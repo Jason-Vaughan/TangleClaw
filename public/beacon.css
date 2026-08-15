@@ -6,7 +6,16 @@
    Every custom property used here is defined in both stylesheets' :root, so the
    beacon follows whichever theme the page is wearing. */
 
-/* The dot is the resting state and persists until the update is applied; the
+/* Every control in here is at least 44px on its smallest axis — the floor
+   nonfunctional-requirements.md states and project-preferences.md repeats, on a
+   product whose primary client is iPhone Safari. They reach it by GROWING
+   (min-height/min-width), not by an overlay: the dot can afford a 44px ::after
+   because nothing sits under it, but three inline controls one `gap` apart
+   would have overlapping invisible hit zones and steal each other's taps. The
+   toast is taller than a desktop eye would draw it, and that is the trade —
+   this surface exists to work where the operator actually is.
+
+   The dot is the resting state and persists until the update is applied; the
    toast pops once per detected version and fades. The animation is here, in
    CSS, so the two script timers only add the `fading` class and then remove
    the toast element — that is the whole of what they do, and neither touches
@@ -63,8 +72,8 @@
   z-index: 40;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
+  gap: 8px;
+  padding: 4px 10px;
   border: 1px solid var(--amber);
   border-radius: 8px;
   background: var(--elevated-bg);
@@ -107,9 +116,11 @@
   font-size: 12px;
   line-height: 1;
   cursor: pointer;
-  padding: 5px 10px;
+  padding: 5px 12px;
   border-radius: 8px;
   white-space: nowrap;
+  /* The primary action of the whole feature. It was ~24px tall. */
+  min-height: 44px;
 }
 .beacon-toast-apply:hover:not(:disabled) { filter: brightness(1.15); }
 .beacon-toast-apply:disabled { opacity: 0.6; cursor: default; }
@@ -120,9 +131,10 @@
   font-family: inherit;
   font-size: 12px;
   cursor: pointer;
-  padding: 0;
+  padding: 0 4px;
   text-decoration: underline;
   text-underline-offset: 3px;
+  min-height: 44px;
 }
 .beacon-toast-close {
   background: none;
@@ -131,7 +143,10 @@
   font-size: 15px;
   line-height: 1;
   cursor: pointer;
-  padding: 0 0 0 2px;
+  padding: 0;
   opacity: 0.7;
+  /* Square: a glyph this small needs the width as much as the height. */
+  min-height: 44px;
+  min-width: 44px;
 }
 .beacon-toast-close:hover { opacity: 1; }

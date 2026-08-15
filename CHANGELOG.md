@@ -77,11 +77,17 @@ All notable changes to TangleClaw are documented in this file.
   enabled **Update now** whose handler returned silently, with no way to tell a running update from
   a dead one.
 
-- **The beacon dot's tap target meets the 44px floor the project records (#931, Critic R-10/R-17).**
-  It was a negative inset on an 11px dot, which resolves against a 7px padding box under
-  `box-sizing: border-box` — 31px, under the minimum in `project-preferences.md`, and a geometry two
-  reviewers read as two different numbers off the same rule. It is now an explicitly sized, centred
-  44×44 box, and the guard asserts the number instead of the presence of some padding.
+- **Every beacon control meets the 44px touch floor, not just the one a review named (#931, Critic
+  R-10/R-17 + PR review).** The dot's hit area was a negative inset on an 11px dot, which resolves
+  against a 7px padding box under `box-sizing: border-box` — 31px, under the minimum in
+  `project-preferences.md`, and a geometry two reviewers read as two different numbers off the same
+  rule. It is now an explicitly sized, centred 44×44 box. The first fix stopped there, which was the
+  real defect: the same new stylesheet's other three controls — including **Update now**, the primary
+  action of the whole feature, at ~24px — stayed under the floor on a product whose primary client is
+  iPhone Safari. They now reach it by growing rather than by overlay, because three inline controls
+  one `gap` apart would have overlapping invisible hit zones and steal each other's taps. The toast
+  is taller for it; that is the trade, on a surface whose whole premise is working where the operator
+  actually is.
 
 - **A beacon with nowhere to render now says so (#931, Critic R-16).** If the logo wrapper is ever
   renamed or dropped, the beacon rendered nothing, forever, with nothing in the console — the
@@ -136,8 +142,9 @@ All notable changes to TangleClaw are documented in this file.
   plan keep their historical wording under a note saying the decision stands and the surfaces do
   not. The `sw.js` learning from 2026-06-17 — "register it in `STATIC_ASSETS` AND bump
   `CACHE_NAME`" — was narrowed in place: its remedy is the move #710 forbids, and network-first is
-  the route for a new asset. A last sweep took "update pill" and "Update & restart" out of eight
-  code comments across `public/` and `lib/` that the first pass did not name.
+  the route for a new asset. Successive sweeps took "update pill" and "Update & restart" out of ten
+  code comments across `public/`, `lib/` and `scripts/`; the two that remain are deliberate
+  historical references explaining why the shared module and stylesheet exist.
 
 - **The beacon's stylesheet is one file linked by both pages (#931).** The dashboard and the
   session page have separate stylesheets, and a copy of the beacon's rules in each would be the

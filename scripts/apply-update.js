@@ -6,7 +6,7 @@
 //   node scripts/apply-update.js
 //
 // This is the command-line face of `lib/update-applier.js` — the SAME code the
-// dashboard's "Update & restart" button runs, so both paths share one set of
+// beacon's "Update now" button runs, so both paths share one set of
 // safety guards and one definition of what "updated" means (detached at the
 // latest release tag).
 //

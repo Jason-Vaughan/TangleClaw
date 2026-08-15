@@ -81,6 +81,32 @@ describe('UB self-update action (#228/#229)', () => {
       assert.match(css, /\.beacon-toast-apply:disabled/);
     });
 
+    it('holds the 44px floor for EVERY control, not just the one a review named', () => {
+      // The Critic's round pointed at the dot; the dot was fixed and its three
+      // siblings were not — the primary action of the whole feature stayed
+      // ~24px tall on a phone-first product. That is
+      // `feedback_verify_mechanism_uniformity` applied to a RULE rather than a
+      // verb: one call site is not the family. This guard is the family.
+      // Sliced to the rule's own closing brace rather than a fixed character
+      // window: a comment added inside a rule must not push its declarations
+      // out of the guard's view, which is how a real 44px could read as absent
+      // (or a missing one as present, from the NEXT rule).
+      const ruleBody = (sel) => {
+        const at = css.indexOf(`${sel} {`);
+        assert.notEqual(at, -1, `${sel} must exist`);
+        return css.slice(at, css.indexOf('}', at));
+      };
+      for (const control of ['.beacon-toast-apply', '.beacon-toast-secondary',
+        '.beacon-toast-close']) {
+        assert.match(ruleBody(control), /min-height:\s*44px/,
+          `${control} must reach the recorded 44px floor`);
+      }
+      assert.match(ruleBody('.beacon-toast-close'), /min-width:\s*44px/,
+        'the ✕ is a glyph — it needs the width as much as the height');
+      // THE MUTATION THIS CATCHES: raising one control and leaving the rest,
+      // which is exactly what shipped before the PR review swept them.
+    });
+
     it('gives the dot a 44px tap target — the recorded floor, asserted as a number', () => {
       // 11px of red is the visual; the hit area is the ::after. The previous
       // guard asserted only that SOME negative inset existed, which passed at
