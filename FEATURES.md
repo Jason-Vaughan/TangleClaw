@@ -248,3 +248,13 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 - `test/wrap-step-commit-autopr.test.js` — the commit step's auto-PR close-loop (#467), which keeps a wrap branch off a protected branch from dangling.
 - `test/_dir-scanner-stderr-child.js` — fixture scanner child that writes real stderr over a real pipe (#884), so the supervisor's re-emission is tested rather than stubbed: WARN and DEBUG lines to prove the level is read not flattened, one line split across two writes to prove a partial is held until its newline, an unparseable line to prove it is not dropped, and an over-4096-byte flood before a nonzero exit to prove the death buffer keeps the tail rather than the head.
 
+## TODO (auto-stubbed 2026-08-15)
+
+- **TBD** — touched in this session: `test/api-update-apply.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/create-flow-mode-picker.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/landing-dirty-discard-flow.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/landing-unreachable-state.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/setup-scan-own-install.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/setup-wizard-git-unknown.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/ub-self-update-pill.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/update-applier.test.js`. <!-- describe -->
