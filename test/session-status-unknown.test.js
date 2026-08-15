@@ -176,6 +176,87 @@ describe('an UNTRACKED session is not erased by a tmux that would not answer', (
   });
 });
 
+describe('every answer this route gives carries the incomplete contract', () => {
+  // `api-contract.md` states that `incomplete` is present on EVERY answer, `[]`
+  // on the healthy ones — the whole point being that a consumer reads its value
+  // instead of probing for the field. A sentence in an artifact does not make
+  // that true; three branches had no `incomplete` at all when the sentence was
+  // first written. This walks every reachable shape so the artifact and the code
+  // cannot drift apart silently.
+
+  /**
+   * Drive one branch and return its payload.
+   * @param {Function} setup - Arranges DB state; returns a cleanup function.
+   * @param {object|null} verdict - Probe verdict, or null to leave the real one.
+   * @returns {object} The status payload.
+   */
+  function branch(setup, verdict) {
+    const cleanup = setup();
+    try {
+      return verdict
+        ? withProbe(verdict, () => sessions.getSessionStatus('unknown-status'))
+        : sessions.getSessionStatus('unknown-status');
+    } finally {
+      cleanup();
+    }
+  }
+
+  /**
+   * Start a tmux-backed session and return its cleanup.
+   * @param {string} name - tmux session name.
+   * @returns {Function} Cleanup.
+   */
+  const withSession = (name) => () => {
+    const s = store.sessions.start({ projectId, engineId: 'claude', tmuxSession: name });
+    return () => {
+      if (store.sessions.get(s.id).status === 'active') {
+        store.sessions.kill(s.id, 'test cleanup');
+      }
+    };
+  };
+
+  const cases = [
+    ['active + reachable', withSession('tc-contract-live'), ALIVE],
+    ['active + unreachable', withSession('tc-contract-wedge'), UNREACHABLE],
+    ['untracked + reachable', () => () => {}, ALIVE],
+    ['untracked + unreachable', () => () => {}, UNREACHABLE],
+    ['no session at all', () => () => {}, GONE]
+  ];
+
+  for (const [label, setup, verdict] of cases) {
+    it(`carries incomplete and cause on: ${label}`, () => {
+      const status = branch(setup, verdict);
+      assert.ok(Array.isArray(status.incomplete),
+        `${label}: incomplete must be an array, never absent — a field that appears only on `
+        + 'failure makes every consumer probe for its existence');
+      assert.ok('cause' in status, `${label}: cause must be present`);
+    });
+  }
+
+  it('covers the webui branch, which has no pane and so nothing that went short', () => {
+    // Deliberately `incomplete: []` with `idle: false` left standing. A webui
+    // session has no terminal, so terminal-idle is not a reading this branch
+    // failed to take — it is a question that does not apply, and `false` is the
+    // webui subsystem's own answer rather than a wedged tmux's. Widening
+    // `incomplete` to mean "not applicable" as well as "could not establish"
+    // would blur the one distinction this whole family exists to draw.
+    const s = store.sessions.start({
+      projectId, engineId: 'openclaw:x', tmuxSession: null, sessionMode: 'webui'
+    });
+    try {
+      const status = sessions.getSessionStatus('unknown-status');
+      assert.equal(status.sessionMode, 'webui', 'precondition: this is the webui branch');
+      assert.deepEqual(status.incomplete, [],
+        'nothing was attempted and failed here, so nothing is incomplete');
+      assert.ok('cause' in status, 'the field is still present, so consumers read rather than probe');
+    } finally {
+      if (store.sessions.get(s.id).status === 'active') {
+        store.sessions.kill(s.id, 'test cleanup');
+      }
+    }
+  });
+});
+
 describe('the invariant the session page depends on', () => {
   // The chime and the wrap-idle modal both branch on `data.idle` being truthy,
   // and both are consequential — one dings, the other opens the modal that
