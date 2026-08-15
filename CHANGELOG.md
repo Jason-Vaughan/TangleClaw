@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.2.0] - 2026-08-15
+
 ### Changed
 
 - **One update beacon on the serpent, instead of a pill on one page and a badge on the other
