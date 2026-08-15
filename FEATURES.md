@@ -258,3 +258,9 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 - **TBD** — touched in this session: `test/setup-wizard-git-unknown.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/ub-self-update-action.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/update-applier.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-08-15)
+
+- **TBD** — touched in this session: `test/_mini-dom.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/session-update-poll.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/update-release-link.test.js`. <!-- describe -->
