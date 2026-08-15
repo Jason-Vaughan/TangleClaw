@@ -922,9 +922,12 @@ async function applyUpdateAndRestart(data) {
   // structured refusal names them, and the operator can discard-and-update in
   // one confirmed step. One real-work path anywhere keeps the hard refusal —
   // then the honest move is showing WHICH files, so "commit or stash" stops
-  // being advice about invisible things.
-  if (applyResp && !applyResp.ok && applyResp.code === 'dirty-tree' && applyResp.dirty) {
-    const d = applyResp.dirty;
+  // being advice about invisible things. `api()` returns null for a 409, so
+  // the refusal body arrives through the `api.lastBody` side channel — the
+  // first version read `applyResp.dirty` and was dead code (Critic R-1).
+  const refusal = applyResp || (api.lastErrorCode === 'dirty-tree' ? api.lastBody : null);
+  if (refusal && !refusal.ok && refusal.code === 'dirty-tree' && refusal.dirty) {
+    const d = refusal.dirty;
     if (d.realWork.length === 0 && d.discardable.length > 0) {
       const proceedDiscard = window.confirm(
         'The update is blocked only by files TangleClaw itself wrote:\n\n'

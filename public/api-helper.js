@@ -66,11 +66,17 @@
           }
           api.lastError = data.error || `HTTP ${res.status}`;
           api.lastErrorCode = data.code || null;
+          // The whole refusal body, for callers whose refusal carries more
+          // than a sentence (#711: dirty-tree's structured file lists). The
+          // null return stays the contract; this is the side channel beside
+          // lastError/lastErrorCode, cleared on every success below.
+          api.lastBody = data;
           console.error(`API ${url}: ${api.lastError}${api.lastErrorCode ? ` (${api.lastErrorCode})` : ''}`);
           return null;
         }
         api.lastError = null;
         api.lastErrorCode = null;
+        api.lastBody = null;
         setConnected(true);
         return data;
       } catch (err) {
@@ -87,6 +93,7 @@
     }
     api.lastError = null;
     api.lastErrorCode = null;
+    api.lastBody = null;
     return api;
   }
 
