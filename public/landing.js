@@ -118,7 +118,7 @@ function renderUnreachableState() {
         last logged:</p>
         <pre>launchctl list | grep tangleclaw
 tail -50 ~/.tangleclaw/logs/server.err.log</pre>
-        <button class="btn btn-primary" onclick="retryConnectionNow()">Retry now</button>
+        <button id="unreachableRetryBtn" class="btn btn-primary" onclick="retryConnectionNow()">Retry now</button>
       </div>`;
     document.body.appendChild(el);
   }
@@ -135,10 +135,27 @@ function hideUnreachableState() {
  * The explicit retry the unreachable state offers. The background loop keeps
  * running regardless; this exists so the operator has an action that answers
  * NOW, not in up to five seconds.
+ *
+ * The button shows the attempt in flight (operator feedback, 2026-08-14 live
+ * smoke: the pause between press and answer read as a dead button). On
+ * recovery the whole card dismisses, so the reset in `finally` matters only
+ * when the server is still gone and the card stays up for another press.
  * @returns {Promise<void>}
  */
 async function retryConnectionNow() {
-  await attemptReconnect();
+  const btn = document.getElementById('unreachableRetryBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Retrying…';
+  }
+  try {
+    await attemptReconnect();
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Retry now';
+    }
+  }
 }
 
 function setConnected(connected) {

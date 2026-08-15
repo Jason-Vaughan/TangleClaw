@@ -35,7 +35,8 @@ All notable changes to TangleClaw are documented in this file.
   checks (`launchctl list | grep tangleclaw`, `~/.tangleclaw/logs/server.err.log`). Background
   retry continues underneath and recovery stays automatic the moment the server returns; the only
   navigation out is the operator's own Retry button — no reload, no redirect, per the no-UI-timers
-  norm.
+  norm. The Retry button shows the attempt in flight ("Retrying…", disabled) instead of sitting
+  silent for the seconds an answer takes — the pause read as a dead button in the live smoke.
 
   The honesty extends into the service-worker layer, where the lie originated: on a SW-controlled
   page a dead server never rejects an `/api` fetch — the worker resolved it as either a cached 200
