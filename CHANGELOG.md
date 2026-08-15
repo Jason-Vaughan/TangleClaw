@@ -4,6 +4,60 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **One update beacon on the serpent, instead of a pill on one page and a badge on the other
+  (#931, chunk 1 of 2 — dashboard).** TangleClaw announced an available update two different ways:
+  a pill in the dashboard header, and a much quieter badge in the session banner. The pill was the
+  only one that could actually apply the update, and it is invisible from the session page — which
+  is where an operator lives. So the surface that could act was the one nobody was looking at, and
+  the surface people looked at was so subtle the product's own operator did not know it existed.
+  Field installs learn that a release exists through this surface, so it is now one thing in both
+  places: a toast pops from the logo naming the version with a single **Update now**, fades on its
+  own after ~3 seconds, and leaves a red dot on the logo that persists until the update is applied.
+  Clicking the dot re-opens the notice — with a ✕ this time — so the fade loses nothing. The dot is
+  a real button that names its version, and the toast is a polite live region, neither of which the
+  badge it replaces was. Design chosen by the operator from an interactive mockup.
+
+  The auto-fade sits inside the no-timer-driven-UI rule (#98/#268) rather than an exception to it,
+  and the boundary is mechanical, not a promise: a timer may only change the visibility of a
+  notification whose state is preserved elsewhere. The dot is that elsewhere, no timer touches it,
+  and the tests fire the timer callbacks by hand and assert exactly what each one is allowed to
+  reach.
+
+- **The dashboard's per-version dismiss is gone (#931).** `tc_updateDismissed_<version>` in
+  `localStorage` is no longer read or written. The dot is the quiet resting state that dismiss
+  existed to provide, and a permanently dismissible update surface restores the invisibility this
+  work exists to remove. Existing keys are left in place, inert — reading them is the only thing
+  that could bring the behavior back.
+
+### Internal
+
+- **The self-update flow has one implementation again (#931).** `applyUpdateAndRestart` and its
+  #711 dirty-tree handling moved out of `public/landing.js` into `public/update-beacon.js`, so the
+  session page can run *the same* guarded flow rather than a copy that would drift from it on the
+  first fix — which is how the pill and the badge diverged. The restart plumbing underneath
+  (`postServerRestart`, `pollServerBackAndReload`) moved to `public/api-helper.js` as
+  `tcCreateRestartFlow`, because the #235 stale-server restart drives it too and is not the beacon.
+  A structural guard now fails if any page names the apply or restart routes directly.
+
+- **Frontend tests moved from reading the source to running it (#931).** The pill's suites asserted
+  that branches *existed* in `landing.js`; #928 R-1 is the standing reminder that existing and
+  reachable are different claims. `test/update-beacon.test.js` runs the real module through the real
+  `api()` chain against a small purpose-built DOM (`test/_mini-dom.js` — no npm dependency added),
+  with the timers recorded rather than scheduled so "what survives the fade" is a direct assertion
+  instead of a 3.45-second sleep. Ten named mutations were each applied and watched go red.
+  `test/landing-dirty-discard-flow.test.js` was **removed, not weakened**: its three cases are
+  reproduced verbatim in the new suite at the module level. `test/ub-self-update-pill.test.js` →
+  `test/ub-self-update-action.test.js` and `test/update-pill-link.test.js` →
+  `test/update-release-link.test.js`, each reduced to the half that cannot be executed (the
+  stylesheet) plus the cross-file invariant that no page has grown its own copy of the flow. The
+  #583 wrap-guard test stopped counting restart POSTs in `landing.js` — a pin that would have gone
+  quiet rather than red once the helper moved — and now executes the force-past-a-running-wrap path.
+
+- **The beacon refuses a release URL that is not http(s) (#931).** The pill escaped `releaseUrl` as
+  markup and then put it in an `href` anyway; escaping constrains markup, not schemes.
+
 ## [5.1.0] - 2026-08-15
 
 ### Added

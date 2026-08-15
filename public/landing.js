@@ -58,6 +58,23 @@ const state = {
 const api = window.tcCreateApi({ setConnected });
 const apiMutate = window.tcCreateApiMutate(api);
 
+// The one restart implementation this page has. Both the #235 stale-server
+// restart and the beacon's apply-and-restart drive it, and both share
+// `state.restartInFlight` so neither can fire while the other is running.
+const restartFlow = window.tcCreateRestartFlow({ api, apiMutate, win: window });
+
+// The update beacon (#931) — the single surface that announces an available
+// update, identical here and on the session page.
+const updateBeacon = window.tcCreateUpdateBeacon({
+  doc: document,
+  anchorId: 'updateBeacon',
+  api,
+  apiMutate,
+  restart: restartFlow,
+  getInFlight: () => state.restartInFlight,
+  setInFlight: (v) => { state.restartInFlight = v; }
+});
+
 // ── Connection State ──
 
 let reconnectTimer = null;
@@ -630,30 +647,6 @@ function renderStaleServerBanner(info) {
  *
  * @returns {Promise<void>}
  */
-/**
- * POST /api/server/restart through the #583 wrap guard. The server
- * refuses (409 WRAP_RESTART_BLOCKED) while a wrap pipeline is mid-flight —
- * restarting then kills the wrap and orphans its AI content steps (the
- * 2026-07-16 incident). On that refusal, ask the operator explicitly and
- * retry with {force:true} only on a yes. Shared by the stale-server
- * restart (#235) and the update-and-restart flow (#229) so both gates
- * behave identically.
- *
- * @returns {Promise<object|null>} The restart response, or null when the
- *   POST failed / the operator declined to force.
- */
-async function postServerRestart() {
-  let resp = await apiMutate('/api/server/restart', 'POST', {});
-  if (!resp && api.lastErrorCode === 'WRAP_RESTART_BLOCKED') {
-    const proceed = window.confirm(
-      `${api.lastError}\n\nForce the restart anyway? The running wrap will be killed mid-pipeline.`
-    );
-    if (!proceed) return null;
-    resp = await apiMutate('/api/server/restart', 'POST', { force: true });
-  }
-  return resp;
-}
-
 async function triggerServerRestart() {
   if (state.restartInFlight) return;
   state.restartInFlight = true;
@@ -711,7 +704,7 @@ async function triggerServerRestart() {
 
   let postResp;
   try {
-    postResp = await postServerRestart();
+    postResp = await restartFlow.postServerRestart();
   } catch (err) {
     state.restartInFlight = false;
     setBtnState('Restart TangleClaw', false);
@@ -726,64 +719,16 @@ async function triggerServerRestart() {
     return;
   }
 
-  pollServerBackAndReload(oldStartedAt, () => {
+  restartFlow.pollServerBackAndReload(oldStartedAt, () => {
     state.restartInFlight = false;
     setBtnState('Restart TangleClaw', false);
   });
 }
 
 /**
- * Poll `/api/server-info` until the process reports a `startedAt` different from
- * `oldStartedAt` (the new process is up), then full-reload so the browser picks
- * up any fresh static assets. Shared by `triggerServerRestart` (#235) and
- * `applyUpdateAndRestart` (UB, #228/#229).
- *
- * **No timer-driven blind reload** (no-UI-timers rule, #98/#268): without a
- * baseline `startedAt` we can't detect when the new process is actually up, so
- * we abort honestly (let the operator refresh) rather than reload onto a
- * possibly-dead server. `restore` clears the in-flight flag and restores the
- * caller's button on any give-up path.
- *
- * 30 polls at 500ms = 15s of patience; the restart itself typically takes ~3s.
- * Each poll tolerates a failed fetch (the in-between window when the old process
- * is dead but the new one hasn't bound the port yet).
- *
- * @param {string|null} oldStartedAt - Pre-restart `startedAt` baseline
- * @param {() => void} restore - Clears `restartInFlight` + restores the caller's button
- */
-function pollServerBackAndReload(oldStartedAt, restore) {
-  if (!oldStartedAt) {
-    restore();
-    window.alert('Could not read server state to confirm the restart. The server may still be coming back — refresh the page in a moment to check.');
-    return;
-  }
-  const POLL_INTERVAL_MS = 500;
-  const POLL_MAX_ATTEMPTS = 30;
-  let attempt = 0;
-  const poll = setInterval(async () => {
-    attempt++;
-    try {
-      const info = await api('/api/server-info');
-      if (info && info.startedAt && info.startedAt !== oldStartedAt) {
-        clearInterval(poll);
-        window.location.reload();
-        return;
-      }
-    } catch { /* expected during the dead window */ }
-    if (attempt >= POLL_MAX_ATTEMPTS) {
-      clearInterval(poll);
-      restore();
-      window.alert('Restart did not complete within 15 seconds. The server may still be coming back — refresh in a moment.');
-    }
-  }, POLL_INTERVAL_MS);
-}
-
-/**
- * Fetch update status and show notification pill if an update is available.
- * Dismissed state is persisted in localStorage keyed by version. The version
- * text is wrapped in an anchor to the GitHub release page (#149) when the
- * backend supplies a `releaseUrl` — falls back to plain text otherwise so
- * pre-#149 servers or non-GitHub remotes still surface the notification.
+ * Fetch update status and render it onto the beacon (#931), which decides
+ * everything about how an available update looks — here and on the session
+ * page, from the same module.
  *
  * Two modes. Plain (`opts` omitted) reads the server's cached answer — cheap,
  * no network. `{refresh: true}` asks the server to measure again, which is what
@@ -816,216 +761,9 @@ async function loadUpdateStatus(opts) {
   } else {
     data = await api('/api/update-status');
   }
-  const pill = document.getElementById('updatePill');
   renderVersionCheckHint(data);
-
-  // A failed request, and a server that has not run its first check yet, are
-  // both "no answer" — not "no update". `startChecker` waits 60s before its
-  // first check and reports `{updateAvailable: false, checkedAt: null}` until
-  // then, which is precisely the window the restart-triggered re-check lands
-  // in. Hiding on that takes down a pill for an update that is still genuinely
-  // available. `checkedAt` is the discriminator, and the payload already
-  // carries it.
-  if (!data || !data.checkedAt) return data;
-
-  // Past that, "no update" is a real answer and every path that reaches it must
-  // take down a pill that is showing — this function re-runs after a restart,
-  // and the state it most often re-runs into is "the update you were offering
-  // is now installed".
-  if (!data.updateAvailable || !data.latestVersion) {
-    if (pill) pill.classList.add('hidden');
-    return data;
-  }
-
-  const dismissKey = `tc_updateDismissed_${data.latestVersion}`;
-  if (localStorage.getItem(dismissKey)) {
-    if (pill) pill.classList.add('hidden');
-    return data;
-  }
-
-  if (!pill) return data;
-
-  const versionLabel = `v${esc(data.latestVersion)}`;
-  const versionHtml = data.releaseUrl
-    ? `<a class="update-pill-link" href="${esc(data.releaseUrl)}" target="_blank" rel="noopener noreferrer" title="View release notes">${versionLabel}</a>`
-    : versionLabel;
-
-  pill.innerHTML = `${versionHtml} available `
-    + `<button class="update-pill-apply" id="updateApplyBtn">Update &amp; restart</button> `
-    + `<button class="update-pill-dismiss" aria-label="Dismiss">&times;</button>`;
-  pill.classList.remove('hidden');
-
-  // UB (#228/#229): the actionable self-update. The git fetch+checkout is the
-  // server-side action this button adds; the restart half reuses the proven
-  // #235 path. The data closure carries the target version for the confirm.
-  const applyBtn = pill.querySelector('#updateApplyBtn');
-  if (applyBtn) {
-    applyBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      applyUpdateAndRestart(data);
-    });
-  }
-
-  pill.querySelector('.update-pill-dismiss').addEventListener('click', (e) => {
-    e.stopPropagation();
-    pill.classList.add('hidden');
-    localStorage.setItem(dismissKey, '1');
-  });
-
+  updateBeacon.render(data);
   return data;
-}
-
-/**
- * UB (#228/#229): apply the latest release, then restart onto it — one operator
- * gesture. `POST /api/update/apply` (fetch + checkout the tag) → on success
- * `POST /api/server/restart` (the existing #235 path) → poll `/api/server-info`
- * until the new process is up → full reload onto the fresh assets. A refused
- * safety guard (409: dirty tree / no update / wrong ref / no git) surfaces its
- * reason and restores the button; the working tree is never touched on a refusal.
- *
- * Idempotent via `state.restartInFlight` (shared with the #235 stale-server
- * restart, so the two paths can't fire concurrently).
- *
- * @param {object} data - The /api/update-status payload (carries latestVersion)
- * @returns {Promise<void>}
- */
-async function applyUpdateAndRestart(data) {
-  if (state.restartInFlight) return;
-
-  const setBtn = (label, disabled) => {
-    const btn = document.getElementById('updateApplyBtn');
-    if (btn) { btn.textContent = label; btn.disabled = disabled; }
-  };
-
-  const proceed = window.confirm(
-    `Update TangleClaw to v${data.latestVersion} and restart?\n\n` +
-    'TC fetches the release, switches the checkout to it, and restarts. Active tmux ' +
-    'sessions survive; the browser reconnects when the server returns (~3 seconds).'
-  );
-  if (!proceed) return;
-
-  state.restartInFlight = true;
-  setBtn('Updating…', true);
-
-  // 1. Apply — fetch + checkout the latest tag (no restart yet).
-  let applyResp;
-  try {
-    applyResp = await apiMutate('/api/update/apply', 'POST', {});
-  } catch (err) {
-    state.restartInFlight = false;
-    setBtn('Update & restart', false);
-    window.alert(`Update failed: ${err && err.message ? err.message : 'request did not complete'}`);
-    return;
-  }
-
-  // A dirty tree blocked only by TangleClaw's own files (#711 chunk 03): the
-  // structured refusal names them, and the operator can discard-and-update in
-  // one confirmed step. One real-work path anywhere keeps the hard refusal —
-  // then the honest move is showing WHICH files, so "commit or stash" stops
-  // being advice about invisible things. `api()` returns null for a 409, so
-  // the refusal body arrives through the `api.lastBody` side channel — the
-  // first version read `applyResp.dirty` and was dead code (Critic R-1).
-  const refusal = applyResp || (api.lastErrorCode === 'dirty-tree' ? api.lastBody : null);
-  if (refusal && !refusal.ok && refusal.code === 'dirty-tree' && refusal.dirty) {
-    const d = refusal.dirty;
-    if (d.realWork.length === 0 && d.discardable.length > 0) {
-      const proceedDiscard = window.confirm(
-        'The update is blocked only by files TangleClaw itself wrote:\n\n'
-        + d.discardable.map((f) => `  ${f}`).join('\n')
-        + '\n\nDiscard these files and update? Nothing of yours is in this list — '
-        + 'anything TangleClaw could not prove it wrote would have blocked instead.'
-      );
-      if (proceedDiscard) {
-        try {
-          applyResp = await apiMutate('/api/update/apply', 'POST', { discardDirty: true });
-        } catch (err) {
-          state.restartInFlight = false;
-          setBtn('Update & restart', false);
-          window.alert(`Update failed: ${err && err.message ? err.message : 'request did not complete'}`);
-          return;
-        }
-      }
-    } else if (d.realWork.length > 0) {
-      state.restartInFlight = false;
-      setBtn('Update & restart', false);
-      window.alert(
-        'Update not applied: the checkout has local changes that might be someone\'s work, '
-        + 'so nothing was touched.\n\nIn the way:\n'
-        + d.realWork.map((f) => `  ${f}`).join('\n')
-        + (d.discardable.length
-          ? '\n\nAlso present (TangleClaw-written, discardable once the above are resolved):\n'
-            + d.discardable.map((f) => `  ${f}`).join('\n')
-          : '')
-        + '\n\nCommit or stash them in the install directory, then update again.'
-      );
-      return;
-    }
-  }
-
-  if (!applyResp || !applyResp.ok) {
-    state.restartInFlight = false;
-    setBtn('Update & restart', false);
-    const msg = (applyResp && applyResp.error) || api.lastError || 'unknown error';
-    window.alert(`Update not applied: ${msg}`);
-    return;
-  }
-
-  // Provisioning this update cannot do for you (#711): deploy assets are
-  // never applied from the server (re-running install steps walks into the
-  // Full-Disk-Access silent hang), and a dependency manifest appearing means
-  // the release reversed the zero-npm-dep norm — the updater reports it, it
-  // does not become an npm executor. The one honest move is to say so BEFORE
-  // the restart, while the operator is watching. The alert blocks until
-  // acknowledged; the restart then proceeds.
-  const prov = applyResp.provisioning;
-  if (prov && prov.action === 'manual') {
-    const lines = [];
-    if (prov.assetsChanged && prov.assetsChanged.length > 0) {
-      lines.push('Deploy assets changed — after the restart, re-run the matching deploy steps '
-        + 'on the server machine (see deploy/install.sh):');
-      for (const f of prov.assetsChanged) lines.push(`  ${f}`);
-    }
-    if (prov.manifestChanged) {
-      lines.push('This release introduced or changed a dependency manifest (package.json). '
-        + 'TangleClaw does not run npm for you — install dependencies manually in the repo '
-        + 'before relying on the new version.');
-    }
-    window.alert('This release needs manual steps the update does not perform itself:\n\n'
-      + lines.join('\n'));
-  }
-
-  // 2. Capture the baseline startedAt, then restart onto the new code.
-  setBtn('Restarting…', true);
-  const appliedLabel = applyResp.toRef || `v${data.latestVersion}`;
-  let oldStartedAt = null;
-  try {
-    const pre = await api('/api/server-info');
-    if (pre && pre.startedAt) oldStartedAt = pre.startedAt;
-  } catch { /* fall through to the manual-restart message below */ }
-
-  let restartResp;
-  try {
-    restartResp = await postServerRestart();
-  } catch (err) {
-    restartResp = null;
-    api.lastError = err && err.message;
-  }
-  if (!restartResp || !restartResp.ok) {
-    // The code IS updated on disk; only the auto-restart didn't fire (e.g. no
-    // restart mechanism on this host). Degrade honestly to the #199 stale path.
-    state.restartInFlight = false;
-    setBtn('Update & restart', false);
-    const msg = (restartResp && restartResp.error) || api.lastError || 'no restart mechanism';
-    window.alert(`Updated to ${appliedLabel} on disk, but auto-restart didn't run (${msg}). Restart TangleClaw to finish.`);
-    return;
-  }
-
-  // 3. Poll until the new process reports a fresh startedAt, then reload —
-  // via the shared helper (no timer-driven blind reload; #98/#268).
-  pollServerBackAndReload(oldStartedAt, () => {
-    state.restartInFlight = false;
-    setBtn('Update & restart', false);
-  });
 }
 
 async function loadStats() {

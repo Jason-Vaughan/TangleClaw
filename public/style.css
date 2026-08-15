@@ -167,25 +167,128 @@ body {
   cursor: default;
 }
 .dash-auth-warning.hidden { display: none; }
-.update-pill {
+/* ── The update beacon (#931) ──
+   One announcement surface for an available update, shared by the dashboard
+   and the session banner (session.css restates only what the banner's own
+   geometry needs). The dot is the resting state and persists until the update
+   is applied; the toast pops once per detected version and fades. The fade is
+   here, in CSS, so the only thing script timers do is add and remove a class —
+   they never touch the dot, which is what makes the fade lossless. */
+.beacon-anchor {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 10px;
-  font-family: monospace;
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: var(--primary-dark);
-  color: #fff;
-  white-space: nowrap;
+  flex: 0 0 auto;
 }
-.update-pill.hidden { display: none; }
-.update-pill-link {
+.beacon-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 11px;
+  height: 11px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--danger);
+  /* Matches the page ground behind the bar, so the dot reads as a notch cut
+     into the logo rather than a mark floating over it — and it follows the
+     light and high-contrast themes instead of pinning a dark ring. */
+  border: 2px solid var(--bg);
+  cursor: pointer;
+  /* The tap target is the padded ::after below, not these 11px: an 11px
+     target fails every touch guideline, and this dashboard is read mostly
+     from a phone. */
+  z-index: 2;
+}
+.beacon-dot::after {
+  content: "";
+  position: absolute;
+  inset: -12px;
+}
+.beacon-dot:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+.beacon-toast {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 8px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--amber);
+  border-radius: 8px;
+  background: var(--elevated-bg);
+  color: var(--text);
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  animation: beacon-toast-in 0.25s ease-out;
+}
+.beacon-toast.fading {
+  animation: beacon-toast-out 0.45s ease-in forwards;
+}
+@keyframes beacon-toast-in {
+  from { transform: translateY(-6px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes beacon-toast-out {
+  to { opacity: 0; transform: translateY(-4px); }
+}
+/* An operator who has asked for less motion still needs the notice; only the
+   movement goes. The fade-out keeps its opacity change because the element is
+   removed on its completion — suppressing it entirely would leave the toast
+   on screen for the life of the page. */
+@media (prefers-reduced-motion: reduce) {
+  .beacon-toast { animation: none; }
+  .beacon-toast.fading { animation: beacon-toast-fade 0.45s linear forwards; }
+  @keyframes beacon-toast-fade { to { opacity: 0; } }
+}
+.beacon-toast-version { color: var(--amber); font-weight: 600; }
+.beacon-toast-version a {
   color: inherit;
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.update-pill-link:hover { text-decoration: none; }
+.beacon-toast-version a:hover { text-decoration: none; }
+.beacon-toast-apply {
+  background: var(--primary-dark);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 5px 10px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.beacon-toast-apply:hover:not(:disabled) { filter: brightness(1.15); }
+.beacon-toast-apply:disabled { opacity: 0.6; cursor: default; }
+.beacon-toast-secondary {
+  background: none;
+  border: none;
+  color: var(--primary);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.beacon-toast-close {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0 0 2px;
+  opacity: 0.7;
+}
+.beacon-toast-close:hover { opacity: 1; }
 
 /* Orphan hooks repair banner (#145, chunk 2) */
 .orphan-banner {
@@ -233,32 +336,6 @@ body {
   cursor: pointer;
 }
 .orphan-banner-details:hover { background: rgba(0,0,0,0.08); }
-/* UB (#228/#229): the self-update action button on the update pill. */
-.update-pill-apply {
-  background: rgba(255, 255, 255, 0.18);
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  color: inherit;
-  font-family: inherit;
-  font-size: 10px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 8px;
-  white-space: nowrap;
-}
-.update-pill-apply:hover:not(:disabled) { background: rgba(255, 255, 255, 0.3); }
-.update-pill-apply:disabled { opacity: 0.6; cursor: default; }
-.update-pill-dismiss {
-  background: none;
-  border: none;
-  color: inherit;
-  font-size: 13px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 0 0 2px;
-  opacity: 0.7;
-}
-.update-pill-dismiss:hover { opacity: 1; }
 .dash-stats {
   display: flex;
   align-items: center;

@@ -974,8 +974,103 @@
     return true;
   }
 
+  /**
+   * Create the restart plumbing a page needs to put the server through a
+   * restart and come back onto it.
+   *
+   * Lives here, not beside either caller, because it has two of them that are
+   * not on the same page: the dashboard's stale-server restart (#235) and the
+   * update beacon's apply-and-restart (#229), which the session page also runs
+   * since #931 put one beacon on both surfaces. A copy per caller is how the
+   * update pill and the session badge drifted apart in the first place.
+   *
+   * @param {object} deps
+   * @param {Function} deps.api - The page's `api()` from `tcCreateApi`.
+   * @param {Function} deps.apiMutate - The page's `apiMutate()`.
+   * @param {Window} deps.win - The window, for its dialogs, timers and
+   *   `location`. Injected so the flow runs under test without a browser.
+   * @returns {{postServerRestart: Function, pollServerBackAndReload: Function}}
+   */
+  function tcCreateRestartFlow(deps) {
+    const api = deps.api;
+    const apiMutate = deps.apiMutate;
+    const win = deps.win;
+
+    /**
+     * POST the restart, honoring the wrap-in-progress guard (#602). A wrap
+     * holds state in the server process, so restarting mid-wrap kills it and
+     * orphans its AI content steps (the 2026-07-16 incident). On that
+     * refusal, ask the operator explicitly and retry with `{force:true}` only
+     * on a yes.
+     *
+     * @returns {Promise<object|null>} The restart response, or null when the
+     *   POST failed / the operator declined to force.
+     */
+    async function postServerRestart() {
+      let resp = await apiMutate('/api/server/restart', 'POST', {});
+      if (!resp && api.lastErrorCode === 'WRAP_RESTART_BLOCKED') {
+        const proceed = win.confirm(
+          `${api.lastError}\n\nForce the restart anyway? The running wrap will be killed mid-pipeline.`
+        );
+        if (!proceed) return null;
+        resp = await apiMutate('/api/server/restart', 'POST', { force: true });
+      }
+      return resp;
+    }
+
+    /**
+     * Poll `/api/server-info` until the process reports a `startedAt`
+     * different from `oldStartedAt` (the new process is up), then full-reload
+     * so the browser picks up any fresh static assets.
+     *
+     * **No timer-driven blind reload** (the no-UI-timers rule, #98/#268):
+     * without a baseline `startedAt` we cannot detect when the new process is
+     * actually up, so we abort honestly — let the operator refresh — rather
+     * than reload onto a possibly-dead server. The reload that does happen
+     * fires on an OBSERVED state change, never on elapsed time alone.
+     *
+     * 30 polls at 500ms = 15s of patience; the restart itself typically takes
+     * ~3s. Each poll tolerates a failed fetch (the in-between window when the
+     * old process is dead but the new one hasn't bound the port yet).
+     *
+     * @param {string|null} oldStartedAt - Pre-restart `startedAt` baseline.
+     * @param {() => void} restore - Clears the caller's in-flight latch and
+     *   restores its button on any give-up path.
+     * @returns {void}
+     */
+    function pollServerBackAndReload(oldStartedAt, restore) {
+      if (!oldStartedAt) {
+        restore();
+        win.alert('Could not read server state to confirm the restart. The server may still be coming back — refresh the page in a moment to check.');
+        return;
+      }
+      const POLL_INTERVAL_MS = 500;
+      const POLL_MAX_ATTEMPTS = 30;
+      let attempt = 0;
+      const poll = win.setInterval(async () => {
+        attempt++;
+        try {
+          const info = await api('/api/server-info');
+          if (info && info.startedAt && info.startedAt !== oldStartedAt) {
+            win.clearInterval(poll);
+            win.location.reload();
+            return;
+          }
+        } catch { /* expected during the dead window */ }
+        if (attempt >= POLL_MAX_ATTEMPTS) {
+          win.clearInterval(poll);
+          restore();
+          win.alert('Restart did not complete within 15 seconds. The server may still be coming back — refresh in a moment.');
+        }
+      }, POLL_INTERVAL_MS);
+    }
+
+    return { postServerRestart, pollServerBackAndReload };
+  }
+
   global.tcCreateApi = tcCreateApi;
   global.tcCreateApiMutate = tcCreateApiMutate;
+  global.tcCreateRestartFlow = tcCreateRestartFlow;
   global.tcCopyToClipboard = tcCopyToClipboard;
   global.TC_XTERM_THEMES = TC_XTERM_THEMES;
   global.tcApplyTerminalTheme = tcApplyTerminalTheme;
