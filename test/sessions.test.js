@@ -2054,9 +2054,16 @@ describe('sessions', () => {
     });
 
     it('returns active+untracked when tmux session exists but DB has no active record', () => {
-      // Mock tmux.hasSession to return true for prime-test
-      const originalHasSession = tmux.hasSession;
-      tmux.hasSession = (name) => name === 'prime-test';
+      // Stubs `probeSession`, which is the seam this branch reads now — it moved
+      // off `hasSession` because that boolean answers false both for a pane that
+      // is gone and for a tmux too wedged to reply, and the code below this
+      // branch states an absence. Stubbing the old name would leave the REAL
+      // probe running: the assertions would then be measuring this machine's
+      // tmux rather than the branch, and would pass or fail by accident.
+      const originalProbe = tmux.probeSession;
+      tmux.probeSession = (name) => ({
+        live: name === 'prime-test', answered: true, cause: null
+      });
       try {
         // prime-test has a wrapped (not active) DB session, but tmux says it exists
         const status = sessions.getSessionStatus('prime-test');
@@ -2066,7 +2073,7 @@ describe('sessions', () => {
         assert.equal(status.tmuxSession, 'prime-test');
         assert.equal(status.engine, null);
       } finally {
-        tmux.hasSession = originalHasSession;
+        tmux.probeSession = originalProbe;
       }
     });
   });

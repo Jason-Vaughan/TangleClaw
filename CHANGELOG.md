@@ -6,6 +6,36 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Changed
 
+- **A session whose pane could not be reached no longer reports as busy (#907).** The active
+  branch of `GET /api/sessions/:project/status` returned `idle: false, lastOutputAge: 0` whenever
+  the liveness probe did not answer. That pair is the reading for *a pane that just produced
+  output*, so it did not merely lose information — it pointed the wrong way, saying the session
+  was busy when the truth was that nobody could see it. The session page reads `idle` as its
+  wrap-completion signal, so a definite "not idle" was a wrong answer to the exact question the
+  page was asking. Both fields are now `null` with `incomplete` naming them and `cause` saying
+  why, which is the treatment #908 already applied one branch over, on the wrapping row this one
+  was carved out of. `active` still reports `true`: the record does say a session is running, and
+  this route may not write a death it did not observe.
+
+- **An untracked session no longer vanishes when tmux will not answer.** When there is no database
+  row, this route asks tmux directly — and it asked with `hasSession`, whose `false` means both
+  "no such pane" and "tmux is wedged", after which the code states a definite absence. So a wedge
+  erased an untracked-but-running session from the route entirely. It now reports `active: null`
+  with `incomplete: ['active']`. No issue named this branch; it surfaced while fixing the two that
+  did, and is the same defect one step further down.
+
+  On that branch `idle` and `lastOutputAge` are now **always** unestablished, even when tmux
+  answers perfectly: it has no session row to date from and never calls `detectIdle`, so it never
+  measured either, and was reporting the fresh-output reading on the strength of nothing at all.
+
+  Every `null` in all of this is falsy, so a consumer written before these states existed behaves
+  exactly as it did before. The session page is deliberately unchanged: its two consequential
+  readers of `idle` — the chime and the wrap-idle modal — already do the right thing on an
+  unknown, and inventing a new badge for it would be a surface the operator has not seen. What is
+  new is a guard on the invariant that makes that safe (the server never emits a truthy `idle`
+  beside an `incomplete` that names it), so the correctness stops resting on an accident of
+  truthiness.
+
 - **The Project Master can now report that its state is unknown, instead of reporting it as down
   (#905).** `getMasterStatus` answered `exists: tmux.hasSession(...)`, and `hasSession` returns
   `false` both for a master that is not running and for a tmux server too wedged to reply — so the

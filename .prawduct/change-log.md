@@ -26,6 +26,40 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-15: the last three unknowns wearing a fact's clothes (#906, #905, #907)
+
+<!-- prawduct: type=bugfix | scope=unknown-not-fact-tail-905-907-906 | chunks=01,02,03 -->
+
+**Why:** #891 settled the rule — a read that could not establish a fact reports unknown, never a
+plausible default — and #900/#908 built the primitive (`tmux.probeSession` → `{live, answered,
+cause}`). Each of these three issues was named in that work's build plan as a deliberate
+carve-out. They are the last three named surfaces, and they share one root condition: the
+PTY-exhaustion wedge this install actually reaches (#94/#144/#380), which is simultaneously the
+moment every one of them lies and the moment an operator most needs the truth.
+
+**What changed:** the Project Master's `exists` became tri-state and its panel says "unknown"
+in words rather than rendering a wedge as silence; `ensureMasterSession` refuses instead of
+starting a second master over one it cannot see. `getSessionStatus`'s active branch returns
+`idle`/`lastOutputAge` as null with `incomplete` naming them, matching what #908 already did on
+the wrapping branch. Both wedge diagnostics now report loud once, quiet while the condition
+persists, loud again on recurrence, through a shared `lib/condition-log.js` lifted out of
+`lib/git.js`'s `_reportIncomplete`.
+
+**Found, not filed:** a fourth site no issue named — `getSessionStatus`'s untracked branch asked
+with `hasSession` and then stated a definite absence, so a wedge erased an untracked-but-running
+session from the route. It also reported `idle: false, lastOutputAge: 0` unconditionally, having
+measured neither. Fixed here and recorded in the build plan rather than carried forward as an
+undocumented requirement.
+
+**Two corrections to the filed issues**, both recorded because a filed root cause is a hypothesis:
+#905 describes a "Start Master" button the panel does not have (the start is implicit in opening
+the panel), and #907's title reads as if all of `getSessionStatus` were affected when #908 had
+already fixed the wrapping branch.
+
+**Deliberately not taken:** #910 (this read still finalizes a wrap and commits the operator's
+repository — re-timing that changes a headline feature and needs the operator watching a real
+wrap) and #934 (its filed root cause names a Medusa port the consumer contract contradicts).
+
 ## 2026-08-15: one update beacon on the serpent, on every page (#931)
 
 <!-- prawduct: type=feature | scope=update-beacon-931 | chunks=01,02,03 -->

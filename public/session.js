@@ -1778,7 +1778,15 @@ async function pollStatus() {
     sessionState.launchGraceRemaining = 0;
   }
 
-  // Idle detection for chime — ding once per idle transition
+  // Idle detection for chime — ding once per idle transition.
+  //
+  // `data.idle` is TRI-STATE: true, false, or null when the pane could not be
+  // reached and nothing was measured (`incomplete` names it). Null must not
+  // ding and must not count, which it does not — but only because null is
+  // falsy, and a truthiness accident is not a decision. Stated here, and pinned
+  // by a guard, because the failure it prevents is silent: a chime for a
+  // session nobody could see would be the surface asserting a reading the
+  // server explicitly declined to make.
   if (data.active && data.idle) {
     sessionState.idleCount++;
     if (sessionState.idleCount >= 2 && sessionState.chimeEnabled && !sessionState.chimePlayedForIdle) {
