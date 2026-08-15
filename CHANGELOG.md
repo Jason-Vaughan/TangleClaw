@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.3.0] - 2026-08-15
+
 ### Changed
 
 - **A session whose pane could not be reached no longer reports as busy (#907).** The active
