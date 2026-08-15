@@ -38,6 +38,17 @@ All notable changes to TangleClaw are documented in this file.
   deliberately re-opened, never in the pop that arrives unbidden and is gone in three seconds. It
   used to be the badge's entire behavior, on a single un-confirmed tap.
 
+- **A session now keeps asking, so a release that lands mid-session is seen (#931).** The session
+  page read update status exactly once, at page load. Sessions here run for days, so an operator
+  working in one would never learn about a release that shipped while they were there — on the
+  surface built precisely because operators live in sessions rather than on the dashboard. That
+  made the beacon technically present and practically absent for the population it exists for. It
+  now re-reads on the dashboard's cadence, riding the existing session-status chain rather than
+  starting a second timer, so it inherits that chain's two properties: skipped while the tab is
+  hidden, and unable to stack a burst of queued callbacks on refocus. Like the dashboard's, it is a
+  plain read of the server's cached answer and never a re-measurement — an open session costs
+  origin nothing however long it stays open.
+
 - **The dashboard's per-version dismiss is gone (#931).** `tc_updateDismissed_<version>` in
   `localStorage` is no longer read or written. The dot is the quiet resting state that dismiss
   existed to provide, and a permanently dismissible update surface restores the invisibility this

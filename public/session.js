@@ -616,7 +616,55 @@ function loadVersion() {
  * @returns {Promise<void>}
  */
 async function loadUpdateStatus() {
+  _lastUpdateCheckAt = Date.now();
   updateBeacon.render(await api('/api/update-status'));
+}
+
+// How long between update-status reads on this page. Matches the dashboard's
+// cadence, and like the dashboard's it is a plain read of the server's CACHED
+// answer — never a re-measurement, so an open session costs origin nothing no
+// matter how long it stays open. The server's own periodic check is the floor
+// on freshness.
+const UPDATE_CHECK_INTERVAL_MS = 300000;
+
+// Stamped by `loadUpdateStatus`. Zero until the first read at init, which
+// happens before polling starts, so the first poll tick never re-reads.
+let _lastUpdateCheckAt = 0;
+
+/**
+ * Whether enough time has passed to re-read update status.
+ *
+ * Extracted so the cadence is a thing a test can drive directly, rather than
+ * something inferred from a timer that fires every five seconds.
+ *
+ * @param {number} lastAt - When the last read happened (ms epoch).
+ * @param {number} now - Now (ms epoch).
+ * @returns {boolean}
+ */
+function updateCheckDue(lastAt, now) {
+  return now - lastAt >= UPDATE_CHECK_INTERVAL_MS;
+}
+
+/**
+ * One poll tick: session status always, update status occasionally.
+ *
+ * The update read rides the existing status chain rather than starting a
+ * second timer, so it inherits both of that chain's properties — it is skipped
+ * while the tab is hidden, and it cannot stack a burst of queued callbacks on
+ * refocus (the reason this file uses setTimeout chains at all).
+ *
+ * **Why a session polls for updates at all (#931).** Before this the session
+ * page read update status exactly once, at page load. Sessions here run for
+ * days, so an operator sitting in one would never learn about a release that
+ * landed while they were working — on the surface built precisely because
+ * operators live here rather than on the dashboard. A beacon that only fires
+ * for someone who happens to reload is not the beacon the issue asked for.
+ *
+ * @returns {Promise<void>}
+ */
+async function pollTick() {
+  await pollStatus();
+  if (updateCheckDue(_lastUpdateCheckAt, Date.now())) await loadUpdateStatus();
 }
 
 /**
@@ -1760,7 +1808,7 @@ function startPolling() {
     pollTimer = setTimeout(async () => {
       if (!pollTimer) return;
       if (!_pageVisible) return; // skip while hidden, visibilitychange will restart
-      await pollStatus();
+      await pollTick();
       scheduleNext();
     }, sessionState.pollInterval);
   }

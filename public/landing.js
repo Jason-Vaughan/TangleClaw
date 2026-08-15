@@ -401,8 +401,8 @@ function renderVersionCheckHint(data) {
  * Make the header version an explicit "check for updates now" control.
  *
  * The update announcement only exists when an update exists, so before this there was
- * no way to tell a measured "you are current" from a check that never ran — the
- * absence of a pill was unfalsifiable from the UI, and an operator who suspected
+ * no way to tell a measured "you are current" from a check that never ran — its
+ * absence was unfalsifiable from the UI, and an operator who suspected
  * a release existed had nothing to press. The version label is the natural home:
  * it is already the update-adjacent thing on screen and already re-renders when
  * the running version changes.
