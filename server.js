@@ -2605,11 +2605,7 @@ route('POST', '/api/update/apply', (_req, res) => {
     jsonResponse(res, 200, result);
     return;
   }
-  // 500 for the two mid-flow failures (git broke, or the checkout landed but
-  // its dependencies would not install — #711); 409 for every fail-closed
-  // guard refusal, which is a state the operator can change, not a fault.
-  const midFlow = result.code === 'git-error' || result.code === 'provision-failed';
-  jsonResponse(res, midFlow ? 500 : 409, result);
+  jsonResponse(res, result.code === 'git-error' ? 500 : 409, result);
 });
 
 // POST /api/tmux/mouse — set a session-level mouse value, or `unset: true`

@@ -40,22 +40,17 @@ const HAPPY = {
 };
 
 describe('update-applier (UB #228/#229)', () => {
-  let origGit, origCheck, origNpmCi;
+  let origGit, origCheck;
 
   beforeEach(() => {
     origGit = applier._internal.git;
     origCheck = applier._internal.checkForUpdate;
-    origNpmCi = applier._internal.npmCi;
     applier._internal.checkForUpdate = () => ({ updateAvailable: true, latestVersion: '9.9.9' });
-    // Loud default: a test that runs npm ci without declaring so fails, the
-    // same posture gitStub takes for undeclared git calls.
-    applier._internal.npmCi = () => { throw new Error('unexpected npmCi call'); };
   });
 
   afterEach(() => {
     applier._internal.git = origGit;
     applier._internal.checkForUpdate = origCheck;
-    applier._internal.npmCi = origNpmCi;
   });
 
   describe('applyUpdate guards', () => {
@@ -149,28 +144,32 @@ describe('update-applier (UB #228/#229)', () => {
     });
   });
 
-  describe('applyUpdate provisioning (#711 chunk 01)', () => {
-    it('skips npm ci when the lockfile did not change, and says so', () => {
+  describe('applyUpdate provisioning report (#711 chunk 01)', () => {
+    // DETECT AND REPORT, never execute. TangleClaw is zero-npm-dep by ratified
+    // norm (dependency-manifest.md), so the manifest branch is the forward
+    // guard for a release that reverses that norm upstream — the updater tells
+    // the operator, it does not become an npm executor (the git-over-packaged
+    // ruling cited npm supply-chain exposure as a reason to keep npm out of
+    // this path).
+
+    it('reports a quiet release as needing nothing', () => {
       applier._internal.git = gitStub({ ...HAPPY,
         ['diff --name-only aaaaaaa0000000000000000000000000000000 aaaaaaa0000000000000000000000000000000']: 'lib/projects.js\npublic/landing.js\n' });
       const r = applier.applyUpdate();
       assert.equal(r.ok, true);
-      assert.deepEqual(r.provisioning, {
-        lockfileChanged: false, npmCi: 'skipped', assetsChanged: [], assetsAction: null
-      });
-      // The loud npmCi default proves it was never called: reaching it throws.
+      assert.deepEqual(r.provisioning,
+        { manifestChanged: false, assetsChanged: [], action: null });
     });
 
-    it('runs npm ci exactly once when the lockfile changed', () => {
-      let ciRuns = 0;
-      applier._internal.npmCi = () => { ciRuns++; };
+    it('reports a dependency manifest appearing, and runs nothing for it', () => {
       applier._internal.git = gitStub({ ...HAPPY,
-        ['diff --name-only aaaaaaa0000000000000000000000000000000 aaaaaaa0000000000000000000000000000000']: 'package-lock.json\nlib/projects.js\n' });
+        ['diff --name-only aaaaaaa0000000000000000000000000000000 aaaaaaa0000000000000000000000000000000']: 'package.json\npackage-lock.json\nlib/projects.js\n' });
       const r = applier.applyUpdate();
-      assert.equal(r.ok, true);
-      assert.equal(ciRuns, 1);
-      assert.equal(r.provisioning.lockfileChanged, true);
-      assert.equal(r.provisioning.npmCi, 'ran');
+      assert.equal(r.ok, true, 'reporting is advisory — the checkout itself landed');
+      assert.equal(r.provisioning.manifestChanged, true);
+      assert.equal(r.provisioning.action, 'manual');
+      // gitStub throws on any undeclared call and no npm seam exists: had the
+      // applier tried to execute an install, this test could not have passed.
     });
 
     it('reports changed deploy assets for the human, never applies them', () => {
@@ -180,34 +179,17 @@ describe('update-applier (UB #228/#229)', () => {
       assert.equal(r.ok, true);
       assert.deepEqual(r.provisioning.assetsChanged,
         ['deploy/com.tangleclaw.server.plist', 'deploy/tmux.conf']);
-      assert.equal(r.provisioning.assetsAction, 'manual');
-      // Nothing else runs for assets — the loud npmCi default would have
-      // thrown if the applier tried to "provision" them through npm.
+      assert.equal(r.provisioning.action, 'manual');
     });
 
-    it('a failed npm ci is provision-failed with the recovery in hand, not ok', () => {
-      applier._internal.npmCi = () => { throw new Error('EAI_AGAIN registry.npmjs.org'); };
-      applier._internal.git = gitStub({ ...HAPPY,
-        ['diff --name-only aaaaaaa0000000000000000000000000000000 aaaaaaa0000000000000000000000000000000']: 'package-lock.json\n' });
-      const r = applier.applyUpdate();
-      assert.equal(r.ok, false);
-      assert.equal(r.code, 'provision-failed');
-      assert.equal(r.fromSha, 'aaaaaaa0000000000000000000000000000000');
-      assert.equal(r.toRef, 'v9.9.9', 'the result must say where the tree was left');
-      assert.match(r.error, /NOT restarted/, 'the caller must know not to restart');
-      assert.match(r.error, /git checkout aaaaaaa/, 'recovery must be in the message');
-      assert.match(r.error, /EAI_AGAIN/, 'the underlying npm failure must surface');
-    });
-
-    it('lockfile and assets together: ci runs AND the assets are reported', () => {
-      let ciRuns = 0;
-      applier._internal.npmCi = () => { ciRuns++; };
+    it('manifest and assets together: both reported, one manual flag', () => {
       applier._internal.git = gitStub({ ...HAPPY,
         ['diff --name-only aaaaaaa0000000000000000000000000000000 aaaaaaa0000000000000000000000000000000']: 'package-lock.json\ndeploy/install.sh\n' });
       const r = applier.applyUpdate();
       assert.equal(r.ok, true);
-      assert.equal(ciRuns, 1);
+      assert.equal(r.provisioning.manifestChanged, true);
       assert.deepEqual(r.provisioning.assetsChanged, ['deploy/install.sh']);
+      assert.equal(r.provisioning.action, 'manual');
     });
   });
 
