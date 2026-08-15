@@ -169,7 +169,12 @@ describe('dead server escalates to an honest unreachable state (#709)', () => {
     ctx.setConnected(false);
     for (let i = 0; i < realCeiling(); i++) await ctx.attemptReconnect();
 
-    // The button the overlay's markup renders, registered as the DOM would.
+    // The button the overlay's markup renders, registered as the DOM would —
+    // and pinned to the markup: if either side of the id seam renames, the
+    // `if (btn)` guard silently no-ops the whole indicator, so the fixture id
+    // must be provably the one the real overlay renders.
+    assert.match(overlay(ctx).innerHTML, /id="unreachableRetryBtn"/,
+      'the fixture id must match the id the rendered overlay actually carries');
     const btn = makeElement('button');
     btn.id = 'unreachableRetryBtn';
     btn.textContent = 'Retry now';
