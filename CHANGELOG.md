@@ -84,10 +84,16 @@ All notable changes to TangleClaw are documented in this file.
   rule. It is now an explicitly sized, centred 44×44 box. The first fix stopped there, which was the
   real defect: the same new stylesheet's other three controls — including **Update now**, the primary
   action of the whole feature, at ~24px — stayed under the floor on a product whose primary client is
-  iPhone Safari. They now reach it by growing rather than by overlay, because three inline controls
-  one `gap` apart would have overlapping invisible hit zones and steal each other's taps. The toast
-  is taller for it; that is the trade, on a surface whose whole premise is working where the operator
-  actually is.
+  iPhone Safari. All five now clear it, by three different shapes because the constraint differs:
+  the dot keeps its 44×44 overlay (nothing sits under it), the three toast buttons grow rather than
+  overlay (three controls one `gap` apart would have overlapping invisible hit zones and steal each
+  other's taps), and the release-notes link — a word inside a sentence — takes vertical padding,
+  which on a non-replaced inline element extends the hit area without moving the line box, so the
+  sentence reads exactly as before. An earlier pass exempted that link in a code comment on WCAG
+  2.5.8 grounds; `nonfunctional-requirements.md` is operator-ratified and names links explicitly, so
+  a departure asserted by the departing code was the wrong instrument even though the reasoning was
+  sound. Clearing the floor leaves nothing to ratify. The toast is taller for all this; that is the
+  trade, on a surface whose whole premise is working where the operator actually is.
 
 - **A beacon with nowhere to render now says so (#931, Critic R-16).** If the logo wrapper is ever
   renamed or dropped, the beacon rendered nothing, forever, with nothing in the console — the

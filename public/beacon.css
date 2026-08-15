@@ -6,22 +6,25 @@
    Every custom property used here is defined in both stylesheets' :root, so the
    beacon follows whichever theme the page is wearing. */
 
-/* Every STANDALONE control here is at least 44px on its smallest axis — the
-   floor nonfunctional-requirements.md states and project-preferences.md
-   repeats, on a product whose primary client is iPhone Safari. That is the dot,
-   the apply button, the secondary action and the dismiss. The one exception is
-   named rather than left implicit: `.beacon-toast-version a`, the release-notes
-   link, is a word inside a sentence ("v5.1.2 update available") and is ~14px
-   tall. Raising it would need `display: inline-block`, which breaks its
-   baseline in that sentence, and WCAG 2.5.8 exempts a target inline in text for
-   exactly this reason. It is also not a control anyone needs in a hurry.
+/* All five interactive things here clear 44px on their smallest axis — the
+   floor nonfunctional-requirements.md's Direction states and its touch-target
+   row repeats, naming links among them, on a product whose primary client is
+   iPhone Safari. Enumerated, because a claim about a set is worth what its
+   enumeration is worth: the dot, the apply button, the secondary action, the
+   dismiss, and the release-notes link.
 
-   The four that do meet the floor reach it by GROWING (min-height/min-width),
-   not by an overlay: the dot can afford a 44px ::after because nothing sits
-   under it, but three inline controls one `gap` apart would have overlapping
-   invisible hit zones and steal each other's taps. The toast is taller than a
-   desktop eye would draw it, and that is the trade — this surface exists to
-   work where the operator actually is.
+   Three shapes, because the constraint differs:
+   - The DOT gets a 44x44 ::after. It can, because nothing sits under it.
+   - The three TOAST BUTTONS grow (min-height/min-width). An overlay would give
+     three controls one `gap` apart overlapping invisible hit zones that steal
+     each other's taps — the hazard interaction-design.md records for the
+     Medusa crest. The toast is taller for it; that is the trade.
+   - The LINK takes vertical padding. It is a word inside a sentence
+     ("v5.1.2 update available"), so it must not become a block: on a
+     non-replaced inline element vertical padding extends the hit and paint area
+     WITHOUT affecting line-box height, so the sentence flows exactly as before
+     and the target still clears 44px (12px content + 2x16px). `inline-block`
+     would have reached the same number by breaking the baseline. */
 
    The dot is the resting state and persists until the update is applied; the
    toast pops once per detected version and fades. The animation is here, in
@@ -114,6 +117,9 @@
   color: inherit;
   text-decoration: underline;
   text-underline-offset: 2px;
+  /* Hit area only — vertical padding on an inline element does not move the
+     line box, so the sentence around it is unchanged. See the file header. */
+  padding: 16px 4px;
 }
 .beacon-toast-version a:hover { text-decoration: none; }
 .beacon-toast-apply {

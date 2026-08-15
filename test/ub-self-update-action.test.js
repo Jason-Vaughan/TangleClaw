@@ -81,15 +81,20 @@ describe('UB self-update action (#228/#229)', () => {
       assert.match(css, /\.beacon-toast-apply:disabled/);
     });
 
-    it('holds the 44px floor for every STANDALONE control, not just the one a review named', () => {
+    it('holds the 44px floor for EVERY interactive thing here — enumerated, not implied', () => {
       // The Critic's round pointed at the dot; the dot was fixed and its three
       // siblings were not — the primary action of the whole feature stayed
       // ~24px tall on a phone-first product. That is
       // `feedback_verify_mechanism_uniformity` applied to a RULE rather than a
-      // verb: one call site is not the family. This guard is the family — with
-      // one member deliberately outside it, named in beacon.css: the
-      // release-notes link is a word inside a sentence, which WCAG 2.5.8
-      // exempts, and raising it would break its baseline in that sentence.
+      // verb: one call site is not the family.
+      //
+      // The first sweep raised three and left the release-notes link out under
+      // a WCAG inline-in-text exemption written into a code comment — but
+      // nonfunctional-requirements.md is operator-ratified and names LINKS
+      // explicitly, so that was a departure from a binding norm asserted by the
+      // code that departed from it. The link now clears the floor too, by
+      // vertical padding rather than by becoming a block, so there is no
+      // exception left to ratify. This guard is the whole family.
       // Sliced to the rule's own closing brace rather than a fixed character
       // window: a comment added inside a rule must not push its declarations
       // out of the guard's view, which is how a real 44px could read as absent
@@ -106,6 +111,17 @@ describe('UB self-update action (#228/#229)', () => {
       }
       assert.match(ruleBody('.beacon-toast-close'), /min-width:\s*44px/,
         'the ✕ is a glyph — it needs the width as much as the height');
+      // The link reaches the floor a third way: 12px of content plus 2x16px of
+      // vertical padding. It cannot use min-height (no effect on a
+      // non-replaced inline element) and must not use inline-block (it is a
+      // word inside a sentence, and that would break its baseline).
+      const link = ruleBody('.beacon-toast-version a');
+      const pad = /padding:\s*(\d+)px/.exec(link);
+      assert.ok(pad, 'the release-notes link must carry a vertical hit area');
+      assert.ok(Number(pad[1]) * 2 + 12 >= 44,
+        `link hit area is ${Number(pad[1]) * 2 + 12}px, under the recorded 44px floor`);
+      assert.doesNotMatch(link, /display:\s*inline-block/,
+        'inline-block would reach the number by breaking the sentence');
       // THE MUTATION THIS CATCHES: raising one control and leaving the rest,
       // which is exactly what shipped before the PR review swept them.
     });
