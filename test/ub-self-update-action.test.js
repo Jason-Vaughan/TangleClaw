@@ -75,6 +75,52 @@ describe('UB self-update action (#228/#229)', () => {
   });
 
   describe('CSS', () => {
+    // Every other assertion in this block slices the stylesheet as a STRING,
+    // via indexOf('<selector> {'). That is blind to comment state — a stray
+    // `*/` swallows the rule that follows it into an invalid prelude, the
+    // browser drops that rule entirely, and every string-based assertion still
+    // passes because the text is right there in the file. It happened: a
+    // comment rewrite left a second `*/` behind and deleted `.beacon-anchor`,
+    // which is the containing block the persistent dot positions against. The
+    // guards below therefore run first, and they look at what a PARSER sees.
+    describe('the stylesheet actually parses', () => {
+      /**
+       * The stylesheet with comments removed — what a CSS parser is left with.
+       * @param {string} text - Stylesheet source.
+       * @returns {string}
+       */
+      const stripComments = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '');
+
+      it('has balanced comment delimiters', () => {
+        const bare = stripComments(css);
+        assert.equal(bare.includes('*/'), false,
+          'a stray comment closer swallows the next rule into an invalid selector');
+        assert.equal(bare.includes('/*'), false,
+          'an unterminated comment swallows the REST OF THE FILE');
+      });
+
+      it('leaves every rule the module depends on as a real top-level rule', () => {
+        const bare = stripComments(css);
+        // .beacon-anchor first and by name: it is the positioned containing
+        // block for the dot, so losing it silently relocates this chunk's
+        // resting state to whatever ancestor happens to be positioned.
+        for (const sel of ['.beacon-anchor', '.beacon-dot', '.beacon-toast',
+          '.beacon-toast-apply', '.beacon-toast-secondary', '.beacon-toast-close',
+          '.beacon-toast-version']) {
+          assert.match(bare, new RegExp(`(^|\\n|\\})\\s*\\${sel}\\s*[,{:]`),
+            `${sel} must survive as a rule a parser can reach`);
+        }
+      });
+
+      it('keeps braces balanced', () => {
+        const bare = stripComments(css);
+        assert.equal((bare.match(/\{/g) || []).length, (bare.match(/\}/g) || []).length,
+          'an unbalanced brace changes where every later rule applies');
+      });
+      // THE MUTATION THIS CATCHES: add a second `*/` anywhere in a comment
+      // block. Every 44px assertion in this file stays green; these go red.
+    });
+
     it('declares the apply button with a hover + disabled treatment', () => {
       assert.match(css, /\.beacon-toast-apply\s*\{/);
       assert.match(css, /\.beacon-toast-apply:hover:not\(:disabled\)/);

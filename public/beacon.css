@@ -26,7 +26,7 @@
      and the target still clears 44px (12px content + 2x16px). `inline-block`
      would have reached the same number by breaking the baseline. */
 
-   The dot is the resting state and persists until the update is applied; the
+/* The dot is the resting state and persists until the update is applied; the
    toast pops once per detected version and fades. The animation is here, in
    CSS, so the two script timers only add the `fading` class and then remove
    the toast element — that is the whole of what they do, and neither touches

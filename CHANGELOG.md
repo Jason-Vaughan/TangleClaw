@@ -127,6 +127,15 @@ All notable changes to TangleClaw are documented in this file.
 - **The beacon refuses a release URL that is not http(s) (#931).** The pill escaped `releaseUrl` as
   markup and then put it in an `href` anyway; escaping constrains markup, not schemes.
 
+- **The beacon's stylesheet is now checked the way a parser reads it, not as a string (#931).** A
+  comment rewrite left a second `*/` behind, which swallowed `.beacon-anchor` into an invalid
+  selector and dropped the rule — and `.beacon-anchor` is the positioned containing block the
+  persistent dot hangs off, so the core deliverable of this work would have positioned against
+  whatever ancestor happened to be positioned. Every existing assertion passed straight over it,
+  because they all slice the stylesheet as text and text is blind to comment state. The suite now
+  strips comments first and asserts that delimiters balance, braces balance, and every rule the
+  module depends on survives as something a parser can reach.
+
 - **A vacuous cross-page guard was rewritten to be able to fail (#931, Critic R-3).** The test
   asserting that both pages hit the same routes in the same order declined the confirm on both, so
   it compared an empty request list to an empty request list — the mutation it named could not
