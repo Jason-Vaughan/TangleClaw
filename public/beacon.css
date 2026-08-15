@@ -6,14 +6,22 @@
    Every custom property used here is defined in both stylesheets' :root, so the
    beacon follows whichever theme the page is wearing. */
 
-/* Every control in here is at least 44px on its smallest axis — the floor
-   nonfunctional-requirements.md states and project-preferences.md repeats, on a
-   product whose primary client is iPhone Safari. They reach it by GROWING
-   (min-height/min-width), not by an overlay: the dot can afford a 44px ::after
-   because nothing sits under it, but three inline controls one `gap` apart
-   would have overlapping invisible hit zones and steal each other's taps. The
-   toast is taller than a desktop eye would draw it, and that is the trade —
-   this surface exists to work where the operator actually is.
+/* Every STANDALONE control here is at least 44px on its smallest axis — the
+   floor nonfunctional-requirements.md states and project-preferences.md
+   repeats, on a product whose primary client is iPhone Safari. That is the dot,
+   the apply button, the secondary action and the dismiss. The one exception is
+   named rather than left implicit: `.beacon-toast-version a`, the release-notes
+   link, is a word inside a sentence ("v5.1.2 update available") and is ~14px
+   tall. Raising it would need `display: inline-block`, which breaks its
+   baseline in that sentence, and WCAG 2.5.8 exempts a target inline in text for
+   exactly this reason. It is also not a control anyone needs in a hurry.
+
+   The four that do meet the floor reach it by GROWING (min-height/min-width),
+   not by an overlay: the dot can afford a 44px ::after because nothing sits
+   under it, but three inline controls one `gap` apart would have overlapping
+   invisible hit zones and steal each other's taps. The toast is taller than a
+   desktop eye would draw it, and that is the trade — this surface exists to
+   work where the operator actually is.
 
    The dot is the resting state and persists until the update is applied; the
    toast pops once per detected version and fades. The animation is here, in

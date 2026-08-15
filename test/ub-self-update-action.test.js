@@ -81,12 +81,15 @@ describe('UB self-update action (#228/#229)', () => {
       assert.match(css, /\.beacon-toast-apply:disabled/);
     });
 
-    it('holds the 44px floor for EVERY control, not just the one a review named', () => {
+    it('holds the 44px floor for every STANDALONE control, not just the one a review named', () => {
       // The Critic's round pointed at the dot; the dot was fixed and its three
       // siblings were not — the primary action of the whole feature stayed
       // ~24px tall on a phone-first product. That is
       // `feedback_verify_mechanism_uniformity` applied to a RULE rather than a
-      // verb: one call site is not the family. This guard is the family.
+      // verb: one call site is not the family. This guard is the family — with
+      // one member deliberately outside it, named in beacon.css: the
+      // release-notes link is a word inside a sentence, which WCAG 2.5.8
+      // exempts, and raising it would break its baseline in that sentence.
       // Sliced to the rule's own closing brace rather than a fixed character
       // window: a comment added inside a rule must not push its declarations
       // out of the guard's view, which is how a real 44px could read as absent

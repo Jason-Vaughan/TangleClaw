@@ -59,11 +59,13 @@ exception to it. A timer may only change the visibility of a notification whose 
 elsewhere; the dot is that elsewhere and no timer touches it. The tests fire the timer callbacks by
 hand and assert what each one is allowed to reach.
 
-**Review:** four rounds. `cumulative` returned 1 blocking, 10 warnings, 12 notes. The blocking one
-mattered: `render` decided "is this a real answer?" on `checkedAt` alone, missing `checkOk: false` —
+**Review:** a `cumulative` round returned 1 blocking, 10 warnings, 12 notes; every later round came
+back clean. The blocking one mattered: `render` decided "is this a real answer?" on `checkedAt` alone, missing `checkOk: false` —
 the state `lib/update-checker.js#_buildStatus` emits when a check RAN and could not measure — so an
 offline install read as "you are up to date" and the dot came down for an update that was genuinely
-available. Three `verify-resolutions` passes followed, each clean.
+available. Each subsequent commit was covered by its own `verify-resolutions` pass, and the PR
+review then caught one more: the 44px touch floor had been applied to the control a review named
+and to none of its siblings — including **Update now**, at ~24px, on a phone-first product.
 
 **Frontend tests moved from reading the source to running it.** `test/update-beacon.test.js` drives
 the real module through the real `api()` chain against a purpose-built DOM stub (`test/_mini-dom.js`,
