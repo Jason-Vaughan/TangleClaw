@@ -15,11 +15,14 @@
    *
    * @param {object} [opts]
    * @param {(connected: boolean) => void} [opts.setConnected] - Optional
-   *   hook called with `true` on a successful response and `false` on a
-   *   network-level failure (TypeError / "Failed to fetch"). Pages without
-   *   a connection banner (e.g. openclaw-view) omit this and the helper
-   *   no-ops the connection-state plumbing while still surfacing the
-   *   "Connection lost." message via `api.lastError`.
+   *   hook called with `true` on a successful response and `false` whenever
+   *   the server did not answer, in any of its shapes: a network-level
+   *   failure (TypeError / "Failed to fetch"), a service-worker cache
+   *   fallback or synthetic 503 (#709), or a gateway 502/503/504 with a
+   *   non-JSON body (#924). Pages without a connection banner (e.g.
+   *   openclaw-view) omit this and the helper no-ops the connection-state
+   *   plumbing while still surfacing the "Connection lost." message via
+   *   `api.lastError`.
    * @returns {Function & { lastError: string|null, lastErrorCode: string|null }}
    */
   function tcCreateApi(opts) {

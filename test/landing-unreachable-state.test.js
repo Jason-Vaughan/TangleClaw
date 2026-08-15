@@ -339,8 +339,9 @@ describe('escalation works through the real service-worker response shapes (#709
  */
 describe('escalation works through the gateway shapes (#924)', () => {
   // Verbatim what Caddy's reverse_proxy answers for a dead upstream: 502,
-  // empty body, no content-type.
-  const caddy502 = () => new Response('', { status: 502, statusText: 'Bad Gateway' });
+  // empty body, no content-type. `null` body, not '' — a string body makes
+  // Response auto-attach text/plain, and the point is the header's absence.
+  const caddy502 = () => new Response(null, { status: 502, statusText: 'Bad Gateway' });
 
   it('a gateway 502 counts as disconnected and reaches the overlay', async () => {
     const ctx = loadFullChain(async () => caddy502());
