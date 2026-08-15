@@ -14,7 +14,7 @@
  *  - Source-level, over `public/session.js`: the prompt text is a durable
  *    instruction executed verbatim by an agent, so its contract is the words.
  *    Same pattern as test/update-prompt-path.test.js (#183) and
- *    test/ub-self-update-pill.test.js.
+ *    test/ub-self-update-action.test.js.
  *
  * The regression this locks: `git pull origin main` merged into whatever branch
  * was checked out, and from a healthy install (detached at a release tag, which

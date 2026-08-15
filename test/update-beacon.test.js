@@ -57,13 +57,13 @@ function loadBeacon(opts = {}) {
   const { doc, ids } = makeDocument(['updateBeacon']);
   const calls = {
     confirms: [], alerts: [], fetches: [], timers: [], intervals: [],
-    reloads: 0, secondaryRuns: []
+    reloads: 0, secondaryRuns: [], warns: []
   };
   const confirmAnswers = opts.confirmAnswers || [true, true, true];
   const fetchImpl = opts.fetchImpl || (() => jsonRes(200, { ok: true }));
 
   const sandbox = {
-    console,
+    console: { ...console, warn: (...a) => { calls.warns.push(a.join(' ')); } },
     Response,
     Headers,
     document: doc,
@@ -271,6 +271,29 @@ describe('#931 the beacon distinguishes "no update" from "no answer" (#716)', ()
     // lands — so the dot for a genuinely available update would vanish.
   });
 
+  it('a check that RAN and could not measure leaves the dot alone (Critic R-1)', () => {
+    const ctx = loadBeacon();
+    ctx.beacon.render(AVAILABLE);
+    ctx.runTimers();
+    // The exact payload `lib/update-checker.js#_buildStatus` returns when the
+    // measurement fails: a real `checkedAt`, `updateAvailable: false`, and
+    // `checkOk: false`. An offline box, a missing git, a 15s timeout.
+    ctx.beacon.render({
+      updateAvailable: false,
+      currentVersion: '5.1.0',
+      latestVersion: null,
+      checkedAt: '2026-08-15T12:00:00.000Z',
+      checkOk: false
+    });
+
+    assert.ok(ctx.dot(), 'a failed check is not "you are up to date"');
+    // THE MUTATION THIS CATCHES: discriminating on `checkedAt` alone, which is
+    // what shipped. The failure carries a timestamp, so it took the
+    // measured-no-update branch and cleared the dot for an update that was
+    // genuinely available — reachable from the 4-hour checker's cached failure
+    // on every later GET, including the session page's one-shot read at load.
+  });
+
   it('a null payload (the request failed) leaves it alone too', () => {
     const ctx = loadBeacon();
     ctx.beacon.render(AVAILABLE);
@@ -346,6 +369,70 @@ describe('#931 "Update now" runs the guarded apply flow, through the real api ch
     // THE MUTATION THIS CATCHES: rendering the button without wiring it — the
     // beacon would look complete and do nothing, which is the failure mode the
     // session badge's un-actionable subtlety already taught (#931's premise).
+  });
+
+  it('accepting the update stops the fade — the toast is now the progress surface', async () => {
+    const ctx = loadBeacon({
+      fetchImpl: (n) => (n === 1
+        ? jsonRes(200, { ok: true, toRef: 'v5.1.2' })
+        : jsonRes(500, { ok: false, error: 'no restart mechanism' }))
+    });
+    ctx.beacon.render(AVAILABLE);
+    ctx.toast().querySelector('.beacon-toast-apply').dispatch('click');
+    await new Promise((r) => setImmediate(r));
+
+    ctx.runTimers();
+    assert.ok(ctx.toast(), 'the toast must survive its own fade once an update is running');
+    assert.equal(ctx.toast().querySelector('.beacon-toast-apply').textContent, 'Update now',
+      'and still be the control that reports the outcome');
+    // THE MUTATION THIS CATCHES: not cancelling the timers on the accepted
+    // path. Three seconds into an update the operator would watch the thing
+    // they just pressed vanish, with "Updating…" and every subsequent label
+    // written to an element no longer on the page.
+  });
+
+  it('DECLINING leaves the fade alone — it has been seen and answered', async () => {
+    const ctx = loadBeacon({ confirmAnswers: [false] });
+    ctx.beacon.render(AVAILABLE);
+    ctx.toast().querySelector('.beacon-toast-apply').dispatch('click');
+    await new Promise((r) => setImmediate(r));
+
+    ctx.runTimers();
+    assert.equal(ctx.toast(), null, 'a declined notice still goes quiet on its own');
+    assert.ok(ctx.dot(), 'and the dot still carries it');
+    // THE MUTATION THIS CATCHES: cancelling the timers before the confirm
+    // rather than after it — a declined update would pin its toast to the logo
+    // for the life of the page.
+  });
+
+  it('an update in flight cannot be torn down or re-triggered from the dot (Critic R-15)', async () => {
+    let release;
+    const ctx = loadBeacon({
+      fetchImpl: (n) => (n === 1
+        // Hold the apply open so the assertions run mid-flight, which is the
+        // only window this failure exists in.
+        ? new Promise((r) => { release = () => r(jsonRes(200, { ok: true, toRef: 'v5.1.2' })); })
+        : jsonRes(200, { startedAt: 'old' }))
+    });
+    ctx.beacon.render(AVAILABLE);
+    ctx.toast().querySelector('.beacon-toast-apply').dispatch('click');
+    await new Promise((r) => setImmediate(r));
+
+    assert.equal(ctx.inFlight, true, 'precondition: the apply is running');
+    ctx.dot().dispatch('click');
+    assert.ok(ctx.toast(), 'the dot must not tear down the only progress surface');
+
+    ctx.toast().remove();
+    ctx.beacon.reopen();
+    const btn = ctx.toast().querySelector('.beacon-toast-apply');
+    assert.equal(btn.disabled, true, 'and a re-opened toast must not offer an enabled control');
+    assert.equal(btn.textContent, 'Updating…', 'it reports the state instead');
+    release();
+    // THE MUTATION THIS CATCHES: rendering the apply button as a constant
+    // 'Update now'/enabled, or letting reopen() hide a toast mid-apply. Both
+    // let the operator reach a control whose handler returns silently on the
+    // in-flight guard — no alert, no label change, nothing to distinguish a
+    // running update from a dead one.
   });
 
   it('an in-flight restart refuses a second apply', async () => {
@@ -575,5 +662,29 @@ describe('#931 the beacon does not assume its anchor exists', () => {
     // dereferencing it unguarded. Every page script here runs before its own
     // markup is guaranteed present, and a throw at this point takes the rest
     // of the page's wiring down with it.
+  });
+
+  it('but it SAYS SO — once — instead of failing silently (Critic R-16)', () => {
+    const ctx = loadBeacon();
+    vm.runInContext(`
+      globalThis.orphan2 = tcCreateUpdateBeacon({
+        doc: document, anchorId: 'noSuchAnchor',
+        api, apiMutate: tcCreateApiMutate(api),
+        restart: tcCreateRestartFlow({ api, apiMutate: tcCreateApiMutate(api), win: window }),
+        getInFlight: () => false, setInFlight: () => {}
+      });
+    `, ctx);
+    ctx.orphan2.render(AVAILABLE);
+    assert.equal(ctx.calls.warns.length, 1, 'a beacon with nowhere to render must say so');
+    assert.match(ctx.calls.warns[0], /noSuchAnchor/, 'and name what it looked for');
+
+    ctx.orphan2.render(AVAILABLE);
+    ctx.orphan2.render({ ...AVAILABLE, latestVersion: '5.3.0' });
+    assert.equal(ctx.calls.warns.length, 1,
+      'once, not once per poll — render runs every five minutes on the dashboard');
+    // THE MUTATION THIS CATCHES: dropping the warning (the failure mode is a
+    // beacon that renders nothing forever with nothing in the console — the
+    // invisible update surface #931 exists to remove, reached by a new door),
+    // or dropping the latch that keeps it to one line.
   });
 });

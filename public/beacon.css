@@ -7,9 +7,10 @@
    beacon follows whichever theme the page is wearing. */
 
 /* The dot is the resting state and persists until the update is applied; the
-   toast pops once per detected version and fades. The fade is here, in CSS, so
-   the only thing script timers do is add and remove a class — they never touch
-   the dot, which is what makes the fade lossless. */
+   toast pops once per detected version and fades. The animation is here, in
+   CSS, so the two script timers only add the `fading` class and then remove
+   the toast element — that is the whole of what they do, and neither touches
+   the dot, which is what makes the fade lossless (#98/#268). */
 .beacon-anchor {
   position: relative;
   display: inline-flex;
@@ -30,15 +31,25 @@
      light and high-contrast themes instead of pinning a dark ring. */
   border: 2px solid var(--bg);
   cursor: pointer;
-  /* The tap target is the padded ::after below, not these 11px: an 11px
-     target fails every touch guideline, and this dashboard is read mostly
-     from a phone. */
+  /* The tap target is the ::after below, NOT these 11px. Once the toast fades
+     this is the only control left, on a product whose operator is almost
+     always on a phone, and `project-preferences.md` records a 44px floor. */
   z-index: 2;
 }
+/* Sized absolutely and centred, rather than as a negative inset on the dot.
+   An inset resolves against the dot's PADDING box, which `box-sizing:
+   border-box` plus the 2px ring makes 7px, not 11 — two reviewers computed
+   this hit area as 35px and 31px from the same rule, and it was actually 31.
+   A geometry nobody can read off the source is a geometry that drifts under
+   the floor without anyone noticing. This states the number the norm states. */
 .beacon-dot::after {
   content: "";
   position: absolute;
-  inset: -12px;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
 }
 .beacon-dot:focus-visible {
   outline: 2px solid var(--amber);
@@ -73,15 +84,14 @@
 @keyframes beacon-toast-out {
   to { opacity: 0; transform: translateY(-4px); }
 }
-/* An operator who has asked for less motion still needs the notice; only the
-   movement goes. The fade-out keeps its opacity change because the element is
-   removed on its completion — suppressing it entirely would leave the toast
-   on screen for the life of the page. */
-@media (prefers-reduced-motion: reduce) {
-  .beacon-toast { animation: none; }
-  .beacon-toast.fading { animation: beacon-toast-fade 0.45s linear forwards; }
-  @keyframes beacon-toast-fade { to { opacity: 0; } }
-}
+/* Reduced motion is already handled, and NOT here: both page stylesheets carry
+   `*, *::before, *::after { animation: none !important; }` under
+   `prefers-reduced-motion`, which no rule in this file could override anyway.
+   What makes that safe is a property of the script, not of this stylesheet —
+   the toast is removed by its own timer, never by an animation completing — so
+   an operator who has asked for less motion gets the notice without movement
+   and it still goes away. A rule here that appeared to guarantee the fade would
+   be worse than none: unreachable, and read as load-bearing. */
 .beacon-toast-version { color: var(--amber); font-weight: 600; }
 .beacon-toast-version a {
   color: inherit;

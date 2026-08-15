@@ -281,7 +281,7 @@ describe('#744 the dashboard stops advertising a version it is not running', () 
    */
   async function runServerInfo(payload, seed = {}) {
     const dom = makeDom(['version', 'staleServerBanner', 'staleServerBannerText',
-      'updatePill', 'restartBtn', 'staleServerRestartBtn']);
+      'restartBtn', 'staleServerRestartBtn']);
     let updateChecks = 0;
     const state = { restartMechanism: null, serverStartedAt: null, ...seed };
     const ctx = vm.createContext({
@@ -646,15 +646,9 @@ describe('#716 update checks happen when they matter', () => {
       classList: { add() {}, remove() {} },
       querySelector: () => ({ addEventListener: () => {}, textContent: '', disabled: false })
     };
-    const updatePill = {
-      textContent: '', innerHTML: '', _hidden: true,
-      classList: { add() { updatePill._hidden = true; }, remove() { updatePill._hidden = false; } },
-      querySelector: () => ({ addEventListener: () => {}, textContent: '', disabled: false }),
-      addEventListener: () => {}
-    };
     const versionCheckLive = { textContent: '' };
     const ctx = vm.createContext({
-      document: { getElementById: (id) => ({ version, updatePill, versionCheckLive })[id] || null },
+      document: { getElementById: (id) => ({ version, versionCheckLive })[id] || null },
       api: async () => payload,
       apiMutate: async () => {
         if (payload instanceof Error) throw payload;

@@ -81,24 +81,39 @@ describe('UB self-update action (#228/#229)', () => {
       assert.match(css, /\.beacon-toast-apply:disabled/);
     });
 
-    it('gives the dot a tap target bigger than the dot', () => {
-      // 11px of red is the visual; an 11px hit area is unusable on the phone
-      // this dashboard is mostly read from, and the dot is the ONLY control
-      // left once the toast fades.
-      assert.match(css, /\.beacon-dot::after\s*\{[\s\S]*?inset:\s*-\d+px/);
+    it('gives the dot a 44px tap target — the recorded floor, asserted as a number', () => {
+      // 11px of red is the visual; the hit area is the ::after. The previous
+      // guard asserted only that SOME negative inset existed, which passed at
+      // 31px — under the floor `project-preferences.md` records — and two
+      // reviewers derived two different sizes from it. A dimension the norm
+      // states as a number is asserted here as a number.
+      const rule = css.slice(css.indexOf('.beacon-dot::after'));
+      assert.match(rule.slice(0, 220), /width:\s*44px/);
+      assert.match(rule.slice(0, 220), /height:\s*44px/);
+      assert.match(rule.slice(0, 220), /transform:\s*translate\(-50%,\s*-50%\)/,
+        'centred on the dot, so the number does not depend on box-sizing');
     });
 
     it('gives the dot a visible focus state', () => {
       assert.match(css, /\.beacon-dot:focus-visible\s*\{[\s\S]*?outline:/);
     });
 
-    it('honors prefers-reduced-motion without stranding the toast on screen', () => {
-      // Suppressing the fade-out entirely would leave the pop up for the life
-      // of the page, because the element is removed on the animation's own
-      // duration — the motion goes, the opacity change stays.
-      const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
-      assert.match(reduced, /\.beacon-toast\s*\{\s*animation:\s*none/);
-      assert.match(reduced, /\.beacon-toast\.fading\s*\{\s*animation:\s*beacon-toast-fade/);
+    it('survives both pages\' global reduced-motion animation kill', () => {
+      // Each page stylesheet carries `* { animation: none !important }` under
+      // prefers-reduced-motion, so the beacon CANNOT rely on an animation
+      // completing for anything load-bearing. It does not: the toast is removed
+      // by its own timer. This pins the page-level rule that makes the beacon's
+      // behavior independent of it, so a future removal of that rule is a
+      // deliberate act rather than an accident.
+      for (const sheet of ['style.css', 'session.css']) {
+        const text = fs.readFileSync(path.join(PUB, sheet), 'utf8');
+        const reduced = text.slice(text.indexOf('@media (prefers-reduced-motion: reduce)'));
+        assert.match(reduced.slice(0, 200), /animation:\s*none\s*!important/,
+          `${sheet} disables animation under reduced motion`);
+      }
+      assert.doesNotMatch(css, /@media \(prefers-reduced-motion/,
+        'and beacon.css must not carry a rule that could never win — unreachable '
+        + 'CSS that looks like a guarantee is worse than no rule');
     });
 
     it('has no stylesheet left for the surfaces the beacon replaced', () => {

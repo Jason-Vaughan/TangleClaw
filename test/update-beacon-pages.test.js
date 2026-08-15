@@ -63,9 +63,12 @@ function beaconConstruction(src) {
  * Stand a page's beacon up in a sandbox.
  *
  * @param {'dashboard'|'session'} page - Which page's wiring to run.
+ * @param {{confirm?: boolean}} [opts] - Dialog answer. Default declines, so a
+ *   test that only needs the toast rendered cannot start a real restart; pass
+ *   `{confirm: true}` to drive the flow through to its routes.
  * @returns {object} The vm context with test handles attached.
  */
-function loadPage(page) {
+function loadPage(page, opts = {}) {
   const { doc, ids } = makeDocument(['updateBeacon']);
   const calls = { confirms: [], alerts: [], fetches: [], timers: [], injected: [] };
   const src = page === 'dashboard' ? LANDING_SRC : SESSION_SRC;
@@ -93,7 +96,7 @@ function loadPage(page) {
     // page's OWN wiring rather than a stand-in.
     injectUpdatePrompt: (data) => { calls.injected.push(data); }
   };
-  sandbox.confirm = (msg) => { calls.confirms.push(msg); return false; };
+  sandbox.confirm = (msg) => { calls.confirms.push(msg); return opts.confirm === true; };
   sandbox.alert = (msg) => { calls.alerts.push(msg); };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
@@ -166,17 +169,27 @@ describe('#931 both pages announce an update the same way', () => {
   it('both reach the same routes, in the same order, from Update now', async () => {
     const seen = {};
     for (const page of ['dashboard', 'session']) {
-      const ctx = loadPage(page);
+      // ACCEPT the confirm. The first version of this test declined it on both
+      // pages and then compared the results — which were `{confirms: 1,
+      // fetches: []}` on both because no request is made before the confirm.
+      // It compared an empty list to an empty list, so the mutation it named
+      // (pointing a page at a different route) could not redden it. A guard
+      // has to be able to fail (#749, #895).
+      const ctx = loadPage(page, { confirm: true });
       ctx.beacon.render(AVAILABLE);
       ctx.toast().querySelector('.beacon-toast-apply').dispatch('click');
-      await new Promise((r) => setImmediate(r));
-      // Both sandboxes decline the confirm, so what is compared is that each
-      // page got AS FAR AS the same confirmed gate — a page pointed at a
-      // different route would diverge before it.
-      seen[page] = { confirms: ctx.calls.confirms.length, fetches: ctx.calls.fetches.map((f) => f.url) };
+      // Three awaits: apply → server-info → restart. Each is a separate
+      // microtask hop, so one flush is not enough to reach the end.
+      for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+      seen[page] = ctx.calls.fetches.map((f) => f.url);
     }
-    assert.deepEqual(seen.session, seen.dashboard);
-    assert.equal(seen.dashboard.confirms, 1, 'and neither restarts without asking');
+    assert.deepEqual(seen.dashboard,
+      ['/api/update/apply', '/api/server-info', '/api/server/restart'],
+      'the #229 sequence');
+    assert.deepEqual(seen.session, seen.dashboard,
+      'and a session takes the identical path — same module, same routes, same order');
+    // THE MUTATION THIS CATCHES: pointing either page at a different route, or
+    // dropping the server-info baseline capture on one of them.
   });
 });
 

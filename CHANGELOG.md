@@ -44,6 +44,39 @@ All notable changes to TangleClaw are documented in this file.
   work exists to remove. Existing keys are left in place, inert — reading them is the only thing
   that could bring the behavior back.
 
+### Fixed
+
+- **An update check that FAILED no longer reads as "you are up to date" (#931, Critic R-1).** When
+  the check runs but cannot measure — offline, no git, a timed-out `git ls-remote` — the server
+  answers `updateAvailable: false` with a real timestamp and `checkOk: false`. The beacon
+  discriminated on the timestamp alone, so it took that for a measured "nothing available" and
+  cleared the dot for an update that was genuinely there. Reachable from the four-hour checker's
+  cached failure on every later read, including the session page's single read at page load.
+  `lib/update-checker.js` states the rule outright and the header hint next to it already honored
+  it; the beacon now does too. Not a regression — the pill had the same gap — but #931 makes this
+  module the sole authority on the question, which is exactly why it had to be settled here.
+
+- **An update in flight now has an honest surface (#931, Critic R-2/R-15).** Pressing **Update now**
+  on the first pop left the fade timers running, and because a `confirm()` blocks the event loop
+  both overdue timers fired the instant the operator accepted — so a 3–15 second operation ran with
+  its progress label written to an element no longer on the page. Accepting now cancels the fade
+  (declining does not: it has been seen and answered). The apply control is also rendered from the
+  in-flight latch rather than as a constant, and re-opening no longer tears the toast down mid-
+  update — before, an operator could dismiss the only progress indicator, re-open, and tap an
+  enabled **Update now** whose handler returned silently, with no way to tell a running update from
+  a dead one.
+
+- **The beacon dot's tap target meets the 44px floor the project records (#931, Critic R-10/R-17).**
+  It was a negative inset on an 11px dot, which resolves against a 7px padding box under
+  `box-sizing: border-box` — 31px, under the minimum in `project-preferences.md`, and a geometry two
+  reviewers read as two different numbers off the same rule. It is now an explicitly sized, centred
+  44×44 box, and the guard asserts the number instead of the presence of some padding.
+
+- **A beacon with nowhere to render now says so (#931, Critic R-16).** If the logo wrapper is ever
+  renamed or dropped, the beacon rendered nothing, forever, with nothing in the console — the
+  invisible-update-surface failure this work exists to remove, reached by a new door. One
+  `console.warn`, once per page load.
+
 ### Internal
 
 - **The self-update flow has one implementation again (#931).** `applyUpdateAndRestart` and its
@@ -70,6 +103,23 @@ All notable changes to TangleClaw are documented in this file.
 
 - **The beacon refuses a release URL that is not http(s) (#931).** The pill escaped `releaseUrl` as
   markup and then put it in an `href` anyway; escaping constrains markup, not schemes.
+
+- **A vacuous cross-page guard was rewritten to be able to fail (#931, Critic R-3).** The test
+  asserting that both pages hit the same routes in the same order declined the confirm on both, so
+  it compared an empty request list to an empty request list — the mutation it named could not
+  redden it. It now drives both flows through to completion. The beacon no longer writes
+  `api.lastError`, an output of the api helper that a consumer writing means a later reader can be
+  shown a message no request produced; and the in-flight accessors lost their no-op defaults, so a
+  page that forgets them fails loudly instead of quietly getting a beacon whose apply is no longer
+  idempotent.
+
+- **Docs caught up with the surface (#931).** `README.md`, `docs/release-process.md` and
+  `docs/user-guide.md` described the pill, its per-version dismiss, and the old **Update & restart**
+  label as current. `docs/adr/0010-one-update-mechanism.md` and the completed `ub-self-update-action`
+  plan keep their historical wording under a note saying the decision stands and the surfaces do
+  not. The `sw.js` learning from 2026-06-17 — "register it in `STATIC_ASSETS` AND bump
+  `CACHE_NAME`" — was narrowed in place: its remedy is the move #710 forbids, and network-first is
+  the route for a new asset.
 
 - **The beacon's stylesheet is one file linked by both pages (#931).** The dashboard and the
   session page have separate stylesheets, and a copy of the beacon's rules in each would be the

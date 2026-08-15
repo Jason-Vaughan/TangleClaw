@@ -63,8 +63,12 @@
     const doc = deps.doc;
     const api = deps.api;
     const apiMutate = deps.apiMutate;
-    const getInFlight = deps.getInFlight || (() => false);
-    const setInFlight = deps.setInFlight || (() => {});
+    // No defaults, deliberately. A page that forgets these would get a beacon
+    // whose apply is no longer idempotent — the exact property the injected
+    // latch exists to preserve — and nothing would say so. A TypeError at
+    // construction is the honest failure.
+    const getInFlight = deps.getInFlight;
+    const setInFlight = deps.setInFlight;
     const restart = deps.restart;
     const secondary = deps.secondaryAction || null;
     const confirmText = deps.confirmText || ((data) =>
@@ -82,6 +86,9 @@
     let current = null;
     let fadeTimer = null;
     let removeTimer = null;
+    // One warning, not one per poll: `render` runs every 5 minutes on the
+    // dashboard and a per-call warn would bury the console.
+    let warnedMissingAnchor = false;
 
     /** @returns {Element|null} The wrapper the dot and toast live in. */
     function anchorEl() {
@@ -200,7 +207,12 @@
       const applyBtn = doc.createElement('button');
       applyBtn.type = 'button';
       applyBtn.className = 'beacon-toast-apply';
-      applyBtn.textContent = 'Update now';
+      // Rendered FROM the latch, not as a constant. A toast re-opened during
+      // an update would otherwise offer an enabled "Update now" whose handler
+      // returns immediately on the in-flight guard — no alert, no label
+      // change, so the operator cannot tell whether anything is happening.
+      applyBtn.textContent = getInFlight() ? 'Updating…' : 'Update now';
+      applyBtn.disabled = getInFlight();
       applyBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         applyUpdateAndRestart(data);
@@ -262,6 +274,10 @@
     function reopen() {
       if (!current) return;
       if (toastEl()) {
+        // While an update is running the toast is not a notice to toggle — it
+        // is the only place "Updating…" and "Restarting…" appear. Letting a
+        // tap tear it down leaves a 3-15s operation with no surface at all.
+        if (getInFlight()) return;
         hideToast();
         return;
       }
@@ -275,13 +291,41 @@
      * @returns {void}
      */
     function render(data) {
-      // A failed request, and a server that has not run its first check yet,
-      // are both "no answer" — not "no update". `startChecker` waits 60s
-      // before its first check and reports `{updateAvailable: false,
-      // checkedAt: null}` until then, so treating that as "no update" would
-      // take the dot down for an update that is still genuinely available
-      // (#716). `checkedAt` is the discriminator, and the payload carries it.
-      if (!data || !data.checkedAt) return;
+      // THREE ways a payload can fail to be an answer, and all three must
+      // leave the beacon exactly as it is. Only the third was obvious:
+      //
+      //   no payload      — the request itself did not complete.
+      //   no `checkedAt`  — `startChecker` waits 60s before its first check
+      //                     and reports `{updateAvailable: false,
+      //                     checkedAt: null}` until then (#716).
+      //   `checkOk: false`— a check that RAN and could not measure. It carries
+      //                     a real `checkedAt` and `updateAvailable: false`,
+      //                     so discriminating on `checkedAt` alone reads an
+      //                     offline box as "you are up to date" and takes the
+      //                     dot down for an update that is genuinely there.
+      //                     `lib/update-checker.js#_buildStatus` says the rule
+      //                     outright: a check that failed and a check that
+      //                     succeeded and found nothing are different facts.
+      //                     Reachable from the 4-hour checker's cached failure
+      //                     on every later GET, and from a focus/reconnect
+      //                     re-check.
+      //
+      // Unknown is not a fact. Nothing here may render it as one.
+      if (!data || !data.checkedAt || data.checkOk === false) return;
+
+      // An anchor that is not there is not "nothing to do" — it is this
+      // feature failing exactly the way #931 exists to prevent, reached by a
+      // new door: renamed in a header refactor, and the beacon renders nothing
+      // forever with nothing in the console. Every other consumer of
+      // `anchorEl()` returns quietly by design (a throw at page-script load
+      // takes the rest of the page's wiring with it); this says so once.
+      if (!anchorEl() && !warnedMissingAnchor) {
+        warnedMissingAnchor = true;
+        console.warn(
+          `update beacon: no #${deps.anchorId} in this page — an available `
+          + 'update cannot be shown. The logo wrapper was probably renamed or removed.'
+        );
+      }
 
       if (!data.updateAvailable || !data.latestVersion) {
         // A real answer, and every path that reaches it must clear a beacon
@@ -341,6 +385,15 @@
 
       const proceed = global.confirm(confirmText(data));
       if (!proceed) return;
+
+      // The toast stops being a notice the moment the operator accepts: it is
+      // now the only place "Updating…" and "Restarting…" are shown. Left alone,
+      // the first pop's fade would take it off screen three seconds in — the
+      // operator would watch the thing they just pressed disappear with the
+      // update still running. Declining does NOT come here, so a declined
+      // confirm still fades on its original schedule, which is right: they
+      // have seen it and answered it.
+      clearTimers();
 
       setInFlight(true);
       setApplyLabel('Updating…', true);
@@ -442,11 +495,17 @@
       } catch { /* fall through to the manual-restart message below */ }
 
       let restartResp;
+      let restartErr = null;
       try {
         restartResp = await restart.postServerRestart();
       } catch (err) {
         restartResp = null;
-        api.lastError = err && err.message;
+        // A local, not `api.lastError`. That field is an OUTPUT of the api
+        // helper, cleared on every success; writing it from a consumer means a
+        // later reader can be shown a message no `api()` call produced. It was
+        // survivable while this lived in landing.js beside the helper's only
+        // other readers — not now that a shared module does it on both pages.
+        restartErr = err && err.message;
       }
       if (!restartResp || !restartResp.ok) {
         // The code IS updated on disk; only the auto-restart didn't fire (e.g.
@@ -454,7 +513,7 @@
         // stale path.
         setInFlight(false);
         setApplyLabel('Update now', false);
-        const msg = (restartResp && restartResp.error) || api.lastError || 'no restart mechanism';
+        const msg = (restartResp && restartResp.error) || restartErr || api.lastError || 'no restart mechanism';
         global.alert(`Updated to ${appliedLabel} on disk, but auto-restart didn't run (${msg}). Restart TangleClaw to finish.`);
         return;
       }
