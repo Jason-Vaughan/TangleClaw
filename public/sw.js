@@ -83,7 +83,17 @@ const NETWORK_FIRST_PATHS = new Set([
   // service-worker lifecycle. Serving a stale copy would re-strand operators
   // on an old worker — exactly the #380 failure it exists to prevent — so it
   // must always come from the network when reachable.
-  '/sw-register.js'
+  '/sw-register.js',
+  // The update beacon (#931), on both pages. Category 2, and the sharpest case
+  // of it: this is the surface that TELLS an operator a release exists and is
+  // the only one that can apply it. A stale copy served behind an active worker
+  // would hide update announcements — including announcements of the release
+  // that fixes it — from the field installs that learn about releases no other
+  // way. Network-first rather than a CACHE_NAME bump, which tears down and
+  // reinstalls the worker for every browser and behind the basic_auth gate is
+  // what produced the repeating credential prompt in #710.
+  '/update-beacon.js',
+  '/beacon.css'
 ]);
 
 self.addEventListener('install', (event) => {

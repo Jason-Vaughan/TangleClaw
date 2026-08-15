@@ -117,7 +117,7 @@ describe('The release link on the update beacon (#149)', () => {
   let css;
 
   before(() => {
-    css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    css = fs.readFileSync(path.join(__dirname, '..', 'public', 'beacon.css'), 'utf8');
   });
 
   // The wiring assertions this block used to make were source pins on the

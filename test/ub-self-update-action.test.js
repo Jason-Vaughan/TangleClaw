@@ -30,7 +30,7 @@ describe('UB self-update action (#228/#229)', () => {
   let css, beacon, landing, session;
 
   before(() => {
-    css = fs.readFileSync(path.join(PUB, 'style.css'), 'utf8');
+    css = fs.readFileSync(path.join(PUB, 'beacon.css'), 'utf8');
     beacon = fs.readFileSync(path.join(PUB, 'update-beacon.js'), 'utf8');
     landing = fs.readFileSync(path.join(PUB, 'landing.js'), 'utf8');
     session = fs.readFileSync(path.join(PUB, 'session.js'), 'utf8');
@@ -102,8 +102,12 @@ describe('UB self-update action (#228/#229)', () => {
     });
 
     it('has no stylesheet left for the surfaces the beacon replaced', () => {
-      for (const dead of ['.update-pill', '.update-badge']) {
-        assert.ok(!css.includes(dead), `${dead} rules must not outlive their markup`);
+      // Checked in the PAGE stylesheets, which is where the dead rules were.
+      for (const sheet of ['style.css', 'session.css']) {
+        const text = fs.readFileSync(path.join(PUB, sheet), 'utf8');
+        for (const dead of ['.update-pill', '.update-badge']) {
+          assert.ok(!text.includes(dead), `${dead} rules must not outlive their markup (${sheet})`);
+        }
       }
     });
   });

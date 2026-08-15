@@ -25,6 +25,19 @@ All notable changes to TangleClaw are documented in this file.
   and the tests fire the timer callbacks by hand and assert exactly what each one is allowed to
   reach.
 
+- **A session now sees the same update beacon, and can act on it (#931, chunk 2 of 2 — session
+  page).** The session banner's update badge is gone, and the serpent beside the project name
+  carries the same toast and the same persistent dot the dashboard does — from the same module, so
+  the two surfaces cannot drift into different answers about the same release again. **Update now**
+  runs the identical guarded apply-and-restart flow, dirty-tree escape and provisioning report
+  included, instead of sending the operator to another page to find the only button that worked.
+  Its confirm says what is different here — the terminal below blips and reconnects on its own —
+  and quotes the same ~3 seconds the dashboard does, because it is the same restart.
+
+  The #730 agent path survives, demoted: **Ask the agent** appears only in the toast the operator
+  deliberately re-opened, never in the pop that arrives unbidden and is gone in three seconds. It
+  used to be the badge's entire behavior, on a single un-confirmed tap.
+
 - **The dashboard's per-version dismiss is gone (#931).** `tc_updateDismissed_<version>` in
   `localStorage` is no longer read or written. The dot is the quiet resting state that dismiss
   existed to provide, and a permanently dismissible update surface restores the invisibility this
@@ -57,6 +70,14 @@ All notable changes to TangleClaw are documented in this file.
 
 - **The beacon refuses a release URL that is not http(s) (#931).** The pill escaped `releaseUrl` as
   markup and then put it in an `href` anyway; escaping constrains markup, not schemes.
+
+- **The beacon's stylesheet is one file linked by both pages (#931).** The dashboard and the
+  session page have separate stylesheets, and a copy of the beacon's rules in each would be the
+  pill-and-badge drift rebuilt in CSS. `public/beacon.css` is linked by both. It and
+  `public/update-beacon.js` are network-first in the service worker: a stale copy of the surface
+  that announces releases would hide the announcement of the release that fixes it. No
+  `CACHE_NAME` bump — that tears down every registered worker and is what locked the operator out
+  of Chrome behind the auth gate on 2026-07-28 (#710).
 
 ## [5.1.0] - 2026-08-15
 

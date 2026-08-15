@@ -79,6 +79,39 @@ function saveSetting(key, value) {
 const api = window.tcCreateApi({ setConnected });
 const apiMutate = window.tcCreateApiMutate(api);
 
+// Serializes the update-and-restart against itself. The dashboard shares this
+// latch with its #235 stale-server restart button; this page has no such
+// button, so the beacon is its only holder.
+let restartInFlight = false;
+
+// The update beacon (#931) — the same module, the same behavior, and the same
+// guarded apply flow the dashboard runs. Before this, a session announced an
+// update with a badge whose one tap fired agent instructions unconfirmed, and
+// the only surface that could actually apply an update lived on a page the
+// operator was not looking at.
+const updateBeacon = window.tcCreateUpdateBeacon({
+  doc: document,
+  anchorId: 'updateBeacon',
+  api,
+  apiMutate,
+  restart: window.tcCreateRestartFlow({ api, apiMutate, win: window }),
+  getInFlight: () => restartInFlight,
+  setInFlight: (v) => { restartInFlight = v; },
+  // Same restart, so the same ~3 seconds the dashboard quotes — one operation
+  // described two ways is the inconsistency this beacon exists to remove. What
+  // is genuinely different here is the terminal, and that is what this adds.
+  confirmText: (data) =>
+    `Update TangleClaw to v${data.latestVersion} and restart?\n\n`
+    + 'TC fetches the release, switches the checkout to it, and restarts. This tmux '
+    + 'session and everything running in it survive — the terminal below blips and '
+    + 'reconnects on its own when the server returns (~3 seconds).',
+  // The #730 path, kept but demoted: it is offered only in the toast the
+  // operator deliberately re-opened, never in the pop that appears unbidden
+  // and is gone in three seconds. Firing agent instructions was a single
+  // mis-tappable gesture before, which is half of why this rewrite exists.
+  secondaryAction: { label: 'Ask the agent', run: (data) => injectUpdatePrompt(data) }
+});
+
 // ── HTML Escaping ──
 
 /**
@@ -573,21 +606,17 @@ function loadVersion() {
 }
 
 /**
- * Load update status and show/hide the update badge.
+ * Load update status and hand it to the beacon, which decides what an
+ * available update looks like — here and on the dashboard, from one module.
+ *
+ * Every answer is passed on, including the non-answers: a failed request and a
+ * server that has not run its first check yet are both "no answer", not "no
+ * update", and the beacon is the one place that knows the difference (#716).
+ *
+ * @returns {Promise<void>}
  */
 async function loadUpdateStatus() {
-  const data = await api('/api/update-status');
-  if (!data) return;
-  const badge = document.getElementById('updateBadge');
-  if (!badge) return;
-  if (data.updateAvailable && data.latestVersion) {
-    badge.textContent = `v${data.latestVersion}`;
-    badge.title = `Update available: v${data.currentVersion} → v${data.latestVersion}. Tap to send update instructions to the AI agent.`;
-    badge.classList.remove('hidden');
-    badge.onclick = () => injectUpdatePrompt(data);
-  } else {
-    badge.classList.add('hidden');
-  }
+  updateBeacon.render(await api('/api/update-status'));
 }
 
 /**
