@@ -4,6 +4,28 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A wedged tmux no longer writes the same error line every ten seconds, forever (#906).** The
+  session listing runs once per `GET /api/projects`, and the dashboard polls that route every ten
+  seconds for as long as a tab is open — so a tmux server too wedged to answer produced an error
+  line every ten seconds, indefinitely, and the same shape appeared on the session page's
+  liveness poll. The cost was not noise: the wedge (#94/#144/#380) is exactly when an operator
+  goes reading the log, and the diagnostic they needed was buried under its own repetitions. Both
+  sites now report loud once, drop to `debug` while the condition persists, and go loud again
+  when it recurs after a recovery. That last part is the half a plain warn-once gets wrong — a
+  second wedge an hour later is a new incident, not a continuation of one already acknowledged,
+  and suppressing it forever would have replaced a flood with a silence.
+
+  Keyed by the condition rather than by the call, and the key differs by what is being asked:
+  there is one tmux server, so the listing has one key however many polls meet it, while the
+  session probe keys per session — one unreachable pane must not silence the first report about
+  a different one. `lib/git.js` solved this first for incomplete git reads; the rule is now a
+  shared mechanism (`lib/condition-log.js`) rather than a third near-copy of it. git.js keeps its
+  own: that set is cleared by the git cache's lifecycle rather than by a successful read, so the
+  two re-arm on different events, and unifying them would change git's behavior to close a
+  duplication nobody is being hurt by.
+
 ## [5.2.0] - 2026-08-15
 
 ### Changed
