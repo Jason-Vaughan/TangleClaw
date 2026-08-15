@@ -2599,8 +2599,13 @@ route('POST', '/api/update/check', (_req, res, _params, body) => {
 // update, wrong ref, not a git checkout) returns 409 with a stable `code`; an
 // unexpected git failure mid-flow returns 500 with the pre-update `fromSha` so
 // recovery is a one-line manual `git checkout <fromSha>`.
-route('POST', '/api/update/apply', (_req, res) => {
-  const result = updateApplier.applyUpdate();
+route('POST', '/api/update/apply', (_req, res, _params, body) => {
+  // `discardDirty` opts into removing TangleClaw-written files that block the
+  // update (#711 chunk 03). A strict-boolean gate like bindAllInterfaces': a
+  // truthy string from a sloppy client must not authorize a discard.
+  const result = updateApplier.applyUpdate({
+    discardDirty: !!(body && body.discardDirty === true)
+  });
   if (result.ok) {
     jsonResponse(res, 200, result);
     return;
