@@ -210,64 +210,65 @@ function runNavigationPin() {
  * real setConnected/attemptReconnect — with fetch resolving the shapes sw.js
  * actually produces.
  */
+
+/**
+ * Build the full client chain with a controllable fetch.
+ *
+ * @param {Function} fetchImpl - What the "service worker" hands the page.
+ * @returns {object} vm context with `elements` attached.
+ */
+function loadFullChain(fetchImpl) {
+  const elements = [makeElement('div')];
+  elements[0].id = 'toast';
+  const sandbox = {
+    console, setTimeout: () => 7, clearTimeout() {},
+    Response, Headers,
+    state: { connected: true },
+    location: { origin: 'https://tc.example:3102' },
+    fetch: fetchImpl,
+    document: {
+      getElementById: (id) => elements.find((e) => e.id === id) || null,
+      createElement: (tag) => makeElement(tag),
+      body: { appendChild: (el) => { elements.push(el); } }
+    }
+  };
+  sandbox.window = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(API_HELPER_SRC, sandbox);
+  vm.runInContext([
+    'let reconnectTimer = null;',
+    'let reconnectFailures = 0;',
+    `const UNREACHABLE_AFTER = ${realCeiling()};`,
+    liftFunction(LANDING_SRC, 'function esc(str)'),
+    liftFunction(LANDING_SRC, 'async function attemptReconnect()'),
+    liftFunction(LANDING_SRC, 'function renderUnreachableState()'),
+    liftFunction(LANDING_SRC, 'function hideUnreachableState()'),
+    liftFunction(LANDING_SRC, 'function setConnected(connected)'),
+    // The page's real wiring shape: api() is created from the factory with
+    // the page's setConnected, and loadProjects rides on it.
+    'const api = tcCreateApi({ setConnected });',
+    'async function loadProjects() { await api("/api/projects"); }',
+    'globalThis.api = api;',
+    'globalThis.attemptReconnect = attemptReconnect;',
+    'globalThis.setConnected = setConnected;'
+  ].join('\n'), sandbox);
+  sandbox.elements = elements;
+  return sandbox;
+}
+
+/** The REAL sw.js builders, lifted and run so the shapes cannot drift. */
+function swBuilders() {
+  const ctx = { Response, Headers, JSON, String };
+  vm.createContext(ctx);
+  vm.runInContext([
+    liftFunction(SW_SRC, 'function _swErrorResponse(err)'),
+    liftFunction(SW_SRC, 'function _withCacheFallbackMarker(cached)'),
+    'globalThis.err = _swErrorResponse; globalThis.mark = _withCacheFallbackMarker;'
+  ].join('\n'), ctx);
+  return ctx;
+}
+
 describe('escalation works through the real service-worker response shapes (#709 R-1)', () => {
-  /**
-   * Build the full client chain with a controllable fetch.
-   *
-   * @param {Function} fetchImpl - What the "service worker" hands the page.
-   * @returns {object} vm context with `elements` attached.
-   */
-  function loadFullChain(fetchImpl) {
-    const elements = [makeElement('div')];
-    elements[0].id = 'toast';
-    const sandbox = {
-      console, setTimeout: () => 7, clearTimeout() {},
-      Response, Headers,
-      state: { connected: true },
-      location: { origin: 'https://tc.example:3102' },
-      fetch: fetchImpl,
-      document: {
-        getElementById: (id) => elements.find((e) => e.id === id) || null,
-        createElement: (tag) => makeElement(tag),
-        body: { appendChild: (el) => { elements.push(el); } }
-      }
-    };
-    sandbox.window = sandbox;
-    vm.createContext(sandbox);
-    vm.runInContext(API_HELPER_SRC, sandbox);
-    vm.runInContext([
-      'let reconnectTimer = null;',
-      'let reconnectFailures = 0;',
-      `const UNREACHABLE_AFTER = ${realCeiling()};`,
-      liftFunction(LANDING_SRC, 'function esc(str)'),
-      liftFunction(LANDING_SRC, 'async function attemptReconnect()'),
-      liftFunction(LANDING_SRC, 'function renderUnreachableState()'),
-      liftFunction(LANDING_SRC, 'function hideUnreachableState()'),
-      liftFunction(LANDING_SRC, 'function setConnected(connected)'),
-      // The page's real wiring shape: api() is created from the factory with
-      // the page's setConnected, and loadProjects rides on it.
-      'const api = tcCreateApi({ setConnected });',
-      'async function loadProjects() { await api("/api/projects"); }',
-      'globalThis.api = api;',
-      'globalThis.attemptReconnect = attemptReconnect;',
-      'globalThis.setConnected = setConnected;'
-    ].join('\n'), sandbox);
-    sandbox.elements = elements;
-    return sandbox;
-  }
-
-  /** The REAL sw.js builders, lifted and run so the shapes cannot drift. */
-  function swBuilders() {
-    const ctx = { Response, Headers, JSON, String };
-    vm.createContext(ctx);
-    vm.runInContext([
-      liftFunction(SW_SRC, 'function _swErrorResponse(err)'),
-      liftFunction(SW_SRC, 'function _withCacheFallbackMarker(cached)'),
-      'globalThis.err = _swErrorResponse; globalThis.mark = _withCacheFallbackMarker;'
-    ].join('\n'), ctx);
-    return ctx;
-  }
-
   it('the synthetic 503 counts as disconnected and reaches the overlay', async () => {
     const sw = swBuilders();
     const ctx = loadFullChain(async () => sw.err(new Error('Failed to fetch')));
@@ -323,6 +324,81 @@ describe('escalation works through the real service-worker response shapes (#709
     assert.equal(served.headers.get('X-TC-Cache-Fallback'), '1',
       'sw.js must mark what it serves in place of a dead network');
     assert.equal(served.status, 200, 'the stand-in keeps the cached status');
+  });
+});
+
+/*
+ * The proxied reality (#924, operator-observed): behind the Caddy ingress a
+ * dead backend is not a failed fetch either — the gate ANSWERS for it with a
+ * 502/503/504 whose body is empty or HTML. During the 2026-08-14 live smoke a
+ * 40-second backend outage on the gate origin produced no toast and no
+ * unreachable card; the dashboard looked connected throughout. The JSON test
+ * is the discriminator: the server's own meaningful 5xxs (health 503,
+ * tmux-dependency 503, Medusa-hub 502) are always `{error, code}` JSON and
+ * must keep surfacing as route errors, never as outages.
+ */
+describe('escalation works through the gateway shapes (#924)', () => {
+  // Verbatim what Caddy's reverse_proxy answers for a dead upstream: 502,
+  // empty body, no content-type. `null` body, not '' — a string body makes
+  // Response auto-attach text/plain, and the point is the header's absence.
+  const caddy502 = () => new Response(null, { status: 502, statusText: 'Bad Gateway' });
+
+  it('a gateway 502 counts as disconnected and reaches the overlay', async () => {
+    const ctx = loadFullChain(async () => caddy502());
+
+    const first = await ctx.api('/api/projects');
+    assert.equal(first, null, 'a gateway page is not data');
+    assert.equal(ctx.state.connected, false,
+      'the gate answering FOR the backend is the backend not answering');
+
+    for (let i = 0; i < realCeiling(); i++) await ctx.attemptReconnect();
+    assert.ok(overlay(ctx), 'the ceiling must be reachable through the proxied shape');
+    assert.equal(overlay(ctx).classList.contains('visible'), true);
+  });
+
+  it('an HTML 503/504 from the gate counts as disconnected too', async () => {
+    for (const status of [503, 504]) {
+      const ctx = loadFullChain(async () => new Response('<html><body>error</body></html>',
+        { status, headers: { 'Content-Type': 'text/html' } }));
+      await ctx.api('/api/projects');
+      assert.equal(ctx.state.connected, false, `HTML ${status} must classify as an outage`);
+    }
+  });
+
+  it("the server's own JSON 5xxs stay route errors, never outages", async () => {
+    // The real shapes lib/errorResponse produces: tmux-dependency 503 and
+    // Medusa-hub 502, both JSON with {error, code}.
+    const shapes = [
+      [503, { error: 'tmux did not answer', code: 'TMUX_UNAVAILABLE' }],
+      [502, { error: 'Medusa hub unreachable', code: 'MEDUSA_SEND_FAILED' }]
+    ];
+    for (const [status, body] of shapes) {
+      const ctx = loadFullChain(async () => new Response(JSON.stringify(body),
+        { status, headers: { 'Content-Type': 'application/json; charset=utf-8' } }));
+      const out = await ctx.api('/api/medusa-ish');
+      assert.equal(out, null);
+      assert.equal(ctx.state.connected, true,
+        `a JSON ${status} is the server SPEAKING — it must not flip connectivity`);
+      assert.equal(ctx.api.lastError, body.error, 'the route error must surface');
+      assert.equal(ctx.api.lastErrorCode, body.code);
+    }
+  });
+
+  it('recovery still works after a gateway outage', async () => {
+    let gatewayDown = true;
+    const ctx = loadFullChain(async () => gatewayDown
+      ? caddy502()
+      : new Response(JSON.stringify({ projects: [] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    for (let i = 0; i < realCeiling(); i++) await ctx.attemptReconnect();
+    assert.equal(overlay(ctx).classList.contains('visible'), true);
+
+    gatewayDown = false;
+    await ctx.attemptReconnect();
+    assert.equal(ctx.state.connected, true);
+    assert.equal(overlay(ctx).classList.contains('visible'), false,
+      'the backend returning through the gate dismisses the state');
   });
 });
 

@@ -15,11 +15,14 @@
    *
    * @param {object} [opts]
    * @param {(connected: boolean) => void} [opts.setConnected] - Optional
-   *   hook called with `true` on a successful response and `false` on a
-   *   network-level failure (TypeError / "Failed to fetch"). Pages without
-   *   a connection banner (e.g. openclaw-view) omit this and the helper
-   *   no-ops the connection-state plumbing while still surfacing the
-   *   "Connection lost." message via `api.lastError`.
+   *   hook called with `true` on a successful response and `false` whenever
+   *   the server did not answer, in any of its shapes: a network-level
+   *   failure (TypeError / "Failed to fetch"), a service-worker cache
+   *   fallback or synthetic 503 (#709), or a gateway 502/503/504 with a
+   *   non-JSON body (#924). Pages without a connection banner (e.g.
+   *   openclaw-view) omit this and the helper no-ops the connection-state
+   *   plumbing while still surfacing the "Connection lost." message via
+   *   `api.lastError`.
    * @returns {Function & { lastError: string|null, lastErrorCode: string|null }}
    */
   function tcCreateApi(opts) {
@@ -34,6 +37,20 @@
         // DID NOT ANSWER — a cached 200 here is stale data, and counting it as
         // connected rendered a dead backend as a healthy dashboard.
         if (res.headers && res.headers.get && res.headers.get('X-TC-Cache-Fallback')) {
+          setConnected(false);
+          api.lastError = 'Connection lost.';
+          api.lastErrorCode = null;
+          return null;
+        }
+        // Behind an ingress the backend's death is not a failed fetch either
+        // (#924): Caddy answers FOR the dead upstream with a 502/503/504 whose
+        // body is empty or HTML. The JSON test is the discriminator that keeps
+        // the server's own meaningful 5xxs — health 503, tmux-dependency 503,
+        // Medusa-hub 502, all `{error, code}` JSON — surfacing as route errors
+        // rather than outages. A gateway page is not the server speaking.
+        if ((res.status === 502 || res.status === 503 || res.status === 504)
+            && !(((res.headers && res.headers.get && res.headers.get('content-type')) || '')
+              .includes('json'))) {
           setConnected(false);
           api.lastError = 'Connection lost.';
           api.lastErrorCode = null;
