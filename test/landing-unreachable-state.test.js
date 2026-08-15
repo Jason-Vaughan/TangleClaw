@@ -164,6 +164,39 @@ describe('dead server escalates to an honest unreachable state (#709)', () => {
     assert.match(html, /retryConnectionNow/, 'must offer an explicit retry action');
   });
 
+  it('the Retry button shows the attempt in flight (operator feedback, #709 smoke)', async () => {
+    const ctx = loadConnectionState();
+    ctx.setConnected(false);
+    for (let i = 0; i < realCeiling(); i++) await ctx.attemptReconnect();
+
+    // The button the overlay's markup renders, registered as the DOM would —
+    // and pinned to the markup: if either side of the id seam renames, the
+    // `if (btn)` guard silently no-ops the whole indicator, so the fixture id
+    // must be provably the one the real overlay renders.
+    assert.match(overlay(ctx).innerHTML, /id="unreachableRetryBtn"/,
+      'the fixture id must match the id the rendered overlay actually carries');
+    const btn = makeElement('button');
+    btn.id = 'unreachableRetryBtn';
+    btn.textContent = 'Retry now';
+    btn.disabled = false;
+    ctx.elements.push(btn);
+
+    // A slow server answer: the press must read as working, not dead.
+    let release;
+    ctx.loadProjects = () => new Promise((resolve) => {
+      release = () => { ctx.setConnected(false); resolve(); };
+    });
+    const pressed = ctx.retryConnectionNow();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(btn.disabled, true, 'the press must disable the button while in flight');
+    assert.equal(btn.textContent, 'Retrying…', 'the pause must say it is working');
+
+    release();
+    await pressed;
+    assert.equal(btn.disabled, false, 'a failed attempt re-arms the button');
+    assert.equal(btn.textContent, 'Retry now');
+  });
+
   it('recovers automatically and re-arms the ceiling', async () => {
     const ctx = loadConnectionState();
     ctx.setConnected(false);
