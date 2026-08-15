@@ -6,7 +6,7 @@
  * Backend (auth-identity.resolveAuthStatus) + wiring (/api/server-info) are
  * covered by test/auth-identity.test.js and test/api-auth-identity.test.js.
  * This file covers the frontend surface with source-level structural
- * assertions — same pattern as test/update-pill-link.test.js and
+ * assertions — same pattern as test/update-release-link.test.js and
  * test/orphan-hooks-banner.test.js (landing.js is a browser global script,
  * not a require()-able module).
  */

@@ -1,18 +1,16 @@
 'use strict';
 
 /*
- * Tests for #149 — update-available pill becomes a clickable link to the
- * GitHub release page.
+ * Tests for #149 — the update-available notice carries a clickable link to
+ * the GitHub release page.
  *
  * Two surfaces:
  *   1. Backend: lib/update-checker.js exposes `releaseUrl` derived from
  *      `git remote get-url origin` so fork installs link to their fork.
- *   2. Frontend: landing.js wraps the pill's version label in an anchor
- *      when the API provides `releaseUrl`, falls back to plain text when
- *      it doesn't (pre-#149 servers / non-GitHub remotes).
- *
- * Frontend tests use source-level structural assertions — same pattern as
- * test/orphan-hooks-banner.test.js for #145 chunk 2.
+ *   2. Frontend: the update beacon links its version label when the API
+ *      provides `releaseUrl`, and falls back to plain text when it doesn't
+ *      (pre-#149 servers / non-GitHub remotes). That half is executed in
+ *      test/update-beacon.test.js; only its stylesheet is pinned here.
  */
 
 const { describe, it, before } = require('node:test');
@@ -115,58 +113,29 @@ describe('update-checker releaseUrl derivation (#149)', () => {
   });
 });
 
-describe('Dashboard update-pill link (#149)', () => {
-  let js, css;
+describe('The release link on the update beacon (#149)', () => {
+  let css;
 
   before(() => {
-    js = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
-    css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+    css = fs.readFileSync(path.join(__dirname, '..', 'public', 'beacon.css'), 'utf8');
   });
 
-  describe('landing.js wiring', () => {
-    it('wraps the version label in an anchor when releaseUrl is present', () => {
-      assert.match(js, /data\.releaseUrl/);
-      assert.match(js, /<a class="update-pill-link" href="\$\{esc\(data\.releaseUrl\)\}"/);
-    });
-
-    it('opens the release page in a new tab with safe rel attrs', () => {
-      // target="_blank" without rel="noopener noreferrer" is a tabnabbing
-      // foot-gun; lock it in structurally.
-      assert.match(js, /target="_blank" rel="noopener noreferrer"/);
-    });
-
-    it('falls back to plain text when releaseUrl is missing (pre-#149 server / non-GitHub remote)', () => {
-      // The ternary on data.releaseUrl is the lock-in: either we get the
-      // anchor branch, or the plain versionLabel branch. No anchor with an
-      // empty href, no broken link.
-      assert.match(js, /data\.releaseUrl\s*\?\s*`<a class="update-pill-link"/);
-      assert.match(js, /:\s*versionLabel/);
-    });
-
-    it('escapes the releaseUrl through esc() to prevent attribute injection', () => {
-      assert.match(js, /href="\$\{esc\(data\.releaseUrl\)\}"/);
-    });
-
-    it('preserves the existing per-version localStorage dismiss key', () => {
-      // Regression guard — the link addition should not have touched the
-      // dismiss-key contract that v3.13.0+ installs already use.
-      assert.match(js, /tc_updateDismissed_\$\{data\.latestVersion\}/);
-    });
-
-    it('keeps the dismiss button intact alongside the new link', () => {
-      assert.match(js, /class="update-pill-dismiss"/);
-      assert.match(js, /pill\.querySelector\(['"]\.update-pill-dismiss['"]\)/);
-    });
-  });
-
+  // The wiring assertions this block used to make were source pins on the
+  // pill's template string in landing.js. Since #931 the link is built from
+  // DOM nodes inside `public/update-beacon.js`, and every claim they made is
+  // now asserted by EXECUTION in test/update-beacon.test.js — the anchor when
+  // `releaseUrl` is present, `rel="noopener noreferrer"`, the plain-text
+  // fallback for a non-GitHub remote, and (new) the refusal to link a
+  // non-http scheme, which escaping never covered. What remains here is the
+  // half that cannot be executed: the stylesheet.
   describe('CSS', () => {
-    it('declares .update-pill-link with inherited color so the pill chrome stays consistent', () => {
-      assert.match(css, /\.update-pill-link\s*\{[\s\S]*?color:\s*inherit/);
+    it('declares the link with inherited color so the toast chrome stays consistent', () => {
+      assert.match(css, /\.beacon-toast-version a\s*\{[\s\S]*?color:\s*inherit/);
     });
 
     it('declares an underline treatment with a hover state for affordance', () => {
-      assert.match(css, /\.update-pill-link\s*\{[\s\S]*?text-decoration:\s*underline/);
-      assert.match(css, /\.update-pill-link:hover\s*\{\s*text-decoration:\s*none/);
+      assert.match(css, /\.beacon-toast-version a\s*\{[\s\S]*?text-decoration:\s*underline/);
+      assert.match(css, /\.beacon-toast-version a:hover\s*\{\s*text-decoration:\s*none/);
     });
   });
 });

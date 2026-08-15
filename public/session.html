@@ -8,6 +8,7 @@
   <meta name="theme-color" content="#000000">
   <title>TangleClaw — Session</title>
   <link rel="stylesheet" href="/session.css">
+  <link rel="stylesheet" href="/beacon.css">
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" type="image/png" href="/logo-icon.png">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
@@ -21,11 +22,17 @@
   <header class="banner" id="banner">
     <div class="banner-row">
       <a href="/" class="banner-back" aria-label="Back to projects">&larr;</a>
-      <img class="banner-logo" src="/logo-banner.png" alt="" width="29" height="29">
+      <!-- The update beacon anchors on the serpent (#931), exactly as it does
+           on the dashboard: the wrapper exists only to give the dot and the
+           toast something positioned to hang off, and update-beacon.js builds
+           both. One module, so a session and the dashboard cannot drift into
+           saying different things about the same release. -->
+      <span class="beacon-anchor" id="updateBeacon">
+        <img class="banner-logo" src="/logo-banner.png" alt="" width="29" height="29">
+      </span>
       <span class="banner-sep" aria-hidden="true">|</span>
       <span class="banner-name" id="bannerName">--</span>
       <span class="banner-version" id="bannerVersion"></span>
-      <span id="updateBadge" class="update-badge hidden"></span>
       <span class="status-dot" id="statusDot" title="Connected"></span>
       <span class="banner-engine" id="bannerEngine"></span>
       <span id="bannerGroups" class="banner-groups"></span>
@@ -409,6 +416,7 @@
   </aside>
 
   <script src="/api-helper.js"></script>
+  <script src="/update-beacon.js"></script>
   <script src="/wrap-drawer.js"></script>
   <script src="/session.js"></script>
 </body>

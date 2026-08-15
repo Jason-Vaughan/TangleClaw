@@ -4,7 +4,7 @@
  * #183 — the self-update prompt must never hardcode the install path.
  *
  * Source-level structural assertions over public/session.js, same pattern as
- * test/ub-self-update-pill.test.js. The backend contract (repoRoot on the
+ * test/ub-self-update-action.test.js. The backend contract (repoRoot on the
  * /api/update-status payload) is behaviorally tested in update-checker.test.js;
  * these lock the client side: buildUpdatePrompt derives its `cd` step from
  * data.repoRoot, and no public script regresses to a hardcoded checkout path.

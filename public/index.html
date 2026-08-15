@@ -9,6 +9,7 @@
   <meta name="description" content="AI Development Orchestration Platform">
   <title>TangleClaw</title>
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/beacon.css">
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" type="image/png" href="/logo-icon.png">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
@@ -21,8 +22,15 @@
   <!-- Dashboard Bar -->
   <header class="dash-bar">
     <div class="dash-brand">
-      <img class="dash-logo" src="/logo-icon.png" alt="" width="32" height="32"
-           onerror="this.src='/logo.png'; this.width=32; this.height=32;">
+      <!-- The update beacon anchors on the serpent (#931). The wrapper exists
+           only to give the dot and the toast something positioned to hang off;
+           both are created by update-beacon.js, on this page and the session
+           page alike, so there is one description of what an available update
+           looks like instead of the pill-and-badge pair that drifted apart. -->
+      <span class="beacon-anchor" id="updateBeacon">
+        <img class="dash-logo" src="/logo-icon.png" alt="" width="32" height="32"
+             onerror="this.src='/logo.png'; this.width=32; this.height=32;">
+      </span>
       <img class="dash-wordmark" src="/logo-text.png" alt="TangleClaw" height="18"
            onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'dash-title',textContent:'TANGLECLAW'}));">
       <!-- A real button, not a styled span: this is the only control that can
@@ -36,7 +44,6 @@
            version indefinitely and double-announce on activation. Same pattern
            as #medusaLive on the session page. -->
       <span class="sr-only" id="versionCheckLive" aria-live="polite"></span>
-      <span id="updatePill" class="update-pill hidden"></span>
       <span id="authUser" class="dash-auth-user hidden" title="Authenticated via the Caddy login gate"></span>
       <span id="authStatusWarning" class="dash-auth-warning hidden" role="status"></span>
       <span id="bindNotice" class="dash-auth-warning hidden" role="status"></span>
@@ -627,6 +634,7 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
   </div>
 
   <script src="/api-helper.js"></script>
+  <script src="/update-beacon.js"></script>
   <script src="/sw-register.js"></script>
   <script src="/landing.js"></script>
   <script src="/ui.js"></script>

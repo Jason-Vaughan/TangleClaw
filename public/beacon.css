@@ -1,0 +1,166 @@
+/* ── TangleClaw — the update beacon (#931) ── */
+/* Linked by BOTH index.html and session.html. It lives in its own file for the
+   same reason update-beacon.js does: the dashboard and the session banner have
+   separate stylesheets, and a copy in each is how the update pill and the
+   session badge drifted into two different-looking answers to one question.
+   Every custom property used here is defined in both stylesheets' :root, so the
+   beacon follows whichever theme the page is wearing. */
+
+/* All five interactive things here clear 44px on their smallest axis — the
+   floor nonfunctional-requirements.md's Direction states and its touch-target
+   row repeats, naming links among them, on a product whose primary client is
+   iPhone Safari. Enumerated, because a claim about a set is worth what its
+   enumeration is worth: the dot, the apply button, the secondary action, the
+   dismiss, and the release-notes link.
+
+   Three shapes, because the constraint differs:
+   - The DOT gets a 44x44 ::after. It can, because nothing sits under it.
+   - The three TOAST BUTTONS grow (min-height/min-width). An overlay would give
+     three controls one `gap` apart overlapping invisible hit zones that steal
+     each other's taps — the hazard interaction-design.md records for the
+     Medusa crest. The toast is taller for it; that is the trade.
+   - The LINK takes vertical padding. It is a word inside a sentence
+     ("v5.1.2 update available"), so it must not become a block: on a
+     non-replaced inline element vertical padding extends the hit and paint area
+     WITHOUT affecting line-box height, so the sentence flows exactly as before
+     and the target still clears 44px (12px content + 2x16px). `inline-block`
+     would have reached the same number by breaking the baseline. */
+
+/* The dot is the resting state and persists until the update is applied; the
+   toast pops once per detected version and fades. The animation is here, in
+   CSS, so the two script timers only add the `fading` class and then remove
+   the toast element — that is the whole of what they do, and neither touches
+   the dot, which is what makes the fade lossless (#98/#268). */
+.beacon-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.beacon-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 11px;
+  height: 11px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--danger);
+  /* Matches the page ground behind the bar, so the dot reads as a notch cut
+     into the logo rather than a mark floating over it — and it follows the
+     light and high-contrast themes instead of pinning a dark ring. */
+  border: 2px solid var(--bg);
+  cursor: pointer;
+  /* The tap target is the ::after below, NOT these 11px. Once the toast fades
+     this is the only control left, on a product whose operator is almost
+     always on a phone, and `project-preferences.md` records a 44px floor. */
+  z-index: 2;
+}
+/* Sized absolutely and centred, rather than as a negative inset on the dot.
+   An inset resolves against the dot's PADDING box, which `box-sizing:
+   border-box` plus the 2px ring makes 7px, not 11 — two reviewers computed
+   this hit area as 35px and 31px from the same rule, and it was actually 31.
+   A geometry nobody can read off the source is a geometry that drifts under
+   the floor without anyone noticing. This states the number the norm states. */
+.beacon-dot::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+}
+.beacon-dot:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+.beacon-toast {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 8px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border: 1px solid var(--amber);
+  border-radius: 8px;
+  background: var(--elevated-bg);
+  color: var(--text);
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  animation: beacon-toast-in 0.25s ease-out;
+}
+.beacon-toast.fading {
+  animation: beacon-toast-out 0.45s ease-in forwards;
+}
+@keyframes beacon-toast-in {
+  from { transform: translateY(-6px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes beacon-toast-out {
+  to { opacity: 0; transform: translateY(-4px); }
+}
+/* Reduced motion is already handled, and NOT here: both page stylesheets carry
+   `*, *::before, *::after { animation: none !important; }` under
+   `prefers-reduced-motion`, which no rule in this file could override anyway.
+   What makes that safe is a property of the script, not of this stylesheet —
+   the toast is removed by its own timer, never by an animation completing — so
+   an operator who has asked for less motion gets the notice without movement
+   and it still goes away. A rule here that appeared to guarantee the fade would
+   be worse than none: unreachable, and read as load-bearing. */
+.beacon-toast-version { color: var(--amber); font-weight: 600; }
+.beacon-toast-version a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  /* Hit area only — vertical padding on an inline element does not move the
+     line box, so the sentence around it is unchanged. See the file header. */
+  padding: 16px 4px;
+}
+.beacon-toast-version a:hover { text-decoration: none; }
+.beacon-toast-apply {
+  background: var(--primary-dark);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 5px 12px;
+  border-radius: 8px;
+  white-space: nowrap;
+  /* The primary action of the whole feature. It was ~24px tall. */
+  min-height: 44px;
+}
+.beacon-toast-apply:hover:not(:disabled) { filter: brightness(1.15); }
+.beacon-toast-apply:disabled { opacity: 0.6; cursor: default; }
+.beacon-toast-secondary {
+  background: none;
+  border: none;
+  color: var(--primary);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 4px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  min-height: 44px;
+}
+.beacon-toast-close {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.7;
+  /* Square: a glyph this small needs the width as much as the height. */
+  min-height: 44px;
+  min-width: 44px;
+}
+.beacon-toast-close:hover { opacity: 1; }

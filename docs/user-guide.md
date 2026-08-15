@@ -495,7 +495,7 @@ TangleClaw proxies to it — so this costs you nothing and needs no action.
 
 ### Update Refuses to Run from the Current Branch
 
-**Update & restart** deliberately refuses to move a development or recovery
+**Update now** deliberately refuses to move a development or recovery
 branch. An error such as:
 
 ```text
@@ -526,7 +526,7 @@ git status --short --branch
 ```
 
 The final status should name `main` and report no modified, staged, or untracked
-files. Retry **Update & restart**; it can then check out the advertised release
+files. Retry **Update now**; it can then check out the advertised release
 tag and restart TangleClaw.
 
 On older 4.32-era checkouts, switching from a recovery branch to a stale local

@@ -2,20 +2,21 @@
 
 /*
  * #744 / #745 — the running version must be visible, and true, everywhere it
- * appears: the dashboard header, the update pill, and every session's status
- * bar.
+ * appears: the dashboard header, the update announcement, and every session's
+ * status bar.
  *
  * The bug class these pin down is one-directional rendering — code that shows
  * a thing and has no path that ever takes it back down. Three separate
  * instances shipped together: the version label written once at page load, the
- * update pill with no hide path, and the stale-server banner with no hide path.
+ * update announcement with no hide path, and the stale-server banner with no
+ * hide path.
  * Each looks correct in isolation and each lies after a restart the page did
  * not drive.
  *
  * The frontend halves are executed, not grepped — `landing.js` is a browser
  * global rather than a module, so they are sliced out and run against a DOM
  * stub the way test/bind-notice-render.test.js does. A grep can prove the word
- * `hidden` appears; only a run proves the pill comes down.
+ * `hidden` appears; only a run proves the announcement comes down.
  */
 
 const { describe, it } = require('node:test');
@@ -76,8 +77,8 @@ function makeDom(ids) {
           }
         }
       },
-      // The show path wires an apply and a dismiss button into the pill it just
-      // rendered, so querySelector must hand back something listenable.
+      // Render paths wire buttons into markup they have just created, so
+      // querySelector must hand back something listenable.
       querySelector: () => ({ addEventListener: () => {}, textContent: '', disabled: false }),
       addEventListener: () => {}
     };
@@ -280,7 +281,7 @@ describe('#744 the dashboard stops advertising a version it is not running', () 
    */
   async function runServerInfo(payload, seed = {}) {
     const dom = makeDom(['version', 'staleServerBanner', 'staleServerBannerText',
-      'updatePill', 'restartBtn', 'staleServerRestartBtn']);
+      'restartBtn', 'staleServerRestartBtn']);
     let updateChecks = 0;
     const state = { restartMechanism: null, serverStartedAt: null, ...seed };
     const ctx = vm.createContext({
@@ -350,23 +351,31 @@ describe('#744 the dashboard stops advertising a version it is not running', () 
     assert.equal(els.staleServerBanner._hidden, false);
   });
 
-  describe('the update pill comes down', () => {
+  // Since #931 the dashboard does not decide what an available update looks
+  // like — the beacon does, from one module shared with the session page, and
+  // `test/update-beacon.test.js` drives every one of those decisions by
+  // execution (including the two #716 cases this block used to pin: a cold
+  // cache and a failed request must not take the announcement down). What
+  // `loadUpdateStatus` still owes is narrower and is what is asserted here:
+  // it must hand the beacon EVERY answer, including the non-answers, and
+  // filter none of them itself. The per-version dismiss these tests also
+  // covered is deliberately gone — see CHANGELOG.
+  describe('every answer reaches the beacon, including the non-answers', () => {
     /**
-     * Run loadUpdateStatus against a stubbed /api/update-status payload.
-     * @param {object|null} payload - The response.
-     * @param {boolean} [dismissed] - Whether this version was dismissed.
-     * @returns {Promise<object>} The stubbed elements.
+     * Run loadUpdateStatus with a recording beacon.
+     * @param {object|null} payload - The stubbed /api/update-status response.
+     * @returns {Promise<object[]>} What was handed to `beacon.render`.
      */
-    async function runUpdateStatus(payload, dismissed = false) {
-      const dom = makeDom(['updatePill', 'version']);
-      dom.els.updatePill.classList.remove('hidden'); // a pill is already showing
+    async function runUpdateStatus(payload) {
+      const dom = makeDom(['version']);
+      const rendered = [];
       const ctx = vm.createContext({
         document: dom.document,
         api: async () => payload,
         // The refresh path (#716) goes through apiMutate; stubbed to the same
         // payload so a test can drive either without changing its expectation.
         apiMutate: async () => payload,
-        localStorage: { getItem: () => (dismissed ? '1' : null), setItem: () => {} },
+        updateBeacon: { render: (d) => { rendered.push(d); } },
         esc: (s) => String(s)
       });
       await vm.runInContext(
@@ -374,48 +383,38 @@ describe('#744 the dashboard stops advertising a version it is not running', () 
         + `${extract('loadUpdateStatus')}\nloadUpdateStatus();`,
         ctx
       );
-      return dom.els;
+      return rendered;
     }
 
-    it('hides once the offered update is installed', async () => {
-      // The state it most often re-runs into after a restart.
-      const els = await runUpdateStatus({
+    it('hands over a measured "no update" — the state a restart lands in', async () => {
+      const payload = {
         updateAvailable: false, currentVersion: '4.35.0', checkedAt: '2026-07-28T00:00:00Z'
-      });
-      assert.equal(els.updatePill._hidden, true);
+      };
+      assert.deepEqual(await runUpdateStatus(payload), [payload]);
     });
 
-    it('leaves the pill alone when the server has not checked yet', async () => {
-      // `startChecker` waits 60s before its first check and answers
-      // {updateAvailable: false, checkedAt: null} until then — and a restart
-      // puts the page right into that window. Reading it as "no update" would
-      // take down a pill for an update that is still genuinely available.
-      const els = await runUpdateStatus({ updateAvailable: false, latestVersion: null, checkedAt: null });
-      assert.equal(els.updatePill._hidden, false, 'not-checked-yet is not an answer');
+    it('hands over a not-checked-yet answer rather than resolving it here', async () => {
+      const payload = { updateAvailable: false, latestVersion: null, checkedAt: null };
+      assert.deepEqual(await runUpdateStatus(payload), [payload],
+        'the beacon is the one place that knows a cold cache is not an answer');
     });
 
-    it('leaves the pill alone when the request failed', async () => {
+    it('hands over a failed request too', async () => {
       // api() returns null on any non-OK response. Absence of an answer is not
-      // an answer of absence.
+      // an answer of absence — and the beacon, not this function, is what
+      // knows that.
       for (const nothing of [null, undefined]) {
-        const els = await runUpdateStatus(nothing);
-        assert.equal(els.updatePill._hidden, false);
+        const rendered = await runUpdateStatus(nothing);
+        assert.equal(rendered.length, 1, 'the beacon is still told');
+        assert.ok(!rendered[0], 'and told that nothing came back');
       }
     });
 
-    it('hides a version the operator already dismissed', async () => {
-      const els = await runUpdateStatus(
-        { updateAvailable: true, latestVersion: '4.36.0', checkedAt: '2026-07-28T00:00:00Z' }, true
-      );
-      assert.equal(els.updatePill._hidden, true);
-    });
-
-    it('still shows a genuine update', async () => {
-      const els = await runUpdateStatus({
+    it('hands over a genuine update, version and all', async () => {
+      const payload = {
         updateAvailable: true, latestVersion: '4.36.0', checkedAt: '2026-07-28T00:00:00Z'
-      });
-      assert.equal(els.updatePill._hidden, false);
-      assert.match(els.updatePill.innerHTML, /4\.36\.0/);
+      };
+      assert.deepEqual(await runUpdateStatus(payload), [payload]);
     });
 
     it('re-asks on a schedule, so a provisional answer is not the last word', async () => {
@@ -446,7 +445,7 @@ describe('#716 update checks happen when they matter', () => {
    * @returns {Promise<{els: object, calls: string[]}>}
    */
   async function runHint(payload, opts) {
-    const dom = makeDom(['updatePill', 'version']);
+    const dom = makeDom(['version']);
     const calls = [];
     const ctx = vm.createContext({
       document: dom.document,
@@ -455,7 +454,7 @@ describe('#716 update checks happen when they matter', () => {
         calls.push(`${method} ${url} manual=${body && body.manual}`);
         return payload;
       },
-      localStorage: { getItem: () => null, setItem: () => {} },
+      updateBeacon: { render: () => {} },
       esc: (s) => String(s)
     });
     await vm.runInContext(
@@ -504,7 +503,7 @@ describe('#716 update checks happen when they matter', () => {
     // Reading that as "the check failed" would raise the failure marker on
     // every page load until someone restarted, which is a false alarm from the
     // one feature built to stop misreporting update state.
-    const dom = makeDom(['updatePill', 'version']);
+    const dom = makeDom(['version']);
     const calls = [];
     const cached = {
       updateAvailable: false, latestVersion: null, checkOk: true,
@@ -516,7 +515,7 @@ describe('#716 update checks happen when they matter', () => {
       document: dom.document,
       api,
       apiMutate: async (url) => { calls.push(`POST ${url}`); return null; },
-      localStorage: { getItem: () => null, setItem: () => {} },
+      updateBeacon: { render: () => {} },
       esc: (s) => String(s)
     });
     await vm.runInContext(
@@ -535,7 +534,7 @@ describe('#716 update checks happen when they matter', () => {
     // The fallback keys on NOT_FOUND specifically. A real network failure or a
     // 500 must still surface — otherwise the fallback would resurrect the very
     // "silently report up to date" bug this branch removed.
-    const dom = makeDom(['updatePill', 'version']);
+    const dom = makeDom(['version']);
     const calls = [];
     const api = async (url) => { calls.push(`GET ${url}`); return null; };
     api.lastErrorCode = null;
@@ -543,7 +542,7 @@ describe('#716 update checks happen when they matter', () => {
       document: dom.document,
       api,
       apiMutate: async (url) => { calls.push(`POST ${url}`); return null; },
-      localStorage: { getItem: () => null, setItem: () => {} },
+      updateBeacon: { render: () => {} },
       esc: (s) => String(s)
     });
     await vm.runInContext(
@@ -647,21 +646,16 @@ describe('#716 update checks happen when they matter', () => {
       classList: { add() {}, remove() {} },
       querySelector: () => ({ addEventListener: () => {}, textContent: '', disabled: false })
     };
-    const updatePill = {
-      textContent: '', innerHTML: '', _hidden: true,
-      classList: { add() { updatePill._hidden = true; }, remove() { updatePill._hidden = false; } },
-      querySelector: () => ({ addEventListener: () => {}, textContent: '', disabled: false }),
-      addEventListener: () => {}
-    };
     const versionCheckLive = { textContent: '' };
     const ctx = vm.createContext({
-      document: { getElementById: (id) => ({ version, updatePill, versionCheckLive })[id] || null },
+      document: { getElementById: (id) => ({ version, versionCheckLive })[id] || null },
       api: async () => payload,
       apiMutate: async () => {
         if (payload instanceof Error) throw payload;
         return payload;
       },
       localStorage: { getItem: () => null, setItem: () => {} },
+      updateBeacon: { render: () => {} },
       esc: (s2) => String(s2),
       console: { error: () => {} },
       // The restore is scheduled, never run here — the assertion is about what

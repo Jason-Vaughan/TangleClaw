@@ -26,6 +26,55 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-15: one update beacon on the serpent, on every page (#931)
+
+<!-- prawduct: type=feature | scope=update-beacon-931 | chunks=01,02,03 -->
+
+**Why:** TangleClaw announced an available update two different ways, and the wrong one was
+visible. The dashboard pill could actually apply the update but is invisible from the session
+page — where operators live. The session badge people did see was so subtle the product's own
+operator did not know it existed, and its single un-confirmed tap fired agent instructions.
+Field installs learn that a release exists through this surface.
+
+**What changed:** one beacon anchored on the logo, identical on both pages, from one module
+(`public/update-beacon.js` + `public/beacon.css`, linked and loaded by both). A toast pops naming
+the version with a single **Update now**, fades after ~3s, and leaves a red dot that persists
+until the update is applied; the dot re-opens the notice with a ✕, and on a session also offers
+the #730 **Ask the agent** path — demoted to the deliberately re-opened toast, never the pop that
+arrives unbidden. `applyUpdateAndRestart` and its #711 dirty-tree handling moved into the shared
+module so a session runs *the same* guarded flow rather than a copy that drifts on its first fix;
+the restart plumbing under it moved to `api-helper.js` as `tcCreateRestartFlow`, because the #235
+stale-server restart drives it too and is not the beacon. The pill's per-version `localStorage`
+dismiss is deliberately not carried over — the dot IS the quiet state dismiss provided, and a
+dismissible update surface restores the invisibility this work removes.
+
+Chunk 03 was added after review, on the operator's delegation: the session page had been reading
+update status once, at page load. Sessions here run for days, so the beacon never fired for the
+population the issue names. It now re-reads on the dashboard's cadence (asserted equal, not
+restated), riding the existing status chain rather than a second timer so it inherits the
+visibility skip and burst protection.
+
+**The auto-fade and the no-UI-timers rule (#98/#268):** the fade is inside the ban, not an
+exception to it. A timer may only change the visibility of a notification whose state is preserved
+elsewhere; the dot is that elsewhere and no timer touches it. The tests fire the timer callbacks by
+hand and assert what each one is allowed to reach.
+
+**Review:** a `cumulative` round returned 1 blocking, 10 warnings, 12 notes; every later round came
+back clean. The blocking one mattered: `render` decided "is this a real answer?" on `checkedAt` alone, missing `checkOk: false` —
+the state `lib/update-checker.js#_buildStatus` emits when a check RAN and could not measure — so an
+offline install read as "you are up to date" and the dot came down for an update that was genuinely
+available. Each subsequent commit was covered by its own `verify-resolutions` pass, and the PR
+review then caught one more: the 44px touch floor had been applied to the control a review named
+and to none of its siblings — including **Update now**, at ~24px, on a phone-first product.
+
+**Frontend tests moved from reading the source to running it.** `test/update-beacon.test.js` drives
+the real module through the real `api()` chain against a purpose-built DOM stub (`test/_mini-dom.js`,
+no npm dependency) with timers recorded rather than scheduled;
+`test/update-beacon-pages.test.js` drives BOTH pages' real wiring in one process and compares the
+result, because "each page has a beacon" is not the criterion — "there is one beacon and both pages
+are on it" is. `test/landing-dirty-discard-flow.test.js` was removed, not weakened: its three cases
+are reproduced verbatim at module level.
+
 ## 2026-08-13: the projects list says whether it is the whole list (#885 chunk 02)
 
 <!-- prawduct: type=feature | scope=degraded-reads-900-885 | chunks=02 | status=shipped -->

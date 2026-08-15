@@ -79,6 +79,39 @@ function saveSetting(key, value) {
 const api = window.tcCreateApi({ setConnected });
 const apiMutate = window.tcCreateApiMutate(api);
 
+// Serializes the update-and-restart against itself. The dashboard shares this
+// latch with its #235 stale-server restart button; this page has no such
+// button, so the beacon is its only holder.
+let restartInFlight = false;
+
+// The update beacon (#931) — the same module, the same behavior, and the same
+// guarded apply flow the dashboard runs. Before this, a session announced an
+// update with a badge whose one tap fired agent instructions unconfirmed, and
+// the only surface that could actually apply an update lived on a page the
+// operator was not looking at.
+const updateBeacon = window.tcCreateUpdateBeacon({
+  doc: document,
+  anchorId: 'updateBeacon',
+  api,
+  apiMutate,
+  restart: window.tcCreateRestartFlow({ api, apiMutate, win: window }),
+  getInFlight: () => restartInFlight,
+  setInFlight: (v) => { restartInFlight = v; },
+  // Same restart, so the same ~3 seconds the dashboard quotes — one operation
+  // described two ways is the inconsistency this beacon exists to remove. What
+  // is genuinely different here is the terminal, and that is what this adds.
+  confirmText: (data) =>
+    `Update TangleClaw to v${data.latestVersion} and restart?\n\n`
+    + 'TC fetches the release, switches the checkout to it, and restarts. This tmux '
+    + 'session and everything running in it survive — the terminal below blips and '
+    + 'reconnects on its own when the server returns (~3 seconds).',
+  // The #730 path, kept but demoted: it is offered only in the toast the
+  // operator deliberately re-opened, never in the pop that appears unbidden
+  // and is gone in three seconds. Firing agent instructions was a single
+  // mis-tappable gesture before, which is half of why this rewrite exists.
+  secondaryAction: { label: 'Ask the agent', run: (data) => injectUpdatePrompt(data) }
+});
+
 // ── HTML Escaping ──
 
 /**
@@ -573,21 +606,65 @@ function loadVersion() {
 }
 
 /**
- * Load update status and show/hide the update badge.
+ * Load update status and hand it to the beacon, which decides what an
+ * available update looks like — here and on the dashboard, from one module.
+ *
+ * Every answer is passed on, including the non-answers: a failed request and a
+ * server that has not run its first check yet are both "no answer", not "no
+ * update", and the beacon is the one place that knows the difference (#716).
+ *
+ * @returns {Promise<void>}
  */
 async function loadUpdateStatus() {
-  const data = await api('/api/update-status');
-  if (!data) return;
-  const badge = document.getElementById('updateBadge');
-  if (!badge) return;
-  if (data.updateAvailable && data.latestVersion) {
-    badge.textContent = `v${data.latestVersion}`;
-    badge.title = `Update available: v${data.currentVersion} → v${data.latestVersion}. Tap to send update instructions to the AI agent.`;
-    badge.classList.remove('hidden');
-    badge.onclick = () => injectUpdatePrompt(data);
-  } else {
-    badge.classList.add('hidden');
-  }
+  _lastUpdateCheckAt = Date.now();
+  updateBeacon.render(await api('/api/update-status'));
+}
+
+// How long between update-status reads on this page. Matches the dashboard's
+// cadence, and like the dashboard's it is a plain read of the server's CACHED
+// answer — never a re-measurement, so an open session costs origin nothing no
+// matter how long it stays open. The server's own periodic check is the floor
+// on freshness.
+const UPDATE_CHECK_INTERVAL_MS = 300000;
+
+// Stamped by `loadUpdateStatus`. Zero until the first read at init, which
+// happens before polling starts, so the first poll tick never re-reads.
+let _lastUpdateCheckAt = 0;
+
+/**
+ * Whether enough time has passed to re-read update status.
+ *
+ * Extracted so the cadence is a thing a test can drive directly, rather than
+ * something inferred from a timer that fires every five seconds.
+ *
+ * @param {number} lastAt - When the last read happened (ms epoch).
+ * @param {number} now - Now (ms epoch).
+ * @returns {boolean}
+ */
+function updateCheckDue(lastAt, now) {
+  return now - lastAt >= UPDATE_CHECK_INTERVAL_MS;
+}
+
+/**
+ * One poll tick: session status always, update status occasionally.
+ *
+ * The update read rides the existing status chain rather than starting a
+ * second timer, so it inherits both of that chain's properties — it is skipped
+ * while the tab is hidden, and it cannot stack a burst of queued callbacks on
+ * refocus (the reason this file uses setTimeout chains at all).
+ *
+ * **Why a session polls for updates at all (#931).** Before this the session
+ * page read update status exactly once, at page load. Sessions here run for
+ * days, so an operator sitting in one would never learn about a release that
+ * landed while they were working — on the surface built precisely because
+ * operators live here rather than on the dashboard. A beacon that only fires
+ * for someone who happens to reload is not the beacon the issue asked for.
+ *
+ * @returns {Promise<void>}
+ */
+async function pollTick() {
+  await pollStatus();
+  if (updateCheckDue(_lastUpdateCheckAt, Date.now())) await loadUpdateStatus();
 }
 
 /**
@@ -597,7 +674,7 @@ async function loadUpdateStatus() {
  * #183) — never hardcoded, so a renamed/relocated checkout stays correct.
  *
  * The update itself is delegated to `scripts/apply-update.js`, the CLI face of
- * the same guarded applier the dashboard's "Update & restart" button calls.
+ * the same guarded applier the beacon's "Update now" button calls.
  * This prompt used to hand the agent raw git (`git pull origin main`), which
  * bypassed every guard the button honors: it merged main into whatever branch
  * happened to be checked out, shipped unreleased commits to an operator who
@@ -1731,7 +1808,7 @@ function startPolling() {
     pollTimer = setTimeout(async () => {
       if (!pollTimer) return;
       if (!_pageVisible) return; // skip while hidden, visibilitychange will restart
-      await pollStatus();
+      await pollTick();
       scheduleNext();
     }, sessionState.pollInterval);
   }

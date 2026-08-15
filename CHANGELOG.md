@@ -4,6 +4,171 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **One update beacon on the serpent, instead of a pill on one page and a badge on the other
+  (#931, chunk 1 of 2 — dashboard).** TangleClaw announced an available update two different ways:
+  a pill in the dashboard header, and a much quieter badge in the session banner. The pill was the
+  only one that could actually apply the update, and it is invisible from the session page — which
+  is where an operator lives. So the surface that could act was the one nobody was looking at, and
+  the surface people looked at was so subtle the product's own operator did not know it existed.
+  Field installs learn that a release exists through this surface, so it is now one thing in both
+  places: a toast pops from the logo naming the version with a single **Update now**, fades on its
+  own after ~3 seconds, and leaves a red dot on the logo that persists until the update is applied.
+  Clicking the dot re-opens the notice — with a ✕ this time — so the fade loses nothing. The dot is
+  a real button that names its version, and the toast is a polite live region, neither of which the
+  badge it replaces was. Design chosen by the operator from an interactive mockup.
+
+  The auto-fade sits inside the no-timer-driven-UI rule (#98/#268) rather than an exception to it,
+  and the boundary is mechanical, not a promise: a timer may only change the visibility of a
+  notification whose state is preserved elsewhere. The dot is that elsewhere, no timer touches it,
+  and the tests fire the timer callbacks by hand and assert exactly what each one is allowed to
+  reach.
+
+- **A session now sees the same update beacon, and can act on it (#931, chunk 2 of 2 — session
+  page).** The session banner's update badge is gone, and the serpent beside the project name
+  carries the same toast and the same persistent dot the dashboard does — from the same module, so
+  the two surfaces cannot drift into different answers about the same release again. **Update now**
+  runs the identical guarded apply-and-restart flow, dirty-tree escape and provisioning report
+  included, instead of sending the operator to another page to find the only button that worked.
+  Its confirm says what is different here — the terminal below blips and reconnects on its own —
+  and quotes the same ~3 seconds the dashboard does, because it is the same restart.
+
+  The #730 agent path survives, demoted: **Ask the agent** appears only in the toast the operator
+  deliberately re-opened, never in the pop that arrives unbidden and is gone in three seconds. It
+  used to be the badge's entire behavior, on a single un-confirmed tap.
+
+- **A session now keeps asking, so a release that lands mid-session is seen (#931).** The session
+  page read update status exactly once, at page load. Sessions here run for days, so an operator
+  working in one would never learn about a release that shipped while they were there — on the
+  surface built precisely because operators live in sessions rather than on the dashboard. That
+  made the beacon technically present and practically absent for the population it exists for. It
+  now re-reads on the dashboard's cadence, riding the existing session-status chain rather than
+  starting a second timer, so it inherits that chain's two properties: skipped while the tab is
+  hidden, and unable to stack a burst of queued callbacks on refocus. Like the dashboard's, it is a
+  plain read of the server's cached answer and never a re-measurement — an open session costs
+  origin nothing however long it stays open.
+
+- **The dashboard's per-version dismiss is gone (#931).** `tc_updateDismissed_<version>` in
+  `localStorage` is no longer read or written. The dot is the quiet resting state that dismiss
+  existed to provide, and a permanently dismissible update surface restores the invisibility this
+  work exists to remove. Existing keys are left in place, inert — reading them is the only thing
+  that could bring the behavior back.
+
+### Fixed
+
+- **An update check that FAILED no longer reads as "you are up to date" (#931, Critic R-1).** When
+  the check runs but cannot measure — offline, no git, a timed-out `git ls-remote` — the server
+  answers `updateAvailable: false` with a real timestamp and `checkOk: false`. The beacon
+  discriminated on the timestamp alone, so it took that for a measured "nothing available" and
+  cleared the dot for an update that was genuinely there. Reachable from the four-hour checker's
+  cached failure on every later read, including the session page's single read at page load.
+  `lib/update-checker.js` states the rule outright and the header hint next to it already honored
+  it; the beacon now does too. Not a regression — the pill had the same gap — but #931 makes this
+  module the sole authority on the question, which is exactly why it had to be settled here.
+
+- **An update in flight now has an honest surface (#931, Critic R-2/R-15).** Pressing **Update now**
+  on the first pop left the fade timers running, and because a `confirm()` blocks the event loop
+  both overdue timers fired the instant the operator accepted — so a 3–15 second operation ran with
+  its progress label written to an element no longer on the page. Accepting now cancels the fade
+  (declining does not: it has been seen and answered). The apply control is also rendered from the
+  in-flight latch rather than as a constant, and re-opening no longer tears the toast down mid-
+  update — before, an operator could dismiss the only progress indicator, re-open, and tap an
+  enabled **Update now** whose handler returned silently, with no way to tell a running update from
+  a dead one.
+
+- **Every beacon control meets the 44px touch floor, not just the one a review named (#931, Critic
+  R-10/R-17 + PR review).** The dot's hit area was a negative inset on an 11px dot, which resolves
+  against a 7px padding box under `box-sizing: border-box` — 31px, under the minimum in
+  `project-preferences.md`, and a geometry two reviewers read as two different numbers off the same
+  rule. It is now an explicitly sized, centred 44×44 box. The first fix stopped there, which was the
+  real defect: the same new stylesheet's other three controls — including **Update now**, the primary
+  action of the whole feature, at ~24px — stayed under the floor on a product whose primary client is
+  iPhone Safari. All five now clear it, by three different shapes because the constraint differs:
+  the dot keeps its 44×44 overlay (nothing sits under it), the three toast buttons grow rather than
+  overlay (three controls one `gap` apart would have overlapping invisible hit zones and steal each
+  other's taps), and the release-notes link — a word inside a sentence — takes vertical padding,
+  which on a non-replaced inline element extends the hit area without moving the line box, so the
+  sentence reads exactly as before. An earlier pass exempted that link in a code comment on WCAG
+  2.5.8 grounds; `nonfunctional-requirements.md` is operator-ratified and names links explicitly, so
+  a departure asserted by the departing code was the wrong instrument even though the reasoning was
+  sound. Clearing the floor leaves nothing to ratify. The toast is taller for all this; that is the
+  trade, on a surface whose whole premise is working where the operator actually is.
+
+- **A beacon with nowhere to render now says so (#931, Critic R-16).** If the logo wrapper is ever
+  renamed or dropped, the beacon rendered nothing, forever, with nothing in the console — the
+  invisible-update-surface failure this work exists to remove, reached by a new door. One
+  `console.warn`, once per page load.
+
+### Internal
+
+- **The self-update flow has one implementation again (#931).** `applyUpdateAndRestart` and its
+  #711 dirty-tree handling moved out of `public/landing.js` into `public/update-beacon.js`, so the
+  session page can run *the same* guarded flow rather than a copy that would drift from it on the
+  first fix — which is how the pill and the badge diverged. The restart plumbing underneath
+  (`postServerRestart`, `pollServerBackAndReload`) moved to `public/api-helper.js` as
+  `tcCreateRestartFlow`, because the #235 stale-server restart drives it too and is not the beacon.
+  A structural guard now fails if any page names the apply or restart routes directly.
+
+- **Frontend tests moved from reading the source to running it (#931).** The pill's suites asserted
+  that branches *existed* in `landing.js`; #928 R-1 is the standing reminder that existing and
+  reachable are different claims. `test/update-beacon.test.js` runs the real module through the real
+  `api()` chain against a small purpose-built DOM (`test/_mini-dom.js` — no npm dependency added),
+  with the timers recorded rather than scheduled so "what survives the fade" is a direct assertion
+  instead of a 3.45-second sleep. Ten named mutations were each applied and watched go red.
+  `test/landing-dirty-discard-flow.test.js` was **removed, not weakened**: its three cases are
+  reproduced verbatim in the new suite at the module level. `test/ub-self-update-pill.test.js` →
+  `test/ub-self-update-action.test.js` and `test/update-pill-link.test.js` →
+  `test/update-release-link.test.js`, each reduced to the half that cannot be executed (the
+  stylesheet) plus the cross-file invariant that no page has grown its own copy of the flow. The
+  #583 wrap-guard test stopped counting restart POSTs in `landing.js` — a pin that would have gone
+  quiet rather than red once the helper moved — and now executes the force-past-a-running-wrap path.
+
+- **The beacon refuses a release URL that is not http(s) (#931).** The pill escaped `releaseUrl` as
+  markup and then put it in an `href` anyway; escaping constrains markup, not schemes.
+
+- **The beacon's stylesheet is now checked the way a parser reads it, not as a string (#931).** A
+  comment rewrite left a second `*/` behind, which swallowed `.beacon-anchor` into an invalid
+  selector and dropped the rule — and `.beacon-anchor` is the positioned containing block the
+  persistent dot hangs off, so the core deliverable of this work would have positioned against
+  whatever ancestor happened to be positioned. Every existing assertion passed straight over it,
+  because they all slice the stylesheet as text and text is blind to comment state. The suite now
+  strips comments first and asserts that delimiters balance, braces balance, and every rule the
+  module depends on survives as something a parser can reach.
+
+- **A vacuous cross-page guard was rewritten to be able to fail (#931, Critic R-3).** The test
+  asserting that both pages hit the same routes in the same order declined the confirm on both, so
+  it compared an empty request list to an empty request list — the mutation it named could not
+  redden it. It now drives both flows through to completion. The beacon no longer writes
+  `api.lastError`, an output of the api helper that a consumer writing means a later reader can be
+  shown a message no request produced; and the in-flight accessors lost their no-op defaults, so a
+  page that forgets them fails loudly instead of quietly getting a beacon whose apply is no longer
+  idempotent.
+
+- **The beacon refuses to be built without the page's restart latch (#931).** Dropping the
+  accessors' no-op defaults was meant to make a forgetful page fail loudly; without a check in the
+  factory the throw landed at the first render instead — the moment an update appears, which is the
+  worst time and the hardest to reproduce. The factory now asserts, and the comment claiming so is
+  true.
+
+- **Docs caught up with the surface (#931).** `README.md`, `docs/release-process.md` and
+  `docs/user-guide.md` described the pill, its per-version dismiss, and the old **Update & restart**
+  label as current. `docs/adr/0010-one-update-mechanism.md` and the completed `ub-self-update-action`
+  plan keep their historical wording under a note saying the decision stands and the surfaces do
+  not. The `sw.js` learning from 2026-06-17 — "register it in `STATIC_ASSETS` AND bump
+  `CACHE_NAME`" — was narrowed in place: its remedy is the move #710 forbids, and network-first is
+  the route for a new asset. Successive sweeps took "update pill" and "Update & restart" out of ten
+  code comments across `public/`, `lib/` and `scripts/`; the two that remain are deliberate
+  historical references explaining why the shared module and stylesheet exist.
+
+- **The beacon's stylesheet is one file linked by both pages (#931).** The dashboard and the
+  session page have separate stylesheets, and a copy of the beacon's rules in each would be the
+  pill-and-badge drift rebuilt in CSS. `public/beacon.css` is linked by both. It and
+  `public/update-beacon.js` are network-first in the service worker: a stale copy of the surface
+  that announces releases would hide the announcement of the release that fixes it. No
+  `CACHE_NAME` bump — that tears down every registered worker and is what locked the operator out
+  of Chrome behind the auth gate on 2026-07-28 (#710).
+
 ## [5.1.0] - 2026-08-15
 
 ### Added

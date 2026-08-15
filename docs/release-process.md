@@ -11,7 +11,7 @@ Session Wrap  →  version.json bumped + CHANGELOG promoted  →  merged to main
                                                                     ↓
                                               annotated tag + GitHub Release
                                                                     ↓
-                              update-checker polls origin tags → update pill → Update & restart
+                            update-checker polls origin tags → update beacon → Update now
 ```
 
 **A merged fix is not a delivered fix.** `lib/update-checker.js` and `lib/update-applier.js` both

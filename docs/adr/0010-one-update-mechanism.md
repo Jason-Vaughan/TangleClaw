@@ -1,8 +1,17 @@
 # ADR 0010: One update mechanism — every surface that starts an update calls the applier
 
-**Status:** Accepted (2026-07-27).
+**Status:** Accepted (2026-07-27). Still in force; its two surfaces were replaced in 2026-08-15 — see *Surfaces since #931* below.
 **Source issue:** #730 — the update pill injected unguarded git commands that could strand an install off the updater.
 **Builds on:** #228/#229 (the self-update action and `lib/update-applier.js`), #711 (the update path's remaining gaps).
+
+> **Surfaces since #931 (2026-08-15).** The decision below is unchanged and is now
+> structurally easier to keep: the "dashboard pill" and the "session badge" this ADR
+> describes no longer exist as separate things. Both pages render one update beacon
+> from `public/update-beacon.js`, so there is a single implementation of the apply
+> flow rather than two that must be kept in agreement. The agent-instruction path
+> survives as a secondary action on the session's beacon and still drives
+> `scripts/apply-update.js`, exactly as this ADR requires. Read the surface names
+> below as history.
 
 ---
 

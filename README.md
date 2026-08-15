@@ -80,7 +80,7 @@ What started as session persistence grew into a full orchestration platform — 
 - **[PortHub](https://github.com/Jason-Vaughan/PortHub) built in** — central port registry preventing conflicts across all projects, with permanent and TTL leases, heartbeats, system-wide conflict detection, and auto-allocation of non-colliding ports for new connections
 - **Project groups & shared docs** — link related projects into a group, then share markdown documents across them with per-doc locking. Shared directories auto-sync `.md` files on session launch
 - **Project Map & Feature Index** *(new in 4.0)* — self-maintaining project indexes (`PROJECT-MAP.md`, `FEATURES.md`) refreshed at wrap time, so agents stop hunting for where things live
-- **Dashboard & mobile PWA** — manage projects, launch sessions, and talk to agents from any browser or phone on your network. Installable on iOS and Android, with one-click **Update & restart** when a new TangleClaw release ships
+- **Dashboard & mobile PWA** — manage projects, launch sessions, and talk to agents from any browser or phone on your network. Installable on iOS and Android, with one-click **Update now** when a new TangleClaw release ships
 - **Zero dependencies** — Node.js 22+ stdlib only. No npm install, no build step, no bundler
 
 <details>
@@ -121,7 +121,7 @@ What started as session persistence grew into a full orchestration platform — 
 - **Project Master pane** — persistent fleet-aware assistant session embedded in the landing page and as an in-session drawer, with a settings surface (access level, engine, scope, auto-start, editable versioned Hard rules) and a structurally enforced read-only boundary on the Claude engine ([ADR 0008](docs/adr/0008-project-master-session-model.md))
 - **Setup wizard** — first-run guided setup scans for existing projects, detects engines, configures preferences, and walks through HTTPS setup
 - **Universal project version detection** — every project's version resolves through a layered chain (`.tangleclaw/project-version.txt` → `CHANGELOG.md` → `version.json` → `package.json`) and shows on the project card and session banner
-- **One-click self-update** — the update pill's **Update & restart** button fetches the latest release tag, checks it out with fail-closed guards, and restarts the server
+- **One-click self-update** — the update beacon's **Update now** button fetches the latest release tag, checks it out with fail-closed guards, and restarts the server
 - **Startup project sync** — on every server boot, all engine configs regenerate and memory/scaffolding backfills, so code changes land immediately
 - **PortHub** — central port registry with permanent and TTL leases, heartbeats, and next-free-port auto-allocation
 
@@ -283,7 +283,7 @@ TangleClaw checks for newer releases automatically (a `git ls-remote --tags` aga
 
 **To check on demand, click the version number** in the header. It reports the result inline — up to date, an update available, or that the check could not be made. That last distinction matters: an install that cannot reach `origin` is not the same as one that is current, and before #716 both rendered identically as "no pill".
 
-When a newer tag exists, a pill appears next to the version label — click through to the release notes, dismiss per-version, or press **Update & restart** to have TangleClaw fetch the release, check it out with fail-closed guards, and restart itself.
+When a newer tag exists, the serpent logo announces it — on the dashboard and inside every session, from one surface. A notice pops naming the version, fades after a few seconds, and leaves a red dot on the logo that stays until the update is applied; clicking the dot re-opens the notice. Click through to the release notes, or press **Update now** to have TangleClaw fetch the release, check it out with fail-closed guards, and restart itself.
 
 > **A fork `origin` freezes detection.** GitHub copies tags into a fork only at creation, so a clone whose `origin` points at your own fork will report "up to date" indefinitely no matter how often it checks. Point `origin` at the upstream repo, or fetch tags from upstream yourself. Tracked as [#711](https://github.com/Jason-Vaughan/TangleClaw/issues/711).
 
