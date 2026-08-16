@@ -68,12 +68,28 @@ a failure for every non-repo project on the fleet, which is the exact invention 
 remove, one level down. Found by rendering the real `GET /api/projects` output rather than trusting
 the fixtures; now `not a git repository`, with its own guard.
 
-**Tests:** `test/master-fleet-map.test.js` (+17). Every honesty pair asserts the two render
+**Critic (cumulative `rev-20260816T220814Z-0f187352`): 0 blocking, 11 warning, 11 note.** Six warnings
+fixed in one batch, and three of them were the same defect class this change exists to remove:
+`version not established` manufactured an unknown out of a plain absence (mirror of the `git: null`
+correction); the identity-only banner promised the map refreshes "when the dashboard polls", which
+never writes it; and it could not say whether a missing state pass had failed or was still running.
+Also fixed: `refreshFleetMap` had no single-flight guard, so it queued behind the poll on the serial
+scanner and could earn a healthy project a false Full Disk Access hint (#884/#891); and — the
+sharpest one — calling it from `server.js` resolved `os.homedir()` regardless of any caller-supplied
+home, so `test/master.test.js`'s route test could overwrite the OPERATOR'S live
+`~/.tangleclaw/master/memory/FLEET.md`. The trigger moved into `refreshMasterIdentity`, where home is
+already resolved, behind an opt-in `fleetState` flag and an injectable `refreshFleet` seam, and both
+`server.js` call sites are gone. The decision to make `buildFleetMap` a second reader of the
+`incomplete`/`cause` vocabulary — the only one outside the browser, since the `tc*` classifiers are
+browser globals returning DOM-shaped records — is recorded in `boundary-patterns.md` with the
+obligation it creates: a new cause token now needs a row in two places.
+
+**Tests:** `test/master-fleet-map.test.js` (+25). Every honesty pair asserts the two render
 DIFFERENTLY, not merely that each contains a string — a `notEqual` on the rendered line, because the
-defect class here is flattening, not omission. Five mutations confirmed red before the guards were
-kept (flatten unknown liveness, render an unread tree as clean, treat raw rows as stateful, drop the
+defect class here is flattening, not omission. Nine mutations confirmed red before the guards were kept, four of them against the finding-fixes
+themselves (flatten unknown liveness, render an unread tree as clean, treat raw rows as stateful, drop the
 no-master-home guard, restore the "git could not be read" wording). Fixtures verified against the
-real shape by rendering the live fleet through them. Full suite **6278 pass / 0 fail / 1 skip**.
+real shape by rendering the live fleet through them. Full suite **6285 pass / 0 fail / 1 skip**.
 
 ## 2026-08-16: the Master settings modal becomes a component both pages can mount (#768 chunk 1)
 

@@ -36,6 +36,13 @@ All notable changes to TangleClaw are documented in this file.
   master home exists — so it cannot create master state for an operator who has never opened the
   Master. The renderer, `master.buildFleetMap()`, is pure: no filesystem, no git, no tmux, no clock.
 
+  **Concurrency.** `refreshFleetMap` is single-flight. `listProjects` is the path the ten-second
+  dashboard poll already drives, and `lib/dir-scanner.js` starts each request's deadline at *issue*
+  time against a serial child — so a second unsynchronized caller's reads queue while their clocks
+  run, and a healthy project can burn its deadline waiting its turn and earn the Full Disk Access
+  hint it did not deserve (#884/#891). Concurrent callers coalesce onto one read; the latch releases
+  on failure too, so a thrown read cannot freeze the map for the life of the process.
+
   Groundwork for the ratified Master startup/wrap spec
   (`.tangleclaw/plans/master-startup-and-wrap.md`), whose next item compares this file's
   `generated-at` stamp against the Master's own `observed-at` notes to compute memory drift.
