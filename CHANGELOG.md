@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.4.0] - 2026-08-15
+
 ### Added
 
 - **A session page now says when TangleClaw's API has stopped answering, instead of retrying
