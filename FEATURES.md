@@ -271,3 +271,7 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 ## TODO (auto-stubbed 2026-08-16)
 
 - **Master settings modal, lift-and-run coverage** — `test/master-launch-mode.test.js` lifts the real `renderMasterSettingsBody` and `saveMasterSettings` out of `public/api-helper.js` and executes them, so a rendered `<option>` is told apart from a string that merely appears in the file; `test/master-settings-mount.test.js` runs `mount()` against an injectable document to cover injection, adoption and idempotence. Tests: `test/master-launch-mode.test.js`, `test/master-settings-mount.test.js`, `test/_mini-dom.js`.
+
+## TODO (auto-stubbed 2026-08-16)
+
+- **TBD** — touched in this session: `test/master-fleet-map.test.js`. <!-- describe -->
