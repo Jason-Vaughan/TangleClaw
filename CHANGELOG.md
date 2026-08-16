@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.6.0] - 2026-08-16
+
 ### Added
 
 - **The Project Master's fleet map says what each project is doing, not just that it exists (#950).**
