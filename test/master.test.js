@@ -25,6 +25,18 @@ setLevel('error');
 delete process.env.TANGLECLAW_PORT;
 
 const store = require('../lib/store');
+
+/**
+ * A no-op fleet refresher for `ensureMasterSession`.
+ *
+ * Without it every call here fires an unawaited REAL fleet pass — `listProjects`
+ * → a dir-scanner fork plus `tmux list-sessions` — against a store pointing at
+ * temp project paths, racing this file's own `after()` teardown. It stayed green
+ * only because `refreshMasterIdentity` catches the resulting write failure and
+ * this file logs at `error`, which is the shape of a test that passes for the
+ * wrong reason.
+ */
+const NO_FLEET = async () => ({ refreshed: false, count: 0 });
 const master = require('../lib/master');
 
 let tmpDir;
@@ -175,7 +187,7 @@ describe('ensureMasterSession', () => {
 
   it('creates the home dir + CLAUDE.md and launches when the session is absent', () => {
     const t = fakeTmux({ alive: false });
-    const r = master.ensureMasterSession({ home, tmuxLib: t, enginesLib: availableEngines });
+    const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: availableEngines });
     assert.equal(r.created, true);
     assert.equal(r.tmuxSession, master.MASTER_TMUX_SESSION);
     assert.equal(r.error, undefined);
@@ -191,7 +203,7 @@ describe('ensureMasterSession', () => {
     const t = fakeTmux({ alive: true });
     fs.mkdirSync(home, { recursive: true });
     fs.writeFileSync(path.join(home, 'CLAUDE.md'), 'stale hand-edit');
-    const r = master.ensureMasterSession({ home, tmuxLib: t, enginesLib: availableEngines });
+    const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: availableEngines });
     assert.equal(r.created, false);
     assert.equal(r.error, undefined);
     assert.equal(t.calls.length, 0, 'must not create a second session');
@@ -202,7 +214,7 @@ describe('ensureMasterSession', () => {
 
   it('refuses with an error when the engine binary is unavailable — and does not create tmux', () => {
     const t = fakeTmux({ alive: false });
-    const r = master.ensureMasterSession({
+    const r = master.ensureMasterSession({ refreshFleet: NO_FLEET,
       home,
       tmuxLib: t,
       // Resolution is pinned so this test is about DETECTION only — without it the
@@ -224,7 +236,7 @@ describe('ensureMasterSession', () => {
     // doesn't depend on which CLIs the host machine has installed.
     const noEngines = { detectEngine: () => ({ available: false }), resolveDefaultEngine: () => null };
     const t = fakeTmux({ alive: false });
-    const r = master.ensureMasterSession({ home, tmuxLib: t, enginesLib: noEngines });
+    const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: noEngines });
     assert.equal(r.created, false);
     assert.match(r.error, /No AI engine is installed/);
     assert.doesNotMatch(r.error, /null/, 'must not leak the null through to the operator');
@@ -238,7 +250,7 @@ describe('ensureMasterSession', () => {
       config.defaultEngine = 'ghost-engine';
       store.config.save(config);
       const t = fakeTmux({ alive: false });
-      const r = master.ensureMasterSession({ home, tmuxLib: t, enginesLib: availableEngines });
+      const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: availableEngines });
       assert.equal(r.created, false);
       assert.match(r.error, /"ghost-engine" not found/);
       assert.equal(t.calls.length, 0);
@@ -254,7 +266,7 @@ describe('ensureMasterSession', () => {
     try {
       sessionsLib._buildLaunchCommand = () => undefined;
       const t = fakeTmux({ alive: false });
-      const r = master.ensureMasterSession({ home, tmuxLib: t, enginesLib: availableEngines });
+      const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: availableEngines });
       assert.equal(r.created, false);
       assert.match(r.error, /no launch command/);
       assert.equal(t.calls.length, 0, 'must not create a session that would run a bare shell');
@@ -266,12 +278,12 @@ describe('ensureMasterSession', () => {
   it('surfaces tmux failures as typed errors — create-false and thrown', () => {
     const engines = availableEngines;
     const refusing = fakeTmux({ alive: false, createSession: () => false });
-    const r1 = master.ensureMasterSession({ home, tmuxLib: refusing, enginesLib: engines });
+    const r1 = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: refusing, enginesLib: engines });
     assert.equal(r1.created, false);
     assert.match(r1.error, /Failed to create tmux session/);
 
     const throwing = fakeTmux({ alive: false, createSession: () => { throw new Error('boom'); } });
-    const r2 = master.ensureMasterSession({ home: home + '-t', tmuxLib: throwing, enginesLib: engines });
+    const r2 = master.ensureMasterSession({ refreshFleet: NO_FLEET, home: home + '-t', tmuxLib: throwing, enginesLib: engines });
     assert.equal(r2.created, false);
     assert.match(r2.error, /tmux error: boom/);
   });
@@ -366,7 +378,7 @@ describe('ensureMasterSession refuses to start a second master over one it canno
     const t = fakeTmux({ alive: true, answered: false });
     const home = path.join(tmpDir, 'master-wedge');
 
-    const r = master.ensureMasterSession({ home, tmuxLib: t, enginesLib: availableEngines });
+    const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: availableEngines });
 
     assert.equal(r.created, false);
     assert.match(r.error, /could not determine/i,
@@ -400,7 +412,7 @@ describe('ensureMasterSession refuses to start a second master over one it canno
     const t = fakeTmux({ alive: false, answered: true });
     const home = path.join(tmpDir, 'master-answered-absent');
 
-    const r = master.ensureMasterSession({ home, tmuxLib: t, enginesLib: availableEngines });
+    const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: availableEngines });
 
     assert.equal(r.error, undefined, 'an answered absence is not an error');
     assert.equal(t.calls.length, 1, 'it has to actually start the master');
@@ -648,7 +660,7 @@ describe('ensureMasterSession — settings integration', () => {
   });
 
   it('seeds the baseline, renders it into CLAUDE.md, scaffolds memory, and writes guardrails (claude engine)', () => {
-    const r = master.ensureMasterSession({ home, tmuxLib: fakeTmux({ alive: false }), enginesLib: availableEngines });
+    const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: fakeTmux({ alive: false }), enginesLib: availableEngines });
     assert.equal(r.created, true);
     assert.equal(r.engine, 'claude');
     assert.equal(r.accessLevel, 'read-only');
@@ -662,7 +674,7 @@ describe('ensureMasterSession — settings integration', () => {
   it('renders edited rules into the identity on the next ensure', () => {
     master.seedBaselineMasterRules();
     store.sessionRules.create({ content: 'Session-rules-backed custom boundary.', kind: 'master' });
-    master.ensureMasterSession({ home, tmuxLib: fakeTmux({ alive: true }), enginesLib: availableEngines });
+    master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: fakeTmux({ alive: true }), enginesLib: availableEngines });
     assert.match(fs.readFileSync(path.join(home, 'CLAUDE.md'), 'utf8'), /Session-rules-backed custom boundary\./);
   });
 
@@ -677,7 +689,7 @@ describe('ensureMasterSession — settings integration', () => {
     try {
       config.master = { accessLevel: 'read-only', engine: 'claude', scope: 'all', autoStart: false };
       store.config.save(config);
-      const r = master.ensureMasterSession({
+      const r = master.ensureMasterSession({ refreshFleet: NO_FLEET,
         home, tmuxLib: fakeTmux({ alive: false }), enginesLib: enginesInstalling(['codex'])
       });
       assert.equal(r.engine, 'codex', 'a pinned engine that is not installed must resolve, not be honored');
@@ -694,7 +706,7 @@ describe('ensureMasterSession — settings integration', () => {
     try {
       config.master = { accessLevel: 'read-only', engine: 'codex', scope: 'all', autoStart: false };
       store.config.save(config);
-      const r = master.ensureMasterSession({
+      const r = master.ensureMasterSession({ refreshFleet: NO_FLEET,
         home, tmuxLib: fakeTmux({ alive: false }), enginesLib: enginesInstalling(['claude', 'codex'])
       });
       assert.equal(r.engine, 'codex', 'an installed pin must be honored, not overridden');
@@ -728,7 +740,7 @@ describe('ensureMasterSession — settings integration', () => {
         config.master = { accessLevel: 'read-only', engine: null, scope: 'all', autoStart: false, ...masterBlock };
         store.config.save(config);
         const tmuxLib = fakeTmux({ alive: false });
-        const r = master.ensureMasterSession({
+        const r = master.ensureMasterSession({ refreshFleet: NO_FLEET,
           home, tmuxLib, enginesLib: opts.enginesLib || availableEngines
         });
         return { result: r, command: tmuxLib.calls.length ? tmuxLib.calls[0].opts.command : null };
@@ -775,7 +787,7 @@ describe('ensureMasterSession — settings integration', () => {
       try {
         config.master = { accessLevel: 'read-only', engine: 'aider', launchMode: 'acceptEdits', scope: 'all', autoStart: false };
         store.config.save(config);
-        master.ensureMasterSession({ home, tmuxLib: fakeTmux({ alive: false }), enginesLib: enginesInstalling(['aider']) });
+        master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: fakeTmux({ alive: false }), enginesLib: enginesInstalling(['aider']) });
         assert.equal(master.masterSettings(store.config.load()).launchMode, 'acceptEdits',
           'the stored preference must survive an engine that cannot honor it');
       } finally {
@@ -819,7 +831,7 @@ describe('ensureMasterSession — settings integration', () => {
       try {
         config.master = { accessLevel: 'read-only', engine: 'aider', launchMode: 'acceptEdits', scope: 'all', autoStart: false };
         store.config.save(config);
-        master.ensureMasterSession({
+        master.ensureMasterSession({ refreshFleet: NO_FLEET,
           home, tmuxLib: fakeTmux({ alive: false }), enginesLib: enginesInstalling(['aider'])
         });
         assert.match(captured.join(''), /not honored by the resolved engine/,
@@ -868,7 +880,7 @@ describe('ensureMasterSession — settings integration', () => {
       try {
         config.master = { accessLevel: 'read-only', engine: 'claude', launchMode: 'acceptEdits', scope: 'all', autoStart: false };
         store.config.save(config);
-        master.ensureMasterSession({ home, tmuxLib: fakeTmux({ alive: false }), enginesLib: availableEngines });
+        master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: fakeTmux({ alive: false }), enginesLib: availableEngines });
         assert.doesNotMatch(captured.join(''), /not honored by the resolved engine/);
       } finally {
         config.master = saved;
@@ -916,7 +928,7 @@ describe('ensureMasterSession — settings integration', () => {
         config.master = { accessLevel: 'read-only', engine: 'aider', launchMode: 'plan', scope: 'all', autoStart: false };
         store.config.save(config);
         const lib = enginesInstalling(['aider']);
-        const ensured = master.ensureMasterSession({ home, tmuxLib: fakeTmux({ alive: false }), enginesLib: lib });
+        const ensured = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: fakeTmux({ alive: false }), enginesLib: lib });
         const status = master.getMasterStatus({ tmuxLib: fakeTmux({ alive: true }), enginesLib: lib });
         assert.equal(ensured.launchMode, status.settings.resolvedLaunchMode);
       } finally {
@@ -934,7 +946,7 @@ describe('ensureMasterSession — settings integration', () => {
       // (proving master.engine wins) and skip the claude-only guardrails.
       config.master = { accessLevel: 'read-only', engine: 'ghost-engine', scope: 'all', autoStart: false };
       store.config.save(config);
-      const r = master.ensureMasterSession({ home, tmuxLib: fakeTmux({ alive: false }), enginesLib: availableEngines });
+      const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: fakeTmux({ alive: false }), enginesLib: availableEngines });
       assert.equal(r.engine, 'ghost-engine');
       assert.equal(r.enforcement, 'instructional');
       assert.match(r.error, /"ghost-engine" not found/);

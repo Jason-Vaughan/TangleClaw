@@ -40,9 +40,11 @@ needs none of that spec's rulings.
 **What changed:** `lib/master.js` gains `buildFleetMap(projects, {generatedAt})` — a PURE renderer,
 no filesystem/git/tmux/clock — plus `refreshFleetMap()`, async, which rides the enriched list
 `projects.listProjects()` already builds and writes only `FLEET.md`. `_refreshMasterMemory` now takes
-an optional `projects` and delegates rendering. Wired in `server.js` at boot (after the identity
-refresh) and on `POST /api/master/ensure`, both **unawaited** — neither boot nor an ensure response
-may wait on the whole fleet's git reads.
+an optional `projects` and delegates rendering. Triggered from `refreshMasterIdentity` behind an opt-in
+`fleetState` flag, so it resolves `home` exactly where every other write in that function does. The
+two production askers are `server.js` at boot and `lib/master.js#ensureMasterSession`; the pass is
+**unawaited** in both, since neither boot nor an ensure response may wait on the whole fleet's git
+reads. `server.js` calls `refreshFleetMap` nowhere — a test pins that.
 
 **The constraint that shaped it, and the estimate it corrected.** The spec called this "one
 function". It is not: `refreshMasterIdentity` is fully synchronous and runs at server boot, while the
@@ -93,9 +95,11 @@ project rendered as `not a git repository · no live session`, identical to an o
 against live data first and rejected — eight present projects report `not-applicable`, so that
 derivation would have declared them gone. (b) Nothing pinned either production wiring site: dropping
 `fleetState: true` at boot or in `ensureMasterSession` left the suite green. Both pinned, both
-mutation-confirmed. `ensureMasterSession` also forwards `refreshFleet` now, because ~15 of its tests
-were firing unawaited real fleet reads that spawned `tmux list-sessions` and raced their own temp-dir
-teardown — a hygiene regression this change introduced.
+mutation-confirmed. `ensureMasterSession` forwards a `refreshFleet` seam, and all 20 of its call
+sites in `test/master.test.js` now pass a no-op through it. Adding the seam without applying it —
+which is how this shipped at first — left every one of those tests firing an unawaited REAL fleet
+pass against temp project paths, racing the file's own teardown, and green only because the write
+failure was caught and the file logs at `error`. A test that passes for the wrong reason.
 
 **Carried, not dropped:** `listProjects` still has no cross-caller guard, so this module's
 single-flight does not stop it interleaving with the ten-second dashboard poll — a `lib/projects.js`
