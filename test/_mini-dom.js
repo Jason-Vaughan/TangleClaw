@@ -36,6 +36,10 @@ function makeElement(tag, doc) {
     // instead of `undefined`. Needed by the session unreachable banner (#941),
     // which fills itself once and checks whether it already has.
     innerHTML: '',
+    // Mirrors `element.dataset`. A plain object is faithful here: production
+    // code only reads and writes string flags on it (mount()'s bound-once
+    // latch), and nothing depends on the attribute-name mapping.
+    dataset: Object.create(null),
     type: '',
     title: '',
     href: '',
@@ -98,6 +102,10 @@ function makeElement(tag, doc) {
     /** @returns {string} The element's own text plus its descendants'. */
     get text() {
       return (el.textContent || '') + el.childNodes.map((c) => c.text).join('');
+    },
+    /** @returns {object|null} First child element, or null when there are none. */
+    get firstElementChild() {
+      return el.childNodes[0] || null;
     }
   };
   // Own text, separate from the composed `text` getter above.
@@ -127,6 +135,8 @@ function makeDocument(ids) {
   const doc = {
     createElement: (tag) => makeElement(tag, doc),
     getElementById: (id) => byId[id] || null,
+    /** Register an element so `getElementById` can find it. */
+    _register(el) { if (el.id) byId[el.id] = el; },
     body: null
   };
   doc.body = makeElement('body', doc);
@@ -139,4 +149,44 @@ function makeDocument(ids) {
   return { doc, ids: byId };
 }
 
-module.exports = { makeElement, makeDocument };
+/**
+ * Give an element an `innerHTML` setter that extracts ids from assigned markup,
+ * registers them on the document, and exposes the first as a single root child.
+ *
+ * This is the narrowest stand-in for the browser's parser that lets a component
+ * which BUILDS its own markup be mounted and driven — the alternative is
+ * asserting on the source of a mount function, which is what #928 R-1 and the
+ * `mount()` idempotence pins showed proves nothing about runtime.
+ *
+ * DELIBERATELY NOT A PARSER. It produces a FLAT list of id-bearing elements
+ * with no nesting, no attributes and no text, so it can answer only "does this
+ * id now exist, and is there one root". Never assert structure, ancestry or
+ * content through it — for that the markup is a string and a regex is honest.
+ *
+ * @param {object} el - Element to upgrade (from `makeElement`).
+ * @param {object} doc - Owning document (from `makeDocument`).
+ * @returns {object} The same element.
+ */
+function withIdParsingInnerHTML(el, doc) {
+  let raw = '';
+  Object.defineProperty(el, 'innerHTML', {
+    configurable: true,
+    get() { return raw; },
+    set(v) {
+      raw = String(v);
+      el.childNodes.length = 0;
+      const seen = [...raw.matchAll(/id="([A-Za-z0-9_-]+)"/g)].map((m) => m[1]);
+      seen.forEach((id, i) => {
+        const child = makeElement('div', doc);
+        child.id = id;
+        doc._register(child);
+        // Flat by construction: only the first id becomes the root child, so
+        // `firstElementChild` answers correctly without implying a real tree.
+        if (i === 0) el.appendChild(child);
+      });
+    }
+  });
+  return el;
+}
+
+module.exports = { makeElement, makeDocument, withIdParsingInnerHTML };
