@@ -28,6 +28,62 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-08-15: the last three unknowns wearing a fact's clothes (#906, #905, #907)
 
+<!-- prawduct: type=refactor | scope=master-settings-component-768 | chunks=01 -->
+
+## The Master settings modal becomes a component both pages can mount (#768 chunk 1)
+
+**Why:** from inside a session there was no route to the Master's settings at all.
+`masterSettingsModal` lived only in `public/index.html`, and `grep -c masterSettingsModal
+public/session.html` was `0`. To see or change the single most consequential fact about the Master
+— what it is allowed to do — the operator had to leave the session, return to the dashboard, open
+the Master panel and click the gear. #768's operator requirement was **reuse, don't fork**: build
+the bar from the same code as the session controls rather than maintaining two of everything.
+
+**What changed:** `openMasterSettings` → `saveMasterSettings` — ~330 lines of `public/ui.js`
+including the entire Hard-rules editor (add / toggle / delete / version history / restore, with the
+eyes-open baseline confirms) — moved to `public/api-helper.js` as `tcCreateMasterSettings(deps)`.
+The shell markup moved with it into `tcMasterSettingsMarkup()`, so neither page carries a copy that
+can drift: `index.html` no longer declares the modal, and both `ui.js` and `session.js` construct
+and `mount()` the same component. `mount()` is idempotent and adopts an existing modal rather than
+appending, because two `#masterSettingsModal` nodes mean `getElementById` renders into the one the
+operator cannot see — which presents as "the gear does nothing". The transient rules-status line is
+now one implementation, `tcSetRulesStatus`, shared by the Project Rules surface and the modal.
+
+Page-specific capability arrives through `deps` rather than as globals, because the mount sites
+genuinely differ: the dashboard has master status dots to paint a failed open onto and passes
+`onOpenError` to do it; the session page has none and says so in the console rather than pretending
+the open succeeded. The engine list lives on `state` on one page and `sessionState` on the other.
+
+**No user-visible change.** The dashboard behaves exactly as before, and nothing on the session
+page opens the modal yet — that control is chunk 2. **No `CACHE_NAME` bump** was needed or made:
+`/api-helper.js`, `/ui.js`, `/session.js` and navigations are all already network-first in
+`public/sw.js`, so they cannot skew stale against each other (a bump tears down every browser's
+worker, #710).
+
+**Tests:** the behavioural net was re-pointed, not rewritten — `test/master-launch-mode.test.js`
+still lifts the real `renderMasterSettingsBody` and `saveMasterSettings` and runs them against
+byte-identical assertions; only the file it lifts from moved. Same for the source pins in
+`test/master-settings-frontend.test.js` and `test/engine-picker-gating.test.js`. New:
+`test/master-settings-mount.test.js` (+6) RUNS `mount()` against an injectable document — mounts
+twice, counts nodes, fires close twice to prove the handler bound once — replacing source-regex
+pins that would have passed whether or not a second mount did anything. `test/_mini-dom.js` gained
+`dataset`, `firstElementChild` and a deliberately non-parsing `withIdParsingInnerHTML`. Full suite
+**6260 pass / 0 fail / 1 skip**.
+
+**Critic:** cumulative `rev-20260816T204208Z-673c4a9b` — 0 blocking, 12 warning, 8 note; 12 fixed,
+7 accepted, 1 filed (#948). `verify-resolutions` after the fixes: 0 blocking, 0 warnings. That pass
+caught three findings recorded as fixed while only half-fixed, including a commit message that
+claimed two stale comments were corrected when one had been; corrected forward rather than amended.
+
+**Carried, not dropped:** `session.css` carries none of the modal's classes, so it renders unstyled
+on the session page — invisible today because nothing opens it, and written into chunk 2's plan as
+non-optional since chunk 2's Done-when is that it opens. `boundary-patterns.md`'s Shared Frontend
+Module Contract gained the general rules (a shared module that emits markup carries a stylesheet
+dependency the script tags do not show; assert mount idempotence by mounting twice, never by
+matching source). **Filed:** #948 — a failed Hard-rules fetch renders as "No rules — the shipped
+baseline applies", an unknown told as a fact about the Master's boundary; moved code, but this
+extraction is about to put it on a second surface.
+
 <!-- prawduct: type=bugfix | scope=unknown-not-fact-tail-905-907-906 | chunks=01,02,03 -->
 
 **Why:** #891 settled the rule — a read that could not establish a fact reports unknown, never a
