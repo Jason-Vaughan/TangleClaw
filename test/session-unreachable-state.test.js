@@ -29,6 +29,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { makeElement, makeDocument } = require('./_mini-dom');
 
 const pub = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
 const SESSION_SRC = pub('session.js');
@@ -80,37 +81,15 @@ function realCeilingMs() {
   return Number(m[1]);
 }
 
-/** A DOM element stub covering what the session connection code touches. */
-function makeElement(tag, id) {
-  const classSet = new Set();
-  return {
-    tagName: tag,
-    id: id || '',
-    innerHTML: '',
-    textContent: '',
-    title: '',
-    disabled: false,
-    get className() { return [...classSet].join(' '); },
-    set className(v) { classSet.clear(); v.split(/\s+/).filter(Boolean).forEach((c) => classSet.add(c)); },
-    classList: {
-      add: (c) => classSet.add(c),
-      remove: (c) => classSet.delete(c),
-      contains: (c) => classSet.has(c)
-    },
-    setAttribute() {},
-    appendChild() {}
-  };
-}
-
 /**
  * Build a sandbox running the session page's real connection-state code.
- * @returns {object} vm context with `elements` and clock controls attached.
+ * @returns {object} vm context with `ids` and clock controls attached.
  */
 function loadSessionConnectionState() {
   // The page's real static mount points, including the terminal the banner
   // must never displace.
-  const elements = ['toast', 'statusDot', 'commandSend', 'sessionUnreachable', 'terminalFrame']
-    .map((id) => makeElement('div', id));
+  const { doc, ids } = makeDocument(
+    ['toast', 'statusDot', 'commandSend', 'sessionUnreachable', 'terminalFrame']);
 
   const state = { clock: 0, pending: [], probes: 0, serverUp: false };
   const sandbox = {
@@ -120,11 +99,7 @@ function loadSessionConnectionState() {
     clearTimeout: () => { state.pending.length = 0; },
     sessionState: { connected: true },
     location: { origin: 'https://tc.example:3102' },
-    document: {
-      getElementById: (id) => elements.find((e) => e.id === id) || null,
-      createElement: (tag) => makeElement(tag),
-      body: { appendChild: (el) => { elements.push(el); } }
-    }
+    document: doc
   };
   sandbox.pollStatus = async () => {
     state.probes++;
@@ -145,14 +120,14 @@ function loadSessionConnectionState() {
     'globalThis.retrySessionConnectionNow = retrySessionConnectionNow;'
   ].join('\n'), sandbox);
 
-  sandbox.elements = elements;
+  sandbox.ids = ids;
   sandbox.state = state;
   sandbox.advance = (ms) => { state.clock += ms; };
   return sandbox;
 }
 
-const banner = (ctx) => ctx.elements.find((e) => e.id === 'sessionUnreachable');
-const toast = (ctx) => ctx.elements.find((e) => e.id === 'toast');
+const banner = (ctx) => ctx.ids.sessionUnreachable;
+const toast = (ctx) => ctx.ids.toast;
 
 /** Let the outage outlive the ceiling, then probe. */
 async function probePastCeiling(ctx) {
@@ -174,6 +149,9 @@ describe('a dead API escalates on the session page too (#941)', () => {
     await probePastCeiling(ctx);
     assert.equal(banner(ctx).classList.contains('visible'), true,
       'past the ceiling the session page must stop claiming a blip');
+    assert.equal(toast(ctx).classList.contains('visible'), false,
+      'the toast and the banner answer the same question — leaving "Retrying…" '
+      + 'pinned above the banner says both at once');
   });
 
   it('names what is unknown: the API is down, the terminal may still be live', async () => {
@@ -220,9 +198,10 @@ describe('a dead API escalates on the session page too (#941)', () => {
 
     assert.match(banner(ctx).innerHTML, /id="sessionUnreachableRetryBtn"/,
       'the fixture id must match the id the rendered banner actually carries');
-    const btn = makeElement('button', 'sessionUnreachableRetryBtn');
+    const btn = makeElement('button', ctx.document);
+    btn.id = 'sessionUnreachableRetryBtn';
     btn.textContent = 'Retry now';
-    ctx.elements.push(btn);
+    ctx.ids.sessionUnreachableRetryBtn = btn;
 
     let release;
     ctx.pollStatus = () => new Promise((resolve) => {

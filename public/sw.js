@@ -26,6 +26,15 @@ const STATIC_ASSETS = [
   // landing.js it is dual-listed (precached here for offline coherence of
   // '/', network-first below because it is cache-bust-critical).
   '/sw-register.js',
+  // reconnect-policy.js is dual-listed for the same reason, with a sharper
+  // failure mode: a network-first MISS while the network is down returns the
+  // synthetic JSON 503, and a `<script src>` served a 503 leaves both pages
+  // throwing `tcCreateReconnectPolicy is not defined` at parse time — rendering
+  // nothing at all, which is strictly worse than the "Retrying… forever" this
+  // module exists to fix. Precaching closes that window for fresh installs.
+  // (It takes effect on the next worker install; existing workers are already
+  // covered because the network-first branch caches what it fetches.)
+  '/reconnect-policy.js',
   '/manifest.json'
 ];
 

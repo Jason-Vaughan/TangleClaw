@@ -39,7 +39,11 @@ All notable changes to TangleClaw are documented in this file.
   The retry policy now lives in one module (`public/reconnect-policy.js`) that both pages consume,
   because the duplicated loop is *why* #709 could be built on one page and not the other. Two
   copies of a rule produce two behaviors; a regression test now fails if either page grows its own
-  loop again.
+  loop again. The ceiling is checked on both sides of each probe, so a black-holed host — a
+  sleeping machine, a tailnet route that went away — cannot withhold the honest verdict for the
+  browser's own multi-minute connect timeout; a probe that throws is caught so it cannot stop the
+  retry loop for the life of the page; and a server that flaps mid-probe cannot leave two probe
+  chains running against it.
 
 ### Fixed
 
@@ -59,14 +63,17 @@ All notable changes to TangleClaw are documented in this file.
   under a running agent is real damage while deferring costs a retry, so an unknown defers — and
   says it could not establish liveness rather than claiming a live session it never saw.
 
-- **Project auto-detection can no longer register the running TangleClaw checkout as a project
+- **Project detection no longer offers the running TangleClaw checkout as a candidate project
   (#920).** `detectExistingProjects` walked the operator's projects directory with no own-install
-  exclusion, and the clone carries the markers it keys on. #708 fixed the wizard's version of this;
-  this path is worse, because it registers what it finds — writing `.tangleclaw/project.json` into
-  the clone, which dirties it and strands the self-updater behind its dirty-tree guard. The install
-  is now excluded by realpath, so a symlinked projects directory cannot smuggle it past a string
-  compare. Attaching this checkout deliberately (developing TangleClaw with TangleClaw) still works
-  through the normal attach flow, which does not pass through detection.
+  exclusion, and the clone carries the markers it keys on, so it would hand the tool itself back as
+  a project. #708 closed the same hole in the setup wizard's scan, where the harm was concrete: a
+  pre-checked box attached the clone as the operator's first project and wrote per-project config
+  into it, dirtying the checkout and stranding the self-updater behind its dirty-tree guard. This
+  function only reports, and today only tests call it — so this closes the hole before a caller
+  reopens it, rather than fixing damage the function does on its own. The install is excluded by
+  realpath, so a symlinked projects directory cannot smuggle it past a string compare. Attaching
+  this checkout deliberately (developing TangleClaw with TangleClaw) still works through the normal
+  attach flow, which does not pass through detection.
 
 ## [5.3.0] - 2026-08-15
 

@@ -176,6 +176,12 @@ const reconnectPolicy = tcCreateReconnectPolicy({
  * applies, so the only navigation out of this state is the operator's.
  */
 function renderSessionUnreachable() {
+  // The toast and this banner answer the same question, and the toast's answer
+  // is the one that stopped being true — leaving "Retrying…" pinned above a
+  // banner explaining the server is gone says both at once. The dashboard drops
+  // its toast at the same moment for the same reason.
+  const toast = document.getElementById('toast');
+  if (toast) toast.classList.remove('visible');
   const el = document.getElementById('sessionUnreachable');
   if (!el) return;
   if (!el.innerHTML.trim()) {
@@ -190,7 +196,7 @@ function renderSessionUnreachable() {
       <p>On the machine that runs TangleClaw:</p>
       <pre>launchctl list | grep tangleclaw
 tail -50 ~/.tangleclaw/logs/server.err.log</pre>
-      <button id="sessionUnreachableRetryBtn" onclick="retrySessionConnectionNow()">Retry now</button>`;
+      <button id="sessionUnreachableRetryBtn" class="btn btn-danger" onclick="retrySessionConnectionNow()">Retry now</button>`;
   }
   el.classList.add('visible');
 }

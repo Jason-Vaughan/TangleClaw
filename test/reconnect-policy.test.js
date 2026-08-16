@@ -212,13 +212,33 @@ describe('escalation fires once, and re-arms only after a real recovery', () => 
     // The re-entrancy case: probe() flips the page connected, which calls
     // end() and clears the outage clock. Escalating after that would paint a
     // dead-server message over a server that just answered.
+    //
+    // Held below the ceiling deliberately. Past it the outage has genuinely
+    // lasted long enough to deserve announcing, and the pre-probe check says
+    // so before the probe runs — that is the point of checking on both sides,
+    // not a leak. What must never happen is the POST-probe check firing on an
+    // outage the probe just closed.
     const h = makeHarness();
     h.policy.begin();
-    h.advance(60000); // long past the ceiling
+    h.advance(5000);
     h.state.serverUp = true;
     await h.policy.retryNow();
     assert.equal(h.state.escalations, 0,
       'a probe that succeeded must not escalate on the way out');
+    assert.equal(h.state.recoveries, 1);
+    assert.equal(h.policy.isOutage(), false);
+  });
+
+  it('an already-escalated outage that recovers does not escalate again', async () => {
+    const h = makeHarness();
+    h.policy.begin();
+    h.advance(30000);
+    await h.policy.retryNow();
+    assert.equal(h.state.escalations, 1);
+
+    h.state.serverUp = true;
+    await h.policy.retryNow();
+    assert.equal(h.state.escalations, 1, 'recovery announces nothing new');
     assert.equal(h.state.recoveries, 1);
   });
 });
@@ -242,6 +262,31 @@ describe('begin() is idempotent so the ceiling cannot be pushed out of reach', (
     h.policy.begin();
     assert.equal(h.state.pending.length, 1,
       'three disconnect signals must not triple the probe rate');
+  });
+
+  it('a flap during an in-flight probe does not orphan a second chain', async () => {
+    // Each page runs its own status poller calling the same `setConnected`, so
+    // a restarting server can produce recover-then-drop inside one probe
+    // window. If the resuming loop and the one `begin()` started both re-arm,
+    // the orphan permanently doubles the probe rate against a booting server —
+    // the exact herd the jitter exists to prevent.
+    let releaseProbe;
+    const h = makeHarness({
+      probe: () => new Promise((resolve) => { releaseProbe = resolve; })
+    });
+    h.policy.begin();
+    const inFlight = h.fire();              // a probe is now awaiting
+    await new Promise((r) => setImmediate(r));
+
+    h.policy.end();                          // server answered on another path
+    h.policy.begin();                        // ...and dropped again
+    const armedByBegin = h.state.pending.length;
+
+    releaseProbe();
+    await inFlight;                          // the old probe resolves and re-arms
+
+    assert.equal(h.state.pending.length, armedByBegin,
+      'the superseded chain must not add a second timer');
   });
 });
 
@@ -272,6 +317,70 @@ describe('probes are jittered so open tabs do not converge into a burst', () => 
     a.policy.begin();
     b.policy.begin();
     assert.notEqual(a.state.pending[0].ms, b.state.pending[0].ms);
+  });
+});
+
+describe('the ceiling holds even when the probe itself is the slow part', () => {
+  it('escalates before a stalled probe returns, not after', async () => {
+    // `fetch` has no deadline. Against a refusing server a probe fails at once,
+    // but against a black-holed host — a sleeping machine, a tailnet route that
+    // went away — the connect stalls for the browser's own multi-minute
+    // timeout. Checking the ceiling only after the probe would withhold the
+    // honest verdict exactly when the network is at its least honest.
+    let releaseProbe;
+    const h = makeHarness({
+      probe: () => new Promise((resolve) => { releaseProbe = resolve; })
+    });
+    h.policy.begin();
+
+    h.advance(30000);            // the outage is provably past the ceiling
+    const inFlight = h.policy.retryNow();   // ...and the probe hangs
+    await new Promise((r) => setImmediate(r));
+
+    assert.equal(h.policy.hasEscalated(), true,
+      'a hung probe must not hold the escalation hostage');
+    releaseProbe();
+    await inFlight;
+  });
+
+  it('does not escalate before the ceiling just because a probe is slow', async () => {
+    let releaseProbe;
+    const h = makeHarness({
+      probe: () => new Promise((resolve) => { releaseProbe = resolve; })
+    });
+    h.policy.begin();
+    h.advance(2000);
+    const inFlight = h.policy.retryNow();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(h.policy.hasEscalated(), false,
+      'the pre-probe check must respect the ceiling, not bypass it');
+    releaseProbe();
+    await inFlight;
+  });
+});
+
+describe('a probe that throws must not take the retry loop down with it', () => {
+  it('keeps probing and still escalates after a rejecting probe', async () => {
+    // Neither page can trigger this today (both route through `api()`, which
+    // catches), but `probe` is this module's extension point, and an unhandled
+    // rejection would stop the re-arm for the life of the page — silently
+    // restoring the exact bug the module exists to remove.
+    let calls = 0;
+    const h = makeHarness({
+      probe: async () => { calls++; throw new Error('probe blew up'); }
+    });
+    h.policy.begin();
+
+    h.advance(5000);
+    await h.fire();
+    assert.equal(calls, 1);
+    assert.equal(h.state.pending.length, 1, 'the loop must have re-armed after the throw');
+
+    h.advance(30000);
+    await h.fire();
+    assert.equal(calls, 2, 'and must keep probing');
+    assert.equal(h.policy.hasEscalated(), true,
+      'a throwing probe must not suppress the honest verdict either');
   });
 });
 

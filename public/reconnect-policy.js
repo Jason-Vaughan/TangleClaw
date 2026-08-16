@@ -80,6 +80,14 @@
     let timer = null;
     let outageStartedAt = null;
     let escalated = false;
+    // Which outage a scheduled callback belongs to. A probe can be in flight
+    // when the page flaps connected-then-disconnected (each page runs its own
+    // status poller calling the same `setConnected`, so a restarting server
+    // produces both transitions inside one probe window). Without this, the
+    // resuming `loop()` and the one `begin()` started would each arm a chain
+    // and the orphan would double the probe rate against a booting server —
+    // the opposite of what the jitter is for.
+    let generation = 0;
 
     /**
      * Next probe delay, spread across ±`jitterRatio` of the base.
@@ -100,31 +108,66 @@
     }
 
     /**
-     * Run one probe and, if the server is still gone, decide whether the
-     * outage has outlived the ceiling.
+     * Escalate if the outage is still open and has outlived the ceiling.
      *
-     * The ceiling is only consulted AFTER the probe, and only while the outage
-     * is still open: a probe that succeeds calls `end()` re-entrantly through
-     * the page's `setConnected`, which clears `outageStartedAt`, and escalating
-     * after that would render a dead-server message over a live server.
+     * Guarded on the outage still being open because a probe that succeeds
+     * calls `end()` re-entrantly through the page's `setConnected`, and
+     * escalating after that would render a dead-server message over a live
+     * server.
+     */
+    function escalateIfDue() {
+      if (outageStartedAt === null || escalated) return;
+      if (elapsedMs() < ceilingMs) return;
+      escalated = true;
+      onEscalate();
+    }
+
+    /**
+     * Run one probe, checking the ceiling on both sides of it.
+     *
+     * Checking BEFORE the probe is what makes the ceiling a promise rather
+     * than a hope. `probe` bottoms out in `fetch`, which carries no deadline:
+     * against a refusing server it fails at once, but against a black-holed
+     * host — a sleeping machine, a tailnet route that went away — the connect
+     * stalls for the browser's own multi-minute timeout. Checking only
+     * afterwards would withhold the honest verdict for exactly as long as the
+     * network is at its least honest, leaving the page insisting on a blip.
+     *
+     * A probe that REJECTS must not take the loop down with it. Neither page
+     * can trigger that today (both route through `api()`, which catches), but
+     * `probe` is this module's extension point, and an unhandled rejection
+     * here would stop the re-arm for the life of the page — silently restoring
+     * the exact bug this module exists to remove.
+     *
      * @returns {Promise<void>}
      */
     async function attempt() {
-      await probe();
-      if (outageStartedAt === null) return; // recovered during the probe
-      if (!escalated && elapsedMs() >= ceilingMs) {
-        escalated = true;
-        onEscalate();
+      escalateIfDue();
+      try {
+        await probe();
+      } catch (err) {
+        // prawduct:allow prawduct/broad-except -- a probe is caller-supplied and
+        // may fail in any way; the loop must survive every one of them. Logged,
+        // never swallowed.
+        if (global.console && global.console.warn) {
+          global.console.warn('[tc] reconnect probe threw; continuing to retry', err);
+        }
       }
+      if (outageStartedAt === null) return; // recovered during the probe
+      escalateIfDue();
     }
 
-    /** Schedule the next probe, unless the outage has already ended. */
-    function loop() {
-      if (outageStartedAt === null) return;
+    /**
+     * Schedule the next probe, unless the outage has already ended or this
+     * callback belongs to an outage that has.
+     * @param {number} gen - The outage generation this chain belongs to.
+     */
+    function loop(gen) {
+      if (outageStartedAt === null || gen !== generation) return;
       timer = schedule(async () => {
-        if (outageStartedAt === null) return;
+        if (outageStartedAt === null || gen !== generation) return;
         await attempt();
-        loop();
+        loop(gen);
       }, nextDelayMs());
     }
 
@@ -138,7 +181,8 @@
         if (outageStartedAt === null) {
           outageStartedAt = now();
           escalated = false;
-          loop();
+          generation++;
+          loop(generation);
         }
       },
 
@@ -148,6 +192,9 @@
           cancel(timer);
           timer = null;
         }
+        // Retire this outage's generation so a probe still in flight cannot
+        // re-arm a chain after the server has come back.
+        generation++;
         outageStartedAt = null;
         escalated = false;
         onRecover();
@@ -164,13 +211,17 @@
         await attempt();
       },
 
+      // The three reads below exist so this state machine can be ASSERTED on
+      // rather than inferred from what a page happened to render — the outage
+      // clock, the escalation latch and the open/closed flag are the whole of
+      // its state. A `ceilingMs()` accessor was dropped rather than shipped:
+      // neither surface names a duration to the operator, so it would have
+      // been a reader with no reader.
       elapsedMs,
       /** @returns {boolean} Whether this outage has already escalated. */
       hasEscalated() { return escalated; },
       /** @returns {boolean} Whether an outage is currently open. */
-      isOutage() { return outageStartedAt !== null; },
-      /** @returns {number} The configured ceiling, so pages can report it. */
-      ceilingMs() { return ceilingMs; }
+      isOutage() { return outageStartedAt !== null; }
     };
   }
 

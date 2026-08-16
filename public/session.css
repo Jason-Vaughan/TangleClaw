@@ -856,17 +856,13 @@ body {
   overflow-x: auto;
   white-space: pre;
 }
-.session-unreachable button {
-  padding: 7px 14px;
-  border: none;
-  border-radius: 6px;
-  background: var(--danger);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.session-unreachable button:disabled { opacity: 0.6; cursor: default; }
+/* The Retry control reuses `.btn`/`.btn-danger` rather than restyling a second
+   button system: it is the sole recovery action inside a `role="alert"` region
+   on a touch-first surface, so it needs `.btn`'s 44px min-height and its
+   `:focus-visible` outline, not a hand-rolled 30px lookalike with no focus
+   ring. Only the disabled state is added here — the banner keeps the button
+   mounted while a retry is in flight. */
+.session-unreachable .btn:disabled { opacity: 0.6; cursor: default; }
 
 .session-wrapping {
   flex-shrink: 0;
