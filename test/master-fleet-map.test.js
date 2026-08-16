@@ -39,6 +39,7 @@ function enriched(over = {}) {
     path: '/p/Enriched',
     archived: false,
     version: '1.2.3',
+    exists: true,
     unreadable: null,
     git: {
       branch: 'main',
@@ -131,6 +132,31 @@ describe('#950 — an unknown and an absence must not render the same', () => {
     assert.doesNotMatch(notRepo, /could not|not established|unknown/i,
       'a directory that is simply not a repo has nothing to report as unestablished');
     assert.match(failedRead, /not established/);
+  });
+
+  it('separates a DELETED directory from an idle non-repo project', () => {
+    // These rendered identically until `exists` was carried through: a deleted
+    // project came back with git: null, version: null and no session, which is
+    // exactly what an ordinary idle non-repo project looks like. For a
+    // coordinator that is the difference between "nothing to do here" and
+    // "this is gone". `governanceState` cannot separate them — a
+    // present-but-ungoverned project reports 'not-applicable' too.
+    const gone = line(enriched({ exists: false, unreadable: null, version: null, git: null, session: null }));
+    const idle = line(enriched({ exists: true, version: null, git: null, session: null }));
+
+    assert.notEqual(gone, idle);
+    assert.match(gone, /DIRECTORY MISSING/);
+    assert.doesNotMatch(idle, /DIRECTORY MISSING/);
+    assert.doesNotMatch(gone, /not a git repository/,
+      'a path that is not there has no repo state to report');
+  });
+
+  it('a failed scan is still reported as a failed scan, not as a missing directory', () => {
+    // `exists: false` WITH `unreadable` means the scan degraded, not that the
+    // path is gone — the two must not collapse into each other.
+    const l = line(enriched({ exists: false, unreadable: 'EACCES', unreadableCode: 'TC_EACCES', git: null, session: null }));
+    assert.match(l, /could not read the project directory/i);
+    assert.doesNotMatch(l, /DIRECTORY MISSING/);
   });
 
   it('reports an unreadable directory once, instead of a row of separate unknowns', () => {
@@ -422,5 +448,32 @@ describe('#950 — the state pass is wired, and wired where home resolves', () =
     assert.match(md, /at server boot and when the master\s+session is opened/);
     // And it must own the ambiguity it cannot resolve from inside the file.
     assert.match(md, /not finished yet or it failed/);
+  });
+});
+
+describe('#950 — the production wiring is pinned, not just the seam', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+
+  // The seam tests above prove the trigger fires when asked. They do NOT prove
+  // anything asks — dropping `fleetState: true` at either production site left
+  // the whole suite green. These pin the two call sites that exist.
+
+  it('ensureMasterSession asks for the state pass, and forwards a test override', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'master.js'), 'utf8');
+    const fn = src.slice(src.indexOf('function ensureMasterSession'));
+    const body = fn.slice(0, fn.indexOf('\nfunction '));
+    assert.match(body, /fleetState: true/,
+      'opening the master is when its fleet map most needs to be current');
+    assert.match(body, /refreshFleet: options\.refreshFleet/,
+      'and the override must be forwarded, or every ensure test fires a real fleet read');
+  });
+
+  it('server boot asks for the state pass', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    assert.match(src, /refreshMasterIdentity\(\{ skipIfAbsent: true, fleetState: true \}\)/,
+      'boot must start the state pass, or FLEET.md stays identity-only until someone opens the master');
+    assert.doesNotMatch(src, /master\.refreshFleetMap\(/,
+      'server.js must NOT call it directly — that resolved os.homedir() past any caller-supplied home');
   });
 });

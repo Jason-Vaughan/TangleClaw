@@ -84,12 +84,28 @@ already resolved, behind an opt-in `fleetState` flag and an injectable `refreshF
 browser globals returning DOM-shaped records — is recorded in `boundary-patterns.md` with the
 obligation it creates: a new cause token now needs a row in two places.
 
-**Tests:** `test/master-fleet-map.test.js` (+25). Every honesty pair asserts the two render
+**Second review round (`verify-resolutions rev-20260816T222306Z-70954d1d`): 7 of 11 verified fixed, 4
+left unresolved and then closed.** Two mattered. (a) The comment justifying the version fix claimed
+the degraded path "always sets `unreadable`" — it does not: `lib/dir-scanner-child.js:231-235`
+returns `exists: false` with no `unreadable` for a directory that is simply gone. So a DELETED
+project rendered as `not a git repository · no live session`, identical to an ordinary idle one.
+`enrichProject` now carries `exists` (additive); deriving it from `governanceState` was checked
+against live data first and rejected — eight present projects report `not-applicable`, so that
+derivation would have declared them gone. (b) Nothing pinned either production wiring site: dropping
+`fleetState: true` at boot or in `ensureMasterSession` left the suite green. Both pinned, both
+mutation-confirmed. `ensureMasterSession` also forwards `refreshFleet` now, because ~15 of its tests
+were firing unawaited real fleet reads that spawned `tmux list-sessions` and raced their own temp-dir
+teardown — a hygiene regression this change introduced.
+
+**Carried, not dropped:** `listProjects` still has no cross-caller guard, so this module's
+single-flight does not stop it interleaving with the ten-second dashboard poll — a `lib/projects.js`
+concern affecting that poll generally, recorded in `.prawduct/.handoff-notes.md`.
+
+**Tests:** `test/master-fleet-map.test.js` (+29). Every honesty pair asserts the two render
 DIFFERENTLY, not merely that each contains a string — a `notEqual` on the rendered line, because the
-defect class here is flattening, not omission. Nine mutations confirmed red before the guards were kept, four of them against the finding-fixes
-themselves (flatten unknown liveness, render an unread tree as clean, treat raw rows as stateful, drop the
+defect class here is flattening, not omission. Thirteen mutations confirmed red before the guards were kept, six of them against finding-fixes (flatten unknown liveness, render an unread tree as clean, treat raw rows as stateful, drop the
 no-master-home guard, restore the "git could not be read" wording). Fixtures verified against the
-real shape by rendering the live fleet through them. Full suite **6285 pass / 0 fail / 1 skip**.
+real shape by rendering the live fleet through them. Full suite **6289 pass / 0 fail / 1 skip**.
 
 ## 2026-08-16: the Master settings modal becomes a component both pages can mount (#768 chunk 1)
 

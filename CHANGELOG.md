@@ -36,6 +36,15 @@ All notable changes to TangleClaw are documented in this file.
   master home exists — so it cannot create master state for an operator who has never opened the
   Master. The renderer, `master.buildFleetMap()`, is pure: no filesystem, no git, no tmux, no clock.
 
+  **A deleted project no longer reads as an idle one.** `enrichProject` now carries `exists` through
+  (additive), because the fields already on the record cannot answer it: `governanceState:
+  'not-applicable'` is also what a present-but-ungoverned project reports — eight of them on this
+  machine — so deriving absence from it would have declared live projects gone. A registered path
+  that is not there now says `DIRECTORY MISSING`, where before it rendered as
+  `not a git repository · no live session`: indistinguishable from an ordinary idle project, which
+  for a coordinator is the difference between "nothing to do here" and "this is gone". A failed scan
+  still reports as a failed scan; `unreadable` is what separates the two.
+
   **Concurrency.** `refreshFleetMap` is single-flight. `listProjects` is the path the ten-second
   dashboard poll already drives, and `lib/dir-scanner.js` starts each request's deadline at *issue*
   time against a serial child — so a second unsynchronized caller's reads queue while their clocks
