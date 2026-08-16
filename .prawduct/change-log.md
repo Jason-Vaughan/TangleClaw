@@ -26,6 +26,95 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-16: the fleet map says what each project is doing (#950)
+
+<!-- prawduct: type=feat | scope=fleet-map-state-950 | chunks=01 -->
+
+**Why:** `FLEET.md` is the Project Master's entire picture of the fleet, and it carried
+name · engine · path. Enough to say a project EXISTS, nothing about what it is DOING — not a basis
+for coordinating anything. Every field it should have carried was already computed for the dashboard
+poll and thrown away at the moment the file was written. This is build item 1 of the ratified Master
+startup/wrap spec (`.tangleclaw/plans/master-startup-and-wrap.md`), picked to go first because it
+needs none of that spec's rulings.
+
+**What changed:** `lib/master.js` gains `buildFleetMap(projects, {generatedAt})` — a PURE renderer,
+no filesystem/git/tmux/clock — plus `refreshFleetMap()`, async, which rides the enriched list
+`projects.listProjects()` already builds and writes only `FLEET.md`. `_refreshMasterMemory` now takes
+an optional `projects` and delegates rendering. Triggered from `refreshMasterIdentity` behind an opt-in
+`fleetState` flag, so it resolves `home` exactly where every other write in that function does. The
+two production askers are `server.js` at boot and `lib/master.js#ensureMasterSession`; the pass is
+**unawaited** in both, since neither boot nor an ensure response may wait on the whole fleet's git
+reads. `server.js` calls `refreshFleetMap` nowhere — a test pins that.
+
+**The constraint that shaped it, and the estimate it corrected.** The spec called this "one
+function". It is not: `refreshMasterIdentity` is fully synchronous and runs at server boot, while the
+state the map needs comes from `git.getInfo` (several `execSync` spawns per repo on a cold cache) and
+an async tmux snapshot. Adding that per project to the boot path is precisely the event-loop hazard
+`lib/dir-scanner.js` exists to prevent (#883/#884). Hence the split: the sync path keeps writing an
+identity-only map at no new cost, and the async sibling upgrades it. Whether state was gathered is
+DERIVED from the records (`_hasStateFields` tests for the KEY, not its value) rather than passed as a
+flag, because a flag can disagree with its data — and an enriched record whose read failed carries
+`git: null` while a raw row simply never had the key, which are different facts.
+
+**Honesty is the feature, not a side-effect.** The map preserves every distinction #941/#937/#920
+bought: "no live session" vs "liveness could not be established" (opposite situations for a
+coordinator — one is safe to act on, the other is when acting is most dangerous); "clean" vs
+"dirty-state unknown"; a branch read vs "branch not established". An unreadable directory reports
+once with its cause instead of as a row of separate unknowns. A pass that gathered no state prints a
+banner saying so, and that absence of a state line means nobody looked.
+
+**Caught on live data before it shipped:** the first draft rendered a null `git` as "git could not be
+read". `lib/dir-scanner-child.js#_gitInfo` returns null for "not a repository, or git is absent" and
+an OBJECT carrying `incomplete`/`cause` when a read genuinely fell short — so the draft manufactured
+a failure for every non-repo project on the fleet, which is the exact invention this change exists to
+remove, one level down. Found by rendering the real `GET /api/projects` output rather than trusting
+the fixtures; now `not a git repository`, with its own guard.
+
+**Critic (cumulative `rev-20260816T220814Z-0f187352`): 0 blocking, 11 warning, 11 note.** Six warnings
+fixed in one batch, and three of them were the same defect class this change exists to remove:
+`version not established` manufactured an unknown out of a plain absence (mirror of the `git: null`
+correction); the identity-only banner promised the map refreshes "when the dashboard polls", which
+never writes it; and it could not say whether a missing state pass had failed or was still running.
+Also fixed: `refreshFleetMap` had no single-flight guard, so it queued behind the poll on the serial
+scanner and could earn a healthy project a false Full Disk Access hint (#884/#891); and — the
+sharpest one — calling it from `server.js` resolved `os.homedir()` regardless of any caller-supplied
+home, so `test/master.test.js`'s route test could overwrite the OPERATOR'S live
+`~/.tangleclaw/master/memory/FLEET.md`. The trigger moved into `refreshMasterIdentity`, where home is
+already resolved, behind an opt-in `fleetState` flag and an injectable `refreshFleet` seam, and both
+`server.js` call sites are gone. The decision to make `buildFleetMap` a second reader of the
+`incomplete`/`cause` vocabulary — the only one outside the browser, since the `tc*` classifiers are
+browser globals returning DOM-shaped records — is recorded in `boundary-patterns.md` with the
+obligation it creates: a new cause token now needs a row in two places.
+
+**Second review round (`verify-resolutions rev-20260816T222306Z-70954d1d`): 7 of 11 verified fixed, 4
+left unresolved and then closed.** Two mattered. (a) The comment justifying the version fix claimed
+the degraded path "always sets `unreadable`" — it does not: `lib/dir-scanner-child.js:231-235`
+returns `exists: false` with no `unreadable` for a directory that is simply gone. So a DELETED
+project rendered as `not a git repository · no live session`, identical to an ordinary idle one.
+`enrichProject` now carries `exists` (additive); deriving it from `governanceState` was checked
+against live data first and rejected — eight present projects report `not-applicable`, so that
+derivation would have declared them gone. (b) Nothing pinned either production wiring site: dropping
+`fleetState: true` at boot or in `ensureMasterSession` left the suite green. Both pinned, both
+mutation-confirmed. `ensureMasterSession` forwards a `refreshFleet` seam, and all 20 of its call
+sites in `test/master.test.js` now pass a no-op through it. Adding the seam without applying it —
+which is how this shipped at first — left every one of those tests firing an unawaited REAL fleet
+pass against temp project paths, racing the file's own teardown, and green only because the write
+failure was caught and the file logs at `error`. A test that passes for the wrong reason.
+
+**Carried, not dropped:** `listProjects` still has no cross-caller guard, so this module's
+single-flight does not stop it interleaving with the ten-second dashboard poll — a `lib/projects.js`
+concern affecting that poll generally, recorded in `.prawduct/.handoff-notes.md`.
+
+**Tests:** `test/master-fleet-map.test.js` (+29). Every honesty pair asserts the two render
+DIFFERENTLY, not merely that each contains a string — a `notEqual` on the rendered line, because the
+defect class here is flattening, not omission. Thirteen mutations confirmed red before the guards were kept, six of them against finding-fixes (flatten unknown liveness, render an unread tree as clean, treat raw rows as stateful, drop the
+no-master-home guard, restore the "git could not be read" wording). Fixtures verified against the
+real shape by rendering the live fleet through them — which caught the `git: null` invention but NOT
+three fixtures carrying an `unreadableCode` no producer emits, nor a pair whose two fields were the
+same string and so left the code-rendering branch vacuous. Rendering live data proves the shapes you
+happen to have; it does not prove the ones you wrote by hand. Both were caught by review, and the
+fixtures now use the producer's real message-plus-code pair. Full suite green (TAP total 6291 including subtests; the evidence store's JUnit top-level count for the same tree is lower by reporter semantics, not by missing tests).
+
 ## 2026-08-16: the Master settings modal becomes a component both pages can mount (#768 chunk 1)
 
 <!-- prawduct: type=refactor | scope=master-settings-component-768 | chunks=01 -->

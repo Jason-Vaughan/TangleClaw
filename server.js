@@ -6212,7 +6212,9 @@ if (require.main === module) {
   // the master's equivalent. skipIfAbsent so starting the server never creates
   // master state for an operator who has not used it.
   try {
-    const refreshed = master.refreshMasterIdentity({ skipIfAbsent: true });
+    // `fleetState` starts the async state pass that fills FLEET.md in; it is
+    // fire-and-forget inside, so boot never waits on the fleet's git reads.
+    const refreshed = master.refreshMasterIdentity({ skipIfAbsent: true, fleetState: true });
     if (refreshed.refreshed) log.debug('Master identity refreshed', { home: refreshed.home });
   } catch (err) {
     log.warn('Master identity refresh failed', { error: err.message });

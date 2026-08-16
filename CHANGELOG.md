@@ -4,6 +4,64 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **The Project Master's fleet map says what each project is doing, not just that it exists (#950).**
+  `FLEET.md` — the Master's whole picture of the fleet it coordinates — carried three fields per
+  project: name, engine, path. It could tell the Master a project existed and nothing about its
+  state, which is not a basis for coordinating anything. A map that lists doors without saying which
+  rooms have anyone in them.
+
+  It now carries version, branch, working-tree state, session liveness and last-commit age. None of
+  that required new scanning: every field was already computed for the dashboard poll and discarded
+  at the moment the file was written.
+
+  **Unknowns stay unknowns.** The map inherits the tri-state vocabulary from #941/#937/#920, and the
+  distinctions it preserves are the ones a coordinator acts on: "no live session" and "liveness could
+  not be established" are opposite situations — one is safe to act on, the other is exactly when
+  acting is most dangerous — and they now render differently. Same for a clean tree versus one whose
+  dirtiness was never read, and for a branch read versus a branch not established. An unreadable
+  project directory reports once, with its cause, instead of as a row of separate unknowns.
+
+  **A pass that gathered no state says so.** `refreshMasterIdentity` is synchronous and runs at
+  server boot; it must never grow per-project git or tmux work, because that is the event-loop
+  hazard the forked scanner exists to prevent (#883/#884). So the boot pass still writes an
+  identity-only map — but it now declares itself as identity-only, and states that a missing state
+  line means nobody looked rather than that there is nothing to report. Whether state was gathered is
+  derived from the records themselves, never passed as a flag that could disagree with its data.
+
+  The state half is a new `master.refreshFleetMap()`, async, riding the enriched list
+  `projects.listProjects()` already builds. It is called (not awaited) after the boot identity
+  refresh and on `POST /api/master/ensure`, writes only `FLEET.md`, and does nothing at all when no
+  master home exists — so it cannot create master state for an operator who has never opened the
+  Master. The renderer, `master.buildFleetMap()`, is pure: no filesystem, no git, no tmux, no clock.
+
+  **A deleted project no longer reads as an idle one.** `enrichProject` now carries `exists` through
+  (additive), because the fields already on the record cannot answer it: `governanceState:
+  'not-applicable'` is also what a present-but-ungoverned project reports — eight of them on this
+  machine — so deriving absence from it would have declared live projects gone. A registered path
+  that is not there now says `DIRECTORY MISSING`, where before it rendered as
+  `not a git repository · no live session`: indistinguishable from an ordinary idle project, which
+  for a coordinator is the difference between "nothing to do here" and "this is gone". A failed scan
+  still reports as a failed scan; `unreadable` is what separates the two.
+
+  **A degraded read never hides a live session.** Session liveness does not depend on the project's
+  directory — a tmux pane can be attached to a checkout that has been deleted, or to one the server
+  is not permitted to read. Both of those branches report the directory problem *and* the session,
+  rather than letting the directory's state swallow it; a pane attached to a project that is gone is
+  the case most worth surfacing, not the one to hide.
+
+  **Concurrency.** `refreshFleetMap` is single-flight. `listProjects` is the path the ten-second
+  dashboard poll already drives, and `lib/dir-scanner.js` starts each request's deadline at *issue*
+  time against a serial child — so a second unsynchronized caller's reads queue while their clocks
+  run, and a healthy project can burn its deadline waiting its turn and earn the Full Disk Access
+  hint it did not deserve (#884/#891). Concurrent callers coalesce onto one read; the latch releases
+  on failure too, so a thrown read cannot freeze the map for the life of the process.
+
+  Groundwork for the ratified Master startup/wrap spec
+  (`.tangleclaw/plans/master-startup-and-wrap.md`), whose next item compares this file's
+  `generated-at` stamp against the Master's own `observed-at` notes to compute memory drift.
+
 ### Internal
 
 - **The Master settings modal became a mountable component (#768, chunk 1 of 3).** The modal — the
