@@ -4,6 +4,38 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **The Project Master has a launch mode (#756).** Every project has had the per-engine launch-mode
+  axis — `default` / `acceptEdits` / `plan` / `bypassPermissions` and their per-engine siblings —
+  and the Master had it at no layer: `lib/master.js` built its session with a hardcoded `null`, so
+  it always started in whatever bare default its engine gave and the operator had no way to change
+  it. It is now settable in Master settings, persisted through `PATCH /api/config`, and reaches the
+  actual CLI flags.
+
+  The old `null` was justified in a comment as *"part of the read-only posture"*, and that reasoning
+  conflated two independent axes. Launch mode governs whether the agent prompts inside **its own
+  session** and is enforced by the engine; access level governs what the Master may do to **the
+  fleet** and is enforced by TangleClaw. A read-only Master in `bypassPermissions` is coherent — it
+  edits its own `memory/` without nagging and still cannot touch the fleet — and a `write` Master in
+  `default` would be equally coherent. The settings modal names them as separate, and the read-only
+  tier's own description no longer promises that everything asks first, since that is now the launch
+  mode's business rather than the access level's.
+
+  The modal also carries the warning for `write` + `bypassPermissions` — the combination that removes
+  confirmation at every layer — but **that warning cannot appear in this release**: `write` is still
+  rejected server-side and `MASTER_ENABLED_ACCESS_LEVELS` remains `['read-only']` until #755 ships
+  real enforcement. It is written now so the branch exists and is tested when the tier lands, not
+  because it is reachable today.
+
+  The mode is reconciled against the Master's **effective** engine in the one place that already
+  resolves engine and enforcement, so the settings modal and the launching session cannot disagree.
+  A mode the resolved engine cannot honor degrades to `default` at launch but is **not** flattened
+  at rest: it stays stored, stays selected in the picker, and is labelled as unavailable with what
+  will run instead — so switching engines and back restores the operator's choice rather than
+  silently discarding it. The picker renders only the modes the server says that engine offers,
+  never a list the frontend derived for itself.
+
 ## [5.4.0] - 2026-08-15
 
 ### Added

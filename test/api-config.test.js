@@ -779,7 +779,10 @@ describe('API endpoints', () => {
       const { status } = await request(server, 'PATCH', '/api/config', { master: { autoStart: true } });
       assert.equal(status, 200);
       assert.deepEqual(store.config.load().master, {
-        accessLevel: 'read-only', engine: null, scope: 'all', autoStart: true
+        // #756 added launchMode to the normalized shape. It is stored on every
+        // write, not only when patched, so the block never carries a missing
+        // field for `_buildLaunchCommand` to receive as undefined.
+        accessLevel: 'read-only', engine: null, launchMode: 'default', scope: 'all', autoStart: true
       });
     });
 
@@ -790,6 +793,73 @@ describe('API endpoints', () => {
       const saved = store.config.load().master;
       assert.equal(saved.engine, 'claude');
       assert.equal(saved.autoStart, true, 'earlier field must survive the second patch');
+    });
+
+    it('ships launchMode in the DEFAULT master block, before any PATCH (#756)', async () => {
+      // The whole point of the DEFAULT_CONFIG entry: `GET /api/config` and
+      // `GET /api/master/status` must agree on an install nobody has PATCHed.
+      // Every other assertion here reads the block AFTER a patch, and
+      // `validateMasterPatch` sources the field from `masterSettings()`, which
+      // defaults it independently — so deleting the default would leave all of
+      // them green while the two endpoints disagreed.
+      const master = require('../lib/master');
+      assert.equal(store.DEFAULT_CONFIG.master.launchMode, 'default',
+        'a never-PATCHed install must carry launchMode, not omit it');
+      // The invariant the default exists for, asserted as an agreement rather
+      // than as the constant's shape: what `GET /api/config` would report and
+      // what `masterSettings` (behind `GET /api/master/status`) reports must be
+      // the same value on an install nobody has touched.
+      assert.equal(
+        store.DEFAULT_CONFIG.master.launchMode,
+        master.masterSettings({}).launchMode,
+        'config default and master-status default must not disagree'
+      );
+    });
+
+    it('stores a launch mode (#756)', async () => {
+      const { status } = await request(server, 'PATCH', '/api/config', { master: { launchMode: 'acceptEdits' } });
+      assert.equal(status, 200);
+      assert.equal(store.config.load().master.launchMode, 'acceptEdits');
+    });
+
+    it('accepts a mode the CURRENT engine cannot honor, and keeps it stored', async () => {
+      // Deliberate: validation is by name, not against whichever engine happens
+      // to be resolved at the moment of the PATCH. The operator may switch
+      // engines back, and `_masterRuntime` reconciles at launch. Rejecting here
+      // would make the setting's validity depend on unrelated state.
+      const { status } = await request(server, 'PATCH', '/api/config', {
+        master: { engine: 'aider', launchMode: 'acceptEdits' }
+      });
+      assert.equal(status, 200);
+      assert.equal(store.config.load().master.launchMode, 'acceptEdits',
+        'the stored preference survives an engine that cannot honor it');
+    });
+
+    it('rejects a launch mode no engine defines, naming the valid set', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        master: { launchMode: 'ludicrous-speed' }
+      });
+      assert.equal(status, 400);
+      assert.match(data.error, /master\.launchMode must be one of/);
+      assert.match(data.error, /default/, 'the honest set must name at least the universal mode');
+    });
+
+    it('does not reject an unrelated patch over a stored mode gone unhonorable', async () => {
+      // `knownLaunchModes()` is the union across INSTALLED engines, so
+      // uninstalling one shrinks it. Validating the MERGED value would then
+      // 400 every master PATCH on the install — including ones that only
+      // toggle autoStart — over a stored mode the operator never touched.
+      const config = store.config.load();
+      config.master = { ...config.master, launchMode: 'mode-from-a-since-removed-engine' };
+      store.config.save(config);
+      const { status } = await request(server, 'PATCH', '/api/config', { master: { autoStart: true } });
+      assert.equal(status, 200, 'a patch that does not touch launchMode must not be judged on it');
+      assert.equal(store.config.load().master.autoStart, true);
+    });
+
+    it('rejects a non-string launch mode', async () => {
+      const { status } = await request(server, 'PATCH', '/api/config', { master: { launchMode: 7 } });
+      assert.equal(status, 400);
     });
 
     it('rejects not-yet-enforced access levels with an honest reason', async () => {
