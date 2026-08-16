@@ -186,7 +186,7 @@ fails any auto-stub section older than 14 days.
 
 ## Tests
 
-Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals — a copy here only drifts, and this one had by ~2000). Most test files pair 1:1 with the module they cover (lib/NAME.js → test/NAME.test.js); the map below covers files whose subject isn't obvious from the name.
+Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals — a copy here only drifts, and this one had drifted by about two thousand). Most test files pair 1:1 with the module they cover (lib/NAME.js → test/NAME.test.js); the map below covers files whose subject isn't obvious from the name.
 
 - `test/features-index.test.js` — this file's own citation contract (no `:line` pointers, no dangling paths/anchors, stub sections fold within 14 days).
 - `test/api-sessions.test.js` — the `/api/sessions/*` route family; `test/api-system.test.js` — system/config/restart routes; `test/api-wrap-status.test.js` — `GET .../wrap/status` reattach + `WRAP_RESTART_BLOCKED` restart guard (#583).
@@ -265,7 +265,6 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 
 ## TODO (auto-stubbed 2026-08-15)
 
-- **TBD** — touched in this session: `test/_mini-dom.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/session-update-poll.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/update-release-link.test.js`. <!-- describe -->
 
