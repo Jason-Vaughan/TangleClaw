@@ -43,9 +43,14 @@ describe('engine picker gating (#707)', () => {
   let resolvePickerEngine;
   let buildEngineOptions;
   let uiSrc;
+  // renderMasterSettingsBody moved into the shared tcCreateMasterSettings
+  // component so the modal can mount on the session page too; these pins
+  // follow it there with their assertions unchanged.
+  let helperSrc;
 
   before(() => {
     uiSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+    helperSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
     require('../public/api-helper.js');
     // Copied from production `esc` (public/landing.js), non-string rejection
     // included. A more forgiving stub renders values the real one drops, which
@@ -152,7 +157,7 @@ describe('engine picker gating (#707)', () => {
     // picker now shares `buildEngineOptions`, so the behavioral assertions above
     // cover it and the only thing left to pin is that it still delegates.
     it('delegates to buildEngineOptions instead of hand-rolling options', () => {
-      const body = sliceFunction(uiSrc, 'renderMasterSettingsBody');
+      const body = sliceFunction(helperSrc, 'renderMasterSettingsBody');
       assert.match(body, /buildEngineOptions\(state\.engines/);
       assert.doesNotMatch(
         body,
@@ -162,7 +167,7 @@ describe('engine picker gating (#707)', () => {
     });
 
     it('keeps its own "follow default engine" empty option', () => {
-      const body = sliceFunction(uiSrc, 'renderMasterSettingsBody');
+      const body = sliceFunction(helperSrc, 'renderMasterSettingsBody');
       assert.match(body, /<option value="">\(follow default engine\)<\/option>/,
         'only this picker has a no-pin state');
     });

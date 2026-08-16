@@ -4,6 +4,43 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Internal
+
+- **The Master settings modal became a mountable component (#768, chunk 1 of 3).** The modal — the
+  access-level radios, the engine and launch-mode pickers, scope, availability, and the whole
+  Hard-rules editor with its version history and eyes-open baseline confirms — lived only on the
+  dashboard: `openMasterSettings` through `saveMasterSettings` was ~330 lines of `public/ui.js`, and
+  its shell markup was static in `public/index.html`. `grep -c masterSettingsModal public/session.html`
+  was `0`, so from inside a session there was no route to the Master's settings at all.
+
+  It now lives in `public/api-helper.js` as `tcCreateMasterSettings(deps)`, a factory both pages
+  construct and `mount()`. The shell markup moved with it, into `tcMasterSettingsMarkup()`, so
+  neither page carries a copy that can drift from the other — `index.html` no longer declares the
+  modal, and `session.js` mounts the same component the dashboard does. `mount()` is idempotent and
+  adopts an existing modal rather than appending a second, because two `#masterSettingsModal` nodes
+  would mean rendering into the one the operator cannot see.
+
+  Page-specific capability arrives through `deps` rather than as globals, because the mount sites
+  genuinely differ: the dashboard has master status dots to paint a failed open onto and passes
+  `onOpenError` to do it, the session page has none and says so in the console instead of pretending
+  the open succeeded; and the engine list lives on `state` on one page and `sessionState` on the
+  other. The transient rules-status helper both surfaces need is now one implementation,
+  `tcSetRulesStatus`.
+
+  **No user-visible change this chunk** — the dashboard behaves exactly as before, and nothing on
+  the session page opens the modal yet. The control that does is chunk 2. No `CACHE_NAME` bump was
+  needed or made: `/api-helper.js`, `/ui.js`, `/session.js` and navigations are all already
+  network-first in `public/sw.js`, so the three cannot be served as a stale-versus-fresh skew.
+
+  The behavioural regression net is unchanged and re-pointed rather than rewritten:
+  `test/master-launch-mode.test.js` still lifts the real `renderMasterSettingsBody` and
+  `saveMasterSettings` and runs them against the same assertions — only the file it lifts from moved.
+  Same for the source pins in `test/master-settings-frontend.test.js` and
+  `test/engine-picker-gating.test.js`. New guards cover what the move itself could break: that
+  neither page re-declares the modal, that both construct the component, and that a second `mount()`
+  neither stacks a node nor re-binds. Each was mutation-checked red before being accepted. Full
+  suite 6254 pass / 0 fail / 1 skip.
+
 ## [5.5.0] - 2026-08-16
 
 ### Added

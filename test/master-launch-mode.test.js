@@ -13,10 +13,16 @@
  *     shows `default` while config still holds the operator's real choice. That
  *     is the silent-ignore failure #741 documents.
  *
- * These LIFT the real functions out of public/ui.js and RUN them, rather than
- * regex-matching the source: the existing master-settings suite is source-pinned
- * (see backlog TST-6L2P), and a source pin cannot tell a rendered option from a
- * string that merely appears in the file.
+ * These LIFT the real functions out of public/api-helper.js and RUN them, rather
+ * than regex-matching the source: the existing master-settings suite is
+ * source-pinned (see backlog TST-6L2P), and a source pin cannot tell a rendered
+ * option from a string that merely appears in the file.
+ *
+ * The functions moved from public/ui.js into the shared `tcCreateMasterSettings`
+ * component so the modal could mount on the session page too. Only the file
+ * these lift FROM changed — every assertion below is the one that guarded the
+ * dashboard's behaviour before the move, which is what makes this suite the
+ * regression net for it.
  */
 
 const { describe, it } = require('node:test');
@@ -25,7 +31,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const UI_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+const HELPER_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
 // `esc` is defined in landing.js and shared globally with ui.js — both scripts
 // load on the dashboard. Lifting the REAL one keeps escaping behaviour honest
 // rather than stubbing it into something more forgiving than production.
@@ -93,7 +99,7 @@ function render(settings) {
   vm.createContext(sandbox);
   vm.runInContext([
     liftFunction(LANDING_SRC, 'function esc(str)'),
-    liftFunction(UI_SRC, 'function renderMasterSettingsBody(s, groups)'),
+    liftFunction(HELPER_SRC, 'function renderMasterSettingsBody(s, groups)'),
     'globalThis.renderMasterSettingsBody = renderMasterSettingsBody;'
   ].join('\n'), sandbox);
   sandbox.renderMasterSettingsBody(settings, []);
@@ -132,7 +138,7 @@ async function save(fields) {
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   vm.runInContext([
-    liftFunction(UI_SRC, 'async function saveMasterSettings()'),
+    liftFunction(HELPER_SRC, 'async function saveMasterSettings()'),
     'globalThis.saveMasterSettings = saveMasterSettings;'
   ].join('\n'), sandbox);
   await sandbox.saveMasterSettings();

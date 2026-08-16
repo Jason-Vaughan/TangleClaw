@@ -79,6 +79,10 @@ function saveSetting(key, value) {
 const api = window.tcCreateApi({ setConnected });
 const apiMutate = window.tcCreateApiMutate(api);
 
+// The shared Master settings modal, constructed in `bindEvents` once its
+// dependencies are live. Declared here so the Master control bar can reach it.
+let masterSettings = null;
+
 // Serializes the update-and-restart against itself. The dashboard shares this
 // latch with its #235 stale-server restart button; this page has no such
 // button, so the beacon is its only holder.
@@ -4592,6 +4596,24 @@ function clickHitsSelector(event, selector) {
 
 function bindEvents() {
   const $ = (id) => document.getElementById(id);
+
+  // The Master settings modal, built from the same component the dashboard uses
+  // (`tcCreateMasterSettings` in api-helper.js). Mounting it here is what makes
+  // the Master's settings reachable without leaving the session; the control
+  // that opens it arrives with the Master control bar. Neither page owns a copy
+  // of the markup or the Hard-rules editor.
+  masterSettings = window.tcCreateMasterSettings({
+    api,
+    apiMutate,
+    esc,
+    buildEngineOptions,
+    state: sessionState,
+    // This page has no master status dot to paint, so a failed open reports to
+    // the console rather than pretending it succeeded. The control bar passes a
+    // handler that paints its own status instead.
+    onOpenError: (message) => console.warn('[master-settings]', message)
+  });
+  masterSettings.mount();
 
   // Close group popovers on outside click. Both predicates read the
   // dispatch-time path (#566) — a re-rendering inner handler must never be able

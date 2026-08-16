@@ -232,17 +232,9 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
 
   <!-- Project Master Settings Modal — access level, engine, scope,
        availability, and the editable Hard-rules block (version history +
-       restore). Body markup is rendered by ui.js on open. -->
-  <div class="modal-backdrop" id="masterSettingsModal">
-    <div class="modal-content" role="dialog" aria-label="Master settings" aria-modal="true" style="max-width:540px;max-height:85vh;overflow-y:auto">
-      <h3 class="modal-title">Master Settings</h3>
-      <div id="masterSettingsBody"></div>
-      <div class="modal-actions">
-        <button class="btn" id="masterSettingsCloseBtn">Close</button>
-        <button class="btn btn-primary" id="masterSettingsSaveBtn">Save</button>
-      </div>
-    </div>
-  </div>
+       restore). Both the shell markup and the body are emitted by
+       `tcCreateMasterSettings` in api-helper.js and mounted on load, so the
+       dashboard and the session page cannot drift apart. -->
 
   <!-- OpenClaw Delete Confirmation Modal -->
   <div class="modal-backdrop" id="openclawDeleteModal">
