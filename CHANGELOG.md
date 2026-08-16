@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.5.0] - 2026-08-16
+
 ### Added
 
 - **The Project Master has a launch mode (#756).** Every project has had the per-engine launch-mode
