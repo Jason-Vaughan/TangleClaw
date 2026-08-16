@@ -186,6 +186,20 @@ describe('#950 — an unknown and an absence must not render the same', () => {
     assert.doesNotMatch(l, /branch not established/);
   });
 
+  it('still reports a live session on a project whose directory will not answer', () => {
+    // The uniformity check on the rule the missing-directory branch adopted:
+    // liveness is no more dependent on a READABLE directory than on an existing
+    // one. Applying it to one branch and not its sibling is how two surfaces
+    // that share a rule drift apart.
+    const l = line(enriched({
+      unreadable: 'EACCES', unreadableCode: 'TC_EACCES', version: null, git: null,
+      session: { active: true, status: 'active', startedAt: '2026-08-16 19:36', tmuxSession: 'Blocked', incomplete: [], cause: null }
+    }));
+    assert.match(l, /could not read the project directory/i);
+    assert.match(l, /session LIVE since/,
+      'a pane attached to a permission-blocked project is worth surfacing too');
+  });
+
   it('treats a missing version as an absence, not as an unknown', () => {
     // The mirror of the `git: null` correction. On a READABLE directory a null
     // version means the project has no version file; only the degraded path

@@ -45,6 +45,12 @@ All notable changes to TangleClaw are documented in this file.
   for a coordinator is the difference between "nothing to do here" and "this is gone". A failed scan
   still reports as a failed scan; `unreadable` is what separates the two.
 
+  **A degraded read never hides a live session.** Session liveness does not depend on the project's
+  directory — a tmux pane can be attached to a checkout that has been deleted, or to one the server
+  is not permitted to read. Both of those branches report the directory problem *and* the session,
+  rather than letting the directory's state swallow it; a pane attached to a project that is gone is
+  the case most worth surfacing, not the one to hide.
+
   **Concurrency.** `refreshFleetMap` is single-flight. `listProjects` is the path the ten-second
   dashboard poll already drives, and `lib/dir-scanner.js` starts each request's deadline at *issue*
   time against a serial child — so a second unsynchronized caller's reads queue while their clocks
