@@ -848,9 +848,10 @@ function validateMasterPatch(patch, config) {
       return { error: `master.launchMode must be one of: ${knownModes.join(', ')}` };
     }
   }
-  if (typeof merged.launchMode !== 'string' || !merged.launchMode) {
-    return { error: 'master.launchMode must be a launch-mode id string' };
-  }
+  // No `merged.launchMode` type check: `masterSettings` normalizes it to a
+  // non-empty string before the merge, so a guard here would be unreachable —
+  // dead code that reads like a safety net. The patched value is checked above,
+  // which is the only place an untrusted value enters.
   return {
     value: {
       accessLevel: merged.accessLevel,

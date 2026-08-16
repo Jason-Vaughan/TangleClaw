@@ -107,6 +107,10 @@ function render(settings) {
  */
 async function save(fields) {
   let sent = null;
+  // The toast text is part of the contract, not decoration: it is what tells
+  // the operator the change is deferred to the next master start. Discarding
+  // it here is what let that half of the fix ship unguarded.
+  const status = { saveMessage: null };
   const els = {
     masterEngineSelect: { value: fields.engine || '' },
     masterScopeSelect: { value: fields.scope || '' },
@@ -123,7 +127,7 @@ async function save(fields) {
     },
     apiMutate: async (_p, _m, body) => { sent = body; return { ok: true }; },
     api: { lastError: null },
-    _setMasterRulesStatus: () => {}
+    _setMasterRulesStatus: (msg) => { status.saveMessage = msg; }
   };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
@@ -132,7 +136,7 @@ async function save(fields) {
     'globalThis.saveMasterSettings = saveMasterSettings;'
   ].join('\n'), sandbox);
   await sandbox.saveMasterSettings();
-  return sent && sent.master;
+  return { patch: sent && sent.master, message: status.saveMessage };
 }
 
 describe('#756 — the Master settings modal offers a launch mode', () => {
@@ -242,7 +246,7 @@ describe('#756 — the Master settings modal offers a launch mode', () => {
 
 describe('#756 — saving the launch mode', () => {
   it('sends the picked mode in the master patch', async () => {
-    const patch = await save({ launchMode: 'acceptEdits', engine: 'claude' });
+    const { patch } = await save({ launchMode: 'acceptEdits', engine: 'claude' });
     assert.equal(patch.launchMode, 'acceptEdits');
   });
 
@@ -250,9 +254,20 @@ describe('#756 — saving the launch mode', () => {
     // Sending a guess here would overwrite the operator's stored choice with
     // whatever the modal happened to default to. PATCH merges, so omitting
     // leaves it intact.
-    const patch = await save({ engine: 'claude' });
+    const { patch } = await save({ engine: 'claude' });
     assert.ok(!('launchMode' in patch),
       'no picker means no opinion — the stored mode must survive the save');
     assert.equal(patch.accessLevel, 'read-only', 'the rest of the form still saves');
+  });
+
+  it('the save confirmation names launch mode among the deferred settings', () => {
+    // The toast said "engine/scope apply on next master start" and omitted the
+    // launch mode, which defers identically. An operator reading it would
+    // reasonably expect the mode to have taken effect already.
+    return save({ launchMode: 'acceptEdits', engine: 'claude' }).then(({ message }) => {
+      assert.match(message, /launch mode/i,
+        'the confirmation must not list only the settings it used to defer');
+      assert.match(message, /next master start/i);
+    });
   });
 });

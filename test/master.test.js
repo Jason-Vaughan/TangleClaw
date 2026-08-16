@@ -802,6 +802,82 @@ describe('ensureMasterSession — settings integration', () => {
       }
     });
 
+    it('WARNS on the launch path when the stored mode is not honored', () => {
+      // This warn IS the R-24 fix. The debug line in `_masterRuntime` writes
+      // nothing on a default install (logger defaults to `info`), so the launch
+      // path is the only place the degrade is actually recorded — and nothing
+      // asserted it. The sibling warn in lib/sessions.js is pinned by
+      // test/codex-launch-modes.test.js against a DIFFERENT string
+      // ("not honored by this engine"), so it cannot stand in for this one.
+      const logger = require('../lib/logger');
+      const captured = [];
+      const priorLevel = 'error';
+      logger.setLevel('warn');
+      logger.setConsoleStream({ write: (s) => captured.push(s) });
+      const config = store.config.load();
+      const saved = config.master;
+      try {
+        config.master = { accessLevel: 'read-only', engine: 'aider', launchMode: 'acceptEdits', scope: 'all', autoStart: false };
+        store.config.save(config);
+        master.ensureMasterSession({
+          home, tmuxLib: fakeTmux({ alive: false }), enginesLib: enginesInstalling(['aider'])
+        });
+        assert.match(captured.join(''), /not honored by the resolved engine/,
+          'a stranded mode must leave a record on the path where it actually bites');
+        assert.match(captured.join(''), /acceptEdits/, 'naming what was stored');
+      } finally {
+        config.master = saved;
+        store.config.save(config);
+        logger.setConsoleStream(null);
+        logger.setLevel(priorLevel);
+      }
+    });
+
+    it('records the stranded mode on the STATUS path too, at debug', () => {
+      // The polled path's counterpart to the launch warn. Debug because
+      // `getMasterStatus` runs on every poll and a warn there would report a
+      // stable condition at the poll's cadence (#906). Asserted at debug level
+      // because that is the only level at which it is observable at all.
+      const logger = require('../lib/logger');
+      const captured = [];
+      logger.setLevel('debug');
+      logger.setConsoleStream({ write: (s) => captured.push(s) });
+      const config = store.config.load();
+      const saved = config.master;
+      try {
+        config.master = { accessLevel: 'read-only', engine: 'aider', launchMode: 'acceptEdits', scope: 'all', autoStart: false };
+        store.config.save(config);
+        master.getMasterStatus({ tmuxLib: fakeTmux({ alive: true }), enginesLib: enginesInstalling(['aider']) });
+        assert.match(captured.join(''), /not honored by the resolved engine/);
+      } finally {
+        config.master = saved;
+        store.config.save(config);
+        logger.setConsoleStream(null);
+        logger.setLevel('error');
+      }
+    });
+
+    it('does NOT warn when the stored mode is honored', () => {
+      // The negative case: a warn that always fires is not a signal.
+      const logger = require('../lib/logger');
+      const captured = [];
+      logger.setLevel('warn');
+      logger.setConsoleStream({ write: (s) => captured.push(s) });
+      const config = store.config.load();
+      const saved = config.master;
+      try {
+        config.master = { accessLevel: 'read-only', engine: 'claude', launchMode: 'acceptEdits', scope: 'all', autoStart: false };
+        store.config.save(config);
+        master.ensureMasterSession({ home, tmuxLib: fakeTmux({ alive: false }), enginesLib: availableEngines });
+        assert.doesNotMatch(captured.join(''), /not honored by the resolved engine/);
+      } finally {
+        config.master = saved;
+        store.config.save(config);
+        logger.setConsoleStream(null);
+        logger.setLevel('error');
+      }
+    });
+
     it('ships each offered mode with its human label, not a bare id', () => {
       // The project-settings picker renders `m.label || key`; a Master picker
       // showing `acceptEdits` would be the visibly poorer of two controls doing
