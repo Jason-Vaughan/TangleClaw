@@ -3486,8 +3486,9 @@ const $ = (id) => document.getElementById(id);
 $('masterToggle').addEventListener('click', toggleMaster);
 $('masterRetryBtn').addEventListener('click', ensureMasterAttached);
 $('masterSettingsBtn').addEventListener('click', openMasterSettings);
-// Close, Save and the Hard-rules delegation are bound by the component itself,
-// which adopts the modal this page already ships rather than appending a second.
+// The component owns the modal end to end: this injects the markup (index.html
+// no longer carries it) and binds Close, Save and the Hard-rules delegation.
+// Only the gear above stays the dashboard's, because the affordance is.
 masterSettings.mount();
 refreshMasterDot();
 $('portsToggle').addEventListener('click', togglePorts);
