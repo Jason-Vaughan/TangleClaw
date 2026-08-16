@@ -3520,6 +3520,24 @@ function renderMasterSettingsBody(s, groups) {
   const engineOpts = '<option value="">(follow default engine)</option>'
     + buildEngineOptions(state.engines, s.engine || '');
 
+  // Launch mode (#756). Rendered from what the SERVER says this engine offers
+  // (`s.launchModes`) rather than re-derived here — a third source of truth for
+  // which flags exist is exactly what #768 warns against.
+  //
+  // A stored mode the resolved engine cannot honor is shown, selected, and
+  // labelled as unavailable rather than dropped: it is still the operator's
+  // saved preference and comes back if they switch the engine back, so silently
+  // showing 'default' would misreport what is stored (the silent-ignore failure
+  // #741 documents). `resolvedLaunchMode` says what will actually run.
+  const offered = Array.isArray(s.launchModes) ? s.launchModes : [];
+  const stranded = s.launchMode && !offered.includes(s.launchMode);
+  const modeOpts = offered
+    .map((m) => `<option value="${esc(m)}" ${m === s.launchMode ? 'selected' : ''}>${esc(m)}</option>`)
+    .concat(stranded
+      ? [`<option value="${esc(s.launchMode)}" selected>${esc(s.launchMode)} — not available on this engine</option>`]
+      : [])
+    .join('');
+
   const scopeIsGroup = s.scope && s.scope !== 'all';
   const groupOpts = ['<option value="">All projects</option>']
     .concat(groups.map((g) =>
@@ -3541,6 +3559,22 @@ function renderMasterSettingsBody(s, groups) {
       <label class="form-label" for="masterEngineSelect">Engine</label>
       <select id="masterEngineSelect" class="form-select">${engineOpts}</select>
       <div class="form-hint">Applies the next time the master session starts (restart via tmux: <code>tmux kill-session -t tangleclaw-master</code>, then reopen).</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="masterLaunchModeSelect">Launch mode</label>
+      ${offered.length
+        ? `<select id="masterLaunchModeSelect" class="form-select">${modeOpts}</select>`
+        : '<div class="form-hint">No engine is resolved, so there are no launch modes to choose from.</div>'}
+      <div class="form-hint">
+        How the master's own session prompts — enforced by the engine, and separate from
+        Access level, which is what the master may do to the fleet.
+        ${stranded
+          ? `<strong>Saved as <code>${esc(s.launchMode)}</code>, which this engine cannot honor — it will start in <code>${esc(s.resolvedLaunchMode || 'default')}</code>.</strong> Your choice is kept and applies again if you switch back.`
+          : ''}
+        ${s.accessLevel === 'write' && s.resolvedLaunchMode === 'bypassPermissions'
+          ? '<strong>This combination lets the master act on the fleet with no confirmation at any layer.</strong>'
+          : ''}
+      </div>
     </div>
     <div class="form-group">
       <label class="form-label" for="masterScopeSelect">Scope</label>
@@ -3745,9 +3779,13 @@ async function saveMasterSettings() {
   const engineSel = document.getElementById('masterEngineSelect');
   const scopeSel = document.getElementById('masterScopeSelect');
   const autoStartEl = document.getElementById('masterAutoStart');
+  const modeSel = document.getElementById('masterLaunchModeSelect');
   const masterPatch = {
     accessLevel: checked ? checked.value : 'read-only',
     engine: engineSel && engineSel.value ? engineSel.value : null,
+    // Absent select → the engine offered no modes, so send nothing rather than
+    // a guess; PATCH merges over the stored block and leaves the choice intact.
+    ...(modeSel && modeSel.value ? { launchMode: modeSel.value } : {}),
     scope: scopeSel && scopeSel.value ? { type: 'group', groupId: scopeSel.value } : 'all',
     autoStart: !!(autoStartEl && autoStartEl.checked)
   };

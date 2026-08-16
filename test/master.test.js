@@ -416,11 +416,17 @@ function clearMasterRules() {
 
 describe('masterSettings normalization', () => {
   it('applies defaults for a missing/partial master block (shallow-merge safety)', () => {
-    assert.deepEqual(master.masterSettings({}), { accessLevel: 'read-only', engine: null, scope: 'all', autoStart: false });
+    assert.deepEqual(master.masterSettings({}), {
+      accessLevel: 'read-only', engine: null, launchMode: 'default', scope: 'all', autoStart: false
+    });
     const partial = master.masterSettings({ master: { autoStart: true } });
     assert.equal(partial.autoStart, true);
     assert.equal(partial.accessLevel, 'read-only');
     assert.equal(partial.engine, null);
+    // #756: a hand-edited partial block must not surface launchMode as
+    // undefined — `_buildLaunchCommand` would then receive it and the Master
+    // would launch under whatever that coerces to.
+    assert.equal(partial.launchMode, 'default');
   });
 
   it('rejects out-of-enum access levels back to read-only', () => {
@@ -696,6 +702,123 @@ describe('ensureMasterSession — settings integration', () => {
       config.master = saved;
       store.config.save(config);
     }
+  });
+
+  /*
+   * #756 — the Master had no launch mode at any layer. `lib/master.js` built its
+   * session with a hardcoded `null`, on the reasoning that ask-gating everything
+   * was part of the read-only posture. That conflated two independent axes: this
+   * one governs whether the agent prompts inside ITS OWN session and is enforced
+   * by the engine; the access level governs what the Master may do to the fleet
+   * and is enforced by TangleClaw. A read-only Master in `bypassPermissions` is
+   * coherent — it edits its own `memory/` without nagging and still cannot touch
+   * the fleet.
+   *
+   * These assert the FLAGS that reach the launch command, not the argument
+   * passed to a spy: the engine profile is the thing that turns a mode id into
+   * `--permission-mode acceptEdits`, so a test that stopped at the call boundary
+   * would keep passing if the mode never reached the CLI.
+   */
+  describe('#756 — the Master honors a launch mode', () => {
+    /** Run an ensure with a stored master block, restoring config after. */
+    function ensureWithMaster(masterBlock, opts = {}) {
+      const config = store.config.load();
+      const saved = config.master;
+      try {
+        config.master = { accessLevel: 'read-only', engine: null, scope: 'all', autoStart: false, ...masterBlock };
+        store.config.save(config);
+        const tmuxLib = fakeTmux({ alive: false });
+        const r = master.ensureMasterSession({
+          home, tmuxLib, enginesLib: opts.enginesLib || availableEngines
+        });
+        return { result: r, command: tmuxLib.calls.length ? tmuxLib.calls[0].opts.command : null };
+      } finally {
+        config.master = saved;
+        store.config.save(config);
+      }
+    }
+
+    it('puts the stored mode\'s real flags into the launch command', () => {
+      const { result, command } = ensureWithMaster({ launchMode: 'acceptEdits', engine: 'claude' });
+      assert.equal(result.created, true);
+      assert.match(command, /--permission-mode acceptEdits/,
+        'the mode must reach the CLI, not stop at the call boundary');
+      assert.equal(result.launchMode, 'acceptEdits');
+    });
+
+    it('defaults to the interactive mode when nothing is stored', () => {
+      const { result, command } = ensureWithMaster({ engine: 'claude' });
+      assert.equal(result.launchMode, 'default');
+      assert.doesNotMatch(command, /--permission-mode|--dangerously-skip-permissions/,
+        "the default mode adds no flags — it is the engine's own interactive default");
+    });
+
+    it('reconciles a mode the effective engine cannot honor down to default', () => {
+      // `acceptEdits` is Claude's; aider defines `yesAlways` and knows nothing
+      // about it. Passing it through would hand the CLI a flag it rejects.
+      const { result, command } = ensureWithMaster(
+        { launchMode: 'acceptEdits', engine: 'aider' },
+        { enginesLib: enginesInstalling(['aider']) }
+      );
+      assert.equal(result.launchMode, 'default',
+        'an unhonored mode must reconcile, never reach the CLI');
+      assert.doesNotMatch(String(command), /acceptEdits/);
+    });
+
+    it('does not FLATTEN the stored choice when an engine cannot honor it', () => {
+      // The reconcile happens at launch, not at rest. An operator who picks
+      // acceptEdits on Claude, switches the Master to aider, and switches back
+      // must find their choice intact rather than silently rewritten to
+      // 'default' on the way past.
+      const config = store.config.load();
+      const saved = config.master;
+      try {
+        config.master = { accessLevel: 'read-only', engine: 'aider', launchMode: 'acceptEdits', scope: 'all', autoStart: false };
+        store.config.save(config);
+        master.ensureMasterSession({ home, tmuxLib: fakeTmux({ alive: false }), enginesLib: enginesInstalling(['aider']) });
+        assert.equal(master.masterSettings(store.config.load()).launchMode, 'acceptEdits',
+          'the stored preference must survive an engine that cannot honor it');
+      } finally {
+        config.master = saved;
+        store.config.save(config);
+      }
+    });
+
+    it('status reports the stored mode, the resolved mode, and what the engine offers', () => {
+      const config = store.config.load();
+      const saved = config.master;
+      try {
+        config.master = { accessLevel: 'read-only', engine: 'aider', launchMode: 'acceptEdits', scope: 'all', autoStart: false };
+        store.config.save(config);
+        const st = master.getMasterStatus({ tmuxLib: fakeTmux({ alive: true }), enginesLib: enginesInstalling(['aider']) });
+        assert.equal(st.settings.launchMode, 'acceptEdits', 'what the operator picked');
+        assert.equal(st.settings.resolvedLaunchMode, 'default', 'what will actually run');
+        assert.ok(Array.isArray(st.settings.launchModes), 'the surface must not re-derive the offered set');
+        assert.ok(!st.settings.launchModes.includes('acceptEdits'),
+          'aider does not offer acceptEdits, so the picker must not show it as available');
+      } finally {
+        config.master = saved;
+        store.config.save(config);
+      }
+    });
+
+    it('ensure and status agree on the mode that will run', () => {
+      // The lockstep hazard `_masterRuntime` exists to prevent: the settings
+      // modal must never show one mode while the session launches another.
+      const config = store.config.load();
+      const saved = config.master;
+      try {
+        config.master = { accessLevel: 'read-only', engine: 'aider', launchMode: 'plan', scope: 'all', autoStart: false };
+        store.config.save(config);
+        const lib = enginesInstalling(['aider']);
+        const ensured = master.ensureMasterSession({ home, tmuxLib: fakeTmux({ alive: false }), enginesLib: lib });
+        const status = master.getMasterStatus({ tmuxLib: fakeTmux({ alive: true }), enginesLib: lib });
+        assert.equal(ensured.launchMode, status.settings.resolvedLaunchMode);
+      } finally {
+        config.master = saved;
+        store.config.save(config);
+      }
+    });
   });
 
   it('honors master.engine over defaultEngine, and reports instructional enforcement off-claude', () => {

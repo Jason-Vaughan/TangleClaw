@@ -4,6 +4,32 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **The Project Master has a launch mode (#756).** Every project has had the per-engine launch-mode
+  axis — `default` / `acceptEdits` / `plan` / `bypassPermissions` and their per-engine siblings —
+  and the Master had it at no layer: `lib/master.js` built its session with a hardcoded `null`, so
+  it always started in whatever bare default its engine gave and the operator had no way to change
+  it. It is now settable in Master settings, persisted through `PATCH /api/config`, and reaches the
+  actual CLI flags.
+
+  The old `null` was justified in a comment as *"part of the read-only posture"*, and that reasoning
+  conflated two independent axes. Launch mode governs whether the agent prompts inside **its own
+  session** and is enforced by the engine; access level governs what the Master may do to **the
+  fleet** and is enforced by TangleClaw. A read-only Master in `bypassPermissions` is coherent — it
+  edits its own `memory/` without nagging and still cannot touch the fleet — and a `write` Master in
+  `default` is equally coherent. The settings modal names them as separate, and calls out the one
+  combination (`write` + `bypassPermissions`) that removes confirmation at every layer, because
+  #756's bar is that it be selectable but never reachable unnoticed.
+
+  The mode is reconciled against the Master's **effective** engine in the one place that already
+  resolves engine and enforcement, so the settings modal and the launching session cannot disagree.
+  A mode the resolved engine cannot honor degrades to `default` at launch but is **not** flattened
+  at rest: it stays stored, stays selected in the picker, and is labelled as unavailable with what
+  will run instead — so switching engines and back restores the operator's choice rather than
+  silently discarding it. The picker renders only the modes the server says that engine offers,
+  never a list the frontend derived for itself.
+
 ## [5.4.0] - 2026-08-15
 
 ### Added

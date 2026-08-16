@@ -779,7 +779,10 @@ describe('API endpoints', () => {
       const { status } = await request(server, 'PATCH', '/api/config', { master: { autoStart: true } });
       assert.equal(status, 200);
       assert.deepEqual(store.config.load().master, {
-        accessLevel: 'read-only', engine: null, scope: 'all', autoStart: true
+        // #756 added launchMode to the normalized shape. It is stored on every
+        // write, not only when patched, so the block never carries a missing
+        // field for `_buildLaunchCommand` to receive as undefined.
+        accessLevel: 'read-only', engine: null, launchMode: 'default', scope: 'all', autoStart: true
       });
     });
 
@@ -790,6 +793,39 @@ describe('API endpoints', () => {
       const saved = store.config.load().master;
       assert.equal(saved.engine, 'claude');
       assert.equal(saved.autoStart, true, 'earlier field must survive the second patch');
+    });
+
+    it('stores a launch mode (#756)', async () => {
+      const { status } = await request(server, 'PATCH', '/api/config', { master: { launchMode: 'acceptEdits' } });
+      assert.equal(status, 200);
+      assert.equal(store.config.load().master.launchMode, 'acceptEdits');
+    });
+
+    it('accepts a mode the CURRENT engine cannot honor, and keeps it stored', async () => {
+      // Deliberate: validation is by name, not against whichever engine happens
+      // to be resolved at the moment of the PATCH. The operator may switch
+      // engines back, and `_masterRuntime` reconciles at launch. Rejecting here
+      // would make the setting's validity depend on unrelated state.
+      const { status } = await request(server, 'PATCH', '/api/config', {
+        master: { engine: 'aider', launchMode: 'acceptEdits' }
+      });
+      assert.equal(status, 200);
+      assert.equal(store.config.load().master.launchMode, 'acceptEdits',
+        'the stored preference survives an engine that cannot honor it');
+    });
+
+    it('rejects a launch mode no engine defines, naming the valid set', async () => {
+      const { status, data } = await request(server, 'PATCH', '/api/config', {
+        master: { launchMode: 'ludicrous-speed' }
+      });
+      assert.equal(status, 400);
+      assert.match(data.error, /master\.launchMode must be one of/);
+      assert.match(data.error, /default/, 'the honest set must name at least the universal mode');
+    });
+
+    it('rejects a non-string launch mode', async () => {
+      const { status } = await request(server, 'PATCH', '/api/config', { master: { launchMode: 7 } });
+      assert.equal(status, 400);
     });
 
     it('rejects not-yet-enforced access levels with an honest reason', async () => {

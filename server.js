@@ -794,7 +794,7 @@ function validateMasterPatch(patch, config) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
     return { error: 'master must be an object' };
   }
-  const known = ['accessLevel', 'engine', 'scope', 'autoStart'];
+  const known = ['accessLevel', 'engine', 'launchMode', 'scope', 'autoStart'];
   for (const key of Object.keys(patch)) {
     if (!known.includes(key)) return { error: `master.${key} is not a settable field` };
   }
@@ -826,7 +826,28 @@ function validateMasterPatch(patch, config) {
   if (typeof merged.autoStart !== 'boolean') {
     return { error: 'master.autoStart must be a boolean' };
   }
-  return { value: { accessLevel: merged.accessLevel, engine: merged.engine, scope: merged.scope, autoStart: merged.autoStart } };
+  // Validated as a NAME, not against the current engine's honored set. A mode
+  // this engine cannot honor is a legitimate stored value — the operator may
+  // switch engines back — and `_masterRuntime` reconciles it to 'default' at
+  // launch. Rejecting it here would make the setting depend on which engine
+  // happened to be resolved at the moment of the PATCH. What must be refused is
+  // a mode no engine defines at all, which is a typo, not a choice.
+  if (typeof merged.launchMode !== 'string' || !merged.launchMode) {
+    return { error: 'master.launchMode must be a launch-mode id string' };
+  }
+  const knownModes = master.knownLaunchModes();
+  if (!knownModes.includes(merged.launchMode)) {
+    return { error: `master.launchMode must be one of: ${knownModes.join(', ')}` };
+  }
+  return {
+    value: {
+      accessLevel: merged.accessLevel,
+      engine: merged.engine,
+      launchMode: merged.launchMode,
+      scope: merged.scope,
+      autoStart: merged.autoStart
+    }
+  };
 }
 
 // PATCH /api/config
