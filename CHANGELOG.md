@@ -4,6 +4,42 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **The Project Master's fleet map says what each project is doing, not just that it exists (#950).**
+  `FLEET.md` — the Master's whole picture of the fleet it coordinates — carried three fields per
+  project: name, engine, path. It could tell the Master a project existed and nothing about its
+  state, which is not a basis for coordinating anything. A map that lists doors without saying which
+  rooms have anyone in them.
+
+  It now carries version, branch, working-tree state, session liveness and last-commit age. None of
+  that required new scanning: every field was already computed for the dashboard poll and discarded
+  at the moment the file was written.
+
+  **Unknowns stay unknowns.** The map inherits the tri-state vocabulary from #941/#937/#920, and the
+  distinctions it preserves are the ones a coordinator acts on: "no live session" and "liveness could
+  not be established" are opposite situations — one is safe to act on, the other is exactly when
+  acting is most dangerous — and they now render differently. Same for a clean tree versus one whose
+  dirtiness was never read, and for a branch read versus a branch not established. An unreadable
+  project directory reports once, with its cause, instead of as a row of separate unknowns.
+
+  **A pass that gathered no state says so.** `refreshMasterIdentity` is synchronous and runs at
+  server boot; it must never grow per-project git or tmux work, because that is the event-loop
+  hazard the forked scanner exists to prevent (#883/#884). So the boot pass still writes an
+  identity-only map — but it now declares itself as identity-only, and states that a missing state
+  line means nobody looked rather than that there is nothing to report. Whether state was gathered is
+  derived from the records themselves, never passed as a flag that could disagree with its data.
+
+  The state half is a new `master.refreshFleetMap()`, async, riding the enriched list
+  `projects.listProjects()` already builds. It is called (not awaited) after the boot identity
+  refresh and on `POST /api/master/ensure`, writes only `FLEET.md`, and does nothing at all when no
+  master home exists — so it cannot create master state for an operator who has never opened the
+  Master. The renderer, `master.buildFleetMap()`, is pure: no filesystem, no git, no tmux, no clock.
+
+  Groundwork for the ratified Master startup/wrap spec
+  (`.tangleclaw/plans/master-startup-and-wrap.md`), whose next item compares this file's
+  `generated-at` stamp against the Master's own `observed-at` notes to compute memory drift.
+
 ### Internal
 
 - **The Master settings modal became a mountable component (#768, chunk 1 of 3).** The modal — the

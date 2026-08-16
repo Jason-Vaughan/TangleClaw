@@ -26,6 +26,55 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-16: the fleet map says what each project is doing (#950)
+
+<!-- prawduct: type=feat | scope=fleet-map-state-950 | chunks=01 -->
+
+**Why:** `FLEET.md` is the Project Master's entire picture of the fleet, and it carried
+name · engine · path. Enough to say a project EXISTS, nothing about what it is DOING — not a basis
+for coordinating anything. Every field it should have carried was already computed for the dashboard
+poll and thrown away at the moment the file was written. This is build item 1 of the ratified Master
+startup/wrap spec (`.tangleclaw/plans/master-startup-and-wrap.md`), picked to go first because it
+needs none of that spec's rulings.
+
+**What changed:** `lib/master.js` gains `buildFleetMap(projects, {generatedAt})` — a PURE renderer,
+no filesystem/git/tmux/clock — plus `refreshFleetMap()`, async, which rides the enriched list
+`projects.listProjects()` already builds and writes only `FLEET.md`. `_refreshMasterMemory` now takes
+an optional `projects` and delegates rendering. Wired in `server.js` at boot (after the identity
+refresh) and on `POST /api/master/ensure`, both **unawaited** — neither boot nor an ensure response
+may wait on the whole fleet's git reads.
+
+**The constraint that shaped it, and the estimate it corrected.** The spec called this "one
+function". It is not: `refreshMasterIdentity` is fully synchronous and runs at server boot, while the
+state the map needs comes from `git.getInfo` (several `execSync` spawns per repo on a cold cache) and
+an async tmux snapshot. Adding that per project to the boot path is precisely the event-loop hazard
+`lib/dir-scanner.js` exists to prevent (#883/#884). Hence the split: the sync path keeps writing an
+identity-only map at no new cost, and the async sibling upgrades it. Whether state was gathered is
+DERIVED from the records (`_hasStateFields` tests for the KEY, not its value) rather than passed as a
+flag, because a flag can disagree with its data — and an enriched record whose read failed carries
+`git: null` while a raw row simply never had the key, which are different facts.
+
+**Honesty is the feature, not a side-effect.** The map preserves every distinction #941/#937/#920
+bought: "no live session" vs "liveness could not be established" (opposite situations for a
+coordinator — one is safe to act on, the other is when acting is most dangerous); "clean" vs
+"dirty-state unknown"; a branch read vs "branch not established". An unreadable directory reports
+once with its cause instead of as a row of separate unknowns. A pass that gathered no state prints a
+banner saying so, and that absence of a state line means nobody looked.
+
+**Caught on live data before it shipped:** the first draft rendered a null `git` as "git could not be
+read". `lib/dir-scanner-child.js#_gitInfo` returns null for "not a repository, or git is absent" and
+an OBJECT carrying `incomplete`/`cause` when a read genuinely fell short — so the draft manufactured
+a failure for every non-repo project on the fleet, which is the exact invention this change exists to
+remove, one level down. Found by rendering the real `GET /api/projects` output rather than trusting
+the fixtures; now `not a git repository`, with its own guard.
+
+**Tests:** `test/master-fleet-map.test.js` (+17). Every honesty pair asserts the two render
+DIFFERENTLY, not merely that each contains a string — a `notEqual` on the rendered line, because the
+defect class here is flattening, not omission. Five mutations confirmed red before the guards were
+kept (flatten unknown liveness, render an unread tree as clean, treat raw rows as stateful, drop the
+no-master-home guard, restore the "git could not be read" wording). Fixtures verified against the
+real shape by rendering the live fleet through them. Full suite **6278 pass / 0 fail / 1 skip**.
+
 ## 2026-08-16: the Master settings modal becomes a component both pages can mount (#768 chunk 1)
 
 <!-- prawduct: type=refactor | scope=master-settings-component-768 | chunks=01 -->

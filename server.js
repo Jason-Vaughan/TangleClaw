@@ -604,6 +604,13 @@ route('GET', '/api/master/status', (_req, res) => {
 // the terminal iframe (ttyd only attaches to EXISTING tmux sessions).
 route('POST', '/api/master/ensure', (_req, res) => {
   const result = master.ensureMasterSession();
+  // Opening the master is exactly when its fleet map most needs to be current,
+  // and it is the one moment the operator is already waiting on a session to
+  // start — so refresh the state half here too. Not awaited: the response must
+  // not wait on the whole fleet's git reads, and `ensureMasterSession` has
+  // already written the identity-only map synchronously.
+  master.refreshFleetMap()
+    .catch((err) => log.warn('Fleet map state refresh failed', { error: err.message }));
   if (result.error) {
     // A refusal because tmux never answered is not a failed start, and the panel
     // must not paint it as one — "down" would be a definite claim about the very
@@ -6217,6 +6224,17 @@ if (require.main === module) {
   } catch (err) {
     log.warn('Master identity refresh failed', { error: err.message });
   }
+
+  // The state half of the fleet map, deliberately NOT awaited: it enriches
+  // every project (a git read each, inside the forked scanner), and boot must
+  // not wait on the fleet to finish answering. The identity refresh above has
+  // already written an honest identity-only FLEET.md, so a slow or failed run
+  // here leaves a map that under-claims rather than one that is wrong.
+  master.refreshFleetMap()
+    .then((r) => {
+      if (r.refreshed) log.debug('Fleet map refreshed with state', { count: r.count });
+    })
+    .catch((err) => log.warn('Fleet map state refresh failed', { error: err.message }));
 
   // Project Master auto-start: launch the reserved master session at boot
   // when the operator opted in (master.autoStart). Failure is logged, never
