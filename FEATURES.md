@@ -268,3 +268,7 @@ Suite: `node --test 'test/*.test.js'` (~4300 tests, CI-gated). Most test files p
 - **TBD** — touched in this session: `test/_mini-dom.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/session-update-poll.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/update-release-link.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-08-16)
+
+- **TBD** — touched in this session: `test/master-launch-mode.test.js`. <!-- describe -->
