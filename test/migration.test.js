@@ -118,4 +118,86 @@ describe('migration — detectExistingProjects', () => {
     assert.ok(found, 'should detect project with both markers');
     assert.equal(found.hasTangleclawConfig, true);
   });
+
+  /*
+   * #920 — the other member of the #708 family. #708 stopped the setup wizard
+   * offering the running checkout as a candidate; this path is worse, because
+   * it REGISTERS what it finds: writing `.tangleclaw/project.json` into the
+   * clone dirties it and strands the self-updater behind its dirty-tree guard.
+   *
+   * The install carries both detection markers, so nothing else in this
+   * function keeps it out.
+   */
+  describe('#920 — the running install is never a detected project', () => {
+    // The scenario is not hypothetical and cannot be faked with a symlink:
+    // `readdirSync(…, {withFileTypes:true})` reports a symlink as
+    // isSymbolicLink(), not isDirectory(), so a symlinked stand-in is skipped
+    // long before the exclusion runs and would prove nothing. The real shape
+    // is the install sitting as a REAL directory inside the scanned folder —
+    // which is what the README's install steps produce, because the operator
+    // clones into the same folder they then name as their projects directory.
+    //
+    // So the fixture points the scan at the install's own parent.
+    const ownInstall = fs.realpathSync(path.join(__dirname, '..'));
+    const ownParent = path.dirname(ownInstall);
+    const ownName = path.basename(ownInstall);
+
+    /** Run a detection with `projectsDir` pointed somewhere else, then restore. */
+    function detectIn(dir) {
+      const config = store.config.load();
+      const orig = config.projectsDir;
+      config.projectsDir = dir;
+      store.config.save(config);
+      try {
+        return projects.detectExistingProjects();
+      } finally {
+        const c = store.config.load();
+        c.projectsDir = orig;
+        store.config.save(c);
+      }
+    }
+
+    it('excludes the running checkout even though it carries a marker', () => {
+      // Proof the fixture is the real shape rather than a stand-in: the
+      // install really does carry a marker the scan keys on, so the exclusion
+      // is the only thing that can keep it out of the result.
+      assert.ok(fs.existsSync(path.join(ownInstall, '.prawduct')),
+        'the install must actually carry a marker, or this test proves nothing');
+
+      const result = detectIn(ownParent);
+      assert.ok(!result.detected.some((d) => d.name === ownName),
+        'registering the install into itself dirties the clone and breaks self-update');
+      assert.deepEqual(result.errors, [], 'exclusion is silent, not an error');
+    });
+
+    it('identifies the install by realpath, not by the path string it was reached through', () => {
+      // Reached via a symlinked parent, the scanned path is a different string
+      // from the install's realpath — the shape macOS produces for /tmp vs
+      // /private/tmp. A string compare passes the test above and fails here.
+      const linkedParent = path.join(tmpDir, 'linked-parent');
+      fs.symlinkSync(ownParent, linkedParent, 'dir');
+      try {
+        const result = detectIn(linkedParent);
+        assert.ok(!result.detected.some((d) => d.name === ownName),
+          'identity is the realpath, not the route the operator happened to take');
+      } finally {
+        fs.unlinkSync(linkedParent);
+      }
+    });
+
+    it('still detects an ordinary marked project sitting beside it', () => {
+      // The exclusion must be surgical — a scan that dropped everything, or
+      // that bailed on the whole directory, would pass both tests above while
+      // silently breaking the feature.
+      const neighbour = path.join(ownParent, 'tc-920-neighbour');
+      fs.mkdirSync(path.join(neighbour, '.prawduct'), { recursive: true });
+      try {
+        const result = detectIn(ownParent);
+        assert.ok(result.detected.some((d) => d.name === 'tc-920-neighbour'),
+          'only the install is excluded, not the directory it sits in');
+      } finally {
+        fs.rmSync(neighbour, { recursive: true, force: true });
+      }
+    });
+  });
 });

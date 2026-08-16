@@ -388,7 +388,13 @@ describe('Session Wrapper UI', () => {
 
     it('should include connection state management', () => {
       assert.ok(js.includes('function setConnected('));
-      assert.ok(js.includes('reconnectTimer'));
+      // The private `reconnectTimer` loop this used to name was replaced by the
+      // shared reconnect policy (#941): keeping a per-page loop here is what let
+      // the dashboard learn to report a dead server while this page kept
+      // claiming a blip forever. Assert the retry mechanism still exists —
+      // it just is not this page's own any more.
+      assert.ok(js.includes('tcCreateReconnectPolicy('));
+      assert.ok(js.includes('function renderSessionUnreachable('));
     });
 
     it('should include command bar functions', () => {

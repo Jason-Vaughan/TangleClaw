@@ -146,7 +146,86 @@ function buildEngineOptions(engineList, selectedId) {
 
 // ── Connection State ──
 
-let reconnectTimer = null;
+// The retry cadence and the ceiling past which an outage stops being called a
+// blip live in the shared policy, so this page and the dashboard cannot drift
+// apart about when a server counts as gone \u2014 the drift that left this page
+// looping "Connection lost. Retrying\u2026" forever while the dashboard had learned
+// to say something true.
+const reconnectPolicy = tcCreateReconnectPolicy({
+  probe: () => pollStatus(),
+  onEscalate: () => renderSessionUnreachable(),
+  onRecover: () => hideSessionUnreachable()
+});
+
+/**
+ * Say what is actually known once the API has been gone long enough that
+ * "Retrying\u2026" is no longer an honest description.
+ *
+ * This is a BANNER, not the dashboard's full-screen overlay, and the
+ * difference is the point. The overlay is honest on the dashboard because
+ * every control under it depends on the server that just died. Here the
+ * terminal is an iframe onto ttyd on a separate port, so it can be perfectly
+ * alive \u2014 with the operator mid-command \u2014 while the API is unreachable.
+ * Covering it would assert something this page cannot establish: that the
+ * session is gone. So the banner names the two axes separately, takes space
+ * from the terminal instead of covering it, and leaves it usable.
+ *
+ * Filled on first need \u2014 a healthy session carries an empty container.
+ *
+ * Explicitly NOT a reload or redirect: the no-UI-timers norm (#98, #268)
+ * applies, so the only navigation out of this state is the operator's.
+ */
+function renderSessionUnreachable() {
+  const el = document.getElementById('sessionUnreachable');
+  if (!el) return;
+  if (!el.innerHTML.trim()) {
+    el.innerHTML = `
+      <h2>TangleClaw's API isn't answering</h2>
+      <p>The server at <strong>${esc(location.origin)}</strong> has stopped answering, so
+      session status, commands and wrap are unavailable. This page may have loaded from the
+      browser's offline cache, so what it shows can be stale.</p>
+      <p class="session-unreachable-note">The terminal below is served separately and may still
+      be live \u2014 TangleClaw can't tell you which from here. It will reconnect by itself the moment
+      the server is back.</p>
+      <p>On the machine that runs TangleClaw:</p>
+      <pre>launchctl list | grep tangleclaw
+tail -50 ~/.tangleclaw/logs/server.err.log</pre>
+      <button id="sessionUnreachableRetryBtn" onclick="retrySessionConnectionNow()">Retry now</button>`;
+  }
+  el.classList.add('visible');
+}
+
+/** Dismiss the unreachable banner (the server answered again). */
+function hideSessionUnreachable() {
+  const el = document.getElementById('sessionUnreachable');
+  if (el) el.classList.remove('visible');
+}
+
+/**
+ * The explicit retry the banner offers. The background loop keeps running
+ * regardless; this exists so the operator has an action that answers NOW
+ * rather than at the end of the current interval.
+ *
+ * The button shows the attempt in flight \u2014 the pause between press and answer
+ * otherwise reads as a dead button. On recovery the banner dismisses, so the
+ * reset in `finally` matters only when the server is still gone.
+ * @returns {Promise<void>}
+ */
+async function retrySessionConnectionNow() {
+  const btn = document.getElementById('sessionUnreachableRetryBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Retrying\u2026';
+  }
+  try {
+    await reconnectPolicy.retryNow();
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Retry now';
+    }
+  }
+}
 
 /**
  * Update connection state and show/hide toast.
@@ -164,29 +243,15 @@ function setConnected(connected) {
     dot.classList.add('disconnected');
     dot.title = 'Disconnected';
     document.getElementById('commandSend').disabled = true;
-    if (!reconnectTimer) {
-      // Use setTimeout chain instead of setInterval to prevent burst storms
-      function reconnectLoop() {
-        if (!reconnectTimer) return;
-        reconnectTimer = setTimeout(async () => {
-          if (!reconnectTimer) return;
-          await pollStatus();
-          reconnectLoop();
-        }, 5000);
-      }
-      reconnectTimer = true; // sentinel
-      reconnectLoop();
-    }
+    reconnectPolicy.begin();
   } else {
+    // `end()` dismisses the unreachable banner through `onRecover`.
+    reconnectPolicy.end();
     toast.textContent = 'Reconnected';
     toast.className = 'toast toast-ok visible';
     dot.classList.remove('disconnected');
     dot.title = 'Connected';
     document.getElementById('commandSend').disabled = false;
-    if (reconnectTimer) {
-      if (reconnectTimer !== true) clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
     setTimeout(() => { toast.classList.remove('visible'); }, 3000);
   }
 }

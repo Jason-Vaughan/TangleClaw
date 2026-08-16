@@ -540,6 +540,28 @@ describe('C1 — per-project plugin migration (#262)', () => {
       assert.equal(engines.isPluginGoverned(p), true);
     });
 
+    it('DEFERS when liveness could not be established (#937) — this caller is about to act', async () => {
+      // The read-only consumers keep what they cannot disprove; this one is
+      // the mirror. It is about to rewrite governance config, and doing that
+      // under a running agent is real damage while deferring costs a retry —
+      // so an unknown takes the same branch as a confirmed-live session.
+      const p = mkProjectDir('unknownlive');
+      store.projects.create({ name: 'c1-unknown', path: p, engine: 'claude' });
+      mock.method(sessionOwnership, 'resolveByProject', () => ({
+        sessionId: 3, project: 'c1-unknown', live: null,
+        incomplete: ['live'], livenessCause: 'read-timed-out'
+      }));
+      const r = await projects.migrateProjectToPlugin('c1-unknown');
+      assert.equal(r.deferred, true, 'a wedged tmux must not green-light a governance rewrite');
+      assert.equal(r.migrated, false);
+      assert.match(r.reason, /could not establish/,
+        'the refusal must say it is an unknown, not claim a live session it never saw');
+      assert.match(r.reason, /read-timed-out/, 'and must carry the cause');
+      assert.ok(!fs.existsSync(path.join(p, '.claude', 'settings.json')),
+        'no settings written while liveness is unknown');
+      assert.equal(store.projects.getByName('c1-unknown').migrationStatus, null);
+    });
+
     it('happy path — migrates a Claude project, status migrated, ref written', async () => {
       const p = mkProjectDir('happy');
       store.projects.create({ name: 'c1-happy', path: p, engine: 'claude' });

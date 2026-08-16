@@ -45,7 +45,7 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
 
   describe('resolveBySessionId', () => {
     it('resolves a local active session into a host-qualified ownership object', (t) => {
-      t.mock.method(tmux, 'hasSession', () => true);
+      t.mock.method(tmux, 'probeSession', () => ({ live: true, answered: true, cause: null }));
       const { project, session } = makeLocalSession('resolve-by-id');
 
       const own = ownership.resolveBySessionId(session.id);
@@ -68,7 +68,7 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
     });
 
     it('surfaces the proxy-authenticated owner when set, null otherwise (AUTH-3)', (t) => {
-      t.mock.method(tmux, 'hasSession', () => true);
+      t.mock.method(tmux, 'probeSession', () => ({ live: true, answered: true, cause: null }));
       const project = store.projects.create({ name: 'owner-surface', path: '/tmp/owner-surface' });
       const owned = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'owner-surface', owner: 'jason' });
       assert.equal(ownership.resolveBySessionId(owned.id).owner, 'jason');
@@ -81,7 +81,7 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
 
   describe('resolveByProject', () => {
     it('resolves the project\'s active session', (t) => {
-      t.mock.method(tmux, 'hasSession', () => true);
+      t.mock.method(tmux, 'probeSession', () => ({ live: true, answered: true, cause: null }));
       const { session } = makeLocalSession('resolve-by-project');
 
       const own = ownership.resolveByProject('resolve-by-project');
@@ -99,7 +99,7 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
     });
 
     it('resolves a wrapping session (live = active OR wrapping)', (t) => {
-      t.mock.method(tmux, 'hasSession', () => true);
+      t.mock.method(tmux, 'probeSession', () => ({ live: true, answered: true, cause: null }));
       const { session } = makeLocalSession('wrapping-resolve');
       store.sessions.setWrapping(session.id);
 
@@ -121,7 +121,7 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
 
   describe('liveness', () => {
     it('reports live:false for a local session whose tmux process is gone', (t) => {
-      t.mock.method(tmux, 'hasSession', () => false);
+      t.mock.method(tmux, 'probeSession', () => ({ live: false, answered: true, cause: null }));
       const { session } = makeLocalSession('dead-tmux');
 
       const own = ownership.resolveBySessionId(session.id);
@@ -131,15 +131,15 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
 
     it('confirms live against the session\'s own tmux handle, not the DB status', (t) => {
       const calls = [];
-      t.mock.method(tmux, 'hasSession', (name) => { calls.push(name); return true; });
+      t.mock.method(tmux, 'probeSession', (name) => { calls.push(name); return { live: true, answered: true, cause: null }; });
       const { session } = makeLocalSession('checks-tmux');
 
       ownership.resolveBySessionId(session.id);
-      assert.ok(calls.includes('checks-tmux'), 'tmux.hasSession should be consulted with the session tmuxSession');
+      assert.ok(calls.includes('checks-tmux'), 'tmux.probeSession should be consulted with the session tmuxSession');
     });
 
     it('a paneless local session (no tmux handle) falls back to db liveness', (t) => {
-      const failIfCalled = t.mock.method(tmux, 'hasSession', () => true);
+      const failIfCalled = t.mock.method(tmux, 'probeSession', () => ({ live: true, answered: true, cause: null }));
       const project = store.projects.create({ name: 'paneless', path: '/tmp/paneless' });
       const session = store.sessions.start({ projectId: project.id, engineId: 'claude' }); // no tmuxSession
 
@@ -151,9 +151,84 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
     });
   });
 
+  /*
+   * #937 — a tmux server too wedged to answer must not be recorded as "this
+   * session is not live". `_liveness` is a pure READ, so it gets the tri-state
+   * every other liveness surface already carries; `hasSession`'s conservative
+   * `false` is correct only for a caller about to act on a pane.
+   *
+   * The consumer assertions are the point. The previous train's review caught
+   * a `null` being consumed as a terminal "ended" — the same trap lives here,
+   * because every read-side consumer filtered on `.live` truthiness and would
+   * silently delete exactly the sessions an operator hunts for during a wedge.
+   */
+  describe('#937 — an unestablished liveness is not a dead session', () => {
+    /** A tmux that cannot answer: the probe returns unanswered, per lib/tmux.js. */
+    const wedged = (t) => t.mock.method(tmux, 'probeSession',
+      () => ({ live: false, answered: false, cause: 'read-timed-out' }));
+
+    it('reports live:null with the field named and a cause, never false', (t) => {
+      wedged(t);
+      const { session } = makeLocalSession('wedged-tmux');
+
+      const own = ownership.resolveBySessionId(session.id);
+      assert.equal(own.live, null,
+        'a wedge is an unknown — reporting false would state a fact nobody has');
+      assert.deepEqual(own.incomplete, ['live'], 'the unestablished field must be named');
+      assert.equal(own.livenessCause, 'read-timed-out', 'and it must say why');
+      assert.equal(own.livenessSource, 'tmux');
+    });
+
+    it('still reports a genuinely absent pane as false', (t) => {
+      t.mock.method(tmux, 'probeSession', () => ({ live: false, answered: true, cause: null }));
+      const { session } = makeLocalSession('answered-gone');
+
+      const own = ownership.resolveBySessionId(session.id);
+      assert.equal(own.live, false, 'tmux answering "not there" is an established fact');
+      assert.deepEqual(own.incomplete, [], 'nothing failed to be established');
+      assert.equal(own.livenessCause, null);
+    });
+
+    it('marks every established answer with an empty incomplete, not an absent field', (t) => {
+      t.mock.method(tmux, 'probeSession', () => ({ live: true, answered: true, cause: null }));
+      const { session } = makeLocalSession('healthy-incomplete');
+      const own = ownership.resolveBySessionId(session.id);
+      assert.ok(Array.isArray(own.incomplete), 'consumers read a value, never probe for a field');
+      assert.equal(own.incomplete.length, 0);
+    });
+
+    it('listLiveProbed KEEPS a session whose liveness could not be established', async (t) => {
+      wedged(t);
+      const { session } = makeLocalSession('wedged-kept');
+
+      const names = (await ownership.listLiveProbed()).map((o) => o.sessionId);
+      assert.ok(names.includes(session.id),
+        'dropping what we cannot disprove deletes the sessions a wedge makes most urgent');
+    });
+
+    it('listLiveProbed still drops a session tmux CONFIRMED is gone', async (t) => {
+      t.mock.method(tmux, 'probeSession', () => ({ live: false, answered: true, cause: null }));
+      const { session } = makeLocalSession('confirmed-gone-dropped');
+
+      const names = (await ownership.listLiveProbed()).map((o) => o.sessionId);
+      assert.ok(!names.includes(session.id),
+        'an established dead session is still not a live tab');
+    });
+
+    it('the scope guard NAMES a project whose liveness could not be established', (t) => {
+      wedged(t);
+      makeLocalSession('wedged-other-tab');
+      const owned = store.projects.create({ name: 'wedged-owner', path: '/tmp/wedged-owner' });
+
+      const lines = ownership.scopeGuardSection(owned).join('\n');
+      assert.match(lines, /wedged-other-tab/,
+        'under-warning lets a session commit into the wrong repo; over-warning costs a sentence');
+    });
+  });
+
   describe('remote (openclaw) sessions', () => {
     it('reads the connection host AS-IS and uses db-only liveness', (t) => {
-      const failIfCalled = t.mock.method(tmux, 'hasSession', () => true);
+      const failIfCalled = t.mock.method(tmux, 'probeSession', () => ({ live: true, answered: true, cause: null }));
       const conn = store.openclawConnections.create({
         name: 'your-host',
         host: 'your-host.tailnet-name.ts.net',
@@ -179,7 +254,7 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
     });
 
     it('yields host:null and an "unknown" handle when the connection is missing', (t) => {
-      t.mock.method(tmux, 'hasSession', () => true);
+      t.mock.method(tmux, 'probeSession', () => ({ live: true, answered: true, cause: null }));
       const project = store.projects.create({ name: 'orphan-remote', path: '/tmp/orphan-remote' });
       const session = store.sessions.start({
         projectId: project.id,
@@ -194,7 +269,7 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
 
   describe('listLive', () => {
     it('enumerates active and wrapping sessions, excludes ended ones', (t) => {
-      t.mock.method(tmux, 'hasSession', () => true);
+      t.mock.method(tmux, 'probeSession', () => ({ live: true, answered: true, cause: null }));
 
       const active = makeLocalSession('live-active');
       const wrapping = makeLocalSession('live-wrapping');
@@ -209,7 +284,7 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
     });
 
     it('skips a live session whose project row is gone', (t) => {
-      t.mock.method(tmux, 'hasSession', () => true);
+      t.mock.method(tmux, 'probeSession', () => ({ live: true, answered: true, cause: null }));
       t.mock.method(store.sessions, 'listLiveAll', () => [
         { id: 777777, projectId: 888888, engineId: 'claude', sessionMode: 'tmux', status: 'active', startedAt: 'x' }
       ]);
@@ -240,7 +315,7 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
       const { conn, project, session } = makeRemoteSession('probe-live');
 
       const res = await ownership.probeLiveness(session);
-      assert.deepEqual(res, { live: true, source: 'bridge' });
+      assert.deepEqual(res, { live: true, source: 'bridge', incomplete: [], cause: null });
       assert.equal(calls.length, 1);
       assert.equal(calls[0].localPort, conn.bridgePort, 'probes the connection bridge port');
       assert.equal(calls[0].token, 'tok');
@@ -251,7 +326,7 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
       ownership._internal.bridgeStatus = async () => ({ ok: true, active: false });
       const { session } = makeRemoteSession('probe-dead');
       // db says active, but the bridge says no live session → accurate dead.
-      assert.deepEqual(await ownership.probeLiveness(session), { live: false, source: 'bridge' });
+      assert.deepEqual(await ownership.probeLiveness(session), { live: false, source: 'bridge', incomplete: [], cause: null });
     });
 
     it('probeLiveness falls back to db (never a fabricated dead) when the bridge is unreachable', async () => {
@@ -272,12 +347,12 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
     });
 
     it('probeLiveness delegates to sync _liveness for a local tmux session (no bridge call)', async (t) => {
-      t.mock.method(tmux, 'hasSession', () => true);
+      t.mock.method(tmux, 'probeSession', () => ({ live: true, answered: true, cause: null }));
       let probed = false;
       ownership._internal.bridgeStatus = async () => { probed = true; return { ok: true, active: true }; };
       const { session } = makeLocalSession('probe-local');
       const res = await ownership.probeLiveness(session);
-      assert.deepEqual(res, { live: true, source: 'tmux' });
+      assert.deepEqual(res, { live: true, source: 'tmux', incomplete: [], cause: null });
       assert.equal(probed, false, 'local session must not hit the bridge');
     });
 
@@ -288,7 +363,7 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
     });
 
     it('listLiveProbed drops a bridge-dead remote tab but keeps a bridge-live one + local sessions', async (t) => {
-      t.mock.method(tmux, 'hasSession', () => true);
+      t.mock.method(tmux, 'probeSession', () => ({ live: true, answered: true, cause: null }));
       const liveLocal = makeLocalSession('lp-local');
       const liveRemote = makeRemoteSession('lp-remote-live');
       const deadRemote = makeRemoteSession('lp-remote-dead');
@@ -309,7 +384,7 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
     });
 
     it('listLiveProbed keeps an unreachable-bridge remote via the db fallback (cannot prove dead)', async (t) => {
-      t.mock.method(tmux, 'hasSession', () => true);
+      t.mock.method(tmux, 'probeSession', () => ({ live: true, answered: true, cause: null }));
       const remote = makeRemoteSession('lp-unreachable');
       t.mock.method(store.sessions, 'listLiveAll', () => [remote.session]);
       ownership._internal.bridgeStatus = async () => ({ ok: false, error: 'down' });
@@ -385,7 +460,7 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
     });
 
     it('a local session address reflects the resolved Magic DNS name', (t) => {
-      t.mock.method(tmux, 'hasSession', () => true);
+      t.mock.method(tmux, 'probeSession', () => ({ live: true, answered: true, cause: null }));
       ownership._resetHostCacheForTest();
       ownership._internal.execSync = () => TS_JSON;
       const { session } = makeLocalSession('magic-dns-addr');
@@ -487,7 +562,7 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
       t.mock.method(store.sessions, 'listLiveAll', () => [
         { id: 9201, projectId: sibling.id, engineId: 'claude', sessionMode: 'tmux', status: 'active', startedAt: 'x', tmuxSession: 'tc-sg-stale' }
       ]);
-      t.mock.method(tmux, 'hasSession', () => false);
+      t.mock.method(tmux, 'probeSession', () => ({ live: false, answered: true, cause: null }));
 
       const names = bulletNames(ownership.scopeGuardSection({ name: 'sg-self', engineId: 'claude' }));
       assert.ok(!names.includes('sg-stale'), 'stale DB row with no live pane is dropped');

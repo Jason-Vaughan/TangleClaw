@@ -93,7 +93,17 @@ const NETWORK_FIRST_PATHS = new Set([
   // reinstalls the worker for every browser and behind the basic_auth gate is
   // what produced the repeating credential prompt in #710.
   '/update-beacon.js',
-  '/beacon.css'
+  '/beacon.css',
+  // reconnect-policy.js is a shared frontend base like api-helper.js: both page
+  // scripts call `tcCreateReconnectPolicy` at load, so a stale copy served
+  // against a fresh landing.js or session.js is not a cosmetic skew but a
+  // ReferenceError that takes the whole page down. It also owns how long an
+  // outage must last before the page stops calling it a blip — a rule that
+  // must not be able to differ between two open tabs of the same install.
+  // Network-first rather than a CACHE_NAME bump, which tears down and
+  // reinstalls the worker for every browser and behind the basic_auth gate is
+  // what produced the repeating credential prompt in #710.
+  '/reconnect-policy.js'
 ]);
 
 self.addEventListener('install', (event) => {
