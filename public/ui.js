@@ -1448,12 +1448,10 @@ function collectWrapSectionsSelection() {
  * @param {boolean} ok
  */
 function _setRulesStatus(elementId, text, ok) {
-  const status = document.getElementById(elementId);
-  if (!status) return;
-  status.textContent = text;
-  status.className = `rules-status ${ok ? 'rules-status-ok' : 'rules-status-err'}`;
-  status.classList.remove('hidden');
-  setTimeout(() => { status.classList.add('hidden'); }, 3000);
+  // One implementation, in api-helper.js: the Master settings modal moved into
+  // a component both pages mount, and it needs this same transient line. A
+  // second copy here would be two behaviours for one visual affordance.
+  window.tcSetRulesStatus(document, elementId, text, ok);
 }
 
 /**

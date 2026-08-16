@@ -39,7 +39,7 @@ All notable changes to TangleClaw are documented in this file.
   `test/engine-picker-gating.test.js`. New guards cover what the move itself could break: that
   neither page re-declares the modal, that both construct the component, and that a second `mount()`
   neither stacks a node nor re-binds. Each was mutation-checked red before being accepted. Full
-  suite 6254 pass / 0 fail / 1 skip.
+  suite 6255 pass / 0 fail / 1 skip.
 
 ## [5.5.0] - 2026-08-16
 

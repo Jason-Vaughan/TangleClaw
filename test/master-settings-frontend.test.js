@@ -155,6 +155,19 @@ describe('Master settings surface — frontend', () => {
       assert.match(sessionJs, /masterSettings\.mount\(\)/);
     });
 
+    it('the transient rules-status line has one implementation, not two', () => {
+      // The Project Rules surface and the Master modal show the same affordance.
+      // When the modal moved into the component it needed the helper too, and
+      // the cheap move — copying it — would have made one visual behaviour
+      // depend on which surface you were looking at.
+      assert.match(helper, /function tcSetRulesStatus\(doc, elementId, text, ok\)/,
+        'the shared helper lives in api-helper.js');
+      assert.match(js, /window\.tcSetRulesStatus\(document, elementId, text, ok\)/,
+        'ui.js must delegate to it rather than carry a second copy');
+      assert.doesNotMatch(js, /rules-status-ok' : 'rules-status-err/,
+        'a re-implemented className ternary in ui.js is the second copy');
+    });
+
     it('mounting twice does not stack a second modal or double-bind', () => {
       // `mount()` runs on load and the control bar will call it again; an
       // append-always mount would give the page two #masterSettingsModal nodes
