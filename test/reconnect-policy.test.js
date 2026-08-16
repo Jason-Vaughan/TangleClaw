@@ -54,7 +54,8 @@ function makeHarness(opts = {}) {
     escalations: 0,
     recoveries: 0,
     probes: 0,
-    serverUp: false
+    serverUp: false,
+    nextTimerId: 1
   };
   const policy = mod.tcCreateReconnectPolicy({
     probe: async () => {
@@ -64,21 +65,56 @@ function makeHarness(opts = {}) {
     onEscalate: () => { state.escalations++; },
     onRecover: () => { state.recoveries++; },
     now: () => state.clock,
-    schedule: (fn, ms) => { state.pending.push({ fn, ms }); return state.pending.length; },
-    cancel: () => { state.pending.length = 0; },
+    // Faithful to setTimeout/clearTimeout: a handle identifies ONE timer, and
+    // cancelling it removes only that one. An earlier version of this harness
+    // cleared the whole queue on any cancel, which made "end() cancels the
+    // ceiling one-shot" pass even with that cancel deleted — the fixture
+    // answered a question the browser would not have.
+    schedule: (fn, ms) => {
+      const entry = { fn, ms, id: state.nextTimerId++ };
+      state.pending.push(entry);
+      return entry.id;
+    },
+    cancel: (id) => {
+      const i = state.pending.findIndex((p) => p.id === id);
+      if (i !== -1) state.pending.splice(i, 1);
+    },
     ...opts
   });
+  // The policy arms two kinds of timer on one scheduler: the repeating probe
+  // chain, and a single one-shot at exactly `ceilingMs`. The harness has to
+  // tell them apart, or a test that means "the next probe" silently drives the
+  // ceiling instead.
+  const CEILING = typeof opts.ceilingMs === 'number'
+    ? opts.ceilingMs
+    : mod.TC_RECONNECT_DEFAULTS.ceilingMs;
+
   return {
     policy,
     state,
     defaults: mod.TC_RECONNECT_DEFAULTS,
     advance: (ms) => { state.clock += ms; },
-    /** Fire the oldest scheduled callback, as a timer would. */
+    /** @returns {object[]} Pending PROBE timers, excluding the ceiling one-shot. */
+    probeQueue() { return state.pending.filter((p) => p.ms !== CEILING); },
+    /** @returns {object[]} Pending ceiling one-shots. */
+    ceilingQueue() { return state.pending.filter((p) => p.ms === CEILING); },
+    /** Fire the oldest scheduled PROBE, as a timer would. */
     async fire() {
-      const next = state.pending.shift();
+      const next = this.probeQueue()[0];
       assert.ok(next, 'a probe must be scheduled');
+      state.pending.splice(state.pending.indexOf(next), 1);
       await next.fn();
       return next.ms;
+    },
+    /**
+     * Fire the one-shot ceiling timer.
+     * @returns {Promise<void>}
+     */
+    async fireCeiling() {
+      const entry = this.ceilingQueue()[0];
+      assert.ok(entry, 'a ceiling timer must be armed for the outage');
+      state.pending.splice(state.pending.indexOf(entry), 1);
+      await entry.fn();
     }
   };
 }
@@ -260,7 +296,7 @@ describe('begin() is idempotent so the ceiling cannot be pushed out of reach', (
     h.policy.begin();
     h.policy.begin();
     h.policy.begin();
-    assert.equal(h.state.pending.length, 1,
+    assert.equal(h.probeQueue().length, 1,
       'three disconnect signals must not triple the probe rate');
   });
 
@@ -280,12 +316,12 @@ describe('begin() is idempotent so the ceiling cannot be pushed out of reach', (
 
     h.policy.end();                          // server answered on another path
     h.policy.begin();                        // ...and dropped again
-    const armedByBegin = h.state.pending.length;
+    const armedByBegin = h.probeQueue().length;
 
     releaseProbe();
     await inFlight;                          // the old probe resolves and re-arms
 
-    assert.equal(h.state.pending.length, armedByBegin,
+    assert.equal(h.probeQueue().length, armedByBegin,
       'the superseded chain must not add a second timer');
   });
 });
@@ -298,7 +334,7 @@ describe('probes are jittered so open tabs do not converge into a burst', () => 
     for (const r of [0, 0.001, 0.25, 0.5, 0.75, 0.999, 1]) {
       const h = makeHarness({ random: () => r });
       h.policy.begin();
-      const ms = h.state.pending[0].ms;
+      const ms = h.probeQueue()[0].ms;
       seen.add(ms);
       const base = h.defaults.baseDelayMs;
       const spread = base * h.defaults.jitterRatio;
@@ -316,11 +352,75 @@ describe('probes are jittered so open tabs do not converge into a burst', () => 
     const b = makeHarness({ random: () => 0.9 });
     a.policy.begin();
     b.policy.begin();
-    assert.notEqual(a.state.pending[0].ms, b.state.pending[0].ms);
+    assert.notEqual(a.probeQueue()[0].ms, b.probeQueue()[0].ms);
   });
 });
 
 describe('the ceiling holds even when the probe itself is the slow part', () => {
+  it('escalates while a probe that stalled BEFORE the ceiling is still hanging', async () => {
+    // The real black-hole shape, and the one the first attempt at this fix
+    // missed. `fetch` has no deadline, so against a sleeping machine or a
+    // withdrawn tailnet route the connect hangs for the browser's own
+    // multi-minute timeout. The stall begins at the FIRST probe — about 5s in,
+    // well before the 20s ceiling — so the pre-probe check cannot help and
+    // `loop()` has not re-armed, leaving no probe timer pending at all. Only a
+    // ceiling armed independently of probes can deliver the verdict here.
+    let releaseProbe;
+    let probeStarted = 0;
+    const h = makeHarness({
+      probe: () => { probeStarted++; return new Promise((resolve) => { releaseProbe = resolve; }); }
+    });
+    h.policy.begin();
+
+    h.advance(5000);
+    const inFlight = h.fire();               // first probe starts, below the ceiling
+    await new Promise((r) => setImmediate(r));
+    assert.equal(probeStarted, 1);
+    assert.equal(h.policy.hasEscalated(), false, 'not due yet — 5s of a 20s ceiling');
+
+    // The host black-holes: the probe never resolves. Wall clock passes anyway.
+    h.advance(20000);
+    await h.fireCeiling();
+
+    assert.equal(h.policy.hasEscalated(), true,
+      'a hung probe must not be able to withhold the ceiling indefinitely');
+    assert.equal(probeStarted, 1, 'and it escalated without needing a second probe');
+
+    releaseProbe();
+    await inFlight;
+  });
+
+  it('cancels the ceiling timer when the server comes back first', async () => {
+    const h = makeHarness();
+    h.policy.begin();
+    h.state.serverUp = true;
+    await h.policy.retryNow();
+    assert.equal(h.policy.isOutage(), false);
+    assert.equal(h.state.pending.length, 0,
+      'a recovered outage must leave no armed ceiling behind to fire later');
+  });
+
+  it('a ceiling that somehow fires late judges the CURRENT outage, not the old one', async () => {
+    // `end()` cancels the armed ceiling, so this is belt-and-braces — but it is
+    // the reason the timer needs no generation guard of its own: escalateIfDue
+    // re-reads the live clock, so a stray fire re-evaluates whatever outage is
+    // open now instead of escalating on a finished one's behalf.
+    const h = makeHarness();
+    h.policy.begin();
+    const stale = h.ceilingQueue()[0];
+    h.policy.end();     // recovered
+    h.policy.begin();   // dropped again — new outage, new clock
+    h.advance(1000);
+    await stale.fn();   // the retired timer fires late
+    assert.equal(h.state.escalations, 0,
+      'one second into the new outage is not past its ceiling');
+
+    h.advance(30000);
+    await stale.fn();   // fires again once the CURRENT outage is genuinely due
+    assert.equal(h.state.escalations, 1,
+      'and it reports the current outage honestly rather than being inert');
+  });
+
   it('escalates before a stalled probe returns, not after', async () => {
     // `fetch` has no deadline. Against a refusing server a probe fails at once,
     // but against a black-holed host — a sleeping machine, a tailnet route that
@@ -374,7 +474,7 @@ describe('a probe that throws must not take the retry loop down with it', () => 
     h.advance(5000);
     await h.fire();
     assert.equal(calls, 1);
-    assert.equal(h.state.pending.length, 1, 'the loop must have re-armed after the throw');
+    assert.equal(h.probeQueue().length, 1, 'the loop must have re-armed after the throw');
 
     h.advance(30000);
     await h.fire();
@@ -391,7 +491,8 @@ describe('end() stops the outage cleanly', () => {
     assert.equal(h.policy.isOutage(), true);
     h.policy.end();
     assert.equal(h.policy.isOutage(), false);
-    assert.equal(h.state.pending.length, 0, 'the scheduled probe must be cancelled');
+    assert.equal(h.probeQueue().length, 0, 'the scheduled probe must be cancelled');
+    assert.equal(h.ceilingQueue().length, 0, 'and the ceiling one-shot with it');
     assert.equal(h.state.recoveries, 1);
   });
 
@@ -441,6 +542,17 @@ describe('both pages are wired to the one policy (#941 root cause)', () => {
         'the policy must load first — the page calls the factory at parse time');
     });
   }
+
+  it('the shared module is precached, so a cold miss cannot blank the page', () => {
+    // Network-first alone leaves a window: a MISS while the network is down
+    // returns sw.js's synthetic JSON 503, and a `<script src>` served a 503
+    // leaves both pages throwing at parse time and rendering nothing — strictly
+    // worse than the "Retrying… forever" this module exists to fix.
+    const sw = fs.readFileSync(path.join(__dirname, '..', 'public', 'sw.js'), 'utf8');
+    const assets = sw.slice(sw.indexOf('STATIC_ASSETS'), sw.indexOf('NETWORK_FIRST_PATHS'));
+    assert.match(assets, /'\/reconnect-policy\.js'/,
+      'a parse-time dependency must be precached, not only network-first');
+  });
 
   it('the shared module is network-first in the service worker', () => {
     // A cache-first copy would be served stale against a fresh page script,

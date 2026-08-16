@@ -817,7 +817,6 @@ body {
   .banner-name { max-width: 200px; }
 }
 
-/* ── Session Wrapping Bar ── */
 /* ── Unreachable API banner ──
    The dashboard answers a dead server with a full-screen overlay, which is
    honest there because nothing underneath it can work. Here the ttyd terminal
@@ -864,6 +863,7 @@ body {
    mounted while a retry is in flight. */
 .session-unreachable .btn:disabled { opacity: 0.6; cursor: default; }
 
+/* ── Session Wrapping Bar ── */
 .session-wrapping {
   flex-shrink: 0;
   display: flex;

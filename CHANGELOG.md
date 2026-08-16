@@ -39,11 +39,13 @@ All notable changes to TangleClaw are documented in this file.
   The retry policy now lives in one module (`public/reconnect-policy.js`) that both pages consume,
   because the duplicated loop is *why* #709 could be built on one page and not the other. Two
   copies of a rule produce two behaviors; a regression test now fails if either page grows its own
-  loop again. The ceiling is checked on both sides of each probe, so a black-holed host — a
-  sleeping machine, a tailnet route that went away — cannot withhold the honest verdict for the
-  browser's own multi-minute connect timeout; a probe that throws is caught so it cannot stop the
-  retry loop for the life of the page; and a server that flaps mid-probe cannot leave two probe
-  chains running against it.
+  loop again. The ceiling is armed as its own one-shot at the start of each outage rather than
+  being carried by the retry loop, because `fetch` has no deadline: against a black-holed host — a
+  sleeping machine, a tailnet route that went away — the first probe stalls before the ceiling is
+  due and the loop only re-arms once it returns, so nothing would be pending to notice the ceiling
+  pass. The probe-side checks remain as the throttled-tab path. A probe that throws is caught so it
+  cannot stop the retry loop for the life of the page, and a server that flaps mid-probe cannot
+  leave two probe chains running against it.
 
 ### Fixed
 

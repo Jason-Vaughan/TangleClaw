@@ -223,11 +223,13 @@ describe('migration — detectExistingProjects', () => {
         'only the install is excluded, not the directory it sits in');
     });
 
-    it('defaults to this process own checkout when nothing is injected', () => {
-      // The seam must not become the only thing that works: with no option the
-      // guard still compares against the real install. Asserted without
-      // scanning anything — the default is read from the module's behavior on
-      // an empty directory, and the real install is simply not in it.
+    it('survives the default path when nothing is injected', () => {
+      // What this proves and nothing more: the default branch resolves and does
+      // not throw. It CANNOT prove the default's VALUE — that would need a real
+      // directory whose realpath is the running install inside a scanned temp
+      // folder, which is not constructible (a symlink is skipped as
+      // isSymbolicLink() before the guard runs). The default's value is covered
+      // instead by `scanDirectoryForProjects`, which shares OWN_INSTALL_REALPATH.
       const empty = fs.mkdtempSync(path.join(tmpDir, 'empty-'));
       const config = store.config.load();
       const orig = config.projectsDir;

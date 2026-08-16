@@ -198,6 +198,12 @@ describe('a dead API escalates on the session page too (#941)', () => {
 
     assert.match(banner(ctx).innerHTML, /id="sessionUnreachableRetryBtn"/,
       'the fixture id must match the id the rendered banner actually carries');
+    // The button must reuse session.css's own button system: it is the only
+    // recovery control in a role="alert" region on a touch-first surface, so it
+    // needs `.btn`'s 44px min-height and its focus-visible outline. A
+    // hand-rolled lookalike loses both silently.
+    assert.match(banner(ctx).innerHTML, /class="btn btn-danger"/,
+      'the retry control must carry the shared button classes, not bespoke styling');
     const btn = makeElement('button', ctx.document);
     btn.id = 'sessionUnreachableRetryBtn';
     btn.textContent = 'Retry now';

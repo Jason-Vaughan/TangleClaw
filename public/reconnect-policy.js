@@ -88,6 +88,22 @@
     // and the orphan would double the probe rate against a booting server —
     // the opposite of what the jitter is for.
     let generation = 0;
+    // Fires once per outage, at the ceiling, INDEPENDENTLY of any probe. The
+    // probe-side checks alone cannot deliver the ceiling: `loop()` re-arms only
+    // after `await attempt()` resolves, so while a probe is stalled there is no
+    // pending timer at all and nothing to notice that the ceiling passed. That
+    // is not a corner case — it is the black-holed host (a sleeping machine, a
+    // tailnet route withdrawn), where `fetch` has no deadline and the connect
+    // hangs for the browser's own multi-minute timeout. The first probe is
+    // scheduled well before the ceiling, so the stall begins while the ceiling
+    // is not yet due and the pre-probe check cannot help.
+    //
+    // Inside the no-UI-timers norm (#98/#268), not an exception to it: this
+    // timer changes nothing on its own and navigates nowhere. It only lets the
+    // page read a fact whose truth is already fixed by the clock — the outage
+    // has lasted `ceilingMs` — and that fact is held in `outageStartedAt`,
+    // which is the elsewhere the norm requires.
+    let ceilingTimer = null;
 
     /**
      * Next probe delay, spread across ±`jitterRatio` of the base.
@@ -125,13 +141,13 @@
     /**
      * Run one probe, checking the ceiling on both sides of it.
      *
-     * Checking BEFORE the probe is what makes the ceiling a promise rather
-     * than a hope. `probe` bottoms out in `fetch`, which carries no deadline:
-     * against a refusing server it fails at once, but against a black-holed
-     * host — a sleeping machine, a tailnet route that went away — the connect
-     * stalls for the browser's own multi-minute timeout. Checking only
-     * afterwards would withhold the honest verdict for exactly as long as the
-     * network is at its least honest, leaving the page insisting on a blip.
+     * Checking BEFORE the probe catches the case where the ceiling fell due
+     * while the previous probe was running, so a stalling probe does not push
+     * the verdict a further interval out. It is NOT what guarantees the
+     * ceiling — a probe that stalls before the ceiling is due leaves no timer
+     * pending at all, and no check here can run. The `ceilingTimer` armed in
+     * `begin()` is what makes the ceiling a promise; these two checks are what
+     * keep it honest in a throttled tab, where that timer fires late.
      *
      * A probe that REJECTS must not take the loop down with it. Neither page
      * can trigger that today (both route through `api()`, which catches), but
@@ -182,6 +198,19 @@
           outageStartedAt = now();
           escalated = false;
           generation++;
+          // Armed here rather than after a probe, so a stalled probe cannot
+          // hold the verdict. A tab whose timers are throttled gets it late
+          // rather than never, and the probe-side checks still cover that case.
+          //
+          // No generation guard on this one, unlike `loop`: `escalateIfDue`
+          // re-reads the live outage clock, so a timer that somehow outlived
+          // its outage re-evaluates the CURRENT one honestly rather than
+          // escalating on the old one's behalf. A guard here would be a branch
+          // no test could ever turn red.
+          ceilingTimer = schedule(() => {
+            ceilingTimer = null;
+            escalateIfDue();
+          }, ceilingMs);
           loop(generation);
         }
       },
@@ -191,6 +220,10 @@
         if (timer !== null) {
           cancel(timer);
           timer = null;
+        }
+        if (ceilingTimer !== null) {
+          cancel(ceilingTimer);
+          ceilingTimer = null;
         }
         // Retire this outage's generation so a probe still in flight cannot
         // re-arm a chain after the server has come back.
