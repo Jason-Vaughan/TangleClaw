@@ -168,14 +168,14 @@ describe('#950 — an unknown and an absence must not render the same', () => {
   it('a failed scan is still reported as a failed scan, not as a missing directory', () => {
     // `exists: false` WITH `unreadable` means the scan degraded, not that the
     // path is gone — the two must not collapse into each other.
-    const l = line(enriched({ exists: false, unreadable: 'EACCES', unreadableCode: 'EACCES', git: null, session: null }));
+    const l = line(enriched({ exists: false, unreadable: 'the directory is there but this server may not read it (permission denied)', unreadableCode: 'EACCES', git: null, session: null }));
     assert.match(l, /could not read the project directory/i);
     assert.doesNotMatch(l, /DIRECTORY MISSING/);
   });
 
   it('reports an unreadable directory once, instead of a row of separate unknowns', () => {
     const l = line(enriched({
-      unreadable: 'EACCES', unreadableCode: 'EACCES',
+      unreadable: 'the directory is there but this server may not read it (permission denied)', unreadableCode: 'EACCES',
       version: null, git: null, session: null
     }));
     assert.match(l, /could not read the project directory/i);
@@ -192,7 +192,7 @@ describe('#950 — an unknown and an absence must not render the same', () => {
     // one. Applying it to one branch and not its sibling is how two surfaces
     // that share a rule drift apart.
     const l = line(enriched({
-      unreadable: 'EACCES', unreadableCode: 'EACCES', version: null, git: null,
+      unreadable: 'the directory is there but this server may not read it (permission denied)', unreadableCode: 'EACCES', version: null, git: null,
       session: { active: true, status: 'active', startedAt: '2026-08-16 19:36', tmuxSession: 'Blocked', incomplete: [], cause: null }
     }));
     assert.match(l, /could not read the project directory/i);
