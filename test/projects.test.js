@@ -201,6 +201,40 @@ describe('projects', () => {
         'enrichProject must not shell out to git when the scanner already answered');
     });
 
+    it('enrichProject carries `exists` through, so a deleted directory stays distinguishable', async () => {
+      // THE MUTATION THIS CATCHES: deleting `exists: facts.exists !== false` from
+      // the returned record. Nothing else in the suite reads `exists` off an
+      // enriched project, so removing it leaves every other assertion green while
+      // `p.exists === false` silently stops firing downstream — and a project
+      // whose directory has been DELETED reverts to rendering exactly like an
+      // ordinary idle one in the Master's fleet map (#950).
+      //
+      // The fleet-map guards cannot catch this: they feed a hand-built fixture
+      // that SYNTHESIZES this producer's signal, so they keep passing against a
+      // record shape the producer no longer emits. The guard has to live here,
+      // against the function that actually emits it.
+      //
+      // Why the field exists at all: `governanceState: 'not-applicable'` is also
+      // what a present-but-ungoverned project reports, so absence cannot be
+      // derived from it — checked against live data, where eight registered
+      // projects report `not-applicable` with directories that are there.
+      projects.createProject({ name: 'facts-exists-through' });
+      const row = store.projects.getByName('facts-exists-through');
+      const facts = (over) => ({
+        governanceState: 'not-applicable', git: null, config: null,
+        version: null, unreadable: null, unreadableHint: null, ...over
+      });
+
+      const gone = await projects.enrichProject(row, facts({ exists: false }));
+      assert.equal(gone.exists, false,
+        'a directory that is not there must say so on the record, not just in the scanner');
+      assert.equal(gone.unreadable, null,
+        'and it is NOT an unreadable — that is what separates "deleted" from "the scan failed"');
+
+      const there = await projects.enrichProject(row, facts({ exists: true }));
+      assert.equal(there.exists, true);
+    });
+
     it('enrichProject reads no version from disk — it reports what the child detected', async () => {
       // THE MUTATION THIS CATCHES: restoring `_detectProjectVersion(project.path)`
       // here. The fixture is what makes that observable: the project's directory

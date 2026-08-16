@@ -105,7 +105,7 @@ concern affecting that poll generally, recorded in `.prawduct/.handoff-notes.md`
 DIFFERENTLY, not merely that each contains a string — a `notEqual` on the rendered line, because the
 defect class here is flattening, not omission. Thirteen mutations confirmed red before the guards were kept, six of them against finding-fixes (flatten unknown liveness, render an unread tree as clean, treat raw rows as stateful, drop the
 no-master-home guard, restore the "git could not be read" wording). Fixtures verified against the
-real shape by rendering the live fleet through them. Full suite **6289 pass / 0 fail / 1 skip**.
+real shape by rendering the live fleet through them. Full suite green (TAP total 6291 including subtests; the evidence store's JUnit top-level count for the same tree is lower by reporter semantics, not by missing tests).
 
 ## 2026-08-16: the Master settings modal becomes a component both pages can mount (#768 chunk 1)
 

@@ -151,6 +151,20 @@ describe('#950 — an unknown and an absence must not render the same', () => {
       'a path that is not there has no repo state to report');
   });
 
+  it('still reports a live session on a project whose directory is gone', () => {
+    // Session liveness is independent of the directory — a tmux session can
+    // outlive a deleted checkout, and that is precisely when a coordinator needs
+    // to know a pane is still attached to it. Suppressing it would be
+    // information lost, not a claim avoided.
+    const l = line(enriched({
+      exists: false, unreadable: null, version: null, git: null,
+      session: { active: true, status: 'active', startedAt: '2026-08-16 19:36', tmuxSession: 'Gone', incomplete: [], cause: null }
+    }));
+    assert.match(l, /DIRECTORY MISSING/);
+    assert.match(l, /session LIVE since/,
+      'a pane attached to a deleted checkout is the case worth surfacing, not hiding');
+  });
+
   it('a failed scan is still reported as a failed scan, not as a missing directory', () => {
     // `exists: false` WITH `unreadable` means the scan degraded, not that the
     // path is gone — the two must not collapse into each other.
