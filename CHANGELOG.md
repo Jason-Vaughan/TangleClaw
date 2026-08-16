@@ -18,9 +18,15 @@ All notable changes to TangleClaw are documented in this file.
   session** and is enforced by the engine; access level governs what the Master may do to **the
   fleet** and is enforced by TangleClaw. A read-only Master in `bypassPermissions` is coherent — it
   edits its own `memory/` without nagging and still cannot touch the fleet — and a `write` Master in
-  `default` is equally coherent. The settings modal names them as separate, and calls out the one
-  combination (`write` + `bypassPermissions`) that removes confirmation at every layer, because
-  #756's bar is that it be selectable but never reachable unnoticed.
+  `default` would be equally coherent. The settings modal names them as separate, and the read-only
+  tier's own description no longer promises that everything asks first, since that is now the launch
+  mode's business rather than the access level's.
+
+  The modal also carries the warning for `write` + `bypassPermissions` — the combination that removes
+  confirmation at every layer — but **that warning cannot appear in this release**: `write` is still
+  rejected server-side and `MASTER_ENABLED_ACCESS_LEVELS` remains `['read-only']` until #755 ships
+  real enforcement. It is written now so the branch exists and is tested when the tier lands, not
+  because it is reachable today.
 
   The mode is reconciled against the Master's **effective** engine in the one place that already
   resolves engine and enforcement, so the settings modal and the launching session cannot disagree.

@@ -802,6 +802,22 @@ describe('ensureMasterSession — settings integration', () => {
       }
     });
 
+    it('ships each offered mode with its human label, not a bare id', () => {
+      // The project-settings picker renders `m.label || key`; a Master picker
+      // showing `acceptEdits` would be the visibly poorer of two controls doing
+      // the same job. Shipping the label here keeps the frontend from needing
+      // the engine profile at all.
+      const st = master.getMasterStatus({ tmuxLib: fakeTmux({ alive: true }), enginesLib: availableEngines });
+      assert.ok(st.settings.launchModes.length > 0, 'this fixture must offer modes, or it proves nothing');
+      for (const m of st.settings.launchModes) {
+        assert.equal(typeof m.id, 'string');
+        assert.equal(typeof m.label, 'string');
+        assert.ok(m.label.length, `${m.id} must carry a label`);
+      }
+      const def = st.settings.launchModes.find((m) => m.id === 'default');
+      assert.ok(def && def.label !== 'default', 'the label must come from the engine profile, not echo the id');
+    });
+
     it('ensure and status agree on the mode that will run', () => {
       // The lockstep hazard `_masterRuntime` exists to prevent: the settings
       // modal must never show one mode while the session launches another.

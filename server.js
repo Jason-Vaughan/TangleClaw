@@ -832,12 +832,24 @@ function validateMasterPatch(patch, config) {
   // launch. Rejecting it here would make the setting depend on which engine
   // happened to be resolved at the moment of the PATCH. What must be refused is
   // a mode no engine defines at all, which is a typo, not a choice.
+  //
+  // Only what this PATCH actually SENT is name-checked, unlike the fields
+  // above. `knownLaunchModes()` is the union across INSTALLED engines, so
+  // uninstalling an engine shrinks it — and validating the merged value would
+  // then reject every master PATCH on the install, including ones that only
+  // toggle autoStart, over a stored mode the operator never touched. The
+  // reconcile at launch already handles a mode that has become unhonorable.
+  if ('launchMode' in patch) {
+    if (typeof patch.launchMode !== 'string' || !patch.launchMode) {
+      return { error: 'master.launchMode must be a launch-mode id string' };
+    }
+    const knownModes = master.knownLaunchModes();
+    if (!knownModes.includes(patch.launchMode)) {
+      return { error: `master.launchMode must be one of: ${knownModes.join(', ')}` };
+    }
+  }
   if (typeof merged.launchMode !== 'string' || !merged.launchMode) {
     return { error: 'master.launchMode must be a launch-mode id string' };
-  }
-  const knownModes = master.knownLaunchModes();
-  if (!knownModes.includes(merged.launchMode)) {
-    return { error: `master.launchMode must be one of: ${knownModes.join(', ')}` };
   }
   return {
     value: {

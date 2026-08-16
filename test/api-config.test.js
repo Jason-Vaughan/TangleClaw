@@ -823,6 +823,19 @@ describe('API endpoints', () => {
       assert.match(data.error, /default/, 'the honest set must name at least the universal mode');
     });
 
+    it('does not reject an unrelated patch over a stored mode gone unhonorable', async () => {
+      // `knownLaunchModes()` is the union across INSTALLED engines, so
+      // uninstalling one shrinks it. Validating the MERGED value would then
+      // 400 every master PATCH on the install — including ones that only
+      // toggle autoStart — over a stored mode the operator never touched.
+      const config = store.config.load();
+      config.master = { ...config.master, launchMode: 'mode-from-a-since-removed-engine' };
+      store.config.save(config);
+      const { status } = await request(server, 'PATCH', '/api/config', { master: { autoStart: true } });
+      assert.equal(status, 200, 'a patch that does not touch launchMode must not be judged on it');
+      assert.equal(store.config.load().master.autoStart, true);
+    });
+
     it('rejects a non-string launch mode', async () => {
       const { status } = await request(server, 'PATCH', '/api/config', { master: { launchMode: 7 } });
       assert.equal(status, 400);

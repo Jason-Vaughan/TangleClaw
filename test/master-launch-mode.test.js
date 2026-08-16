@@ -59,7 +59,15 @@ function status(over = {}) {
     resolvedEngine: 'claude',
     launchMode: 'default',
     resolvedLaunchMode: 'default',
-    launchModes: ['default', 'acceptEdits', 'plan', 'bypassPermissions'],
+    // The real shape `getMasterStatus` emits, verified against the module:
+    // `{id, label}`, so the picker can render "Accept Edits" like its sibling
+    // rather than the raw id.
+    launchModes: [
+      { id: 'default', label: 'Interactive' },
+      { id: 'acceptEdits', label: 'Accept Edits' },
+      { id: 'plan', label: 'Plan Only' },
+      { id: 'bypassPermissions', label: 'Bypass' }
+    ],
     scope: 'all',
     autoStart: false,
     enforcement: 'structural',
@@ -129,9 +137,15 @@ async function save(fields) {
 
 describe('#756 — the Master settings modal offers a launch mode', () => {
   it('renders exactly the modes the server said this engine offers', () => {
-    const html = render(status({ launchModes: ['default', 'acceptEdits'] }));
+    const html = render(status({
+      launchModes: [{ id: 'default', label: 'Interactive' }, { id: 'acceptEdits', label: 'Accept Edits' }]
+    }));
     assert.match(html, /id="masterLaunchModeSelect"/);
     assert.match(html, /<option value="acceptEdits"/);
+    assert.match(html, />Accept Edits</,
+      'the picker must render the human label, like the project-settings picker does');
+    assert.doesNotMatch(html, />acceptEdits</,
+      'a raw mode id in the option text is the visibly-poorer-sibling failure');
     // Claude defines these, but this payload did not offer them. Rendering them
     // anyway would mean the modal derived the list itself.
     assert.doesNotMatch(html, /<option value="plan"/);
@@ -150,7 +164,7 @@ describe('#756 — the Master settings modal offers a launch mode', () => {
     const html = render(status({
       engine: 'aider', resolvedEngine: 'aider',
       launchMode: 'acceptEdits', resolvedLaunchMode: 'default',
-      launchModes: ['default', 'yesAlways']
+      launchModes: [{ id: 'default', label: 'Interactive' }, { id: 'yesAlways', label: 'Yes To All' }]
     }));
     assert.match(html, /<option value="acceptEdits" selected>/,
       'the saved choice must still be the selected one');
@@ -163,6 +177,13 @@ describe('#756 — the Master settings modal offers a launch mode', () => {
     const html = render(status({ resolvedEngine: null, launchModes: [] }));
     assert.doesNotMatch(html, /id="masterLaunchModeSelect"/);
     assert.match(html, /no launch modes to choose from/i);
+    // With no engine there is nothing to strand the stored mode against. The
+    // previous version of this test asserted only the picker's absence, so it
+    // passed while the output also said "saved as default, which this engine
+    // cannot honor" — directly under "there are no modes to choose from".
+    assert.doesNotMatch(html, /cannot honor/i,
+      'an install with no engine must not also claim the mode is unhonorable');
+    assert.doesNotMatch(html, /not available on this engine/i);
   });
 
   it('names the two axes as separate, so neither implies the other', () => {

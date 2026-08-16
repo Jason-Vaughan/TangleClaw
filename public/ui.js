@@ -3497,7 +3497,7 @@ async function openMasterSettings() {
 function renderMasterSettingsBody(s, groups) {
   const body = document.getElementById('masterSettingsBody');
   const tierHints = {
-    'read-only': 'Structurally enforced on the Claude engine: writes are hard-denied outside the master’s memory/ directory; everything else needs your approval in the master terminal.',
+    'read-only': 'Structurally enforced on the Claude engine: writes are hard-denied outside the master’s memory/ directory. Whether anything else asks first is the Launch mode setting below — this tier bounds what the master may touch, not how often it prompts.',
     'suggest': 'Not available yet — ships only with real enforcement (draft-but-never-commit).',
     'write': 'Not available yet — ships only with real enforcement (full tool access).'
   };
@@ -3530,9 +3530,15 @@ function renderMasterSettingsBody(s, groups) {
   // showing 'default' would misreport what is stored (the silent-ignore failure
   // #741 documents). `resolvedLaunchMode` says what will actually run.
   const offered = Array.isArray(s.launchModes) ? s.launchModes : [];
-  const stranded = s.launchMode && !offered.includes(s.launchMode);
+  // "Stranded" means this engine offers modes but not the stored one. With NO
+  // modes offered there is no engine to strand it against, and claiming
+  // otherwise renders "no modes to choose from" directly above "saved as
+  // default, which this engine cannot honor" — two sentences that cannot both
+  // be true. `offered.length` is the guard that keeps them exclusive.
+  const stranded = Boolean(offered.length && s.launchMode
+    && !offered.some((m) => m.id === s.launchMode));
   const modeOpts = offered
-    .map((m) => `<option value="${esc(m)}" ${m === s.launchMode ? 'selected' : ''}>${esc(m)}</option>`)
+    .map((m) => `<option value="${esc(m.id)}" ${m.id === s.launchMode ? 'selected' : ''}>${esc(m.label)}</option>`)
     .concat(stranded
       ? [`<option value="${esc(s.launchMode)}" selected>${esc(s.launchMode)} — not available on this engine</option>`]
       : [])
