@@ -816,6 +816,19 @@ describe('ensureMasterSession — settings integration', () => {
       }
       const def = st.settings.launchModes.find((m) => m.id === 'default');
       assert.ok(def && def.label !== 'default', 'the label must come from the engine profile, not echo the id');
+
+      // The SAFETY half, which the label assertions above do not cover:
+      // data/engines/claude.json marks bypassPermissions with a warning, and
+      // dropping it server-side would leave the picker unable to render ⚠ no
+      // matter what the frontend does.
+      const bypass = st.settings.launchModes.find((m) => m.id === 'bypassPermissions');
+      assert.ok(bypass, 'claude offers bypassPermissions, or this fixture proves nothing');
+      assert.ok(bypass.warning && bypass.warning.length,
+        'a warned mode must carry its warning to the client');
+      assert.ok(bypass.description && bypass.description.length,
+        'and its description');
+      const plain = st.settings.launchModes.find((m) => m.id === 'default');
+      assert.equal(plain.warning, null, 'an unwarned mode carries null, not a missing field');
     });
 
     it('ensure and status agree on the mode that will run', () => {

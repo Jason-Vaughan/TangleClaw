@@ -192,6 +192,43 @@ describe('#756 — the Master settings modal offers a launch mode', () => {
     assert.match(html, /Access level/);
   });
 
+  it('the read-only tier no longer promises what the launch mode can remove', () => {
+    // The tier hint used to read "everything else needs your approval in the
+    // master terminal" — the exact property a bypassPermissions launch mode
+    // takes away. The assertions above match the LAUNCH-MODE hint and pass
+    // unchanged if the tier hint reverts, so this is its own guard.
+    const html = render(status());
+    assert.doesNotMatch(html, /everything else needs your approval/i,
+      'the access tier must not promise a prompt the launch mode governs');
+    assert.match(html, /bounds what the master may touch, not how often it prompts/i);
+  });
+
+  it('carries a warned mode\'s ⚠ through to the option, like the sibling picker', () => {
+    // data/engines/claude.json marks bypassPermissions with a warning, and the
+    // project-settings picker renders ⚠ for it. Dropping it here would make the
+    // Master picker silently the less safe of two controls doing one job.
+    const html = render(status({
+      launchModes: [
+        { id: 'default', label: 'Interactive', warning: null },
+        { id: 'bypassPermissions', label: 'Bypass', warning: 'Only use in isolated environments' }
+      ]
+    }));
+    assert.match(html, /Bypass ⚠/, 'a warned mode must carry its glyph');
+    assert.doesNotMatch(html, /Interactive ⚠/, 'and an unwarned one must not');
+  });
+
+  it('says when the choice takes effect, in the launch-mode hint itself', () => {
+    // Scoped to the launch-mode form-group on purpose. The ENGINE control's
+    // hint has always said "Applies the next time the master session starts",
+    // so an unscoped match passes with this hint carrying no such line at all.
+    const html = render(status());
+    const start = html.indexOf("How the master's own session prompts");
+    assert.notEqual(start, -1, 'the launch-mode hint must exist');
+    const hint = html.slice(start, html.indexOf('</div>', start));
+    assert.match(hint, /next time the master session starts/i,
+      'the launch-mode hint must state its own deferral, not rely on a neighbour');
+  });
+
   it('calls out write + bypassPermissions rather than letting it pass unremarked', () => {
     // #756: that combination is legitimate and selectable, but must not be
     // reachable without the operator seeing what they picked.

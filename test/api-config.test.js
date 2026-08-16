@@ -795,6 +795,27 @@ describe('API endpoints', () => {
       assert.equal(saved.autoStart, true, 'earlier field must survive the second patch');
     });
 
+    it('ships launchMode in the DEFAULT master block, before any PATCH (#756)', async () => {
+      // The whole point of the DEFAULT_CONFIG entry: `GET /api/config` and
+      // `GET /api/master/status` must agree on an install nobody has PATCHed.
+      // Every other assertion here reads the block AFTER a patch, and
+      // `validateMasterPatch` sources the field from `masterSettings()`, which
+      // defaults it independently — so deleting the default would leave all of
+      // them green while the two endpoints disagreed.
+      const master = require('../lib/master');
+      assert.equal(store.DEFAULT_CONFIG.master.launchMode, 'default',
+        'a never-PATCHed install must carry launchMode, not omit it');
+      // The invariant the default exists for, asserted as an agreement rather
+      // than as the constant's shape: what `GET /api/config` would report and
+      // what `masterSettings` (behind `GET /api/master/status`) reports must be
+      // the same value on an install nobody has touched.
+      assert.equal(
+        store.DEFAULT_CONFIG.master.launchMode,
+        master.masterSettings({}).launchMode,
+        'config default and master-status default must not disagree'
+      );
+    });
+
     it('stores a launch mode (#756)', async () => {
       const { status } = await request(server, 'PATCH', '/api/config', { master: { launchMode: 'acceptEdits' } });
       assert.equal(status, 200);

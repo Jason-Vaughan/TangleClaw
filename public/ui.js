@@ -3538,7 +3538,7 @@ function renderMasterSettingsBody(s, groups) {
   const stranded = Boolean(offered.length && s.launchMode
     && !offered.some((m) => m.id === s.launchMode));
   const modeOpts = offered
-    .map((m) => `<option value="${esc(m.id)}" ${m.id === s.launchMode ? 'selected' : ''}>${esc(m.label)}</option>`)
+    .map((m) => `<option value="${esc(m.id)}" ${m.id === s.launchMode ? 'selected' : ''}>${esc(m.label)}${m.warning ? ' ⚠' : ''}</option>`)
     .concat(stranded
       ? [`<option value="${esc(s.launchMode)}" selected>${esc(s.launchMode)} — not available on this engine</option>`]
       : [])
@@ -3574,6 +3574,7 @@ function renderMasterSettingsBody(s, groups) {
       <div class="form-hint">
         How the master's own session prompts — enforced by the engine, and separate from
         Access level, which is what the master may do to the fleet.
+        Applies the next time the master session starts.
         ${stranded
           ? `<strong>Saved as <code>${esc(s.launchMode)}</code>, which this engine cannot honor — it will start in <code>${esc(s.resolvedLaunchMode || 'default')}</code>.</strong> Your choice is kept and applies again if you switch back.`
           : ''}
@@ -3797,7 +3798,7 @@ async function saveMasterSettings() {
   };
   const data = await apiMutate('/api/config', 'PATCH', { master: masterPatch });
   if (data) {
-    _setMasterRulesStatus('Settings saved — engine/scope apply on next master start', true);
+    _setMasterRulesStatus('Settings saved — engine, launch mode and scope apply on next master start', true);
   } else {
     _setMasterRulesStatus(api.lastError || 'Save failed', false);
   }
