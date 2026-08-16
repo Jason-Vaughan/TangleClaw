@@ -26,11 +26,9 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
-## 2026-08-15: the last three unknowns wearing a fact's clothes (#906, #905, #907)
+## 2026-08-16: the Master settings modal becomes a component both pages can mount (#768 chunk 1)
 
 <!-- prawduct: type=refactor | scope=master-settings-component-768 | chunks=01 -->
-
-## The Master settings modal becomes a component both pages can mount (#768 chunk 1)
 
 **Why:** from inside a session there was no route to the Master's settings at all.
 `masterSettingsModal` lived only in `public/index.html`, and `grep -c masterSettingsModal
@@ -83,6 +81,8 @@ dependency the script tags do not show; assert mount idempotence by mounting twi
 matching source). **Filed:** #948 — a failed Hard-rules fetch renders as "No rules — the shipped
 baseline applies", an unknown told as a fact about the Master's boundary; moved code, but this
 extraction is about to put it on a second surface.
+
+## 2026-08-15: the last three unknowns wearing a fact's clothes (#906, #905, #907)
 
 <!-- prawduct: type=bugfix | scope=unknown-not-fact-tail-905-907-906 | chunks=01,02,03 -->
 
