@@ -168,15 +168,10 @@ describe('Master settings surface — frontend', () => {
         'a re-implemented className ternary in ui.js is the second copy');
     });
 
-    it('mounting twice does not stack a second modal or double-bind', () => {
-      // `mount()` runs on load and the control bar will call it again; an
-      // append-always mount would give the page two #masterSettingsModal nodes
-      // and getElementById would render into the one the operator cannot see.
-      assert.match(masterSection, /if \(!modal\) \{/,
-        'mount must inject only when the modal is absent');
-      assert.match(masterSection, /dataset\.tcMasterSettingsBound === '1'/,
-        'mount must not re-bind listeners it already bound');
-    });
+    // mount()'s injection, adoption and idempotence are RUN, not pinned, in
+    // test/master-settings-mount.test.js. Source regexes for those matched
+    // whether or not mounting twice actually did anything — the vacuous-guard
+    // family — so they were replaced rather than kept alongside.
 
     it('access options meet the 44px mobile touch-target bar', () => {
       const block = css.match(/\.master-access-option \{[^}]*\}/s);

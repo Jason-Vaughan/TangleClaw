@@ -4608,9 +4608,11 @@ function bindEvents() {
     esc,
     buildEngineOptions,
     state: sessionState,
-    // This page has no master status dot to paint, so a failed open reports to
-    // the console rather than pretending it succeeded. The control bar passes a
-    // handler that paints its own status instead.
+    // This page has no master status affordance yet, so a failed open reports
+    // to the console rather than pretending it succeeded. That is honest but
+    // not visible: until the control bar exists to own a status line, an
+    // operator sees nothing at all. Replacing this handler is part of building
+    // that bar, not an afterthought to it.
     onOpenError: (message) => console.warn('[master-settings]', message)
   });
   masterSettings.mount();

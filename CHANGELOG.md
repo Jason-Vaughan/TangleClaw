@@ -37,9 +37,16 @@ All notable changes to TangleClaw are documented in this file.
   `saveMasterSettings` and runs them against the same assertions — only the file it lifts from moved.
   Same for the source pins in `test/master-settings-frontend.test.js` and
   `test/engine-picker-gating.test.js`. New guards cover what the move itself could break: that
-  neither page re-declares the modal, that both construct the component, and that a second `mount()`
-  neither stacks a node nor re-binds. Each was mutation-checked red before being accepted. Full
-  suite 6255 pass / 0 fail / 1 skip.
+  neither page re-declares the modal, that both construct the component, and that the shared
+  rules-status helper is not re-implemented. Each was mutation-checked red before being accepted.
+
+  `mount()`'s own contract — inject when absent, adopt when present, and stay idempotent — is
+  covered by `test/master-settings-mount.test.js`, which builds the component against an injectable
+  document and mounts twice rather than matching the source for `if (!modal)`. A source regex there
+  would have passed whether or not the second mount did anything, which is the property the control
+  bar will depend on. `test/_mini-dom.js` grew `dataset`, `firstElementChild` and a deliberately
+  non-parsing `withIdParsingInnerHTML` helper to make that possible. Full suite 6260 pass / 0 fail
+  / 1 skip.
 
 ## [5.5.0] - 2026-08-16
 

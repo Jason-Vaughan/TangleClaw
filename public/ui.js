@@ -3480,9 +3480,6 @@ const masterSettings = window.tcCreateMasterSettings({
 /** Open the Master settings modal. */
 function openMasterSettings() { return masterSettings.open(); }
 
-/** Close the Master settings modal. */
-function closeMasterSettings() { masterSettings.close(); }
-
 // ── Event Bindings ──
 
 const $ = (id) => document.getElementById(id);

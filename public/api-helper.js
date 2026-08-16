@@ -1896,10 +1896,13 @@
     /**
      * Ensure the modal exists in the page and its listeners are bound.
      *
-     * Idempotent, and it adopts markup the page already carries rather than
-     * appending a second copy — the dashboard ships the modal in its HTML, so a
-     * blind append would give that page two `#masterSettingsModal` elements and
-     * `getElementById` would render into the one the operator cannot see.
+     * Idempotent: it injects the modal only when the page has none, and adopts
+     * one that is already present rather than appending a second. Neither page
+     * ships the markup any more — this function emits it — so the adoption path
+     * exists for the repeat call, not for static HTML: the control bar mounts
+     * on demand while page load has already mounted once, and a blind append
+     * would leave two `#masterSettingsModal` elements with `getElementById`
+     * rendering into the one the operator cannot see.
      *
      * @param {HTMLElement} [container] - Where to inject when absent; defaults
      *   to the document body.
@@ -1956,6 +1959,5 @@
   global.tcWireTerminalDragCopy = tcWireTerminalDragCopy;
   global.tcWireTerminalFrame = tcWireTerminalFrame;
   global.tcSetRulesStatus = tcSetRulesStatus;
-  global.tcMasterSettingsMarkup = tcMasterSettingsMarkup;
   global.tcCreateMasterSettings = tcCreateMasterSettings;
 })(typeof window !== 'undefined' ? window : globalThis);
