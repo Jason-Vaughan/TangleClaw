@@ -31,6 +31,11 @@ function makeElement(tag, doc) {
     tagName: String(tag).toUpperCase(),
     ownerDocument: doc,
     id: '',
+    // Declared rather than left to spring into existence on first assignment,
+    // so a render that reads it back before writing sees '' as a browser would
+    // instead of `undefined`. Needed by the session unreachable banner (#941),
+    // which fills itself once and checks whether it already has.
+    innerHTML: '',
     type: '',
     title: '',
     href: '',

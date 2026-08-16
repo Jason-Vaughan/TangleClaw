@@ -817,6 +817,52 @@ body {
   .banner-name { max-width: 200px; }
 }
 
+/* ── Unreachable API banner ──
+   The dashboard answers a dead server with a full-screen overlay, which is
+   honest there because nothing underneath it can work. Here the ttyd terminal
+   is served from a different port and can be perfectly alive while the API is
+   gone, so this is a flow sibling with `flex-shrink: 0` — it shortens the
+   terminal viewport instead of covering it, and the operator can keep typing
+   in a session that still works. Empty and unstyled until session.js fills it. */
+.session-unreachable {
+  display: none;
+  flex-shrink: 0;
+  padding: 12px 16px;
+  background: rgba(239, 83, 80, 0.12);
+  border-bottom: 1px solid rgba(239, 83, 80, 0.35);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  overflow-y: auto;
+  max-height: 45%;
+}
+.session-unreachable.visible { display: block; }
+.session-unreachable h2 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--danger);
+  margin: 0 0 6px;
+}
+.session-unreachable p { margin: 0 0 8px; }
+.session-unreachable strong { color: var(--text); word-break: break-all; }
+.session-unreachable .session-unreachable-note { color: var(--text-muted); }
+.session-unreachable pre {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  background: var(--elevated-bg);
+  border-radius: 6px;
+  font-size: 12px;
+  overflow-x: auto;
+  white-space: pre;
+}
+/* The Retry control reuses `.btn`/`.btn-danger` rather than restyling a second
+   button system: it is the sole recovery action inside a `role="alert"` region
+   on a touch-first surface, so it needs `.btn`'s 44px min-height and its
+   `:focus-visible` outline, not a hand-rolled 30px lookalike with no focus
+   ring. Only the disabled state is added here — the banner keeps the button
+   mounted while a retry is in flight. */
+.session-unreachable .btn:disabled { opacity: 0.6; cursor: default; }
+
 /* ── Session Wrapping Bar ── */
 .session-wrapping {
   flex-shrink: 0;

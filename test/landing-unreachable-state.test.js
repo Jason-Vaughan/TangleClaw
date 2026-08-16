@@ -7,11 +7,17 @@
  * The SW serves the app shell from cache with the backend completely gone, so
  * the page looks healthy while nothing behind it answers — and the toast said
  * exactly the same thing after one failure and after two hundred. Past a
- * bounded ceiling of consecutive failed reconnects, the client must stop
- * claiming a transient blip and render the real unreachable state: what host
- * it is trying, that the shell may be cached, and the concrete checks to run
- * on the machine. Recovery stays automatic; nothing reloads or redirects
- * (no-UI-timers norm, #98/#268).
+ * bounded ceiling the client must stop claiming a transient blip and render
+ * the real unreachable state: what host it is trying, that the shell may be
+ * cached, and the concrete checks to run on the machine. Recovery stays
+ * automatic; nothing reloads or redirects (no-UI-timers norm, #98/#268).
+ *
+ * #941 moved the ceiling from a count of failed attempts to ELAPSED TIME, and
+ * moved the whole retry policy into public/reconnect-policy.js so this page
+ * and the session page cannot disagree about when a server counts as gone.
+ * These tests drive the page's real policy construction, lifted verbatim from
+ * landing.js, against a controlled clock — so they measure the wiring the
+ * operator actually gets, not a re-declaration of it.
  *
  * These tests LIFT the real functions out of public/landing.js and RUN them —
  * asserting on rendered state, since the whole defect is what the operator
@@ -30,6 +36,8 @@ const API_HELPER_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
 const SW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'sw.js'), 'utf8');
+const RECONNECT_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'public', 'reconnect-policy.js'), 'utf8');
 
 /**
  * Slice a top-level function (declaration + body) out of source text by
@@ -51,10 +59,34 @@ function liftFunction(src, decl) {
   assert.fail(`${decl} body must close`);
 }
 
-/** The real ceiling, read from the source so the test follows it. */
-function realCeiling() {
-  const m = LANDING_SRC.match(/const UNREACHABLE_AFTER = (\d+);/);
-  assert.ok(m, 'UNREACHABLE_AFTER must be declared');
+/**
+ * Slice a top-level call statement out of source text by paren-matching.
+ *
+ * Used to lift the page's OWN policy construction rather than re-declaring it
+ * here: a test that builds its own policy would keep passing if the page
+ * stopped wiring one of the callbacks, which is precisely the failure #941 is
+ * about (an escalation that existed but was never connected on one page).
+ *
+ * @param {string} src - File source text.
+ * @param {string} head - Statement head, e.g. `const p = f(`.
+ * @returns {string} The statement through its balanced closing paren + `;`.
+ */
+function liftCall(src, head) {
+  const start = src.indexOf(head);
+  assert.notEqual(start, -1, `${head} must exist`);
+  const open = src.indexOf('(', start + head.length - 1);
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '(') depth++;
+    else if (src[i] === ')' && --depth === 0) return `${src.slice(start, i + 1)};`;
+  }
+  assert.fail(`${head} call must close`);
+}
+
+/** The real ceiling in ms, read from the policy source so the test follows it. */
+function realCeilingMs() {
+  const m = RECONNECT_SRC.match(/const DEFAULT_CEILING_MS = (\d+);/);
+  assert.ok(m, 'DEFAULT_CEILING_MS must be declared');
   return Number(m[1]);
 }
 
@@ -79,10 +111,44 @@ function makeElement(tag) {
 }
 
 /**
+ * The page's real connection-state wiring, in a sandbox whose clock and timers
+ * the test drives.
+ *
+ * @param {object} sandbox - Partially built vm sandbox (mutated).
+ * @param {string[]} extra - Additional source lines to run after the policy.
+ * @returns {object} Controls: `advance(ms)`, `scheduled`.
+ */
+function installConnectionState(sandbox, extra) {
+  const controls = { clock: 0, scheduled: [] };
+  sandbox.Date = { now: () => controls.clock };
+  sandbox.Math = Math;
+  sandbox.setTimeout = (fn, ms) => { controls.scheduled.push({ fn, ms }); return controls.scheduled.length; };
+  sandbox.clearTimeout = () => {};
+  sandbox.window = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(RECONNECT_SRC, sandbox);
+  vm.runInContext([
+    liftFunction(LANDING_SRC, 'function esc(str)'),
+    liftFunction(LANDING_SRC, 'function renderUnreachableState()'),
+    liftFunction(LANDING_SRC, 'function hideUnreachableState()'),
+    ...extra,
+    // The page's OWN construction — callbacks and all.
+    liftCall(LANDING_SRC, 'const reconnectPolicy = tcCreateReconnectPolicy('),
+    liftFunction(LANDING_SRC, 'async function retryConnectionNow()'),
+    liftFunction(LANDING_SRC, 'function setConnected(connected)'),
+    'globalThis.reconnectPolicy = reconnectPolicy;',
+    'globalThis.setConnected = setConnected;',
+    'globalThis.retryConnectionNow = retryConnectionNow;'
+  ].join('\n'), sandbox);
+  controls.advance = (ms) => { controls.clock += ms; };
+  return controls;
+}
+
+/**
  * Build a sandbox running the real connection-state functions with a
  * test-controlled `loadProjects`.
  *
- * @returns {object} The vm context, with `elements` registry attached.
+ * @returns {object} The vm context, with `elements` and clock controls attached.
  */
 function loadConnectionState() {
   const elements = [makeElement('div')];
@@ -90,13 +156,10 @@ function loadConnectionState() {
 
   const sandbox = {
     console,
-    // The reconnect loop schedules with setTimeout; the tests drive attempts
-    // by hand, so scheduling records nothing and never fires.
-    setTimeout: () => 7, clearTimeout() {},
     state: { connected: true },
     location: { origin: 'https://tc.example:3102' },
     // Mirrors the real contract: api() flips connectivity through
-    // setConnected, and loadProjects rides on api(). The test decides whether
+    // setConnected, and loadProjects rides on it. The test decides whether
     // the "server" answers.
     serverUp: false,
     document: {
@@ -106,45 +169,41 @@ function loadConnectionState() {
     }
   };
   sandbox.loadProjects = async () => { sandbox.setConnected(sandbox.serverUp); };
-  sandbox.window = sandbox;
-  vm.createContext(sandbox);
 
-  const script = [
-    'let reconnectTimer = null;',
-    'let reconnectFailures = 0;',
-    `const UNREACHABLE_AFTER = ${realCeiling()};`,
-    liftFunction(LANDING_SRC, 'function esc(str)'),
-    liftFunction(LANDING_SRC, 'async function attemptReconnect()'),
-    liftFunction(LANDING_SRC, 'function renderUnreachableState()'),
-    liftFunction(LANDING_SRC, 'function hideUnreachableState()'),
-    liftFunction(LANDING_SRC, 'async function retryConnectionNow()'),
-    liftFunction(LANDING_SRC, 'function setConnected(connected)'),
-    'globalThis.attemptReconnect = attemptReconnect;',
-    'globalThis.setConnected = setConnected;',
-    'globalThis.retryConnectionNow = retryConnectionNow;'
-  ].join('\n');
-  vm.runInContext(script, sandbox);
-
+  const controls = installConnectionState(sandbox, []);
   sandbox.elements = elements;
+  sandbox.controls = controls;
   return sandbox;
 }
 
 const overlay = (ctx) => ctx.elements.find((e) => e.id === 'unreachableState');
 const toast = (ctx) => ctx.elements.find((e) => e.id === 'toast');
 
+/** Probe once without the outage having outlived the ceiling. */
+async function probeBelowCeiling(ctx) {
+  ctx.controls.advance(Math.floor(realCeilingMs() / 4));
+  await ctx.reconnectPolicy.retryNow();
+}
+
+/** Let the outage outlive the ceiling, then probe. */
+async function probePastCeiling(ctx) {
+  ctx.controls.advance(realCeilingMs());
+  await ctx.reconnectPolicy.retryNow();
+}
+
 describe('dead server escalates to an honest unreachable state (#709)', () => {
   it('holds the toast below the ceiling, then renders the unreachable state', async () => {
     const ctx = loadConnectionState();
-    const N = realCeiling();
     ctx.setConnected(false);
 
-    for (let i = 0; i < N - 1; i++) await ctx.attemptReconnect();
+    await probeBelowCeiling(ctx);
+    await probeBelowCeiling(ctx);
     assert.equal(overlay(ctx), undefined,
-      `below ${N} failures this is still plausibly a blip — no overlay yet`);
+      'below the ceiling this is still plausibly a blip — no overlay yet');
     assert.equal(toast(ctx).classList.contains('visible'), true,
       'the retry toast carries the state until the ceiling');
 
-    await ctx.attemptReconnect();
+    await probePastCeiling(ctx);
     assert.ok(overlay(ctx), 'the ceiling must produce the unreachable state');
     assert.equal(overlay(ctx).classList.contains('visible'), true);
     assert.equal(toast(ctx).classList.contains('visible'), false,
@@ -154,7 +213,7 @@ describe('dead server escalates to an honest unreachable state (#709)', () => {
   it('names the origin, the cached-shell possibility, and the concrete checks', async () => {
     const ctx = loadConnectionState();
     ctx.setConnected(false);
-    for (let i = 0; i < realCeiling(); i++) await ctx.attemptReconnect();
+    await probePastCeiling(ctx);
 
     const html = overlay(ctx).innerHTML;
     assert.match(html, /https:\/\/tc\.example:3102/, 'must name what it is trying to reach');
@@ -167,7 +226,7 @@ describe('dead server escalates to an honest unreachable state (#709)', () => {
   it('the Retry button shows the attempt in flight (operator feedback, #709 smoke)', async () => {
     const ctx = loadConnectionState();
     ctx.setConnected(false);
-    for (let i = 0; i < realCeiling(); i++) await ctx.attemptReconnect();
+    await probePastCeiling(ctx);
 
     // The button the overlay's markup renders, registered as the DOM would —
     // and pinned to the markup: if either side of the id seam renames, the
@@ -200,19 +259,20 @@ describe('dead server escalates to an honest unreachable state (#709)', () => {
   it('recovers automatically and re-arms the ceiling', async () => {
     const ctx = loadConnectionState();
     ctx.setConnected(false);
-    for (let i = 0; i < realCeiling(); i++) await ctx.attemptReconnect();
+    await probePastCeiling(ctx);
     assert.equal(overlay(ctx).classList.contains('visible'), true);
 
     // The server comes back: the next background attempt succeeds.
     ctx.serverUp = true;
-    await ctx.attemptReconnect();
+    await ctx.reconnectPolicy.retryNow();
     assert.equal(overlay(ctx).classList.contains('visible'), false,
       'recovery must dismiss the state without any operator action');
 
-    // The counter reset: a fresh outage gets a fresh ceiling, not an instant overlay.
+    // The outage clock reset: a fresh outage gets a fresh ceiling, not an
+    // instant overlay just because the page has been open a long time.
     ctx.serverUp = false;
     ctx.setConnected(false);
-    await ctx.attemptReconnect();
+    await probeBelowCeiling(ctx);
     assert.equal(overlay(ctx).classList.contains('visible'), false,
       'one failure after recovery is a blip again');
   });
@@ -240,21 +300,21 @@ function runNavigationPin() {
  * unreachable in the exact scenario #709 names, and the tests above masked it
  * by synthesizing the connectivity signal. This suite drives the WHOLE chain —
  * the real sw.js response builders, the real api() from api-helper.js, the
- * real setConnected/attemptReconnect — with fetch resolving the shapes sw.js
- * actually produces.
+ * real setConnected and the real reconnect policy — with fetch resolving the
+ * shapes sw.js actually produces.
  */
 
 /**
  * Build the full client chain with a controllable fetch.
  *
  * @param {Function} fetchImpl - What the "service worker" hands the page.
- * @returns {object} vm context with `elements` attached.
+ * @returns {object} vm context with `elements` and clock controls attached.
  */
 function loadFullChain(fetchImpl) {
   const elements = [makeElement('div')];
   elements[0].id = 'toast';
   const sandbox = {
-    console, setTimeout: () => 7, clearTimeout() {},
+    console,
     Response, Headers,
     state: { connected: true },
     location: { origin: 'https://tc.example:3102' },
@@ -268,37 +328,17 @@ function loadFullChain(fetchImpl) {
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(API_HELPER_SRC, sandbox);
-  vm.runInContext([
-    'let reconnectTimer = null;',
-    'let reconnectFailures = 0;',
-    `const UNREACHABLE_AFTER = ${realCeiling()};`,
-    liftFunction(LANDING_SRC, 'function esc(str)'),
-    liftFunction(LANDING_SRC, 'async function attemptReconnect()'),
-    liftFunction(LANDING_SRC, 'function renderUnreachableState()'),
-    liftFunction(LANDING_SRC, 'function hideUnreachableState()'),
-    liftFunction(LANDING_SRC, 'function setConnected(connected)'),
+
+  const controls = installConnectionState(sandbox, [
     // The page's real wiring shape: api() is created from the factory with
     // the page's setConnected, and loadProjects rides on it.
     'const api = tcCreateApi({ setConnected });',
     'async function loadProjects() { await api("/api/projects"); }',
-    'globalThis.api = api;',
-    'globalThis.attemptReconnect = attemptReconnect;',
-    'globalThis.setConnected = setConnected;'
-  ].join('\n'), sandbox);
+    'globalThis.api = api;'
+  ]);
   sandbox.elements = elements;
+  sandbox.controls = controls;
   return sandbox;
-}
-
-/** The REAL sw.js builders, lifted and run so the shapes cannot drift. */
-function swBuilders() {
-  const ctx = { Response, Headers, JSON, String };
-  vm.createContext(ctx);
-  vm.runInContext([
-    liftFunction(SW_SRC, 'function _swErrorResponse(err)'),
-    liftFunction(SW_SRC, 'function _withCacheFallbackMarker(cached)'),
-    'globalThis.err = _swErrorResponse; globalThis.mark = _withCacheFallbackMarker;'
-  ].join('\n'), ctx);
-  return ctx;
 }
 
 describe('escalation works through the real service-worker response shapes (#709 R-1)', () => {
@@ -306,7 +346,8 @@ describe('escalation works through the real service-worker response shapes (#709
     const sw = swBuilders();
     const ctx = loadFullChain(async () => sw.err(new Error('Failed to fetch')));
 
-    for (let i = 0; i < realCeiling(); i++) await ctx.attemptReconnect();
+    await ctx.loadProjects();
+    await probePastCeiling(ctx);
 
     assert.equal(ctx.state.connected, false,
       'a resolved 503 from the SW is a dead server, not a served answer');
@@ -327,7 +368,7 @@ describe('escalation works through the real service-worker response shapes (#709
     assert.equal(ctx.state.connected, false,
       'a marked cache fallback means the server did not answer');
 
-    for (let i = 0; i < realCeiling(); i++) await ctx.attemptReconnect();
+    await probePastCeiling(ctx);
     assert.ok(overlay(ctx), 'the ceiling must be reachable through the cache-fallback shape');
     assert.equal(overlay(ctx).classList.contains('visible'), true);
   });
@@ -340,11 +381,12 @@ describe('escalation works through the real service-worker response shapes (#709
         { status: 200, headers: { 'Content-Type': 'application/json' } })
       : sw.err(new Error('Failed to fetch')));
 
-    for (let i = 0; i < realCeiling(); i++) await ctx.attemptReconnect();
+    await ctx.loadProjects();
+    await probePastCeiling(ctx);
     assert.equal(overlay(ctx).classList.contains('visible'), true);
 
     serverUp = true;
-    await ctx.attemptReconnect();
+    await ctx.reconnectPolicy.retryNow();
     assert.equal(ctx.state.connected, true, 'a real answer reconnects');
     assert.equal(overlay(ctx).classList.contains('visible'), false,
       'recovery through the real api() dismisses the state');
@@ -359,6 +401,18 @@ describe('escalation works through the real service-worker response shapes (#709
     assert.equal(served.status, 200, 'the stand-in keeps the cached status');
   });
 });
+
+/** The REAL sw.js builders, lifted and run so the shapes cannot drift. */
+function swBuilders() {
+  const ctx = { Response, Headers, JSON, String };
+  vm.createContext(ctx);
+  vm.runInContext([
+    liftFunction(SW_SRC, 'function _swErrorResponse(err)'),
+    liftFunction(SW_SRC, 'function _withCacheFallbackMarker(cached)'),
+    'globalThis.err = _swErrorResponse; globalThis.mark = _withCacheFallbackMarker;'
+  ].join('\n'), ctx);
+  return ctx;
+}
 
 /*
  * The proxied reality (#924, operator-observed): behind the Caddy ingress a
@@ -384,7 +438,7 @@ describe('escalation works through the gateway shapes (#924)', () => {
     assert.equal(ctx.state.connected, false,
       'the gate answering FOR the backend is the backend not answering');
 
-    for (let i = 0; i < realCeiling(); i++) await ctx.attemptReconnect();
+    await probePastCeiling(ctx);
     assert.ok(overlay(ctx), 'the ceiling must be reachable through the proxied shape');
     assert.equal(overlay(ctx).classList.contains('visible'), true);
   });
@@ -424,11 +478,12 @@ describe('escalation works through the gateway shapes (#924)', () => {
       : new Response(JSON.stringify({ projects: [] }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }));
 
-    for (let i = 0; i < realCeiling(); i++) await ctx.attemptReconnect();
+    await ctx.loadProjects();
+    await probePastCeiling(ctx);
     assert.equal(overlay(ctx).classList.contains('visible'), true);
 
     gatewayDown = false;
-    await ctx.attemptReconnect();
+    await ctx.reconnectPolicy.retryNow();
     assert.equal(ctx.state.connected, true);
     assert.equal(overlay(ctx).classList.contains('visible'), false,
       'the backend returning through the gate dismisses the state');
@@ -440,11 +495,6 @@ describe('unreachable-state functions never navigate (source pin)', () => {
     // The no-UI-timers norm (#98, #268): honest state plus explicit user
     // action, not a blind refresh. Pinned against the source of the three
     // functions that own this state.
-    for (const decl of ['function renderUnreachableState()',
-      'function hideUnreachableState()', 'async function retryConnectionNow()']) {
-      const body = liftFunction(LANDING_SRC, decl);
-      assert.doesNotMatch(body, /location\.reload|location\.href\s*=|location\.assign/,
-        `${decl} must not navigate for the operator`);
-    }
+    runNavigationPin();
   });
 });

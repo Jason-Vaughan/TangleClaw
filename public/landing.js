@@ -77,35 +77,22 @@ const updateBeacon = window.tcCreateUpdateBeacon({
 
 // ── Connection State ──
 
-let reconnectTimer = null;
-
-// #709 — consecutive reconnect attempts that still found the server gone.
 // The service worker serves the app shell from cache with the server
 // completely dead, so this page can render healthy-looking while nothing
 // behind it answers. The toast alone claimed "Retrying…" identically after
-// one failure and after two hundred; past this ceiling the claim of a
+// one failure and after two hundred; past the policy's ceiling the claim of a
 // transient blip becomes dishonest and the real unreachable state takes over.
 // Retrying continues underneath it — recovery stays automatic — the ceiling
 // only changes what the operator is TOLD.
-let reconnectFailures = 0;
-const UNREACHABLE_AFTER = 4;
-
-/**
- * One background reconnect attempt, and the honesty ceiling.
- *
- * `loadProjects` flips `state.connected` back through `setConnected(true)` on
- * success, which resets the counter and dismisses the unreachable state. While
- * the server stays gone, count — and once the ceiling passes, stop calling it
- * a blip.
- *
- * @returns {Promise<void>}
- */
-async function attemptReconnect() {
-  await loadProjects();
-  if (state.connected) return;
-  reconnectFailures++;
-  if (reconnectFailures >= UNREACHABLE_AFTER) renderUnreachableState();
-}
+//
+// The ceiling and the retry cadence live in the shared policy so this page and
+// the session page cannot drift apart about when a server counts as gone; the
+// page supplies only how to probe and what to render.
+const reconnectPolicy = tcCreateReconnectPolicy({
+  probe: () => loadProjects(),
+  onEscalate: () => renderUnreachableState(),
+  onRecover: () => hideUnreachableState()
+});
 
 /**
  * Replace the ambiguous retry toast with a state that says what is actually
@@ -166,7 +153,7 @@ async function retryConnectionNow() {
     btn.textContent = 'Retrying…';
   }
   try {
-    await attemptReconnect();
+    await reconnectPolicy.retryNow();
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -182,26 +169,12 @@ function setConnected(connected) {
   if (!connected) {
     toast.textContent = 'Connection lost. Retrying\u2026';
     toast.className = 'toast toast-warn visible';
-    if (!reconnectTimer) {
-      reconnectTimer = true; // sentinel
-      (function reconnectLoop() {
-        if (!reconnectTimer) return;
-        reconnectTimer = setTimeout(async () => {
-          if (!reconnectTimer) return;
-          await attemptReconnect();
-          reconnectLoop();
-        }, 5000);
-      })();
-    }
+    reconnectPolicy.begin();
   } else {
-    reconnectFailures = 0;
-    hideUnreachableState();
+    // `end()` dismisses the unreachable state through `onRecover`.
+    reconnectPolicy.end();
     toast.textContent = 'Reconnected';
     toast.className = 'toast toast-ok visible';
-    if (reconnectTimer) {
-      if (reconnectTimer !== true) clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
     setTimeout(() => { toast.classList.remove('visible'); }, 3000);
   }
 }

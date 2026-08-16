@@ -4,6 +4,79 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **A session page now says when TangleClaw's API has stopped answering, instead of retrying
+  forever (#941).** #709 taught the dashboard to stop calling a dead server a transient blip, but
+  it was built on the dashboard alone — so a session tab, which is where operators actually work,
+  kept looping "Connection lost. Retrying…" indefinitely behind a cached service-worker shell.
+  Past the same ceiling the session page now raises a persistent banner naming the origin it is
+  trying, that the shell may be stale, and the two host-side checks (`launchctl list | grep
+  tangleclaw`, `~/.tangleclaw/logs/server.err.log`), with a Retry button. Background retry
+  continues underneath and recovery stays automatic; nothing reloads or redirects (no-UI-timers
+  norm, #98/#268).
+
+  It is a **banner, not the dashboard's full-screen overlay**, and the difference is the point.
+  The overlay is honest on the dashboard because every control beneath it depends on the server
+  that just died. A session page embeds ttyd on a separate port, so the terminal can be perfectly
+  alive — with the operator mid-command — while the API is unreachable. Covering it would assert
+  exactly what this page cannot establish. The banner takes space from the terminal instead of
+  covering it, names the two axes separately, and says plainly that TangleClaw cannot tell which
+  applies.
+
+### Changed
+
+- **The unreachable-server ceiling is now elapsed time rather than a count of retries (#941).**
+  Browsers clamp timers in a backgrounded tab to roughly one per minute, so a four-attempt ceiling
+  meant about twenty seconds in a foreground tab and about four minutes in a background one. An
+  operator with several dashboards and several session tabs open watched the same outage escalate
+  minutes apart across them — which reads as a bug and undermines the honesty the escalation
+  exists to provide. Elapsed time makes every tab reach the same verdict without any tab talking
+  to another; probes are also jittered so N tabs stop converging into a synchronized burst against
+  a server that is still booting. Deliberately not cross-tab coordinated: per-tab state is honest,
+  and the time-based ceiling removes the visible inconsistency at a fraction of the complexity.
+
+  The retry policy now lives in one module (`public/reconnect-policy.js`) that both pages consume,
+  because the duplicated loop is *why* #709 could be built on one page and not the other. Two
+  copies of a rule produce two behaviors; a regression test now fails if either page grows its own
+  loop again. The ceiling is armed as its own one-shot at the start of each outage rather than
+  being carried by the retry loop, because `fetch` has no deadline: against a black-holed host — a
+  sleeping machine, a tailnet route that went away — the first probe stalls before the ceiling is
+  due and the loop only re-arms once it returns, so nothing would be pending to notice the ceiling
+  pass. The probe-side checks remain as the throttled-tab path. A probe that throws is caught so it
+  cannot stop the retry loop for the life of the page, and a server that flaps mid-probe cannot
+  leave two probe chains running against it.
+
+### Fixed
+
+- **A wedged tmux no longer records every session it owns as "not live" (#937).** `_liveness` in
+  `lib/session-ownership.js` called `hasSession`, whose `false` means "not confirmed live" — the
+  right answer for a caller about to act on a pane, and the wrong one for a pure read about to
+  RECORD that a session is gone. It now uses the `probeSession` primitive and reports the same
+  tri-state the rest of the liveness surfaces carry: `live: null` with `incomplete: ['live']` and
+  a cause when tmux could not be asked. This was the last read-shaped `hasSession` caller in
+  `lib/`, closing the family #900/#905/#906/#907 opened.
+
+  The consumers were the substance. Every read-side consumer filtered on `.live` truthiness, so a
+  `null` would have been deleted as though it were a confirmed death — `listLiveProbed` and the
+  prime's scope guard now keep what they cannot disprove (`live !== false`), which matters most
+  during exactly the wedge that produces the unknown. The migration guard in `lib/projects.js`
+  takes the opposite branch on purpose: it is about to rewrite governance config, and doing that
+  under a running agent is real damage while deferring costs a retry, so an unknown defers — and
+  says it could not establish liveness rather than claiming a live session it never saw.
+
+- **Project detection no longer offers the running TangleClaw checkout as a candidate project
+  (#920).** `detectExistingProjects` walked the operator's projects directory with no own-install
+  exclusion, and the clone carries the markers it keys on, so it would hand the tool itself back as
+  a project. #708 closed the same hole in the setup wizard's scan, where the harm was concrete: a
+  pre-checked box attached the clone as the operator's first project and wrote per-project config
+  into it, dirtying the checkout and stranding the self-updater behind its dirty-tree guard. This
+  function only reports, and today only tests call it — so this closes the hole before a caller
+  reopens it, rather than fixing damage the function does on its own. The install is excluded by
+  realpath, so a symlinked projects directory cannot smuggle it past a string compare. Attaching
+  this checkout deliberately (developing TangleClaw with TangleClaw) still works through the normal
+  attach flow, which does not pass through detection.
+
 ## [5.3.0] - 2026-08-15
 
 ### Changed

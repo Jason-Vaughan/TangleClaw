@@ -101,6 +101,14 @@
     </div>
   </header>
 
+  <!-- Unreachable-API banner. Deliberately a flow sibling of the terminal
+       viewport rather than an overlay: the API and the ttyd terminal are on
+       separate ports and die independently, so covering a terminal that may
+       still be working would state as fact something this page cannot
+       establish. Empty until session.js fills it — a healthy session renders
+       nothing here. -->
+  <div class="session-unreachable" id="sessionUnreachable" role="alert" aria-live="assertive"></div>
+
   <!-- Session Wrapping Bar -->
   <div class="session-wrapping hidden" id="sessionWrapping">
     <span class="wrapping-indicator"></span>
@@ -416,6 +424,7 @@
   </aside>
 
   <script src="/api-helper.js"></script>
+  <script src="/reconnect-policy.js"></script>
   <script src="/update-beacon.js"></script>
   <script src="/wrap-drawer.js"></script>
   <script src="/session.js"></script>
