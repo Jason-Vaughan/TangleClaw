@@ -344,6 +344,12 @@ describe('#955 one rule decides what counts as an answer', () => {
     // which states `checkOk: false` covers is not an implementation — an
     // un-stripped match makes the guard fire on its own documentation, which is
     // how it first went red.
+    //
+    // The line-comment strip is naive: it would also truncate a line holding
+    // `//` inside a string. Nothing in this function does today (the two URLs
+    // are root-relative), and a heuristic that tried to tell them apart would be
+    // more fragile than the thing it guards. If this function ever grows an
+    // absolute URL, replace the strip rather than trusting it.
     const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     assert.doesNotMatch(code, /checkOk|checkedAt/,
       'no second copy of the rule may live here');

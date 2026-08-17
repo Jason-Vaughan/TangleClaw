@@ -4794,4 +4794,4 @@ failed only on runs sharing the machine with concurrent `node --test` processes;
 passed on both `main` and this branch. This change-log had already recorded the same sighting on an
 unrelated branch and moved past it. Now #957, with a reproduction.
 
-**Classification:** fix
+**Classification:** fix — with one **changed** element, and the two records must not disagree about which. Both bugs are fixes; the enabling interval drop (`updateCheckIntervalMs` 4h → 30m) is a documented operator-facing default, so `CHANGELOG.md` files it under `### Changed` and the next release is **minor**, not patch. Filing it under `### Internal` would have been the quieter answer and the wrong one: an operator would notice next session, which is the test CLAUDE.md sets.
