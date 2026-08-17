@@ -373,6 +373,30 @@ have a visibility-aware `setTimeout` chain that Medusa already rides ("same cade
 
 - [x] Chunk 1 — level store + level-aware guard — **DONE 2026-08-17**, branch `feat/755-access-level`
 - [x] Chunk 2 — level-aware identity — **DONE 2026-08-17**, same branch
+
+### Chunk 2, as built
+
+Eight commits, `408ad10`…`95da8b8`. Suite 6371/0/1. **Six Critic rounds** — the heaviest of the
+plan, and every round found a real defect.
+
+**The plan's own premise for this chunk was wrong** and was corrected before any code (`408ad10`):
+it named `MASTER_BASELINE_RULES[0]` as the sentence going false at `write`, but that rule bounds the
+API, which decision B defers. Rule `[1]` bounds the filesystem. Building from the original premise
+would have widened the API boundary this issue does not touch.
+
+**One defect recurred five times in five costumes** — a bound that fails OPEN while reading as
+though it fails closed. Guard keyed on the artifact the threat deletes; leaf-ness keyed on
+`existsSync`, which follows links so a dangling one reads as absent; a hop cap whose exhaustion fell
+through to the carve-out; a catch falling back to the lexical path, which for anything under
+`memory/` allows; and twice a comment claiming "the restrictive direction" above code doing the
+opposite. **For any guard here, ask what happens when the guard itself fails — if the answer is "it
+uses the value it was computing", that is an allow.**
+
+**Also carried out of this chunk:** an assertion inside a `node:test` `after()` hook prints `not ok`
+and exits 0, so it cannot gate CI; guards belong in an `it`. And `test/master-guard-source.test.js`
+exists because the guard is built in a template literal — a backtick in one of its comments broke
+`lib/master.js` at require time three times, and every other guard lived in a file that imports it,
+so the failure presented as every test dying at once.
 - [ ] Chunk 3 — bar toggle, badge, global warning
 
 ### Chunk 1, as built
