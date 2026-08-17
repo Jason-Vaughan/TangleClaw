@@ -1573,8 +1573,22 @@
       const body = document.getElementById('masterSettingsBody');
       const tierHints = {
         'read-only': 'Structurally enforced on the Claude engine: writes are hard-denied outside the master’s memory/ directory. Whether anything else asks first is the Launch mode setting below — this tier bounds what the master may touch, not how often it prompts.',
-        'suggest': 'The master may attempt writes anywhere, and each one stops for your confirmation in the master’s own terminal. Takes effect on its next tool call — no restart. Note this is exactly read-only if Launch mode is bypassPermissions, since nothing is ever asked.',
-        'write': 'The master may write anywhere it can reach, across every project, with no confirmation. Takes effect on its next tool call — no restart.'
+        // The bypassPermissions sentence is PROBED, not reasoned. Both the first
+        // draft of this hint and the plan's own caveat guessed — in opposite
+        // directions — at what that launch mode does to a hook decision. Measured
+        // against Claude Code 2.1.233 with this guard: under
+        // --dangerously-skip-permissions a hook `deny` still blocks, a hook `ask`
+        // still gates, and only a hook `allow` writes. The launch mode skips the
+        // permission-RULES gate; a hook decision is evaluated separately and
+        // outranks it. Do not soften this to a guess again.
+        'suggest': 'The master may attempt writes anywhere, and each one outside its own memory directory stops for your confirmation in the master’s terminal. Takes effect on its next tool call — no restart. The confirmation still stands under the bypassPermissions launch mode: a hook decision outranks it.',
+        // Deliberately NOT the phrase "no confirmation at any layer": that
+        // wording belongs to the conditional write + bypassPermissions warning
+        // below, which only renders for that combination. Tier hints render at
+        // every tier, so borrowing the sentinel made a read-only master display
+        // the dangerous-combination text — caught by the #756 guard that asserts
+        // exactly that.
+        'write': 'The master may write anywhere it can reach, across every project, without asking you first. Takes effect on its next tool call — no restart.'
       };
       const accessRadios = s.accessLevels.map((level) => {
         const enabled = s.enabledAccessLevels.includes(level);
@@ -2005,7 +2019,12 @@
    */
   const TC_MASTER_PENDING = {
     medusa: "Medusa isn't wired to the Master yet — every endpoint is per-project.",
-    access: "Write access isn't enforced by the server yet, so this toggle wouldn't bind.",
+    // Was "write access isn't enforced yet, so this toggle wouldn't bind" — that
+    // stopped being true the moment the guard started reading the level per tool
+    // call. The control is still dim, but for a different and smaller reason, and
+    // a disabled control whose stated reason is false is worse than no reason.
+    // Until the toggle is wired, the gear is the working route.
+    access: 'This toggle isn’t wired up yet — the access level is live and enforced, so change it from the gear for now.',
     upload: 'Uploads resolve through a registered project, and the Master is not one.',
     wrap: "Wrap is a git pipeline and the Master has no checkout — what it should mean here isn't decided yet.",
     kill: 'The Master API has no kill route yet.'

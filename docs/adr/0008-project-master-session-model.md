@@ -67,6 +67,16 @@ singleton beside the project machinery, not inside it:
 
 ## The read-only boundary is instructional in v1 — stated, not silently claimed
 
+> **Superseded in part, 2026-08-17 (#755).** The section below still describes the *API* boundary
+> correctly — TC's mutation endpoints remain open and the scoped token is still deferred. What it no
+> longer describes is the **file-write** boundary, which is now a real, selectable tier rather than a
+> fixed posture: `read-only`, `suggest` (each write outside the master home's memory directory stops
+> for operator confirmation) and `write`. The `PreToolUse` guard reads the level from a file in the
+> master home on every invocation, so a change binds on the master's next tool call with no restart,
+> and every unreadable level degrades to `read-only`. Measured against Claude Code 2.1.233: a hook
+> decision outranks the `bypassPermissions` launch mode, so the tier means the same thing on every
+> launch mode. Still Claude-only — on other engines this remains instructional, and the API says so.
+
 v1's "read-only" is enforced by **instruction and construction**, not by the API:
 
 - *Instruction:* the regenerated `CLAUDE.md` rules — answer/report, propose but never execute

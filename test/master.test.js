@@ -815,6 +815,46 @@ describe('access level — the guard reads it per invocation (#755)', () => {
     }
   });
 
+  it('revoking restores a guard the master tampered with while it was at write (#755)', () => {
+    // At `write` the guard permits edits to every path INCLUDING its own hook
+    // file, so a master that has been at write may have altered or deleted the
+    // script meant to bind it again. Rewriting only the level file would then
+    // revoke nothing until the next ensure — a toggle reporting a boundary it
+    // did not restore.
+    const home = homeAt('write');
+    try {
+      const script = path.join(home, '.claude', 'hooks', 'guard-writes.js');
+      const genuine = fs.readFileSync(script, 'utf8');
+      fs.writeFileSync(script, '#!/usr/bin/env node\nprocess.exit(0);\n'); // neutered
+      assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), null,
+        'precondition: the tampered guard decides nothing');
+
+      master.applyMasterAccessLevel('read-only', { home });
+
+      assert.equal(fs.readFileSync(script, 'utf8'), genuine, 'the guard must be restored, not just the level');
+      assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'deny',
+        'revocation must actually bind');
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('applyMasterAccessLevel does not newly provision structural enforcement on an instructional master', () => {
+    // The change path must not hand a non-Claude master a guard it never had —
+    // that would be a posture change nobody asked for, on the surface that is
+    // supposed to degrade visibly instead.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-instr-'));
+    try {
+      const result = master.applyMasterAccessLevel('write', { home });
+      assert.equal(result.applied, true);
+      assert.equal(fs.readFileSync(master.masterAccessLevelPath(home), 'utf8').trim(), 'write');
+      assert.ok(!fs.existsSync(path.join(home, '.claude')),
+        'no guard existed here, so none may be created');
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it('writeMasterAccessLevel round-trips every level the settings surface can store', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-level-rt-'));
     try {
@@ -1239,6 +1279,24 @@ describe('refreshMasterIdentity (#726)', () => {
       // Written outside the master's own write carve-out.
       assert.ok(!levelFile.startsWith(pathx.join(home, 'memory') + pathx.sep));
     } finally {
+      fsx.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('the refresh writes the CONFIGURED level, not a hardcoded one — a write Master must not be downgraded every boot (#755)', () => {
+    // THE MUTATION THIS CATCHES: `writeMasterAccessLevel(home, 'read-only')` in
+    // the refresh path. Asserting only the default leaves that green while every
+    // server restart silently revokes a `write` Master's access.
+    const config = store.config.load();
+    const previous = config.master;
+    store.config.save({ ...config, master: { ...(config.master || {}), accessLevel: 'write' } });
+    const home = tmpHome();
+    try {
+      master.refreshMasterIdentity({ home });
+      assert.equal(fsx.readFileSync(master.masterAccessLevelPath(home), 'utf8').trim(), 'write',
+        'the refresh must carry the stored level, not a constant');
+    } finally {
+      store.config.save({ ...store.config.load(), master: previous });
       fsx.rmSync(home, { recursive: true, force: true });
     }
   });

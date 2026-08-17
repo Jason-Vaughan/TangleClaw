@@ -56,7 +56,7 @@ What started as session persistence grew into a full orchestration platform — 
 <tr>
 <td width="50%" align="center" valign="top">
   <a href="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-master.png?raw=true"><img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-master.png?raw=true" width="400" alt="Project Master"></a>
-  <br><sub><b>Project Master</b> <i>(new in 4.0)</i> — a persistent, read-only fleet assistant that pops open as a drawer inside any session (and as a landing-page pane): what's running, what's idle, what shipped</sub>
+  <br><sub><b>Project Master</b> <i>(new in 4.0)</i> — a persistent fleet assistant that pops open as a drawer inside any session (and as a landing-page pane): what's running, what's idle, what shipped</sub>
 </td>
 <td width="50%" align="center" valign="top">
   <a href="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-settings.png?raw=true"><img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-settings.png?raw=true" width="400" alt="Project settings"></a>
@@ -118,7 +118,7 @@ What started as session persistence grew into a full orchestration platform — 
 
 ### Dashboard
 - **Project management** — create, attach, archive, filter, tag, and delete projects from a central landing page
-- **Project Master pane** — persistent fleet-aware assistant session embedded in the landing page and as an in-session drawer, with a settings surface (access level, engine, launch mode, scope, auto-start, editable versioned Hard rules) and a structurally enforced read-only boundary on the Claude engine ([ADR 0008](docs/adr/0008-project-master-session-model.md))
+- **Project Master pane** — persistent fleet-aware assistant session embedded in the landing page and as an in-session drawer, with a settings surface (access level, engine, launch mode, scope, auto-start, editable versioned Hard rules) and a structurally enforced write boundary on the Claude engine — read-only, ask-before-writing, or full access, applied to its next tool call ([ADR 0008](docs/adr/0008-project-master-session-model.md))
 - **Setup wizard** — first-run guided setup scans for existing projects, detects engines, configures preferences, and walks through HTTPS setup
 - **Universal project version detection** — every project's version resolves through a layered chain (`.tangleclaw/project-version.txt` → `CHANGELOG.md` → `version.json` → `package.json`) and shows on the project card and session banner
 - **One-click self-update** — the update beacon's **Update now** button fetches the latest release tag, checks it out with fail-closed guards, and restarts the server

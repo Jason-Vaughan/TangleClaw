@@ -40,6 +40,17 @@ All notable changes to TangleClaw are documented in this file.
   `PATCH /api/config` tests rewrite the operator's live master posture, the same defect class that
   once let a route test overwrite the real `FLEET.md`.
 
+  **A hook decision outranks the `bypassPermissions` launch mode — measured, not assumed.** Both the
+  plan's ratified caveat and the first draft of the settings copy guessed at what that launch mode
+  does to a hook decision, reached *opposite* conclusions, and neither was checked. Probed against
+  Claude Code 2.1.233 with the real generated guard: at `read-only` the write is refused carrying the
+  guard's own reason; at `suggest` it is gated and cannot proceed unattended; at `write` it succeeds —
+  the last being the validated control that proves the path was reachable and the other two were
+  stopped by the hook rather than the environment. So the launch mode skips the permission-*rules*
+  gate, not hook decisions, and every tier means the same thing on every launch mode. The `suggest`
+  hint says so; the `write` + `bypassPermissions` warning is deliberately *not* extended to
+  `suggest`, since its claim is only true of `write`.
+
   Still to come on #755: the master's identity prose still says "Read-only" unconditionally
   (chunk 2), and the control bar's READ/WRITE toggle is still dim (chunk 3).
 

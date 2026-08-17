@@ -122,10 +122,38 @@ operator confirmation before executing") and it costs one branch in the guard. T
 build `suggest` later as a TC-side proposal queue with a confirm UI — is a materially bigger feature
 and would leave the modal's middle radio disabled through another release.
 
-**The caveat that must ship with it:** `suggest` collapses into `write` when the Master's launch mode
-is `bypassPermissions`, because nothing is ever asked. The modal already warns on
-`write` + `bypassPermissions` (`api-helper.js:1656`); that warning must extend to `suggest`, or the
-tier silently means something else than it says.
+**~~The caveat that must ship with it:~~ CORRECTED 2026-08-17 by live probe — the caveat was wrong.**
+
+The ruling originally carried this caveat: *"`suggest` collapses into `write` when the Master's
+launch mode is `bypassPermissions`, because nothing is ever asked"*, and required extending the
+modal's `write` + `bypassPermissions` warning to `suggest`.
+
+**That is not what happens.** Probed during chunk 1 against a real Claude Code 2.1.233 session with
+the real generated guard, all three tiers under `--dangerously-skip-permissions`:
+
+| level | outcome | establishes |
+|---|---|---|
+| `read-only` | blocked, carrying the guard's own reason | a hook `deny` is honored under bypass |
+| `suggest` | blocked at the permission gate — *"non-interactive, so the confirmation can't be granted"* | a hook `ask` still creates a real gate |
+| `write` | file written | a hook `allow` is honored — the validated control, proving the path was reachable and the other two were stopped by the hook rather than by the environment |
+
+**`--dangerously-skip-permissions` does not override PreToolUse hook decisions.** The launch mode
+skips the *permission-rules* gate; a hook decision is evaluated separately and outranks it. So
+`suggest` keeps asking under bypass, and the tier means what it says on every launch mode.
+
+Consequences, both of which invert the original instruction:
+- The `write` + `bypassPermissions` warning must **NOT** be extended to `suggest`. For `write` its
+  claim ("no confirmation at any layer") stays true; for `suggest` it would be the false claim.
+- The tier hint must not reassure *or* alarm about bypass — it simply is not the special case the
+  ruling assumed.
+
+*Not directly observed:* what the confirmation looks like inside an interactive bypass session. The
+gate demonstrably exists, which is the load-bearing half; the prompt's appearance is not.
+
+*How this got in:* both the plan's caveat and the first-drafted hint were reasoned from what
+`bypassPermissions` sounds like, not from the harness. They reached opposite conclusions and neither
+was checked — which is why the Critic routed the shipped string to BLOCKING rather than to a copy
+edit.
 
 **B. #755 closes on this plan.** The API-authority half — a scoped Master token and a fleet-mutation
 route — becomes its own issue against the Master Control milestone: different mechanism, different
@@ -188,14 +216,14 @@ including an empty file, extra lines, or a token it does not recognize — as `r
    token · unreadable (mode `0o000`) · path is a directory — the guard denies. Each test must be
    watched go **red** against a guard that returns allow on that path, per the standing rule that a
    guard returning GREEN before it is mutated asserted nothing.
-4. A live flip binds with no restart: set `write`, have the Master edit outside `memory/`, succeed;
+4. A live flip binds with no restart: set `write`, have the Master edit outside its memory directory, succeed;
    set `read-only`, repeat, denied. Verified against a real Master session, not a fixture.
 5. `PATCH` accepts all three levels and still rejects an unknown one.
 6. Suite green; JSDoc on every new function.
 
 **Watch for:** the guard resolves `HOME` today via `path.resolve(HOME, target)`; the level file path
 must be interpolated the same way (absolute, JSON-stringified into the template) and must sit
-**outside** `memory/` — a level file the Master can edit is a level file the Master can raise.
+**outside** the master home’s memory directory — a level file the Master can edit is a level file the Master can raise.
 
 ### Chunk 2 — the instructional half: the identity tells the truth about the level
 

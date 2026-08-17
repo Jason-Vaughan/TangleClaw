@@ -1116,14 +1116,23 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
         from: oldMasterAccessLevel, to: newMasterAccessLevel, applied
       });
     } catch (err) {
-      // Report, never swallow: the config now says one thing and the guard still
-      // enforces another, and the operator is the only one who can tell the
-      // difference. The failure degrades toward the STRICTER posture — the guard
-      // keeps reading the old level — so this does not fail the request; but a
-      // silent failure would leave the UI asserting a boundary that did not move.
+      // Reported to the CALLER, not just the log, and this is the direction that
+      // matters: a failed apply does NOT reliably degrade toward the stricter
+      // posture. On write→read-only the config now says `read-only` while the
+      // level file still says `write` and the guard keeps allowing — a
+      // revocation that returns 200 and did not happen. Since the operator
+      // cannot see the difference, the request has to say so.
+      //
+      // The config save is deliberately left standing rather than rolled back:
+      // the stored intent is correct, and the next ensure reconciles the guard to
+      // it. What must not happen is the UI painting a boundary that did not move.
       log.error('Master access level saved but not applied — the write guard still enforces the previous level', {
         from: oldMasterAccessLevel, to: newMasterAccessLevel, error: err.message
       });
+      return errorResponse(res, 500,
+        `Settings were saved, but the master's access level could not be applied — it is still enforcing "${oldMasterAccessLevel}". `
+        + 'Restart the master session to reconcile it.',
+        'MASTER_LEVEL_NOT_APPLIED');
     }
   }
 

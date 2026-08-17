@@ -892,6 +892,24 @@ describe('API endpoints', () => {
       }
     });
 
+    it('reports a failed apply instead of returning 200 on a revocation that did not happen (#755)', async () => {
+      // The dangerous direction: on write -> read-only, a failed apply leaves the
+      // config saying `read-only` while the guard still reads `write` and keeps
+      // allowing. A 200 there is a revocation that reports success and did not
+      // occur, and the operator cannot see the difference.
+      const realApply = master.applyMasterAccessLevel;
+      master.applyMasterAccessLevel = () => { throw new Error('disk on fire'); };
+      try {
+        const { status, data } = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'suggest' } });
+        assert.equal(status, 500);
+        assert.equal(data.code, 'MASTER_LEVEL_NOT_APPLIED');
+        assert.match(data.error, /still enforcing/);
+      } finally {
+        master.applyMasterAccessLevel = realApply;
+        await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'read-only' } });
+      }
+    });
+
     it('accepts every enforced access level, and still refuses one it does not know (#755)', async () => {
       const realApply = master.applyMasterAccessLevel;
       master.applyMasterAccessLevel = () => ({ applied: false, home: '/stub' });
