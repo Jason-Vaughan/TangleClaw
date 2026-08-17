@@ -984,6 +984,15 @@ describe('access level — the guard reads it per invocation (#755)', () => {
       assert.equal(guardDecision(home, { tool_input: { file_path: path.join(home, 'memory', 'NOTES.md') } }), null);
       assert.equal(guardDecision(home, { tool_input: { file_path: path.join(home, 'memory', 'deep', 'new.md') } }), null,
         'a not-yet-existing path under memory/ is still allowed');
+
+      // The LEAF case: the target itself is the link, so resolving only its
+      // parent would leave the final component unfollowed.
+      const outsideFile = path.join(outsideDir, 'target.txt');
+      fs.writeFileSync(outsideFile, 'x');
+      const leaf = path.join(home, 'memory', 'leaflink');
+      fs.symlinkSync(outsideFile, leaf, 'file');
+      assert.equal(guardDecision(home, { tool_input: { file_path: leaf } }), 'deny',
+        'a symlinked FILE inside memory/ must be refused too');
     } finally {
       fs.rmSync(outsideDir, { recursive: true, force: true });
       fs.rmSync(home, { recursive: true, force: true });

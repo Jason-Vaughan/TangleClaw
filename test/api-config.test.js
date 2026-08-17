@@ -9,6 +9,7 @@ const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const master = require('../lib/master');
+const portScanner = require('../lib/port-scanner');
 const { createServer } = require('../server');
 
 setLevel('error');
@@ -962,25 +963,38 @@ describe('API endpoints', () => {
       // Without this case, putting `return errorResponse(...)` back inside the
       // catch leaves the suite green.
       const realApply = master.applyMasterAccessLevel;
+      const realStop = portScanner.stopScanner;
+      const realStart = portScanner.startScanner;
+      const scannerCalls = [];
       master.applyMasterAccessLevel = () => { throw new Error('disk on fire'); };
+      portScanner.stopScanner = () => { scannerCalls.push('stop'); };
+      portScanner.startScanner = () => { scannerCalls.push('start'); };
       try {
         const { status, data } = await request(server, 'PATCH', '/api/config', {
           master: { accessLevel: 'suggest' },
-          portScannerEnabled: false,
+          portScannerEnabled: true,
           chimeMuted: true
         });
         assert.equal(status, 500, 'the master failure is still reported');
         assert.equal(data.code, 'MASTER_LEVEL_NOT_APPLIED');
 
-        // The co-submitted settings must have been SAVED regardless.
-        const after = await request(server, 'GET', '/api/config');
-        assert.equal(after.data.portScannerEnabled, false,
-          'a co-submitted setting must not be cancelled by the master failure');
-        assert.equal(after.data.chimeMuted, true);
+        // Assert the POST-SAVE WORK ran — not that the values persisted.
+        // `store.config.save()` happens BEFORE the master block, so persistence
+        // survives the mutation this test exists to catch and would report a
+        // pass either way. What the deferral actually protects is the work
+        // BELOW the catch: the port-scanner restart and the hook-sync walk.
+        assert.ok(scannerCalls.includes('stop'),
+          'the port-scanner restart below the catch must still run');
+        assert.ok(scannerCalls.includes('start'),
+          'and must restart it, since portScannerEnabled was saved as true');
       } finally {
         master.applyMasterAccessLevel = () => ({ applied: true, home: '/stub' });
-        await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'read-only' } });
+        await request(server, 'PATCH', '/api/config', {
+          master: { accessLevel: 'read-only' }, portScannerEnabled: false
+        });
         master.applyMasterAccessLevel = realApply;
+        portScanner.stopScanner = realStop;
+        portScanner.startScanner = realStart;
       }
     });
 
