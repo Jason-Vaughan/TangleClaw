@@ -22,6 +22,20 @@ All notable changes to TangleClaw are documented in this file.
   and single-flights the rest, so the ceiling is one measurement per floor **per server** — the same
   whether one session is open or twenty. A hidden tab stops polling entirely.
 
+  **The steady-state rate, stated rather than left to the ceiling.** The poll cadence equals that
+  refresh floor, so while any session page is visible the install sits *at* the ceiling: about one
+  `git ls-remote` every five minutes, ~288/day, against the origin you already push to. With nothing
+  open it falls to the periodic timer alone. That is a real increase and it is the price of the
+  behaviour — being told about a release within minutes requires someone to look within minutes — but
+  it is strictly less than the equivalent server-side interval would cost, because that would run at
+  the same rate whether or not anyone was there. `updateCheckIntervalMs` tunes the unattended floor;
+  the attended rate is fixed by `AUTO_REFRESH_MIN_AGE_MS`.
+
+  `.prawduct/artifacts/security-model.md` claimed under "What TangleClaw Does NOT Do" that it makes
+  no outbound network requests and specifically no update checks. That was already false before this
+  change and materially more so after it, so it now describes the one request TangleClaw does make,
+  its rate, and the fact that it carries no data about the operator.
+
   `landing.js`'s `NOT_FOUND` fallback is replicated rather than assumed unnecessary. This repo is the
   live install, so a merge or a self-update puts new client files on disk while the running process
   keeps serving the old routes until it restarts; without the fallback the page would read that 404

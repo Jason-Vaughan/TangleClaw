@@ -1960,7 +1960,22 @@ function startPolling() {
     pollTimer = setTimeout(async () => {
       if (!pollTimer) return;
       if (!_pageVisible) return; // skip while hidden, visibilitychange will restart
-      await pollTick();
+      // The chain re-arms BELOW this call, so anything `pollTick` throws stops
+      // this session polling for the life of the page — session status,
+      // wrap-sentinel and ended detection, and the update beacon all stop with
+      // it, silently and with the page still looking alive. That makes this a
+      // supervisor boundary rather than an error to swallow: report it and keep
+      // the chain running.
+      //
+      // Not hypothetical since the update read began consulting a global
+      // published by `update-beacon.js`: a separately-fetched asset, so a
+      // mismatched pair makes that call a TypeError. Guarding only the init call
+      // site missed this one, which is the site that runs every five minutes.
+      try {
+        await pollTick();
+      } catch (err) { // prawduct:allow prawduct/broad-except -- poll supervisor: a throw here would end all polling for the page's life. Reported, then the chain re-arms.
+        console.error('session poll tick failed:', err);
+      }
       scheduleNext();
     }, sessionState.pollInterval);
   }

@@ -2607,7 +2607,7 @@ route('GET', '/api/update-status', (_req, res) => {
 // POST /api/update/check — measure now, rather than reporting whatever the
 // periodic timer last saw.
 //
-// The timer alone cannot keep the answer current: it fires every four hours, so
+// The timer alone cannot keep the answer current: it fires on a long interval, so
 // a release published just after a check stays invisible for most of its life,
 // and the dashboard's own status poll only re-read the same cached value. This
 // is the route that lets a page load, a tab regaining focus, or the operator

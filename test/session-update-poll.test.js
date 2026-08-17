@@ -392,4 +392,24 @@ describe('#931 the update read inherits the status chain, not a second timer', (
     const ticks = (SESSION_SRC.match(/pollTick\(\)/g) || []).length;
     assert.equal(ticks, 2, 'exactly the declaration and the one call site');
   });
+
+  it('a throwing tick cannot end polling for the life of the page', () => {
+    // The chain re-arms BELOW `await pollTick()`, so an unguarded throw there
+    // stops session status, wrap-sentinel detection, ended detection and the
+    // beacon — all at once, silently, with the page still looking alive.
+    //
+    // Reachable since the update read began calling a global published by a
+    // separately-fetched asset. Guarding the INIT call site (which this bundle
+    // also does) does not cover this one, and this is the site that runs every
+    // five minutes rather than once.
+    const body = lift('function startPolling()');
+    assert.match(body, /try \{\s*await pollTick\(\);\s*\} catch/,
+      'the tick must be guarded where the chain re-arms');
+    assert.match(body, /\} catch \(err\) \{[^\n]*\n\s*console\.error/,
+      'and the failure must be reported, not swallowed');
+    // Order matters as much as presence: re-arming inside the try would be
+    // undone by the throw it is meant to survive.
+    assert.ok(body.indexOf('scheduleNext();', body.indexOf('catch')) > body.indexOf('catch'),
+      'the chain re-arms after the catch, not inside the try');
+  });
 });

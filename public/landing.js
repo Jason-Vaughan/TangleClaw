@@ -392,9 +392,11 @@ function wireVersionCheck() {
     try {
       const data = await loadUpdateStatus({ refresh: true, manual: true });
       // No answer and a failed measurement are the same thing to an operator:
-      // the question was not resolved. `api()` already returns null rather than
-      // throwing for the first.
-      if (!data || data.checkOk === false) {
+      // the question was not resolved. The shared predicate rather than a local
+      // test, so this cannot drift from what the beacon beside it believes —
+      // the local form omitted `checkedAt` and only worked because the
+      // never-measured payload happens to also carry `checkOk: false`.
+      if (!window.tcIsUpdateAnswer(data)) {
         _showVersionLabel("couldn't check", true);
       } else if (data.updateAvailable) {
         // The pill is the real answer here and it has just been rendered, so the
@@ -1482,7 +1484,7 @@ async function init() {
   await loadProjects();
   // Opening the dashboard is a real measurement, not a cache read. A release
   // published since the server's last periodic check was previously invisible
-  // until that timer next fired — up to four hours of a page that had been
+  // until that timer next fired — a whole interval of a page that had been
   // asked, and answered from memory. Throttled server-side, so a reload loop
   // costs one check per window rather than one per load.
   await Promise.all([loadStats(), loadPorts(), loadGlobalRules(), loadModelStatus(), loadGroups(), loadOpenclawConnections(),
@@ -1533,10 +1535,21 @@ function startPolling() {
   // deliberately left showing rather than hidden, so without a retry a pill for
   // an update already installed would stay up for the life of the page.
   //
-  // Deliberately still a plain cache read, NOT a re-measurement: turning this
-  // into one would mean a `git ls-remote` every five minutes for the life of
-  // every open tab. Freshness is event-driven instead — page load and the
-  // visibility handler below — with the server's periodic check as the floor.
+  // Deliberately still a plain cache read here, where the session page's
+  // equivalent poll re-measures (#954). The two pages differ because the way an
+  // operator ARRIVES at them differs, not because one of them is wrong: this
+  // page re-measures on load and on the visibility handler below, and nobody
+  // reads a dashboard without having just opened or refocused it — so the
+  // event-driven path has already asked. An operator sits INSIDE a session for
+  // hours with the tab already focused, firing neither event, which is why that
+  // page had to move its freshness onto the poll itself.
+  //
+  // The cost of re-measuring is bounded server-side either way — `refreshIfStale`
+  // throttles and single-flights, so it is one `git ls-remote` per floor per
+  // SERVER, not per tab. What it is not is free: at a poll cadence equal to that
+  // floor the steady state sits at roughly one measurement per five minutes for
+  // as long as a page is open. Worth paying where it buys freshness nothing else
+  // provides; not worth paying here, where it duplicates the focus path.
   loop(loadUpdateStatus, 300000);
 
   // Returning to the tab is the moment an operator is about to trust what the
