@@ -229,9 +229,28 @@ must be interpolated the same way (absolute, JSON-stringified into the template)
 
 **Type:** `code` · **Critic mode:** `chunk` · **Visual change:** no
 
-`MASTER_BASELINE_RULES[0]` says **"Read-only. Use only GET endpoints…"** unconditionally. At `write`
-that sentence is false, and on a non-Claude Master it is the *only* boundary there is — so this is
-not cosmetic, it is the enforcement on four of five engines.
+**CORRECTED 2026-08-17, at the start of chunk 2 — this section named the wrong rule.**
+
+It said `MASTER_BASELINE_RULES[0]` ("Read-only. Use only GET endpoints…") goes false at `write`. It
+does not. Read against the tree, the baseline splits into two *different* boundaries:
+
+| | Rule | What it bounds | Does the access level change it? |
+|---|---|---|---|
+| `[0]` | "**Read-only.** Use only GET endpoints… never POST/PATCH/DELETE" | the **TangleClaw API** | **No.** Decision B defers API authority to a separate issue — the Master still may not call mutating endpoints at any tier. |
+| `[1]` | "**Never edit files outside this directory.** Your home is your only writable surface…" | the **filesystem** | **Yes.** This is the sentence `write` falsifies. |
+| `[2]` | "direct the operator to that project's own session" | division of labour | No. |
+
+Two more places assert the same thing outside the rules: the identity's opening prose calls the
+Master "the **read-only** administrator of this whole TangleClaw instance", and the Hard-rules
+heading is `## Hard rules (v1 boundary)`.
+
+So the work is narrower and more precise than written: **rule `[0]` must be left exactly as it is**
+— weakening it would quietly widen the API boundary this issue deliberately did not touch — and the
+file-write claim is what becomes level-derived. Getting this backwards would have been the same
+class of defect chunk 1's review caught twice: prose drifting in the permissive direction.
+
+On a non-Claude Master this prose is the *only* file boundary there is, so it is not cosmetic — it
+is the enforcement on four of five engines.
 
 The complication: the rules are stored as editable `session_rules` rows seeded from the baseline,
 with version history and a Restore-defaults path. The level cannot simply rewrite rows the operator
