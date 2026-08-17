@@ -2022,12 +2022,14 @@
    * would mean `getElementById` returning the one the operator cannot see,
    * which presents as "the control does nothing".
    *
+   * Takes no label: `mount()` writes the resting status line, so a `title` here
+   * would be a second place the same string could come from — and it was already
+   * dead, computed and never interpolated.
+   *
    * @param {string} p - Id prefix, unique per surface.
-   * @param {{title?: string}} [opts] - `title` is the label beside the dot.
    * @returns {string} The bar's inner HTML.
    */
-  function tcMasterControlBarMarkup(p, opts) {
-    const title = (opts && opts.title) || 'Project Master';
+  function tcMasterControlBarMarkup(p) {
     // `disabled` AND `aria-disabled` — the first stops the press, the second is
     // what assistive tech announces. A hint element carries the reason so it is
     // not locked inside a `title` tooltip that touch devices never show.
@@ -2099,7 +2101,7 @@
     function mount() {
       const root = doc.getElementById(deps.rootId);
       if (!root) return false;
-      if (!el('SettingsBtn')) root.innerHTML = tcMasterControlBarMarkup(p, { title: deps.title });
+      if (!el('SettingsBtn')) root.innerHTML = tcMasterControlBarMarkup(p);
       if (bound) return true;
       bound = true;
       const gear = el('SettingsBtn');

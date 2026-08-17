@@ -175,13 +175,43 @@ describe('#768 the bar behaves', () => {
     assert.equal(fired.length, 1, 'Retry must reach the handler the page supplied');
   });
 
-  it('paints the model pill from a real fetch, and both pages ask for one', () => {
-    // THE BLOCKING DEFECT THIS CATCHES: `setModel` existed with no production
-    // caller, so the pill was permanently hidden while the plan, CHANGELOG and
-    // FEATURES all said it was one of only two working controls. A component
-    // method nothing calls is not a feature.
-    assert.match(UI, /masterBar\.loadModel\(/, 'the dashboard must load a model');
-    assert.match(SESSION_JS, /masterBar\.loadModel\(/, 'the session page must too');
+  it('paints the model pill from a real fetch', async () => {
+    // BEHAVIOURAL, because the source-pin version of this was itself a review
+    // finding: `assert.match(UI, /masterBar\.loadModel\(/)` stays green for
+    // `loadModel(status.engine)`, `loadModel(undefined)`, or any other wrong
+    // field — which is exactly how the dashboard shipped passing `undefined`
+    // while the guard reported the defect fixed.
+    const { doc, ids } = makeDocument(['masterPanelBar']);
+    withIdParsingInnerHTML(ids.masterPanelBar, doc);
+    const asked = [];
+    const bar = G.tcCreateMasterControlBar({
+      doc, rootId: 'masterPanelBar', prefix: 'masterPanel',
+      api: async (url) => { asked.push(url); return { status: { claude: { status: 'degraded' } } }; }
+    });
+    bar.mount();
+    const pill = doc.getElementById('masterPanelModel');
+    assert.equal(pill.hidden, true, 'hidden until a model is known');
+
+    await bar.loadModel('claude');
+    assert.deepEqual(asked, ['/api/models/status'], 'it must actually ask');
+    assert.equal(pill.hidden, false, 'and the pill must appear');
+    assert.match(pill.textContent, /claude/, 'carrying the engine it painted');
+    assert.match(pill.className, /engine-pill-degraded/, 'and its health');
+  });
+
+  it('each page passes a field that exists on the payload it reads', async () => {
+    // The other half of the same defect: the component was correct and the
+    // CALLER passed a field the API does not return. Pinning the field names
+    // against the shapes their own producers emit is what a regex could not do.
+    assert.match(UI, /status\.settings && status\.settings\.resolvedEngine/,
+      'the dashboard reads getMasterStatus, whose engine is settings.resolvedEngine');
+    assert.match(SESSION_JS, /masterBar\.loadModel\(result\.engine/,
+      'the session page reads the ensure response, whose engine IS top-level');
+    const master = fs.readFileSync(path.join(__dirname, '..', 'lib', 'master.js'), 'utf8');
+    assert.match(master, /resolvedEngine: engineId/,
+      'getMasterStatus must still expose resolvedEngine, or the dashboard call is dead again');
+    assert.match(master, /engine: engineId, accessLevel/,
+      'the ensure response must still carry a top-level engine');
   });
 
   it('a failed open is visible, not console-only', () => {
@@ -264,22 +294,31 @@ describe('#768 the shared stylesheet is wired on both pages', () => {
     // EVERY class, not just the `master-*` ones. The first version filtered to
     // the bar's own prefix and therefore could not see the defect that actually
     // shipped: the pill emitted `engine-pill`, a class declared only in
-    // style.css, so it was unstyled on the session page — invisible to a guard
-    // that only checked classes it already assumed were shared.
-    const pageOwned = new Set(['btn', 'btn-small', 'hidden', 'sr-only', 'banner-btn',
-      'btn-wrap', 'btn-kill', 'medusa-control', 'medusa-mark', 'medusa-head',
-      'medusa-head--in', 'medusa-head--out', 'medusa-emblem', 'master-dot',
-      'master-status-text']);
-    const unstyled = [...emitted].filter((c) => !pageOwned.has(c)
-      && !new RegExp(`\\.${c}(?![\\w-])`).test(css));
-    assert.deepEqual(unstyled, [],
-      'emitted by the bar but styled nowhere both pages can see');
-    // And the classes deferred to the shared sheet above must really be there —
-    // otherwise the allow-list becomes a way to hide the same defect.
-    const sharedCss = css;
-    for (const c of ['banner-btn', 'btn-wrap', 'medusa-control']) {
-      assert.match(sharedCss, new RegExp(`\\.${c}(?![\\w-])`),
-        `${c} is on the allow-list because it is SHARED — it must live in the shared sheet`);
+    // style.css, so it was unstyled on the session page.
+    //
+    // The exemptions below are CHECKED, not asserted. A bare allow-list is the
+    // mechanism that would hide the next `engine-pill`-shaped defect — so each
+    // exempt class must still satisfy one of the three honest outcomes: it lives
+    // in the shared sheet, or it is declared in BOTH page sheets (parity, the
+    // older contract), or it is declared nowhere at all and is therefore a hook
+    // needing no rule. What is forbidden is the fourth case: declared in exactly
+    // one page sheet, which is what "unstyled on the other page" looks like.
+    const style = strip(read('style.css'));
+    const session = strip(read('session.css'));
+    const has = (t, c) => new RegExp(`\\.${c}(?![\\w-])`).test(t);
+
+    const bad = [];
+    for (const c of [...emitted].sort()) {
+      const inShared = has(css, c);
+      const inStyle = has(style, c);
+      const inSession = has(session, c);
+      if (inShared) continue;                          // shared: the preferred home
+      if (!inStyle && !inSession) continue;            // a hook, styled nowhere
+      if (inStyle && inSession) continue;              // parity across both pages
+      bad.push(`${c}: shared=${inShared} style=${inStyle} session=${inSession}`);
     }
+    assert.deepEqual(bad, [],
+      'a class the shared bar emits must be shared, in parity across both page '
+      + 'sheets, or styled nowhere — never declared on exactly one page');
   });
 });

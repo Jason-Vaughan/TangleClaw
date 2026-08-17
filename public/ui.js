@@ -3449,7 +3449,13 @@ async function refreshMasterDot() {
   // The model pill is painted from the Master's OWN engine, whatever the
   // status says about liveness — an unreachable master still has a configured
   // engine, and hiding the pill would lose that.
-  if (masterBar) masterBar.loadModel(status.engine || null);
+  // `settings.resolvedEngine`, NOT `status.engine` — there is no top-level
+  // engine on this payload, so the first version of this passed `undefined` and
+  // the pill stayed hidden on exactly the surface the finding was raised
+  // against. `resolvedEngine` is what will actually run (`settings.engine` is
+  // the stored preference and is null when unpinned), which is the same value
+  // the ensure response carries as `engine`, so both pages paint from one fact.
+  if (masterBar) masterBar.loadModel((status.settings && status.settings.resolvedEngine) || null);
   if (status.exists) {
     setMasterStatus('live');
     return;
