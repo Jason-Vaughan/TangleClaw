@@ -2305,3 +2305,205 @@ body {
   clip: rect(0,0,0,0);
   border: 0;
 }
+
+/* ── Master settings modal — ported from style.css for #768 chunk 2 ──
+   The modal is ONE component (`tcCreateMasterSettings` in api-helper.js) mounted by
+   both pages since #768 chunk 1, but `style.css` and `session.css` are independent
+   files with no `@import`, so its markup arrived here unstyled. Nothing on this page
+   could open it until the control bar, which is why the gap shipped unnoticed.
+
+   These rules are COPIED, not re-authored — divergence between the two pages is the
+   failure this port exists to prevent, and re-typing them is how divergence starts.
+   `test/master-settings-css-parity.test.js` derives the class list from the component
+   itself and fails if either sheet gains or loses one; it found 23 of these that the
+   plan had not, so do not maintain this block by hand-reading the markup. ── */
+
+.master-enforcement-badge {
+  padding: 6px 10px;
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+.master-access-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.master-access-option {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px;
+  min-height: 44px;
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.master-access-option .form-hint { grid-column: 3; margin: 0; }
+.master-access-disabled { opacity: 0.5; cursor: not-allowed; }
+.master-access-name { font-weight: 600; text-transform: capitalize; }
+.master-rules-section .btn { min-height: 32px; }
+.master-rule-history {
+  margin: 0 0 8px 24px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--border, #333);
+  font-size: 12px;
+}
+.master-rule-version {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+}
+.master-rule-version-meta { color: var(--text-muted); flex-shrink: 0; }
+.master-rule-version-content { flex: 1 1 100%; }
+.rules-editor {
+  width: 100%;
+  min-height: 150px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--elevated-bg);
+  border-radius: var(--radius-btn);
+  color: var(--text);
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.rules-editor:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+.rules-status {
+  font-size: 12px;
+  margin-top: 6px;
+  text-align: right;
+}
+/* ── Session rule lists (#347/D1a) — reused by the Project Rules section of
+   the Settings modal; the standalone global-tier panel was retired. ── */
+.session-rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.session-rules-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.session-rule-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--elevated-bg);
+  border-radius: var(--radius-btn);
+}
+.session-rule-disabled .session-rule-content {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+.session-rule-content {
+  flex: 1;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.session-rule-toggle {
+  display: flex;
+  align-items: center;
+  padding-top: 2px;
+}
+.session-rule-delete {
+  flex: 0 0 auto;
+}
+.session-rules-add {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.session-rules-add .rules-editor {
+  flex: 1;
+  min-height: 48px;
+}
+/* ── Session Rules self-improvement (D1b) ── */
+.session-rule-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: var(--radius-pill);
+  background: rgba(66, 165, 245, 0.18);
+  color: var(--engine-codex);
+  vertical-align: middle;
+}
+.project-rules-block .session-rules-list {
+  margin-top: 6px;
+}
+/* ── Global Settings Toggle ── */
+.gs-toggle-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+  min-height: 44px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.gs-toggle-label input[type="checkbox"] { display: none; }
+.gs-toggle-label .toggle-switch {
+  width: 44px;
+  height: 26px;
+  border-radius: 13px;
+  background: var(--elevated-bg);
+  position: relative;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.gs-toggle-label .toggle-switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--text);
+  transition: transform 0.2s;
+}
+.gs-toggle-label input:checked + .toggle-switch {
+  background: var(--primary);
+}
+.gs-toggle-label input:checked + .toggle-switch::after {
+  transform: translateX(18px);
+}
+/* A locked toggle must LOOK locked. The real checkbox is display:none, so a
+   bare `disabled` attribute produces no visual change at all and the 44px
+   target silently swallows the tap — worst on touch, where there is no hover
+   or title tooltip to fall back on. Mirrors `.master-access-disabled`.
+
+   Deliberately keyed to an explicit modifier rather than `input:disabled`:
+   `disabled` alone is not "locked". The wrap "Next action" toggle is rendered
+   checked AND disabled because it is mandatory, so a blanket disabled rule
+   would grey out a permanently-ON required control and make it read as off —
+   the same lie-about-state this styling exists to prevent, moved to another
+   feature. Opt in per control instead.
+
+   This restores the VISUAL affordance only. `display: none` also drops the
+   input out of the accessibility tree, so no toggle here is operable by a
+   screen reader or keyboard — a shared defect across the whole settings
+   surface, tracked in #740. */
+.gs-toggle-label.gs-toggle-locked {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.gs-toggle-label.gs-toggle-locked input:disabled + .toggle-switch {
+  background: var(--border, #333);
+}
