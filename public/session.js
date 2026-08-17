@@ -4955,7 +4955,18 @@ async function initSession() {
   bindEvents();
 
   // Parallel data loading (loadVersion runs after loadProject since it reads project data)
-  await Promise.all([loadProject(), loadConfig(), loadEngines(), loadUpdateStatus()]);
+  await Promise.all([loadProject(), loadConfig(), loadEngines(),
+    // `.catch` rather than bare, the same guard `landing.js` puts on this call
+    // and for a worse consequence here: a rejection inside `Promise.all` would
+    // abandon everything past this await — `loadVersion`, the not-found banner,
+    // and `startPolling`, so the session would never poll at all. The update
+    // check is the one member of this set that talks to a remote, and it is
+    // background work the operator did not ask for; it must not be able to take
+    // the page down with it.
+    loadUpdateStatus().catch((err) => {
+      console.error('update check on load failed:', err);
+      return null;
+    })]);
   loadVersion();
 
   if (!sessionState.project) {

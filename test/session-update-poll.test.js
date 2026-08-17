@@ -361,6 +361,23 @@ describe('#955 one rule decides what counts as an answer', () => {
   });
 });
 
+describe('#954 a failed check cannot take the page down with it', () => {
+  it('the init call is catch-guarded', () => {
+    // Structural, because what matters is the SHAPE of the call site rather
+    // than the body already exercised above: `loadUpdateStatus` sits in an
+    // `await Promise.all([...])` at init, so a rejection there abandons
+    // everything after it — `loadVersion`, the not-found banner, and
+    // `startPolling`, which would leave the session never polling at all. The
+    // dashboard learned this and guards the same call; the session page did not,
+    // and gained a new throw path when it started consulting a shared predicate.
+    const src = SESSION_SRC;
+    const m = /Promise\.all\(\[[\s\S]{0,900}?\]\);/.exec(src);
+    assert.ok(m, 'the init Promise.all must still exist');
+    assert.match(m[0], /loadUpdateStatus\(\)\.catch\(/,
+      'the update check must not be able to abandon the rest of init');
+  });
+});
+
 describe('#931 the update read inherits the status chain, not a second timer', () => {
   it('startPolling drives pollTick', () => {
     // Structural, and it says so: the tick body is executed above, but WHICH

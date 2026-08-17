@@ -27,6 +27,12 @@ All notable changes to TangleClaw are documented in this file.
   keeps serving the old routes until it restarts; without the fallback the page would read that 404
   as a failed check and hold a stale beacon until the restart.
 
+  The init call is now `.catch`-guarded, the same way the dashboard guards its own, and for a worse
+  consequence here: `loadUpdateStatus` sits in an `await Promise.all([...])`, so a rejection would
+  abandon everything past it — `loadVersion`, the not-found banner, and `startPolling`, leaving the
+  session never polling at all. Background work the operator did not ask for must not be able to take
+  the page down with it.
+
 - **A session that did not apply the update stops offering it (#955).** Applying an update from one
   surface left every *other* open session showing the beacon dot — and re-opening a toast for a
   version already running — while its own status bar correctly read the new one. Only a manual page
