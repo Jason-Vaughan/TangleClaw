@@ -372,7 +372,7 @@ have a visibility-aware `setTimeout` chain that Medusa already rides ("same cade
 ## Status
 
 - [x] Chunk 1 — level store + level-aware guard — **DONE 2026-08-17**, branch `feat/755-access-level`
-- [ ] Chunk 2 — level-aware identity
+- [x] Chunk 2 — level-aware identity — **DONE 2026-08-17**, same branch
 - [ ] Chunk 3 — bar toggle, badge, global warning
 
 ### Chunk 1, as built

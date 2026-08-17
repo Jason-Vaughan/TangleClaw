@@ -953,6 +953,37 @@ describe('API endpoints', () => {
       }
     });
 
+    it('a failed master level does not cancel the rest of the same save (#755)', async () => {
+      // Co-submission is the REAL shape: the settings modal POSTs the whole form,
+      // so a master-level failure arrives alongside unrelated settings. Returning
+      // the 500 from inside the catch skipped the port-scanner restart and the
+      // stripAiCoauthors walk below it — unrelated settings in the same save
+      // silently not taking effect, a second failure bolted onto the first.
+      // Without this case, putting `return errorResponse(...)` back inside the
+      // catch leaves the suite green.
+      const realApply = master.applyMasterAccessLevel;
+      master.applyMasterAccessLevel = () => { throw new Error('disk on fire'); };
+      try {
+        const { status, data } = await request(server, 'PATCH', '/api/config', {
+          master: { accessLevel: 'suggest' },
+          portScannerEnabled: false,
+          chimeMuted: true
+        });
+        assert.equal(status, 500, 'the master failure is still reported');
+        assert.equal(data.code, 'MASTER_LEVEL_NOT_APPLIED');
+
+        // The co-submitted settings must have been SAVED regardless.
+        const after = await request(server, 'GET', '/api/config');
+        assert.equal(after.data.portScannerEnabled, false,
+          'a co-submitted setting must not be cancelled by the master failure');
+        assert.equal(after.data.chimeMuted, true);
+      } finally {
+        master.applyMasterAccessLevel = () => ({ applied: true, home: '/stub' });
+        await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'read-only' } });
+        master.applyMasterAccessLevel = realApply;
+      }
+    });
+
     it('accepts every enforced access level, and still refuses one it does not know (#755)', async () => {
       const realApply = master.applyMasterAccessLevel;
       master.applyMasterAccessLevel = () => ({ applied: false, home: '/stub' });

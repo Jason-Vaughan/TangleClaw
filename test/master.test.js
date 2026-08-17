@@ -643,6 +643,24 @@ describe('the identity states the access level (#755 chunk 2)', () => {
     assert.doesNotMatch(struct, /only because you honor it/);
   });
 
+  it('names the shell gap to the master, and names it differently per tier', () => {
+    // The guard's matcher is Edit|Write|NotebookEdit, so a shell redirect is not
+    // covered. That gap is the one a well-meaning agent walks straight through,
+    // so the identity has to say it — and say it in a form that is TRUE at the
+    // tier. Rendering one sentence at both tiers produced "the guard covers the
+    // file-editing tools" two lines above "there is no write guard".
+    const struct = idAt('read-only', 'structural');
+    assert.match(struct, /shell commands are not hooked/);
+    assert.match(struct, /working around the boundary, not around a bug/);
+    assert.doesNotMatch(struct, /no write guard at all/);
+
+    const inst = idAt('read-only', 'instructional');
+    assert.match(inst, /no write guard at all/);
+    assert.match(inst, /not for shell commands/);
+    assert.doesNotMatch(inst, /shell commands are not hooked/,
+      'the structural phrasing implies a guard exists, which is false here');
+  });
+
   it('resolves the level from config when the caller did not pass one', () => {
     // THE MUTATION THIS CATCHES: defaulting to 'read-only' here. That is the
     // safe-LOOKING choice and the wrong one — it would render "you are
@@ -945,6 +963,29 @@ describe('access level — the guard reads it per invocation (#755)', () => {
       // An ordinary path is still the tier's normal ask.
       assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'ask');
     } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('a symlink inside memory/ cannot smuggle a write outside it', () => {
+    // `path.resolve` normalises ".." lexically but does not follow links, so a
+    // link created inside the carve-out — which the master may create at every
+    // tier, since memory/ is writable — would otherwise pass the prefix test and
+    // write wherever it points.
+    const home = homeAt('read-only');
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-escape-'));
+    try {
+      fs.mkdirSync(path.join(home, 'memory'), { recursive: true });
+      const link = path.join(home, 'memory', 'escape');
+      fs.symlinkSync(outsideDir, link, 'dir');
+      assert.equal(guardDecision(home, { tool_input: { file_path: path.join(link, 'pwned.txt') } }), 'deny',
+        'a write through a symlink out of memory/ must be refused');
+      // The carve-out itself still works.
+      assert.equal(guardDecision(home, { tool_input: { file_path: path.join(home, 'memory', 'NOTES.md') } }), null);
+      assert.equal(guardDecision(home, { tool_input: { file_path: path.join(home, 'memory', 'deep', 'new.md') } }), null,
+        'a not-yet-existing path under memory/ is still allowed');
+    } finally {
+      fs.rmSync(outsideDir, { recursive: true, force: true });
       fs.rmSync(home, { recursive: true, force: true });
     }
   });

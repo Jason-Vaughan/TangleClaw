@@ -4851,3 +4851,21 @@ statement than either half. `test/_mini-dom.js` gained `hidden`, `classList.togg
 each added by the test that needed it, per that file's own rule.
 
 **Classification:** feature
+
+## 2026-08-17 — #755 chunks 1–2: the Master's access level becomes real
+
+Branch `feat/755-access-level`. The level moved from a picker with two disabled options to a value
+the write guard reads on every tool call (deny / ask / allow), and from prose that asserted a fixed
+posture to an identity that states the current one and says who enforces it.
+
+Two things generalise beyond this issue:
+
+- **A ratified decision is only as good as the evidence under it.** The plan's decision A carried a
+  caveat about `bypassPermissions` reasoned from what the flag sounds like; the shipped copy carried
+  the opposite guess. A probe against the real harness falsified both. Where a ruling makes a
+  claim about a security boundary, probe before ratifying — and record what was NOT observed.
+- **A finding-fix is new code.** Two fixes shipped without guards and a later round caught them;
+  reverting either had left the suite green. Every fix in the rounds after that was mutated.
+
+Also learned the hard way: an assertion inside a `node:test` `after()` hook prints `not ok` and
+still exits 0, so it cannot gate CI. Guards belong in an `it`.
