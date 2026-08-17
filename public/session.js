@@ -691,20 +691,72 @@ function loadVersion() {
  * @returns {Promise<void>}
  */
 async function loadUpdateStatus() {
+  // Stamped BEFORE the await, so two ticks cannot both pass the due check and
+  // fire overlapping reads. Corrected below once the answer's quality is known.
   _lastUpdateCheckAt = Date.now();
-  updateBeacon.render(await api('/api/update-status'));
+  _updateIntervalMs = UPDATE_CHECK_INTERVAL_MS;
+
+  // A re-measurement, not a cache read. This page used to read the server's
+  // cached answer only, which made the server's periodic check the sole floor on
+  // freshness — so an operator sitting in a session could be told about a
+  // release most of an interval after it existed, while this poll ran the whole
+  // time and reported a remembered answer. The dashboard already asks for a real
+  // measurement on load and on refocus; a session is where operators actually
+  // live, so it is the surface that most needed to ask.
+  //
+  // It cannot become a `git ls-remote` loop, and that is a property of the
+  // server rather than a promise made here: `refreshIfStale` serves a cache
+  // younger than `AUTO_REFRESH_MIN_AGE_MS` without measuring, and single-flights
+  // the rest, so the ceiling is one measurement per floor per SERVER — not per
+  // session, however many are open. A hidden tab stops polling entirely.
+  let data = await apiMutate('/api/update/check', 'POST', { manual: false });
+
+  // A server older than these assets does not have this route. That window is
+  // not hypothetical: this repo IS the live install, so a merge or a self-update
+  // puts new client files on disk while the running process keeps serving the
+  // old routes until it restarts. Without this fallback the page would read the
+  // 404 as a failed check and hold a stale beacon until that restart — a false
+  // alarm from the very feature built to stop misreporting update state.
+  if (!data && api.lastErrorCode === 'NOT_FOUND') {
+    data = await api('/api/update-status');
+  }
+
+  // A NON-ANSWER MUST NOT CONSUME THE FULL INTERVAL. The states that produce one
+  // are precisely the states that resolve on their own within seconds: the
+  // server restarting (its cache lives in the process, so every restart passes
+  // back through "never measured"), the outage while it comes back, and a failed
+  // measurement that the next attempt may well succeed at.
+  //
+  // Holding the full interval there is what let a session keep offering an
+  // update that had ALREADY been applied from another surface: the restart
+  // answered "unknown", the beacon correctly refused to act on it, and nothing
+  // asked again until the interval expired. Retrying instead is what makes the
+  // offer disappear on its own rather than on a manual refresh.
+  if (!window.tcIsUpdateAnswer(data)) _updateIntervalMs = UPDATE_RETRY_INTERVAL_MS;
+
+  updateBeacon.render(data);
 }
 
-// How long between update-status reads on this page. Matches the dashboard's
-// cadence, and like the dashboard's it is a plain read of the server's CACHED
-// answer — never a re-measurement, so an open session costs origin nothing no
-// matter how long it stays open. The server's own periodic check is the floor
-// on freshness.
+// How long between update checks on this page, once one has actually answered.
+// Matches the dashboard's cadence — one product, one answer to "how often do we
+// ask".
 const UPDATE_CHECK_INTERVAL_MS = 300000;
+
+// The cadence after a NON-answer. Short, because what it waits on is a server
+// finishing a restart rather than a remote publishing a release, and those
+// resolve on completely different timescales. Bounded server-side the same way
+// the normal cadence is, so a page retrying through a long outage still cannot
+// measure more often than the refresh floor allows.
+const UPDATE_RETRY_INTERVAL_MS = 30000;
 
 // Stamped by `loadUpdateStatus`. Zero until the first read at init, which
 // happens before polling starts, so the first poll tick never re-reads.
 let _lastUpdateCheckAt = 0;
+
+// Which of the two cadences is currently in force. Set by every
+// `loadUpdateStatus` from the answer it got, so the page falls back to the
+// normal interval on its own as soon as one arrives — never latching into retry.
+let _updateIntervalMs = UPDATE_CHECK_INTERVAL_MS;
 
 /**
  * Whether enough time has passed to re-read update status.
@@ -712,12 +764,18 @@ let _lastUpdateCheckAt = 0;
  * Extracted so the cadence is a thing a test can drive directly, rather than
  * something inferred from a timer that fires every five seconds.
  *
+ * The interval is a parameter rather than read from module state, because the
+ * page runs two of them — the normal cadence and the post-non-answer retry —
+ * and a predicate that reached for "the" interval itself would silently pick
+ * one. Explicit here means a caller cannot forget which one is in force.
+ *
  * @param {number} lastAt - When the last read happened (ms epoch).
  * @param {number} now - Now (ms epoch).
+ * @param {number} intervalMs - The cadence currently in force.
  * @returns {boolean}
  */
-function updateCheckDue(lastAt, now) {
-  return now - lastAt >= UPDATE_CHECK_INTERVAL_MS;
+function updateCheckDue(lastAt, now, intervalMs) {
+  return now - lastAt >= intervalMs;
 }
 
 /**
@@ -739,7 +797,7 @@ function updateCheckDue(lastAt, now) {
  */
 async function pollTick() {
   await pollStatus();
-  if (updateCheckDue(_lastUpdateCheckAt, Date.now())) await loadUpdateStatus();
+  if (updateCheckDue(_lastUpdateCheckAt, Date.now(), _updateIntervalMs)) await loadUpdateStatus();
 }
 
 /**

@@ -198,16 +198,46 @@ describe('update-checker', () => {
       updateChecker.startChecker(999999, 999999); // should not throw
       updateChecker.stopChecker();
     });
+
+    it('ticks through the non-blocking form, never the execSync one', async () => {
+      // The property that makes the interval safe to shorten, and the reason
+      // this is a test rather than a comment. `checkForUpdate` measures through
+      // `execSync`, so a tick against a slow or unreachable remote stalls the
+      // single-threaded server — every request, terminal websockets included —
+      // for up to the 15s timeout. Shortening the interval while the timer still
+      // used it would have multiplied those stalls instead of just improving
+      // freshness.
+      //
+      // The two forms are told apart by their seam, not by reading the source:
+      // only the async form measures through `_internal.lsRemote`. A revert to
+      // `checkForUpdate()` leaves this stub untouched and the assertion fails.
+      const realLsRemote = updateChecker._internal.lsRemote;
+      let calls = 0;
+      updateChecker._internal.lsRemote = (cb) => { calls++; cb(null, ''); };
+      try {
+        updateChecker.startChecker(999999, 1);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        assert.equal(calls, 1, 'the first tick measures without blocking the loop');
+      } finally {
+        updateChecker.stopChecker();
+        updateChecker._internal.lsRemote = realLsRemote;
+      }
+    });
   });
 });
 
 describe('resolveCheckInterval (#720)', () => {
   const uc = require('../lib/update-checker');
 
-  it('defaults to 4 hours, not the 24 it shipped with', () => {
-    assert.equal(uc.DEFAULT_CHECK_INTERVAL_MS, 4 * 60 * 60 * 1000);
-    assert.deepEqual(uc.resolveCheckInterval(undefined), { intervalMs: 4 * 60 * 60 * 1000, warning: null });
-    assert.deepEqual(uc.resolveCheckInterval(null), { intervalMs: 4 * 60 * 60 * 1000, warning: null });
+  it('defaults to 30 minutes, down from 4h and 24h before that', () => {
+    // Shortened deliberately, twice, for the same reason each time: a
+    // long-running server sat through most of a release's life without noticing
+    // it. The prior assertion pinned 4h and is reversed here rather than
+    // relaxed — see `startChecker` below for the change that made shortening it
+    // safe, which is the half of this that actually needed a guard.
+    assert.equal(uc.DEFAULT_CHECK_INTERVAL_MS, 30 * 60 * 1000);
+    assert.deepEqual(uc.resolveCheckInterval(undefined), { intervalMs: 30 * 60 * 1000, warning: null });
+    assert.deepEqual(uc.resolveCheckInterval(null), { intervalMs: 30 * 60 * 1000, warning: null });
   });
 
   it('honors a valid configured interval', () => {
@@ -480,10 +510,9 @@ describe('#716 measuring on demand', () => {
   });
 
   it('upgraded BOTH failure paths, not just the one under test', () => {
-    // The sync path is what `startChecker` drives every 4h and what
-    // `update-applier` runs pre-flight — i.e. the one that fails on an
-    // unattended server, where nobody is watching a dashboard. Upgrading only
-    // the async path would leave the quieter, more important path dark.
+    // The sync path is what `update-applier` runs pre-flight — i.e. one that
+    // fails on an unattended server, where nobody is watching a dashboard.
+    // Upgrading only the async path would leave the quieter path dark.
     const src = require('node:fs').readFileSync(
       path.join(__dirname, '..', 'lib', 'update-checker.js'), 'utf8');
     assert.doesNotMatch(src, /log\.debug\('Update check failed/,

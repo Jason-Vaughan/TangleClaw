@@ -10,6 +10,43 @@
   const FADE_MS = 450;
 
   /**
+   * Whether an `/api/update-status` payload is an ANSWER — something a surface
+   * may act on — rather than the absence of one.
+   *
+   * THREE ways a payload can fail to be an answer, and all three must leave a
+   * beacon exactly as it is. Only the third was obvious:
+   *
+   *   no payload      — the request itself did not complete.
+   *   no `checkedAt`  — the server has not measured yet. `startChecker` waits
+   *                     before its first check and reports
+   *                     `{updateAvailable: false, checkedAt: null}` until then,
+   *                     and since the cache lives in the process, this is also
+   *                     the state every restart passes back through (#716).
+   *   `checkOk: false`— a check that RAN and could not measure. It carries a
+   *                     real `checkedAt` and `updateAvailable: false`, so
+   *                     discriminating on `checkedAt` alone reads an offline box
+   *                     as "you are up to date" and takes the dot down for an
+   *                     update that is genuinely there.
+   *                     `lib/update-checker.js#_buildStatus` says the rule
+   *                     outright: a check that failed and a check that succeeded
+   *                     and found nothing are different facts.
+   *
+   * Unknown is not a fact. Nothing may render it as one.
+   *
+   * Shared rather than inlined because two surfaces branch on it: the beacon,
+   * deciding whether to repaint, and the session page, deciding whether its next
+   * poll is a short retry or a full interval away. Two copies of this rule would
+   * drift, and the drift would be invisible — both copies render plausibly, and
+   * only the reachable-but-rare states disagree.
+   *
+   * @param {object|null} data - An `/api/update-status` payload, or null.
+   * @returns {boolean} True when the payload states a fact about the remote.
+   */
+  function tcIsUpdateAnswer(data) {
+    return !!data && !!data.checkedAt && data.checkOk !== false;
+  }
+
+  /**
    * Create the update beacon for a page.
    *
    * TangleClaw used to announce an update two different ways: a pill in the
@@ -297,27 +334,11 @@
      * @returns {void}
      */
     function render(data) {
-      // THREE ways a payload can fail to be an answer, and all three must
-      // leave the beacon exactly as it is. Only the third was obvious:
-      //
-      //   no payload      — the request itself did not complete.
-      //   no `checkedAt`  — `startChecker` waits 60s before its first check
-      //                     and reports `{updateAvailable: false,
-      //                     checkedAt: null}` until then (#716).
-      //   `checkOk: false`— a check that RAN and could not measure. It carries
-      //                     a real `checkedAt` and `updateAvailable: false`,
-      //                     so discriminating on `checkedAt` alone reads an
-      //                     offline box as "you are up to date" and takes the
-      //                     dot down for an update that is genuinely there.
-      //                     `lib/update-checker.js#_buildStatus` says the rule
-      //                     outright: a check that failed and a check that
-      //                     succeeded and found nothing are different facts.
-      //                     Reachable from the 4-hour checker's cached failure
-      //                     on every later GET, and from a focus/reconnect
-      //                     re-check.
-      //
-      // Unknown is not a fact. Nothing here may render it as one.
-      if (!data || !data.checkedAt || data.checkOk === false) return;
+      // Unknown is not a fact, and this is the one gate that keeps it from
+      // being rendered as one. The three shapes it rejects, and why each is
+      // reachable, are on `tcIsUpdateAnswer` — where the session page's poll
+      // reads the same rule rather than restating it.
+      if (!tcIsUpdateAnswer(data)) return;
 
       // An anchor that is not there is not "nothing to do" — it is this
       // feature failing exactly the way #931 exists to prevent, reached by a
@@ -537,4 +558,5 @@
   }
 
   global.tcCreateUpdateBeacon = tcCreateUpdateBeacon;
+  global.tcIsUpdateAnswer = tcIsUpdateAnswer;
 })(typeof window !== 'undefined' ? window : globalThis);

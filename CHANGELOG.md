@@ -4,6 +4,78 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A session learns about a release when it happens, not up to four hours later (#954).** The
+  update beacon polls every five minutes on both the dashboard and every session page, but on the
+  session page every one of those reads was a pure cache read — `GET /api/update-status`, documented
+  as side-effect-free. Nothing on that page ever asked the server to measure again, so the only
+  unconditional re-measurement anywhere was `startChecker`'s timer, and that ran every **four hours**.
+  The cadence was real; the freshness was not. An operator sitting in a session could watch a page
+  poll twelve times an hour and still be told about a release most of a release's life after it
+  existed.
+
+  The session poll now asks for a measurement — `POST /api/update/check` with `manual: false`, the
+  same request the dashboard has always made on load and on refocus. This cannot become a
+  `git ls-remote` loop, and that is a property of the server rather than a promise made by the
+  client: `refreshIfStale` serves a cache younger than `AUTO_REFRESH_MIN_AGE_MS` without measuring
+  and single-flights the rest, so the ceiling is one measurement per floor **per server** — the same
+  whether one session is open or twenty. A hidden tab stops polling entirely.
+
+  `landing.js`'s `NOT_FOUND` fallback is replicated rather than assumed unnecessary. This repo is the
+  live install, so a merge or a self-update puts new client files on disk while the running process
+  keeps serving the old routes until it restarts; without the fallback the page would read that 404
+  as a failed check and hold a stale beacon until the restart.
+
+- **A session that did not apply the update stops offering it (#955).** Applying an update from one
+  surface left every *other* open session showing the beacon dot — and re-opening a toast for a
+  version already running — while its own status bar correctly read the new one. Only a manual page
+  refresh cleared it.
+
+  The restart is the cause. The update cache lives in the process, so a restarted server answers
+  "never measured" until its first check; the beacon correctly refuses to act on that, because an
+  unknown rendered as "you are up to date" would take the dot down for an update that is genuinely
+  there (#716). Nothing then asked again until the full five-minute interval expired — and because
+  the cadence clock is stamped before the request, the reads that failed during the restart outage
+  consumed the same budget. The status bar disagreed because it is a different mechanism entirely,
+  re-stamped server-side at boot (#745).
+
+  A **non-answer no longer costs a full interval**: the page re-asks on a 30-second retry cadence
+  until a real answer arrives, then returns to the normal one. It cannot latch — the cadence is
+  chosen per read from the answer itself, never accumulated. The states that produce a non-answer are
+  exactly the states that resolve within seconds (a restart, the outage around it, a measurement that
+  failed and may next succeed), so this is a short wait for a fast event rather than a shorter poll
+  for a slow one.
+
+  **What counts as an answer is now one rule, not two.** `tcIsUpdateAnswer` moved out of the beacon's
+  `render` onto `window`, and both surfaces consult it. Two copies would have drifted, and the drift
+  would have been invisible — both render plausibly, and only the reachable-but-rare states disagree,
+  which is the #716 bug class exactly.
+
+### Internal
+
+- **The periodic update check no longer blocks the event loop, and the interval dropped from 4h to
+  30m as a result (#954).** `startChecker` drove `checkForUpdate`, the `execSync` form — so on a slow
+  or unreachable remote every tick could stall the single-threaded server, terminal websockets
+  included, for up to the full 15s `git ls-remote` timeout. Every request-triggered path already used
+  the `execFile` form for exactly that reason; a timer firing unattended is no more entitled to block
+  the loop than a request is.
+
+  This is what made the interval free to shorten. While the timer blocked, the interval was
+  load-bearing for **latency** and not only for freshness, so lowering it would have multiplied those
+  stalls rather than simply improving freshness. Lowering it without this change first was the
+  tempting version of this fix and the wrong one.
+
+  Deliberately **not** routed through `refreshIfStale`, which would otherwise be the tidier call: its
+  staleness test compares against a `checkedAt` stamped when the previous tick *started*, so at
+  `maxAgeMs === interval` the comparison lands on its own boundary and a few milliseconds of timer
+  drift decide whether a tick measures or skips — a skip silently doubling the interval.
+
+  30m is the floor for the case nobody is looking; with any page open the effective floor is already
+  `AUTO_REFRESH_MIN_AGE_MS`. Shorter by default would buy freshness only for installs nobody is
+  watching and spend every install's origin traffic to do it, so `updateCheckIntervalMs` remains the
+  dial for anyone who wants it.
+
 ## [5.6.0] - 2026-08-16
 
 ### Added
