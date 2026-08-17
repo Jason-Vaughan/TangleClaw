@@ -3359,6 +3359,14 @@ function renderAuditPanel() {
  * @param {string} [text] - Status line shown in the panel row
  * @param {boolean} [showRetry] - Reveal the panel's Retry button
  */
+// Declared here, ABOVE its first reader, and assigned further down where its
+// dependencies exist. A `const` at the assignment site would put every reader
+// between the two in a temporal dead zone: `setMasterStatus` reads it, and a
+// future top-level call added anywhere above the assignment would throw at
+// parse time rather than fail visibly. `let` plus the guard in each reader
+// makes the ordering a non-issue instead of a rule someone has to remember.
+let masterBar = null;
+
 function setMasterStatus(status, text, showRetry) {
   // The header BUTTON's dot stays here — it sits outside the panel and has no
   // counterpart on the session page, so it is genuinely dashboard-only.
@@ -3483,7 +3491,7 @@ const masterSettings = window.tcCreateMasterSettings({
 
 // The Master control bar. Same component the session drawer mounts, so the two
 // surfaces render from one implementation; only ids and label differ.
-const masterBar = window.tcCreateMasterControlBar({
+masterBar = window.tcCreateMasterControlBar({
   doc: document,
   rootId: 'masterPanelBar',
   prefix: 'masterPanel',

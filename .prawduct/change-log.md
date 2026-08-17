@@ -4795,3 +4795,59 @@ passed on both `main` and this branch. This change-log had already recorded the 
 unrelated branch and moved past it. Now #957, with a reproduction.
 
 **Classification:** fix — with one **changed** element, and the two records must not disagree about which. Both bugs are fixes; the enabling interval drop (`updateCheckIntervalMs` 4h → 30m) is a documented operator-facing default, so `CHANGELOG.md` files it under `### Changed` and the next release is **minor**, not patch. Filing it under `### Internal` would have been the quieter answer and the wrong one: an operator would notice next session, which is the test CLAUDE.md sets.
+
+## 2026-08-17: the Master's settings open from inside a session (#768 chunk 2)
+
+**The operator redirected the design mid-chunk, and the redirect was right.** The plan scoped a
+status row plus a launch-mode control. Rendered as a mockup, the operator rejected all three options
+and asked for the session bar instead: same scaffolding, Master-only additions, session-only controls
+removed. That is a bigger chunk than planned and a better product — the bar an operator already knows
+how to read beats a bespoke one that has to be learned.
+
+**Deriving beat listing, twice, and both times the derived answer was several times larger.** The
+carried-in CSS task named six classes; the component emitted **23** that `session.css` lacked. A
+sweep written against the plan's list would have gone green with the modal two-thirds unstyled — the
+"sweep narrower than the claim" shape this log already records twice. The parity guard extracts the
+class set from the component's own markup instead, and it found a class missing from `style.css` too:
+a pre-existing dashboard gap nobody knew about, which turned out to be a JS hook needing no rule.
+Adding one to satisfy the test would have been inventing styling to fit a guard.
+
+**A guard's premise can be wrong even when the guard is right.** The first parity assertion demanded
+a CSS rule for EVERY emitted class and failed on `session-rule-history`. The fix was not to style it
+but to re-state the contract as SYMMETRY — a class styled on one page must be styled on the other,
+in both directions — which is what point 5 of the Shared Frontend Module Contract actually asks. The
+guard is the same strength for styled classes and stops demanding rules for hooks.
+
+**The load-bearing decision was a stylesheet, not a component.** The operator's requirement was
+"restyle Medusa in the session and the Master follows". `banner-btn`, `btn-wrap` and the `medusa-*`
+family lived only in `session.css`, so the bar would have rendered unstyled on the dashboard — and
+the obvious fix, copying them into `style.css`, would have satisfied "both stylesheets carry them"
+while making restyle-once **false**. Base rules moved to `shared-controls.css` that both pages link;
+page-specific `@media` overrides stayed, because narrow-width banner behaviour is about the banner's
+layout, not the control. That is a departure from the letter of the boundary contract and is recorded
+as one rather than done quietly.
+
+**The placeholder is where the fork sneaks in.** Five of seven controls have no backend, so they ship
+dim with their reason. A hand-rolled dim Medusa that merely LOOKS like the session's is identical on
+day one and drifted by the third restyle — and a placeholder feels too small to be an architecture
+decision, which is exactly what makes it one. The split shipped (shared look now, shared
+implementation when each backend lands) is safe ONLY because the placeholder is inert, and that
+condition is written at the call site so the next person cannot honour half of it.
+
+**Mutation caught a guard asserting nothing.** `\bdisabled\b` also matches inside
+`aria-disabled="true"`, so removing the real `disabled` attribute left the test green. Seven
+mutations run, one green, one guard rewritten. The lesson is not "mutate" — that was already the
+practice — it is that a mutation returning GREEN is itself the finding, and the temptation is to read
+it as "already covered elsewhere".
+
+**A hazard removed rather than reasoned about.** `ui.js` held `masterBar` in a module-level `const`
+assigned below `setMasterStatus`, its first reader. Every call today sits inside a function body, so
+it works — but that is a property a future top-level call would break at parse time. Changed to a
+`let` declared above its readers, so ordering is a non-issue instead of a rule someone must remember.
+
+**Four suites re-pointed, not relaxed.** They pinned ids that moved into the component; each now
+asserts the page carries the mount root AND the component carries the control, which is a stronger
+statement than either half. `test/_mini-dom.js` gained `hidden`, `classList.toggle` and `prepend` —
+each added by the test that needed it, per that file's own rule.
+
+**Classification:** feature
