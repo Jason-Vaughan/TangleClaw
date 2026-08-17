@@ -3359,14 +3359,26 @@ function renderAuditPanel() {
  * @param {string} [text] - Status line shown in the panel row
  * @param {boolean} [showRetry] - Reveal the panel's Retry button
  */
+// Declared here, ABOVE its first reader, and assigned further down where its
+// dependencies exist. A `const` at the assignment site would put every reader
+// between the two in a temporal dead zone: `setMasterStatus` reads it, and a
+// future top-level call added anywhere above the assignment would throw at
+// parse time rather than fail visibly. `let` plus the guard in each reader
+// makes the ordering a non-issue instead of a rule someone has to remember.
+let masterBar = null;
+
 function setMasterStatus(status, text, showRetry) {
-  for (const id of ['masterDot', 'masterPanelDot']) {
-    const dot = document.getElementById(id);
+  // The header BUTTON's dot stays here — it sits outside the panel and has no
+  // counterpart on the session page, so it is genuinely dashboard-only.
+  const dot = document.getElementById('masterDot');
+  if (dot) {
     dot.classList.remove('live', 'pending', 'down');
     if (status) dot.classList.add(status);
   }
-  if (text !== undefined) document.getElementById('masterStatusText').textContent = text;
-  document.getElementById('masterRetryBtn').classList.toggle('hidden', !showRetry);
+  // Everything inside the panel row belongs to the shared bar. Painting it by
+  // id from here would be the second implementation #768 exists to remove, and
+  // it is the copy that would quietly stop matching the session's.
+  if (masterBar) masterBar.setStatus(status, text, showRetry);
 }
 
 /**
@@ -3434,6 +3446,16 @@ function attachMasterFrame() {
 async function refreshMasterDot() {
   const status = await api('/api/master/status');
   if (!status) return;
+  // The model pill is painted from the Master's OWN engine, whatever the
+  // status says about liveness — an unreachable master still has a configured
+  // engine, and hiding the pill would lose that.
+  // `settings.resolvedEngine`, NOT `status.engine` — there is no top-level
+  // engine on this payload, so the first version of this passed `undefined` and
+  // the pill stayed hidden on exactly the surface the finding was raised
+  // against. `resolvedEngine` is what will actually run (`settings.engine` is
+  // the stored preference and is null when unpinned), which is the same value
+  // the ensure response carries as `engine`, so both pages paint from one fact.
+  if (masterBar) masterBar.loadModel((status.settings && status.settings.resolvedEngine) || null);
   if (status.exists) {
     setMasterStatus('live');
     return;
@@ -3474,18 +3496,26 @@ const masterSettings = window.tcCreateMasterSettings({
   esc,
   buildEngineOptions,
   state,
-  onOpenError: (message) => setMasterStatus('down', message, true)
+  onOpenError: (message) => { setMasterStatus('down', message, true); if (masterBar) masterBar.setError(message); }
 });
 
-/** Open the Master settings modal. */
-function openMasterSettings() { return masterSettings.open(); }
+// The Master control bar. Same component the session drawer mounts, so the two
+// surfaces render from one implementation; only ids and label differ.
+masterBar = window.tcCreateMasterControlBar({
+  doc: document,
+  rootId: 'masterPanelBar',
+  prefix: 'masterPanel',
+  title: 'Project Master',
+  api,
+  onRetry: ensureMasterAttached,
+  onOpenSettings: () => { masterBar.setError(''); masterSettings.open(); }
+});
+masterBar.mount();
 
 // ── Event Bindings ──
 
 const $ = (id) => document.getElementById(id);
 $('masterToggle').addEventListener('click', toggleMaster);
-$('masterRetryBtn').addEventListener('click', ensureMasterAttached);
-$('masterSettingsBtn').addEventListener('click', openMasterSettings);
 // The component owns the modal end to end: this injects the markup (index.html
 // no longer carries it) and binds Close, Save and the Hard-rules delegation.
 // Only the gear above stays the dashboard's, because the affordance is.

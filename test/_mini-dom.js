@@ -53,10 +53,19 @@ function makeElement(tag, doc) {
       classes.clear();
       String(v).split(/\s+/).filter(Boolean).forEach((c) => classes.add(c));
     },
+    // Mirrors `element.hidden`. Declared so a render that hides before showing
+    // reads `false` as a browser would rather than `undefined` — the Master
+    // bar's model pill and error line both start hidden and are asserted on.
+    hidden: false,
     classList: {
       add: (...cs) => cs.forEach((c) => classes.add(c)),
       remove: (...cs) => cs.forEach((c) => classes.delete(c)),
-      contains: (c) => classes.has(c)
+      contains: (c) => classes.has(c),
+      // Two-arg form only, which is all production code here uses. The one-arg
+      // flip is deliberately NOT implemented: nothing needs it, and a stub that
+      // answers questions the callers never ask is a stub that can be wrong
+      // without anything noticing.
+      toggle: (c, on) => (on ? classes.add(c) : classes.delete(c))
     },
     setAttribute(name, value) { attrs[name] = String(value); },
     getAttribute(name) { return Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null; },
@@ -66,6 +75,19 @@ function makeElement(tag, doc) {
     appendChild(child) {
       child.parentNode = el;
       el.childNodes.push(child);
+      return child;
+    },
+    /**
+     * Insert before every existing child. Needed by the Master bar's model
+     * pill, which sets its text and then prepends a status dot — the order
+     * matters to the render, so a stub that appended would pass while producing
+     * the wrong DOM.
+     * @param {object} child - Element to insert first.
+     * @returns {object} The child.
+     */
+    prepend(child) {
+      child.parentNode = el;
+      el.childNodes.unshift(child);
       return child;
     },
     remove() {

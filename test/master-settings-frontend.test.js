@@ -54,7 +54,13 @@ describe('Master settings surface — frontend', () => {
 
   describe('markup', () => {
     it('the master panel status row carries the settings gear', () => {
-      assert.match(html, /id="masterSettingsBtn"[^>]*aria-label="Master settings"/s);
+      // The gear moved into the shared control bar (#768 chunk 2), so it is no
+      // longer in the page's own markup — it is in the component's, on BOTH
+      // surfaces. That is the point of the move, and the original guarantee
+      // still holds: this page renders a gear labelled for Master settings.
+      assert.match(html, /id="masterPanelBar"/);
+      const bar = require('./_api-helper-globals')().tcMasterControlBarMarkup('masterPanel', {});
+      assert.match(bar, /id="masterPanelSettingsBtn"[^>]*aria-label="Master settings"/s);
     });
 
     it('the settings modal ships with body container, Save and Close', () => {
@@ -137,7 +143,10 @@ describe('Master settings surface — frontend', () => {
       // The gear stays the dashboard's, because that is where the dashboard's
       // affordance lives. Close/Save and the delegated Hard-rules handlers moved
       // into the component so the session page gets them without re-wiring.
-      assert.match(js, /\$\('masterSettingsBtn'\)\.addEventListener\('click', openMasterSettings\)/);
+      // The gear moved into the shared control bar (#768 chunk 2) — the page
+      // hands the bar what to open instead of binding the button. Same
+      // guarantee: pressing the gear opens this modal.
+      assert.match(js, /onOpenSettings: \(\) => \{ masterBar\.setError\(''\); masterSettings\.open\(\); \}/);
       assert.match(js, /masterSettings\.mount\(\)/);
       assert.match(masterSection, /closeBtn\.addEventListener\('click', closeMasterSettings\)/);
       assert.match(masterSection, /saveBtn\.addEventListener\('click', saveMasterSettings\)/);

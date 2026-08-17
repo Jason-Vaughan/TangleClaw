@@ -620,7 +620,6 @@ body {
 .master-dot.down { background: var(--danger); }
 
 /* Master settings modal — access tiers, enforcement badge, Hard-rules history */
-#masterSettingsBtn { margin-left: auto; min-height: 32px; }
 .master-enforcement-badge {
   padding: 6px 10px;
   border: 1px solid var(--border, #333);

@@ -47,9 +47,14 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
 
     it('the master panel carries a status row, retry button, and the iframe', () => {
       assert.match(html, /id="masterPanel" class="master-panel"/);
-      assert.match(html, /id="masterPanelDot"/);
-      assert.match(html, /id="masterStatusText"/);
-      assert.match(html, /id="masterRetryBtn"/);
+      // Same move as the drawer's: the page carries the mount root, the shared
+      // component carries the controls. See master-drawer-frontend for why both
+      // halves are asserted.
+      assert.match(html, /id="masterPanelBar"/);
+      const bar = require('./_api-helper-globals')().tcMasterControlBarMarkup('masterPanel', {});
+      assert.match(bar, /id="masterPanelDot"/);
+      assert.match(bar, /id="masterPanelStatusText"/);
+      assert.match(bar, /id="masterPanelRetryBtn"/);
       assert.match(html, /id="masterFrame"/);
     });
 
@@ -88,7 +93,7 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
 
     it('failure surfaces the real server message and a retry affordance', () => {
       assert.match(masterSection, /api\.lastError/);
-      assert.match(js, /\$\('masterRetryBtn'\)\.addEventListener\('click', ensureMasterAttached\)/);
+      assert.match(js, /onRetry: ensureMasterAttached/);
     });
 
     it('the iframe attaches to the reserved tmux session, once per page load', () => {

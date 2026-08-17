@@ -8,6 +8,9 @@
   <meta name="theme-color" content="#000000">
   <meta name="description" content="AI Development Orchestration Platform">
   <title>TangleClaw</title>
+  <!-- Shared session/Master control styles (#768 chunk 2). BEFORE the page
+       sheet on purpose: base look is shared, page overrides still win. -->
+  <link rel="stylesheet" href="/shared-controls.css">
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/beacon.css">
   <link rel="manifest" href="/manifest.json">
@@ -85,12 +88,10 @@
        tmux session. The iframe src is set by ui.js ONLY after
        POST /api/master/ensure succeeds (ttyd cannot create sessions). -->
   <div id="masterPanel" class="master-panel" aria-label="Project Master">
-    <div class="master-status-row">
-      <span class="master-dot" id="masterPanelDot" aria-hidden="true"></span>
-      <span class="master-status-text" id="masterStatusText">Checking&hellip;</span>
-      <button class="btn btn-small hidden" id="masterRetryBtn">Retry</button>
-      <button class="btn btn-small" id="masterSettingsBtn" aria-label="Master settings" title="Master settings — access level, engine, scope, Hard rules">&#9881;</button>
-    </div>
+    <!-- The Master control bar (#768 chunk 2) renders here, from the same
+         component the session drawer uses. Empty on purpose — see the drawer's
+         twin in session.html. -->
+    <div class="master-status-row" id="masterPanelBar"></div>
     <div class="master-frame-wrap">
       <iframe id="masterFrame" class="master-frame" title="Project Master terminal"></iframe>
     </div>

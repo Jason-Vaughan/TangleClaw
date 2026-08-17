@@ -7,6 +7,9 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#000000">
   <title>TangleClaw — Session</title>
+  <!-- Shared session/Master control styles (#768 chunk 2). BEFORE the page
+       sheet on purpose: base look is shared, page overrides still win. -->
+  <link rel="stylesheet" href="/shared-controls.css">
   <link rel="stylesheet" href="/session.css">
   <link rel="stylesheet" href="/beacon.css">
   <link rel="manifest" href="/manifest.json">
@@ -188,11 +191,11 @@
       <span class="master-drawer-title">&#129504; Project Master</span>
       <button class="banner-btn" id="masterCloseBtn" aria-label="Close Project Master">&times;</button>
     </div>
-    <div class="master-status-row">
-      <span class="master-dot" id="masterDrawerDot" aria-hidden="true"></span>
-      <span class="master-status-text" id="masterDrawerStatusText">Checking&hellip;</span>
-      <button class="btn btn-small hidden" id="masterDrawerRetryBtn">Retry</button>
-    </div>
+    <!-- The Master control bar (#768 chunk 2) renders here, from the same
+         component the dashboard panel uses. Empty on purpose: markup single-
+         sourced in `tcCreateMasterControlBar` so a change reaches both
+         surfaces, rather than two hand-written rows that drift. -->
+    <div class="master-status-row" id="masterDrawerBar"></div>
     <div class="master-drawer-frame-wrap">
       <iframe id="masterDrawerFrame" class="master-drawer-frame" title="Project Master terminal"></iframe>
     </div>

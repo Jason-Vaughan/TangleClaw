@@ -4,6 +4,94 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **The Master's settings open from inside a session, and both surfaces render one control bar
+  (#768 chunk 2).** From inside a session there was no route to the Master's settings at all —
+  `grep -c masterSettingsModal public/session.html` was `0`, so changing the single most
+  consequential fact about the Master meant leaving the session for the dashboard. Chunk 1 made the
+  modal a mountable component; this is the control that opens it.
+
+  The bar is the **session banner's control set, reused**: status dot, model pill, Medusa, then the
+  Master-only READ/WRITE toggle, Upload, gear, Wrap, Kill. `Select`, `Cmd` and `Peek` drop off as
+  terminal-local, Run Critic is absent by design (see below), and there is no Shared-docs control
+  because the Master reads every shared doc already. `tcCreateMasterControlBar` renders into the
+  dashboard panel and the session drawer from one implementation; a test asserts the two markups are
+  identical modulo their id prefix, so a page cannot quietly grow its own copy.
+
+  **Every id is prefixed**, because the drawer renders on the same page as the session banner. A bare
+  `uploadBtn` here would silently retarget the session's own Upload — the guard names those ids
+  explicitly rather than trusting the convention.
+
+  **A failed open is now visible.** Chunk 1 mounted the settings modal with an `onOpenError` that
+  only reached the console — honest, but invisible, so a Master whose status fetch failed looked
+  exactly like a gear that does nothing. The bar owns a status line and both pages paint it.
+
+- **Controls with no backend ship visibly absent, with their reason (#768 chunk 2).** Only the gear and the model pill have routes today — the pill is painted by
+  `loadModel`, which both pages call with the Master's own engine from its own status response —
+  the dashboard reads `settings.resolvedEngine` from `GET /api/master/status` and the session page
+  reads the top-level `engine` from the ensure response, because those payloads genuinely differ and
+  a component method with no caller (or with a caller passing a field that does not exist) is not a
+  feature. Both are pinned against the shapes `lib/master.js` actually emits, so removing the field
+  at the producer end fails too. Medusa, the access toggle, Upload, Wrap and Kill render dim,
+  disabled, and carrying why — `title` for pointers and an `aria-describedby` element for everything
+  else, because a `title` is invisible on touch and this install is driven from a phone. The reasons
+  live in **one table** (`tcMasterPendingReasons`), since two surfaces giving different reasons for
+  the same absence reads as one of them being wrong.
+
+  This is the #755/#741 rule — never present-and-inert — in its honest form: the operator sees the
+  bar's final shape, and each control lights up as its route lands, without the layout being
+  re-decided five times.
+
+  **Run Critic is absent permanently, and for a structural reason.** `invoke-critic` dispatches
+  `/critic` into a project's tmux session and reads that project's findings file. The Master has no
+  checkout, so there is nothing to review — the same root reason Wrap is *undecided* rather than
+  merely unbuilt. A "run the Critic in project X" capability is a different feature. Tracked: #961.
+
+### Changed
+
+- **Shared session/Master control styles moved to `public/shared-controls.css` (#768 chunk 2).** The
+  bar renders the same markup on both pages, so the operator's requirement is that restyling a
+  control once moves both surfaces. `banner-btn`, `btn-wrap` and the whole `medusa-*` family lived
+  only in `session.css`, so the bar would have rendered unstyled on the dashboard — and copying them
+  into `style.css` would have satisfied "both stylesheets carry them" while making restyle-once
+  **false**: the change would then have to be made twice, and the first time it was made once the two
+  surfaces would silently disagree.
+
+  Base rules moved to a sheet both pages link; page-specific `@media` overrides stayed put, because
+  the session banner's narrow-width behaviour is about that banner's layout, not about the control.
+  It is linked **before** each page's own stylesheet so a page can still override, and it is carried
+  in `sw.js`'s `STATIC_ASSETS` and `NETWORK_FIRST_PATHS` — never by bumping `CACHE_NAME`, which tears
+  down every browser's worker (#710).
+
+- **The default update-check interval is now 30 minutes, down from 4 hours (#954).** This changes a
+  documented default an operator can see and tune (`updateCheckIntervalMs`), and it changes how often
+  an unattended install talks to `origin`, so it is a change rather than an internal one even though
+  the reason for it is internal. `docs/configuration-reference.md` documented the old value and has
+  been corrected.
+
+  The enabling change: `startChecker` drove `checkForUpdate`, the `execSync` form — so on a slow
+  or unreachable remote every tick could stall the single-threaded server, terminal websockets
+  included, for up to the full 15s `git ls-remote` timeout. The status routes already used the
+  `execFile` form for exactly that reason; a timer firing unattended is no more entitled to block the
+  loop than a request is. (`update-applier`'s pre-flight guard is the one caller still measuring
+  synchronously, and it does so from inside a request — a separate problem, left alone here.)
+
+  This is what made the interval free to shorten. While the timer blocked, the interval was
+  load-bearing for **latency** and not only for freshness, so lowering it would have multiplied those
+  stalls rather than simply improving freshness. Lowering it without this change first was the
+  tempting version of this fix and the wrong one.
+
+  Deliberately **not** routed through `refreshIfStale`, which would otherwise be the tidier call: its
+  staleness test compares against a `checkedAt` stamped when the previous tick *started*, so at
+  `maxAgeMs === interval` the comparison lands on its own boundary and a few milliseconds of timer
+  drift decide whether a tick measures or skips — a skip silently doubling the interval.
+
+  30m is the floor for the case nobody is looking; with any page open the effective floor is already
+  `AUTO_REFRESH_MIN_AGE_MS`. Shorter by default would buy freshness only for installs nobody is
+  watching and spend every install's origin traffic to do it, so `updateCheckIntervalMs` remains the
+  dial for anyone who wants it.
+
 ### Fixed
 
 - **A session learns about a release when it happens, not up to four hours later (#954).** The
@@ -83,35 +171,20 @@ All notable changes to TangleClaw are documented in this file.
   would have been invisible — both render plausibly, and only the reachable-but-rare states disagree,
   which is the #716 bug class exactly.
 
-### Changed
+### Internal
 
-- **The default update-check interval is now 30 minutes, down from 4 hours (#954).** This changes a
-  documented default an operator can see and tune (`updateCheckIntervalMs`), and it changes how often
-  an unattended install talks to `origin`, so it is a change rather than an internal one even though
-  the reason for it is internal. `docs/configuration-reference.md` documented the old value and has
-  been corrected.
+- **The Master settings modal is styled on the session page (#768 chunk 2, carried from chunk 1's
+  review).** The modal's markup was single-sourced into a shared component while its styles stayed in
+  `style.css`, so it rendered unstyled on the session page — invisible only because nothing there
+  could open it. The gear makes it visible, so the port belongs here.
 
-  The enabling change: `startChecker` drove `checkForUpdate`, the `execSync` form — so on a slow
-  or unreachable remote every tick could stall the single-threaded server, terminal websockets
-  included, for up to the full 15s `git ls-remote` timeout. The status routes already used the
-  `execFile` form for exactly that reason; a timer firing unattended is no more entitled to block the
-  loop than a request is. (`update-applier`'s pre-flight guard is the one caller still measuring
-  synchronously, and it does so from inside a request — a separate problem, left alone here.)
-
-  This is what made the interval free to shorten. While the timer blocked, the interval was
-  load-bearing for **latency** and not only for freshness, so lowering it would have multiplied those
-  stalls rather than simply improving freshness. Lowering it without this change first was the
-  tempting version of this fix and the wrong one.
-
-  Deliberately **not** routed through `refreshIfStale`, which would otherwise be the tidier call: its
-  staleness test compares against a `checkedAt` stamped when the previous tick *started*, so at
-  `maxAgeMs === interval` the comparison lands on its own boundary and a few milliseconds of timer
-  drift decide whether a tick measures or skips — a skip silently doubling the interval.
-
-  30m is the floor for the case nobody is looking; with any page open the effective floor is already
-  `AUTO_REFRESH_MIN_AGE_MS`. Shorter by default would buy freshness only for installs nobody is
-  watching and spend every install's origin traffic to do it, so `updateCheckIntervalMs` remains the
-  dial for anyone who wants it.
+  The guard is **derived, not hand-listed**, and that mattered: the plan named six classes and the
+  component emitted **23** that `session.css` lacked. A sweep written against the list would have
+  gone green with the modal two-thirds unstyled. `test/master-settings-css-parity.test.js` extracts
+  the class set from the component's own markup, reads inside interpolated class attributes (where
+  `master-access-disabled` lives, the state an operator meets when access changes are gated), and
+  asserts **symmetry** between the two sheets rather than universal coverage — a class styled on one
+  page must be styled on the other, while a pure JS hook styled on neither is fine.
 
 ## [5.6.0] - 2026-08-16
 
