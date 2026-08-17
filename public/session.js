@@ -721,11 +721,18 @@ async function loadUpdateStatus() {
     data = await api('/api/update-status');
   }
 
-  // A NON-ANSWER MUST NOT CONSUME THE FULL INTERVAL. The states that produce one
-  // are precisely the states that resolve on their own within seconds: the
-  // server restarting (its cache lives in the process, so every restart passes
-  // back through "never measured"), the outage while it comes back, and a failed
-  // measurement that the next attempt may well succeed at.
+  // A NON-ANSWER MUST NOT CONSUME THE FULL INTERVAL. The states this is FOR
+  // resolve on their own within seconds: the server restarting (its cache lives
+  // in the process, so every restart passes back through "never measured"), and
+  // the outage while it comes back.
+  //
+  // One of them does not: a `checkOk: false` from an origin that is simply
+  // unreachable can persist for hours, and this retries it every 30s for as long
+  // as the page is open. That is accepted rather than overlooked. The cost is a
+  // localhost request, not origin traffic — `refreshIfStale` serves the cached
+  // failure without re-measuring until the refresh floor expires — so what the
+  // retry actually buys there is noticing the moment the network returns. The
+  // server-side logging does NOT scale as gracefully; that is #956.
   //
   // Holding the full interval there is what let a session keep offering an
   // update that had ALREADY been applied from another surface: the restart

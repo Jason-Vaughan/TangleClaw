@@ -62,24 +62,36 @@ All notable changes to TangleClaw are documented in this file.
 
   A **non-answer no longer costs a full interval**: the page re-asks on a 30-second retry cadence
   until a real answer arrives, then returns to the normal one. It cannot latch — the cadence is
-  chosen per read from the answer itself, never accumulated. The states that produce a non-answer are
-  exactly the states that resolve within seconds (a restart, the outage around it, a measurement that
-  failed and may next succeed), so this is a short wait for a fast event rather than a shorter poll
-  for a slow one.
+  chosen per read from the answer itself, never accumulated. The states it exists for resolve within
+  seconds (a restart, and the outage around it), so this is a short wait for a fast event rather than
+  a shorter poll for a slow one.
+
+  One non-answer does *not* resolve quickly: an origin that is simply unreachable keeps returning
+  `checkOk: false`, and the page will retry it every 30s for as long as it is open. That is accepted,
+  not overlooked. The cost on that path is a localhost request rather than origin traffic, because
+  `refreshIfStale` serves the cached failure without re-measuring until its floor expires, and what
+  the retry buys is noticing the moment the network comes back. The server-side *logging* does not
+  scale as gracefully at that rate, which is filed as #956.
 
   **What counts as an answer is now one rule, not two.** `tcIsUpdateAnswer` moved out of the beacon's
   `render` onto `window`, and both surfaces consult it. Two copies would have drifted, and the drift
   would have been invisible — both render plausibly, and only the reachable-but-rare states disagree,
   which is the #716 bug class exactly.
 
-### Internal
+### Changed
 
-- **The periodic update check no longer blocks the event loop, and the interval dropped from 4h to
-  30m as a result (#954).** `startChecker` drove `checkForUpdate`, the `execSync` form — so on a slow
+- **The default update-check interval is now 30 minutes, down from 4 hours (#954).** This changes a
+  documented default an operator can see and tune (`updateCheckIntervalMs`), and it changes how often
+  an unattended install talks to `origin`, so it is a change rather than an internal one even though
+  the reason for it is internal. `docs/configuration-reference.md` documented the old value and has
+  been corrected.
+
+  The enabling change: `startChecker` drove `checkForUpdate`, the `execSync` form — so on a slow
   or unreachable remote every tick could stall the single-threaded server, terminal websockets
-  included, for up to the full 15s `git ls-remote` timeout. Every request-triggered path already used
-  the `execFile` form for exactly that reason; a timer firing unattended is no more entitled to block
-  the loop than a request is.
+  included, for up to the full 15s `git ls-remote` timeout. The status routes already used the
+  `execFile` form for exactly that reason; a timer firing unattended is no more entitled to block the
+  loop than a request is. (`update-applier`'s pre-flight guard is the one caller still measuring
+  synchronously, and it does so from inside a request — a separate problem, left alone here.)
 
   This is what made the interval free to shorten. While the timer blocked, the interval was
   load-bearing for **latency** and not only for freshness, so lowering it would have multiplied those

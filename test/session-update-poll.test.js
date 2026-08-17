@@ -339,7 +339,13 @@ describe('#955 one rule decides what counts as an answer', () => {
     const body = lift('async function loadUpdateStatus()');
     assert.match(body, /window\.tcIsUpdateAnswer\(/,
       'the shared predicate is the one consulted');
-    assert.doesNotMatch(body, /checkOk/,
+    // Comments stripped first. The rule being guarded is "no second
+    // IMPLEMENTATION of the answer test lives here", and prose that explains
+    // which states `checkOk: false` covers is not an implementation — an
+    // un-stripped match makes the guard fire on its own documentation, which is
+    // how it first went red.
+    const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    assert.doesNotMatch(code, /checkOk|checkedAt/,
       'no second copy of the rule may live here');
     assert.match(BEACON_SRC, /global\.tcIsUpdateAnswer = tcIsUpdateAnswer;/,
       'and the beacon must still publish it');
