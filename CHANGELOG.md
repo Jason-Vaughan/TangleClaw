@@ -99,6 +99,25 @@ All notable changes to TangleClaw are documented in this file.
   granted permanent write, and one to the hook would have removed the boundary: a tier whose entire
   point is per-action approval handing over every future action on a single click.
 
+  **The carve-out resolves symlinks, and anything it cannot resolve is refused.** `memory/` is
+  writable at every tier, so the master can create links there — and `path.resolve` normalises `..`
+  lexically without following them, so a link pointing outside passed the carve-out check and wrote
+  wherever it aimed. Three escapes were closed in turn, each one the half the previous fix had not
+  considered: a linked directory; a link whose target already existed; and a **dangling** link, which
+  is the shape that matters most, because `existsSync` follows links and therefore answers *false*
+  for one — while a write through it still creates the file at the destination.
+
+  Resolution now follows the leaf with `lstat`/`readlink` (bounded, so a chain cannot launder it),
+  then realpaths the deepest existing ancestor. Both the target and the carve-out go through
+  realpath or neither works: on macOS `/var` is itself a symlink, so resolving one side alone refused
+  every legitimate write into `memory/`.
+
+  **And a path the guard cannot resolve is now denied rather than guessed at.** Both the hop cap
+  running out and any resolution error used to fall back to the lexical path — which, for anything
+  under `memory/`, *starts with* the carve-out and therefore **allowed**. A comment described that as
+  the restrictive direction; it was the opposite, and a chain longer than the cap wrote outside at
+  the read-only tier. Exhaustion and errors both mark the path unresolved and refuse it.
+
   **What the guard does not cover is now stated rather than implied.** The `PreToolUse` matcher is
   `Edit|Write|NotebookEdit`, so shell writes sit outside it — Bash stays operator-gated rather than
   hook-enforced, because command-pattern matching cannot reliably separate a mutating command from a
