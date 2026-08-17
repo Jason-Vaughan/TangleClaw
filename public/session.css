@@ -318,11 +318,8 @@ body {
   outline: 2px solid var(--root-accent);
   outline-offset: 1px;
 }
-@keyframes medusa-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
-@keyframes medusa-flow {
-  0%, 100% { filter: none; }
-  30%      { filter: drop-shadow(0 0 5px var(--primary-bright)) brightness(1.5); }
-}
+
+
 .medusa-msg {
   padding: 6px 0;
   border-bottom: 1px solid rgba(255,255,255,0.06);
@@ -357,7 +354,7 @@ body {
   grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   gap: 0 12px;
 }
-@keyframes medusa-loop-glow { 0%, 100% { opacity: 1; } 50% { opacity: .7; } }
+
 @media (prefers-reduced-motion: reduce) {
   .medusa-control.has-live-loop .medusa-mark { animation: none; }
 }

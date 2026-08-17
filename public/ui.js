@@ -3506,9 +3506,6 @@ masterBar = window.tcCreateMasterControlBar({
 });
 masterBar.mount();
 
-/** Open the Master settings modal. */
-function openMasterSettings() { return masterSettings.open(); }
-
 // ── Event Bindings ──
 
 const $ = (id) => document.getElementById(id);
