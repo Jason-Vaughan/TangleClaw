@@ -18,7 +18,16 @@
 
 <p align="center">
   <a href="https://github.com/Jason-Vaughan/TangleClaw/actions/workflows/test.yml"><img src="https://github.com/Jason-Vaughan/TangleClaw/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <a href="https://github.com/Jason-Vaughan/TangleClaw/releases/latest"><img src="https://img.shields.io/github/v/release/Jason-Vaughan/TangleClaw?color=blue" alt="Release"></a>
+  <a href="#prerequisites"><img src="https://img.shields.io/badge/npm%20dependencies-zero-purple" alt="Zero npm dependencies"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
 </p>
+
+```bash
+# Quickstart (macOS) — prerequisites and what the installer does: Quick Start, below
+git clone --branch v5.6.0 https://github.com/Jason-Vaughan/TangleClaw.git
+cd TangleClaw && ./deploy/install.sh
+```
 
 ---
 
@@ -151,7 +160,7 @@ What started as session persistence grew into a full orchestration platform — 
 ## Quick Start
 
 ```bash
-git clone --branch v5.0.0 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v5.6.0 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw
 ./deploy/install.sh
 ```

@@ -203,6 +203,32 @@ All notable changes to TangleClaw are documented in this file.
   "remote hosts by Magic DNS, never literal IPs" norm — replaced with the host name the same
   sentence already used.
 
+- **README badges are dynamic, and the quickstart points at an installer that exists.** The badge
+  row and an above-the-fold quickstart are both worth having on a public repo — but four of the five
+  claims drafted for them were wrong, and each would have been wrong *silently*.
+
+  A hardcoded `tests-6,544 passing` shields image had replaced the live workflow badge while keeping
+  its link, so it read as a status badge and would have shown green against red CI. A
+  `release-v4.0.0` badge sat a full major behind. `dependencies-zero` restated the framing
+  `project-preferences.md` § Direction records as a drafting error — the correct claim is *npm*
+  dependencies, since this product orchestrates eleven external tools on purpose. And the
+  `curl … /main/INSTALL.sh | bash` one-liner fetched a path that does not exist in the repo: verified
+  404, which would have piped a GitHub error page into `bash`.
+
+  Fixed to values that cannot go stale: GitHub's own workflow badge, shields' `github/v/release`
+  endpoint, `npm dependencies-zero`, and a quickstart using the real `deploy/install.sh`. Badges now
+  link to what they assert (workflow, releases, prerequisites, LICENSE).
+
+  The tests badge is GitHub's native `test.yml/badge.svg` rather than a shields equivalent, because
+  `test/ci-workflow.test.js` pins exactly that — a contract worth keeping, since the native badge is
+  served by the same system that runs the workflow and needs no third party to be truthful. Meeting
+  it costs the `?style=for-the-badge` treatment (Actions badges don't take a style parameter), so
+  the row is flat across all four rather than three bold badges beside one that could not match.
+
+  Also corrected while here: Quick Start still pinned `--branch v5.0.0`, six minor versions back.
+  Both snippets now name the current release — which makes the version a **two-site** staleness
+  surface, so a source-scanning guard asserting both match `version.json` is worth filing.
+
 ## [5.6.0] - 2026-08-16
 
 ### Added
