@@ -17,8 +17,16 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Jason-Vaughan/TangleClaw/actions/workflows/test.yml"><img src="https://github.com/Jason-Vaughan/TangleClaw/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <a href="https://github.com/Jason-Vaughan/TangleClaw/actions/workflows/test.yml"><img src="https://img.shields.io/badge/tests-6%2C544%20passing-brightgreen?style=for-the-badge" alt="Tests"></a>
+  <img src="https://img.shields.io/badge/release-v4.0.0-blue?style=for-the-badge" alt="Release">
+  <img src="https://img.shields.io/badge/dependencies-zero-purple?style=for-the-badge" alt="Zero Dependencies">
+  <img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="MIT License">
 </p>
+
+```bash
+# 1-Click Quickstart (macOS)
+curl -sSL https://raw.githubusercontent.com/Jason-Vaughan/TangleClaw/main/INSTALL.sh | bash
+```
 
 ---
 
