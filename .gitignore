@@ -10,8 +10,16 @@
 .prawduct/*
 !.prawduct/change-log.md
 
-# TangleClaw project config (dogfooding artifact)
-.tangleclaw/
+# TangleClaw project config (dogfooding artifact).
+# Contents are ignored fail-closed, with ONE exception: `plans/` is tracked.
+# A plan is project state, not machine state — it must survive a fresh clone and
+# an engine switch, and the archiving convention explicitly leans on that ("the
+# issue-state check is the contract — it protects across fresh clones, which have
+# no local archive"). Ignoring plans made every clone of this repo planless.
+# `.tangleclaw/*` rather than `.tangleclaw/`: git never descends into an ignored
+# DIRECTORY, so a `!` negation below a bare `.tangleclaw/` would never match.
+.tangleclaw/*
+!.tangleclaw/plans/
 
 # Engine configs TangleClaw GENERATES when its own clone is attached as a managed
 # project (#708 — the first-run scan detects the clone and pre-selects it). These
