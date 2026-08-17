@@ -1008,6 +1008,20 @@ describe('access level — the guard reads it per invocation (#755)', () => {
       fs.symlinkSync(dangling, hop, 'file');
       assert.equal(guardDecision(home, { tool_input: { file_path: hop } }), 'deny',
         'a chain of links landing outside must be refused');
+
+      // A chain LONGER than the guard's hop cap. The kernel follows far more
+      // links than the guard does (MAXSYMLINKS is 32 on macOS, 40 on Linux), so
+      // if exhausting the counter resolved permissively, this would write
+      // outside the carve-out. A chain shorter than the cap measures nothing —
+      // it exits through the normal break — so this one is deliberately 20.
+      let prev = path.join(outsideDir, 'deep-target.md');
+      for (let i = 20; i >= 1; i--) {
+        const linkPath = path.join(home, 'memory', `chain${i}`);
+        fs.symlinkSync(prev, linkPath, 'file');
+        prev = linkPath;
+      }
+      assert.equal(guardDecision(home, { tool_input: { file_path: prev } }), 'deny',
+        'a chain longer than the hop cap must be refused, not resolved permissively');
     } finally {
       fs.rmSync(outsideDir, { recursive: true, force: true });
       fs.rmSync(home, { recursive: true, force: true });
