@@ -186,6 +186,23 @@ All notable changes to TangleClaw are documented in this file.
   asserts **symmetry** between the two sheets rather than universal coverage — a class styled on one
   page must be styled on the other, while a pure JS hook styled on neither is fine.
 
+- **Build plans are tracked in git.** `.tangleclaw/` was ignored wholesale, so no plan this project
+  has ever written was committed — `git log -- .tangleclaw/plans/` was empty, and every fresh clone
+  of TangleClaw arrived planless. That is not a cosmetic gap: the plan-archiving convention leans on
+  it explicitly ("the issue-state check is the contract — it protects across fresh clones, which have
+  no local archive"), and Prawduct's planning guide treats build plans as tracked artifacts.
+
+  `.gitignore` now mirrors the `.prawduct` pattern — contents ignored fail-closed, one negation for
+  `plans/`. The rule is `.tangleclaw/*` rather than `.tangleclaw/`, because git never descends into
+  an ignored *directory* and a `!` negation beneath a bare directory ignore silently never matches.
+  Everything else under `.tangleclaw/` — memories, priming, session rules, project config — stays
+  ignored as machine state; 25 plans (10 active, 15 archived) enter history.
+
+  One redaction on the way in: `v5-secure-baseline.md` recorded a verification against a literal
+  tailnet IP. The repository is public, and a literal address also misses this project's own
+  "remote hosts by Magic DNS, never literal IPs" norm — replaced with the host name the same
+  sentence already used.
+
 ## [5.6.0] - 2026-08-16
 
 ### Added
