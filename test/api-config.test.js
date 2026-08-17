@@ -987,6 +987,16 @@ describe('API endpoints', () => {
           'the port-scanner restart below the catch must still run');
         assert.ok(scannerCalls.includes('start'),
           'and must restart it, since portScannerEnabled was saved as true');
+
+        // And the contract the catch's comment makes: the config save is left
+        // STANDING rather than rolled back, because the stored intent is right
+        // and the next ensure reconciles the guard to it. This assertion is
+        // mutation-immune on its own — the save happens before the master block
+        // either way — so it rides alongside the side-effect checks above
+        // rather than standing in for them.
+        const after = await request(server, 'GET', '/api/config');
+        assert.equal(after.data.chimeMuted, true,
+          'the save is left standing, not rolled back');
       } finally {
         master.applyMasterAccessLevel = () => ({ applied: true, home: '/stub' });
         await request(server, 'PATCH', '/api/config', {

@@ -993,6 +993,21 @@ describe('access level — the guard reads it per invocation (#755)', () => {
       fs.symlinkSync(outsideFile, leaf, 'file');
       assert.equal(guardDecision(home, { tool_input: { file_path: leaf } }), 'deny',
         'a symlinked FILE inside memory/ must be refused too');
+
+      // The DANGLING case, which is the shape an attacker actually controls and
+      // the one an existence check cannot see: `existsSync` follows links, so it
+      // answers false here — while `writeFileSync` through the link still
+      // creates the file at the destination, outside the carve-out.
+      const dangling = path.join(home, 'memory', 'danglink');
+      fs.symlinkSync(path.join(outsideDir, 'not-created-yet.md'), dangling, 'file');
+      assert.equal(guardDecision(home, { tool_input: { file_path: dangling } }), 'deny',
+        'a write through a DANGLING symlink out of memory/ must be refused');
+
+      // A link chain must not launder it either.
+      const hop = path.join(home, 'memory', 'hoplink');
+      fs.symlinkSync(dangling, hop, 'file');
+      assert.equal(guardDecision(home, { tool_input: { file_path: hop } }), 'deny',
+        'a chain of links landing outside must be refused');
     } finally {
       fs.rmSync(outsideDir, { recursive: true, force: true });
       fs.rmSync(home, { recursive: true, force: true });
