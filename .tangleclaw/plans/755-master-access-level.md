@@ -302,8 +302,18 @@ in `.prawduct/operator-verification.md`
 - **The bar inherits the enforcement badge** — the `master-enforcement-badge` vocabulary exists in
   the modal and shows nothing on the bar, so a Gemini Master and a Claude Master look identical
   there. That gap predates this issue and closes here, where it is nearly free.
-- **The modal's tier hints stop saying "Not available yet"** (`api-helper.js:1576-1577`) and the
-  `write` + `bypassPermissions` warning extends to `suggest` per decision A.
+- **The modal's tier hints stop saying "Not available yet"** — DONE in chunk 1. The
+  `write` + `bypassPermissions` warning is deliberately **NOT** extended to `suggest`: the probe
+  recorded in decision A showed a hook decision outranks that launch mode, so the warning's claim
+  ("no confirmation at any layer") is true only of `write`. Extending it would re-ship the string
+  chunk 1's review rated BLOCKING.
+
+**Carried in from chunk 2's review (R-15):** a degraded guard is invisible to the operator.
+`readLevel()` fails closed correctly, but `getMasterStatus` keeps reporting config's level with
+`enforcement: 'structural'` — nothing reads the level file back and compares. Chunk 1's own
+consumer table listed `getMasterStatus` as the cross-check and it was never built. The bar is the
+surface that should show it: a master whose guard cannot read its posture is enforcing read-only
+while every surface says otherwise.
 
 **Cross-surface freshness — the mechanism, and what it does not cover.** The ratification says other
 open bars must repaint "on their next poll". Verified: **the dashboard has no poll** —

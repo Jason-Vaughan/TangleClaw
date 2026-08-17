@@ -59,8 +59,29 @@ function request(server, method, urlPath, body) {
 describe('API endpoints', () => {
   let tmpDir;
   let server;
+  let liveMasterFingerprint;
+
+  /** Snapshot of the OPERATOR's real master home — the one thing in this file
+   *  that `store._setBasePath(tmpDir)` does NOT redirect. `masterHome()`
+   *  resolves to `~/.tangleclaw/master` unconditionally, so any route that
+   *  reaches the real applier re-postures the live master while the suite runs.
+   *  That has now happened twice; this turns it from something a reviewer has
+   *  to notice into something the suite reports. */
+  function liveMasterState() {
+    const home = path.join(os.homedir(), '.tangleclaw', 'master');
+    return ['.access-level', path.join('.claude', 'settings.json'), path.join('.claude', 'hooks', 'guard-writes.js')]
+      .map((rel) => {
+        const f = path.join(home, rel);
+        try {
+          return `${rel}:${fs.statSync(f).mtimeMs}:${fs.readFileSync(f, 'utf8').length}`;
+        } catch {
+          return `${rel}:absent`;
+        }
+      }).join('|');
+  }
 
   before(async () => {
+    liveMasterFingerprint = liveMasterState();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-'));
     store._setBasePath(tmpDir);
     store.init();
@@ -74,6 +95,7 @@ describe('API endpoints', () => {
     store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
+
 
   // #710 — the server owns the network-binding classification and ships it as
   // `bindState`. The frontend renders that and derives nothing. These are live
@@ -919,8 +941,15 @@ describe('API endpoints', () => {
         assert.match(second.data.error, /is now "write"/);
         assert.match(second.data.error, /guard could not be re-provisioned/);
       } finally {
-        master.applyMasterAccessLevel = realApply;
+        // Order matters, and getting it wrong is what the neighbouring comment
+        // warns about: the cleanup PATCH still carries a CHANGED level, so with
+        // the real applier restored first it takes the changed-level branch into
+        // `masterHome()` — the operator's own `~/.tangleclaw/master`, which
+        // `store._setBasePath(tmpDir)` does not redirect. Reset the config while
+        // still stubbed, THEN restore.
+        master.applyMasterAccessLevel = () => ({ applied: true, home: '/stub' });
         await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'read-only' } });
+        master.applyMasterAccessLevel = realApply;
       }
     });
 
@@ -971,4 +1000,14 @@ describe('API endpoints', () => {
       assert.deepEqual(store.config.load().master.scope, { type: 'group', groupId: group.id });
     });
   });
+  // A TEST, not an `after` hook: a failing assertion inside `after` prints
+  // `not ok` and still exits 0, so node --test would report it while CI passed.
+  // Verified before relying on it. Runs last within this describe, which is what
+  // makes it a whole-file check.
+  it('did not touch the operator\'s real master home (#755)', () => {
+    assert.equal(liveMasterState(), liveMasterFingerprint,
+      'this suite rewrote the operator\'s real ~/.tangleclaw/master — a route test reached '
+      + 'master.applyMasterAccessLevel without stubbing it (see the accessLevel tests)');
+  });
+
 });

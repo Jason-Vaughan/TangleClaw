@@ -118,7 +118,7 @@ What started as session persistence grew into a full orchestration platform — 
 
 ### Dashboard
 - **Project management** — create, attach, archive, filter, tag, and delete projects from a central landing page
-- **Project Master pane** — persistent fleet-aware assistant session embedded in the landing page and as an in-session drawer, with a settings surface (access level, engine, launch mode, scope, auto-start, editable versioned Hard rules) and a structurally enforced write boundary on the Claude engine — read-only, ask-before-writing, or full access, applied to its next tool call ([ADR 0008](docs/adr/0008-project-master-session-model.md))
+- **Project Master pane** — persistent fleet-aware assistant session embedded in the landing page and as an in-session drawer, with a settings surface (access level, engine, launch mode, scope, auto-start, editable versioned Hard rules) and a write boundary on the Claude engine — read-only, ask-before-writing, or full access, applied to its next tool call (file writes; Bash stays operator-gated rather than hook-enforced) ([ADR 0008](docs/adr/0008-project-master-session-model.md))
 - **Setup wizard** — first-run guided setup scans for existing projects, detects engines, configures preferences, and walks through HTTPS setup
 - **Universal project version detection** — every project's version resolves through a layered chain (`.tangleclaw/project-version.txt` → `CHANGELOG.md` → `version.json` → `package.json`) and shows on the project card and session banner
 - **One-click self-update** — the update beacon's **Update now** button fetches the latest release tag, checks it out with fail-closed guards, and restarts the server
@@ -394,7 +394,7 @@ curl -s http://localhost:3102/api/health | python3 -m json.tool
 Planned features and improvements — contributions and feedback welcome.
 
 - **Session Switchboard — v2 automation** — the switchboard's send + receive + banner control are in beta today (see [What TangleClaw Does](#what-tangleclaw-does)); next is opt-in auto-inject of inbound messages into the live session and hover swarm-stats, gated on an at-least-once delivery guarantee upstream
-- **Project Master actions** — today the Master assistant is read-only; next it acts (confirm-gated) on your behalf across the fleet
+- **Project Master actions** — the Master can now write files at the access level you set; next it acts on the TangleClaw API itself (confirm-gated) across the fleet
 - **Cross-model governance** — extend the deeper governance layers beyond Claude Code to the other engines
 - **Multi-engine sessions** — launch multiple engines on the same project simultaneously (e.g., Claude Code for implementation, Codex for review)
 - **Sidecar controls** — poll, refresh, dismiss, and terminate individual background processes from the detail panel

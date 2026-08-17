@@ -86,6 +86,25 @@ All notable changes to TangleClaw are documented in this file.
   defaulted — a default would render "you are read-only" into the identity of a master the operator
   had set to `write`.
 
+  **A superseded baseline rule now reaches installs that already seeded.** Seeding only ever ran on
+  an empty table, so a changed shipped rule reached nobody who had opened the Master once — every
+  such install would have kept "Never edit files outside this directory" while the same generated
+  file said "you may create and edit files anywhere" at `write`. Rows still byte-identical to the old
+  text are upgraded, with the rewrite recorded in the rule's version history; rows the operator
+  edited are left alone, because those are theirs.
+
+  **`suggest` no longer contains its own escalation.** Writes to the guard's own control surface —
+  the level file, the master's `settings.json`, the hook script — are refused outright below `write`
+  rather than offered for confirmation. One "yes" to editing the level file would otherwise have
+  granted permanent write, and one to the hook would have removed the boundary: a tier whose entire
+  point is per-action approval handing over every future action on a single click.
+
+  **What the guard does not cover is now stated rather than implied.** The `PreToolUse` matcher is
+  `Edit|Write|NotebookEdit`, so shell writes sit outside it — Bash stays operator-gated rather than
+  hook-enforced, because command-pattern matching cannot reliably separate a mutating command from a
+  reading one. "Structurally enforced" means the file-editing tools, and the generated identity says
+  so to the master in as many words rather than leaving it to be discovered.
+
   **Instructional engines are told the truth twice.** The section says there is no write guard and
   the boundary holds only because the master honors it, and the status payload gained
   `levelAppliesAt` — `next-tool-call` where a guard exists, `next-ensure` where the level travels in

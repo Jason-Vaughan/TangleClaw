@@ -524,6 +524,60 @@ describe('master Hard rules — seeding, fail-safe, restore', () => {
   });
 });
 
+describe('superseded baseline rules reach installs that already seeded (#755 chunk 2)', () => {
+  const OLD = '**Never edit files outside this directory.** Your home is your only writable'
+    + ' surface, and durable notes belong under `memory/`. You have no project'
+    + ' working tree by design — do not go looking for one.';
+
+  beforeEach(() => clearMasterRules());
+
+  it('upgrades an UNEDITED superseded row, so an existing install stops contradicting itself', () => {
+    // Seeding only ever runs on an empty table, so without this every install
+    // that ever opened the Master would keep "Never edit files outside this
+    // directory" while the same generated CLAUDE.md says "you may create and
+    // edit files anywhere" at `write`. On a non-Claude master that contradiction
+    // IS the boundary.
+    store.sessionRules.create({
+      content: OLD, kind: 'master', createdBy: 'system', criticGate: 'not-required'
+    });
+    master.seedBaselineMasterRules();
+
+    const rules = store.sessionRules.list({ kind: 'master' }).map((r) => r.content);
+    assert.ok(!rules.includes(OLD), 'the superseded text must be gone');
+    assert.ok(rules.some((c) => c.includes('unless your access level allows it')),
+      'and replaced by the shipped one');
+  });
+
+  it('leaves an operator-EDITED row alone — their text is theirs', () => {
+    const mine = OLD + ' And one more thing I added myself.';
+    store.sessionRules.create({
+      content: mine, kind: 'master', createdBy: 'operator', criticGate: 'not-required'
+    });
+    master.seedBaselineMasterRules();
+
+    const rules = store.sessionRules.list({ kind: 'master' }).map((r) => r.content);
+    assert.ok(rules.includes(mine), 'an edited row must survive verbatim');
+  });
+
+  it('keeps the migration history — provenance outlives the rewrite', () => {
+    const created = store.sessionRules.create({
+      content: OLD, kind: 'master', createdBy: 'system', criticGate: 'not-required'
+    });
+    master.seedBaselineMasterRules();
+    const versions = store.sessionRules.listVersions(created.id);
+    assert.ok(versions.length >= 1, 'the rewrite must be recorded, not silent');
+    assert.ok(versions.some((v) => (v.changeReason || '').includes('#755')));
+  });
+
+  it('does not re-seed when rows already exist', () => {
+    store.sessionRules.create({
+      content: 'Just one rule.', kind: 'master', createdBy: 'operator', criticGate: 'not-required'
+    });
+    assert.equal(master.seedBaselineMasterRules(), 0);
+    assert.equal(store.sessionRules.list({ kind: 'master' }).length, 1);
+  });
+});
+
 describe('the identity states the access level (#755 chunk 2)', () => {
   const STRUCT = { serverPort: 3101, master: { engine: 'claude' } };
 
@@ -869,6 +923,36 @@ describe('access level — the guard reads it per invocation (#755)', () => {
       // Inside the carve-out there is nothing to confirm — it was already the
       // master's own writable surface at every tier.
       assert.equal(guardDecision(home, { tool_input: { file_path: path.join(home, 'memory', 'N.md') } }), null);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('suggest never merely ASKS about the guard\'s own controls — that would be a one-click escalation', () => {
+    // A tier whose point is per-action approval must not let one approval hand
+    // over every future action: confirming an edit to .access-level grants
+    // permanent write, and confirming one to the hook removes the boundary.
+    const home = homeAt('suggest');
+    try {
+      for (const target of [
+        master.masterAccessLevelPath(home),
+        path.join(home, '.claude', 'settings.json'),
+        path.join(home, '.claude', 'hooks', 'guard-writes.js')
+      ]) {
+        assert.equal(guardDecision(home, { tool_input: { file_path: target } }), 'deny',
+          `${target} must be refused outright, not offered for confirmation`);
+      }
+      // An ordinary path is still the tier's normal ask.
+      assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'ask');
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('read-only refuses the control surface too, for the same reason', () => {
+    const home = homeAt('read-only');
+    try {
+      assert.equal(guardDecision(home, { tool_input: { file_path: master.masterAccessLevelPath(home) } }), 'deny');
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
