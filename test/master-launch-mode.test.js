@@ -60,7 +60,13 @@ function status(over = {}) {
   return {
     accessLevel: 'read-only',
     accessLevels: ['read-only', 'suggest', 'write'],
-    enabledAccessLevels: ['read-only'],
+    // Kept in step with what `getMasterStatus` actually emits: all three tiers
+    // are enabled since #755, and `levelAppliesAt` is the field the tier hints
+    // read to decide whether to promise per-tool-call immediacy. A fixture
+    // missing it would exercise only the cautious fallback and report the
+    // structural copy as untested.
+    enabledAccessLevels: ['read-only', 'suggest', 'write'],
+    levelAppliesAt: 'next-tool-call',
     engine: 'claude',
     resolvedEngine: 'claude',
     launchMode: 'default',
@@ -247,6 +253,30 @@ describe('#756 — the Master settings modal offers a launch mode', () => {
     const quiet = render(status({ accessLevel: 'read-only', resolvedLaunchMode: 'bypassPermissions' }));
     assert.doesNotMatch(quiet, /no confirmation at any layer/i,
       'a read-only master in bypass is coherent — it must not be flagged as dangerous');
+  });
+
+  it('the tier hints say WHEN a change binds, from the payload rather than by assertion (#755 R-4)', () => {
+    // THE MUTATION THIS CATCHES: hardcoding "next tool call" back into the
+    // hints. That is true only where a write guard exists; on an instructional
+    // master the level rides the regenerated identity, so promising immediacy
+    // there tells the operator their flip has landed when it has not.
+    const structural = render(status({ levelAppliesAt: 'next-tool-call' }));
+    assert.match(structural, /next tool call/i);
+    assert.doesNotMatch(structural, /carries the level in its instructions/i);
+
+    const instructional = render(status({ levelAppliesAt: 'next-ensure' }));
+    assert.match(instructional, /carries the level in its instructions/i);
+    assert.doesNotMatch(instructional, /next tool call/i);
+  });
+
+  it('an absent levelAppliesAt falls back to the cautious sentence, never the promise', () => {
+    // Older server, or a payload shape that moved. Over-promising immediacy is
+    // the direction that misleads, so absence must not read as "immediate".
+    const s = status();
+    delete s.levelAppliesAt;
+    const md = render(s);
+    assert.doesNotMatch(md, /next tool call/i);
+    assert.match(md, /carries the level in its instructions/i);
   });
 });
 

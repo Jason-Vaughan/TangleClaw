@@ -59,8 +59,39 @@ All notable changes to TangleClaw are documented in this file.
   hint says so; the `write` + `bypassPermissions` warning is deliberately *not* extended to
   `suggest`, since its claim is only true of `write`.
 
-  Still to come on #755: the master's identity prose still says "Read-only" unconditionally
-  (chunk 2), and the control bar's READ/WRITE toggle is still dim (chunk 3).
+  Still to come on #755: the control bar's READ/WRITE toggle is still dim (chunk 3).
+
+- **The Master's own instructions state its access level, and say honestly whether anything enforces
+  it (#755, chunk 2).** The generated identity described a fixed posture — "the **read-only**
+  administrator", plus a Hard rule reading "Never edit files outside this directory" — while the
+  level had become a setting. On the Claude engine that was merely stale; on every other engine that
+  prose *is* the boundary, so it was the enforcement itself that was wrong.
+
+  The identity now carries a generated **"Your current access level"** section, distinct at each tier
+  and deliberately separate from the Hard rules. The rules are the operator's text — editable,
+  versioned, restorable — so rewriting them to track a setting would either destroy an edit or leave
+  it contradicting the live posture. The rules say what the master should not do; the generated
+  section says what it currently can.
+
+  **The two boundaries are no longer conflated, and only one of them moved.** The baseline splits
+  into an API rule ("use only GET endpoints") and a filesystem rule. #755 grants a file-write tier
+  and explicitly **not** API authority, so the API rule stays unconditional at every level and the
+  role prose still says the master uses the API read-only. Only the filesystem rule became
+  level-derived — and it is phrased so the restrictive reading survives on its own, for a reader who
+  never reaches the level section.
+
+  **An unknown level renders the read-only statement rather than nothing**, matching the guard: an
+  identity with no access-level section reads as *unbounded* to a master with no other source for
+  the answer. And when a caller does not pass a level, it is resolved from config rather than
+  defaulted — a default would render "you are read-only" into the identity of a master the operator
+  had set to `write`.
+
+  **Instructional engines are told the truth twice.** The section says there is no write guard and
+  the boundary holds only because the master honors it, and the status payload gained
+  `levelAppliesAt` — `next-tool-call` where a guard exists, `next-ensure` where the level travels in
+  the regenerated identity. The settings hints read that field instead of promising immediacy
+  everywhere, and fall back to the cautious sentence when it is absent, because over-promising is
+  the direction that misleads.
 
 - **The Master's settings open from inside a session, and both surfaces render one control bar
   (#768 chunk 2).** From inside a session there was no route to the Master's settings at all —

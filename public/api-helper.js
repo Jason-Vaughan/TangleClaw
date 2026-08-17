@@ -1571,6 +1571,16 @@
      */
     function renderMasterSettingsBody(s, groups) {
       const body = document.getElementById('masterSettingsBody');
+      // WHEN a change binds, read from the server rather than asserted. Both
+      // hints used to promise "its next tool call" on every engine; that is the
+      // structural answer, and on an instructional master the level travels in
+      // the regenerated identity, so it arrives with the next ensure (#755).
+      // Falls back to the cautious sentence when the field is absent — an older
+      // server, or a payload shape that changed — because over-promising
+      // immediacy is the direction that misleads.
+      const bindsAt = s.levelAppliesAt === 'next-tool-call'
+        ? 'Takes effect on the master’s next tool call — no restart.'
+        : 'Takes effect the next time the master session starts, since this engine carries the level in its instructions rather than a write guard.';
       const tierHints = {
         'read-only': 'Structurally enforced on the Claude engine: writes are hard-denied outside the master’s memory/ directory. Whether anything else asks first is the Launch mode setting below — this tier bounds what the master may touch, not how often it prompts.',
         // The bypassPermissions sentence is PROBED, not reasoned. Both the first
@@ -1581,14 +1591,14 @@
         // still gates, and only a hook `allow` writes. The launch mode skips the
         // permission-RULES gate; a hook decision is evaluated separately and
         // outranks it. Do not soften this to a guess again.
-        'suggest': 'The master may attempt writes anywhere, and each one outside its own memory directory stops for your confirmation in the master’s terminal. Takes effect on its next tool call — no restart. The confirmation still stands under the bypassPermissions launch mode: a hook decision outranks it.',
+        'suggest': 'The master may attempt writes anywhere, and each one outside its own memory directory stops for your confirmation in the master’s terminal. ' + bindsAt + ' The confirmation still stands under the bypassPermissions launch mode: a hook decision outranks it.',
         // Deliberately NOT the phrase "no confirmation at any layer": that
         // wording belongs to the conditional write + bypassPermissions warning
         // below, which only renders for that combination. Tier hints render at
         // every tier, so borrowing the sentinel made a read-only master display
         // the dangerous-combination text — caught by the #756 guard that asserts
         // exactly that.
-        'write': 'The master may write anywhere it can reach, across every project, without asking you first. Takes effect on its next tool call — no restart.'
+        'write': 'The master may write anywhere it can reach, across every project, without asking you first. ' + bindsAt
       };
       const accessRadios = s.accessLevels.map((level) => {
         const enabled = s.enabledAccessLevels.includes(level);
