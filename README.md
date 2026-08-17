@@ -17,10 +17,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Jason-Vaughan/TangleClaw/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/Jason-Vaughan/TangleClaw/test.yml?branch=main&style=for-the-badge&label=tests" alt="Tests"></a>
-  <a href="https://github.com/Jason-Vaughan/TangleClaw/releases/latest"><img src="https://img.shields.io/github/v/release/Jason-Vaughan/TangleClaw?style=for-the-badge&color=blue" alt="Release"></a>
-  <a href="#prerequisites"><img src="https://img.shields.io/badge/npm%20dependencies-zero-purple?style=for-the-badge" alt="Zero npm dependencies"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="MIT License"></a>
+  <a href="https://github.com/Jason-Vaughan/TangleClaw/actions/workflows/test.yml"><img src="https://github.com/Jason-Vaughan/TangleClaw/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <a href="https://github.com/Jason-Vaughan/TangleClaw/releases/latest"><img src="https://img.shields.io/github/v/release/Jason-Vaughan/TangleClaw?color=blue" alt="Release"></a>
+  <a href="#prerequisites"><img src="https://img.shields.io/badge/npm%20dependencies-zero-purple" alt="Zero npm dependencies"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
 </p>
 
 ```bash

@@ -215,9 +215,15 @@ All notable changes to TangleClaw are documented in this file.
   `curl … /main/INSTALL.sh | bash` one-liner fetched a path that does not exist in the repo: verified
   404, which would have piped a GitHub error page into `bash`.
 
-  Fixed to values that cannot go stale: shields' live workflow-status and `github/v/release`
-  endpoints, `npm dependencies-zero`, and a quickstart using the real `deploy/install.sh`. Badges now
+  Fixed to values that cannot go stale: GitHub's own workflow badge, shields' `github/v/release`
+  endpoint, `npm dependencies-zero`, and a quickstart using the real `deploy/install.sh`. Badges now
   link to what they assert (workflow, releases, prerequisites, LICENSE).
+
+  The tests badge is GitHub's native `test.yml/badge.svg` rather than a shields equivalent, because
+  `test/ci-workflow.test.js` pins exactly that — a contract worth keeping, since the native badge is
+  served by the same system that runs the workflow and needs no third party to be truthful. Meeting
+  it costs the `?style=for-the-badge` treatment (Actions badges don't take a style parameter), so
+  the row is flat across all four rather than three bold badges beside one that could not match.
 
   Also corrected while here: Quick Start still pinned `--branch v5.0.0`, six minor versions back.
   Both snippets now name the current release — which makes the version a **two-site** staleness
