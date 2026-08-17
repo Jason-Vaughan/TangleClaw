@@ -2076,7 +2076,7 @@
       <span class="master-access-toggle master-bar-pending" id="${p}Access" role="group"
             aria-label="Master access level" aria-disabled="true"
             aria-describedby="${p}AccessWhy" title="${TC_MASTER_PENDING.access}">
-        <span class="master-access-seg is-on">READ</span><span class="master-access-seg">WRITE</span>
+        <span class="master-access-seg">READ</span><span class="master-access-seg">WRITE</span>
       </span>
       <span class="sr-only" id="${p}AccessWhy">${TC_MASTER_PENDING.access}</span>
       ${pend('Upload', 'banner-btn', 'Upload')}

@@ -688,6 +688,23 @@ describe('access level — the guard reads it per invocation (#755)', () => {
 
   const OUTSIDE = '/etc/hosts';
 
+  it('the generated guard is syntactically valid JavaScript', () => {
+    // The guard is built inside a template literal, so a stray backtick in one of
+    // its comments silently ends the string — which is a syntax error in
+    // lib/master.js, not in the guard, and it takes the whole module down at
+    // require time. This names that failure directly instead of leaving it to be
+    // inferred from every other test in the file failing at once.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-syn-'));
+    try {
+      const script = path.join(home, 'guard.js');
+      fs.writeFileSync(script, master.buildMasterGuardScript(home));
+      const res = spawnSync(process.execPath, ['--check', script], { encoding: 'utf8' });
+      assert.equal(res.status, 0, `generated guard does not parse:\n${res.stderr}`);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it('stores the level beside memory/, never inside it — a level file the master could edit is one it could raise', () => {
     const home = '/tmp/tc-master-x';
     const levelFile = master.masterAccessLevelPath(home);
@@ -776,6 +793,35 @@ describe('access level — the guard reads it per invocation (#755)', () => {
     }
   });
 
+  it('says WHY when read-only was reached by failing rather than by choice', () => {
+    // Same outcome either way — that is the fail-closed property — but the
+    // operator debugging a master that will not write has to be able to tell
+    // "this is the posture I set" from "this guard cannot read its posture".
+    function reasonFor(setup) {
+      const home = homeAt(null);
+      try {
+        setup(home);
+        const script = path.join(home, '.claude', 'hooks', 'guard-writes.js');
+        const res = spawnSync(process.execPath, [script], {
+          input: JSON.stringify({ tool_input: { file_path: OUTSIDE } }), encoding: 'utf8'
+        });
+        return JSON.parse(res.stdout).hookSpecificOutput.permissionDecisionReason;
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    }
+    const chosen = reasonFor((home) => master.writeMasterAccessLevel(home, 'read-only'));
+    const failed = reasonFor((home) => fs.writeFileSync(master.masterAccessLevelPath(home), 'nonsense'));
+    const absent = reasonFor(() => {});
+
+    assert.doesNotMatch(chosen, /could not be read/,
+      'a deliberate read-only must not accuse its own level file');
+    for (const [label, reason] of [['garbage', failed], ['absent', absent]]) {
+      assert.match(reason, /could not be read/, `${label}: the degrade must be stated`);
+      assert.ok(reason.includes('.access-level'), `${label}: name the file to fix`);
+    }
+  });
+
   it('a level file that is a directory degrades to read-only', () => {
     const home = homeAt(null);
     try {
@@ -839,17 +885,48 @@ describe('access level — the guard reads it per invocation (#755)', () => {
     }
   });
 
-  it('applyMasterAccessLevel does not newly provision structural enforcement on an instructional master', () => {
+  it('revoking restores a guard the master DELETED, not merely blanked (#755)', () => {
+    // The sharper half of the same threat, and the one that defeated the first
+    // fix: that version gated regeneration on the guard file existing — the very
+    // artifact a master at `write` would remove. Under bypassPermissions an `rm`
+    // is unconfirmed too, so deletion is not the exotic case.
+    const home = homeAt('write');
+    try {
+      const script = path.join(home, '.claude', 'hooks', 'guard-writes.js');
+      const genuine = fs.readFileSync(script, 'utf8');
+      fs.rmSync(path.join(home, '.claude'), { recursive: true, force: true });
+      assert.ok(!fs.existsSync(script), 'precondition: the guard is gone');
+
+      master.applyMasterAccessLevel('read-only', { home });
+
+      assert.ok(fs.existsSync(script), 'revocation must re-provision a deleted guard');
+      assert.equal(fs.readFileSync(script, 'utf8'), genuine);
+      assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'deny',
+        'and it must actually bind');
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('applyMasterAccessLevel does not provision structural enforcement on an INSTRUCTIONAL master', () => {
     // The change path must not hand a non-Claude master a guard it never had —
     // that would be a posture change nobody asked for, on the surface that is
-    // supposed to degrade visibly instead.
+    // supposed to degrade visibly instead. Driven through the engine resolver
+    // rather than through "does a guard already exist", because that is what
+    // decides enforcement everywhere else.
+    const instructional = {
+      resolveDefaultEngine: () => 'gemini',
+      reconcileLaunchMode: () => 'default'
+    };
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-instr-'));
     try {
-      const result = master.applyMasterAccessLevel('write', { home });
+      const result = master.applyMasterAccessLevel('write', { home, enginesLib: instructional });
       assert.equal(result.applied, true);
-      assert.equal(fs.readFileSync(master.masterAccessLevelPath(home), 'utf8').trim(), 'write');
+      assert.equal(result.enforcement, 'instructional');
+      assert.equal(fs.readFileSync(master.masterAccessLevelPath(home), 'utf8').trim(), 'write',
+        'the level is still recorded — intent is useful even where it is not structurally backed');
       assert.ok(!fs.existsSync(path.join(home, '.claude')),
-        'no guard existed here, so none may be created');
+        'an instructional master must not be handed a guard by the change path');
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

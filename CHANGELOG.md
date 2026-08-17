@@ -30,6 +30,14 @@ All notable changes to TangleClaw are documented in this file.
   **The level file sits beside `memory/`, never inside it.** `memory/` is the master's own write
   carve-out, so a level file placed there would be one the master could raise for itself.
 
+  **Revoking re-provisions the guard, not just the level file.** At `write` the master may edit *or
+  delete* its own hook script, so writing `.access-level` alone could revoke nothing until the next
+  ensure — a toggle reporting a boundary it did not restore. Regeneration is keyed on the resolved
+  engine's enforcement tier, deliberately **not** on the guard file being present: keying on the
+  artifact the threat removes covers a blanked hook and misses a deleted one, which is how the first
+  version of this fix failed review. Instructional masters are still never handed a guard they never
+  had.
+
   **`write` makes the guard permit; it never makes the guard absent.** Skipping generation for a
   permissive tier would leave a stale read-only guard from an earlier ensure silently in force.
 

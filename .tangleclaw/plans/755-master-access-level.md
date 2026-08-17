@@ -108,13 +108,13 @@ re-litigate them mid-build.
 **A. `suggest` ships in chunk 1, via fall-through-to-ask.**
 
 There is a mapping that makes all three tiers real for almost nothing. The `PreToolUse` hook has
-three outcomes, not two: emit a `deny` decision, or **exit 0 with no decision at all**, which falls
-through to the harness permission rules and asks the operator in the Master's own terminal. So:
+three outcomes, not two — `deny`, `ask`, and `allow`. `ask` puts the confirmation in the Master's
+own terminal, which is what "propose, don't execute" means. So:
 
 | Tier | Guard behavior | What the operator sees |
 |---|---|---|
 | `read-only` | explicit `deny` outside `memory/` | refused, with the reason |
-| `suggest` | fall through — no decision | Claude Code asks before each write |
+| `suggest` | explicit `ask` outside `memory/` | Claude Code asks before each write |
 | `write` | allow | writes proceed |
 
 That is precisely #755's stated meaning of `suggest` ("may propose mutations; each requires explicit
