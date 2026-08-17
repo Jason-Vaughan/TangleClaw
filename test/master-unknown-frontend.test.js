@@ -95,14 +95,14 @@ async function render(payload) {
   const els = {
     masterDot: makeElement('masterDot'),
     masterPanelDot: makeElement('masterPanelDot'),
-    masterStatusText: makeElement('masterStatusText'),
-    masterRetryBtn: makeElement('masterRetryBtn')
+    masterPanelStatusText: makeElement('masterPanelStatusText'),
+    masterPanelRetryBtn: makeElement('masterPanelRetryBtn')
   };
   // The row starts as the markup ships it, so a test can tell "left untouched"
   // from "deliberately written" — the original defect was silence, and silence
   // is only visible against the placeholder it fails to replace.
-  els.masterStatusText.textContent = 'Checking…';
-  els.masterRetryBtn.classList.add('hidden');
+  els.masterPanelStatusText.textContent = 'Checking…';
+  els.masterPanelRetryBtn.classList.add('hidden');
 
   const sandbox = {
     console,
@@ -115,6 +115,14 @@ async function render(payload) {
     // claim unfalsifiable.
     tcMasterRead: loadApiHelper().tcMasterRead
   };
+  // The status row moved into the shared control bar (#768 chunk 2), so
+  // `setMasterStatus` delegates rather than writing ids. The REAL component is
+  // injected, bound to these same elements — a stub here would assert only that
+  // delegation was attempted, not that the row still ends up correct, which is
+  // the whole subject of this file.
+  sandbox.masterBar = loadApiHelper().tcCreateMasterControlBar({
+    doc: sandbox.document, rootId: 'masterPanelBar', prefix: 'masterPanel'
+  });
   sandbox.window = sandbox;
   vm.createContext(sandbox);
 
@@ -137,11 +145,11 @@ describe('the master panel distinguishes "not running" from "could not look" (#9
     // looks like a master they never started.
     const { els } = await render({ exists: null, incomplete: ['exists'], cause: 'read-timed-out' });
 
-    assert.notEqual(els.masterStatusText.textContent, 'Checking…',
+    assert.notEqual(els.masterPanelStatusText.textContent, 'Checking…',
       'a state nobody could establish must not leave the placeholder standing');
-    assert.match(els.masterStatusText.textContent, /could not be established/i,
+    assert.match(els.masterPanelStatusText.textContent, /could not be established/i,
       'and it has to name the state as unestablished, not as down');
-    assert.equal(els.masterRetryBtn._classes.has('hidden'), false,
+    assert.equal(els.masterPanelRetryBtn._classes.has('hidden'), false,
       'an unknown is worth re-asking about, so Retry has to be reachable');
   });
 
@@ -158,7 +166,7 @@ describe('the master panel distinguishes "not running" from "could not look" (#9
     // going through `tcMasterRead` — the remedy disappears, and so does any
     // future cause the shared table learns to translate.
     const { els } = await render({ exists: null, incomplete: ['exists'], cause: 'read-timed-out' });
-    const text = els.masterStatusText.textContent;
+    const text = els.masterPanelStatusText.textContent;
 
     assert.match(text, /stopped by TangleClaw after it stopped responding/,
       'the CAUSE has to be translated, not dropped — it is in the payload and nothing read it');
@@ -171,9 +179,9 @@ describe('the master panel distinguishes "not running" from "could not look" (#9
     // here because the master row is a new consumer of that behaviour, and the
     // failure mode is a payload token leaking into prose someone reads.
     const { els } = await render({ exists: null, incomplete: ['exists'], cause: 'some-new-token' });
-    assert.doesNotMatch(els.masterStatusText.textContent, /some-new-token/,
+    assert.doesNotMatch(els.masterPanelStatusText.textContent, /some-new-token/,
       'a raw cause token in operator-facing prose reads as a leak');
-    assert.match(els.masterStatusText.textContent, /did not complete/);
+    assert.match(els.masterPanelStatusText.textContent, /did not complete/);
   });
 
   it('does not paint the master live or down on an unknown', async () => {
@@ -201,7 +209,7 @@ describe('the master panel distinguishes "not running" from "could not look" (#9
     // started the master is the ordinary case, and it is not a problem report.
     const { els } = await render({ exists: false, incomplete: [], cause: null });
 
-    assert.equal(els.masterStatusText.textContent, 'Checking…',
+    assert.equal(els.masterPanelStatusText.textContent, 'Checking…',
       'an answered absence is the ordinary state, not a condition to announce');
     assert.equal(els.masterDot._classes.has('live'), false);
   });
@@ -216,8 +224,8 @@ describe('the master panel distinguishes "not running" from "could not look" (#9
     const els = {
       masterDot: makeElement('masterDot'),
       masterPanelDot: makeElement('masterPanelDot'),
-      masterStatusText: makeElement('masterStatusText'),
-      masterRetryBtn: makeElement('masterRetryBtn')
+      masterPanelStatusText: makeElement('masterPanelStatusText'),
+      masterPanelRetryBtn: makeElement('masterPanelRetryBtn')
     };
     const sandbox = {
       console,
@@ -230,6 +238,11 @@ describe('the master panel distinguishes "not running" from "could not look" (#9
     api.lastErrorCode = 'MASTER_LIVENESS_UNKNOWN';
     sandbox.api = api;
     sandbox.window = sandbox;
+    // Same reason as `render` above: the row belongs to the shared bar now, so
+    // the real component is injected rather than stubbed.
+    sandbox.masterBar = loadApiHelper().tcCreateMasterControlBar({
+      doc: sandbox.document, rootId: 'masterPanelBar', prefix: 'masterPanel'
+    });
     vm.createContext(sandbox);
 
     await vm.runInContext([
@@ -240,9 +253,9 @@ describe('the master panel distinguishes "not running" from "could not look" (#9
 
     assert.equal(els.masterDot._classes.has('down'), false,
       'a liveness nobody established must not be painted as a definite down');
-    assert.match(els.masterStatusText.textContent, /tmux did not answer/,
+    assert.match(els.masterPanelStatusText.textContent, /tmux did not answer/,
       'and the real reason has to reach the operator');
-    assert.equal(els.masterRetryBtn._classes.has('hidden'), false, 'Retry stays available');
+    assert.equal(els.masterPanelRetryBtn._classes.has('hidden'), false, 'Retry stays available');
   });
 
   it('still paints down when the ensure genuinely failed', async () => {
@@ -252,8 +265,8 @@ describe('the master panel distinguishes "not running" from "could not look" (#9
     const els = {
       masterDot: makeElement('masterDot'),
       masterPanelDot: makeElement('masterPanelDot'),
-      masterStatusText: makeElement('masterStatusText'),
-      masterRetryBtn: makeElement('masterRetryBtn')
+      masterPanelStatusText: makeElement('masterPanelStatusText'),
+      masterPanelRetryBtn: makeElement('masterPanelRetryBtn')
     };
     const sandbox = {
       console,
@@ -266,6 +279,11 @@ describe('the master panel distinguishes "not running" from "could not look" (#9
     api.lastErrorCode = 'MASTER_ENSURE_FAILED';
     sandbox.api = api;
     sandbox.window = sandbox;
+    // Same reason as `render` above: the row belongs to the shared bar now, so
+    // the real component is injected rather than stubbed.
+    sandbox.masterBar = loadApiHelper().tcCreateMasterControlBar({
+      doc: sandbox.document, rootId: 'masterPanelBar', prefix: 'masterPanel'
+    });
     vm.createContext(sandbox);
 
     await vm.runInContext([
@@ -283,6 +301,6 @@ describe('the master panel distinguishes "not running" from "could not look" (#9
     // server reporting an unknown — reading `.exists` off it would throw and
     // take the rest of page init with it.
     const { els } = await render(null);
-    assert.equal(els.masterStatusText.textContent, 'Checking…');
+    assert.equal(els.masterPanelStatusText.textContent, 'Checking…');
   });
 });

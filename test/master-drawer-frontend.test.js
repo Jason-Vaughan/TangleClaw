@@ -51,9 +51,16 @@ describe('Project Master drawer — session page (chunk G slice 3, #331)', () =>
     it('the drawer carries a status row, retry button, and the iframe', () => {
       assert.match(html, /<aside class="master-drawer" id="masterDrawer" role="dialog"/);
       assert.match(html, /id="masterBackdrop"/);
-      assert.match(html, /id="masterDrawerDot"/);
-      assert.match(html, /id="masterDrawerStatusText"/);
-      assert.match(html, /id="masterDrawerRetryBtn"/);
+      // The status row's contents moved into the shared control bar (#768
+      // chunk 2), so the PAGE now carries only the mount root and the COMPONENT
+      // carries the ids. Asserting both keeps the original guarantee — those
+      // controls exist on this page — while proving they come from one
+      // implementation rather than a copy that can drift from the dashboard's.
+      assert.match(html, /id="masterDrawerBar"/);
+      const bar = require('./_api-helper-globals')().tcMasterControlBarMarkup('masterDrawer', {});
+      assert.match(bar, /id="masterDrawerDot"/);
+      assert.match(bar, /id="masterDrawerStatusText"/);
+      assert.match(bar, /id="masterDrawerRetryBtn"/);
       assert.match(html, /id="masterDrawerFrame"/);
     });
 
@@ -103,7 +110,9 @@ describe('Project Master drawer — session page (chunk G slice 3, #331)', () =>
 
     it('failure surfaces the real server message and a retry affordance', () => {
       assert.match(drawerSection, /api\.lastError/);
-      assert.match(js, /\$\('masterDrawerRetryBtn'\)\.addEventListener\('click', ensureMasterDrawerAttached\)/);
+      // Retry is the bar's now; the page supplies the handler rather than
+      // binding the button itself.
+      assert.match(js, /onRetry: ensureMasterDrawerAttached/);
     });
 
     it('the iframe attaches to the reserved tmux session, once per page load', () => {

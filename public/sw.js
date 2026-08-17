@@ -14,6 +14,11 @@ const CACHE_NAME = 'tangleclaw-v3-59';
 const STATIC_ASSETS = [
   '/',
   '/style.css',
+  // shared-controls.css carries the base look for every control the session
+  // banner and the Master control bar SHARE (#768). A page that renders the bar
+  // without it shows unstyled controls, not a cosmetic skew — so it is precached
+  // here and network-first below, never surfaced by a CACHE_NAME bump (#710).
+  '/shared-controls.css',
   '/landing.js',
   '/ui.js',
   // history-drawer.js is the dashboard-shell sibling of ui.js (CC-5): cache-first
@@ -60,6 +65,7 @@ const NETWORK_FIRST_PATHS = new Set([
   // A stale copy hides shared-helper changes from operators the same way #271
   // describes for session.js (#427: the clipboard fix lived here) — keep it
   // network-first so a plain reload always gets the current helper.
+  '/shared-controls.css',
   '/api-helper.js',
   '/session.js',
   // wrap-drawer.js is the pure-helper sibling of session.js: session.js

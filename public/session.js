@@ -83,6 +83,11 @@ const apiMutate = window.tcCreateApiMutate(api);
 // dependencies are live. Declared here so the Master control bar can reach it.
 let masterSettings = null;
 
+// The Master control bar (#768 chunk 2) — the same component the dashboard
+// panel mounts. Declared here because `setMasterDrawerStatus` delegates to it
+// from well above its mount site.
+let masterBar = null;
+
 // Serializes the update-and-restart against itself. The dashboard shares this
 // latch with its #235 stale-server restart button; this page has no such
 // button, so the beacon is its only holder.
@@ -2081,11 +2086,10 @@ function handleSessionEnded(statusData) {
  * @param {boolean} [showRetry] - Reveal the drawer's Retry button
  */
 function setMasterDrawerStatus(status, text, showRetry) {
-  const dot = document.getElementById('masterDrawerDot');
-  dot.classList.remove('live', 'pending', 'down');
-  if (status) dot.classList.add(status);
-  if (text !== undefined) document.getElementById('masterDrawerStatusText').textContent = text;
-  document.getElementById('masterDrawerRetryBtn').classList.toggle('hidden', !showRetry);
+  // Delegates to the shared control bar rather than reaching for ids. The bar
+  // owns this row on both surfaces now, so painting it from here by hand would
+  // be the second implementation #768 exists to remove.
+  if (masterBar) masterBar.setStatus(status, text, showRetry);
 }
 
 /**
@@ -4699,14 +4703,26 @@ function bindEvents() {
     esc,
     buildEngineOptions,
     state: sessionState,
-    // This page has no master status affordance yet, so a failed open reports
-    // to the console rather than pretending it succeeded. That is honest but
-    // not visible: until the control bar exists to own a status line, an
-    // operator sees nothing at all. Replacing this handler is part of building
-    // that bar, not an afterthought to it.
-    onOpenError: (message) => console.warn('[master-settings]', message)
+    // The bar owns a status line, so a failed open is now VISIBLE rather than
+    // console-only. Before this, a Master whose status fetch failed looked
+    // exactly like a gear that does nothing.
+    onOpenError: (message) => { if (masterBar) masterBar.setError(message); }
   });
   masterSettings.mount();
+
+  // The Master control bar. Same component as the dashboard panel, so the two
+  // surfaces cannot drift; only the ids and the label differ.
+  masterBar = window.tcCreateMasterControlBar({
+    doc: document,
+    rootId: 'masterDrawerBar',
+    prefix: 'masterDrawer',
+    title: 'Master',
+    onRetry: ensureMasterDrawerAttached,
+    // Clear any previous failure before opening: a stale error line beside a
+    // modal that just opened fine is its own lie.
+    onOpenSettings: () => { masterBar.setError(''); masterSettings.open(); }
+  });
+  masterBar.mount();
 
   // Close group popovers on outside click. Both predicates read the
   // dispatch-time path (#566) — a re-rendering inner handler must never be able
@@ -4831,7 +4847,6 @@ function bindEvents() {
   $('masterBtn').addEventListener('click', openMasterDrawer);
   $('masterCloseBtn').addEventListener('click', closeMasterDrawer);
   $('masterBackdrop').addEventListener('click', closeMasterDrawer);
-  $('masterDrawerRetryBtn').addEventListener('click', ensureMasterDrawerAttached);
   $('settingsBtn').addEventListener('click', openSettings);
   $('wrapBtn').addEventListener('click', openWrapModal);
   $('killBtn').addEventListener('click', openKillModal);

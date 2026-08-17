@@ -3360,13 +3360,17 @@ function renderAuditPanel() {
  * @param {boolean} [showRetry] - Reveal the panel's Retry button
  */
 function setMasterStatus(status, text, showRetry) {
-  for (const id of ['masterDot', 'masterPanelDot']) {
-    const dot = document.getElementById(id);
+  // The header BUTTON's dot stays here — it sits outside the panel and has no
+  // counterpart on the session page, so it is genuinely dashboard-only.
+  const dot = document.getElementById('masterDot');
+  if (dot) {
     dot.classList.remove('live', 'pending', 'down');
     if (status) dot.classList.add(status);
   }
-  if (text !== undefined) document.getElementById('masterStatusText').textContent = text;
-  document.getElementById('masterRetryBtn').classList.toggle('hidden', !showRetry);
+  // Everything inside the panel row belongs to the shared bar. Painting it by
+  // id from here would be the second implementation #768 exists to remove, and
+  // it is the copy that would quietly stop matching the session's.
+  if (masterBar) masterBar.setStatus(status, text, showRetry);
 }
 
 /**
@@ -3474,8 +3478,20 @@ const masterSettings = window.tcCreateMasterSettings({
   esc,
   buildEngineOptions,
   state,
-  onOpenError: (message) => setMasterStatus('down', message, true)
+  onOpenError: (message) => { setMasterStatus('down', message, true); if (masterBar) masterBar.setError(message); }
 });
+
+// The Master control bar. Same component the session drawer mounts, so the two
+// surfaces render from one implementation; only ids and label differ.
+const masterBar = window.tcCreateMasterControlBar({
+  doc: document,
+  rootId: 'masterPanelBar',
+  prefix: 'masterPanel',
+  title: 'Project Master',
+  onRetry: ensureMasterAttached,
+  onOpenSettings: () => { masterBar.setError(''); masterSettings.open(); }
+});
+masterBar.mount();
 
 /** Open the Master settings modal. */
 function openMasterSettings() { return masterSettings.open(); }
@@ -3484,8 +3500,6 @@ function openMasterSettings() { return masterSettings.open(); }
 
 const $ = (id) => document.getElementById(id);
 $('masterToggle').addEventListener('click', toggleMaster);
-$('masterRetryBtn').addEventListener('click', ensureMasterAttached);
-$('masterSettingsBtn').addEventListener('click', openMasterSettings);
 // The component owns the modal end to end: this injects the markup (index.html
 // no longer carries it) and binds Close, Save and the Hard-rules delegation.
 // Only the gear above stays the dashboard's, because the affordance is.

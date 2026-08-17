@@ -1958,6 +1958,237 @@
   global.tcWireTerminalTouchScroll = tcWireTerminalTouchScroll;
   global.tcWireTerminalDragCopy = tcWireTerminalDragCopy;
   global.tcWireTerminalFrame = tcWireTerminalFrame;
+  /*
+   * ── The Master control bar (#768 chunk 2) ────────────────────────────────
+   *
+   * The session banner's control set, reused for the Master. Not a status row:
+   * from inside a session there was no route to the Master's settings at all,
+   * and the dashboard's own row carried a gear the drawer's did not.
+   *
+   * CONTINUITY IS THE POINT, and it is delivered in two layers that land at
+   * different times:
+   *
+   *   Look — shared NOW. Every control here reuses the SESSION'S OWN classes
+   *   (`banner-btn`, `medusa-control`, the engine pill), never new ones. A
+   *   restyle of the session banner moves this bar with it, dim placeholders
+   *   included. That is the whole "change it once" property, and it costs
+   *   nothing beyond choosing not to invent class names.
+   *
+   *   Behaviour — shared WHEN each backend lands. Making one implementation
+   *   serve both surfaces means parameterising each control by target and
+   *   having the session banner adopt the shared version too. That is real
+   *   work and it is wasted while the Master has no route to drive.
+   *
+   * THE TRAP THIS ENCODES. The dim placeholder is exactly where a fork sneaks
+   * in, because a placeholder feels too small to be an architecture decision.
+   * A hand-rolled Medusa that merely LOOKS like the session's is identical on
+   * day one and drifted by the third restyle. The split above is safe ONLY
+   * because the placeholder is inert — the moment a control goes live on the
+   * Master it must be the extracted component, not a copy that happens to
+   * share a stylesheet.
+   */
+
+  /**
+   * Why each control cannot work yet, in the operator's words.
+   *
+   * ONE table, consulted by both surfaces, because the failure mode for
+   * absent-with-a-reason is two surfaces giving different reasons for the same
+   * absence — which reads as one of them being wrong. Rendered into `title` and
+   * `aria-describedby` so the reason is reachable by pointer and by screen
+   * reader, not just by hover.
+   *
+   * The rule these serve (#755, #741): a control with no backend is visibly
+   * absent WITH ITS REASON, never present-and-inert. A disabled control that
+   * carries its own reason is the honest form of that — the operator can see
+   * the bar's final shape without being able to press something that would
+   * silently do nothing.
+   */
+  const TC_MASTER_PENDING = {
+    medusa: "Medusa isn't wired to the Master yet — every endpoint is per-project.",
+    access: "Write access isn't enforced by the server yet, so this toggle wouldn't bind.",
+    upload: 'Uploads resolve through a registered project, and the Master is not one.',
+    wrap: "Wrap is a git pipeline and the Master has no checkout — what it should mean here isn't decided yet.",
+    kill: 'The Master API has no kill route yet.'
+  };
+
+  /**
+   * Markup for one Master control bar.
+   *
+   * Pure, so a test can assert the shape without a DOM, and so both surfaces
+   * provably render the same string for the same inputs.
+   *
+   * Every id is prefixed. Both surfaces can be present in one document — the
+   * dashboard panel and, on the session page, the drawer — and an unprefixed id
+   * would mean `getElementById` returning the one the operator cannot see,
+   * which presents as "the control does nothing".
+   *
+   * @param {string} p - Id prefix, unique per surface.
+   * @param {{title?: string}} [opts] - `title` is the label beside the dot.
+   * @returns {string} The bar's inner HTML.
+   */
+  function tcMasterControlBarMarkup(p, opts) {
+    const title = (opts && opts.title) || 'Project Master';
+    // `disabled` AND `aria-disabled` — the first stops the press, the second is
+    // what assistive tech announces. A hint element carries the reason so it is
+    // not locked inside a `title` tooltip that touch devices never show.
+    const pend = (key, cls, label) =>
+      `<button type="button" class="${cls} master-bar-pending" id="${p}${key}Btn" disabled`
+      + ` aria-disabled="true" aria-describedby="${p}${key}Why" title="${TC_MASTER_PENDING[key.toLowerCase()]}"`
+      + `>${label}</button><span class="sr-only" id="${p}${key}Why">${TC_MASTER_PENDING[key.toLowerCase()]}</span>`;
+
+    return `
+      <span class="master-dot" id="${p}Dot" aria-hidden="true"></span>
+      <span class="master-status-text" id="${p}StatusText"></span>
+      <span class="engine-pill master-bar-model" id="${p}Model" hidden></span>
+      <span class="medusa-control master-bar-pending" id="${p}Medusa"
+            aria-disabled="true" aria-describedby="${p}MedusaWhy"
+            title="${TC_MASTER_PENDING.medusa}">
+        <span class="medusa-mark" aria-hidden="true">
+          <img class="medusa-head medusa-head--in" src="/medusa-head-left.webp" alt="" width="24" height="29">
+          <img class="medusa-emblem" src="/medusa-wordmark.webp" alt="" width="50" height="23">
+          <img class="medusa-head medusa-head--out" src="/medusa-head-right.webp" alt="" width="24" height="29">
+        </span>
+      </span>
+      <span class="sr-only" id="${p}MedusaWhy">${TC_MASTER_PENDING.medusa}</span>
+      <button class="btn btn-small hidden" id="${p}RetryBtn">Retry</button>
+      <span class="master-bar-spacer"></span>
+      <span class="master-access-toggle master-bar-pending" id="${p}Access" role="group"
+            aria-label="Master access level" aria-disabled="true"
+            aria-describedby="${p}AccessWhy" title="${TC_MASTER_PENDING.access}">
+        <span class="master-access-seg is-on">READ</span><span class="master-access-seg">WRITE</span>
+      </span>
+      <span class="sr-only" id="${p}AccessWhy">${TC_MASTER_PENDING.access}</span>
+      ${pend('Upload', 'banner-btn', 'Upload')}
+      <button class="banner-btn" id="${p}SettingsBtn"
+              aria-label="Master settings" title="Master settings">&#9881;</button>
+      ${pend('Wrap', 'banner-btn btn-wrap', 'Wrap')}
+      ${pend('Kill', 'banner-btn btn-kill', 'Kill')}
+      <span class="master-bar-error" id="${p}Error" role="status" hidden></span>`;
+  }
+
+  /**
+   * Create a Master control bar bound to one surface.
+   *
+   * @param {object} deps
+   * @param {Document} deps.doc - The page document.
+   * @param {string} deps.rootId - Id of the element to render into.
+   * @param {string} deps.prefix - Id prefix for this surface's controls.
+   * @param {string} [deps.title] - Label beside the status dot.
+   * @param {Function} [deps.onRetry] - Called when Retry is pressed.
+   * @param {Function} [deps.onOpenSettings] - Called when the gear is pressed.
+   * @returns {{mount: Function, setStatus: Function, setModel: Function, setError: Function}}
+   */
+  function tcCreateMasterControlBar(deps) {
+    const doc = deps.doc || global.document;
+    const p = deps.prefix;
+    let bound = false;
+
+    const el = (suffix) => doc.getElementById(p + suffix);
+
+    /**
+     * Render into the root, and bind once.
+     *
+     * Idempotent by the same rule as the settings modal: a page may mount at
+     * load and again when something opens the surface, and a second render
+     * would orphan the first's listeners. Re-mounting refreshes nothing because
+     * nothing here is stateful between mounts — the guard is on BINDING, which
+     * is what would double.
+     *
+     * @returns {boolean} True when the bar is present after this call.
+     */
+    function mount() {
+      const root = doc.getElementById(deps.rootId);
+      if (!root) return false;
+      if (!el('SettingsBtn')) root.innerHTML = tcMasterControlBarMarkup(p, { title: deps.title });
+      if (bound) return true;
+      bound = true;
+      const gear = el('SettingsBtn');
+      if (gear && deps.onOpenSettings) gear.addEventListener('click', deps.onOpenSettings);
+      const retry = el('RetryBtn');
+      if (retry && deps.onRetry) retry.addEventListener('click', deps.onRetry);
+      // Establish the resting state in CODE rather than leaning on the markup's
+      // attributes. The component then owns its own initial appearance, which
+      // means one source for "what does this say before anything answers"
+      // instead of a string in the template and a second in the first paint.
+      setStatus('', (deps.title || 'Project Master') + ' · checking…', false);
+      setError('');
+      setModel(null, null);
+      return true;
+    }
+
+    /**
+     * Paint the status dot, its text, and the Retry affordance.
+     *
+     * @param {string} status - 'live' | 'pending' | 'down' | '' (unknown).
+     * @param {string} [text] - Status line.
+     * @param {boolean} [showRetry] - Reveal Retry.
+     * @returns {void}
+     */
+    function setStatus(status, text, showRetry) {
+      const dot = el('Dot');
+      if (dot) {
+        dot.classList.remove('live', 'pending', 'down');
+        if (status) dot.classList.add(status);
+      }
+      const t = el('StatusText');
+      if (t && text !== undefined) t.textContent = text;
+      const retry = el('RetryBtn');
+      if (retry) retry.classList.toggle('hidden', !showRetry);
+    }
+
+    /**
+     * Paint the model pill from a `/api/models/status` entry.
+     *
+     * Mirrors the session banner: a status dot AND a pill-level class for
+     * non-operational states, because a 6px dot alone is not a signal an
+     * operator catches in passing, and colour alone is not one every operator
+     * can catch at all. Hidden entirely when the model is unknown — an empty
+     * pill would assert a model we cannot name.
+     *
+     * @param {{status?: string, message?: string, error?: string}|null} st - Status entry.
+     * @param {string} [label] - Model name to show.
+     * @returns {void}
+     */
+    function setModel(st, label) {
+      const pill = el('Model');
+      if (!pill) return;
+      if (!label) { pill.hidden = true; return; }
+      pill.hidden = false;
+      pill.className = pill.className.replace(/\bengine-pill-\S+/g, '').trim();
+      const state = (st && st.status) || 'unknown';
+      if (state !== 'operational') pill.classList.add('engine-pill-' + state);
+      pill.textContent = label;
+      const d = doc.createElement('span');
+      d.className = 'engine-status-dot engine-status-' + state;
+      pill.prepend(d);
+      pill.title = (st && st.error) ? `Status unknown: ${st.error}`
+        : ((st && st.message) || state).replace(/_/g, ' ');
+    }
+
+    /**
+     * Show or clear a failure the operator would otherwise not see.
+     *
+     * This is what chunk 1's review asked for. The session page mounted the
+     * settings modal with an `onOpenError` that only reached the console —
+     * honest, but invisible, so a Master whose status fetch failed looked
+     * exactly like a gear that does nothing.
+     *
+     * @param {string} [message] - The failure; omit or pass empty to clear.
+     * @returns {void}
+     */
+    function setError(message) {
+      const box = el('Error');
+      if (!box) return;
+      box.textContent = message || '';
+      box.hidden = !message;
+    }
+
+    return { mount, setStatus, setModel, setError };
+  }
+
   global.tcSetRulesStatus = tcSetRulesStatus;
   global.tcCreateMasterSettings = tcCreateMasterSettings;
+  global.tcMasterPendingReasons = TC_MASTER_PENDING;
+  global.tcMasterControlBarMarkup = tcMasterControlBarMarkup;
+  global.tcCreateMasterControlBar = tcCreateMasterControlBar;
 })(typeof window !== 'undefined' ? window : globalThis);

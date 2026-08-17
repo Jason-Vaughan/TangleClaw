@@ -300,22 +300,6 @@ body {
   color: var(--primary);
   font-weight: 600;
 }
-
-/* ── Medusa Session-Comms Control (MED-2K9P) ──
-   Two facing heads flank the MEDUSA emblem (real gold art). Listener status is
-   carried by STATE, not a flat recolor (approach B): gold at rest (`listening`),
-   desaturated + dimmed when `off`, an amber glow (+ "!" glyph) on `error` — off
-   and error stay visually distinct so "off" never reads as "broken" (honest
-   status), driven by a state class on `.medusa-control`. Status is never
-   color-only: the aria-label carries the state text, the badge shows unread
-   count, the "!" glyph marks error, and connecting/flow use motion (auto-disabled
-   under prefers-reduced-motion, where the badge + aria-live remain the cues). */
-.medusa-control {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-.medusa-control[hidden] { display: none; }
 .medusa-heads {
   display: inline-flex;
   align-items: center;
@@ -334,82 +318,11 @@ body {
   outline: 2px solid var(--root-accent);
   outline-offset: 1px;
 }
-.medusa-mark {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  height: 29px;
-}
-/* Real gold art carries the brand. Each head is its own <img> so the inbound
-   (left) head can glow independently on a received message and the outbound
-   (right) head lights on send (Chunk 03); the MEDUSA emblem sits between them,
-   a touch shorter than the heads so they read as the endpoints. All three
-   share the state-driven dim/glow below. */
-.medusa-mark img { display: block; height: 100%; width: auto; transition: filter .2s ease, opacity .2s ease; }
-/* Emblem: a touch shorter than the heads (they read as the endpoints). The
-   `.medusa-mark img` height:100% above is more specific than a bare `.medusa-emblem`,
-   so this override must also qualify with `img` to win (else the emblem renders at
-   full head-height). */
-.medusa-mark img.medusa-emblem { height: 23px; align-self: center; }
-/* Off = unmistakably inactive: desaturated + dimmed, not a flat red repaint. */
-.medusa-control.is-off .medusa-mark img { filter: grayscale(1) brightness(.7); opacity: .4; }
-/* Error = amber glow on the art, kept distinct from off (the "!" also shows). */
-.medusa-control.is-error .medusa-mark img { filter: drop-shadow(0 0 3px var(--amber)); }
-.medusa-warn {
-  display: none;
-  color: var(--amber);
-  font-weight: 800;
-  font-size: 13px;
-  line-height: 1;
-}
-/* ── States ── (the classes JS toggles; the visual rules live above/below —
-   dim on .is-off, amber glow + "!" on .is-error, breathe on .is-connecting) */
-.medusa-control.is-error .medusa-warn { display: inline; }
-.medusa-control.is-connecting .medusa-mark { animation: medusa-breathe 1.2s ease-in-out infinite; }
 @keyframes medusa-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
-/* Transient inbound flow — the inbound (left) head glows on a received message.
-   Filter-only (no transform) so the group's translate/scale is preserved. */
-.medusa-control.flow-in .medusa-head--in { animation: medusa-flow .9s ease-out; }
-/* Transient outbound flow — the outbound (right) head glows on a successful send,
-   mirroring the inbound glow so the two directions read symmetrically. */
-.medusa-control.flow-out .medusa-head--out { animation: medusa-flow .9s ease-out; }
 @keyframes medusa-flow {
   0%, 100% { filter: none; }
   30%      { filter: drop-shadow(0 0 5px var(--primary-bright)) brightness(1.5); }
 }
-/* ── Unread badge ── */
-.medusa-badge {
-  min-width: 20px;
-  height: 20px;
-  padding: 0 5px;
-  margin-left: 1px;
-  border: none;
-  border-radius: 10px;
-  background: var(--danger);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 20px;
-  text-align: center;
-  cursor: pointer;
-}
-.medusa-badge[hidden] { display: none; }
-.medusa-badge:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
-/* ── Inbox read panel + peers popover (reuse .group-popover chrome) ──
-   .group-popover sets display:none by default (shown via .open); these are
-   toggled by the [hidden] attribute instead, so restore display and let
-   [hidden] win by specificity. */
-.medusa-panel, .medusa-peers { display: block; }
-.medusa-panel[hidden], .medusa-peers[hidden] { display: none; }
-.medusa-panel {
-  right: 0;
-  left: auto;
-  min-width: 220px;
-  max-width: 320px;
-  max-height: 50vh;
-  overflow-y: auto;
-}
-.medusa-peers { right: 0; left: auto; }
 .medusa-msg {
   padding: 6px 0;
   border-bottom: 1px solid rgba(255,255,255,0.06);
@@ -437,29 +350,6 @@ body {
 }
 .medusa-panel-close:hover { color: var(--text); background: var(--elevated-bg); }
 .medusa-panel-close:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
-
-/* ── Loop launch (outbound) — the ➤ button (MED-2K9P v2 T3; class name kept
-   from the compose era it replaced — same banner slot, same visual). The setup
-   form itself rides the shared modal + form-* primitives. ── */
-.medusa-compose {
-  min-width: 20px;
-  height: 20px;
-  padding: 0 5px;
-  margin-left: 1px;
-  border: none;
-  border-radius: 10px;
-  background: var(--elevated-bg);
-  color: var(--root-accent);
-  font-size: 11px;
-  line-height: 20px;
-  text-align: center;
-  cursor: pointer;
-  -webkit-appearance: none;
-  appearance: none;
-}
-.medusa-compose[hidden] { display: none; }
-.medusa-compose:hover { color: var(--text); }
-.medusa-compose:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
 /* The two guard fields sit side by side; stacking happens naturally on very
    narrow screens via the min column width. */
 .medusa-loop-guards {
@@ -467,36 +357,6 @@ body {
   grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   gap: 0 12px;
 }
-
-/* ── Loop view (MED-2K9P v2 T4): the ⟳ chip + loops panel. The chip's TEXT is
-   the primary status cue (round count / live count) — the glow below is the
-   ambient, color-only counterpart and never stands alone. ── */
-.medusa-loops-chip {
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
-  margin-left: 1px;
-  border: none;
-  border-radius: 10px;
-  background: var(--elevated-bg);
-  color: var(--root-accent);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 20px;
-  text-align: center;
-  white-space: nowrap;
-  cursor: pointer;
-  -webkit-appearance: none;
-  appearance: none;
-}
-.medusa-loops-chip[hidden] { display: none; }
-.medusa-loops-chip:hover { color: var(--text); }
-.medusa-loops-chip:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
-/* Live-loop glow on the mark — ambient pulse while any loop is in a live
-   protocol state. Suppressed under reduced motion (the chip text still says
-   R2/10, so nothing is lost). */
-.medusa-control.has-live-loop .medusa-mark img { filter: drop-shadow(0 0 3px var(--root-accent)); }
-.medusa-control.has-live-loop .medusa-mark { animation: medusa-loop-glow 2.4s ease-in-out infinite; }
 @keyframes medusa-loop-glow { 0%, 100% { opacity: 1; } 50% { opacity: .7; } }
 @media (prefers-reduced-motion: reduce) {
   .medusa-control.has-live-loop .medusa-mark { animation: none; }
@@ -734,53 +594,6 @@ body {
   padding: 12px;
   line-height: 1.5;
   color: #d3a83f;
-}
-.banner-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 30px;
-  min-width: 30px;
-  padding: 2px 8px;
-  background: none;
-  border: 1px solid var(--elevated-bg);
-  border-radius: var(--radius-btn);
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  -webkit-user-select: none;
-  user-select: none;
-  transition: background 0.15s, border-color 0.15s;
-}
-.banner-btn:active { background: var(--elevated-bg); }
-.banner-btn:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
-}
-.banner-btn.active {
-  border-color: var(--primary);
-  color: var(--primary);
-}
-.banner-btn.btn-wrap {
-  color: var(--primary);
-  border-color: var(--primary-dark);
-}
-.banner-btn.btn-wrap:active {
-  background: var(--primary-dark);
-  color: #fff;
-}
-.banner-btn.btn-kill {
-  color: var(--danger);
-  border-color: var(--danger-dark);
-}
-.banner-btn.btn-kill:active {
-  background: var(--danger-dark);
-  color: #fff;
-}
-.banner-btn:disabled {
-  opacity: 0.4;
-  pointer-events: none;
 }
 
 /* Mobile banner: smaller buttons */
@@ -1426,13 +1239,6 @@ body {
   font-size: 14px;
   color: var(--text-muted);
   padding: 8px 0;
-}
-
-/* ── Select Button Active ── */
-.banner-btn.select-active {
-  background: var(--primary-dark);
-  border-color: var(--primary);
-  color: #fff;
 }
 
 /* ── Upload Modal ── */

@@ -347,7 +347,12 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
   // the no-new-timer rule, and the control invariant surfacing.
   describe('banner loop view + force-done (MED-2K9P v2 T4)', () => {
     const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.html'), 'utf8');
-    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.css'), 'utf8');
+    // Medusa's BASE rules moved to shared-controls.css (#768 chunk 2) so the
+    // Master bar and the session banner restyle together; session.css keeps
+    // only its own responsive overrides. Read both — the assertion is about
+    // what the page ends up with, and the page loads both.
+    const css = ['shared-controls.css', 'session.css']
+      .map((f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8')).join('\n');
 
     it('renders the loops chip + loops panel markup', () => {
       assert.match(html, /id="medusaLoopsChip"[^>]*aria-haspopup="dialog"/);
@@ -427,7 +432,12 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
   // Visuals are operator-VRF'd; the source pins the gate (only when the
   // initiator can actually judge), the honest labels, and the wiring.
   describe('supervised continue/feedback + satisfied closeout (TC#561)', () => {
-    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.css'), 'utf8');
+    // Medusa's BASE rules moved to shared-controls.css (#768 chunk 2) so the
+    // Master bar and the session banner restyle together; session.css keeps
+    // only its own responsive overrides. Read both — the assertion is about
+    // what the page ends up with, and the page loads both.
+    const css = ['shared-controls.css', 'session.css']
+      .map((f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8')).join('\n');
 
     it('defines the continue + closeout handlers', () => {
       for (const name of ['continueMedusaLoop', 'closeoutMedusaLoop']) {
