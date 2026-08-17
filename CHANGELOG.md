@@ -6,6 +6,43 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **The Master's access level is real, and changing it binds on its next tool call (#755, chunk 1).**
+  `suggest` and `write` had been rendered in the settings modal and rejected by the server since the
+  tier was specified — a picker with two permanently-disabled options. They are selectable now,
+  because each carries actual enforcement rather than prose.
+
+  **The level is read per tool call, not baked into the guard.** `buildMasterGuardScript` previously
+  had "deny unless under `memory/`" written into its body, so the posture was fixed at launch and a
+  change needed a restart to mean anything. The guard now reads a single-token file in the master
+  home on every invocation and maps it to the three `PreToolUse` outcomes: `read-only` denies
+  outside `memory/`, `suggest` **asks** — the confirmation in the master's own terminal is what makes
+  it "propose, don't execute" — and `write` allows. So a flip is in force for the master's very next
+  write attempt, with no restart and no re-ensure.
+
+  **Every failure path degrades to read-only, and that is the acceptance criterion rather than a
+  nicety.** The harness fails OPEN on hook crashes, which is why the existing guard ends every
+  internal path in an explicit deny; reading a level adds new ways to fail, so an absent, empty,
+  unreadable, directory-shaped, or unrecognized level file all resolve to `read-only`. A level-aware
+  guard that failed open would be strictly worse than the baked-in one it replaced. Each of those
+  paths was proven by mutating the guard to return `write` there and watching the assertion go red —
+  a fail-closed test that passes before it is mutated has asserted nothing.
+
+  **The level file sits beside `memory/`, never inside it.** `memory/` is the master's own write
+  carve-out, so a level file placed there would be one the master could raise for itself.
+
+  **`write` makes the guard permit; it never makes the guard absent.** Skipping generation for a
+  permissive tier would leave a stale read-only guard from an earlier ensure silently in force.
+
+  Two writers, answering different questions: every identity refresh writes the level so it stays
+  true across restarts, and `PATCH /api/config` pushes a *changed* level so the toggle is immediate.
+  The push routes through `master.applyMasterAccessLevel` rather than inline filesystem work, so the
+  home resolves in one place and a route test can stub it — an earlier shape of this let
+  `PATCH /api/config` tests rewrite the operator's live master posture, the same defect class that
+  once let a route test overwrite the real `FLEET.md`.
+
+  Still to come on #755: the master's identity prose still says "Read-only" unconditionally
+  (chunk 2), and the control bar's READ/WRITE toggle is still dim (chunk 3).
+
 - **The Master's settings open from inside a session, and both surfaces render one control bar
   (#768 chunk 2).** From inside a session there was no route to the Master's settings at all —
   `grep -c masterSettingsModal public/session.html` was `0`, so changing the single most

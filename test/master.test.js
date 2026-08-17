@@ -328,7 +328,13 @@ describe('getMasterStatus', () => {
     const s = master.getMasterStatus({ tmuxLib: fakeTmux(), enginesLib: availableEngines }).settings;
     assert.equal(s.accessLevel, 'read-only');
     assert.deepEqual(s.accessLevels, ['read-only', 'suggest', 'write']);
-    assert.deepEqual(s.enabledAccessLevels, ['read-only']);
+    // All three are selectable since #755 gave each one real enforcement in the
+    // write guard. Asserted against the constant rather than a literal so this
+    // stays a statement about the PAYLOAD carrying the enabled set, which is
+    // what the settings UI renders from — the literal belongs in the test that
+    // owns the gate ('every enabled level is one the guard actually understands').
+    assert.deepEqual(s.enabledAccessLevels, master.MASTER_ENABLED_ACCESS_LEVELS);
+    assert.ok(s.enabledAccessLevels.includes('write'));
     assert.equal(s.engine, null);
     assert.equal(s.resolvedEngine, 'claude');
     assert.equal(s.scope, 'all');
@@ -594,10 +600,14 @@ describe('read-only guardrails (structural enforcement)', () => {
       encoding: 'utf8'
     });
     assert.equal(res.status, 0, `guard must always exit 0 (got ${res.status}: ${res.stderr})`);
-    if (!res.stdout) return { denied: false };
+    // No stdout is the fall-through case: the guard declined to decide, so the
+    // harness's own permission rules apply. `decision: null` names that, rather
+    // than letting it read as an allow the guard actually issued.
+    if (!res.stdout) return { denied: false, decision: null };
     const out = JSON.parse(res.stdout);
     return {
       denied: out.hookSpecificOutput.permissionDecision === 'deny',
+      decision: out.hookSpecificOutput.permissionDecision,
       reason: out.hookSpecificOutput.permissionDecisionReason
     };
   }
@@ -647,6 +657,186 @@ describe('read-only guardrails (structural enforcement)', () => {
       assert.equal(runGuard(home, {}).denied, true);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('access level — the guard reads it per invocation (#755)', () => {
+  const { spawnSync } = require('node:child_process');
+
+  /** Run the generated guard and report which of the three PreToolUse outcomes
+   *  it chose: 'deny' | 'ask' | 'allow', or null for fall-through (no stdout). */
+  function guardDecision(home, payload) {
+    const script = path.join(home, '.claude', 'hooks', 'guard-writes.js');
+    const res = spawnSync(process.execPath, [script], {
+      input: typeof payload === 'string' ? payload : JSON.stringify(payload),
+      encoding: 'utf8'
+    });
+    assert.equal(res.status, 0, `guard must always exit 0 (got ${res.status}: ${res.stderr})`);
+    if (!res.stdout) return null;
+    return JSON.parse(res.stdout).hookSpecificOutput.permissionDecision;
+  }
+
+  /** A master home with guardrails written and `level` in place. Pass `null` to
+   *  leave no level file at all. */
+  function homeAt(level) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-level-'));
+    master._writeMasterGuardrails(home);
+    if (level !== null) master.writeMasterAccessLevel(home, level);
+    return home;
+  }
+
+  const OUTSIDE = '/etc/hosts';
+
+  it('stores the level beside memory/, never inside it — a level file the master could edit is one it could raise', () => {
+    const home = '/tmp/tc-master-x';
+    const levelFile = master.masterAccessLevelPath(home);
+    assert.equal(path.dirname(levelFile), home, 'level file lives at the home root');
+    const memoryDir = path.join(home, 'memory') + path.sep;
+    assert.ok(!levelFile.startsWith(memoryDir),
+      `the level file must not sit inside the master's own write carve-out (got ${levelFile})`);
+  });
+
+  it('read-only denies outside memory/ and falls through inside it', () => {
+    const home = homeAt('read-only');
+    try {
+      assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'deny');
+      assert.equal(guardDecision(home, { tool_input: { file_path: path.join(home, 'memory', 'N.md') } }), null);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('suggest asks outside memory/ — the confirmation IS the tier — and falls through inside it', () => {
+    const home = homeAt('suggest');
+    try {
+      assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'ask');
+      assert.equal(guardDecision(home, { tool_input: { notebook_path: OUTSIDE } }), 'ask');
+      // Inside the carve-out there is nothing to confirm — it was already the
+      // master's own writable surface at every tier.
+      assert.equal(guardDecision(home, { tool_input: { file_path: path.join(home, 'memory', 'N.md') } }), null);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('write allows — and allows explicitly, because falling through would only reach the ask-gate', () => {
+    const home = homeAt('write');
+    try {
+      assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'allow');
+      assert.equal(guardDecision(home, { tool_input: { file_path: path.join(home, '.claude', 'settings.json') } }), 'allow');
+      assert.equal(guardDecision(home, { tool_input: { file_path: path.join(home, 'memory', 'N.md') } }), 'allow');
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('a flip binds on the NEXT invocation — no regeneration, no restart', () => {
+    const home = homeAt('read-only');
+    try {
+      assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'deny');
+      // Only the level file changes. The guard script is NOT rewritten, which is
+      // the property that makes the operator's toggle immediate.
+      const before = fs.readFileSync(path.join(home, '.claude', 'hooks', 'guard-writes.js'), 'utf8');
+      master.writeMasterAccessLevel(home, 'write');
+      assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'allow');
+      master.writeMasterAccessLevel(home, 'read-only');
+      assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'deny');
+      const after = fs.readFileSync(path.join(home, '.claude', 'hooks', 'guard-writes.js'), 'utf8');
+      assert.equal(before, after, 'the guard script itself must not change when the level does');
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  // THE MUTATION THESE CATCH: any `readLevel()` failure path returning a
+  // permissive level instead of 'read-only'. A level-aware guard that fails OPEN
+  // is strictly worse than the baked-in one it replaced, so each of these is the
+  // acceptance criterion rather than a nicety.
+  it('every unreadable level degrades to read-only — absent, empty, whitespace, garbage, wrong case', () => {
+    const cases = [
+      ['absent', null],
+      ['empty', ''],
+      ['whitespace only', '   \n  '],
+      ['garbage', 'yes-please'],
+      ['wrong case', 'WRITE'],
+      ['a token from a newer TangleClaw', 'write-with-confirmation'],
+      ['an almost-match', 'writer'],
+      ['a JSON object, in case someone changes the format under the guard', '{"level":"write"}']
+    ];
+    for (const [label, contents] of cases) {
+      const home = homeAt(null);
+      try {
+        if (contents !== null) fs.writeFileSync(master.masterAccessLevelPath(home), contents);
+        assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'deny',
+          `level file (${label}) must degrade to read-only`);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it('a level file that is a directory degrades to read-only', () => {
+    const home = homeAt(null);
+    try {
+      fs.mkdirSync(master.masterAccessLevelPath(home), { recursive: true });
+      assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'deny');
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('a level file that cannot be read degrades to read-only', (t) => {
+    // Root bypasses mode bits, so the unreadable case cannot be staged as root.
+    // Skipping is honest; asserting would report a pass the run never tested.
+    if (process.getuid && process.getuid() === 0) {
+      t.skip('running as root — mode 0o000 is still readable, so this cannot be staged');
+      return;
+    }
+    const home = homeAt('write');
+    try {
+      // Staged from a level that WOULD allow, so a guard ignoring the read error
+      // and reusing a cached/parsed value would show up as an allow here.
+      fs.chmodSync(master.masterAccessLevelPath(home), 0o000);
+      assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'deny');
+    } finally {
+      try { fs.chmodSync(master.masterAccessLevelPath(home), 0o600); } catch { /* already gone */ }
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('trims surrounding whitespace, since the file is written with a trailing newline', () => {
+    const home = homeAt(null);
+    try {
+      fs.writeFileSync(master.masterAccessLevelPath(home), '  write \n');
+      assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'allow');
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('writeMasterAccessLevel round-trips every level the settings surface can store', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-level-rt-'));
+    try {
+      for (const level of master.MASTER_ACCESS_LEVELS) {
+        master.writeMasterAccessLevel(home, level);
+        assert.equal(fs.readFileSync(master.masterAccessLevelPath(home), 'utf8').trim(), level);
+      }
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('every enabled level is one the guard actually understands', () => {
+    // The gate this holds: a tier becomes selectable only WITH its enforcement.
+    // Adding a fourth id to MASTER_ACCESS_LEVELS and enabling it without
+    // teaching the guard would leave it silently equal to read-only.
+    const understood = new Set(['read-only', 'suggest', 'write']);
+    for (const level of master.MASTER_ENABLED_ACCESS_LEVELS) {
+      assert.ok(understood.has(level),
+        `"${level}" is selectable but the write guard has no branch for it — it would silently mean read-only`);
+      assert.ok(master.MASTER_ACCESS_LEVELS.includes(level),
+        `"${level}" is enabled but not a known access level`);
     }
   });
 });
@@ -1035,6 +1225,23 @@ describe('refreshMasterIdentity (#726)', () => {
   function tmpHome() {
     return fsx.mkdtempSync(pathx.join(os.tmpdir(), 'tc-master-'));
   }
+
+  it('writes the access level on every refresh, so the guard survives a restart with the right posture (#755)', () => {
+    const home = tmpHome();
+    try {
+      master.refreshMasterIdentity({ home });
+      const levelFile = master.masterAccessLevelPath(home);
+      assert.ok(fsx.existsSync(levelFile), 'the refresh must leave a level file behind');
+      // The default posture, and the file must say it rather than being absent —
+      // absent happens to degrade to read-only in the guard, so an assertion on
+      // BEHAVIOUR alone would pass with nothing written at all.
+      assert.equal(fsx.readFileSync(levelFile, 'utf8').trim(), 'read-only');
+      // Written outside the master's own write carve-out.
+      assert.ok(!levelFile.startsWith(pathx.join(home, 'memory') + pathx.sep));
+    } finally {
+      fsx.rmSync(home, { recursive: true, force: true });
+    }
+  });
 
   it('rewrites a stale API base URL without starting a session', () => {
     const home = tmpHome();

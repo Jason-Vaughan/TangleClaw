@@ -881,6 +881,9 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   // — saveGlobalSettings POSTs the field on every Save click, so unrelated
   // UI saves were triggering an N-project filesystem walk).
   const oldStripAiCoauthors = config.stripAiCoauthors;
+  // Same reason, for the master's access level: the loop below replaces
+  // `config.master` wholesale, so the previous level has to be read before it.
+  const oldMasterAccessLevel = master.masterSettings(config).accessLevel;
   // Whether setup was still OPEN when this request arrived. Captured here
   // because the loop below writes `body.setupComplete` straight onto `config` —
   // read it afterwards and every request looks like an install that was already
@@ -1092,6 +1095,37 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   }
 
   store.config.save(config);
+
+  // The master's access level takes effect on its NEXT TOOL CALL, not its next
+  // launch — that is the whole point of the level being a file the write guard
+  // reads per invocation. So the flip has to reach disk here, on the change
+  // path, rather than waiting for an ensure the operator has no reason to run.
+  //
+  // After the save, never before: an earlier field's validation failure returns
+  // 400 without saving, and a level file more permissive than the stored config
+  // is the one inconsistency this must not create.
+  //
+  // Routed through the master module rather than done inline, so `home` resolves
+  // in one place and a route test can stub the entry point instead of rewriting
+  // the operator's live master posture. An absent master home is a no-op there.
+  const newMasterAccessLevel = master.masterSettings(config).accessLevel;
+  if (newMasterAccessLevel !== oldMasterAccessLevel) {
+    try {
+      const { applied } = master.applyMasterAccessLevel(newMasterAccessLevel);
+      log.info('Master access level changed', {
+        from: oldMasterAccessLevel, to: newMasterAccessLevel, applied
+      });
+    } catch (err) {
+      // Report, never swallow: the config now says one thing and the guard still
+      // enforces another, and the operator is the only one who can tell the
+      // difference. The failure degrades toward the STRICTER posture — the guard
+      // keeps reading the old level — so this does not fail the request; but a
+      // silent failure would leave the UI asserting a boundary that did not move.
+      log.error('Master access level saved but not applied — the write guard still enforces the previous level', {
+        from: oldMasterAccessLevel, to: newMasterAccessLevel, error: err.message
+      });
+    }
+  }
 
   // Restart or stop port scanner if settings changed
   if ('portScannerEnabled' in body || 'portScannerIntervalMs' in body) {

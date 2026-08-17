@@ -8,6 +8,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
+const master = require('../lib/master');
 const { createServer } = require('../server');
 
 setLevel('error');
@@ -802,7 +803,6 @@ describe('API endpoints', () => {
       // `validateMasterPatch` sources the field from `masterSettings()`, which
       // defaults it independently — so deleting the default would leave all of
       // them green while the two endpoints disagreed.
-      const master = require('../lib/master');
       assert.equal(store.DEFAULT_CONFIG.master.launchMode, 'default',
         'a never-PATCHed install must carry launchMode, not omit it');
       // The invariant the default exists for, asserted as an agreement rather
@@ -862,14 +862,56 @@ describe('API endpoints', () => {
       assert.equal(status, 400);
     });
 
-    it('rejects not-yet-enforced access levels with an honest reason', async () => {
-      for (const level of ['suggest', 'write']) {
-        const { status, data } = await request(server, 'PATCH', '/api/config', { master: { accessLevel: level } });
-        assert.equal(status, 400);
-        assert.match(data.error, /structural enforcement/);
+    it('pushes a changed access level to the live master, and only when it changed (#755)', async () => {
+      // Stubbed, NOT allowed to run: the real applier resolves `masterHome()`,
+      // so an unstubbed run here rewrites the operator's own
+      // `~/.tangleclaw/master/.access-level` — a route test silently re-posturing
+      // the live master, which is the defect class that once let a route test
+      // overwrite the real FLEET.md.
+      const realApply = master.applyMasterAccessLevel;
+      const calls = [];
+      master.applyMasterAccessLevel = (level) => { calls.push(level); return { applied: true, home: '/stub' }; };
+      try {
+        await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'write' } });
+        assert.deepEqual(calls, ['write'], 'a changed level must be pushed to the guard');
+
+        // Re-saving the same level must not push again — the settings modal
+        // POSTs the whole master block on every Save, so an ungated push would
+        // rewrite the level file on saves that never touched it.
+        await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'write' } });
+        assert.deepEqual(calls, ['write'], 'an unchanged level must not be pushed');
+
+        // A partial patch that omits accessLevel must not push either.
+        await request(server, 'PATCH', '/api/config', { master: { autoStart: true } });
+        assert.deepEqual(calls, ['write'], 'a patch that does not touch the level must not push');
+
+        await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'read-only' } });
+        assert.deepEqual(calls, ['write', 'read-only'], 'flipping back must push too');
+      } finally {
+        master.applyMasterAccessLevel = realApply;
+      }
+    });
+
+    it('accepts every enforced access level, and still refuses one it does not know (#755)', async () => {
+      const realApply = master.applyMasterAccessLevel;
+      master.applyMasterAccessLevel = () => ({ applied: false, home: '/stub' });
+      try {
+      // All three carry real enforcement since the write guard reads the level
+      // per tool call. The refusal that remains is for a level NOBODY has taught
+      // the guard — which is a typo, or a tier someone enabled ahead of its
+      // enforcement, and both must fail rather than silently mean read-only.
+      for (const level of ['suggest', 'write', 'read-only']) {
+        const { status } = await request(server, 'PATCH', '/api/config', { master: { accessLevel: level } });
+        assert.equal(status, 200, `${level} must be settable`);
+        const after = await request(server, 'GET', '/api/config');
+        assert.equal(after.data.master.accessLevel, level, `${level} must persist`);
       }
       const unknown = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'root' } });
-      assert.equal(unknown.status, 400);
+        assert.equal(unknown.status, 400);
+        assert.match(unknown.data.error, /must be one of/);
+      } finally {
+        master.applyMasterAccessLevel = realApply;
+      }
     });
 
     it('rejects unknown fields, unconfigured engines, missing groups, and bad shapes', async () => {

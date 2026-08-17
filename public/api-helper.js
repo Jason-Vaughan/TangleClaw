@@ -1573,8 +1573,8 @@
       const body = document.getElementById('masterSettingsBody');
       const tierHints = {
         'read-only': 'Structurally enforced on the Claude engine: writes are hard-denied outside the master’s memory/ directory. Whether anything else asks first is the Launch mode setting below — this tier bounds what the master may touch, not how often it prompts.',
-        'suggest': 'Not available yet — ships only with real enforcement (draft-but-never-commit).',
-        'write': 'Not available yet — ships only with real enforcement (full tool access).'
+        'suggest': 'The master may attempt writes anywhere, and each one stops for your confirmation in the master’s own terminal. Takes effect on its next tool call — no restart. Note this is exactly read-only if Launch mode is bypassPermissions, since nothing is ever asked.',
+        'write': 'The master may write anywhere it can reach, across every project, with no confirmation. Takes effect on its next tool call — no restart.'
       };
       const accessRadios = s.accessLevels.map((level) => {
         const enabled = s.enabledAccessLevels.includes(level);
