@@ -29,6 +29,34 @@ const tmux = require('../lib/tmux');
 const serverInfo = require('../lib/server-info');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
+const BEACON_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'public', 'update-beacon.js'), 'utf8');
+
+/**
+ * The REAL shared answer predicate, lifted from `update-beacon.js`.
+ *
+ * Landing's manual-check path consults `window.tcIsUpdateAnswer` rather than
+ * testing the payload itself, so these sandboxes have to supply it. Lifted
+ * rather than restated: a hand-written stand-in here would keep passing on the
+ * day the real rule changed, which is the entire failure mode sharing the rule
+ * was meant to close.
+ *
+ * @returns {(data: object|null) => boolean}
+ */
+function realIsUpdateAnswer() {
+  const decl = 'function tcIsUpdateAnswer(data)';
+  const start = BEACON_SRC.indexOf(decl);
+  assert.ok(start > -1, 'update-beacon.js must still declare tcIsUpdateAnswer');
+  let depth = 0;
+  for (let i = BEACON_SRC.indexOf('{', start); i < BEACON_SRC.length; i++) {
+    if (BEACON_SRC[i] === '{') depth++;
+    else if (BEACON_SRC[i] === '}' && --depth === 0) {
+      // eslint-disable-next-line no-new-func
+      return new Function(`${BEACON_SRC.slice(start, i + 1)}; return tcIsUpdateAnswer;`)();
+    }
+  }
+  throw new Error('could not brace-match tcIsUpdateAnswer');
+}
 
 /**
  * Slice a top-level function out of landing.js by brace matching.
@@ -656,6 +684,9 @@ describe('#716 update checks happen when they matter', () => {
       },
       localStorage: { getItem: () => null, setItem: () => {} },
       updateBeacon: { render: () => {} },
+      // The shared answer rule, as the page really resolves it — a global that
+      // `update-beacon.js` publishes and `landing.js` consults.
+      window: { tcIsUpdateAnswer: realIsUpdateAnswer() },
       esc: (s2) => String(s2),
       console: { error: () => {} },
       // The restore is scheduled, never run here — the assertion is about what

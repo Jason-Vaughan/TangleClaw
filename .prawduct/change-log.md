@@ -4723,3 +4723,75 @@ subject is a timeout must not have a tight cap, because a delayed fork under loa
 indistinguishable from the condition it exists to rule out.
 
 **Classification:** fix
+
+## 2026-08-16: an open session learns about a release, and stops offering one already applied (#954, #955)
+
+**The reported symptom was the second bug, not the first.** The operator asked whether the update
+notice could reach an already-open page without a browser refresh. It already could — the update
+beacon (#931) polls every five minutes on both pages and repaints the logo. What it could not do was
+be *right*: every session-page read was `GET /api/update-status`, a pure cache read, so the only
+unconditional measurement anywhere was `startChecker`'s timer at four hours. Twelve polls an hour
+reciting an answer up to four hours old.
+
+Mid-build the operator hit the sibling: an update applied from one surface stayed on offer in every
+other open session until they refreshed. Same family, and the same shape as the first — restart
+awareness exists on `landing.js` (a changed `startedAt` re-runs the check) and was never carried to
+`session.js`, which contains no reference to `startedAt` at all. One call site is not the family,
+twice in one feature.
+
+**The fix for the second is cheaper than mirroring the first.** Rather than give the session page a
+second poll for `/api/server-info`, the cadence itself became answer-dependent: a **non-answer** costs
+a 30s retry, a real answer the full 5m. The states that produce a non-answer are exactly the states
+that resolve in seconds — a restart (the cache is per-process, so every restart passes back through
+"never measured"), the outage around it, a measurement that may next succeed. The predicate deciding
+which is which moved onto `window` so the beacon and the poll cannot disagree about it; two inlined
+copies is the #716 bug class exactly.
+
+**The pivotal finding was one nobody asked about.** The operator proposed dropping the check interval
+to 5m and judged the overhead small. Reading `startChecker` first showed it drove `checkForUpdate` —
+the `execSync` form — so each tick could stall the single-threaded server, terminal websockets
+included, for up to the 15s `ls-remote` timeout. The interval was load-bearing for **latency**, not
+only freshness, and shortening it as asked would have multiplied stalls 8× at 30m and 48× at 5m. The
+async switch had to land first; only then was 4h → 30m safe. Shipped at 30m rather than 5m because
+with any page open the effective floor is already `AUTO_REFRESH_MIN_AGE_MS`, so shorter buys
+freshness only for installs nobody is watching.
+
+**Self-review caught one, the Critic caught its sibling — the same defect, twice.** Consulting a
+global published by a separately-fetched asset added a throw path. I found it at the *init* call
+site (an unguarded `await Promise.all([...])` whose rejection would abandon `startPolling`) and
+guarded that. Three independent reviewers then found the one I had walked past: `startPolling`
+re-arms *below* `await pollTick()`, so the same throw at the *poll* site ends all polling for the
+page's life — and that site runs every five minutes rather than once. A finding-fix is new code; so
+is a self-finding-fix, and it needs the same sweep for siblings that any other fix does.
+
+**Six-plus stale "four hours" claims, including a wrong operator-facing default.**
+`docs/configuration-reference.md` still documented `14400000`. Also README, `server.js`,
+`api-contract.md`, `boundary-patterns.md`, `landing.js` and a test comment. Swept, and made
+relational where the number is not load-bearing so the next change does not have to find them again.
+One left alone deliberately: a dated incident record in `test/update-checker.test.js` whose "four
+hours" is what was true on 2026-07-29.
+
+**A security artifact was denying the feature.** `security-model.md` listed "no update checks" under
+what TangleClaw does NOT do — false before this change and materially more so after. It now names the
+one outbound request TC makes, its steady-state rate, and that it carries no operator data.
+
+**The rate, stated rather than left implied.** The bundle argued the *ceiling* ("one measurement per
+floor per server") and never the steady state. Because the poll cadence equals the refresh floor, an
+open session sits at that ceiling continuously: ~288 `git ls-remote`/day. Defensible — it is less
+than the server-side interval the operator was willing to accept, since that would run unattended —
+but it had to be written down, and the log-flood it implies on an unreachable origin is filed as
+#956 rather than fixed here.
+
+**Accepted, not fixed:** the 30s retry has no backoff for a durably unreachable origin (bounded
+server-side to a localhost request, since `refreshIfStale` caps the actual measurement); the periodic
+tick deliberately bypasses `refreshIfStale` (at `maxAgeMs === interval` its staleness test lands on
+its own boundary, and timer drift would decide whether a tick measures or silently doubles the
+interval); `landing.js`'s four-way hint renderer keeps its own branching, because it must
+*distinguish* the states the shared predicate collapses.
+
+**One flake, twice-observed, finally filed.** `test/dir-scanner.test.js`'s #883 threadpool guard
+failed only on runs sharing the machine with concurrent `node --test` processes; clean full runs
+passed on both `main` and this branch. This change-log had already recorded the same sighting on an
+unrelated branch and moved past it. Now #957, with a reproduction.
+
+**Classification:** fix — with one **changed** element, and the two records must not disagree about which. Both bugs are fixes; the enabling interval drop (`updateCheckIntervalMs` 4h → 30m) is a documented operator-facing default, so `CHANGELOG.md` files it under `### Changed` and the next release is **minor**, not patch. Filing it under `### Internal` would have been the quieter answer and the wrong one: an operator would notice next session, which is the test CLAUDE.md sets.

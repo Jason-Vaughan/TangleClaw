@@ -290,7 +290,7 @@ describe('#931 the beacon distinguishes "no update" from "no answer" (#716)', ()
     // THE MUTATION THIS CATCHES: discriminating on `checkedAt` alone, which is
     // what shipped. The failure carries a timestamp, so it took the
     // measured-no-update branch and cleared the dot for an update that was
-    // genuinely available — reachable from the 4-hour checker's cached failure
+    // genuinely available — reachable from the periodic checker's cached failure
     // on every later GET, including the session page's one-shot read at load.
   });
 

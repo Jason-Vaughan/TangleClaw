@@ -691,20 +691,90 @@ function loadVersion() {
  * @returns {Promise<void>}
  */
 async function loadUpdateStatus() {
+  // Stamped BEFORE the await, so two ticks cannot both pass the due check and
+  // fire overlapping reads. Corrected below once the answer's quality is known.
   _lastUpdateCheckAt = Date.now();
-  updateBeacon.render(await api('/api/update-status'));
+  _updateIntervalMs = UPDATE_CHECK_INTERVAL_MS;
+
+  // A re-measurement, not a cache read. This page used to read the server's
+  // cached answer only, which made the server's periodic check the sole floor on
+  // freshness — so an operator sitting in a session could be told about a
+  // release most of an interval after it existed, while this poll ran the whole
+  // time and reported a remembered answer. The dashboard already asks for a real
+  // measurement on load and on refocus; a session is where operators actually
+  // live, so it is the surface that most needed to ask.
+  //
+  // It cannot become a `git ls-remote` loop, and that is a property of the
+  // server rather than a promise made here: `refreshIfStale` serves a cache
+  // younger than `AUTO_REFRESH_MIN_AGE_MS` without measuring, and single-flights
+  // the rest, so the ceiling is one measurement per floor per SERVER — not per
+  // session, however many are open. A hidden tab stops polling entirely.
+  let data = await apiMutate('/api/update/check', 'POST', { manual: false });
+
+  // A server older than these assets does not have this route. That window is
+  // not hypothetical: this repo IS the live install, so a merge or a self-update
+  // puts new client files on disk while the running process keeps serving the
+  // old routes until it restarts. Without this fallback the page would read the
+  // 404 as a failed check and hold a stale beacon until that restart — a false
+  // alarm from the very feature built to stop misreporting update state.
+  if (!data && api.lastErrorCode === 'NOT_FOUND') {
+    data = await api('/api/update-status');
+  }
+
+  // A NON-ANSWER MUST NOT CONSUME THE FULL INTERVAL. The state this is FOR is
+  // the OUTAGE — the seconds a restart is not listening, where the request fails
+  // outright and the page has no answer at all. That is what a lingering session
+  // meets when an update is applied from another surface, and it is what used to
+  // cost five minutes.
+  //
+  // Note what this is NOT for, because the obvious guess is wrong: a restarted
+  // server that IS listening does not return "never measured" to this path.
+  // `refreshIfStale` treats a cache with no `checkedAt` as always stale, so the
+  // POST measures on the spot and answers properly. "Never measured" now reaches
+  // the client only through the NOT_FOUND fallback below, against a server old
+  // enough to lack this route. (Verified end-to-end by
+  // `scripts/verify-update-beacon-restart.js`, which is where this correction
+  // came from — the first version of this comment claimed the restart itself
+  // produced the non-answer.)
+  //
+  // One of them does not: a `checkOk: false` from an origin that is simply
+  // unreachable can persist for hours, and this retries it every 30s for as long
+  // as the page is open. That is accepted rather than overlooked. The cost is a
+  // localhost request, not origin traffic — `refreshIfStale` serves the cached
+  // failure without re-measuring until the refresh floor expires — so what the
+  // retry actually buys there is noticing the moment the network returns. The
+  // server-side logging does NOT scale as gracefully; that is #956.
+  //
+  // Holding the full interval there is what let a session keep offering an
+  // update that had ALREADY been applied from another surface: the restart
+  // answered "unknown", the beacon correctly refused to act on it, and nothing
+  // asked again until the interval expired. Retrying instead is what makes the
+  // offer disappear on its own rather than on a manual refresh.
+  if (!window.tcIsUpdateAnswer(data)) _updateIntervalMs = UPDATE_RETRY_INTERVAL_MS;
+
+  updateBeacon.render(data);
 }
 
-// How long between update-status reads on this page. Matches the dashboard's
-// cadence, and like the dashboard's it is a plain read of the server's CACHED
-// answer — never a re-measurement, so an open session costs origin nothing no
-// matter how long it stays open. The server's own periodic check is the floor
-// on freshness.
+// How long between update checks on this page, once one has actually answered.
+// Matches the dashboard's cadence — one product, one answer to "how often do we
+// ask".
 const UPDATE_CHECK_INTERVAL_MS = 300000;
+
+// The cadence after a NON-answer. Short, because what it waits on is a server
+// finishing a restart rather than a remote publishing a release, and those
+// resolve on completely different timescales. Bounded server-side the same way
+// the normal cadence is, so a page retrying through a long outage still cannot
+// measure more often than the refresh floor allows.
+const UPDATE_RETRY_INTERVAL_MS = 30000;
 
 // Stamped by `loadUpdateStatus`. Zero until the first read at init, which
 // happens before polling starts, so the first poll tick never re-reads.
 let _lastUpdateCheckAt = 0;
+
+// Which of the two cadences is currently in force. Set by every
+// `loadUpdateStatus` from the answer it got, so the page falls back to the
+// normal interval on its own as soon as one arrives — never latching into retry.
+let _updateIntervalMs = UPDATE_CHECK_INTERVAL_MS;
 
 /**
  * Whether enough time has passed to re-read update status.
@@ -712,12 +782,18 @@ let _lastUpdateCheckAt = 0;
  * Extracted so the cadence is a thing a test can drive directly, rather than
  * something inferred from a timer that fires every five seconds.
  *
+ * The interval is a parameter rather than read from module state, because the
+ * page runs two of them — the normal cadence and the post-non-answer retry —
+ * and a predicate that reached for "the" interval itself would silently pick
+ * one. Explicit here means a caller cannot forget which one is in force.
+ *
  * @param {number} lastAt - When the last read happened (ms epoch).
  * @param {number} now - Now (ms epoch).
+ * @param {number} intervalMs - The cadence currently in force.
  * @returns {boolean}
  */
-function updateCheckDue(lastAt, now) {
-  return now - lastAt >= UPDATE_CHECK_INTERVAL_MS;
+function updateCheckDue(lastAt, now, intervalMs) {
+  return now - lastAt >= intervalMs;
 }
 
 /**
@@ -739,7 +815,7 @@ function updateCheckDue(lastAt, now) {
  */
 async function pollTick() {
   await pollStatus();
-  if (updateCheckDue(_lastUpdateCheckAt, Date.now())) await loadUpdateStatus();
+  if (updateCheckDue(_lastUpdateCheckAt, Date.now(), _updateIntervalMs)) await loadUpdateStatus();
 }
 
 /**
@@ -1902,7 +1978,22 @@ function startPolling() {
     pollTimer = setTimeout(async () => {
       if (!pollTimer) return;
       if (!_pageVisible) return; // skip while hidden, visibilitychange will restart
-      await pollTick();
+      // The chain re-arms BELOW this call, so anything `pollTick` throws stops
+      // this session polling for the life of the page — session status,
+      // wrap-sentinel and ended detection, and the update beacon all stop with
+      // it, silently and with the page still looking alive. That makes this a
+      // supervisor boundary rather than an error to swallow: report it and keep
+      // the chain running.
+      //
+      // Not hypothetical since the update read began consulting a global
+      // published by `update-beacon.js`: a separately-fetched asset, so a
+      // mismatched pair makes that call a TypeError. Guarding only the init call
+      // site missed this one, which is the site that runs every five minutes.
+      try {
+        await pollTick();
+      } catch (err) { // prawduct:allow prawduct/broad-except -- poll supervisor: a throw here would end all polling for the page's life. Reported, then the chain re-arms.
+        console.error('session poll tick failed:', err);
+      }
       scheduleNext();
     }, sessionState.pollInterval);
   }
@@ -4897,7 +4988,18 @@ async function initSession() {
   bindEvents();
 
   // Parallel data loading (loadVersion runs after loadProject since it reads project data)
-  await Promise.all([loadProject(), loadConfig(), loadEngines(), loadUpdateStatus()]);
+  await Promise.all([loadProject(), loadConfig(), loadEngines(),
+    // `.catch` rather than bare, the same guard `landing.js` puts on this call
+    // and for a worse consequence here: a rejection inside `Promise.all` would
+    // abandon everything past this await — `loadVersion`, the not-found banner,
+    // and `startPolling`, so the session would never poll at all. The update
+    // check is the one member of this set that talks to a remote, and it is
+    // background work the operator did not ask for; it must not be able to take
+    // the page down with it.
+    loadUpdateStatus().catch((err) => {
+      console.error('update check on load failed:', err);
+      return null;
+    })]);
   loadVersion();
 
   if (!sessionState.project) {

@@ -4,6 +4,115 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A session learns about a release when it happens, not up to four hours later (#954).** The
+  update beacon polls every five minutes on both the dashboard and every session page, but on the
+  session page every one of those reads was a pure cache read — `GET /api/update-status`, documented
+  as side-effect-free. Nothing on that page ever asked the server to measure again, so the only
+  unconditional re-measurement anywhere was `startChecker`'s timer, and that ran every **four hours**.
+  The cadence was real; the freshness was not. An operator sitting in a session could watch a page
+  poll twelve times an hour and still be told about a release most of a release's life after it
+  existed.
+
+  The session poll now asks for a measurement — `POST /api/update/check` with `manual: false`, the
+  same request the dashboard has always made on load and on refocus. This cannot become a
+  `git ls-remote` loop, and that is a property of the server rather than a promise made by the
+  client: `refreshIfStale` serves a cache younger than `AUTO_REFRESH_MIN_AGE_MS` without measuring
+  and single-flights the rest, so the ceiling is one measurement per floor **per server** — the same
+  whether one session is open or twenty. A hidden tab stops polling entirely.
+
+  **The steady-state rate, stated rather than left to the ceiling.** The poll cadence equals that
+  refresh floor, so while any session page is visible the install sits *at* the ceiling: about one
+  `git ls-remote` every five minutes, ~288/day, against the origin you already push to. With nothing
+  open it falls to the periodic timer alone. That is a real increase and it is the price of the
+  behaviour — being told about a release within minutes requires someone to look within minutes — but
+  it is strictly less than the equivalent server-side interval would cost, because that would run at
+  the same rate whether or not anyone was there. `updateCheckIntervalMs` tunes the unattended floor;
+  the attended rate is fixed by `AUTO_REFRESH_MIN_AGE_MS`.
+
+  `.prawduct/artifacts/security-model.md` claimed under "What TangleClaw Does NOT Do" that it makes
+  no outbound network requests and specifically no update checks. That was already false before this
+  change and materially more so after it, so it now describes the one request TangleClaw does make,
+  its rate, and the fact that it carries no data about the operator.
+
+  `landing.js`'s `NOT_FOUND` fallback is replicated rather than assumed unnecessary. This repo is the
+  live install, so a merge or a self-update puts new client files on disk while the running process
+  keeps serving the old routes until it restarts; without the fallback the page would read that 404
+  as a failed check and hold a stale beacon until the restart.
+
+  The init call is now `.catch`-guarded, the same way the dashboard guards its own, and for a worse
+  consequence here: `loadUpdateStatus` sits in an `await Promise.all([...])`, so a rejection would
+  abandon everything past it — `loadVersion`, the not-found banner, and `startPolling`, leaving the
+  session never polling at all. Background work the operator did not ask for must not be able to take
+  the page down with it.
+
+- **A session that did not apply the update stops offering it (#955).** Applying an update from one
+  surface left every *other* open session showing the beacon dot — and re-opening a toast for a
+  version already running — while its own status bar correctly read the new one. Only a manual page
+  refresh cleared it.
+
+  The restart is the cause. The update cache lives in the process, so a restarted server answers
+  "never measured" until its first check; the beacon correctly refuses to act on that, because an
+  unknown rendered as "you are up to date" would take the dot down for an update that is genuinely
+  there (#716). Nothing then asked again until the full five-minute interval expired — and because
+  the cadence clock is stamped before the request, the reads that failed during the restart outage
+  consumed the same budget. The status bar disagreed because it is a different mechanism entirely,
+  re-stamped server-side at boot (#745).
+
+  A **non-answer no longer costs a full interval**: the page re-asks on a 30-second retry cadence
+  until a real answer arrives, then returns to the normal one. It cannot latch — the cadence is
+  chosen per read from the answer itself, never accumulated.
+
+  What the retry is actually for is the **outage** — the seconds a restarting server is not
+  listening, where the request fails outright. A restarted server that *is* listening needs no retry:
+  `refreshIfStale` treats a never-measured cache as always stale, so the re-measurement above answers
+  properly on the spot. Both halves were verified against a real server, a real restart and the real
+  client files by `scripts/verify-update-beacon-restart.js`, which is what corrected this description
+  — the first draft credited the retry with covering a state it never sees.
+
+  One non-answer does *not* resolve quickly: an origin that is simply unreachable keeps returning
+  `checkOk: false`, and the page will retry it every 30s for as long as it is open. That is accepted,
+  not overlooked. The cost on that path is a localhost request rather than origin traffic, because
+  `refreshIfStale` serves the cached failure without re-measuring until its floor expires, and what
+  the retry buys is noticing the moment the network comes back. The server-side *logging* does not
+  scale as gracefully at that rate, which is filed as #956.
+
+  **What counts as an answer is now one rule, not two.** `tcIsUpdateAnswer` moved out of the beacon's
+  `render` onto `window`, and both surfaces consult it. Two copies would have drifted, and the drift
+  would have been invisible — both render plausibly, and only the reachable-but-rare states disagree,
+  which is the #716 bug class exactly.
+
+### Changed
+
+- **The default update-check interval is now 30 minutes, down from 4 hours (#954).** This changes a
+  documented default an operator can see and tune (`updateCheckIntervalMs`), and it changes how often
+  an unattended install talks to `origin`, so it is a change rather than an internal one even though
+  the reason for it is internal. `docs/configuration-reference.md` documented the old value and has
+  been corrected.
+
+  The enabling change: `startChecker` drove `checkForUpdate`, the `execSync` form — so on a slow
+  or unreachable remote every tick could stall the single-threaded server, terminal websockets
+  included, for up to the full 15s `git ls-remote` timeout. The status routes already used the
+  `execFile` form for exactly that reason; a timer firing unattended is no more entitled to block the
+  loop than a request is. (`update-applier`'s pre-flight guard is the one caller still measuring
+  synchronously, and it does so from inside a request — a separate problem, left alone here.)
+
+  This is what made the interval free to shorten. While the timer blocked, the interval was
+  load-bearing for **latency** and not only for freshness, so lowering it would have multiplied those
+  stalls rather than simply improving freshness. Lowering it without this change first was the
+  tempting version of this fix and the wrong one.
+
+  Deliberately **not** routed through `refreshIfStale`, which would otherwise be the tidier call: its
+  staleness test compares against a `checkedAt` stamped when the previous tick *started*, so at
+  `maxAgeMs === interval` the comparison lands on its own boundary and a few milliseconds of timer
+  drift decide whether a tick measures or skips — a skip silently doubling the interval.
+
+  30m is the floor for the case nobody is looking; with any page open the effective floor is already
+  `AUTO_REFRESH_MIN_AGE_MS`. Shorter by default would buy freshness only for installs nobody is
+  watching and spend every install's origin traffic to do it, so `updateCheckIntervalMs` remains the
+  dial for anyone who wants it.
+
 ## [5.6.0] - 2026-08-16
 
 ### Added

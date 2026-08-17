@@ -279,7 +279,7 @@ To reach TangleClaw from another device, pick one of two things — never neithe
 
 ## Stay Updated
 
-TangleClaw checks for newer releases automatically (a `git ls-remote --tags` against your `origin`, ~60 seconds after server start and every 4 hours after). It also re-checks when you open the dashboard and whenever you return to its tab, so a release published between timer ticks is noticed within moments of you looking at the page rather than up to four hours later.
+TangleClaw checks for newer releases automatically (a `git ls-remote --tags` against your `origin`, ~60 seconds after server start and periodically after — see `updateCheckIntervalMs`). That timer is only the floor for an install nobody has open: the dashboard re-checks when you open it and whenever you return to its tab, and every open session re-checks on its own poll, so a release published between timer ticks is noticed within minutes of it existing rather than whenever the timer next happens to fire. Those page-driven checks are throttled and coalesced server-side, so the cost is the same whether you have one tab open or twenty.
 
 **To check on demand, click the version number** in the header. It reports the result inline — up to date, an update available, or that the check could not be made. That last distinction matters: an install that cannot reach `origin` is not the same as one that is current, and before #716 both rendered identically as "no pill".
 
