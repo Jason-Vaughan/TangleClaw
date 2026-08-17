@@ -903,7 +903,21 @@ describe('API endpoints', () => {
         const { status, data } = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'suggest' } });
         assert.equal(status, 500);
         assert.equal(data.code, 'MASTER_LEVEL_NOT_APPLIED');
-        assert.match(data.error, /still enforcing/);
+        assert.match(data.error, /still enforcing "read-only"/,
+          'a failure before the level was written must say the OLD level is in force');
+
+        // The other failure class must NOT claim that. Once the level file is
+        // written the guard reads it per tool call, so the new level IS in
+        // force and only the guard restoration is in doubt — saying "still
+        // enforcing read-only" there would be the false-reassurance direction.
+        const late = new Error('guard write failed');
+        late.levelApplied = true;
+        master.applyMasterAccessLevel = () => { throw late; };
+        const second = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'write' } });
+        assert.equal(second.status, 500);
+        assert.doesNotMatch(second.data.error, /still enforcing/);
+        assert.match(second.data.error, /is now "write"/);
+        assert.match(second.data.error, /guard could not be re-provisioned/);
       } finally {
         master.applyMasterAccessLevel = realApply;
         await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'read-only' } });

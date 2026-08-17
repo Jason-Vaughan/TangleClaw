@@ -1129,9 +1129,16 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
       log.error('Master access level saved but not applied — the write guard still enforces the previous level', {
         from: oldMasterAccessLevel, to: newMasterAccessLevel, error: err.message
       });
+      // Two different truths, and saying the wrong one is the defect this whole
+      // route is about. `levelApplied` means the level file was already written
+      // and the guard reads it per tool call, so the new level IS in force —
+      // what may not have happened is restoring a guard the master tampered with.
       return errorResponse(res, 500,
-        `Settings were saved, but the master's access level could not be applied — it is still enforcing "${oldMasterAccessLevel}". `
-        + 'Restart the master session to reconcile it.',
+        err.levelApplied
+          ? `The master's access level is now "${newMasterAccessLevel}", but its write guard could not be re-provisioned. `
+            + 'If the master altered the guard while it had write access, restart the master session to restore it.'
+          : `Settings were saved, but the master's access level could not be applied — it is still enforcing "${oldMasterAccessLevel}". `
+            + 'Restart the master session to reconcile it.',
         'MASTER_LEVEL_NOT_APPLIED');
     }
   }

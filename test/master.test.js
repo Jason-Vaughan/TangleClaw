@@ -677,6 +677,14 @@ describe('access level — the guard reads it per invocation (#755)', () => {
     return JSON.parse(res.stdout).hookSpecificOutput.permissionDecision;
   }
 
+  /** Engine resolvers pinned per test, so enforcement is decided by the CASE and
+   *  not by which CLIs the host happens to have installed. Without this, the
+   *  guard-restoration tests read the machine's real config and go red anywhere
+   *  `claude` is not the resolved default — CI included — for an environment
+   *  reason rather than a code one. */
+  const STRUCTURAL = { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' };
+  const INSTRUCTIONAL = { resolveDefaultEngine: () => 'gemini', reconcileLaunchMode: () => 'default' };
+
   /** A master home with guardrails written and `level` in place. Pass `null` to
    *  leave no level file at all. */
   function homeAt(level) {
@@ -875,7 +883,7 @@ describe('access level — the guard reads it per invocation (#755)', () => {
       assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), null,
         'precondition: the tampered guard decides nothing');
 
-      master.applyMasterAccessLevel('read-only', { home });
+      master.applyMasterAccessLevel('read-only', { home, enginesLib: STRUCTURAL });
 
       assert.equal(fs.readFileSync(script, 'utf8'), genuine, 'the guard must be restored, not just the level');
       assert.equal(guardDecision(home, { tool_input: { file_path: OUTSIDE } }), 'deny',
@@ -897,7 +905,7 @@ describe('access level — the guard reads it per invocation (#755)', () => {
       fs.rmSync(path.join(home, '.claude'), { recursive: true, force: true });
       assert.ok(!fs.existsSync(script), 'precondition: the guard is gone');
 
-      master.applyMasterAccessLevel('read-only', { home });
+      master.applyMasterAccessLevel('read-only', { home, enginesLib: STRUCTURAL });
 
       assert.ok(fs.existsSync(script), 'revocation must re-provision a deleted guard');
       assert.equal(fs.readFileSync(script, 'utf8'), genuine);
@@ -914,13 +922,9 @@ describe('access level — the guard reads it per invocation (#755)', () => {
     // supposed to degrade visibly instead. Driven through the engine resolver
     // rather than through "does a guard already exist", because that is what
     // decides enforcement everywhere else.
-    const instructional = {
-      resolveDefaultEngine: () => 'gemini',
-      reconcileLaunchMode: () => 'default'
-    };
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-master-instr-'));
     try {
-      const result = master.applyMasterAccessLevel('write', { home, enginesLib: instructional });
+      const result = master.applyMasterAccessLevel('write', { home, enginesLib: INSTRUCTIONAL });
       assert.equal(result.applied, true);
       assert.equal(result.enforcement, 'instructional');
       assert.equal(fs.readFileSync(master.masterAccessLevelPath(home), 'utf8').trim(), 'write',
