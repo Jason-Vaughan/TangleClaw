@@ -342,9 +342,30 @@ have a visibility-aware `setTimeout` chain that Medusa already rides ("same cade
 
 ## Status
 
-- [ ] Chunk 1 — level store + level-aware guard
+- [x] Chunk 1 — level store + level-aware guard — **DONE 2026-08-17**, branch `feat/755-access-level`
 - [ ] Chunk 2 — level-aware identity
 - [ ] Chunk 3 — bar toggle, badge, global warning
+
+### Chunk 1, as built
+
+Five commits: `ac1c4cf` (the chunk) then four review-driven — `b71f2f4`, `0db16df`, `2577260`,
+`2bdbd9a`. Suite 6349/0/1. Three Critic rounds: 4 blocking → 1 blocking → clean
+(`rev-20260817T195746Z-f3ee8f4e`, 0/0/0).
+
+**The two findings that mattered, both in the permissive direction:**
+1. The `suggest` tier hint inverted the bypassPermissions consequence. Resolved by *probing* rather
+   than picking a side — which falsified the shipped string AND this plan's own ratified caveat. See
+   the corrected decision A above.
+2. Guard re-provisioning keyed on `fs.existsSync(guard-writes.js)` — the artifact the threat
+   removes. Covered a blanked hook, missed a deleted one. Now keyed on
+   `enforcement === 'structural'`.
+
+**Coverage note for whoever runs the PR gate:** the clean review sits at `2577260`; `2bdbd9a`
+landed after it (test-resolver pinning + the 500's failure-class split, both mutation-proven).
+Chunk 2's review, or the cumulative at PR time, spans that delta — it is not silently unreviewed.
+
+**Deliberately not done here:** R-4, the tier hints' unconditional immediacy claim — carried into
+chunk 2, written into its section above.
 
 ## Related
 
