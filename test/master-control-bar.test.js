@@ -160,6 +160,30 @@ describe('#768 the bar behaves', () => {
     assert.equal(opened.length, 1, 'the gear must fire once, not once per mount');
   });
 
+  it('Retry actually fires its handler', () => {
+    // Behavioural, because the source-regex version of this passes whether or
+    // not `mount()` still binds the button — which is exactly the shape this
+    // repo's `feedback_measure_against_the_real_shape` learning warns about.
+    const { doc, ids } = makeDocument(['masterPanelBar']);
+    withIdParsingInnerHTML(ids.masterPanelBar, doc);
+    const fired = [];
+    const bar = G.tcCreateMasterControlBar({
+      doc, rootId: 'masterPanelBar', prefix: 'masterPanel', onRetry: () => fired.push(1)
+    });
+    bar.mount();
+    doc.getElementById('masterPanelRetryBtn').dispatch('click');
+    assert.equal(fired.length, 1, 'Retry must reach the handler the page supplied');
+  });
+
+  it('paints the model pill from a real fetch, and both pages ask for one', () => {
+    // THE BLOCKING DEFECT THIS CATCHES: `setModel` existed with no production
+    // caller, so the pill was permanently hidden while the plan, CHANGELOG and
+    // FEATURES all said it was one of only two working controls. A component
+    // method nothing calls is not a feature.
+    assert.match(UI, /masterBar\.loadModel\(/, 'the dashboard must load a model');
+    assert.match(SESSION_JS, /masterBar\.loadModel\(/, 'the session page must too');
+  });
+
   it('a failed open is visible, not console-only', () => {
     // What chunk 1's review required. Before this, a Master whose status fetch
     // failed looked exactly like a gear that does nothing.
@@ -226,19 +250,36 @@ describe('#768 the shared stylesheet is wired on both pages', () => {
     // Derived from the markup, not hand-listed — the same lesson the settings
     // modal's parity guard learned, where the plan named six classes and the
     // component emitted 23.
-    const css = read('shared-controls.css');
+    // Comments STRIPPED first. A prose mention of a class — "rather than
+    // borrowing `.engine-pill`" — otherwise reads as a declaration, and this
+    // guard reported a class as styled purely because a comment named it. A
+    // guard that treats documentation as implementation cannot fail.
+    const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '');
+    const css = strip(read('shared-controls.css'));
     const bar = G.tcMasterControlBarMarkup('masterPanel', {});
     const emitted = new Set();
     for (const m of bar.matchAll(/class="([^"]*)"/g)) {
       for (const c of m[1].trim().split(/\s+/)) if (c) emitted.add(c);
     }
-    // Classes the PAGE stylesheets legitimately own (generic chrome) are not
-    // this file's job; the bar's own vocabulary is.
-    const owned = [...emitted].filter((c) => c.startsWith('master-bar') || c.startsWith('master-access'));
-    assert.ok(owned.length >= 3, `expected the bar to have its own classes, got ${owned.join(',')}`);
-    for (const c of owned) {
-      assert.match(css, new RegExp(`\\.${c}(?![\\w-])`),
-        `${c} is emitted by the bar but styled nowhere both pages can see`);
+    // EVERY class, not just the `master-*` ones. The first version filtered to
+    // the bar's own prefix and therefore could not see the defect that actually
+    // shipped: the pill emitted `engine-pill`, a class declared only in
+    // style.css, so it was unstyled on the session page — invisible to a guard
+    // that only checked classes it already assumed were shared.
+    const pageOwned = new Set(['btn', 'btn-small', 'hidden', 'sr-only', 'banner-btn',
+      'btn-wrap', 'btn-kill', 'medusa-control', 'medusa-mark', 'medusa-head',
+      'medusa-head--in', 'medusa-head--out', 'medusa-emblem', 'master-dot',
+      'master-status-text']);
+    const unstyled = [...emitted].filter((c) => !pageOwned.has(c)
+      && !new RegExp(`\\.${c}(?![\\w-])`).test(css));
+    assert.deepEqual(unstyled, [],
+      'emitted by the bar but styled nowhere both pages can see');
+    // And the classes deferred to the shared sheet above must really be there —
+    // otherwise the allow-list becomes a way to hide the same defect.
+    const sharedCss = css;
+    for (const c of ['banner-btn', 'btn-wrap', 'medusa-control']) {
+      assert.match(sharedCss, new RegExp(`\\.${c}(?![\\w-])`),
+        `${c} is on the allow-list because it is SHARED — it must live in the shared sheet`);
     }
   });
 });

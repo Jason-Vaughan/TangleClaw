@@ -29,8 +29,11 @@ const path = require('node:path');
 
 const pub = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
 const HELPER = pub('api-helper.js');
-const STYLE = pub('style.css');
-const SESSION_CSS = pub('session.css');
+// Comments stripped: a class merely NAMED in prose would otherwise read as
+// declared, and this guard's whole job is to tell those apart.
+const stripCss = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '');
+const STYLE = stripCss(pub('style.css'));
+const SESSION_CSS = stripCss(pub('session.css'));
 
 /**
  * Slice a top-level function (declaration + body) out of source by brace match.

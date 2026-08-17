@@ -3446,6 +3446,10 @@ function attachMasterFrame() {
 async function refreshMasterDot() {
   const status = await api('/api/master/status');
   if (!status) return;
+  // The model pill is painted from the Master's OWN engine, whatever the
+  // status says about liveness — an unreachable master still has a configured
+  // engine, and hiding the pill would lose that.
+  if (masterBar) masterBar.loadModel(status.engine || null);
   if (status.exists) {
     setMasterStatus('live');
     return;
@@ -3496,6 +3500,7 @@ masterBar = window.tcCreateMasterControlBar({
   rootId: 'masterPanelBar',
   prefix: 'masterPanel',
   title: 'Project Master',
+  api,
   onRetry: ensureMasterAttached,
   onOpenSettings: () => { masterBar.setError(''); masterSettings.open(); }
 });

@@ -2138,6 +2138,10 @@ async function ensureMasterDrawerAttached() {
     return;
   }
   setMasterDrawerStatus('live', result.created ? 'Master session started' : 'Master session live');
+  // Same source as the dashboard's: the Master's own engine, from its own
+  // response. Not awaited — the pill is supplementary, and a slow model-status
+  // call must not hold up attaching the terminal.
+  if (masterBar) masterBar.loadModel(result.engine || null);
   attachMasterDrawerFrame();
 }
 
@@ -4717,6 +4721,7 @@ function bindEvents() {
     rootId: 'masterDrawerBar',
     prefix: 'masterDrawer',
     title: 'Master',
+    api,
     onRetry: ensureMasterDrawerAttached,
     // Clear any previous failure before opening: a stale error line beside a
     // modal that just opened fine is its own lie.

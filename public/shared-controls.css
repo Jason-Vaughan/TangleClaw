@@ -226,11 +226,47 @@
   opacity: 0.38;
   border-style: dashed !important;
   cursor: not-allowed;
-  pointer-events: auto; /* keep the tooltip reachable while disabled */
+  /* !important, and not a style preference: `.banner-btn:disabled` sets
+     `pointer-events: none` at (0,2,0), which beats this rule's (0,1,0) whatever
+     the source order. Without it the browser never delivers hover to these
+     controls, so the `title` carrying each control's reason NEVER APPEARS — and
+     the reason is the entire justification for rendering a disabled control at
+     all. The border-style fight above was already met once; this is the rest of
+     the same fight. */
+  pointer-events: auto !important;
 }
 .master-bar-pending:hover { opacity: 0.52; }
 
-.master-bar-model { flex-shrink: 0; }
+/* The bar's own pill, fully specified here rather than borrowing `.engine-pill`.
+   That class is declared only in style.css (under "Legacy compat"), so it is
+   invisible on the session page, and every tint rule for it is
+   companion-qualified — `.badge-engine.engine-pill-degraded` — so the whole-pill
+   tint this bar promises would have matched no selector on either page. A shared
+   component cannot rest on a class only one page defines. */
+.master-bar-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border: 1px solid var(--border, #333);
+  border-radius: var(--radius-pill, 14px);
+  font-size: 11.5px;
+  color: var(--text-muted, #777);
+}
+/* Non-operational states tint the WHOLE pill, not just the dot: a 6px dot is not
+   a signal caught in passing, and colour alone is not one every operator can
+   catch at all — the label's own colour changes with it. */
+.master-bar-model.engine-pill-degraded,
+.master-bar-model.engine-pill-partial_outage {
+  border-color: var(--amber, #FFA726);
+  color: var(--amber, #FFA726);
+}
+.master-bar-model.engine-pill-major_outage,
+.master-bar-model.engine-pill-unknown {
+  border-color: var(--danger, #EF5350);
+  color: var(--danger, #EF5350);
+}
 
 /* The Master-only access toggle. Two segments rather than a switch, because a
    switch says on/off and this says which of two named modes is in force. */
@@ -268,3 +304,11 @@
   color: var(--danger, #EF5350);
   margin-top: 6px;
 }
+
+/* The row wraps. `.master-bar-error` is written as `flex-basis: 100%` so a
+   failure takes its own line beneath the controls — without wrapping it would
+   be squeezed onto the end of the row and effectively invisible, which is the
+   defect the error line exists to fix. Plan Q4 deferred the mobile-density rule
+   on the premise "the bar ships with two controls"; it ships with nine laid-out
+   children, so wrapping is the floor, not the whole answer. */
+.master-status-row { flex-wrap: wrap; }

@@ -2039,7 +2039,7 @@
     return `
       <span class="master-dot" id="${p}Dot" aria-hidden="true"></span>
       <span class="master-status-text" id="${p}StatusText"></span>
-      <span class="engine-pill master-bar-model" id="${p}Model" hidden></span>
+      <span class="master-bar-model" id="${p}Model" hidden></span>
       <span class="medusa-control master-bar-pending" id="${p}Medusa"
             aria-disabled="true" aria-describedby="${p}MedusaWhy"
             title="${TC_MASTER_PENDING.medusa}">
@@ -2183,7 +2183,28 @@
       box.hidden = !message;
     }
 
-    return { mount, setStatus, setModel, setError };
+    /**
+     * Fetch the model's health and paint the pill.
+     *
+     * The bar owns this rather than each page fetching and calling `setModel`,
+     * because two callers is how the dashboard and the session came to disagree
+     * about everything else this chunk had to reunify. `engineId` comes from the
+     * Master's own status — the Master runs one engine, and which one is a fact
+     * about the Master, not about the page looking at it.
+     *
+     * @param {string|null} engineId - The Master's engine, or null if unknown.
+     * @returns {Promise<void>}
+     */
+    async function loadModel(engineId) {
+      if (!engineId || !deps.api) { setModel(null, null); return; }
+      const data = await deps.api('/api/models/status');
+      // A failed fetch is not "operational" — paint the label with an unknown
+      // state rather than implying health nobody measured.
+      const st = (data && data.status && data.status[engineId]) || null;
+      setModel(st, engineId);
+    }
+
+    return { mount, setStatus, setModel, setError, loadModel };
   }
 
   global.tcSetRulesStatus = tcSetRulesStatus;
