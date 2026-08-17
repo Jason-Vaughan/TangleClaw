@@ -62,9 +62,14 @@ All notable changes to TangleClaw are documented in this file.
 
   A **non-answer no longer costs a full interval**: the page re-asks on a 30-second retry cadence
   until a real answer arrives, then returns to the normal one. It cannot latch — the cadence is
-  chosen per read from the answer itself, never accumulated. The states it exists for resolve within
-  seconds (a restart, and the outage around it), so this is a short wait for a fast event rather than
-  a shorter poll for a slow one.
+  chosen per read from the answer itself, never accumulated.
+
+  What the retry is actually for is the **outage** — the seconds a restarting server is not
+  listening, where the request fails outright. A restarted server that *is* listening needs no retry:
+  `refreshIfStale` treats a never-measured cache as always stale, so the re-measurement above answers
+  properly on the spot. Both halves were verified against a real server, a real restart and the real
+  client files by `scripts/verify-update-beacon-restart.js`, which is what corrected this description
+  — the first draft credited the retry with covering a state it never sees.
 
   One non-answer does *not* resolve quickly: an origin that is simply unreachable keeps returning
   `checkOk: false`, and the page will retry it every 30s for as long as it is open. That is accepted,

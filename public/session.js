@@ -721,10 +721,21 @@ async function loadUpdateStatus() {
     data = await api('/api/update-status');
   }
 
-  // A NON-ANSWER MUST NOT CONSUME THE FULL INTERVAL. The states this is FOR
-  // resolve on their own within seconds: the server restarting (its cache lives
-  // in the process, so every restart passes back through "never measured"), and
-  // the outage while it comes back.
+  // A NON-ANSWER MUST NOT CONSUME THE FULL INTERVAL. The state this is FOR is
+  // the OUTAGE — the seconds a restart is not listening, where the request fails
+  // outright and the page has no answer at all. That is what a lingering session
+  // meets when an update is applied from another surface, and it is what used to
+  // cost five minutes.
+  //
+  // Note what this is NOT for, because the obvious guess is wrong: a restarted
+  // server that IS listening does not return "never measured" to this path.
+  // `refreshIfStale` treats a cache with no `checkedAt` as always stale, so the
+  // POST measures on the spot and answers properly. "Never measured" now reaches
+  // the client only through the NOT_FOUND fallback below, against a server old
+  // enough to lack this route. (Verified end-to-end by
+  // `scripts/verify-update-beacon-restart.js`, which is where this correction
+  // came from — the first version of this comment claimed the restart itself
+  // produced the non-answer.)
   //
   // One of them does not: a `checkOk: false` from an origin that is simply
   // unreachable can persist for hours, and this retries it every 30s for as long
