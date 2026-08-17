@@ -247,6 +247,14 @@ baseline rule's first sentence loses its unconditional "Read-only" framing and k
 so the toggle is *not* immediate there. The status payload must carry that distinction so chunk 3's
 bar can say it rather than implying otherwise.
 
+**Carried in from chunk 1's review (R-4), to be fixed by the commit this chunk makes anyway:** both
+settings tier hints currently promise "takes effect on its next tool call — no restart"
+*unconditionally*. That is true structurally and false on an instructional engine, where the level
+reaches the master only through the regenerated identity — i.e. on the next ensure. The enforcement
+badge above the grid partly mitigates it today. When this chunk teaches the payload to distinguish
+"binds on the next tool call" from "binds on the next ensure", the hints must read from that rather
+than asserting the structural answer for every engine.
+
 **Done when:**
 1. The generated identity states the current level at all three tiers, verified by reading the
    generated file at each.
