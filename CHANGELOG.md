@@ -28,7 +28,12 @@ All notable changes to TangleClaw are documented in this file.
   exactly like a gear that does nothing. The bar owns a status line and both pages paint it.
 
 - **Controls with no backend ship visibly absent, with their reason (#768 chunk 2).** Only the gear and the model pill have routes today — the pill is painted by
-  `loadModel`, which both pages call with the Master's own engine from its own status response. Medusa, the access toggle, Upload, Wrap and Kill render dim,
+  `loadModel`, which both pages call with the Master's own engine from its own status response —
+  the dashboard reads `settings.resolvedEngine` from `GET /api/master/status` and the session page
+  reads the top-level `engine` from the ensure response, because those payloads genuinely differ and
+  a component method with no caller (or with a caller passing a field that does not exist) is not a
+  feature. Both are pinned against the shapes `lib/master.js` actually emits, so removing the field
+  at the producer end fails too. Medusa, the access toggle, Upload, Wrap and Kill render dim,
   disabled, and carrying why — `title` for pointers and an `aria-describedby` element for everything
   else, because a `title` is invisible on touch and this install is driven from a phone. The reasons
   live in **one table** (`tcMasterPendingReasons`), since two surfaces giving different reasons for

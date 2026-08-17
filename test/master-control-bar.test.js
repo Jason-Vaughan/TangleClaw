@@ -307,14 +307,30 @@ describe('#768 the shared stylesheet is wired on both pages', () => {
     const session = strip(read('session.css'));
     const has = (t, c) => new RegExp(`\\.${c}(?![\\w-])`).test(t);
 
+    // Classes the bar emits purely as selector/JS hooks, carrying no styling of
+    // their own. Each is a deliberate claim: `master-status-text` takes its
+    // appearance from `.master-status-row`, and `medusa-head` is a positioning
+    // hook whose visuals live on the `--in`/`--out` modifiers.
+    const ACKNOWLEDGED_HOOKS = new Set(['master-status-text', 'medusa-head']);
     const bad = [];
     for (const c of [...emitted].sort()) {
       const inShared = has(css, c);
       const inStyle = has(style, c);
       const inSession = has(session, c);
       if (inShared) continue;                          // shared: the preferred home
-      if (!inStyle && !inSession) continue;            // a hook, styled nowhere
       if (inStyle && inSession) continue;              // parity across both pages
+      if (!inStyle && !inSession) {
+        // Styled NOWHERE is a legitimate outcome — a pure selector hook — but it
+        // has to be a claim someone made, not a bucket anything can fall into.
+        // The three-way rule replaced a hand-written allow-list and, left open,
+        // would pass a NEW emitted class styled nowhere: the one defect shape the
+        // old list did catch. Naming them restores that without going back to
+        // "trust me" for the classes that ARE styled.
+        if (!ACKNOWLEDGED_HOOKS.has(c)) {
+          bad.push(`${c}: styled nowhere and not acknowledged as a hook`);
+        }
+        continue;
+      }
       bad.push(`${c}: shared=${inShared} style=${inStyle} session=${inSession}`);
     }
     assert.deepEqual(bad, [],
