@@ -693,6 +693,33 @@ describe('#755 the access toggle is live, and paints only from server state', ()
     assert.match(prompts[0], /next time the master session starts/i);
   });
 
+  it('the confirmation is cautious about WHEN and silent about WHY when the field is absent', () => {
+    // The third member of the family. `bindsAt` (the modal hint) and `setAccess`
+    // (the bar's warning line) both have their absent-field state pinned; this
+    // one — the confirmation shown on the way into `write` — did not, and it is
+    // the surface where the sentence is read most carefully.
+    //
+    // Payload skew is the reachable case: a service-worker-cached client against
+    // an older server. On a Claude master, "this engine carries the level in its
+    // instructions rather than a write guard" is false.
+    //
+    // THE MUTATION THIS CATCHES: collapsing `writeWarningText`'s three states
+    // back to two, which is exactly what the two sibling call sites already
+    // guard against and this one did not.
+    const skewed = settings();
+    delete skewed.levelAppliesAt;
+    const { el, prompts } = mountedBar({ statuses: [{ settings: skewed }] });
+    el('AccessWrite').dispatch('click');
+    return flush().then(() => {
+      assert.equal(prompts.length, 1, 'the confirmation must still be shown');
+      assert.doesNotMatch(prompts[0], /rather than a write guard/,
+        'absence of the field must not become a claim about the engine');
+      assert.doesNotMatch(prompts[0], /next tool call/, 'nor a promise of immediacy');
+      assert.match(prompts[0], /next time the master session starts/,
+        'the cautious WHEN still ships');
+    });
+  });
+
   it('does NOT warn on the way back to read-only', async () => {
     // Returning to read-only is always the safe direction, and warning there
     // trains the operator to click through the one that matters.
