@@ -1,7 +1,8 @@
 # Plan — #968: a level change reaches the Master, and the operator can make it
 
-**Status:** BOTH CHUNKS BUILT AND REVIEWED — 2026-08-18, branch
-`fix/968-master-level-takes-effect`, awaiting PR. **Milestone:** Master Control (#829). **Issue:** #968.
+**Status:** ARCHIVED — completed 2026-08-18. Both chunks built, reviewed and shipped on
+`fix/968-master-level-takes-effect` across nine review rounds; archived on that branch so the
+retirement merges atomically with the work rather than needing a bookkeeping commit on `main`. **Milestone:** Master Control (#829). **Issue:** #968.
 **Also ships:** #768 chunk 3 (Master Kill), which this bug turns from optional into the remedy.
 **Predecessor:** #755 (shipped 2026-08-18 as PR #967 — this fixes a defect in it).
 **Requirements Confidence:** **High.** The defect is reproduced and its mechanism is verified
