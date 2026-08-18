@@ -15,4 +15,14 @@ if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$PRIME_FILE" ] && [ -r "$PRIME_FILE
   # readability check and cat — the script still exits 0 silently.
   cat "$PRIME_FILE" || true
 fi
+
+WRAP_ADVISORY="${CLAUDE_PROJECT_DIR:-}/.tangleclaw/ui-wrap-advisory.md"
+if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$WRAP_ADVISORY" ] && [ -r "$WRAP_ADVISORY" ]; then
+  # Inject the UI Wrap advisory decision heuristic
+  echo ""
+  echo "---"
+  echo ""
+  cat "$WRAP_ADVISORY" || true
+fi
+
 exit 0
