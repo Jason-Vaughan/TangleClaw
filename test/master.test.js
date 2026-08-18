@@ -2488,6 +2488,9 @@ describe('master API routes over HTTP', () => {
       assert.equal(unknown.status, 500);
       assert.equal(unknown.data.code, 'MASTER_LIVENESS_UNKNOWN',
         'the same code ensure uses — one client branch covers both');
+      assert.equal(unknown.data.cause, 'read-timed-out',
+        'and the CAUSE travels, or a client cannot tell this refusal from the '
+        + 'unconfirmed-kill one that shares its code');
     } finally {
       master.killMasterSession = original;
     }

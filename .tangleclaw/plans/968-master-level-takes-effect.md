@@ -1,6 +1,7 @@
 # Plan — #968: a level change reaches the Master, and the operator can make it
 
-**Status:** OPEN — not started. **Milestone:** Master Control (#829). **Issue:** #968.
+**Status:** BOTH CHUNKS BUILT AND REVIEWED — 2026-08-18, branch
+`fix/968-master-level-takes-effect`, awaiting PR. **Milestone:** Master Control (#829). **Issue:** #968.
 **Also ships:** #768 chunk 3 (Master Kill), which this bug turns from optional into the remedy.
 **Predecessor:** #755 (shipped 2026-08-18 as PR #967 — this fixes a defect in it).
 **Requirements Confidence:** **High.** The defect is reproduced and its mechanism is verified

@@ -947,8 +947,12 @@ describe('API endpoints', () => {
         assert.doesNotMatch(second.data.error, /still enforcing/);
         assert.match(second.data.error, /is now "write"/);
         assert.match(second.data.error, /refresh that should have followed it did not finish/);
-        assert.doesNotMatch(second.data.error, /^[^]*only[^]*write guard/,
-          'and it must not point at the guard alone, which is now one of three artifacts');
+        // A `doesNotMatch(/^[^]*only[^]*write guard/)` sat here and was VACUOUS:
+        // it required a literal "only" before "write guard", which the old
+        // message never contained, so it passed against the exact wording it
+        // claimed to ban. Removed rather than repaired — the positive assertion
+        // above already fails on a revert, and a guard that looks like a second
+        // check while testing nothing is worse than one fewer check.
         assert.match(second.data.error, /Restart the master session/,
           'and it must say what to do about it');
       } finally {

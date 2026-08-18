@@ -365,9 +365,14 @@ function jsonResponse(res, status, data) {
  * @param {number} status - HTTP status code
  * @param {string} message - Error message
  * @param {string} code - Machine-readable error code
+ * @param {object} [extra] - Extra fields merged into the body, for refusals that
+ *   share a code and differ by detail (e.g. the master kill's two 500s).
  */
-function errorResponse(res, status, message, code) {
-  jsonResponse(res, status, { error: message, code });
+function errorResponse(res, status, message, code, extra) {
+  // `extra` carries fields a client needs to tell two refusals apart when they
+  // share a code — the master kill's two 500s differ only by `cause`. Optional
+  // and spread last, so every existing caller is byte-identical.
+  jsonResponse(res, status, { error: message, code, ...(extra || {}) });
 }
 
 // ── Body Parser ──
@@ -628,7 +633,11 @@ route('POST', '/api/master/kill', (_req, res) => {
     // answer is not "the master is stopped". Saying it was would tell the
     // operator their master is down during exactly the wedge where it is most
     // likely still running.
-    return errorResponse(res, 500, result.error, 'MASTER_LIVENESS_UNKNOWN');
+    // The CAUSE travels too. One code covers both refusals — tmux never answered
+    // the probe, or the session was live and the kill went unconfirmed — and
+    // without the cause a client cannot tell a timeout from the second case,
+    // which are different things to tell the operator.
+    return errorResponse(res, 500, result.error, 'MASTER_LIVENESS_UNKNOWN', { cause: result.cause });
   }
   jsonResponse(res, 200, result);
 });
