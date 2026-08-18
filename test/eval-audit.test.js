@@ -909,6 +909,14 @@ describe('eval-audit: scoreWrapQuality', () => {
     assert.equal(result.totalSteps, 0);
   });
 
+  it('has a regex pattern for every pipeline step ID (structural regression test)', () => {
+    const pipeline = require('../lib/wrap-pipeline');
+    const allStepIds = Object.keys(pipeline.STEP_DISPATCH);
+    for (const stepId of allStepIds) {
+      assert.ok(evalAudit.WRAP_STEP_PATTERNS[stepId], `Missing WRAP_STEP_PATTERNS entry for ${stepId}`);
+    }
+  });
+
   it('scores against the ids the caller passes (effective, override-filtered set)', () => {
     const exchanges = [
       { agentResponse: 'I bumped the version to v3.6.0 and updated version.json', userMessage: '' },
