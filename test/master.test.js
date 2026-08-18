@@ -553,7 +553,6 @@ describe('#968 a level change reaches the Master\'s own instructions', () => {
 });
 
 describe('readMasterIdentityFreshness — has the RUNNING Master read this? (#968)', () => {
-  const masterPath = path;
   const homes = [];
   const mk = () => {
     const h = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fresh-'));
@@ -644,7 +643,7 @@ describe('readMasterIdentityFreshness — has the RUNNING Master read this? (#96
     //
     // THE MUTATION THIS CATCHES: narrowing the try back to the guard write.
     const home = mk();
-    fs.mkdirSync(masterPath.join(home, 'CLAUDE.md'), { recursive: true });
+    fs.mkdirSync(path.join(home, 'CLAUDE.md'), { recursive: true });
     let caught = null;
     try {
       master.refreshMasterIdentity({
@@ -683,6 +682,47 @@ describe('readMasterIdentityFreshness — has the RUNNING Master read this? (#96
     master.refreshMasterIdentity({ home, enginesLib: { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' } });
     assert.equal(fs.statSync(master.masterIdentityPath(home)).mtimeMs, past.getTime(),
       'an ensure that changes nothing must not touch the identity mtime');
+  });
+
+  it('a read that failed on a LIVE session is unknown, not "no such session"', () => {
+    // `probeSession` confirmed the session is live, then the timestamp read
+    // failed without timing out. The bare negative shape (`answered: true`,
+    // `createdAt: null`) means "no such session" everywhere else, and reading it
+    // that way here would report a live Master as never stale — a report
+    // reassuring from a read that did not happen.
+    //
+    // THE MUTATION THIS CATCHES: dropping `read-failed` from the unknown set, or
+    // having tmux return a bare null for that case.
+    const home = mk();
+    identityAt(home, 0);
+    const p = master.readMasterIdentityFreshness({
+      home, tmuxLib: tmuxAt({ createdAt: null, answered: true, cause: 'read-failed' })
+    });
+    assert.equal(p.identityStale, null);
+  });
+
+  it('a stat failure that is NOT "absent" reports unknown, not "nothing is stale"', () => {
+    // Changed behavior that shipped without a test: only ENOENT means nothing
+    // has been generated. EACCES, EIO or ENOTDIR mean the identity may well
+    // exist and could not be read, and answering "nothing is stale" there is a
+    // report reassuring from a read that never happened.
+    //
+    // Driven with ENOTDIR because it is portable and needs no permission games:
+    // a home whose parent component is a regular FILE.
+    //
+    // THE MUTATION THIS CATCHES: collapsing the branch back to a bare `return
+    // none`, which leaves every existing stat test green — the only other one
+    // exercises the ENOENT arm.
+    const notADir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-enotdir-'));
+    homes.push(notADir);
+    const asFile = path.join(notADir, 'afile');
+    fs.writeFileSync(asFile, 'not a directory');
+    const p = master.readMasterIdentityFreshness({
+      home: path.join(asFile, 'home'),
+      tmuxLib: tmuxAt({ createdAt: 1, answered: true, cause: null })
+    });
+    assert.equal(p.identityStale, null,
+      'an unreadable identity is unknown; only an ABSENT one is "nothing is stale"');
   });
 
   it('no running Master, and no identity at all, are both "nothing is stale"', () => {

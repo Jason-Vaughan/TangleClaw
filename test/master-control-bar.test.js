@@ -1090,12 +1090,22 @@ describe('#755 both surfaces drive the live toggle, and neither grows a timer', 
     // thing a structural master must not say: the guard binds immediately, the
     // Master does not.
     //
-    // SCANS FIVE FILES, not one. The first version of this guard read only
-    // `api-helper.js` and reported the family held while
-    // `docs/configuration-reference.md`, both halves of ADR 0008, the
-    // `[Unreleased]` CHANGELOG entry and `FEATURES.md` all still carried it —
-    // the CHANGELOG one would have PUBLISHED the disproved claim. A family guard
-    // that knows about one member is how the claim survived in the first place.
+    // SCANS EVERY TRACKED MEMBER. The first version read only `api-helper.js` and
+    // reported the family held while `docs/configuration-reference.md`, both
+    // halves of ADR 0008, the `[Unreleased]` CHANGELOG entry and `FEATURES.md`
+    // all still carried it — the CHANGELOG one would have PUBLISHED the
+    // disproved claim. A family guard that knows about one member is how the
+    // claim survived in the first place.
+    //
+    // TRACKED is the operative word. A sixth member, `.prawduct/artifacts/
+    // api-contract.md`, was briefly added here and had to come out: `.gitignore`
+    // is `.prawduct/*`, so that file exists in no clone and the guard would have
+    // thrown ENOENT in CI while passing locally — this worktree symlinks
+    // `.prawduct/artifacts` into the primary checkout, which is exactly the
+    // "passes on the machine that wrote it" trap `test/degraded-reads-frontend.
+    // test.js` already documents about the same directory. Its claim IS fixed;
+    // it simply cannot be held from a test. Everything listed below is tracked —
+    // asserted, not assumed, by the readability check itself.
     //
     // Bans the CLAIM, not the phrase: the corrected docs quote the old wording
     // to explain what changed, and a bare /no restart/ would forbid saying what
@@ -1106,13 +1116,17 @@ describe('#755 both surfaces drive the live toggle, and neither grows a timer', 
       /next tool call with no restart/i,
       /with no restart and no re-ensure/i
     ];
-    // Six, not five: `api-contract.md` carried the claim too and sat outside the
-    // first widening — the family kept being bigger than the last count of it.
     const FAMILY = ['public/api-helper.js', 'docs/configuration-reference.md',
-      'docs/adr/0008-project-master-session-model.md', 'CHANGELOG.md', 'FEATURES.md',
-      '.prawduct/artifacts/api-contract.md'];
+      'docs/adr/0008-project-master-session-model.md', 'CHANGELOG.md', 'FEATURES.md'];
     for (const rel of FAMILY) {
-      const body = fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+      const abs = path.join(__dirname, '..', rel);
+      // Fails loudly rather than skipping. A guard that quietly passes over a
+      // member it cannot read is the same as not having that member — and
+      // silently-skipped is how the gitignored entry would have hidden.
+      assert.equal(fs.existsSync(abs), true,
+        `${rel} must exist in every clone for this guard to mean anything — `
+        + 'if it is gitignored it cannot be a member');
+      const body = fs.readFileSync(abs, 'utf8');
       for (const claim of CLAIMS) {
         assert.doesNotMatch(body, claim,
           `${rel} still says a level change needs no restart — the running Master reads its `

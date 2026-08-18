@@ -844,6 +844,37 @@ describe('tmux', () => {
       }
     });
 
+    it('should name a cause when a LIVE session\'s timestamp read fails', () => {
+      // STRUCTURAL, for the same reason the existence check above is: the branch
+      // needs `has-session` to succeed and `display-message` to fail without
+      // timing out, which cannot be arranged from a test without racing a kill
+      // between the two calls.
+      //
+      // It matters because the bare negative shape — `answered: true`,
+      // `createdAt: null`, no cause — means "no such session" to every caller,
+      // and a live session whose read failed is not that. Its consumer treats a
+      // named cause as unknown; an unnamed one would read as "nothing to be
+      // stale about".
+      //
+      // THE MUTATION THIS CATCHES: returning `cause: null` from that catch.
+      const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'tmux.js'), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
+      const fn = src.slice(src.indexOf('function sessionCreatedAt'));
+      const body = fn.slice(0, fn.indexOf('\n}'));
+      // The CATCH block specifically. A whole-function scan is satisfied by the
+      // `unparseable` return — which is also an answered-negative with a cause —
+      // so it passed while the catch was mutated back to a bare null. Measured.
+      const catchAt = body.indexOf('} catch (err) {');
+      assert.notEqual(catchAt, -1, 'the failed-read catch must still exist');
+      const catchBody = body.slice(catchAt);
+      const answered = [...catchBody.matchAll(/answered: true, cause: ([^ }]+)/g)].map((m) => m[1]);
+      assert.equal(answered.length, 1,
+        `expected exactly one answered-negative return in the catch, got ${answered.length}`);
+      assert.notEqual(answered[0], 'null',
+        'the failed-read return must name a cause, or it is indistinguishable from "no such session"');
+    });
+
     it('should not report an absent session\'s creation time from a neighbour', () => {
       // THE REGRESSION THIS EXISTS FOR: `display-message` does not fail on an
       // absent session — it answers for the attached client — so without an
