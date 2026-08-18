@@ -4,6 +4,21 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.10.0] - 2026-08-18
+
+### Added
+- **Live Wrap Progress via SSE (#185, #771)**: The Wrap button now immediately shows a "Wrapping..." state and streams live progress row-by-row into the Wrap Drawer using Server-Sent Events, removing the silent blocking period.
+- **Project Engine Filter (#790)**: Added an LLM engine filter dropdown to the project view that automatically populates based on loaded projects.
+- **Multi-File Uploads (#770, #769)**: The Upload modal now supports selecting multiple files simultaneously. It uploads them in sequence and features a brief green "Uploaded!" success flash along with a list of the uploaded file paths.
+
+## [5.9.0] - 2026-08-18
+
+### Added
+- **Medusa Switchboard Integration (#755, #945)**: Integrated Medusa broadcasting. Shared documents are now watched via `fs.watch` on the server and Medusa instantly pings connected sessions when the file changes, eliminating the need to refresh or restart to see cross-session updates.
+
+### Fixed
+- **Master Session Recovery (#342, #372, #348)**: Hardened the Master session update loop against orphaned tmux states and lingering cache files.
+
 ## [5.8.0] - 2026-08-18
 
 ### Added
