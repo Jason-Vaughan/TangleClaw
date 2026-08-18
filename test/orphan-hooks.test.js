@@ -178,7 +178,7 @@ describe('scanForOrphanHooks (#145, chunk 2)', () => {
   it('TC-v3 incident shape: flags orphan prawduct entries but preserves the silentPrime absolute-path entry', () => {
     // The live incident: orphan $CLAUDE_PROJECT_DIR/tools/product-hook entries
     // alongside a legitimate silentPrime SessionStart hook using an absolute
-    // path to data/hooks/sessionstart-prime.sh. Only the env-var entries should
+    // path to data/hooks/sessionstart-prime-claude.sh. Only the env-var entries should
     // be flagged; the absolute-path entry must not appear as orphan.
     const p = registerProject('tc-incident');
     writeSettings(p, {
@@ -189,7 +189,7 @@ describe('scanForOrphanHooks (#145, chunk 2)', () => {
         },
         {
           matcher: 'startup',
-          hooks: [{ type: 'command', command: `${p}/data/hooks/sessionstart-prime.sh` }]
+          hooks: [{ type: 'command', command: `${p}/data/hooks/sessionstart-prime-claude.sh` }]
         }
       ],
       Stop: [orphanStopEntry()]

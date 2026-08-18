@@ -10,9 +10,21 @@
   },
   "coAuthorFormat": "Co-Authored-By: {name} <{email}>",
   "commands": [
-    { "label": "Compact", "input": "/compact", "description": "Compress context" },
-    { "label": "Clear", "input": "/clear", "description": "Clear conversation" },
-    { "label": "Review", "input": "/review", "description": "Review recent changes" }
+    {
+      "label": "Compact",
+      "input": "/compact",
+      "description": "Compress context"
+    },
+    {
+      "label": "Clear",
+      "input": "/clear",
+      "description": "Clear conversation"
+    },
+    {
+      "label": "Review",
+      "input": "/review",
+      "description": "Review recent changes"
+    }
   ],
   "install": {
     "command": "npm install -g @anthropic-ai/claude-code",
@@ -29,11 +41,44 @@
     "startupDelay": 2000
   },
   "launchModes": {
-    "default": { "label": "Interactive", "args": [], "description": "Prompts for permission on every action" },
-    "acceptEdits": { "label": "Accept Edits", "args": ["--permission-mode", "acceptEdits"], "description": "Auto-accepts file reads and edits" },
-    "plan": { "label": "Plan Only", "args": ["--permission-mode", "plan"], "description": "Read-only, no code changes" },
-    "auto": { "label": "Auto", "args": ["--permission-mode", "auto", "--enable-auto-mode"], "description": "Full autonomy with safety classifier" },
-    "bypassPermissions": { "label": "Bypass", "args": ["--dangerously-skip-permissions"], "description": "Accepts everything (containers/VMs only)", "warning": "Only use in isolated environments" }
+    "default": {
+      "label": "Interactive",
+      "args": [],
+      "description": "Prompts for permission on every action"
+    },
+    "acceptEdits": {
+      "label": "Accept Edits",
+      "args": [
+        "--permission-mode",
+        "acceptEdits"
+      ],
+      "description": "Auto-accepts file reads and edits"
+    },
+    "plan": {
+      "label": "Plan Only",
+      "args": [
+        "--permission-mode",
+        "plan"
+      ],
+      "description": "Read-only, no code changes"
+    },
+    "auto": {
+      "label": "Auto",
+      "args": [
+        "--permission-mode",
+        "auto",
+        "--enable-auto-mode"
+      ],
+      "description": "Full autonomy with safety classifier"
+    },
+    "bypassPermissions": {
+      "label": "Bypass",
+      "args": [
+        "--dangerously-skip-permissions"
+      ],
+      "description": "Accepts everything (containers/VMs only)",
+      "warning": "Only use in isolated environments"
+    }
   },
   "defaultLaunchMode": "default",
   "persistent": null,
@@ -43,12 +88,16 @@
     "supportsConfigFile": true,
     "supportsCoAuthor": true,
     "supportsSilentPrime": true,
-    "startupInjection": { "maxChars": 10000 }
+    "startupInjection": {
+      "maxChars": 10000
+    }
   },
   "statusPage": {
     "adapter": "atlassian",
     "url": "https://status.claude.com/api/v2/summary.json",
     "componentId": "yyzkbfz2thpt",
     "componentName": "Claude Code"
-  }
+  },
+  "silentPrimeScript": "sessionstart-prime-claude.sh",
+  "silentRulesScript": "sessionstart-rules-claude.sh"
 }
