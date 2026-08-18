@@ -1968,6 +1968,16 @@ async function pollStatus() {
   // MED-2K9P Chunk 02 — refresh the Medusa control on the same cadence (no new
   // timer). Skipped once the session has ended.
   if (!sessionState.ended) await pollMedusa();
+
+  // The Master's access level rides the same tick (#755). This is what makes a
+  // flip from one session's bar reach another's — there is exactly one Master,
+  // so every open bar is looking at the same thing, and a bar showing a level
+  // someone else already changed is the stale half of a global control.
+  //
+  // Gated on the drawer being OPEN, and that is not an optimisation: an
+  // unconditional read would add a `/api/master/status` call per tick per open
+  // session tab, for a control nobody can see. Closed drawers repaint on open.
+  if (sessionState.masterOpen && masterBar) await masterBar.loadAccess();
 }
 
 /**
@@ -2077,7 +2087,17 @@ function handleSessionEnded(statusData) {
 // Same ensure-then-attach contract as the landing pane (ui.js): opening the
 // drawer POSTs /api/master/ensure (idempotent) and only attaches the ttyd
 // iframe once ensure succeeds, because ttyd attaches to EXISTING sessions
-// only. No polling (no-UI-timers rule) — status repaints on open/ensure.
+// only.
+//
+// Status repaints on open and on ensure; the access controls ALSO ride the
+// page's existing `pollTick` while the drawer is open, which is how a flip made
+// from one session's bar reaches another's. No new timer — the same "same
+// cadence" arrangement Medusa already uses. This line used to read "No polling
+// (no-UI-timers rule)" as though the norm forbade one; it does not. #98/#268
+// governs timer-driven LIFECYCLE (auto-dismiss, revert, redirect, blind
+// reload), and `reconnect-policy.js` records a poll as explicitly inside the
+// norm. Left uncorrected it would keep being read as a constraint on exactly
+// the mechanism this feature needs.
 
 /**
  * Paint the Master drawer status dot and text.
@@ -2142,6 +2162,10 @@ async function ensureMasterDrawerAttached() {
   // response. Not awaited — the pill is supplementary, and a slow model-status
   // call must not hold up attaching the terminal.
   if (masterBar) masterBar.loadModel(result.engine || null);
+  // A full status read, not `result`: the ensure response carries the level and
+  // the enforcement tier but not the guard readback, and that readback is what
+  // says whether the level is actually in force.
+  if (masterBar) masterBar.loadAccess();
   attachMasterDrawerFrame();
 }
 
@@ -4722,6 +4746,7 @@ function bindEvents() {
     prefix: 'masterDrawer',
     title: 'Master',
     api,
+    apiMutate,
     onRetry: ensureMasterDrawerAttached,
     // Clear any previous failure before opening: a stale error line beside a
     // modal that just opened fine is its own lie.

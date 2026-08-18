@@ -2029,16 +2029,35 @@
    */
   const TC_MASTER_PENDING = {
     medusa: "Medusa isn't wired to the Master yet — every endpoint is per-project.",
-    // Was "write access isn't enforced yet, so this toggle wouldn't bind" — that
-    // stopped being true the moment the guard started reading the level per tool
-    // call. The control is still dim, but for a different and smaller reason, and
-    // a disabled control whose stated reason is false is worse than no reason.
-    // Until the toggle is wired, the gear is the working route.
-    access: 'This toggle isn’t wired up yet — the access level is live and enforced, so change it from the gear for now.',
+    // `access` is GONE from this table on purpose. It named the last reason the
+    // toggle was inert ("isn't wired up yet"), and the toggle is wired now — the
+    // entry's own removal is what proves the pending treatment came off rather
+    // than being left beside a live control, which is the worst of both (a
+    // reason for an absence that is not absent).
     upload: 'Uploads resolve through a registered project, and the Master is not one.',
     wrap: "Wrap is a git pipeline and the Master has no checkout — what it should mean here isn't decided yet.",
     kill: 'The Master API has no kill route yet.'
   };
+
+  /**
+   * The access toggle's segments — the ONE place a segment and the level it
+   * stands for are related.
+   *
+   * The markup, the click binding and the pressed-state paint all read this,
+   * rather than the markup emitting a `data-access` attribute the other two
+   * read back. An attribute round-trip looks like single-sourcing and is not:
+   * it puts the relationship in the DOM, where a renderer that stops emitting
+   * the attribute leaves a control that renders fine and does nothing.
+   *
+   * `suggest` is deliberately absent — #768 ratified a two-segment bar with the
+   * gear as the complete control. `setAccess` renders it as a readout instead.
+   *
+   * @type {{suffix: string, level: string, label: string}[]}
+   */
+  const TC_MASTER_ACCESS_SEGMENTS = [
+    { suffix: 'AccessRead', level: 'read-only', label: 'READ' },
+    { suffix: 'AccessWrite', level: 'write', label: 'WRITE' }
+  ];
 
   /**
    * Markup for one Master control bar.
@@ -2059,6 +2078,25 @@
    * @returns {string} The bar's inner HTML.
    */
   function tcMasterControlBarMarkup(p) {
+    // The access toggle is REAL BUTTONS, not spans with a click handler.
+    // Buttons are keyboard-operable, focusable and announced as pressable for
+    // free; a span pretending to be a control has to re-implement all three and
+    // usually re-implements two. `aria-pressed` rather than a radio group
+    // because these are two states of one setting the operator toggles between,
+    // and the pressed state is what a screen reader reads out.
+    //
+    // The segments are ≥44px per the mobile Direction in
+    // `nonfunctional-requirements.md`, which binds and carries no exception for
+    // this surface. That makes the row carrying them taller, and #768's chunk 3
+    // owns the collapse rule that answers it for the bar's other eight controls
+    // — this control does not get to ship under the minimum while waiting for
+    // that decision.
+    //
+    // The segments are joined with `''` and the surrounding tags close tight
+    // against them. They are inline-flex children of a bordered group, so any
+    // whitespace between them renders as a visible gap inside the control's own
+    // border.
+    //
     // `disabled` AND `aria-disabled` — the first stops the press, the second is
     // what assistive tech announces. A hint element carries the reason so it is
     // not locked inside a `title` tooltip that touch devices never show.
@@ -2083,18 +2121,18 @@
       <span class="sr-only" id="${p}MedusaWhy">${TC_MASTER_PENDING.medusa}</span>
       <button class="btn btn-small hidden" id="${p}RetryBtn">Retry</button>
       <span class="master-bar-spacer"></span>
-      <span class="master-access-toggle master-bar-pending" id="${p}Access" role="group"
-            aria-label="Master access level" aria-disabled="true"
-            aria-describedby="${p}AccessWhy" title="${TC_MASTER_PENDING.access}">
-        <span class="master-access-seg">READ</span><span class="master-access-seg">WRITE</span>
+      <span class="master-bar-enforcement" id="${p}Enforce" hidden></span>
+      <span class="master-access-toggle" id="${p}Access" role="group"
+            aria-label="Master access level">${TC_MASTER_ACCESS_SEGMENTS.map((seg) =>
+    `<button type="button" class="master-access-seg" id="${p}${seg.suffix}" aria-pressed="false">${seg.label}</button>`).join('')}<span class="master-access-other" id="${p}AccessOther" hidden></span>
       </span>
-      <span class="sr-only" id="${p}AccessWhy">${TC_MASTER_PENDING.access}</span>
       ${pend('Upload', 'banner-btn', 'Upload')}
       <button class="banner-btn" id="${p}SettingsBtn"
               aria-label="Master settings" title="Master settings">&#9881;</button>
       ${pend('Wrap', 'banner-btn btn-wrap', 'Wrap')}
       ${pend('Kill', 'banner-btn btn-kill', 'Kill')}
-      <span class="master-bar-error" id="${p}Error" role="status" hidden></span>`;
+      <span class="master-bar-error" id="${p}Error" role="status" hidden></span>
+      <span class="master-bar-warn" id="${p}Warn" role="status" hidden></span>`;
   }
 
   /**
@@ -2107,12 +2145,24 @@
    * @param {string} [deps.title] - Label beside the status dot.
    * @param {Function} [deps.onRetry] - Called when Retry is pressed.
    * @param {Function} [deps.onOpenSettings] - Called when the gear is pressed.
-   * @returns {{mount: Function, setStatus: Function, setModel: Function, setError: Function}}
+   * @param {Function} [deps.apiMutate] - `(path, method, body)` — required for
+   *   the access toggle; without it the segments are inert rather than pretending.
+   * @param {Function} [deps.confirm] - Confirmation prompt; defaults to the
+   *   window's. Injected so the READ→WRITE warning is assertable without a
+   *   browser dialog, which would block the whole page.
+   * @returns {{mount: Function, setStatus: Function, setModel: Function, setError: Function,
+   *            setWarning: Function, setAccess: Function, loadAccess: Function, loadModel: Function}}
    */
   function tcCreateMasterControlBar(deps) {
     const doc = deps.doc || global.document;
     const p = deps.prefix;
     let bound = false;
+    // The last SERVER state the access controls were painted from. Held so
+    // `setBusy` can re-derive whether the segments should be pressable instead
+    // of blanket-enabling them when a request finishes — a bar whose status
+    // could not be read must stay inert.
+    let access = null;
+    let busy = false;
 
     const el = (suffix) => doc.getElementById(p + suffix);
 
@@ -2137,13 +2187,25 @@
       if (gear && deps.onOpenSettings) gear.addEventListener('click', deps.onOpenSettings);
       const retry = el('RetryBtn');
       if (retry && deps.onRetry) retry.addEventListener('click', deps.onRetry);
+      // Bound from `data-access` rather than from the id, so the segment and the
+      // level it stands for are declared in ONE place. Two segments whose
+      // meaning lived in a listener would be two more things to keep in step
+      // with the markup.
+      for (const spec of TC_MASTER_ACCESS_SEGMENTS) {
+        const seg = el(spec.suffix);
+        if (seg) seg.addEventListener('click', () => flip(spec.level));
+      }
       // Establish the resting state in CODE rather than leaning on the markup's
       // attributes. The component then owns its own initial appearance, which
       // means one source for "what does this say before anything answers"
       // instead of a string in the template and a second in the first paint.
       setStatus('', (deps.title || 'Project Master') + ' · checking…', false);
       setError('');
+      setWarning('');
       setModel(null, null);
+      // Inert until a status answers. The alternative is a control that looks
+      // like it is telling you the level before anything has said what it is.
+      setAccess(null);
       return true;
     }
 
@@ -2215,6 +2277,238 @@
     }
 
     /**
+     * Show or clear a STANDING condition — as opposed to `setError`, which
+     * reports something that just failed.
+     *
+     * Two elements rather than one because they have different lifetimes. The
+     * error line is cleared whenever the operator does something that could
+     * have fixed it (opening the gear clears it), and a degraded write guard is
+     * not fixed by opening the gear — folding it into `setError` would make the
+     * boundary warning disappear on the next unrelated click. It takes its own
+     * wrapped line for the same reason the error does: squeezed onto the end of
+     * a nine-control row it would be effectively invisible.
+     *
+     * @param {string} [message] - The condition; omit or pass empty to clear.
+     * @returns {void}
+     */
+    function setWarning(message) {
+      const box = el('Warn');
+      if (!box) return;
+      box.textContent = message || '';
+      box.hidden = !message;
+    }
+
+    /**
+     * Paint the access toggle, the enforcement badge and the degraded warning
+     * from a `/api/master/status` settings payload.
+     *
+     * SERVER STATE ONLY. There is exactly one Master — `MASTER_TMUX_SESSION` is
+     * a single reserved tmux session and every drawer attaches the same iframe —
+     * so a bar that painted from its own click would show one operator a level
+     * another surface had already changed. Nothing here reads the click; `flip`
+     * calls this with what the server said, both before and after.
+     *
+     * The `suggest` tier has no segment, and that is deliberate: #768 ratified a
+     * two-segment bar as the fast path with the gear as the complete control.
+     * So at `suggest` NEITHER segment is pressed and a non-interactive readout
+     * names the level. An unpressed pair on its own would leave a touch operator
+     * with no visible reason — `title` never appears on touch, and this install
+     * is driven from a phone.
+     *
+     * @param {object|null} settings - `settings` from `/api/master/status`, or
+     *   null when the status could not be read.
+     * @returns {void}
+     */
+    function setAccess(settings) {
+      const group = el('Access');
+      const other = el('AccessOther');
+      const badge = el('Enforce');
+      if (!group) return;
+
+      const level = settings ? settings.accessLevel : null;
+      access = settings || null;
+
+      for (const spec of TC_MASTER_ACCESS_SEGMENTS) {
+        const btn = el(spec.suffix);
+        if (!btn) continue;
+        const on = spec.level === level;
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        btn.classList.toggle('is-on', on);
+        // Unknown level → nothing to flip TO that we can describe honestly, so
+        // the control is inert rather than guessing. A status we could not read
+        // is not the same as a level of read-only.
+        btn.disabled = !level || busy;
+      }
+      group.classList.toggle('is-write', level === 'write');
+      group.classList.toggle('is-degraded', Boolean(settings && settings.guardDegraded));
+      // The accessible name carries the LEVEL, not just the control's purpose.
+      // Without it a screen-reader user at `suggest` hears two unpressed buttons
+      // and no way to learn which tier is in force.
+      group.setAttribute('aria-label', level
+        ? `Master access level: ${level}`
+        : 'Master access level: unknown');
+
+      if (other) {
+        // "A level no segment stands for" — read off the table rather than
+        // re-listing the two, so adding a segment later cannot leave the readout
+        // announcing a tier the bar now has a button for.
+        const named = Boolean(level) && !TC_MASTER_ACCESS_SEGMENTS.some((seg) => seg.level === level);
+        other.hidden = !named;
+        other.textContent = named ? String(level).toUpperCase() : '';
+      }
+
+      if (badge) {
+        const tier = settings && settings.enforcement;
+        badge.hidden = !tier;
+        badge.textContent = tier || '';
+        // The gap this closes predates #755: the badge vocabulary existed in the
+        // modal only, so a Gemini Master and a Claude Master looked identical on
+        // the bar — and read-only is already unenforced on the instructional
+        // one. The class carries the distinction too, because colour alone is
+        // not a signal every operator can catch.
+        badge.classList.toggle('is-instructional', tier === 'instructional');
+        badge.title = tier === 'instructional'
+          ? 'This engine cannot be structurally bounded — the boundary is rules-only, carried in the master’s identity.'
+          : 'A write guard reads the level on every tool call, plus permission rules regenerated on every master start.';
+      }
+
+      setWarning(settings && settings.guardDegraded ? settings.guardDegradedReason : '');
+    }
+
+    /**
+     * The confirmation shown on the way IN to `write`.
+     *
+     * Built from the SERVER's `levelAppliesAt` rather than asserting "its next
+     * tool call": that promise is the structural answer, and on an instructional
+     * master the level travels in the regenerated identity, so it arrives with
+     * the next ensure. The settings modal already learned this the hard way
+     * (#755 chunk 2 / R-4) and reads the same field.
+     *
+     * Says GLOBAL, which the blast-radius wording it grew out of did not: that
+     * sentence was right about reach ("every project it can reach") and silent
+     * about scope, and scope is the half an operator flipping from one session's
+     * drawer would guess wrong.
+     *
+     * @param {object} settings - `settings` from `/api/master/status`.
+     * @returns {string} The confirmation text.
+     */
+    function writeWarningText(settings) {
+      const binds = settings && settings.levelAppliesAt === 'next-tool-call'
+        ? 'It binds on the Master’s next tool call — no restart.'
+        : 'It arrives the next time the master session starts, since this engine carries the level in its instructions rather than a write guard.';
+      return 'Give the Project Master WRITE access?\n\n'
+        + 'There is exactly one Master, so this changes it EVERYWHERE — every session drawer '
+        + 'and the dashboard, not just this one.\n\n'
+        + 'It will be able to modify files across every project it can reach, without asking you first. '
+        + binds;
+    }
+
+    /**
+     * Move the Master to a level, from a press on one of the segments.
+     *
+     * The order is the contract, and every step of it answers a way this went
+     * wrong before:
+     *
+     * 1. **Re-fetch first.** A flip must never act on a value another surface
+     *    changed. This is the dangerous half of staleness and it is closed here
+     *    rather than with a poll — the dashboard has no timer and is not getting
+     *    one (#98/#268 governs timer-driven lifecycle, and a repaint-on-open
+     *    page needs no clock).
+     * 2. **Repaint from that fetch before deciding anything.** If the bar was
+     *    stale, the operator now sees the truth, and a press that has become a
+     *    no-op stops there instead of re-asserting a level nobody asked for.
+     * 3. **Warn only on the way IN.** Returning to read-only is always the safe
+     *    direction; warning there trains the operator to click through.
+     * 4. **PATCH, then read the status back.** Painting from the click is what
+     *    this whole control is forbidden to do. Reading back is stronger than
+     *    painting from the PATCH response: it is the only thing that can tell
+     *    the operator the guard actually took the change, which is exactly the
+     *    invisibility R-15 exists to remove.
+     *
+     * @param {string} level - The level the pressed segment stands for.
+     * @returns {Promise<void>}
+     */
+    async function flip(level) {
+      // A second press while the first is in flight would send a second PATCH
+      // and paint whichever status answered last — a race whose visible symptom
+      // is the toggle settling on a level nobody chose.
+      if (busy || !deps.api || !deps.apiMutate) return;
+      busy = true;
+      setBusy(true);
+      try {
+        setError('');
+        const fresh = await deps.api('/api/master/status');
+        if (!fresh || !fresh.settings) {
+          setError('Could not read the Master’s current access level, so nothing was changed.');
+          return;
+        }
+        setAccess(fresh.settings);
+        if (fresh.settings.accessLevel === level) return;
+
+        if (level === 'write') {
+          const ask = deps.confirm || global.confirm;
+          if (typeof ask === 'function' && !ask(writeWarningText(fresh.settings))) return;
+        }
+
+        const saved = await deps.apiMutate('/api/config', 'PATCH', { master: { accessLevel: level } });
+        if (!saved) {
+          // The toggle is already sitting on the re-fetched truth, which is where
+          // a failed change must leave it — the level did not move, so neither
+          // does the control.
+          setError((deps.api && deps.api.lastError) || 'The access level could not be changed.');
+          return;
+        }
+
+        const after = await deps.api('/api/master/status');
+        if (after && after.settings) {
+          setAccess(after.settings);
+        } else {
+          // Saved, but unreadable. Painting the new level would be the optimistic
+          // paint this control exists to avoid, and painting the old one would be
+          // false — so say what is actually known and leave the control alone.
+          setError('The change was saved, but the Master’s state could not be read back — reopen to confirm it.');
+        }
+      } finally {
+        busy = false;
+        setBusy(false);
+      }
+    }
+
+    /**
+     * Disable or re-enable the segments while a flip is in flight.
+     *
+     * Re-derives from the last painted server state rather than blanket-enabling,
+     * so a bar whose status could not be read stays inert after a failed flip
+     * instead of becoming pressable because a request finished.
+     *
+     * @param {boolean} on - True while a flip is running.
+     * @returns {void}
+     */
+    function setBusy(on) {
+      const group = el('Access');
+      if (group) group.classList.toggle('is-busy', on);
+      for (const spec of TC_MASTER_ACCESS_SEGMENTS) {
+        const btn = el(spec.suffix);
+        if (btn) btn.disabled = on || !access || !access.accessLevel;
+      }
+    }
+
+    /**
+     * Fetch the Master's status and paint the access controls from it.
+     *
+     * The surfaces call this at the moments they have: the dashboard on open and
+     * on ensure, the session page on its existing poll tick. Neither gets a new
+     * timer.
+     *
+     * @returns {Promise<void>}
+     */
+    async function loadAccess() {
+      if (!deps.api) return;
+      const status = await deps.api('/api/master/status');
+      setAccess(status && status.settings ? status.settings : null);
+    }
+
+    /**
      * Fetch the model's health and paint the pill.
      *
      * The bar owns this rather than each page fetching and calling `setModel`,
@@ -2235,12 +2529,13 @@
       setModel(st, engineId);
     }
 
-    return { mount, setStatus, setModel, setError, loadModel };
+    return { mount, setStatus, setModel, setError, setWarning, setAccess, loadAccess, loadModel };
   }
 
   global.tcSetRulesStatus = tcSetRulesStatus;
   global.tcCreateMasterSettings = tcCreateMasterSettings;
   global.tcMasterPendingReasons = TC_MASTER_PENDING;
+  global.tcMasterAccessSegments = TC_MASTER_ACCESS_SEGMENTS;
   global.tcMasterControlBarMarkup = tcMasterControlBarMarkup;
   global.tcCreateMasterControlBar = tcCreateMasterControlBar;
 })(typeof window !== 'undefined' ? window : globalThis);
