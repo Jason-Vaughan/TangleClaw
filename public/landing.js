@@ -17,6 +17,7 @@ const state = {
   filterText: '',
   activeTag: null,
   showUnregistered: false,
+  activeEngine: null,
   allTags: [],
   connected: true,
   statsOpen: true,
@@ -905,6 +906,7 @@ async function loadProjects() {
   // complete one.
   state.projectsScan = data.scan || null;
   collectTags();
+  collectEngines();
   renderProjects();
   renderSessionCount();
   updateUnregisteredToggle();
@@ -1038,6 +1040,42 @@ function wireStaleServerBanner() {
   }
 }
 
+
+  state.activeEngine = null;
+
+  function collectEngines() {
+    const engines = new Set();
+    for (const p of state.projects) {
+      if (p.engine && p.engine.name) {
+        engines.add(p.engine.name);
+      }
+    }
+    const select = document.getElementById('engineFilter');
+    if (!select) return;
+    
+    // Only show if there are engines
+    if (engines.size === 0) {
+      select.style.display = 'none';
+      return;
+    }
+    
+    select.style.display = 'inline-block';
+    
+    const current = select.value;
+    select.innerHTML = '<option value="">All Engines</option>';
+    
+    Array.from(engines).sort().forEach(e => {
+      const opt = document.createElement('option');
+      opt.value = e;
+      opt.textContent = e;
+      select.appendChild(opt);
+    });
+    
+    if (engines.has(current)) {
+      select.value = current;
+    }
+  }
+
 function collectTags() {
   const tags = new Set();
   for (const p of state.projects) {
@@ -1071,6 +1109,9 @@ function filterProjects() {
   }
   if (state.activeTag) {
     list = list.filter(p => (p.tags || []).includes(state.activeTag));
+  }
+  if (state.activeEngine) {
+    list = list.filter(p => p.engine && p.engine.name === state.activeEngine);
   }
   return list;
 }

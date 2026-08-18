@@ -3643,6 +3643,15 @@ $('docCancelBtn').addEventListener('click', closeDocModal);
 $('docSaveBtn').addEventListener('click', saveDoc);
 $('docModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeDocModal(); });
 
+
+const engineFilterEl = document.getElementById('engineFilter');
+if (engineFilterEl) {
+  engineFilterEl.addEventListener('change', (e) => {
+    state.activeEngine = e.target.value;
+    renderProjects();
+  });
+}
+
 let filterTimer = null;
 $('filterInput').addEventListener('input', (e) => {
   clearTimeout(filterTimer);
