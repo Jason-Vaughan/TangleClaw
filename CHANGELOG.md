@@ -27,6 +27,10 @@ All notable changes to TangleClaw are documented in this file.
   the point of restarting it. Reopening the drawer starts it again, with a fresh identity — so the
   bar's "restart to apply" warning clears by doing the thing it asks for.
 
+  The refusal's `cause` travels in the 500 body, because one code covers both refusals — tmux never
+  answered the probe, or the session was live and the kill went unconfirmed — and those are different
+  things to tell an operator.
+
 - **The Master's access level is real, and changing it binds on its next tool call (#755, chunk 1).**
   `suggest` and `write` had been rendered in the settings modal and rejected by the server since the
   tier was specified — a picker with two permanently-disabled options. They are selectable now,

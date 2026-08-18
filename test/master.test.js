@@ -2491,6 +2491,11 @@ describe('master API routes over HTTP', () => {
       assert.equal(unknown.data.cause, 'read-timed-out',
         'and the CAUSE travels, or a client cannot tell this refusal from the '
         + 'unconfirmed-kill one that shares its code');
+      // `extra` must not be able to blank the two fields every client branches
+      // on. It is spread FIRST for that reason; spreading it last read as
+      // harmless with one caller and quietly allowed the override.
+      assert.equal(unknown.data.code, 'MASTER_LIVENESS_UNKNOWN');
+      assert.ok(unknown.data.error, 'error and code survive alongside the extra field');
     } finally {
       master.killMasterSession = original;
     }

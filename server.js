@@ -366,13 +366,19 @@ function jsonResponse(res, status, data) {
  * @param {string} message - Error message
  * @param {string} code - Machine-readable error code
  * @param {object} [extra] - Extra fields merged into the body, for refusals that
- *   share a code and differ by detail (e.g. the master kill's two 500s).
+ *   share a code and differ by detail (e.g. the master kill's two 500s). It
+ *   cannot override `error` or `code` — see below.
  */
 function errorResponse(res, status, message, code, extra) {
   // `extra` carries fields a client needs to tell two refusals apart when they
-  // share a code — the master kill's two 500s differ only by `cause`. Optional
-  // and spread last, so every existing caller is byte-identical.
-  jsonResponse(res, status, { error: message, code, ...(extra || {}) });
+  // share a code — the master kill's two 500s differ only by `cause`.
+  //
+  // Spread FIRST, so `error` and `code` always win. Spreading it last read as
+  // harmless with one caller passing `{ cause }`, and quietly meant any future
+  // caller could blank the two fields every client branches on — a hazard that
+  // looks safe while it has no reach, which is the shape this whole issue is
+  // about. Made impossible rather than documented.
+  jsonResponse(res, status, { ...(extra || {}), error: message, code });
 }
 
 // ── Body Parser ──
