@@ -1,6 +1,9 @@
 # Plan — #768: the Master drawer header becomes a real control bar
 
-**Status:** chunks 1 and 2 SHIPPED. Chunk 3 (Master Kill) optional and unstarted. **Milestone:** Master Control (#829).
+**Status:** chunks 1 and 2 SHIPPED. **Chunk 3 (Master Kill) SHIPPED 2026-08-18 via #968**, which
+made it load-bearing rather than optional: a level change binds on the guard at once but the running
+Master only reads its instructions at launch, so restarting it is what makes the change take effect.
+Upload and Wrap remain unbuilt (Q1/Q2 still open), so this plan stays live for them. **Milestone:** Master Control (#829).
 **Predecessor:** #756 shipped in v5.5.0 (the Master's launch mode) — its picker is one of the two
 mode controls this bar surfaces.
 **Shared artifact:** published alongside this file; keep both updated together.
@@ -55,7 +58,7 @@ the drawer alone — otherwise the second copy this constraint exists to prevent
 | Access level | radios exist, `public/ui.js:3504` | `suggest`/`write` rejected server-side | **Blocked on #755.** |
 | Upload | modal reusable | ❌ no route — `/api/upload*` resolves via `projects.getProject`, and the Master is not a registered project | Absent, honest reason. |
 | Medusa | control reusable | ❌ no route — every endpoint is `/api/sessions/:project/medusa/*` | Absent, honest reason. Gated on Q3. |
-| Kill | button reusable | ❌ no endpoint — Master API is `status`, `ensure`, `rules/restore-defaults`; `lib/master.js:581` says "no kill/adopt semantics in v1" | Absent, honest reason. |
+| Kill | button reusable | ✅ `POST /api/master/kill` (#968) — idempotent, and refusing rather than claiming a kill tmux would not confirm | **LIVE.** Confirmed, and its pending reason removed from the table with it. |
 | Wrap | button reusable | ❌ and undefined — see Q1 | Do not build. |
 
 **Rule for this bar (from #755 and #741):** a control with no backend is **visibly absent with an

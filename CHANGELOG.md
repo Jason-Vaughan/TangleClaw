@@ -348,8 +348,10 @@ All notable changes to TangleClaw are documented in this file.
   **And the surfaces stopped promising the opposite.** The confirmation shown before granting write
   told the operator the change bound on the Master's next tool call and needed *"no restart"* — the
   single most misleading sentence available, since the restart is exactly what they needed to do. That claim is gone from the
-  confirmation, the settings modal, the configuration reference, ADR 0008 and FEATURES, and a guard
-  now holds all five together rather than one of them.
+  confirmation, the settings modal, the configuration reference, ADR 0008, FEATURES, the README and
+  `lib/master.js`'s own JSDoc — and a guard now holds every tracked one of them together rather than
+  one at a time. (Written without a number on purpose: that family was five, then six, then seven
+  inside this one branch.)
 
   **The bar says when it matters, rather than always.** `/api/master/status` compares the Master's
   tmux session start time against its identity's mtime and reports whether the *running* Master has
