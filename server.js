@@ -17,6 +17,67 @@ if (Number.isFinite(_nodeMajor) && _nodeMajor < 22) {
 
 const { createLogger, setLevel, initFileLogging } = require('./lib/logger');
 const store = require('./lib/store');
+
+// --- Shared Docs Watcher ---
+const sharedDocWatchers = new Map();
+const docDebounceTimers = new Map();
+
+async function broadcastSharedDocUpdate(docId) {
+  try {
+    const doc = store.sharedDocs.get(docId);
+    if (!doc || !doc.groupId) return 0;
+    
+    const projectsInGroup = store.projects.list({ groupId: doc.groupId });
+    const projectIds = new Set(projectsInGroup.map(p => p.id));
+    
+    const liveSessions = store.sessions.listLiveAll();
+    const targetSessions = liveSessions.filter(s => projectIds.has(s.projectId));
+    
+    let notified = 0;
+    for (const session of targetSessions) {
+      const status = medusa.getStatus(session.id);
+      if (status && status.state === 'listening' && status.workspaceId) {
+        try {
+          await medusa.sendSystemMessage({
+            to: status.workspaceId,
+            message: JSON.stringify({ type: 'system', event: 'shared_doc_updated', doc: doc.name })
+          });
+          notified++;
+        } catch (e) {
+          log.warn('Failed to notify session', { sessionId: session.id, error: e.message });
+        }
+      }
+    }
+    if (notified > 0) log.info('Broadcasted shared doc update', { docId: doc.id, notified });
+    return notified;
+  } catch (err) {
+    log.error('Broadcast failed', { error: err.stack });
+    return 0;
+  }
+}
+
+function refreshSharedDocWatchers() {
+  const docs = store.sharedDocs.list();
+  for (const doc of docs) {
+    if (doc.filePath && !sharedDocWatchers.has(doc.id)) {
+      try {
+        const watcher = fs.watch(doc.filePath, (eventType) => {
+          if (eventType === 'change') {
+            if (docDebounceTimers.has(doc.id)) clearTimeout(docDebounceTimers.get(doc.id));
+            docDebounceTimers.set(doc.id, setTimeout(() => {
+               broadcastSharedDocUpdate(doc.id);
+            }, 500));
+          }
+        });
+        sharedDocWatchers.set(doc.id, watcher);
+      } catch (e) {
+        log.warn('Failed to watch shared doc', { path: doc.filePath, error: e.message });
+      }
+    }
+  }
+}
+// ---------------------------
+
 const system = require('./lib/system');
 const engines = require('./lib/engines');
 const gitHooks = require('./lib/git-hooks');
@@ -4162,6 +4223,7 @@ route('POST', '/api/shared-docs', (_req, res, _params, body) => {
   }
   try {
     const doc = store.sharedDocs.create(body);
+    refreshSharedDocWatchers();
     jsonResponse(res, 201, doc);
   } catch (err) {
     if (err.code === 'CONFLICT') {
@@ -4195,6 +4257,7 @@ route('PUT', '/api/shared-docs/:id', (_req, res, params, body) => {
   }
   try {
     const doc = store.sharedDocs.update(params.id, body);
+    refreshSharedDocWatchers();
     jsonResponse(res, 200, doc);
   } catch (err) {
     if (err.code === 'NOT_FOUND') {
@@ -4204,6 +4267,51 @@ route('PUT', '/api/shared-docs/:id', (_req, res, params, body) => {
       return errorResponse(res, 400, err.message, 'BAD_REQUEST');
     }
     throw err;
+  }
+});
+
+// POST /api/shared-docs/:id/notify
+route('POST', '/api/shared-docs/:id/notify', async (_req, res, params) => {
+  try {
+    const doc = store.sharedDocs.get(params.id);
+    if (!doc) return errorResponse(res, 404, 'Shared document not found', 'NOT_FOUND');
+
+    if (!doc.groupId) return jsonResponse(res, 200, { success: true, notifiedCount: 0 });
+
+    const projectsInGroup = store.projects.list({ groupId: doc.groupId });
+    const projectIds = new Set(projectsInGroup.map(p => p.id));
+
+    const liveSessions = store.sessions.listLiveAll();
+    const targetSessions = liveSessions.filter(s => projectIds.has(s.projectId));
+
+    let notified = 0;
+    const errors = [];
+    for (const session of targetSessions) {
+      const status = medusa.getStatus(session.id);
+      if (status && status.state === 'listening' && status.workspaceId) {
+        try {
+          await medusa.sendSystemMessage({
+            to: status.workspaceId,
+            message: JSON.stringify({
+              type: 'system',
+              event: 'shared_doc_updated',
+              doc: doc.name
+            })
+          });
+          notified++;
+        } catch (e) {
+          errors.push(`Failed for session ${session.id}: ${e.message}`);
+        }
+      }
+    }
+
+    if (errors.length > 0) {
+      log.warn('Some notifications failed', { errors });
+    }
+    jsonResponse(res, 200, { success: true, notifiedCount: notified, errors: errors.length > 0 ? errors : undefined });
+  } catch (err) {
+    log.error('Failed to notify shared-doc update', { error: err.stack });
+    errorResponse(res, 500, err.message, 'SERVER_ERROR');
   }
 });
 
@@ -6529,6 +6637,7 @@ if (require.main === module) {
     // profile, which is unbounded work that must not happen on the event loop
     // inside a route. Fire-and-forget: detection falls back to this process's
     // own PATH until it lands, which is exactly what it did before.
+    refreshSharedDocWatchers();
     engines.refreshDetectionPath().catch((err) => {
       log.warn('Could not resolve the login PATH at boot; engine detection will see only '
         + 'the PATH launchd gave this service', { error: err && err.message });
