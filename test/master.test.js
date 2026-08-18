@@ -553,6 +553,7 @@ describe('#968 a level change reaches the Master\'s own instructions', () => {
 });
 
 describe('readMasterIdentityFreshness — has the RUNNING Master read this? (#968)', () => {
+  const masterPath = path;
   const homes = [];
   const mk = () => {
     const h = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fresh-'));
@@ -626,6 +627,39 @@ describe('readMasterIdentityFreshness — has the RUNNING Master read this? (#96
       home, tmuxLib: tmuxAt({ createdAt: null, answered: true, cause: 'unparseable' })
     });
     assert.equal(p.identityStale, null);
+  });
+
+  it('a failure AFTER the level lands is flagged as level-applied, wherever it happens', () => {
+    // The route branches on `err.levelApplied` to choose between "nothing
+    // changed" and "the new level is in force but the refresh did not finish".
+    // Moving the level write to the top of the refresh made everything below it
+    // capable of throwing with the level already on disk — and the flag was set
+    // in ONE place, the guard write, so a failure in seeding or the identity
+    // write reported the reassuring sentence about a guard that was already
+    // permitting writes.
+    //
+    // Injected at the identity write, which is squarely in the middle of the
+    // reordered region — not at the guard write, where the old flag already sat
+    // and which would pass either way.
+    //
+    // THE MUTATION THIS CATCHES: narrowing the try back to the guard write.
+    const home = mk();
+    fs.mkdirSync(masterPath.join(home, 'CLAUDE.md'), { recursive: true });
+    let caught = null;
+    try {
+      master.refreshMasterIdentity({
+        home,
+        accessLevel: 'write',
+        enginesLib: { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' }
+      });
+    } catch (err) {
+      caught = err;
+    }
+    assert.ok(caught, 'precondition: the identity write must actually fail');
+    assert.equal(fs.readFileSync(master.masterAccessLevelPath(home), 'utf8').trim(), 'write',
+      'precondition: the level landed before the failure — that is what makes the flag necessary');
+    assert.equal(caught.levelApplied, true,
+      'the caller must be told the level IS in force, not that nothing changed');
   });
 
   it('an identity rewritten with IDENTICAL content does not become stale', () => {

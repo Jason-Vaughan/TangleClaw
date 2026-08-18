@@ -1106,8 +1106,11 @@ describe('#755 both surfaces drive the live toggle, and neither grows a timer', 
       /next tool call with no restart/i,
       /with no restart and no re-ensure/i
     ];
+    // Six, not five: `api-contract.md` carried the claim too and sat outside the
+    // first widening — the family kept being bigger than the last count of it.
     const FAMILY = ['public/api-helper.js', 'docs/configuration-reference.md',
-      'docs/adr/0008-project-master-session-model.md', 'CHANGELOG.md', 'FEATURES.md'];
+      'docs/adr/0008-project-master-session-model.md', 'CHANGELOG.md', 'FEATURES.md',
+      '.prawduct/artifacts/api-contract.md'];
     for (const rel of FAMILY) {
       const body = fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
       for (const claim of CLAIMS) {
