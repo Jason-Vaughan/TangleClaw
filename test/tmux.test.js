@@ -810,6 +810,74 @@ describe('tmux', () => {
       });
     });
 
+    it('should check existence before every display-message, since -t cannot', () => {
+      // STRUCTURAL, and deliberately so — the behavioural test below CANNOT hold
+      // this. `display-message` falls back to the ATTACHED CLIENT's session, and
+      // a headless test run has no attached client, so removing the existence
+      // check leaves that test green. Measured: the guard was mutated away and
+      // the behavioural assertions did not move.
+      //
+      // Same reasoning as this file's `-t` site sweep two tests down — reading
+      // the source is the only way to hold a property whose misuse is silent.
+      //
+      // THE MUTATION THIS CATCHES: dropping the `probeSession`/`hasSession` check
+      // from any display-message caller, which is the exact #968 defect.
+      // Comments STRIPPED first. Both callers explain the hazard in prose
+      // directly above the guard, so scanning raw source finds the word
+      // `display-message` before the check and reports a correctly-guarded
+      // function as unguarded — which is what the first version of this test
+      // did. A guard that reads documentation as implementation cannot be
+      // trusted in either direction.
+      const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'tmux.js'), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
+      const callers = [...src.matchAll(/function (\w+)\(([\s\S]*?)\n\}/g)]
+        .filter(([body]) => /display-message/.test(body));
+      assert.ok(callers.length >= 2,
+        `expected the display-message callers to be found, got ${callers.length}`);
+      for (const [body, name] of callers) {
+        const at = body.indexOf('display-message');
+        const before = body.slice(0, at);
+        assert.match(before, /hasSession\(|probeSession\(/,
+          `${name}() must establish the session exists BEFORE display-message — `
+          + 'that command answers for the attached client instead of failing');
+      }
+    });
+
+    it('should not report an absent session\'s creation time from a neighbour', () => {
+      // THE REGRESSION THIS EXISTS FOR: `display-message` does not fail on an
+      // absent session — it answers for the attached client — so without an
+      // explicit existence check `sessionCreatedAt` hands back SOME OTHER
+      // session's start time. Its caller compares that against a file's mtime to
+      // decide whether a running process has read the file, so a borrowed
+      // timestamp is not a wrong number, it is a confident wrong answer.
+      //
+      // NOTE what this does and does not prove. It pins the answer for an absent
+      // session in a headless run. It does NOT reproduce the attached-client
+      // fallback — mutating the existence guard away leaves this green, which was
+      // measured rather than assumed — so the structural guard above is what
+      // actually holds that property.
+      withNeighbour(() => {
+        const answer = tmux.sessionCreatedAt(base);
+        assert.equal(answer.answered, true, 'tmux ran and gave a real negative');
+        assert.equal(answer.createdAt, null,
+          `sessionCreatedAt('${base}') must not borrow '${longer}'s start time`);
+      });
+    });
+
+    it('should report a real session\'s creation time', () => {
+      // The positive control. Without it, a function that always returned
+      // `{createdAt: null}` would pass the negative above.
+      withNeighbour(() => {
+        const answer = tmux.sessionCreatedAt(longer);
+        assert.equal(answer.answered, true);
+        assert.equal(typeof answer.createdAt, 'number');
+        const skew = Math.abs(Date.now() / 1000 - answer.createdAt);
+        assert.ok(skew < 600,
+          `a session created moments ago must report a recent timestamp, got skew ${skew}s`);
+      });
+    });
+
     it('should refuse to capture a prefix-matched neighbour', () => {
       withNeighbour(() => {
         assert.throws(

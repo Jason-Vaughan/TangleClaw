@@ -615,6 +615,26 @@ describe('#755 the access toggle is live, and paints only from server state', ()
     assert.match(el('Warn').textContent, /Could not confirm/);
   });
 
+  it('a confirmed "not enforced" outranks an unconfirmable identity', () => {
+    // Both are non-healthy and there is one line. An UNKNOWN must never suppress
+    // a CONFIRMED absence — the first ordering here put the unknown branch above
+    // the guard posture, so a tmux that would not answer hid a boundary that was
+    // measurably gone.
+    //
+    // THE MUTATION THIS CATCHES: ranking `identityStale === null` above
+    // `guardDegraded`, which was the shipped ordering and which no test held.
+    const { bar, el } = mountedBar();
+    bar.setAccess(settings({
+      identityStale: null,
+      guardDegraded: true,
+      guardDegradedCode: 'guard-missing',
+      guardDegradedReason: 'nothing is bounding this master'
+    }));
+    assert.match(el('Warn').textContent, /nothing is bounding/,
+      'the measured absence is what the operator must see');
+    assert.doesNotMatch(el('Warn').textContent, /Could not confirm/);
+  });
+
   it('a fresh identity says nothing at all', () => {
     // The positive control: without it, a warning that ALWAYS renders would pass
     // all three tests above.
@@ -737,6 +757,11 @@ describe('#755 the access toggle is live, and paints only from server state', ()
     assert.match(prompts[0], /one Master/i, 'it must say the change is global');
     assert.match(prompts[0], /EVERYWHERE|every session/i);
     assert.match(prompts[0], /next tool call/, 'and when it binds, from the server');
+    // The operator read this dialog, flipped to write, and hit a Master that
+    // refused anyway — because the sentence said "no restart". The restart is
+    // the single most actionable thing in it (#968).
+    assert.match(prompts[0], /restart/i,
+      'and that the RUNNING Master must be restarted before it acts on the change');
   });
 
   it('the warning reads the engine\'s binding moment rather than promising immediacy', async () => {
@@ -1060,21 +1085,80 @@ describe('#755 both surfaces drive the live toggle, and neither grows a timer', 
     assert.equal(await save(null), 0, 'a failed save changed nothing, so it must notify nothing');
   });
 
-  it('no surface claims "no restart" — the family, not one call site (#968)', () => {
-    // The string the operator actually read before hitting the bug. It was in
-    // the confirmation AND in the modal's tier hint, and it is the one thing a
-    // structural master must not say: the guard binds immediately, the Master
-    // does not. Guarded across the whole component because losing one member of
-    // this family is exactly how the false claim survived #755's review.
+  it('no surface claims the change needs no restart — the whole family (#968)', () => {
+    // The string the operator actually read before hitting the bug, and the one
+    // thing a structural master must not say: the guard binds immediately, the
+    // Master does not.
     //
-    // THE MUTATION THIS CATCHES: restoring either sentence.
-    const helper = read('api-helper.js').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-    assert.doesNotMatch(helper, /no restart/i,
-      'the guard binds on the next tool call; the running Master does not');
-    // And the replacement must actually say the useful thing, or removing the
-    // false claim would pass by saying nothing.
-    assert.match(helper, /restart it|restarts|Restart it to apply/i,
-      'every surface that describes when a change lands must name the restart');
+    // SCANS FIVE FILES, not one. The first version of this guard read only
+    // `api-helper.js` and reported the family held while
+    // `docs/configuration-reference.md`, both halves of ADR 0008, the
+    // `[Unreleased]` CHANGELOG entry and `FEATURES.md` all still carried it —
+    // the CHANGELOG one would have PUBLISHED the disproved claim. A family guard
+    // that knows about one member is how the claim survived in the first place.
+    //
+    // Bans the CLAIM, not the phrase: the corrected docs quote the old wording
+    // to explain what changed, and a bare /no restart/ would forbid saying what
+    // was fixed.
+    const CLAIMS = [
+      /next tool call\s*—\s*no restart/i,
+      /next write attempt with no restart/i,
+      /next tool call with no restart/i,
+      /with no restart and no re-ensure/i
+    ];
+    const FAMILY = ['public/api-helper.js', 'docs/configuration-reference.md',
+      'docs/adr/0008-project-master-session-model.md', 'CHANGELOG.md', 'FEATURES.md'];
+    for (const rel of FAMILY) {
+      const body = fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+      for (const claim of CLAIMS) {
+        assert.doesNotMatch(body, claim,
+          `${rel} still says a level change needs no restart — the running Master reads its `
+          + 'instructions only at launch');
+      }
+    }
+  });
+
+  it('the modal hint and the confirmation each RENDER the restart, structurally', () => {
+    // Behavioural, because the source form of this guard was too coarse: both
+    // functions contain the word "restart" for unrelated reasons (the engine hint
+    // says "restart via tmux"), so reverting the access-level sentence alone left
+    // a source scan green. Measured — that mutation was run.
+    //
+    // THE MUTATION THIS CATCHES: dropping the restart clause from `bindsAt` OR
+    // from `writeWarningText`, one at a time.
+    const body = { innerHTML: '' };
+    const component = G.tcCreateMasterSettings({
+      api: async () => null, apiMutate: async () => null,
+      esc: (v) => String(v), buildEngineOptions: () => '', state: { engines: [] },
+      document: { getElementById: () => body, querySelector: () => null }
+    });
+    component.renderBody({
+      accessLevel: 'read-only', accessLevels: ['read-only', 'suggest', 'write'],
+      enabledAccessLevels: ['read-only', 'suggest', 'write'],
+      enforcement: 'structural', levelAppliesAt: 'next-tool-call',
+      launchModes: [], scope: 'all', autoStart: false
+    }, []);
+    const hint = body.innerHTML.slice(body.innerHTML.indexOf('read-only'),
+      body.innerHTML.indexOf('read-only') + 900);
+    assert.match(hint, /restart/i,
+      "the modal's tier hint must say the running master needs restarting");
+    // The confirmation's half of this is asserted where `mountedBar` lives —
+    // see 'warns on the way IN to write', which drives the real dialog.
+  });
+
+  it('every place that describes when a level change lands also names the restart', () => {
+    // The positive half, and it is PER-SITE. The first version asserted one
+    // matching occurrence anywhere in `api-helper.js`, so reverting a single
+    // call site left it green — it did not hold the family it was named for.
+    //
+    // THE MUTATION THIS CATCHES: dropping the restart clause from `bindsAt` OR
+    // from `writeWarningText` alone.
+    const helper = read('api-helper.js');
+    for (const fn of ['function renderMasterSettingsBody', 'function writeWarningText']) {
+      const body = lift(fn, helper);
+      assert.match(body, /restart/i,
+        `${fn} describes when a change takes effect and must name the restart`);
+    }
   });
 
   it('the segments meet the touch-target minimum the mobile Direction binds', () => {

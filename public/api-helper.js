@@ -2087,6 +2087,14 @@
    *
    * @type {Object<string, string>}
    */
+  const TC_MASTER_GUARD_DEGRADED = {
+    'guard-missing': 'NOT ENFORCED',
+    'guard-unwired': 'NOT ENFORCED',
+    'guard-tampered': 'UNKNOWN',
+    'level-unreadable': 'READ-ONLY',
+    'level-mismatch': 'MISMATCH'
+  };
+
   /**
    * A short, local date for a timestamp the operator has to act on.
    *
@@ -2105,14 +2113,6 @@
       return String(iso);
     }
   }
-
-  const TC_MASTER_GUARD_DEGRADED = {
-    'guard-missing': 'NOT ENFORCED',
-    'guard-unwired': 'NOT ENFORCED',
-    'guard-tampered': 'UNKNOWN',
-    'level-unreadable': 'READ-ONLY',
-    'level-mismatch': 'MISMATCH'
-  };
 
   /**
    * The access toggle's segments — the ONE place a segment and the level it
@@ -2480,11 +2480,15 @@
         setWarning('NOT IN EFFECT — the running Master started before these instructions were written'
           + (settings.identityWrittenAt ? ` (${_tcShortDate(settings.identityWrittenAt)})` : '')
           + ', and reads them only at launch. Restart it to apply.');
-      } else if (settings.identityStale === null) {
-        setWarning('Could not confirm the running Master has picked up its current instructions — tmux did not answer.');
       } else if (settings.guardDegraded) {
         const tag = TC_MASTER_GUARD_DEGRADED[settings.guardDegradedCode];
         setWarning((tag ? tag + ' — ' : '') + settings.guardDegradedReason);
+      } else if (settings.identityStale === null) {
+        // BELOW `guardDegraded`, deliberately. An UNKNOWN must never suppress a
+        // CONFIRMED "nothing is enforcing" — the first ordering here put this
+        // branch above it, so a tmux that would not answer hid a boundary that
+        // was measurably absent. Unknown outranks only the healthy states.
+        setWarning('Could not confirm the running Master has picked up its current instructions — tmux did not answer.');
       } else if (pending) {
         // THREE states, not two — the same split `bindsAt` and `writeWarningText`
         // make, and for the same reason. `pending` is true both when the server

@@ -613,6 +613,44 @@ describe('readMasterIdentityFreshness — has the RUNNING Master read this? (#96
     assert.ok(p.identityWrittenAt, 'the timestamp is still known even when the comparison is not');
   });
 
+  it('an unparseable answer is UNKNOWN, not "no session"', () => {
+    // tmux answered, but with nothing usable. Folding that into "there is no
+    // session" would report a live Master as never stale — same consequence as
+    // the timeout (the comparison could not be made), different cause.
+    //
+    // THE MUTATION THIS CATCHES: keying only on `answered`, which leaves `cause`
+    // with no consumer at all — a field nothing reads is its own smell.
+    const home = mk();
+    identityAt(home, 0);
+    const p = master.readMasterIdentityFreshness({
+      home, tmuxLib: tmuxAt({ createdAt: null, answered: true, cause: 'unparseable' })
+    });
+    assert.equal(p.identityStale, null);
+  });
+
+  it('an identity rewritten with IDENTICAL content does not become stale', () => {
+    // The defect the review caught, and the one that would have made this whole
+    // feature a permanent nag: `refreshMasterIdentity` runs on every ensure —
+    // which both surfaces fire on drawer open, and which runs at boot — so an
+    // unconditional write bumped the mtime past the session start every time.
+    // The bar would have read "NOT IN EFFECT … Restart it to apply" forever, on
+    // a perfectly healthy Master. `buildMasterClaudeMd` is deterministic, so the
+    // mtime is load-bearing and not touching it is part of the contract.
+    //
+    // THE MUTATION THIS CATCHES: reverting to an unconditional writeFileSync.
+    const home = mk();
+    master.refreshMasterIdentity({ home, enginesLib: { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' } });
+    const first = fs.statSync(master.masterIdentityPath(home)).mtimeMs;
+    // Push the recorded mtime back so an unconditional rewrite is detectable
+    // without sleeping for a filesystem tick.
+    const past = new Date(first - 60000);
+    fs.utimesSync(master.masterIdentityPath(home), past, past);
+
+    master.refreshMasterIdentity({ home, enginesLib: { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' } });
+    assert.equal(fs.statSync(master.masterIdentityPath(home)).mtimeMs, past.getTime(),
+      'an ensure that changes nothing must not touch the identity mtime');
+  });
+
   it('no running Master, and no identity at all, are both "nothing is stale"', () => {
     // Nothing is running to hold a stale belief, and an operator who has never
     // opened the Master must not meet a warning about it.

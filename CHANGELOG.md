@@ -17,7 +17,9 @@ All notable changes to TangleClaw are documented in this file.
   home on every invocation and maps it to the three `PreToolUse` outcomes: `read-only` denies
   outside `memory/`, `suggest` **asks** — the confirmation in the master's own terminal is what makes
   it "propose, don't execute" — and `write` allows. So a flip is in force for the master's very next
-  write attempt, with no restart and no re-ensure.
+  write attempt, with no re-ensure. (Amended before release by #968: that is true of the GUARD. The
+  running master reads its instructions only at launch, so it must be restarted before it will act
+  on the new level — the original wording here said "no restart".)
 
   **Every failure path degrades to read-only, and that is the acceptance criterion rather than a
   nicety.** The harness fails OPEN on hook crashes, which is why the existing guard ends every
@@ -305,6 +307,33 @@ All notable changes to TangleClaw are documented in this file.
   dial for anyone who wants it.
 
 ### Fixed
+
+- **The Master no longer refuses writes it is allowed to make (#968).** Flipping the access level to
+  `write` moved the toggle, satisfied the server, and left the Master saying it had no write access.
+  It was refusing *itself*: the change path wrote the level file and regenerated the guard but never
+  refreshed the Master's identity, so `CLAUDE.md` kept whatever level was current at the last ensure.
+  The Master reads its own instructions, saw `read-only`, and declined without ever attempting a
+  write — so the guard, which was correctly answering *allow*, was never consulted.
+
+  The change path now delegates to the one full identity refresher rather than keeping a partial one,
+  because keeping a partial one is what let the three artifacts drift apart. The level is written
+  first, so a failure part-way leaves the guard reading the *tighter* value rather than still
+  permitting the old one.
+
+  **And the surfaces stopped promising the opposite.** The confirmation shown before granting write
+  told the operator the change bound on the Master's next tool call and needed *"no restart"* — the
+  single most misleading sentence available, since the restart is exactly what they needed to do. That claim is gone from the
+  confirmation, the settings modal, the configuration reference, ADR 0008 and FEATURES, and a guard
+  now holds all five together rather than one of them.
+
+  **The bar says when it matters, rather than always.** `/api/master/status` compares the Master's
+  tmux session start time against its identity's mtime and reports whether the *running* Master has
+  actually read its current instructions; the bar shows `NOT IN EFFECT — the running Master started
+  before these instructions were written (17 Jul). Restart it to apply.` only when that is true, and
+  says so plainly when tmux will not answer rather than implying all is well. It catches every cause
+  of a stale identity — an edited Hard rule, a scope change — not only a level flip. On the machine
+  this was found on, the Master had been running for a month against instructions rewritten the day
+  before.
 
 - **A session learns about a release when it happens, not up to four hours later (#954).** The
   update beacon polls every five minutes on both the dashboard and every session page, but on the
