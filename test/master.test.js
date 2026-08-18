@@ -470,6 +470,81 @@ describe('_looksEditedFrom — is this rule an EDIT of a superseded baseline?', 
   });
 });
 
+describe('#968 a level change reaches the Master\'s own instructions', () => {
+  const STRUCTURAL_968 = { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' };
+  const homes968 = [];
+  const mk = () => {
+    const h = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-968-'));
+    homes968.push(h);
+    return h;
+  };
+  after(() => { for (const h of homes968) fs.rmSync(h, { recursive: true, force: true }); });
+
+  /** @param {string} home @returns {string} The identity's access-level section. */
+  const levelSection = (home) => {
+    const md = fs.readFileSync(path.join(home, 'CLAUDE.md'), 'utf8');
+    const at = md.indexOf('## Your current access level');
+    assert.notEqual(at, -1, 'the identity must carry an access-level section at all');
+    return md.slice(at, at + 400);
+  };
+
+  it('rewrites CLAUDE.md, not only the level file and the guard', () => {
+    // THE BUG, and the mutation that must go red: reverting this path to write
+    // the level file and the guardrails without refreshing the identity. Every
+    // other assertion in this suite stayed green while it shipped, because they
+    // all read the level file or the guard — the two artifacts that WERE being
+    // written. The Master reads a third one.
+    const home = mk();
+    master.applyMasterAccessLevel('read-only', { home, enginesLib: STRUCTURAL_968 });
+    assert.match(levelSection(home), /\*\*read-only\*\*/, 'precondition');
+
+    master.applyMasterAccessLevel('write', { home, enginesLib: STRUCTURAL_968 });
+    const after = levelSection(home);
+    assert.match(after, /\*\*write\*\*/,
+      'the identity must state the level the operator just chose');
+    assert.doesNotMatch(after, /\*\*read-only\*\*/,
+      'and must not still assert the old one — the Master reads this and refuses itself');
+  });
+
+  it('still writes the level file and the guard it delegated away', () => {
+    // The delegation must not LOSE what the partial path did. Asserted because
+    // "one refresher instead of two" is only an improvement if the one does
+    // everything the two did.
+    const home = mk();
+    master.applyMasterAccessLevel('write', { home, enginesLib: STRUCTURAL_968 });
+    assert.equal(fs.readFileSync(master.masterAccessLevelPath(home), 'utf8').trim(), 'write');
+    assert.equal(fs.existsSync(master.masterGuardScriptPath(home)), true);
+    assert.equal(master.readMasterGuardPosture('write', 'structural', { home }).guardDegraded, false,
+      'and the three artifacts must agree afterwards');
+  });
+
+  it('the identity follows the level ARGUMENT, not whatever config happens to say', () => {
+    // The change path saves config and then passes the level it saved, so the
+    // two agree in production. Passing it explicitly means they cannot disagree
+    // even for the width of a write — and this pins that the argument is what
+    // renders, since the test store's config says read-only throughout.
+    //
+    // THE MUTATION THIS CATCHES: dropping the `accessLevel` override so the
+    // refresher falls back to config, which would silently re-introduce the bug
+    // for any caller whose config write has not landed yet.
+    const home = mk();
+    master.applyMasterAccessLevel('suggest', { home, enginesLib: STRUCTURAL_968 });
+    assert.match(levelSection(home), /\*\*suggest\*\*/);
+  });
+
+  it('an instructional master gets the identity refresh too — it is the whole boundary there', () => {
+    // On a non-Claude master the prose IS the enforcement, so a stale identity
+    // is not a cosmetic problem, it is the boundary being wrong.
+    const home = mk();
+    master.applyMasterAccessLevel('write', {
+      home, enginesLib: { resolveDefaultEngine: () => 'gemini', reconcileLaunchMode: () => 'default' }
+    });
+    assert.match(levelSection(home), /\*\*write\*\*/);
+    assert.equal(fs.existsSync(master.masterGuardScriptPath(home)), false,
+      'and it still gets no guard it never had');
+  });
+});
+
 describe('readMasterGuardPosture — a degraded guard is visible (#755 chunk 3, R-15)', () => {
   const STRUCTURAL = { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' };
   const INSTRUCTIONAL = { resolveDefaultEngine: () => 'gemini', reconcileLaunchMode: () => 'default' };
