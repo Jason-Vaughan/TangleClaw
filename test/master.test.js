@@ -396,6 +396,211 @@ describe('getMasterStatus', () => {
   });
 });
 
+// ── R-15 (#755 chunk 3): the guard's posture is read BACK, so a degraded
+// boundary stops being invisible ──
+//
+// Chunk 2's review found that every surface reported the level out of config
+// and called it `structural` without ever asking the guard. Two ways that lies:
+// the guard falls back to read-only when it cannot read its posture, and a
+// master at `write` can delete the hook outright — after which `structural` is
+// what the UI says and nothing is what enforces.
+//
+// Fixtures are built by the REAL caller (`applyMasterAccessLevel`), not by
+// hand-writing the two files. A hand-built fixture would encode this test's
+// belief about what the writer produces, and #755's recurring failure has been
+// exactly a fix and a test sharing a premise.
+describe('readMasterGuardPosture — a degraded guard is visible (#755 chunk 3, R-15)', () => {
+  const STRUCTURAL = { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' };
+  const INSTRUCTIONAL = { resolveDefaultEngine: () => 'gemini', reconcileLaunchMode: () => 'default' };
+  const homes = [];
+
+  /**
+   * A master home provisioned the way the product provisions one.
+   * @param {string} level - Access level to apply.
+   * @param {object} enginesLib - Engine resolver stub deciding the enforcement tier.
+   * @returns {string} The home path.
+   */
+  function provision(level, enginesLib) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-r15-'));
+    homes.push(home);
+    const result = master.applyMasterAccessLevel(level, { home, enginesLib });
+    assert.equal(result.applied, true,
+      'the fixture must actually be provisioned, or every assertion below measures an empty directory');
+    return home;
+  }
+
+  after(() => {
+    for (const h of homes) fs.rmSync(h, { recursive: true, force: true });
+  });
+
+  it('an instructional master raises no alarm — it was never meant to have a guard', () => {
+    // THE MUTATION THIS CATCHES: dropping the `enforcement !== 'structural'`
+    // early return. Every non-Claude master would then permanently report
+    // "guard missing", because a guard is exactly what an instructional master
+    // does not have — an alarm that is always on is an alarm nobody reads.
+    const home = provision('write', INSTRUCTIONAL);
+    assert.equal(fs.existsSync(master.masterGuardScriptPath(home)), false,
+      'precondition: an instructional master genuinely has no guard script');
+
+    const p = master.readMasterGuardPosture('write', 'instructional', { home });
+    assert.equal(p.guardDegraded, false);
+    assert.equal(p.guardDegradedCode, null);
+    assert.equal(p.guardLevel, null, 'there is no guard to report a level for');
+  });
+
+  it('a master that has never been opened raises no alarm', () => {
+    // THE MUTATION THIS CATCHES: dropping the home-exists check, which would
+    // show a degraded boundary to every operator who has not opened the Master
+    // yet — a scary badge about a subsystem that does not exist.
+    const home = path.join(os.tmpdir(), 'tc-r15-never-opened-does-not-exist');
+    assert.equal(fs.existsSync(home), false, 'precondition: the home must be absent');
+
+    const p = master.readMasterGuardPosture('read-only', 'structural', { home });
+    assert.equal(p.guardDegraded, false);
+    assert.equal(p.guardLevel, null);
+  });
+
+  it('a healthy structural master reports the level the guard will actually apply', () => {
+    for (const level of ['read-only', 'suggest', 'write']) {
+      const home = provision(level, STRUCTURAL);
+      const p = master.readMasterGuardPosture(level, 'structural', { home });
+      assert.equal(p.guardDegraded, false, `${level} is provisioned and consistent`);
+      assert.equal(p.guardDegradedReason, null);
+      assert.equal(p.guardLevel, level,
+        'the reported level must come from DISK, not be echoed back from the argument');
+    }
+  });
+
+  it('a deleted guard script is reported — the write tier can remove its own hook', () => {
+    // The threat in its own words: at `write` the guard permits edits to every
+    // path including its own hook file, and under the bypassPermissions launch
+    // mode the `rm` is not confirmed either. Before this, deleting it changed
+    // nothing any surface said.
+    //
+    // THE MUTATION THIS CATCHES: returning the healthy shape when the script is
+    // absent — which is what the code did before this chunk, silently, on the
+    // one state where the boundary has stopped existing altogether.
+    const home = provision('write', STRUCTURAL);
+    fs.rmSync(master.masterGuardScriptPath(home));
+
+    const p = master.readMasterGuardPosture('write', 'structural', { home });
+    assert.equal(p.guardDegraded, true);
+    assert.equal(p.guardDegradedCode, 'guard-missing');
+    assert.equal(p.guardLevel, null, 'a guard that is gone enforces no level at all');
+    assert.match(p.guardDegradedReason, /not there|nothing is bounding/i,
+      'the reason has to say the boundary is absent, not merely that something differs');
+  });
+
+  it('the missing-guard check is NOT keyed on the guard file — it is keyed on enforcement', () => {
+    // Chunk 2 shipped a bound keyed on `existsSync(guard-writes.js)`, the exact
+    // artifact the threat removes, so deleting the guard made the check conclude
+    // there was nothing to check. This pins the inversion: with BOTH artifacts
+    // gone, the answer is still "degraded", never "clean".
+    //
+    // THE MUTATION THIS CATCHES: an early `if (!guardPresent) return none;`
+    // guard-clause "optimisation", which reads as skipping irrelevant work and
+    // is a silent all-clear on a master with no boundary at all.
+    const home = provision('write', STRUCTURAL);
+    fs.rmSync(master.masterGuardScriptPath(home));
+    fs.rmSync(master.masterAccessLevelPath(home));
+
+    const p = master.readMasterGuardPosture('write', 'structural', { home });
+    assert.equal(p.guardDegraded, true,
+      'removing every artifact the check reads must not be a way to pass the check');
+    assert.equal(p.guardDegradedCode, 'guard-missing',
+      'and the WORSE of the two findings is the one reported');
+  });
+
+  it('an unreadable or unrecognized level file reports read-only — what the guard will do', () => {
+    // Three shapes of the same failure, each of which makes the generated
+    // guard's own `readLevel()` fall back to read-only. The report has to model
+    // the guard's behaviour, not the file's bytes: the operator needs to know
+    // what will happen, and "the file says <garbage>" does not tell them.
+    //
+    // THE MUTATION THIS CATCHES: reporting `guardLevel: token` (the raw value)
+    // or the configured level. Either one tells an operator whose master is
+    // silently refusing every write that the level is what they set.
+    const cases = [
+      ['deleted', (h) => fs.rmSync(master.masterAccessLevelPath(h))],
+      ['garbage', (h) => fs.writeFileSync(master.masterAccessLevelPath(h), 'WRITE-ish\n')],
+      ['empty', (h) => fs.writeFileSync(master.masterAccessLevelPath(h), '   \n')],
+      ['a directory', (h) => {
+        fs.rmSync(master.masterAccessLevelPath(h));
+        fs.mkdirSync(master.masterAccessLevelPath(h));
+      }]
+    ];
+    for (const [name, corrupt] of cases) {
+      const home = provision('write', STRUCTURAL);
+      corrupt(home);
+      const p = master.readMasterGuardPosture('write', 'structural', { home });
+      assert.equal(p.guardDegraded, true, `${name}: must be flagged`);
+      assert.equal(p.guardDegradedCode, 'level-unreadable', `${name}: code`);
+      assert.equal(p.guardLevel, 'read-only',
+        `${name}: the guard falls back to read-only, so that is what is in force`);
+    }
+  });
+
+  it('a level on disk that disagrees with config is reported, and says WHICH WAY', () => {
+    // The two directions are different problems and a single "they differ"
+    // sentence leaves the operator to work out which: a guard permitting MORE
+    // than configured is a boundary that is not holding; permitting LESS is a
+    // master that will not do its job.
+    //
+    // THE MUTATION THIS CATCHES: comparing with `>=`/`<=`, or emitting one
+    // fixed sentence for both directions — the security-relevant case then
+    // reads exactly like the merely-annoying one.
+    const permissive = provision('write', STRUCTURAL);
+    const pMore = master.readMasterGuardPosture('read-only', 'structural', { home: permissive });
+    assert.equal(pMore.guardDegraded, true);
+    assert.equal(pMore.guardDegradedCode, 'level-mismatch');
+    assert.equal(pMore.guardLevel, 'write', 'what is in force is what is on disk');
+    assert.match(pMore.guardDegradedReason, /permitting MORE/);
+
+    const restrictive = provision('read-only', STRUCTURAL);
+    const pLess = master.readMasterGuardPosture('write', 'structural', { home: restrictive });
+    assert.equal(pLess.guardDegraded, true);
+    assert.equal(pLess.guardDegradedCode, 'level-mismatch');
+    assert.equal(pLess.guardLevel, 'read-only');
+    assert.match(pLess.guardDegradedReason, /permitting LESS/);
+  });
+
+  it('getMasterStatus carries the readback, so a surface can render it', () => {
+    // R-15's actual complaint: `getMasterStatus` was listed in chunk 1's own
+    // consumer table as the cross-check and was never built. This is that.
+    //
+    // THE MUTATION THIS CATCHES: computing the posture and not spreading it into
+    // `settings` — every unit test above would stay green while the only
+    // consumer that matters received nothing.
+    const home = provision('write', STRUCTURAL);
+    fs.rmSync(master.masterGuardScriptPath(home));
+
+    const s = master.getMasterStatus({
+      tmuxLib: fakeTmux(), enginesLib: STRUCTURAL, home
+    }).settings;
+    assert.equal(s.enforcement, 'structural');
+    assert.equal(s.guardDegraded, true);
+    assert.equal(s.guardDegradedCode, 'guard-missing');
+    assert.ok(s.guardDegradedReason, 'the surface needs a sentence to show, not just a flag');
+  });
+
+  it('getMasterStatus reads the guard from the home it REPORTS, not the live one', () => {
+    // Route tests reached the operator's real `~/.tangleclaw/master` twice
+    // during this issue. `home` is resolved once and used for both the reported
+    // path and the readback, so the payload cannot half-describe a fixture and
+    // half-describe the real master.
+    //
+    // THE MUTATION THIS CATCHES: calling `masterHome()` again inside the
+    // readback instead of threading the resolved `home` — the fields would then
+    // describe whatever master this machine happens to have, which passes on a
+    // developer box and fails on CI (or vice versa).
+    const home = provision('suggest', STRUCTURAL);
+    const status = master.getMasterStatus({ tmuxLib: fakeTmux(), enginesLib: STRUCTURAL, home });
+    assert.equal(status.home, home);
+    assert.equal(status.settings.guardLevel, 'suggest',
+      'the readback must follow the overridden home');
+  });
+});
+
 describe('ensureMasterSession refuses to start a second master over one it cannot see', () => {
   it('declines, and does not create a session, when tmux did not answer', () => {
     // THE MUTATION THIS CATCHES: keeping `t.hasSession(...)` as the guard.
