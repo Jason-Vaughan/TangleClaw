@@ -315,6 +315,42 @@ consumer table listed `getMasterStatus` as the cross-check and it was never buil
 surface that should show it: a master whose guard cannot read its posture is enforcing read-only
 while every surface says otherwise.
 
+**R-15's breadth — RULED 2026-08-17 by the operator.** R-15's literal words cover the level file
+only. It ships covering **guard presence too**: `getMasterStatus` reports degraded when enforcement
+is structural AND the master home exists AND any of — the on-disk level is unreadable or
+unrecognized, it disagrees with what config says, or the guard script is absent. Each carries its
+own reason so the operator can act on the right one. **`[DECISION: the degraded readback covers a
+missing guard script, not only an unreadable level file | a master at `write` may delete its own
+hook — and under bypassPermissions the `rm` is not confirmed either — after which every surface
+reports "structural" while nothing enforces at all, until the next flip or ensure regenerates it;
+that is the maximal case of the invisibility R-15 exists to close, not a different defect |
+RULED by the operator 2026-08-17]`**
+
+Two bounds on that check, both in the fail-closed direction this issue keeps getting wrong:
+
+- **The readback failing is itself degraded.** If reading the level file throws, the answer is
+  "degraded", never "fine". This is a status report rather than a guard, so the restrictive
+  direction here is *reporting the alarm*, and an exception handler that returns the configured
+  level would be the same allow in a new costume.
+- **It cannot key on the guard script existing.** Chunk 2's recurring defect was a bound keyed on
+  the artifact the threat deletes. The *predicate* is `enforcement === 'structural'`, derived from
+  the resolved engine and untamperable from inside the master home; the script's absence is a
+  *reported finding* under that predicate, never the thing that decides whether to look.
+- **No master home means no alarm.** An operator who has never opened the Master must not see a
+  degraded badge; `applyMasterAccessLevel` already draws that line the same way.
+
+**What the bar renders at `suggest` — RULED 2026-08-17 by the operator.** #768 §2b ratified a
+two-segment READ/WRITE control, and chunk 1 made `suggest` reachable from the gear, so the bar has
+a level it cannot express. It renders **neither segment pressed, plus a non-interactive `SUGGEST`
+readout inside the group**, with the group's accessible name reading the actual level. **`[DECISION:
+the bar shows an unpressed pair plus a SUGGEST readout rather than gaining a third segment | the
+gear is the complete access-level control and the bar is the fast path, so adding a third pressable
+segment would make the bar a second complete control on the one axis #768 kept it off; a readout
+tells the truth without adding a control, and a bare unpressed pair would leave a touch operator
+with no visible reason since `title` never appears on touch | RULED by the operator 2026-08-17]`**
+Pressing READ or WRITE from `suggest` moves to that tier by the ordinary path — including the
+READ→WRITE warning, because `suggest`→`write` is also a move *in*.
+
 **Cross-surface freshness — the mechanism, and what it does not cover.** The ratification says other
 open bars must repaint "on their next poll". Verified: **the dashboard has no poll** —
 `refreshMasterDot()` is one-shot and its comment cites the no-UI-timers rule. The session page *does*
@@ -327,10 +363,13 @@ have a visibility-aware `setTimeout` chain that Medusa already rides ("same cade
 - **Residual, accepted under decision C:** a dashboard panel left open while another surface flips
   shows a stale segment until something touches it. It cannot act on that stale value — the pre-flip
   re-fetch closes the dangerous half — and the cosmetic half is not worth a timer on a page that has
-  none. *The ui.js comment at `3444` cites "the no-UI-timers rule" as the reason for no polling; that
-  is a mis-citation — the norm (#98/#268) governs timer-driven **lifecycle** (auto-dismiss, revert,
-  redirect, blind reload), and `reconnect-policy.js:101` records a poll explicitly as **inside** the
-  norm. Correct the comment; do not treat it as a constraint it never was.*
+  none. *The comment above `refreshMasterDot` in `ui.js` cites "the no-UI-timers rule" as the reason
+  for no polling; that is a mis-citation — the norm (#98/#268) governs timer-driven **lifecycle**
+  (auto-dismiss, revert, redirect, blind reload), and `reconnect-policy.js` records a poll
+  explicitly as **inside** the norm. Correct the comment; do not treat it as a constraint it never
+  was. **Both surfaces carry it**, not just the dashboard: the Master-drawer header comment in
+  `session.js` makes the same claim in the same words. One call site is not the family — fix the
+  pair, or the next reader finds the norm still "forbidding" polling on the other page.*
 
 **Done when:**
 1. Flip to WRITE from a session drawer, Master edits outside `memory/`, succeeds — no restart.
@@ -349,6 +388,12 @@ have a visibility-aware `setTimeout` chain that Medusa already rides ("same cade
 - **Mobile density, touch targets, and the bar's collapse rule** — carried into **#768 chunk 3**,
   not here. This plan must not absorb it; the two would enlarge each other's diff mid-review.
 - **Consolidating the settings-modal CSS into `shared-controls.css`** — also #768 chunk 3 (R-7).
+
+**Re-ratified 2026-08-17** at the start of chunk 3, because the session's own kickoff prompt had
+pulled both of those in: they stay in #768, which is OPEN and records them. What chunk 3 *does* owe
+is "Done when" 7 — the access segment control itself clears ≥44px. That is satisfiable on one
+control without deciding the nine-control collapse rule, which is #768's subject and not this
+plan's.
 - **Master Kill / Upload / Medusa / Wrap** — the bar's other dim controls, each its own backend.
 
 ---
