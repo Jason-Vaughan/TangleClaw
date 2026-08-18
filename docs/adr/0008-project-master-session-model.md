@@ -1,17 +1,33 @@
-# ADR 0008: Project Master — Harness-Session Singleton with an Instructional Read-Only Boundary
+# ADR 0008: Project Master — Harness-Session Singleton with a Tiered Write Boundary
 
 **Status:** Accepted (2026-07-03, chunk G / #331). Shipped across three slices: #440 (`lib/master.js` + API), #442 (landing pane), slice 3 (in-session drawer + this ADR).
 **Amended 2026-07-18 (Master settings surface v1):** the filesystem half of the boundary is now
 **structural** on the Claude engine — every ensure regenerates `.claude/settings.json` plus a
-default-deny PreToolUse guard hook in the master home that hard-blocks Edit/Write/NotebookEdit
-outside the `memory/` carve-out (the master's durable memory, the sole writable path; the guard
-covers `.claude/` itself so it cannot be edited away). The Hard rules moved from hardcoded prose
+default-deny PreToolUse guard hook in the master home.
+The Hard rules moved from hardcoded prose
 into editable, versioned `session_rules` rows (kind `master`) with a shipped-baseline restore
 path. The **API half is unchanged**: mutation endpoints stay open on localhost, GET-only remains
 instructional, and the enforced token scope remains a G2+ concern. See "The read-only boundary"
 below for the original v1 posture this amends.
+**Amended again 2026-08-17 (#755):** that guard is no longer fixed at read-only. It reads the
+operator's access level from `<master home>/.access-level` on every invocation and maps it to
+deny / ask / allow, so a change binds on the master's next write attempt with no restart; every
+unreadable level degrades to read-only, and the guard's own control surface is refused below the
+write tier so no single confirmation can raise it. **That control surface includes TangleClaw's own
+`config.json`** — `.access-level` is a copy the next ensure rewrites from it, and the config sits
+one directory ABOVE the master home, so refusing only the in-home artifacts left the real switch a
+sibling away. `memory/` remains writable at every tier. Two limits stated rather than implied: the
+matcher is `Edit|Write|NotebookEdit`, so shell writes are operator-gated rather than hook-enforced;
+and this is a Claude-engine capability — elsewhere the level is instructional, carried in the
+regenerated identity, and the API reports which it is.
+**Amended 2026-08-17 (#755 chunk 3):** the status API now reads the boundary BACK — the guard's
+presence, its registration in `.claude/settings.json`, its source, and the level on disk against
+the level in config — and reports a boundary that is not in force rather than restating the
+configured one. Before this a deleted or unregistered hook left every surface saying "structural"
+with nothing enforcing.
+The original read-only description below is retained as the record of what v1 shipped.
 **Source issue:** #331 — Project Master. **Ratified design:** 2026-06-16 interview + D7 (reach-from-anywhere), operator decisions 2026-07-01 (home dir, lifecycle).
-**Builds on:** ADR 0005 (AUTH-4 service token — the master's gated-surface credential). **Successor work:** G2 (post-4.0) — actions/relay via Switchboard #333, enforced read-only token scope.
+**Builds on:** ADR 0005 (AUTH-4 service token — the master's gated-surface credential). **Successor work:** **#966** — a scoped TangleClaw API token and a fleet-mutation route, so the Master's authority over TC's own API is bounded server-side rather than by whatever its engine enforces locally. Filed 2026-08-17 when #755 shipped the file-write tier only; it carries the G2 (post-4.0) actions/relay work, which needs Switchboard #333 as its transport.
 
 ---
 
@@ -53,8 +69,9 @@ singleton beside the project machinery, not inside it:
 4. **Identity via a TC-generated `CLAUDE.md`** in the master home, regenerated on every ensure so
    guide/token changes propagate (marker header, same pattern as engine configs). Claude Code
    reads the cwd `CLAUDE.md` natively — no prime-delivery machinery, survives restarts and
-   re-attaches. Contents: the read-only administrator role, the TC API base URL + read-endpoint
-   guide, the AUTH-4 bearer block when the M2M gate is enabled, and the read-only rules.
+   re-attaches. Contents: the administrator role, a generated statement of the current access
+   level and what enforces it (#755), the TC API base URL + read-endpoint guide, the AUTH-4 bearer
+   block when the M2M gate is enabled, and the editable Hard rules.
 5. **Lifecycle: launch on first open, then persist.** No boot-time launch — the launchd daemon
    context does no interactive/privileged work (root-family learning). Opening either surface
    POSTs ensure; closing a surface never kills the session.
@@ -66,6 +83,16 @@ singleton beside the project machinery, not inside it:
    keeps v1 free of any new chat transport.
 
 ## The read-only boundary is instructional in v1 — stated, not silently claimed
+
+> **Superseded in part, 2026-08-17 (#755).** The section below still describes the *API* boundary
+> correctly — TC's mutation endpoints remain open and the scoped token is still deferred. What it no
+> longer describes is the **file-write** boundary, which is now a real, selectable tier rather than a
+> fixed posture: `read-only`, `suggest` (each write outside the master home's memory directory stops
+> for operator confirmation) and `write`. The `PreToolUse` guard reads the level from a file in the
+> master home on every invocation, so a change binds on the master's next tool call with no restart,
+> and every unreadable level degrades to `read-only`. Measured against Claude Code 2.1.233: a hook
+> decision outranks the `bypassPermissions` launch mode, so the tier means the same thing on every
+> launch mode. Still Claude-only — on other engines this remains instructional, and the API says so.
 
 v1's "read-only" is enforced by **instruction and construction**, not by the API:
 

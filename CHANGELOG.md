@@ -6,6 +6,131 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **The Master's access level is real, and changing it binds on its next tool call (#755, chunk 1).**
+  `suggest` and `write` had been rendered in the settings modal and rejected by the server since the
+  tier was specified — a picker with two permanently-disabled options. They are selectable now,
+  because each carries actual enforcement rather than prose.
+
+  **The level is read per tool call, not baked into the guard.** `buildMasterGuardScript` previously
+  had "deny unless under `memory/`" written into its body, so the posture was fixed at launch and a
+  change needed a restart to mean anything. The guard now reads a single-token file in the master
+  home on every invocation and maps it to the three `PreToolUse` outcomes: `read-only` denies
+  outside `memory/`, `suggest` **asks** — the confirmation in the master's own terminal is what makes
+  it "propose, don't execute" — and `write` allows. So a flip is in force for the master's very next
+  write attempt, with no restart and no re-ensure.
+
+  **Every failure path degrades to read-only, and that is the acceptance criterion rather than a
+  nicety.** The harness fails OPEN on hook crashes, which is why the existing guard ends every
+  internal path in an explicit deny; reading a level adds new ways to fail, so an absent, empty,
+  unreadable, directory-shaped, or unrecognized level file all resolve to `read-only`. A level-aware
+  guard that failed open would be strictly worse than the baked-in one it replaced. Each of those
+  paths was proven by mutating the guard to return `write` there and watching the assertion go red —
+  a fail-closed test that passes before it is mutated has asserted nothing.
+
+  **The level file sits beside `memory/`, never inside it.** `memory/` is the master's own write
+  carve-out, so a level file placed there would be one the master could raise for itself.
+
+  **Revoking re-provisions the guard, not just the level file.** At `write` the master may edit *or
+  delete* its own hook script, so writing `.access-level` alone could revoke nothing until the next
+  ensure — a toggle reporting a boundary it did not restore. Regeneration is keyed on the resolved
+  engine's enforcement tier, deliberately **not** on the guard file being present: keying on the
+  artifact the threat removes covers a blanked hook and misses a deleted one, which is how the first
+  version of this fix failed review. Instructional masters are still never handed a guard they never
+  had.
+
+  **`write` makes the guard permit; it never makes the guard absent.** Skipping generation for a
+  permissive tier would leave a stale read-only guard from an earlier ensure silently in force.
+
+  Two writers, answering different questions: every identity refresh writes the level so it stays
+  true across restarts, and `PATCH /api/config` pushes a *changed* level so the toggle is immediate.
+  The push routes through `master.applyMasterAccessLevel` rather than inline filesystem work, so the
+  home resolves in one place and a route test can stub it — an earlier shape of this let
+  `PATCH /api/config` tests rewrite the operator's live master posture, the same defect class that
+  once let a route test overwrite the real `FLEET.md`.
+
+  **A hook decision outranks the `bypassPermissions` launch mode — measured, not assumed.** Both the
+  plan's ratified caveat and the first draft of the settings copy guessed at what that launch mode
+  does to a hook decision, reached *opposite* conclusions, and neither was checked. Probed against
+  Claude Code 2.1.233 with the real generated guard: at `read-only` the write is refused carrying the
+  guard's own reason; at `suggest` it is gated and cannot proceed unattended; at `write` it succeeds —
+  the last being the validated control that proves the path was reachable and the other two were
+  stopped by the hook rather than the environment. So the launch mode skips the permission-*rules*
+  gate, not hook decisions, and every tier means the same thing on every launch mode. The `suggest`
+  hint says so; the `write` + `bypassPermissions` warning is deliberately *not* extended to
+  `suggest`, since its claim is only true of `write`.
+
+  Still to come on #755: the control bar's READ/WRITE toggle is still dim (chunk 3).
+
+- **The Master's own instructions state its access level, and say honestly whether anything enforces
+  it (#755, chunk 2).** The generated identity described a fixed posture — "the **read-only**
+  administrator", plus a Hard rule reading "Never edit files outside this directory" — while the
+  level had become a setting. On the Claude engine that was merely stale; on every other engine that
+  prose *is* the boundary, so it was the enforcement itself that was wrong.
+
+  The identity now carries a generated **"Your current access level"** section, distinct at each tier
+  and deliberately separate from the Hard rules. The rules are the operator's text — editable,
+  versioned, restorable — so rewriting them to track a setting would either destroy an edit or leave
+  it contradicting the live posture. The rules say what the master should not do; the generated
+  section says what it currently can.
+
+  **The two boundaries are no longer conflated, and only one of them moved.** The baseline splits
+  into an API rule ("use only GET endpoints") and a filesystem rule. #755 grants a file-write tier
+  and explicitly **not** API authority, so the API rule stays unconditional at every level and the
+  role prose still says the master uses the API read-only. Only the filesystem rule became
+  level-derived — and it is phrased so the restrictive reading survives on its own, for a reader who
+  never reaches the level section.
+
+  **An unknown level renders the read-only statement rather than nothing**, matching the guard: an
+  identity with no access-level section reads as *unbounded* to a master with no other source for
+  the answer. And when a caller does not pass a level, it is resolved from config rather than
+  defaulted — a default would render "you are read-only" into the identity of a master the operator
+  had set to `write`.
+
+  **A superseded baseline rule now reaches installs that already seeded.** Seeding only ever ran on
+  an empty table, so a changed shipped rule reached nobody who had opened the Master once — every
+  such install would have kept "Never edit files outside this directory" while the same generated
+  file said "you may create and edit files anywhere" at `write`. Rows still byte-identical to the old
+  text are upgraded, with the rewrite recorded in the rule's version history; rows the operator
+  edited are left alone, because those are theirs.
+
+  **`suggest` no longer contains its own escalation.** Writes to the guard's own control surface —
+  the level file, the master's `settings.json`, the hook script — are refused outright below `write`
+  rather than offered for confirmation. One "yes" to editing the level file would otherwise have
+  granted permanent write, and one to the hook would have removed the boundary: a tier whose entire
+  point is per-action approval handing over every future action on a single click.
+
+  **The carve-out resolves symlinks, and anything it cannot resolve is refused.** `memory/` is
+  writable at every tier, so the master can create links there — and `path.resolve` normalises `..`
+  lexically without following them, so a link pointing outside passed the carve-out check and wrote
+  wherever it aimed. Three escapes were closed in turn, each one the half the previous fix had not
+  considered: a linked directory; a link whose target already existed; and a **dangling** link, which
+  is the shape that matters most, because `existsSync` follows links and therefore answers *false*
+  for one — while a write through it still creates the file at the destination.
+
+  Resolution now follows the leaf with `lstat`/`readlink` (bounded, so a chain cannot launder it),
+  then realpaths the deepest existing ancestor. Both the target and the carve-out go through
+  realpath or neither works: on macOS `/var` is itself a symlink, so resolving one side alone refused
+  every legitimate write into `memory/`.
+
+  **And a path the guard cannot resolve is now denied rather than guessed at.** Both the hop cap
+  running out and any resolution error used to fall back to the lexical path — which, for anything
+  under `memory/`, *starts with* the carve-out and therefore **allowed**. A comment described that as
+  the restrictive direction; it was the opposite, and a chain longer than the cap wrote outside at
+  the read-only tier. Exhaustion and errors both mark the path unresolved and refuse it.
+
+  **What the guard does not cover is now stated rather than implied.** The `PreToolUse` matcher is
+  `Edit|Write|NotebookEdit`, so shell writes sit outside it — Bash stays operator-gated rather than
+  hook-enforced, because command-pattern matching cannot reliably separate a mutating command from a
+  reading one. "Structurally enforced" means the file-editing tools, and the generated identity says
+  so to the master in as many words rather than leaving it to be discovered.
+
+  **Instructional engines are told the truth twice.** The section says there is no write guard and
+  the boundary holds only because the master honors it, and the status payload gained
+  `levelAppliesAt` — `next-tool-call` where a guard exists, `next-ensure` where the level travels in
+  the regenerated identity. The settings hints read that field instead of promising immediacy
+  everywhere, and fall back to the cautious sentence when it is absent, because over-promising is
+  the direction that misleads.
+
 - **The Master's settings open from inside a session, and both surfaces render one control bar
   (#768 chunk 2).** From inside a session there was no route to the Master's settings at all —
   `grep -c masterSettingsModal public/session.html` was `0`, so changing the single most
@@ -47,6 +172,93 @@ All notable changes to TangleClaw are documented in this file.
   `/critic` into a project's tmux session and reads that project's findings file. The Master has no
   checkout, so there is nothing to review — the same root reason Wrap is *undecided* rather than
   merely unbuilt. A "run the Critic in project X" capability is a different feature. Tracked: #961.
+
+- **The Master's access level is now a control on the bar, and the bar says whether it is actually
+  in force (#755, chunk 3).** The READ/WRITE toggle shipped dim in #768 waiting for a backend. It is
+  live: two real buttons, keyboard-operable and announced with their pressed state, in a group whose
+  accessible name carries the current tier.
+
+  **It paints only from server state, never from the click, and that is the whole point.** There is
+  exactly one Master — a single reserved tmux session that every session drawer and the dashboard
+  panel attach the same iframe to — so a bar showing what *this* operator just pressed can be showing
+  a level another surface already changed. Pressing a segment re-fetches the status first, repaints
+  from it, and only then decides whether there is anything to do; a press the re-fetch has turned
+  into a no-op sends nothing. After the change is saved the status is read again, because that read
+  is the only thing that can report whether the guard actually took it. A failed save leaves the
+  toggle exactly where the re-fetch put it and shows the error in the bar.
+
+  **The confirmation fires on the way IN only, and it says the change is global.** Returning to
+  read-only is always the safe direction, and warning there teaches the operator to click through the
+  one that matters. The text names the scope — the previous blast-radius wording was right about
+  reach ("every project it can reach") and silent about there being one Master, which is the half
+  someone flipping from inside a session would guess wrong. When the change binds comes from the
+  server rather than promising immediacy an instructional master cannot deliver, and `suggest` →
+  `write` is warned too, because what makes a move dangerous is the destination.
+
+  **`suggest` has no segment, so the bar shows it as a readout rather than lying.** The two-segment
+  design is deliberate: the gear remains the complete access-level control and the bar is the fast
+  path. At `suggest` neither segment is pressed and a non-interactive label names the tier — an
+  unpressed pair on its own would leave a touch operator with nothing to read, since `title` never
+  appears without a pointer.
+
+  **The bar inherits the enforcement badge**, closing a gap that predates this issue: a Gemini Master
+  and a Claude Master rendered identically there, and read-only is *already* unenforced on the
+  instructional one.
+
+  **A degraded write guard stopped being invisible.** Every surface reported the level out of config
+  and called the enforcement structural without ever asking the guard, so both ways that boundary
+  comes apart were silent. The guard falls back to read-only when it cannot read its posture —
+  correct, and indistinguishable from a master configured to refuse. The other direction is worse: at
+  the `write` tier the master may delete its own hook, and under the `bypassPermissions` launch mode
+  that removal is not confirmed either, after which the interface says "structural" and nothing
+  enforces at all. `/api/master/status` now reads the level file and the hook back off disk and
+  reports which of three things has happened — the guard is missing, the level is unreadable, or the
+  level on disk disagrees with the setting — each with a sentence the bar displays on its own line.
+  The mismatch case names which direction it went, because a guard permitting *more* than configured
+  is a boundary that is not holding and one permitting *less* is merely a master that will not work.
+
+  The check is keyed on the resolved engine's enforcement tier, never on the guard file being
+  present: keying a check on the artifact the threat removes is how deleting the guard would make the
+  check conclude there was nothing to check.
+
+  **The toggle's targets are 44px**, per the mobile requirement, which makes the row carrying them
+  taller than the controls beside it. That cost is taken deliberately — the bar's collapse rule is
+  #768's to decide, and waiting for it is not a reason to ship a target a thumb misses.
+
+  Other open bars stay honest without anyone gaining a timer: the session page's level rides its
+  existing poll chain while the drawer is open, and the dashboard repaints on open, on ensure, and on
+  the re-fetch before any flip. A dashboard panel left open while another surface flips shows a stale
+  segment until something touches it — accepted, because it cannot *act* on that stale value.
+
+  **The review that followed found three more instances of this issue's signature defect, and they
+  ship fixed.** The guard's control surface refused every copy of the access level except the
+  authoritative one: `.access-level` inside the master home is a copy that every ensure rewrites
+  from `master.accessLevel` in TangleClaw's own config, which sits one directory *above* that home —
+  so a single `suggest` confirmation on `config.json` bought permanent write, which is exactly the
+  escalation the refusal exists to prevent, reached by going up one level. The posture readback
+  keyed on the guard *script*, so deleting the hook's *registration* in `.claude/settings.json`, or
+  blanking the script, reported healthy; it now checks presence, wiring and source. And the path
+  resolver's ancestor walk still used `existsSync`, which follows links — the predicate replaced at
+  the leaf during the previous chunk — so a dangling *directory* link under `memory/` let the walk
+  step past it and the target rebuild inside the carve-out.
+
+  Alongside those: the gear renders the degraded readback too, since it is the complete access-level
+  control and a boundary flagged on the bar and silent there would make the fuller surface the less
+  honest one; an instructional master marks its level as *pending* rather than in force, because on
+  that engine a flip does not bind until the next master start; an unreadable status says so instead
+  of leaving a silent dimmed control; and the superseded-baseline-rule notice stopped re-firing on
+  every panel open forever for a state the design calls permanent.
+
+  **One thing to know before rolling back.** `PATCH /api/config { master: … }` validates the merged
+  settings object, so a build older than this one — whose enabled set is `read-only` alone — rejects
+  every master patch while `suggest` or `write` is stored, including one that only toggles
+  "Start with server", leaving the Master settings modal unsavable until `~/.tangleclaw/config.json`
+  is edited by hand. Set the level back to `read-only` before downgrading. The boundary itself stays
+  safe either way: an older build's guard is baked read-only.
+
+  Closes #755 on the file-write tier. The API-authority half — a scoped Master token and a
+  fleet-mutation route, which is a credential with a fleet-sized blast radius rather than a local
+  file guard — is #966.
 
 ### Changed
 

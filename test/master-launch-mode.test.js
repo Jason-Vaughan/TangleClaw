@@ -60,7 +60,13 @@ function status(over = {}) {
   return {
     accessLevel: 'read-only',
     accessLevels: ['read-only', 'suggest', 'write'],
-    enabledAccessLevels: ['read-only'],
+    // Kept in step with what `getMasterStatus` actually emits: all three tiers
+    // are enabled since #755, and `levelAppliesAt` is the field the tier hints
+    // read to decide whether to promise per-tool-call immediacy. A fixture
+    // missing it would exercise only the cautious fallback and report the
+    // structural copy as untested.
+    enabledAccessLevels: ['read-only', 'suggest', 'write'],
+    levelAppliesAt: 'next-tool-call',
     engine: 'claude',
     resolvedEngine: 'claude',
     launchMode: 'default',
@@ -116,7 +122,7 @@ async function save(fields) {
   // The toast text is part of the contract, not decoration: it is what tells
   // the operator the change is deferred to the next master start. Discarding
   // it here is what let that half of the fix ship unguarded.
-  const status = { saveMessage: null };
+  const status = { saveMessage: null, savedNotifications: 0 };
   const els = {
     masterEngineSelect: { value: fields.engine || '' },
     masterScopeSelect: { value: fields.scope || '' },
@@ -133,7 +139,12 @@ async function save(fields) {
     },
     apiMutate: async (_p, _m, body) => { sent = body; return { ok: true }; },
     api: { lastError: null },
-    _setMasterRulesStatus: (msg) => { status.saveMessage = msg; }
+    _setMasterRulesStatus: (msg) => { status.saveMessage = msg; },
+    // The factory hoists every dep to a bare local, so this sandbox has to model
+    // that scope. `onSaved` joined it in #755 chunk 3 — the bar repaints when the
+    // gear saves. Recorded rather than a bare no-op so the count is available to
+    // whoever needs it here later; this file's own subject is launch mode.
+    onSaved: () => { status.savedNotifications++; }
   };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
@@ -247,6 +258,46 @@ describe('#756 — the Master settings modal offers a launch mode', () => {
     const quiet = render(status({ accessLevel: 'read-only', resolvedLaunchMode: 'bypassPermissions' }));
     assert.doesNotMatch(quiet, /no confirmation at any layer/i,
       'a read-only master in bypass is coherent — it must not be flagged as dangerous');
+  });
+
+  it('the tier hints say WHEN a change binds, from the payload rather than by assertion (#755 R-4)', () => {
+    // THE MUTATION THIS CATCHES: hardcoding "next tool call" back into the
+    // hints. That is true only where a write guard exists; on an instructional
+    // master the level rides the regenerated identity, so promising immediacy
+    // there tells the operator their flip has landed when it has not.
+    const structural = render(status({ levelAppliesAt: 'next-tool-call' }));
+    assert.match(structural, /next tool call/i);
+    assert.doesNotMatch(structural, /carries the level in its instructions/i);
+
+    const instructional = render(status({ levelAppliesAt: 'next-ensure' }));
+    assert.match(instructional, /carries the level in its instructions/i);
+    assert.doesNotMatch(instructional, /next tool call/i);
+  });
+
+  it('an absent levelAppliesAt is cautious about WHEN and silent about WHY', () => {
+    // Older server, or a payload shape that moved. Over-promising immediacy is
+    // the direction that misleads, so absence must not read as "immediate".
+    //
+    // It must ALSO not read as "this engine has no write guard" (#755 chunk 3,
+    // R-6). The fallback used to share the instructional sentence, which states
+    // a mechanism — and a Claude master hitting this skew has a write guard, so
+    // that sentence is simply false there. This test previously PINNED the false
+    // half; it now pins the boundary between the two claims.
+    const s = status();
+    delete s.levelAppliesAt;
+    const md = render(s);
+    assert.doesNotMatch(md, /next tool call/i, 'absence must not promise immediacy');
+    assert.doesNotMatch(md, /carries the level in its instructions/i,
+      'nor assert a mechanism the payload did not state');
+    assert.match(md, /next time the master session starts/i, 'the cautious WHEN still ships');
+  });
+
+  it('a stated instructional binding DOES explain the mechanism', () => {
+    // The positive control for the test above: without it, deleting the
+    // instructional sentence entirely would pass both assertions there while
+    // losing the explanation an operator on that engine actually needs.
+    const md = render(status({ levelAppliesAt: 'next-ensure' }));
+    assert.match(md, /carries the level in its instructions/i);
   });
 });
 

@@ -589,7 +589,7 @@ route('GET', '/api/server-info', (_req, res) => {
 });
 
 // ── Project Master (chunk G, #331) ──
-// Operator routes for the global read-only assistant — a reserved tmux
+// Operator routes for the global fleet assistant — a reserved tmux
 // session, NOT a sessions-table row (see lib/master.js). Deliberately outside
 // the M2M-gated path set: these are operator surfaces, not fleet surfaces.
 
@@ -881,6 +881,9 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   // — saveGlobalSettings POSTs the field on every Save click, so unrelated
   // UI saves were triggering an N-project filesystem walk).
   const oldStripAiCoauthors = config.stripAiCoauthors;
+  // Same reason, for the master's access level: the loop below replaces
+  // `config.master` wholesale, so the previous level has to be read before it.
+  const oldMasterAccessLevel = master.masterSettings(config).accessLevel;
   // Whether setup was still OPEN when this request arrived. Captured here
   // because the loop below writes `body.setupComplete` straight onto `config` —
   // read it afterwards and every request looks like an install that was already
@@ -1093,6 +1096,57 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
 
   store.config.save(config);
 
+  // The master's access level takes effect on its NEXT TOOL CALL, not its next
+  // launch — that is the whole point of the level being a file the write guard
+  // reads per invocation. So the flip has to reach disk here, on the change
+  // path, rather than waiting for an ensure the operator has no reason to run.
+  //
+  // After the save, never before: an earlier field's validation failure returns
+  // 400 without saving, and a level file more permissive than the stored config
+  // is the one inconsistency this must not create.
+  //
+  // Routed through the master module rather than done inline, so `home` resolves
+  // in one place and a route test can stub the entry point instead of rewriting
+  // the operator's live master posture. An absent master home is a no-op there.
+  let masterLevelError = null;
+  const newMasterAccessLevel = master.masterSettings(config).accessLevel;
+  if (newMasterAccessLevel !== oldMasterAccessLevel) {
+    try {
+      const { applied } = master.applyMasterAccessLevel(newMasterAccessLevel);
+      log.info('Master access level changed', {
+        from: oldMasterAccessLevel, to: newMasterAccessLevel, applied
+      });
+    } catch (err) {
+      // Reported to the CALLER, not just the log, and this is the direction that
+      // matters: a failed apply does NOT reliably degrade toward the stricter
+      // posture. On write→read-only the config now says `read-only` while the
+      // level file still says `write` and the guard keeps allowing — a
+      // revocation that returns 200 and did not happen. Since the operator
+      // cannot see the difference, the request has to say so.
+      //
+      // The config save is deliberately left standing rather than rolled back:
+      // the stored intent is correct, and the next ensure reconciles the guard to
+      // it. What must not happen is the UI painting a boundary that did not move.
+      log.error('Master access level saved but not applied — the write guard still enforces the previous level', {
+        from: oldMasterAccessLevel, to: newMasterAccessLevel, error: err.message
+      });
+      // Two different truths, and saying the wrong one is the defect this whole
+      // route is about. `levelApplied` means the level file was already written
+      // and the guard reads it per tool call, so the new level IS in force —
+      // what may not have happened is restoring a guard the master tampered with.
+      // Held, not returned here. Returning mid-handler skipped the port-scanner
+      // restart and the stripAiCoauthors hook sync below — unrelated settings in
+      // the same save silently not taking effect, which is a second failure
+      // bolted onto the first. The response is still a 500; it just happens
+      // after the rest of the save has finished doing what it was asked.
+      masterLevelError = err.levelApplied
+        ? `The master's access level is now "${newMasterAccessLevel}", but its write guard could not be re-provisioned. `
+          + 'If the master altered the guard while it had write access, restart the master session to restore it.'
+        : `Settings were saved, but the master's access level could not be applied — it is still enforcing "${oldMasterAccessLevel}". `
+          + 'Restart the master session to reconcile it.';
+    }
+  }
+
   // Restart or stop port scanner if settings changed
   if ('portScannerEnabled' in body || 'portScannerIntervalMs' in body) {
     portScanner.stopScanner();
@@ -1140,6 +1194,10 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   // basicAuthHash) — and re-resolve the bind state so the UI re-renders the
   // Network Exposure control from the server's answer, not its own guess.
   const redacted = _withBindState(config);
+
+  if (masterLevelError) {
+    return errorResponse(res, 500, masterLevelError, 'MASTER_LEVEL_NOT_APPLIED');
+  }
 
   jsonResponse(res, 200, { ok: true, config: redacted, requiresRestart });
 });

@@ -8,6 +8,8 @@ const path = require('node:path');
 const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
+const master = require('../lib/master');
+const portScanner = require('../lib/port-scanner');
 const { createServer } = require('../server');
 
 setLevel('error');
@@ -58,8 +60,29 @@ function request(server, method, urlPath, body) {
 describe('API endpoints', () => {
   let tmpDir;
   let server;
+  let liveMasterFingerprint;
+
+  /** Snapshot of the OPERATOR's real master home — the one thing in this file
+   *  that `store._setBasePath(tmpDir)` does NOT redirect. `masterHome()`
+   *  resolves to `~/.tangleclaw/master` unconditionally, so any route that
+   *  reaches the real applier re-postures the live master while the suite runs.
+   *  That has now happened twice; this turns it from something a reviewer has
+   *  to notice into something the suite reports. */
+  function liveMasterState() {
+    const home = path.join(os.homedir(), '.tangleclaw', 'master');
+    return ['.access-level', path.join('.claude', 'settings.json'), path.join('.claude', 'hooks', 'guard-writes.js')]
+      .map((rel) => {
+        const f = path.join(home, rel);
+        try {
+          return `${rel}:${fs.statSync(f).mtimeMs}:${fs.readFileSync(f, 'utf8').length}`;
+        } catch {
+          return `${rel}:absent`;
+        }
+      }).join('|');
+  }
 
   before(async () => {
+    liveMasterFingerprint = liveMasterState();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-'));
     store._setBasePath(tmpDir);
     store.init();
@@ -73,6 +96,7 @@ describe('API endpoints', () => {
     store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
+
 
   // #710 — the server owns the network-binding classification and ships it as
   // `bindState`. The frontend renders that and derives nothing. These are live
@@ -802,7 +826,6 @@ describe('API endpoints', () => {
       // `validateMasterPatch` sources the field from `masterSettings()`, which
       // defaults it independently — so deleting the default would leave all of
       // them green while the two endpoints disagreed.
-      const master = require('../lib/master');
       assert.equal(store.DEFAULT_CONFIG.master.launchMode, 'default',
         'a never-PATCHed install must carry launchMode, not omit it');
       // The invariant the default exists for, asserted as an agreement rather
@@ -862,14 +885,149 @@ describe('API endpoints', () => {
       assert.equal(status, 400);
     });
 
-    it('rejects not-yet-enforced access levels with an honest reason', async () => {
-      for (const level of ['suggest', 'write']) {
-        const { status, data } = await request(server, 'PATCH', '/api/config', { master: { accessLevel: level } });
-        assert.equal(status, 400);
-        assert.match(data.error, /structural enforcement/);
+    it('pushes a changed access level to the live master, and only when it changed (#755)', async () => {
+      // Stubbed, NOT allowed to run: the real applier resolves `masterHome()`,
+      // so an unstubbed run here rewrites the operator's own
+      // `~/.tangleclaw/master/.access-level` — a route test silently re-posturing
+      // the live master, which is the defect class that once let a route test
+      // overwrite the real FLEET.md.
+      const realApply = master.applyMasterAccessLevel;
+      const calls = [];
+      master.applyMasterAccessLevel = (level) => { calls.push(level); return { applied: true, home: '/stub' }; };
+      try {
+        await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'write' } });
+        assert.deepEqual(calls, ['write'], 'a changed level must be pushed to the guard');
+
+        // Re-saving the same level must not push again — the settings modal
+        // POSTs the whole master block on every Save, so an ungated push would
+        // rewrite the level file on saves that never touched it.
+        await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'write' } });
+        assert.deepEqual(calls, ['write'], 'an unchanged level must not be pushed');
+
+        // A partial patch that omits accessLevel must not push either.
+        await request(server, 'PATCH', '/api/config', { master: { autoStart: true } });
+        assert.deepEqual(calls, ['write'], 'a patch that does not touch the level must not push');
+
+        await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'read-only' } });
+        assert.deepEqual(calls, ['write', 'read-only'], 'flipping back must push too');
+      } finally {
+        master.applyMasterAccessLevel = realApply;
+      }
+    });
+
+    it('reports a failed apply instead of returning 200 on a revocation that did not happen (#755)', async () => {
+      // The dangerous direction: on write -> read-only, a failed apply leaves the
+      // config saying `read-only` while the guard still reads `write` and keeps
+      // allowing. A 200 there is a revocation that reports success and did not
+      // occur, and the operator cannot see the difference.
+      const realApply = master.applyMasterAccessLevel;
+      master.applyMasterAccessLevel = () => { throw new Error('disk on fire'); };
+      try {
+        const { status, data } = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'suggest' } });
+        assert.equal(status, 500);
+        assert.equal(data.code, 'MASTER_LEVEL_NOT_APPLIED');
+        assert.match(data.error, /still enforcing "read-only"/,
+          'a failure before the level was written must say the OLD level is in force');
+
+        // The other failure class must NOT claim that. Once the level file is
+        // written the guard reads it per tool call, so the new level IS in
+        // force and only the guard restoration is in doubt — saying "still
+        // enforcing read-only" there would be the false-reassurance direction.
+        const late = new Error('guard write failed');
+        late.levelApplied = true;
+        master.applyMasterAccessLevel = () => { throw late; };
+        const second = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'write' } });
+        assert.equal(second.status, 500);
+        assert.doesNotMatch(second.data.error, /still enforcing/);
+        assert.match(second.data.error, /is now "write"/);
+        assert.match(second.data.error, /guard could not be re-provisioned/);
+      } finally {
+        // Order matters, and getting it wrong is what the neighbouring comment
+        // warns about: the cleanup PATCH still carries a CHANGED level, so with
+        // the real applier restored first it takes the changed-level branch into
+        // `masterHome()` — the operator's own `~/.tangleclaw/master`, which
+        // `store._setBasePath(tmpDir)` does not redirect. Reset the config while
+        // still stubbed, THEN restore.
+        master.applyMasterAccessLevel = () => ({ applied: true, home: '/stub' });
+        await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'read-only' } });
+        master.applyMasterAccessLevel = realApply;
+      }
+    });
+
+    it('a failed master level does not cancel the rest of the same save (#755)', async () => {
+      // Co-submission is the REAL shape: the settings modal POSTs the whole form,
+      // so a master-level failure arrives alongside unrelated settings. Returning
+      // the 500 from inside the catch skipped the port-scanner restart and the
+      // stripAiCoauthors walk below it — unrelated settings in the same save
+      // silently not taking effect, a second failure bolted onto the first.
+      // Without this case, putting `return errorResponse(...)` back inside the
+      // catch leaves the suite green.
+      const realApply = master.applyMasterAccessLevel;
+      const realStop = portScanner.stopScanner;
+      const realStart = portScanner.startScanner;
+      const scannerCalls = [];
+      master.applyMasterAccessLevel = () => { throw new Error('disk on fire'); };
+      portScanner.stopScanner = () => { scannerCalls.push('stop'); };
+      portScanner.startScanner = () => { scannerCalls.push('start'); };
+      try {
+        const { status, data } = await request(server, 'PATCH', '/api/config', {
+          master: { accessLevel: 'suggest' },
+          portScannerEnabled: true,
+          chimeMuted: true
+        });
+        assert.equal(status, 500, 'the master failure is still reported');
+        assert.equal(data.code, 'MASTER_LEVEL_NOT_APPLIED');
+
+        // Assert the POST-SAVE WORK ran — not that the values persisted.
+        // `store.config.save()` happens BEFORE the master block, so persistence
+        // survives the mutation this test exists to catch and would report a
+        // pass either way. What the deferral actually protects is the work
+        // BELOW the catch: the port-scanner restart and the hook-sync walk.
+        assert.ok(scannerCalls.includes('stop'),
+          'the port-scanner restart below the catch must still run');
+        assert.ok(scannerCalls.includes('start'),
+          'and must restart it, since portScannerEnabled was saved as true');
+
+        // And the contract the catch's comment makes: the config save is left
+        // STANDING rather than rolled back, because the stored intent is right
+        // and the next ensure reconciles the guard to it. This assertion is
+        // mutation-immune on its own — the save happens before the master block
+        // either way — so it rides alongside the side-effect checks above
+        // rather than standing in for them.
+        const after = await request(server, 'GET', '/api/config');
+        assert.equal(after.data.chimeMuted, true,
+          'the save is left standing, not rolled back');
+      } finally {
+        master.applyMasterAccessLevel = () => ({ applied: true, home: '/stub' });
+        await request(server, 'PATCH', '/api/config', {
+          master: { accessLevel: 'read-only' }, portScannerEnabled: false
+        });
+        master.applyMasterAccessLevel = realApply;
+        portScanner.stopScanner = realStop;
+        portScanner.startScanner = realStart;
+      }
+    });
+
+    it('accepts every enforced access level, and still refuses one it does not know (#755)', async () => {
+      const realApply = master.applyMasterAccessLevel;
+      master.applyMasterAccessLevel = () => ({ applied: false, home: '/stub' });
+      try {
+      // All three carry real enforcement since the write guard reads the level
+      // per tool call. The refusal that remains is for a level NOBODY has taught
+      // the guard — which is a typo, or a tier someone enabled ahead of its
+      // enforcement, and both must fail rather than silently mean read-only.
+      for (const level of ['suggest', 'write', 'read-only']) {
+        const { status } = await request(server, 'PATCH', '/api/config', { master: { accessLevel: level } });
+        assert.equal(status, 200, `${level} must be settable`);
+        const after = await request(server, 'GET', '/api/config');
+        assert.equal(after.data.master.accessLevel, level, `${level} must persist`);
       }
       const unknown = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'root' } });
-      assert.equal(unknown.status, 400);
+        assert.equal(unknown.status, 400);
+        assert.match(unknown.data.error, /must be one of/);
+      } finally {
+        master.applyMasterAccessLevel = realApply;
+      }
     });
 
     it('rejects unknown fields, unconfigured engines, missing groups, and bad shapes', async () => {
@@ -897,4 +1055,14 @@ describe('API endpoints', () => {
       assert.deepEqual(store.config.load().master.scope, { type: 'group', groupId: group.id });
     });
   });
+  // A TEST, not an `after` hook: a failing assertion inside `after` prints
+  // `not ok` and still exits 0, so node --test would report it while CI passed.
+  // Verified before relying on it. Runs last within this describe, which is what
+  // makes it a whole-file check.
+  it('did not touch the operator\'s real master home (#755)', () => {
+    assert.equal(liveMasterState(), liveMasterFingerprint,
+      'this suite rewrote the operator\'s real ~/.tangleclaw/master — a route test reached '
+      + 'master.applyMasterAccessLevel without stubbing it (see the accessLevel tests)');
+  });
+
 });

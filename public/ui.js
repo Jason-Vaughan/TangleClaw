@@ -3345,7 +3345,8 @@ function renderAuditPanel() {
 }
 
 // ── Project Master (chunk G, #331) ──
-// The global read-only assistant above all projects. The panel embeds the
+// The global assistant above all projects, bounded by the operator-set access
+// level on its control bar rather than by a fixed read-only rule (#755). The panel embeds the
 // verified ttyd terminal stack as an iframe onto the reserved tmux session
 // (lib/master.js) — the Claude Code TUI is the chat UI; there is no custom
 // chat transport. Lifecycle is launch-on-first-open: opening the panel POSTs
@@ -3419,6 +3420,11 @@ async function ensureMasterAttached() {
     return;
   }
   setMasterStatus('live', result.created ? 'Master session started' : 'Master session live');
+  // Repaint the access controls from a full status read rather than from
+  // `result`: the ensure response carries the level and the enforcement tier but
+  // not the guard readback, and the guard readback is the half that says whether
+  // the level is actually in force.
+  if (masterBar) masterBar.loadAccess();
   attachMasterFrame();
 }
 
@@ -3440,12 +3446,28 @@ function attachMasterFrame() {
 
 /**
  * One-shot status probe at page load so the header dot reflects whether the
- * master session is already live before the panel is ever opened. No polling
- * (no-UI-timers rule) — the dot refreshes again on open/ensure.
+ * master session is already live before the panel is ever opened.
+ *
+ * No polling — and NOT because the no-UI-timers norm forbids one. This comment
+ * used to cite it as the reason, which is a mis-citation the next reader would
+ * inherit: #98/#268 governs timer-driven LIFECYCLE (auto-dismiss, revert,
+ * redirect, blind reload), and `reconnect-policy.js` records a poll explicitly
+ * as inside the norm. The real reason is that this page has nothing to poll FOR:
+ * it repaints on open and on ensure, which covers every moment the panel is
+ * visible, so a clock would buy a cosmetic refresh of a closed panel.
+ *
+ * The residual, accepted deliberately: a panel left open while another surface
+ * flips the access level shows a stale segment until something touches it. It
+ * cannot ACT on that stale value — the bar re-fetches before every flip — and
+ * that is the half that matters.
  */
 async function refreshMasterDot() {
   const status = await api('/api/master/status');
   if (!status) return;
+  // The access controls paint from THIS fetch rather than issuing their own.
+  // Two calls answering the same question is how the dashboard and the session
+  // came to disagree about everything else the bar had to reunify.
+  if (masterBar) masterBar.setAccess(status.settings || null);
   // The model pill is painted from the Master's OWN engine, whatever the
   // status says about liveness — an unreachable master still has a configured
   // engine, and hiding the pill would lose that.
@@ -3496,7 +3518,11 @@ const masterSettings = window.tcCreateMasterSettings({
   esc,
   buildEngineOptions,
   state,
-  onOpenError: (message) => { setMasterStatus('down', message, true); if (masterBar) masterBar.setError(message); }
+  onOpenError: (message) => { setMasterStatus('down', message, true); if (masterBar) masterBar.setError(message); },
+  // The gear and the bar are two controls for one setting, and on this
+  // surface the gear sits INSIDE the bar. A save here must move the toggle,
+  // or the operator watches it keep saying the old level.
+  onSaved: () => { if (masterBar) masterBar.loadAccess(); }
 });
 
 // The Master control bar. Same component the session drawer mounts, so the two
@@ -3507,6 +3533,7 @@ masterBar = window.tcCreateMasterControlBar({
   prefix: 'masterPanel',
   title: 'Project Master',
   api,
+  apiMutate,
   onRetry: ensureMasterAttached,
   onOpenSettings: () => { masterBar.setError(''); masterSettings.open(); }
 });

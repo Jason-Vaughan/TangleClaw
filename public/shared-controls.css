@@ -272,17 +272,47 @@
    switch says on/off and this says which of two named modes is in force. */
 .master-access-toggle {
   display: inline-flex;
-  align-items: center;
+  align-items: stretch;
   border: 1px solid var(--border, #333);
   border-radius: var(--radius-btn, 6px);
   overflow: hidden;
   flex-shrink: 0;
 }
+/* Real <button>s, so the reset is on us. ≥44px on BOTH axes: the mobile
+   Direction in `nonfunctional-requirements.md` binds ("Interactive elements are
+   ≥44×44px") and carries no exception for this surface — the bar renders in a
+   drawer and a panel, not a banner.
+
+   This does make the row that carries the toggle taller than the 30px
+   `.banner-btn` next to it, and that is a real cost, deliberately taken. #768's
+   chunk 3 owns the bar's collapse rule and its verdict is that raising heights
+   without it makes a nine-control bar taller on the smallest screen. The answer
+   is not to ship one control under the minimum while waiting for that decision:
+   a sub-44px target on a phone-first product is a defect now, and the extra
+   height is visible motivation for the collapse rule rather than an argument
+   against it. */
 .master-access-seg {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
   padding: 4px 10px;
+  background: none;
+  border: 0;
+  font-family: inherit;
   font-size: 11.5px;
+  font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--text-muted, #777);
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.master-access-seg:disabled { cursor: not-allowed; opacity: 0.5; }
+.master-access-seg:focus-visible {
+  outline: 2px solid var(--primary, #8BC34A);
+  outline-offset: -2px;
 }
 .master-access-seg.is-on {
   background: rgba(139, 195, 74, 0.14);
@@ -293,6 +323,79 @@
 .master-access-toggle.is-write .master-access-seg.is-on {
   background: rgba(239, 83, 80, 0.14);
   color: var(--danger, #EF5350);
+}
+.master-access-toggle.is-busy { opacity: 0.6; }
+
+/* The readout for a level the two segments cannot express — `suggest` today.
+   Not a button and never pressable: the gear is the complete access-level
+   control and this is the fast path, so a third pressable segment would make
+   the bar a second complete control on the one axis #768 kept it off. It exists
+   because an unpressed pair with the level only in a `title` tells a touch
+   operator nothing at all. */
+.master-access-other {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border-left: 1px solid var(--border, #333);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--amber, #FFA726);
+}
+
+/* The level is set but not yet RUNNING. On an instructional master the level
+   travels in the regenerated identity, so a flip does not bind until the next
+   ensure — and without this the toggle paints the new level as though it were
+   already in force. Dotted rather than solid so the state is legible without
+   colour, per the errors-never-by-colour-alone floor. */
+.master-access-toggle.is-pending {
+  border-style: dotted;
+  border-color: var(--text-muted, #777);
+}
+.master-access-toggle.is-pending .master-access-seg.is-on { font-style: italic; }
+
+/* A guard that is not enforcing what the settings say. Dashed, not merely
+   tinted: `nonfunctional-requirements.md` requires that errors are never
+   communicated by colour alone, and the sentence in `.master-bar-warn` is the
+   other half of the same rule. */
+.master-access-toggle.is-degraded {
+  border-color: var(--amber, #FFA726);
+  border-style: dashed;
+}
+
+/* Which KIND of boundary this master has. The vocabulary is the settings
+   modal's; the sizing is not, because the modal's badge is a block with a
+   12px bottom margin and this sits inline in a control row. */
+.master-bar-enforcement {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border: 1px solid var(--border, #333);
+  border-radius: var(--radius-pill, 14px);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--text-muted, #777);
+}
+/* An instructional master's boundary is prose in its identity — read-only is
+   already unenforced there. Marked so a Gemini Master and a Claude Master stop
+   looking identical on this bar, which they did before #755. */
+.master-bar-enforcement.is-instructional {
+  border-color: var(--amber, #FFA726);
+  color: var(--amber, #FFA726);
+}
+
+/* A standing condition, on its own wrapped line for the same reason
+   `.master-bar-error` takes one: squeezed onto the end of a nine-control row a
+   sentence is effectively invisible, and this one names a boundary that is not
+   holding. Separate from the error line because they have different lifetimes —
+   opening the gear clears an error and does not fix a degraded guard. */
+.master-bar-warn {
+  flex-basis: 100%;
+  color: var(--amber, #FFA726);
+  font-size: 11px;
+  line-height: 1.4;
+  margin-top: 6px;
 }
 
 /* A failure the operator would otherwise never see. Chunk 1 mounted the

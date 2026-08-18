@@ -150,6 +150,16 @@ look identical, which is a gap that predates this work.
 returning to read-only is always the safe direction, and warning there trains the operator to click
 through. Blocked on #755 until then.
 
+**SHIPPED 2026-08-17 in #755 chunk 3, and the wording is settled.** The warning names the GLOBAL
+scope, which the blast-radius sentence above did not: it was right about reach ("modify files across
+every project it can reach") and silent about there being exactly one Master — the half an operator
+flipping from inside a session drawer would guess wrong. It also reads WHEN the change binds from the
+server's `levelAppliesAt` rather than promising immediacy an instructional master cannot deliver, and
+it fires on `suggest` → `write` too, because what makes a move dangerous is the destination. The
+toggle paints only from server state, re-fetches before every flip, and the bar carries the
+enforcement badge. `suggest` renders as a readout rather than a third segment — the two-segment
+design here is what that decision preserves.
+
 **Continuity is a two-layer contract, and the split is the load-bearing decision.**
 - *Look — shared NOW.* The Master's controls reuse the SESSION'S OWN CSS classes (`.banner-btn`,
   `.medusa-control`, the engine pill), never new ones. Restyle once, both surfaces move, dim
