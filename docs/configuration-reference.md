@@ -59,6 +59,15 @@ the regenerated identity, so it arrives at the next master start and nothing str
 it. `GET /api/master/status` reports which of the two is running, and both the control bar and the
 settings modal show it, so the weaker case is never displayed as the stronger one.
 
+**If you roll TangleClaw back to a build older than #755, set `accessLevel` to `read-only` first.**
+`PATCH /api/config { master: … }` validates the *merged* settings object, so an older build — whose
+enabled set is `['read-only']` — rejects **every** master patch while `suggest` or `write` is stored,
+including one that only toggles `autoStart`. The Master settings modal is then unsavable until you
+edit this file by hand. The boundary itself stays safe (an older build's guard is baked read-only),
+so this is a usability trap rather than a security one. Two other artifacts simply go inert on a
+rollback and need no action: `<master home>/.access-level`, which an older guard does not read, and
+the level-derived Hard rule, whose previous text is recoverable through the rule's version history.
+
 **Editing this file by hand to raise the level is refused from inside the Master.** Below the `write`
 tier the guard denies writes to its own control surface, and that includes this file — otherwise one
 `suggest` confirmation here would buy permanent write at the next ensure.

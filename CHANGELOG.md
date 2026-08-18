@@ -249,6 +249,13 @@ All notable changes to TangleClaw are documented in this file.
   of leaving a silent dimmed control; and the superseded-baseline-rule notice stopped re-firing on
   every panel open forever for a state the design calls permanent.
 
+  **One thing to know before rolling back.** `PATCH /api/config { master: … }` validates the merged
+  settings object, so a build older than this one — whose enabled set is `read-only` alone — rejects
+  every master patch while `suggest` or `write` is stored, including one that only toggles
+  "Start with server", leaving the Master settings modal unsavable until `~/.tangleclaw/config.json`
+  is edited by hand. Set the level back to `read-only` before downgrading. The boundary itself stays
+  safe either way: an older build's guard is baked read-only.
+
   Closes #755 on the file-write tier. The API-authority half — a scoped Master token and a
   fleet-mutation route, which is a credential with a fleet-sized blast radius rather than a local
   file guard — is #966.
