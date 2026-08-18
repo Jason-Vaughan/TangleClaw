@@ -343,6 +343,17 @@
   color: var(--amber, #FFA726);
 }
 
+/* The level is set but not yet RUNNING. On an instructional master the level
+   travels in the regenerated identity, so a flip does not bind until the next
+   ensure — and without this the toggle paints the new level as though it were
+   already in force. Dotted rather than solid so the state is legible without
+   colour, per the errors-never-by-colour-alone floor. */
+.master-access-toggle.is-pending {
+  border-style: dotted;
+  border-color: var(--text-muted, #777);
+}
+.master-access-toggle.is-pending .master-access-seg.is-on { font-style: italic; }
+
 /* A guard that is not enforcing what the settings say. Dashed, not merely
    tinted: `nonfunctional-requirements.md` requires that errors are never
    communicated by colour alone, and the sentence in `.master-bar-warn` is the

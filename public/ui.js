@@ -3345,7 +3345,8 @@ function renderAuditPanel() {
 }
 
 // ── Project Master (chunk G, #331) ──
-// The global read-only assistant above all projects. The panel embeds the
+// The global assistant above all projects, bounded by the operator-set access
+// level on its control bar rather than by a fixed read-only rule (#755). The panel embeds the
 // verified ttyd terminal stack as an iframe onto the reserved tmux session
 // (lib/master.js) — the Claude Code TUI is the chat UI; there is no custom
 // chat transport. Lifecycle is launch-on-first-open: opening the panel POSTs

@@ -1587,9 +1587,16 @@
       // Falls back to the cautious sentence when the field is absent — an older
       // server, or a payload shape that changed — because over-promising
       // immediacy is the direction that misleads.
+      // Three states, not two. The fallback used to share a sentence with the
+      // instructional case, which states WHY as well as WHEN — and on a Claude
+      // master hitting payload skew (older server, field moved) that "why" is
+      // false: there IS a write guard. An absent field must never ship as a
+      // claim about the engine, so the unknown case says only the cautious WHEN.
       const bindsAt = s.levelAppliesAt === 'next-tool-call'
         ? 'Takes effect on the master’s next tool call — no restart.'
-        : 'Takes effect the next time the master session starts, since this engine carries the level in its instructions rather than a write guard.';
+        : s.levelAppliesAt === 'next-ensure'
+          ? 'Takes effect the next time the master session starts, since this engine carries the level in its instructions rather than a write guard.'
+          : 'Takes effect the next time the master session starts.';
       const tierHints = {
         'read-only': 'Structurally enforced on the Claude engine: writes are hard-denied outside the master’s memory/ directory. Whether anything else asks first is the Launch mode setting below — this tier bounds what the master may touch, not how often it prompts.',
         // The bypassPermissions sentence is PROBED, not reasoned. Both the first
@@ -1659,11 +1666,14 @@
         .join('');
 
       body.innerHTML = `
-    <div class="form-hint master-enforcement-badge">
+    <div class="form-hint master-enforcement-badge${s.guardDegraded ? ' master-enforcement-degraded' : ''}">
       Enforcement: <strong>${esc(s.enforcement)}</strong>
       ${s.enforcement === 'instructional'
         ? ' — the selected engine cannot be structurally bounded; the boundary is rules-only'
         : ' — write guard + permission rules regenerate on every master start'}
+      ${s.guardDegraded
+        ? `<div class="master-enforcement-degraded-why"><strong>${esc(TC_MASTER_GUARD_DEGRADED[s.guardDegradedCode] || 'DEGRADED')}:</strong> ${esc(s.guardDegradedReason || '')}${s.guardLevel ? ` The guard is applying <strong>${esc(s.guardLevel)}</strong>.` : ''}</div>`
+        : ''}
     </div>
     <div class="form-group">
       <div class="form-label">Access level</div>
@@ -2064,6 +2074,28 @@
   };
 
   /**
+   * Short labels for the guard-degradation codes `/api/master/status` reports.
+   *
+   * ONE table, for the same reason the pending-control reasons are one table:
+   * the bar and the gear both render this, and two surfaces naming the same
+   * condition differently reads as one of them being wrong.
+   *
+   * It is also what gives `guardDegradedCode` a consumer. The field exists so
+   * neither surface has to regex the reason sentence to tell "the guard is gone"
+   * from "the level disagrees" — a machine-readable discriminator that nothing
+   * reads is just a longer payload.
+   *
+   * @type {Object<string, string>}
+   */
+  const TC_MASTER_GUARD_DEGRADED = {
+    'guard-missing': 'NOT ENFORCED',
+    'guard-unwired': 'NOT ENFORCED',
+    'guard-tampered': 'UNKNOWN',
+    'level-unreadable': 'READ-ONLY',
+    'level-mismatch': 'MISMATCH'
+  };
+
+  /**
    * The access toggle's segments — the ONE place a segment and the level it
    * stands for are related.
    *
@@ -2211,10 +2243,14 @@
       if (gear && deps.onOpenSettings) gear.addEventListener('click', deps.onOpenSettings);
       const retry = el('RetryBtn');
       if (retry && deps.onRetry) retry.addEventListener('click', deps.onRetry);
-      // Bound from `data-access` rather than from the id, so the segment and the
-      // level it stands for are declared in ONE place. Two segments whose
-      // meaning lived in a listener would be two more things to keep in step
-      // with the markup.
+      // The segment table is the single declaration: the id comes from
+      // `spec.suffix` and the level it stands for from `spec.level`, so the two
+      // cannot come apart. Deliberately NOT a `data-access` attribute read back
+      // off the DOM — that round-trip looks like single-sourcing and instead
+      // leaves a control that renders fine and does nothing the moment the
+      // renderer stops emitting the attribute. (An earlier draft of this comment
+      // described the attribute design that was rejected, which read as an
+      // instruction to go looking for a contract that does not exist.)
       for (const spec of TC_MASTER_ACCESS_SEGMENTS) {
         const seg = el(spec.suffix);
         if (seg) seg.addEventListener('click', () => flip(spec.level));
@@ -2363,13 +2399,24 @@
         // is not the same as a level of read-only.
         btn.disabled = !level || busy;
       }
+      // PENDING, not in force. On an instructional master the level travels in
+      // the regenerated identity, so a flip does not bind until the next ensure —
+      // and the toggle would otherwise paint the new level as though it already
+      // had. Returning to read-only is where that bites: the operator sees READ
+      // pressed while the master's identity still grants write, and nothing on
+      // the surface says so. State-based rather than fired after a flip, because
+      // on those engines the toggle NEVER binds immediately; a permanent honest
+      // note beats a control that quietly overstates.
+      const pending = Boolean(settings) && settings.levelAppliesAt !== 'next-tool-call';
       group.classList.toggle('is-write', level === 'write');
+      group.classList.toggle('is-pending', pending);
       group.classList.toggle('is-degraded', Boolean(settings && settings.guardDegraded));
       // The accessible name carries the LEVEL, not just the control's purpose.
       // Without it a screen-reader user at `suggest` hears two unpressed buttons
-      // and no way to learn which tier is in force.
+      // and no way to learn which tier is in force — and on an instructional
+      // master, no way to learn that the level shown is not yet the one running.
       group.setAttribute('aria-label', level
-        ? `Master access level: ${level}`
+        ? `Master access level: ${level}${pending ? ', applies when the master next starts' : ''}`
         : 'Master access level: unknown');
 
       if (other) {
@@ -2396,7 +2443,22 @@
           : 'A write guard reads the level on every tool call, plus permission rules regenerated on every master start.';
       }
 
-      setWarning(settings && settings.guardDegraded ? settings.guardDegradedReason : '');
+      // Worst-first, one line. A degraded guard outranks a pending one — "nothing
+      // is enforcing" is not softened by "and it would arrive at the next start"
+      // — and an unreadable status outranks nothing because there is no posture
+      // to describe at all. The bare dimmed pair with no sentence was its own
+      // small version of the defect this chunk is about: a control saying
+      // nothing, where an operator reads "broken" or "read-only" at random.
+      if (!settings) {
+        setWarning('The Master’s status could not be read, so its access level is unknown — the toggle is inactive until it answers.');
+      } else if (settings.guardDegraded) {
+        const tag = TC_MASTER_GUARD_DEGRADED[settings.guardDegradedCode];
+        setWarning((tag ? tag + ' — ' : '') + settings.guardDegradedReason);
+      } else if (pending) {
+        setWarning('This engine carries the access level in the master’s instructions rather than a write guard, so a change here applies the next time the master session starts.');
+      } else {
+        setWarning('');
+      }
     }
 
     /**
@@ -2417,9 +2479,13 @@
      * @returns {string} The confirmation text.
      */
     function writeWarningText(settings) {
+      // Same three states as the modal's hint, and for the same reason: the
+      // unknown case must not assert a mechanism. See `bindsAt` above.
       const binds = settings && settings.levelAppliesAt === 'next-tool-call'
         ? 'It binds on the Master’s next tool call — no restart.'
-        : 'It arrives the next time the master session starts, since this engine carries the level in its instructions rather than a write guard.';
+        : settings && settings.levelAppliesAt === 'next-ensure'
+          ? 'It arrives the next time the master session starts, since this engine carries the level in its instructions rather than a write guard.'
+          : 'It arrives the next time the master session starts.';
       return 'Give the Project Master WRITE access?\n\n'
         + 'There is exactly one Master, so this changes it EVERYWHERE — every session drawer '
         + 'and the dashboard, not just this one.\n\n'
@@ -2575,6 +2641,7 @@
   global.tcCreateMasterSettings = tcCreateMasterSettings;
   global.tcMasterPendingReasons = TC_MASTER_PENDING;
   global.tcMasterAccessSegments = TC_MASTER_ACCESS_SEGMENTS;
+  global.tcMasterGuardDegradedLabels = TC_MASTER_GUARD_DEGRADED;
   global.tcMasterControlBarMarkup = tcMasterControlBarMarkup;
   global.tcCreateMasterControlBar = tcCreateMasterControlBar;
 })(typeof window !== 'undefined' ? window : globalThis);

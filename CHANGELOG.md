@@ -230,6 +230,25 @@ All notable changes to TangleClaw are documented in this file.
   the re-fetch before any flip. A dashboard panel left open while another surface flips shows a stale
   segment until something touches it — accepted, because it cannot *act* on that stale value.
 
+  **The review that followed found three more instances of this issue's signature defect, and they
+  ship fixed.** The guard's control surface refused every copy of the access level except the
+  authoritative one: `.access-level` inside the master home is a copy that every ensure rewrites
+  from `master.accessLevel` in TangleClaw's own config, which sits one directory *above* that home —
+  so a single `suggest` confirmation on `config.json` bought permanent write, which is exactly the
+  escalation the refusal exists to prevent, reached by going up one level. The posture readback
+  keyed on the guard *script*, so deleting the hook's *registration* in `.claude/settings.json`, or
+  blanking the script, reported healthy; it now checks presence, wiring and source. And the path
+  resolver's ancestor walk still used `existsSync`, which follows links — the predicate replaced at
+  the leaf during the previous chunk — so a dangling *directory* link under `memory/` let the walk
+  step past it and the target rebuild inside the carve-out.
+
+  Alongside those: the gear renders the degraded readback too, since it is the complete access-level
+  control and a boundary flagged on the bar and silent there would make the fuller surface the less
+  honest one; an instructional master marks its level as *pending* rather than in force, because on
+  that engine a flip does not bind until the next master start; an unreadable status says so instead
+  of leaving a silent dimmed control; and the superseded-baseline-rule notice stopped re-firing on
+  every panel open forever for a state the design calls permanent.
+
   Closes #755 on the file-write tier. The API-authority half — a scoped Master token and a
   fleet-mutation route, which is a credential with a fleet-sized blast radius rather than a local
   file guard — is #966.

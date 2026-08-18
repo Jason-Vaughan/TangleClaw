@@ -1,6 +1,7 @@
 # Plan — #755: the Master's access level becomes real
 
-**Status:** OPEN — not started. **Milestone:** Master Control (#829). **Issue:** #755.
+**Status:** ALL THREE CHUNKS BUILT AND REVIEWED — 2026-08-17, branch `feat/755-access-level`,
+awaiting PR. **Milestone:** Master Control (#829). **Issue:** #755. **Successor:** #966.
 **Predecessors:** #756 (launch mode, shipped v5.5.0) · #768 chunks 1–2 (the shared settings
 component and the control bar, shipped 2026-08-17 — the bar's READ/WRITE toggle ships **dim** and
 this plan is what lights it).
@@ -443,7 +444,48 @@ and exits 0, so it cannot gate CI; guards belong in an `it`. And `test/master-gu
 exists because the guard is built in a template literal — a backtick in one of its comments broke
 `lib/master.js` at require time three times, and every other guard lived in a file that imports it,
 so the failure presented as every test dying at once.
-- [ ] Chunk 3 — bar toggle, badge, global warning
+- [x] Chunk 3 — bar toggle, badge, global warning — **DONE 2026-08-17**, same branch
+
+### Chunk 3, as built
+
+Ten commits, `d8553b0`…the disposition batch. One cumulative review
+(`rev-20260818T025747Z-852f9fb8`, 0 blocking / 13 warning / 12 note) plus its verify pass.
+
+**Two operator rulings had to be taken before any code**, because the chunk opened on two states no
+plan covered: what the two-segment bar shows at `suggest` (a readout, not a third segment), and how
+wide R-15 reaches (guard presence, not only the level file). Both are written into the chunk-3
+section above. The session's own kickoff prompt also contradicted the plan on #768's deferred
+mobile-density work; the plan held, re-ratified.
+
+**The recurring fail-open bound appeared four more times** — twice in code written this chunk, twice
+found by review in code the earlier chunks shipped. Self-caught while scrubbing: `typeof ask ===
+'function' && !ask(...)`, which reads as "warn before granting write" and grants it unconfirmed when
+there is nothing to warn with. Review-caught: the posture readback keyed on the guard SCRIPT, so
+deleting the hook's REGISTRATION reported healthy; the control-surface deny covering every copy of
+the level except the authoritative one, which sits one directory ABOVE the master home, so one
+`suggest` confirmation on `~/.tangleclaw/config.json` bought permanent write; and `existsSync` still
+in the ancestor climb, the exact predicate chunk 2 replaced at the leaf. The pattern is now a
+learnings rule — nine recurrences across three chunks was enough.
+
+**Once, the fix and its test shared an accessor.** The control-surface test asked
+`master.masterControlConfigPath()` where the config was, and so did the fix; hardcoding that
+accessor moved both sides together and the mutation stayed GREEN. Re-anchoring the test on the store
+— the independent authority — turned it red. Mutation proves an implementation matches its test; it
+cannot see the two agreeing about the wrong thing.
+
+**Three source-slicing guards were cutting the wrong region**, all silently, all confidently. A cut
+to the next `\n}\n` matched the close of a shorter function two definitions earlier and reported a
+present call as missing; a fixed 900-character window anchored on a bare identifier started at a
+COMMENT 300 characters before the call it meant. They brace-match through one shared helper now.
+
+**A dependency added at module-evaluation time is a load-order contract.** Passing `apiMutate` into
+the bar's factory is top-level code in `ui.js`, while `apiMutate` is a top-level `const` in
+`landing.js` — correct today only because `index.html` loads them in that order. Every other use of
+it sits inside a function and never cared. Guarded.
+
+**`fs.existsSync` cannot throw** — probed with a NUL-byte path, an empty string, a number, null and
+an object; all returned false. Two defensive catches written around it were removed as branches no
+mutation could reach.
 
 ### Chunk 1, as built
 

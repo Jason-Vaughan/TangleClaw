@@ -524,6 +524,68 @@ describe('readMasterGuardPosture — a degraded guard is visible (#755 chunk 3, 
       'and the WORSE of the two findings is the one reported');
   });
 
+  it('a guard that exists but is no longer WIRED is reported (R-1)', () => {
+    // Presence was the whole of this check when it shipped, and presence is the
+    // weakest of the three ways the boundary goes away. Claude Code only invokes
+    // the script because `.claude/settings.json` registers it as a PreToolUse
+    // matcher — remove that and every artifact is still on disk while nothing
+    // runs. At the `write` tier the master can make exactly this edit, and under
+    // bypassPermissions it is not confirmed.
+    //
+    // THE MUTATION THIS CATCHES: checking only `existsSync(guardPath)`, which is
+    // what this function did before the review, and which is green here.
+    const home = provision('write', STRUCTURAL);
+    assert.equal(fs.existsSync(master.masterGuardScriptPath(home)), true,
+      'precondition: the script itself must still be there, or this measures guard-missing');
+    fs.rmSync(master.masterGuardSettingsPath(home));
+
+    const p = master.readMasterGuardPosture('write', 'structural', { home });
+    assert.equal(p.guardDegraded, true);
+    assert.equal(p.guardDegradedCode, 'guard-unwired');
+    assert.equal(p.guardLevel, null, 'a hook that never runs enforces no level');
+  });
+
+  it('a settings file that parses but registers something else is also unwired', () => {
+    // The failure that a bare existence check cannot see. Every restrictive
+    // reading here is deliberate: absent, unreadable, unparseable, wrong shape,
+    // matcher removed — all answer "not wired", because this feeds a degradation
+    // report and the restrictive direction is raising the alarm.
+    //
+    // THE MUTATION THIS CATCHES: `_masterGuardIsWired` returning true on a parse
+    // failure or an unexpected shape — the "assume wired unless proven otherwise"
+    // reading, which is this issue's recurring fail-open.
+    const cases = [
+      ['empty object', '{}'],
+      ['not JSON at all', 'not json {{{'],
+      ['PreToolUse present but empty', '{"hooks":{"PreToolUse":[]}}'],
+      ['a hook for a different script', '{"hooks":{"PreToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"node other.js"}]}]}}'],
+      ['PreToolUse is not an array', '{"hooks":{"PreToolUse":{"matcher":"Edit"}}}']
+    ];
+    for (const [name, body] of cases) {
+      const home = provision('write', STRUCTURAL);
+      fs.writeFileSync(master.masterGuardSettingsPath(home), body);
+      const p = master.readMasterGuardPosture('write', 'structural', { home });
+      assert.equal(p.guardDegradedCode, 'guard-unwired', `${name}: must read as unwired`);
+    }
+  });
+
+  it('a guard whose SOURCE has been altered is reported (R-1)', () => {
+    // Blanking the script is the cheap tamper: it stays present, stays wired,
+    // and decides nothing. Byte-comparing against what this version generates
+    // catches that and every other edit.
+    //
+    // THE MUTATION THIS CATCHES: comparing only length, or only that the file is
+    // non-empty — a one-line `process.exit(0)` passes both and permits every
+    // write, because the harness fails OPEN when a hook emits no decision.
+    for (const [name, body] of [['blanked', ''], ['replaced with a no-op', 'process.exit(0);\n']]) {
+      const home = provision('write', STRUCTURAL);
+      fs.writeFileSync(master.masterGuardScriptPath(home), body);
+      const p = master.readMasterGuardPosture('write', 'structural', { home });
+      assert.equal(p.guardDegraded, true, `${name}: must be flagged`);
+      assert.equal(p.guardDegradedCode, 'guard-tampered', `${name}: code`);
+    }
+  });
+
   it('an unreadable or unrecognized level file reports read-only — what the guard will do', () => {
     // Three shapes of the same failure, each of which makes the generated
     // guard's own `readLevel()` fall back to read-only. The report has to model
@@ -1250,6 +1312,90 @@ describe('access level — the guard reads it per invocation (#755)', () => {
     const home = homeAt('read-only');
     try {
       assert.equal(guardDecision(home, { tool_input: { file_path: master.masterAccessLevelPath(home) } }), 'deny');
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('suggest refuses TangleClaw\'s OWN config — the level really lives there (R-2)', () => {
+    // The other control-surface entries all sit inside the master home. The
+    // AUTHORITATIVE copy of the level does not: `~/.tangleclaw/config.json` is
+    // the home's sibling, and every ensure copies `master.accessLevel` out of it
+    // into `.access-level`. So before this, `suggest` contained its own permanent
+    // escalation one directory up — one confirmed edit there, and the next ensure
+    // makes the master `write` forever. A tier whose whole promise is that each
+    // action is individually approved would have been handing over every future
+    // action on a single click.
+    //
+    // `suggest` is the tier under test, not `read-only`: at read-only everything
+    // outside `memory/` is denied anyway, so the deny there proves nothing about
+    // the control list. `ask` is the outcome the escalation rides.
+    //
+    // THE MUTATION THIS CATCHES: removing TC_CONFIG_FILE from the guard's
+    // `control` array — which leaves every other control-surface assertion green.
+    //
+    // The path comes from the STORE, not from `master.masterControlConfigPath()`.
+    // Asking master where its own config is would let a fix and this test share a
+    // premise: hardcoding the accessor to `~/.tangleclaw/config.json` moves both
+    // sides together and the assertion stays green while the guard protects a
+    // path this test suite never uses. That mutation was run, and it WAS green
+    // until this line changed.
+    const cfg = store.config.file();
+    for (const level of ['read-only', 'suggest']) {
+      const home = homeAt(level);
+      try {
+        assert.equal(guardDecision(home, { tool_input: { file_path: cfg } }), 'deny',
+          `${level} must refuse TangleClaw's config outright, never merely ask`);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it('the control-surface refusal reaches the config path the STORE reports', () => {
+    // Not a second `path.join` in the test either. If the guard interpolated one
+    // path and the store used another, both this assertion and the product would
+    // be wrong together — which is the shape that makes a guard look proven and
+    // protect nothing.
+    //
+    // THE MUTATION THIS CATCHES: hardcoding `~/.tangleclaw/config.json` in the
+    // guard instead of asking the store, which silently stops matching the moment
+    // `_setBasePath` moves it — the exact condition every test run creates.
+    const home = homeAt('suggest');
+    try {
+      const src = fs.readFileSync(path.join(home, '.claude', 'hooks', 'guard-writes.js'), 'utf8');
+      assert.ok(src.includes(JSON.stringify(store.config.file())),
+        'the generated guard must carry the store\'s own config path');
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('a dangling DIRECTORY link inside the carve-out is refused, like the file one (R-3)', () => {
+    // Chunk 2 replaced `existsSync` with `lstat` for LEAF-ness because
+    // `existsSync` follows links and answers false for a dangling one. The
+    // ancestor climb kept `existsSync`, so the directory-shaped variant of the
+    // same hole survived: the walk stepped straight PAST the dangling component,
+    // `realpath` resolved only the surviving ancestor, and the target rebuilt
+    // lexically inside `memory/` — allowed.
+    //
+    // The already-covered case is a dangling FILE link. This is the sibling, and
+    // the reason it needed its own test is that the two go through different
+    // halves of the resolver.
+    //
+    // THE MUTATION THIS CATCHES: reverting the climb's predicate to
+    // `fs.existsSync(dir)`, which leaves the leaf test green.
+    const home = homeAt('read-only');
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-escape-dir-'));
+    try {
+      fs.rmSync(outsideDir, { recursive: true, force: true }); // now a dangling TARGET
+      fs.mkdirSync(path.join(home, 'memory'), { recursive: true });
+      const link = path.join(home, 'memory', 'gonedir');
+      fs.symlinkSync(outsideDir, link, 'dir');
+      assert.equal(fs.existsSync(link), false,
+        'precondition: the link must be dangling, or this measures the resolved case');
+      assert.equal(guardDecision(home, { tool_input: { file_path: path.join(link, 'x.md') } }), 'deny',
+        'a path whose parent cannot be resolved must be refused, not rebuilt lexically');
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

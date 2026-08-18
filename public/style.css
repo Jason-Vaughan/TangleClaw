@@ -626,6 +626,19 @@ body {
   border-radius: 6px;
   margin-bottom: 12px;
 }
+/* The write guard is not enforcing what this modal says it is (#755 chunk 3).
+   The gear is the COMPLETE access control, so a boundary flagged on the bar and
+   silent here would make the fuller surface the less honest one. Bordered and
+   labelled, never colour alone. */
+.master-enforcement-badge.master-enforcement-degraded {
+  border-color: var(--amber, #FFA726);
+  border-style: dashed;
+}
+.master-enforcement-degraded-why {
+  margin-top: 6px;
+  color: var(--amber, #FFA726);
+  line-height: 1.45;
+}
 .master-access-grid {
   display: flex;
   flex-direction: column;

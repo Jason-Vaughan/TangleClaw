@@ -35,7 +35,50 @@ function guardTemplate() {
   return SRC.slice(bodyStart, close);
 }
 
+/**
+ * The guard's own recognized-token set, read out of the template.
+ * @returns {string[]} Sorted, deduplicated tokens the guard accepts.
+ */
+function guardRecognizedTokens() {
+  const body = guardTemplate();
+  const line = /if \(token === ([^)]+)\) \{/.exec(body);
+  assert.ok(line, 'the guard must still recognize its tokens with an explicit comparison chain');
+  return [...new Set([...line[1].matchAll(/'([^']+)'/g)].map((m) => m[1]))].sort();
+}
+
+/**
+ * The MODEL of that set held in `readMasterGuardPosture`.
+ * @returns {string[]} Sorted, deduplicated tokens the status readback accepts.
+ */
+function readbackRecognizedTokens() {
+  const at = SRC.indexOf('const recognized =');
+  assert.notEqual(at, -1, 'readMasterGuardPosture must still declare a `recognized` predicate');
+  const line = SRC.slice(at, SRC.indexOf(';', at));
+  return [...new Set([...line.matchAll(/'([^']+)'/g)].map((m) => m[1]))].sort();
+}
+
 describe('the generated write guard, scanned as source', () => {
+  it('the status readback recognizes exactly the tokens the guard does (R-14)', () => {
+    // `readMasterGuardPosture` duplicates the guard's recognition rule ON
+    // PURPOSE — the guard is a standalone script with no access to the module,
+    // so the module can only MODEL it. That duplication is safe only if
+    // something holds the two together, and this file was NAMED as the thing
+    // that did while doing nothing of the sort: it scanned for backticks and for
+    // the fail-closed fallbacks, never for the token sets. `test/master.test.js`
+    // exercises each side independently, so a tier added to one and not the
+    // other left the whole suite green — and the failure that produces is the
+    // worst-shaped one available: the status surface reporting `read-only` for a
+    // level the guard is happily applying.
+    //
+    // THE MUTATION THIS CATCHES: adding a fourth token to either side alone.
+    const guard = guardRecognizedTokens();
+    assert.deepEqual(guard, ['read-only', 'suggest', 'write'],
+      'precondition: the extractor must find the real set, not silently match nothing');
+    assert.deepEqual(readbackRecognizedTokens(), guard,
+      'the model and the guard must accept the same tokens, or the status lies about the posture');
+  });
+
+
   it('contains no backtick, which would end its own template literal', () => {
     const body = guardTemplate();
     const line = body.split('\n').findIndex((l) => l.includes('`'));

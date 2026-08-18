@@ -57,6 +57,14 @@ function lift(decl, src) {
 }
 
 const G = loadApiHelperGlobals();
+// The server's own emitted degradation codes, read as TEXT. Requiring
+// `lib/master.js` here would pull the store and its SQLite handle into a
+// frontend test file; the codes are string literals, so reading them is honest
+// and the assertion is about the two staying in step.
+const master = {
+  readMasterGuardPostureSource: fs.readFileSync(
+    path.join(__dirname, '..', 'lib', 'master.js'), 'utf8')
+};
 
 describe('#768 one implementation, two surfaces', () => {
   it('neither page declares the controls itself', () => {
@@ -474,6 +482,108 @@ describe('#755 the access toggle is live, and paints only from server state', ()
     bar.setAccess(settings());
     assert.equal(el('Warn').hidden, true, 'and it clears when the guard is healthy again');
     assert.equal(el('Access').classList.contains('is-degraded'), false);
+  });
+
+  it('every degradation code the server can send has a label on BOTH surfaces (R-21)', () => {
+    // `guardDegradedCode` exists so neither surface has to regex the reason
+    // sentence to tell "the guard is gone" from "the level disagrees". A
+    // discriminator nothing reads is just a longer payload, so this pins that it
+    // IS read — and that the vocabulary is one table, not one per surface.
+    //
+    // Derived from the server's own emitted codes, so adding a sixth code to
+    // `lib/master.js` without labelling it fails here rather than rendering a
+    // blank tag in front of the operator.
+    const emitted = [...master.readMasterGuardPostureSource.matchAll(/guardDegradedCode: '([a-z-]+)'/g)]
+      .map((m) => m[1]);
+    assert.ok(emitted.length >= 3, `expected the server to emit real codes, got ${emitted.length}`);
+    for (const code of new Set(emitted)) {
+      assert.ok(G.tcMasterGuardDegradedLabels[code],
+        `${code} is emitted by the server and has no label`);
+    }
+  });
+
+  it('an unreadable status says so, instead of a bare dimmed pair (R-22)', () => {
+    // Two unpressed segments and no sentence is the operator reading "broken" or
+    // "read-only" at random — a control saying nothing, which is this chunk's own
+    // subject matter turned on itself.
+    //
+    // THE MUTATION THIS CATCHES: clearing the warning line whenever settings are
+    // absent, which is the tidy-looking `setWarning('')` and leaves the silent
+    // control exactly as it was.
+    const { bar, el } = mountedBar();
+    bar.setAccess(null);
+    assert.equal(el('Warn').hidden, false);
+    assert.match(el('Warn').textContent, /could not be read/i);
+  });
+
+  it('an instructional master shows its level as PENDING, not in force (R-11)', () => {
+    // On that engine the level travels in the regenerated identity, so a flip
+    // does not bind until the next ensure. Going back to read-only is where it
+    // bites: READ paints as pressed while the identity still grants write.
+    //
+    // THE MUTATION THIS CATCHES: painting `is-pending` only after a flip rather
+    // than from state — which leaves a freshly-loaded bar on a Gemini master
+    // asserting a level that is not running.
+    const { bar, el } = mountedBar();
+    bar.setAccess(settings({
+      accessLevel: 'read-only', enforcement: 'instructional', levelAppliesAt: 'next-ensure'
+    }));
+    assert.equal(el('Access').classList.contains('is-pending'), true);
+    assert.match(el('Access').getAttribute('aria-label'), /applies when the master next starts/);
+    assert.equal(el('Warn').hidden, false, 'and it says so in words, not only in a border');
+
+    bar.setAccess(settings());
+    assert.equal(el('Access').classList.contains('is-pending'), false,
+      'a structural master binds immediately and must not be marked pending');
+    assert.equal(el('Warn').hidden, true);
+  });
+
+  it('a degraded guard outranks a pending one in the single warning line', () => {
+    // Both conditions can hold at once and there is one line. "Nothing is
+    // enforcing" is not softened by "and it would arrive at the next start", so
+    // the worse one wins.
+    //
+    // THE MUTATION THIS CATCHES: ordering the branches pending-first, which
+    // hides an absent boundary behind a timing note.
+    const { bar, el } = mountedBar();
+    bar.setAccess(settings({
+      enforcement: 'instructional',
+      levelAppliesAt: 'next-ensure',
+      guardDegraded: true,
+      guardDegradedCode: 'guard-missing',
+      guardDegradedReason: 'nothing is bounding this master'
+    }));
+    assert.match(el('Warn').textContent, /nothing is bounding/);
+    assert.match(el('Warn').textContent, /NOT ENFORCED/, 'and it carries the code\'s label');
+  });
+
+  it('the gear renders the degraded readback too — it is the complete control (R-12)', () => {
+    // The plan calls the modal the complete access-level control and the bar the
+    // fast path. A boundary flagged on the fast path and silent on the complete
+    // one makes the fuller surface the less honest of the two.
+    //
+    // THE MUTATION THIS CATCHES: rendering only `enforcement` in the modal, which
+    // is what it did before the review and which every other modal test allows.
+    const settingsComponent = G.tcCreateMasterSettings({
+      api: async () => null, apiMutate: async () => null,
+      esc: (v) => String(v), buildEngineOptions: () => '', state: { engines: [] },
+      document: { getElementById: () => body, querySelector: () => null }
+    });
+    const body = { innerHTML: '' };
+    settingsComponent.renderBody({
+      accessLevel: 'write', accessLevels: ['read-only', 'suggest', 'write'],
+      enabledAccessLevels: ['read-only', 'suggest', 'write'],
+      enforcement: 'structural', levelAppliesAt: 'next-tool-call',
+      launchModes: [], scope: 'all', autoStart: false,
+      guardLevel: 'read-only', guardDegraded: true, guardDegradedCode: 'level-mismatch',
+      guardDegradedReason: 'the guard is permitting LESS than the configured level allows'
+    }, []);
+    assert.match(body.innerHTML, /master-enforcement-degraded/,
+      'the badge must be marked, not just tinted');
+    assert.match(body.innerHTML, /permitting LESS/, 'and carry the reason');
+    assert.match(body.innerHTML, /MISMATCH/, 'labelled from the shared code table');
+    assert.match(body.innerHTML, /applying <strong>read-only<\/strong>/,
+      'and name what the guard is ACTUALLY applying — guardLevel\'s only consumer');
   });
 
   it('the degraded warning survives clearing an error — they have different lifetimes', () => {

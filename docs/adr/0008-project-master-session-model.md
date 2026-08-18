@@ -13,13 +13,21 @@ below for the original v1 posture this amends.
 operator's access level from `<master home>/.access-level` on every invocation and maps it to
 deny / ask / allow, so a change binds on the master's next write attempt with no restart; every
 unreadable level degrades to read-only, and the guard's own control surface is refused below the
-write tier so no single confirmation can raise it. `memory/` remains writable at every tier. Two
-limits stated rather than implied: the matcher is `Edit|Write|NotebookEdit`, so shell writes are
-operator-gated rather than hook-enforced; and this is a Claude-engine capability — elsewhere the
-level is instructional, carried in the regenerated identity, and the API reports which it is.
+write tier so no single confirmation can raise it. **That control surface includes TangleClaw's own
+`config.json`** — `.access-level` is a copy the next ensure rewrites from it, and the config sits
+one directory ABOVE the master home, so refusing only the in-home artifacts left the real switch a
+sibling away. `memory/` remains writable at every tier. Two limits stated rather than implied: the
+matcher is `Edit|Write|NotebookEdit`, so shell writes are operator-gated rather than hook-enforced;
+and this is a Claude-engine capability — elsewhere the level is instructional, carried in the
+regenerated identity, and the API reports which it is.
+**Amended 2026-08-17 (#755 chunk 3):** the status API now reads the boundary BACK — the guard's
+presence, its registration in `.claude/settings.json`, its source, and the level on disk against
+the level in config — and reports a boundary that is not in force rather than restating the
+configured one. Before this a deleted or unregistered hook left every surface saying "structural"
+with nothing enforcing.
 The original read-only description below is retained as the record of what v1 shipped.
 **Source issue:** #331 — Project Master. **Ratified design:** 2026-06-16 interview + D7 (reach-from-anywhere), operator decisions 2026-07-01 (home dir, lifecycle).
-**Builds on:** ADR 0005 (AUTH-4 service token — the master's gated-surface credential). **Successor work:** G2 (post-4.0) — actions/relay via Switchboard #333, enforced read-only token scope.
+**Builds on:** ADR 0005 (AUTH-4 service token — the master's gated-surface credential). **Successor work:** **#966** — a scoped TangleClaw API token and a fleet-mutation route, so the Master's authority over TC's own API is bounded server-side rather than by whatever its engine enforces locally. Filed 2026-08-17 when #755 shipped the file-write tier only; it carries the G2 (post-4.0) actions/relay work, which needs Switchboard #333 as its transport.
 
 ---
 

@@ -274,13 +274,29 @@ describe('#756 — the Master settings modal offers a launch mode', () => {
     assert.doesNotMatch(instructional, /next tool call/i);
   });
 
-  it('an absent levelAppliesAt falls back to the cautious sentence, never the promise', () => {
+  it('an absent levelAppliesAt is cautious about WHEN and silent about WHY', () => {
     // Older server, or a payload shape that moved. Over-promising immediacy is
     // the direction that misleads, so absence must not read as "immediate".
+    //
+    // It must ALSO not read as "this engine has no write guard" (#755 chunk 3,
+    // R-6). The fallback used to share the instructional sentence, which states
+    // a mechanism — and a Claude master hitting this skew has a write guard, so
+    // that sentence is simply false there. This test previously PINNED the false
+    // half; it now pins the boundary between the two claims.
     const s = status();
     delete s.levelAppliesAt;
     const md = render(s);
-    assert.doesNotMatch(md, /next tool call/i);
+    assert.doesNotMatch(md, /next tool call/i, 'absence must not promise immediacy');
+    assert.doesNotMatch(md, /carries the level in its instructions/i,
+      'nor assert a mechanism the payload did not state');
+    assert.match(md, /next time the master session starts/i, 'the cautious WHEN still ships');
+  });
+
+  it('a stated instructional binding DOES explain the mechanism', () => {
+    // The positive control for the test above: without it, deleting the
+    // instructional sentence entirely would pass both assertions there while
+    // losing the explanation an operator on that engine actually needs.
+    const md = render(status({ levelAppliesAt: 'next-ensure' }));
     assert.match(md, /carries the level in its instructions/i);
   });
 });

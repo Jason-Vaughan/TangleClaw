@@ -2083,7 +2083,9 @@ function handleSessionEnded(statusData) {
 }
 
 // ── Project Master Drawer (chunk G slice 3, #331) ──
-// The global read-only assistant, reachable without leaving the session.
+// The global assistant, reachable without leaving the session. What it may
+// write is the operator-set access level on its control bar, not a fixed
+// read-only rule (#755).
 // Same ensure-then-attach contract as the landing pane (ui.js): opening the
 // drawer POSTs /api/master/ensure (idempotent) and only attaches the ttyd
 // iframe once ensure succeeds, because ttyd attaches to EXISTING sessions
