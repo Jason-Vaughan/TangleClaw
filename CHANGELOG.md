@@ -441,6 +441,22 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- **The identity-mtime guard stopped comparing filesystem timestamps exactly (#974).** It scored the
+  host's clock plumbing rather than the contract, and it had `main` red from #970 onward:
+  `utimesSync` hands the kernel a float of *seconds*, so a millisecond value that float cannot
+  represent comes back off by a fraction — ext4 stored `1787039343102` and returned
+  `1787039343101.999`, while a 2000-value probe on APFS drifts on none of them. Green on the
+  developer's machine, red in CI, with the code under test running identically in both.
+
+  **The tolerance costs the assertion nothing**, which is why it is the fix rather than a weakening:
+  the mutation the guard exists to catch is reverting `_writeIfChanged` to an unconditional
+  `writeFileSync`, which sets the mtime to *now* — 60s from the recorded value by construction. That
+  mutation was run and the guard failed on it by 60001 ms. Sub-millisecond and sixty seconds are not
+  close together.
+
+  Third guard in this repo found scoring host plumbing instead of its own merits, after #969 (stderr
+  that never reaches the assertion) and #957 (a threadpool assertion that fails under machine load).
+
 - **A refusal guard in the plugin-migration suite stopped depending on how Node formats an error
   (#969).** It matched Python's `ValueError` text, which only reaches the assertion when a child
   process's stderr is appended to the thrown error — a property of the Node build, not of the code
