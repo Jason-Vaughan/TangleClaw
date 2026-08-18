@@ -173,6 +173,67 @@ All notable changes to TangleClaw are documented in this file.
   checkout, so there is nothing to review — the same root reason Wrap is *undecided* rather than
   merely unbuilt. A "run the Critic in project X" capability is a different feature. Tracked: #961.
 
+- **The Master's access level is now a control on the bar, and the bar says whether it is actually
+  in force (#755, chunk 3).** The READ/WRITE toggle shipped dim in #768 waiting for a backend. It is
+  live: two real buttons, keyboard-operable and announced with their pressed state, in a group whose
+  accessible name carries the current tier.
+
+  **It paints only from server state, never from the click, and that is the whole point.** There is
+  exactly one Master — a single reserved tmux session that every session drawer and the dashboard
+  panel attach the same iframe to — so a bar showing what *this* operator just pressed can be showing
+  a level another surface already changed. Pressing a segment re-fetches the status first, repaints
+  from it, and only then decides whether there is anything to do; a press the re-fetch has turned
+  into a no-op sends nothing. After the change is saved the status is read again, because that read
+  is the only thing that can report whether the guard actually took it. A failed save leaves the
+  toggle exactly where the re-fetch put it and shows the error in the bar.
+
+  **The confirmation fires on the way IN only, and it says the change is global.** Returning to
+  read-only is always the safe direction, and warning there teaches the operator to click through the
+  one that matters. The text names the scope — the previous blast-radius wording was right about
+  reach ("every project it can reach") and silent about there being one Master, which is the half
+  someone flipping from inside a session would guess wrong. When the change binds comes from the
+  server rather than promising immediacy an instructional master cannot deliver, and `suggest` →
+  `write` is warned too, because what makes a move dangerous is the destination.
+
+  **`suggest` has no segment, so the bar shows it as a readout rather than lying.** The two-segment
+  design is deliberate: the gear remains the complete access-level control and the bar is the fast
+  path. At `suggest` neither segment is pressed and a non-interactive label names the tier — an
+  unpressed pair on its own would leave a touch operator with nothing to read, since `title` never
+  appears without a pointer.
+
+  **The bar inherits the enforcement badge**, closing a gap that predates this issue: a Gemini Master
+  and a Claude Master rendered identically there, and read-only is *already* unenforced on the
+  instructional one.
+
+  **A degraded write guard stopped being invisible.** Every surface reported the level out of config
+  and called the enforcement structural without ever asking the guard, so both ways that boundary
+  comes apart were silent. The guard falls back to read-only when it cannot read its posture —
+  correct, and indistinguishable from a master configured to refuse. The other direction is worse: at
+  the `write` tier the master may delete its own hook, and under the `bypassPermissions` launch mode
+  that removal is not confirmed either, after which the interface says "structural" and nothing
+  enforces at all. `/api/master/status` now reads the level file and the hook back off disk and
+  reports which of three things has happened — the guard is missing, the level is unreadable, or the
+  level on disk disagrees with the setting — each with a sentence the bar displays on its own line.
+  The mismatch case names which direction it went, because a guard permitting *more* than configured
+  is a boundary that is not holding and one permitting *less* is merely a master that will not work.
+
+  The check is keyed on the resolved engine's enforcement tier, never on the guard file being
+  present: keying a check on the artifact the threat removes is how deleting the guard would make the
+  check conclude there was nothing to check.
+
+  **The toggle's targets are 44px**, per the mobile requirement, which makes the row carrying them
+  taller than the controls beside it. That cost is taken deliberately — the bar's collapse rule is
+  #768's to decide, and waiting for it is not a reason to ship a target a thumb misses.
+
+  Other open bars stay honest without anyone gaining a timer: the session page's level rides its
+  existing poll chain while the drawer is open, and the dashboard repaints on open, on ensure, and on
+  the re-fetch before any flip. A dashboard panel left open while another surface flips shows a stale
+  segment until something touches it — accepted, because it cannot *act* on that stale value.
+
+  Closes #755 on the file-write tier. The API-authority half — a scoped Master token and a
+  fleet-mutation route, which is a credential with a fleet-sized blast radius rather than a local
+  file guard — is #966.
+
 ### Changed
 
 - **Shared session/Master control styles moved to `public/shared-controls.css` (#768 chunk 2).** The

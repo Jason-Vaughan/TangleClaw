@@ -160,6 +160,7 @@ route — becomes its own issue against the Master Control milestone: different 
 risk profile, and a dependency on the Switchboard relay (#333). Keeping one issue open across both
 invites the smaller half to close the larger. **File that issue before chunk 3's PR**, so #755's
 closing PR can point at its successor rather than leaving the deferral in a plan file only.
+**Filed 2026-08-17 as #966**, before chunk 3's PR as the ruling required.
 
 **C. No new timer on the dashboard.** The session page rides its existing poll tick; the dashboard
 repaints on open, on ensure, and on the re-fetch before every flip. The dangerous half of staleness
@@ -384,7 +385,7 @@ have a visibility-aware `setTimeout` chain that Medusa already rides ("same cade
 
 ### Not in this plan
 
-- **Scoped Master API token / fleet mutations** — decision B; a separate issue.
+- **Scoped Master API token / fleet mutations** — decision B; **#966**.
 - **Mobile density, touch targets, and the bar's collapse rule** — carried into **#768 chunk 3**,
   not here. This plan must not absorb it; the two would enlarge each other's diff mid-review.
 - **Consolidating the settings-modal CSS into `shared-controls.css`** — also #768 chunk 3 (R-7).
@@ -469,5 +470,6 @@ chunk 2, written into its section above.
 
 #755 (this) · #768 + `.tangleclaw/plans/768-master-control-bar.md` §2b (the bar; amend its warning
 wording with the global-scope sentence when chunk 3 lands) · #756 (shipped) · #829 (tracking) ·
+#966 (the API-authority successor, filed on decision B) ·
 #333 (Switchboard relay — the transport the API-authority half would need) ·
 `docs/adr/0008-project-master-session-model.md` (the read-only boundary and the G2 deferral)
