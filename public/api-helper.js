@@ -1593,7 +1593,7 @@
       // false: there IS a write guard. An absent field must never ship as a
       // claim about the engine, so the unknown case says only the cautious WHEN.
       const bindsAt = s.levelAppliesAt === 'next-tool-call'
-        ? 'Takes effect on the master’s next tool call — no restart.'
+        ? 'The write guard applies it on the master’s next tool call. The running master keeps the instructions it started with until it restarts, so restart it for the master itself to act on the change.'
         : s.levelAppliesAt === 'next-ensure'
           ? 'Takes effect the next time the master session starts, since this engine carries the level in its instructions rather than a write guard.'
           : 'Takes effect the next time the master session starts.';
@@ -2087,6 +2087,25 @@
    *
    * @type {Object<string, string>}
    */
+  /**
+   * A short, local date for a timestamp the operator has to act on.
+   *
+   * Full ISO in a one-line warning is noise; the day is the part that makes
+   * "started before these instructions" concrete. Falls back to the raw value
+   * rather than throwing, because a warning that cannot render is worse than one
+   * that renders awkwardly.
+   *
+   * @param {string} iso - ISO timestamp.
+   * @returns {string} e.g. `17 Jul`.
+   */
+  function _tcShortDate(iso) {
+    try {
+      return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+    } catch (err) {
+      return String(iso);
+    }
+  }
+
   const TC_MASTER_GUARD_DEGRADED = {
     'guard-missing': 'NOT ENFORCED',
     'guard-unwired': 'NOT ENFORCED',
@@ -2451,6 +2470,18 @@
       // nothing, where an operator reads "broken" or "read-only" at random.
       if (!settings) {
         setWarning('The Master’s status could not be read, so its access level is unknown — the toggle is inactive until it answers.');
+      } else if (settings.identityStale === true) {
+        // Ranked ABOVE the guard posture on purpose. A degraded guard is a
+        // boundary that is not holding; a stale identity is the Master not
+        // acting on the level at all — which is the state an operator hits
+        // first, and the one that reads as "the toggle did nothing" (#968).
+        // The date is what makes it actionable rather than a shrug: a session
+        // started weeks ago has missed every rule and scope change since.
+        setWarning('NOT IN EFFECT — the running Master started before these instructions were written'
+          + (settings.identityWrittenAt ? ` (${_tcShortDate(settings.identityWrittenAt)})` : '')
+          + ', and reads them only at launch. Restart it to apply.');
+      } else if (settings.identityStale === null) {
+        setWarning('Could not confirm the running Master has picked up its current instructions — tmux did not answer.');
       } else if (settings.guardDegraded) {
         const tag = TC_MASTER_GUARD_DEGRADED[settings.guardDegradedCode];
         setWarning((tag ? tag + ' — ' : '') + settings.guardDegradedReason);
@@ -2492,7 +2523,7 @@
       // Same three states as the modal's hint, and for the same reason: the
       // unknown case must not assert a mechanism. See `bindsAt` above.
       const binds = settings && settings.levelAppliesAt === 'next-tool-call'
-        ? 'It binds on the Master’s next tool call — no restart.'
+        ? 'The write guard binds on the Master’s next tool call. The RUNNING Master keeps the instructions it started with, so restart it or it will go on refusing writes it is now allowed to make.'
         : settings && settings.levelAppliesAt === 'next-ensure'
           ? 'It arrives the next time the master session starts, since this engine carries the level in its instructions rather than a write guard.'
           : 'It arrives the next time the master session starts.';

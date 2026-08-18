@@ -320,7 +320,9 @@ describe('#755 the access toggle is live, and paints only from server state', ()
     guardLevel: 'read-only',
     guardDegraded: false,
     guardDegradedCode: null,
-    guardDegradedReason: null
+    guardDegradedReason: null,
+    identityStale: false,
+    identityWrittenAt: null
   }, over || {});
 
   /**
@@ -560,6 +562,65 @@ describe('#755 the access toggle is live, and paints only from server state', ()
     bar.setAccess(settings({ enforcement: 'instructional', levelAppliesAt: 'next-ensure' }));
     assert.match(el('Warn').textContent, /rather than a write guard/,
       'a STATED instructional binding does explain the mechanism');
+  });
+
+  it('a stale identity says the change is NOT IN EFFECT, and when it was written (#968)', () => {
+    // The bug the operator hit: the toggle moved, the guard permitted the write,
+    // and the Master went on refusing because it reads its instructions only at
+    // launch. The bar has to say that, or the toggle looks like it did nothing.
+    //
+    // THE MUTATION THIS CATCHES: rendering only the guard posture and ignoring
+    // identityStale — which is the shipped behaviour this fixes, and which every
+    // other assertion in this file allows.
+    const { bar, el } = mountedBar();
+    bar.setAccess(settings({
+      accessLevel: 'write',
+      identityStale: true,
+      identityWrittenAt: '2026-07-17T12:00:00.000Z'
+    }));
+    assert.equal(el('Warn').hidden, false);
+    assert.match(el('Warn').textContent, /NOT IN EFFECT/);
+    assert.match(el('Warn').textContent, /Restart it to apply/);
+    assert.match(el('Warn').textContent, /Jul/,
+      'and it names WHEN, so the operator can see how far behind the Master is');
+  });
+
+  it('a stale identity outranks a degraded guard — it is the state hit first', () => {
+    // Both can hold at once and there is one line. A degraded guard is a
+    // boundary not holding; a stale identity is the Master not acting on the
+    // level at all, which is what reads as "the toggle did nothing".
+    //
+    // THE MUTATION THIS CATCHES: ordering guardDegraded first, which hides the
+    // reason the operator is actually looking at the bar.
+    const { bar, el } = mountedBar();
+    bar.setAccess(settings({
+      identityStale: true,
+      guardDegraded: true,
+      guardDegradedCode: 'guard-missing',
+      guardDegradedReason: 'nothing is bounding this master'
+    }));
+    assert.match(el('Warn').textContent, /NOT IN EFFECT/);
+  });
+
+  it('an unconfirmable identity says so rather than reassuring', () => {
+    // tmux did not answer. The #905 discipline again: silence here would render
+    // "all good" from a read that never happened.
+    //
+    // THE MUTATION THIS CATCHES: treating null like false, which is the tidier
+    // two-state version and goes quiet during exactly the tmux wedge this
+    // install hits.
+    const { bar, el } = mountedBar();
+    bar.setAccess(settings({ identityStale: null }));
+    assert.equal(el('Warn').hidden, false);
+    assert.match(el('Warn').textContent, /Could not confirm/);
+  });
+
+  it('a fresh identity says nothing at all', () => {
+    // The positive control: without it, a warning that ALWAYS renders would pass
+    // all three tests above.
+    const { bar, el } = mountedBar();
+    bar.setAccess(settings());
+    assert.equal(el('Warn').hidden, true);
   });
 
   it('a degraded guard outranks a pending one in the single warning line', () => {
@@ -997,6 +1058,23 @@ describe('#755 both surfaces drive the live toggle, and neither grows a timer', 
     };
     assert.equal(await save({ ok: true }), 1, 'a successful save must notify the surface');
     assert.equal(await save(null), 0, 'a failed save changed nothing, so it must notify nothing');
+  });
+
+  it('no surface claims "no restart" — the family, not one call site (#968)', () => {
+    // The string the operator actually read before hitting the bug. It was in
+    // the confirmation AND in the modal's tier hint, and it is the one thing a
+    // structural master must not say: the guard binds immediately, the Master
+    // does not. Guarded across the whole component because losing one member of
+    // this family is exactly how the false claim survived #755's review.
+    //
+    // THE MUTATION THIS CATCHES: restoring either sentence.
+    const helper = read('api-helper.js').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    assert.doesNotMatch(helper, /no restart/i,
+      'the guard binds on the next tool call; the running Master does not');
+    // And the replacement must actually say the useful thing, or removing the
+    // false claim would pass by saying nothing.
+    assert.match(helper, /restart it|restarts|Restart it to apply/i,
+      'every surface that describes when a change lands must name the restart');
   });
 
   it('the segments meet the touch-target minimum the mobile Direction binds', () => {

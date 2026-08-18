@@ -81,6 +81,13 @@ function fakeTmux({ alive = false, answered = true, createSession } = {}) {
   return {
     calls,
     probeSession,
+    // Modelled because `getMasterStatus` asks it (#968). Defaults to "answered,
+    // no such session", which is the neutral honest answer for a stub that is
+    // not modelling a live session's age — it yields `identityStale: false`, so
+    // tests that do not care about freshness keep a boring payload. Tests that
+    // DO care override this rather than the code defending against a stub that
+    // does not model the module.
+    sessionCreatedAt: () => ({ createdAt: null, answered, cause: answered ? null : 'read-timed-out' }),
     hasSession: () => probeSession().live,
     createSession: (name, opts) => {
       calls.push({ name, opts });
@@ -542,6 +549,100 @@ describe('#968 a level change reaches the Master\'s own instructions', () => {
     assert.match(levelSection(home), /\*\*write\*\*/);
     assert.equal(fs.existsSync(master.masterGuardScriptPath(home)), false,
       'and it still gets no guard it never had');
+  });
+});
+
+describe('readMasterIdentityFreshness — has the RUNNING Master read this? (#968)', () => {
+  const homes = [];
+  const mk = () => {
+    const h = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fresh-'));
+    homes.push(h);
+    return h;
+  };
+  after(() => { for (const h of homes) fs.rmSync(h, { recursive: true, force: true }); });
+
+  /** @param {object} answer - What the stubbed tmux reports. */
+  const tmuxAt = (answer) => ({ sessionCreatedAt: () => answer, probeSession: () => ({ live: true, answered: true, cause: null }) });
+
+  /** Write an identity whose mtime is `offsetSec` from now. */
+  const identityAt = (home, offsetSec) => {
+    const f = master.masterIdentityPath(home);
+    fs.writeFileSync(f, '# identity');
+    const when = new Date(Date.now() + offsetSec * 1000);
+    fs.utimesSync(f, when, when);
+    return Math.floor(when.getTime() / 1000);
+  };
+
+  it('an identity written AFTER the session started has reached nobody', () => {
+    // The reported bug's shape: the file is right and the running Master is
+    // acting on what it read at launch.
+    //
+    // THE MUTATION THIS CATCHES: comparing the other way round, which reports
+    // every freshly-restarted Master as stale and every stale one as fine.
+    const home = mk();
+    const written = identityAt(home, 0);
+    const p = master.readMasterIdentityFreshness({
+      home, tmuxLib: tmuxAt({ createdAt: written - 3600, answered: true, cause: null })
+    });
+    assert.equal(p.identityStale, true);
+    assert.ok(p.identityWrittenAt, 'and it names WHEN, or the operator cannot judge how far behind');
+  });
+
+  it('an identity the session already read is not stale', () => {
+    const home = mk();
+    const written = identityAt(home, -3600);
+    const p = master.readMasterIdentityFreshness({
+      home, tmuxLib: tmuxAt({ createdAt: written + 60, answered: true, cause: null })
+    });
+    assert.equal(p.identityStale, false);
+  });
+
+  it('tmux not answering is UNKNOWN, never "fine"', () => {
+    // The #905 discipline: a caller that renders "all good" from a read that
+    // never happened writes a fact nobody has.
+    //
+    // THE MUTATION THIS CATCHES: folding the unanswered case into `false`, which
+    // is the tidier two-state version and silently reassures during exactly the
+    // tmux wedge this install hits (#94/#144/#380).
+    const home = mk();
+    identityAt(home, 0);
+    const p = master.readMasterIdentityFreshness({
+      home, tmuxLib: tmuxAt({ createdAt: null, answered: false, cause: 'read-timed-out' })
+    });
+    assert.equal(p.identityStale, null);
+    assert.ok(p.identityWrittenAt, 'the timestamp is still known even when the comparison is not');
+  });
+
+  it('no running Master, and no identity at all, are both "nothing is stale"', () => {
+    // Nothing is running to hold a stale belief, and an operator who has never
+    // opened the Master must not meet a warning about it.
+    const home = mk();
+    identityAt(home, 0);
+    assert.equal(master.readMasterIdentityFreshness({
+      home, tmuxLib: tmuxAt({ createdAt: null, answered: true, cause: null })
+    }).identityStale, false, 'answered, no session');
+
+    const bare = mk();
+    assert.equal(master.readMasterIdentityFreshness({
+      home: bare, tmuxLib: tmuxAt({ createdAt: 1, answered: true, cause: null })
+    }).identityStale, false, 'no identity on disk');
+  });
+
+  it('getMasterStatus carries it, so a surface can render it', () => {
+    // THE MUTATION THIS CATCHES: computing the freshness and not spreading it
+    // into settings — every unit test above stays green while the only consumer
+    // that matters receives nothing.
+    const home = mk();
+    const written = identityAt(home, 0);
+    const s = master.getMasterStatus({
+      home,
+      enginesLib: { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' },
+      tmuxLib: Object.assign(fakeTmux({ alive: true }), {
+        sessionCreatedAt: () => ({ createdAt: written - 60, answered: true, cause: null })
+      })
+    }).settings;
+    assert.equal(s.identityStale, true);
+    assert.ok(s.identityWrittenAt);
   });
 });
 
