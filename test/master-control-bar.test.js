@@ -965,7 +965,13 @@ describe('#755 the access toggle is live, and paints only from server state', ()
     // `wasRunning` alone prints "Master stopped" about a Master most likely still
     // up. This is also what gives `killed` a reader.
     //
-    // THE MUTATION THIS CATCHES: wording the status line from `wasRunning`.
+    // WHAT THIS PINS, precisely: the refusal path shows the error and paints NO
+    // status. It does NOT catch wording the line from `wasRunning` — measured,
+    // and the api-helper comment says why: a refusal is a 500, so `apiMutate`
+    // returns null and the status line is never reached. Under the route's
+    // contract a 200 always has `killed === wasRunning`, so that mutation is
+    // unobservable rather than uncaught. Claiming otherwise here would be the
+    // false-confidence this issue is about.
     const { doc, el } = mountedBar({ statuses: [{ settings: settings() }], patch: null });
     el('KillBtn').dispatch('click');
     await flush();
@@ -973,6 +979,38 @@ describe('#755 the access toggle is live, and paints only from server state', ()
     assert.doesNotMatch(line, /Master stopped/,
       'a refusal must never read as a completed kill');
     assert.equal(el('Error').hidden, false, 'and the refusal is visible');
+  });
+
+  it('Kill is disabled while a press is in flight', async () => {
+    // It shares the access toggle's in-flight latch, so leaving it pressable
+    // meant the latch silently did a disabled control's job and the operator got
+    // no signal that the first press was still running.
+    //
+    // Asserted mid-flight, with a confirmation that inspects the button at the
+    // moment the handler is inside its own guard — a check after `flush()` would
+    // pass against a control that was never disabled at all.
+    //
+    // THE MUTATION THIS CATCHES: dropping Kill from `setBusy`.
+    let disabledDuring = null;
+    const { doc, ids } = makeDocument(['masterPanelBar']);
+    withIdParsingInnerHTML(ids.masterPanelBar, doc);
+    const bar = G.tcCreateMasterControlBar({
+      doc,
+      rootId: 'masterPanelBar',
+      prefix: 'masterPanel',
+      title: 'M',
+      api: async () => ({ settings: settings() }),
+      apiMutate: async () => ({ killed: true, wasRunning: true }),
+      confirm: () => {
+        disabledDuring = doc.getElementById('masterPanelKillBtn').disabled;
+        return true;
+      }
+    });
+    bar.mount();
+    doc.getElementById('masterPanelKillBtn').dispatch('click');
+    await flush();
+    assert.equal(disabledDuring, true,
+      'Kill must be disabled while its own press is still running');
   });
 
   it('a declined confirmation kills nothing', async () => {

@@ -60,9 +60,11 @@ singleton beside the project machinery, not inside it:
 1. **Reserved tmux session `tangleclaw-master`** (exported constant). Project names come from the
    projects table, so the name cannot collide; the dashboard's session machinery never sees it.
 2. **No `sessions` row, no project.** The master is invisible to wrap, watchdog, dashboard cards,
-   and ownership — deliberately. Its lifecycle API is three operator routes (`kill` added by #968): `POST
-   /api/master/ensure` (idempotent create-or-refresh) and `GET /api/master/status` (liveness truth
-   straight from tmux — no DB row to drift). A structural test pins that `lib/master.js` never
+   and ownership — deliberately. Its lifecycle API is three operator routes: `POST
+   /api/master/ensure` (idempotent create-or-refresh), `GET /api/master/status` (liveness truth
+   straight from tmux — no DB row to drift), and `POST /api/master/kill` (#968 — idempotent, and
+   refusing rather than claiming a kill tmux would not confirm, since a level change binds on the
+   guard at once but the running master only reads its instructions at launch). A structural test pins that `lib/master.js` never
    touches the sessions store.
 3. **Dedicated home `~/.tangleclaw/master/`** — a data directory, never a repo clone. A clone
    would share git HEAD with dev sessions (the documented shared-worktree hazard) and hand the

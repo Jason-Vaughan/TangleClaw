@@ -1156,8 +1156,8 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
       // bolted onto the first. The response is still a 500; it just happens
       // after the rest of the save has finished doing what it was asked.
       masterLevelError = err.levelApplied
-        ? `The master's access level is now "${newMasterAccessLevel}", but its write guard could not be re-provisioned. `
-          + 'If the master altered the guard while it had write access, restart the master session to restore it.'
+        ? `The master's access level is now "${newMasterAccessLevel}", but the refresh that should have followed it did not finish. `
+          + 'Its identity, its memory scaffold or its write guard may be a step behind. Restart the master session to bring them back into line.'
         : `Settings were saved, but the master's access level could not be applied — it is still enforcing "${oldMasterAccessLevel}". `
           + 'Restart the master session to reconcile it.';
     }

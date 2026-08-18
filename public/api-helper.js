@@ -2647,6 +2647,13 @@
         const btn = el(spec.suffix);
         if (btn) btn.disabled = on || !access || !access.accessLevel;
       }
+      // Kill too. It shares the same in-flight latch, so leaving it pressable
+      // meant the latch silently did the work a disabled control should be
+      // doing — and the operator got no feedback that the first press was
+      // still running. Unlike the segments it does not depend on a known level:
+      // stopping a Master whose status could not be read is still meaningful.
+      const kill = el('KillBtn');
+      if (kill) kill.disabled = on;
     }
 
     /**
@@ -2663,14 +2670,18 @@
      * the Master's durable notes under `memory/` are a data directory and
      * survive; the conversation does not, which is the point of restarting.
      *
-     * Repaints from server state afterwards, never from the click — the same
-     * rule the toggle follows, and for the same reason.
+     * Repaints the ACCESS controls from server state afterwards, never from the
+     * click — the same rule the toggle follows. The status line and dot are
+     * painted here directly, because `loadAccess` only reaches `setAccess`; an
+     * earlier version of this sentence claimed the whole bar repainted, which
+     * was not true of either.
      *
      * @returns {Promise<void>}
      */
     async function killMaster() {
       if (busy || !deps.apiMutate) return;
       busy = true;
+      setBusy(true);
       try {
         setError('');
         const ask = deps.confirm || global.confirm;
