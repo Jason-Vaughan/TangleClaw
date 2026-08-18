@@ -26,6 +26,46 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-17 — #755: the Master's access level becomes real (chunks 1–3)
+
+<!-- prawduct: type=feat | scope=master-access-level-755 | chunks=01,02,03 -->
+
+Branch `feat/755-access-level`. The level moved from a picker with two disabled options to a value
+the write guard reads on every tool call (deny / ask / allow), from prose that asserted a fixed
+posture to an identity that states the current one and says who enforces it, and finally onto the
+control bar as a live toggle with a readback that says when the boundary is not the one the settings
+claim.
+
+*(This entry replaces a chunks-1–2-only one that had been appended at the BOTTOM of this file and
+carried no tag line — so it was invisible to regen-views and could never be stamped. The file's
+header says append at the top; that inversion was this file's only one.)*
+
+Four things generalise beyond this issue:
+
+- **A ratified decision is only as good as the evidence under it.** The plan's decision A carried a
+  caveat about `bypassPermissions` reasoned from what the flag sounds like; the shipped copy carried
+  the opposite guess. A probe against the real harness falsified both. Where a ruling makes a claim
+  about a security boundary, probe before ratifying — and record what was NOT observed.
+- **A finding-fix is new code.** Fixes shipped without guards more than once and later rounds caught
+  them; reverting either had left the suite green. Every fix after that was mutated.
+- **For any guard, ask what happens when the GUARD ITSELF fails.** If the answer is "it uses the
+  value it was computing", that is an allow. Nine recurrences across the three chunks, in eight
+  costumes — the sharpest being a control-surface deny that covered every copy of the access level
+  except the authoritative one, which lives one directory ABOVE the home it protects, so a single
+  `suggest` confirmation bought permanent write. Corollary: fail-closed INVERTS for a status report,
+  where the restrictive direction is raising the alarm.
+- **A green mutation is a finding.** Once a fix and its test both read the same accessor, so
+  hardcoding it moved both sides together and the guard stayed green while protecting a path the
+  suite never used. A guard's fixture must come from a different authority than the code it guards.
+
+Also learned the hard way: an assertion inside a `node:test` `after()` hook prints `not ok` and
+still exits 0, so it cannot gate CI — guards belong in an `it`. And a count written into a closing
+record cannot be made self-consistent mid-loop, because each correction is itself a commit; write it
+relationally or cite the command that regenerates it.
+
+**Classification:** feature
+
+
 ## 2026-08-16: the fleet map says what each project is doing (#950)
 
 <!-- prawduct: type=feat | scope=fleet-map-state-950 | chunks=01 -->
@@ -4851,21 +4891,3 @@ statement than either half. `test/_mini-dom.js` gained `hidden`, `classList.togg
 each added by the test that needed it, per that file's own rule.
 
 **Classification:** feature
-
-## 2026-08-17 — #755 chunks 1–2: the Master's access level becomes real
-
-Branch `feat/755-access-level`. The level moved from a picker with two disabled options to a value
-the write guard reads on every tool call (deny / ask / allow), and from prose that asserted a fixed
-posture to an identity that states the current one and says who enforces it.
-
-Two things generalise beyond this issue:
-
-- **A ratified decision is only as good as the evidence under it.** The plan's decision A carried a
-  caveat about `bypassPermissions` reasoned from what the flag sounds like; the shipped copy carried
-  the opposite guess. A probe against the real harness falsified both. Where a ruling makes a
-  claim about a security boundary, probe before ratifying — and record what was NOT observed.
-- **A finding-fix is new code.** Two fixes shipped without guards and a later round caught them;
-  reverting either had left the suite green. Every fix in the rounds after that was mutated.
-
-Also learned the hard way: an assertion inside a `node:test` `after()` hook prints `not ok` and
-still exits 0, so it cannot gate CI. Guards belong in an `it`.
