@@ -2447,7 +2447,22 @@
 
         if (level === 'write') {
           const ask = deps.confirm || global.confirm;
-          if (typeof ask === 'function' && !ask(writeWarningText(fresh.settings))) return;
+          // NO CONFIRMATION AVAILABLE MEANS NO WRITE. The obvious spelling of
+          // this — `if (typeof ask === 'function' && !ask(...)) return;` — reads
+          // as "warn before granting write" and does the opposite when there is
+          // nothing to warn with: the check evaluates false and the flip carries
+          // straight on to fleet-wide write access, unconfirmed.
+          //
+          // That is this issue's recurring defect in a new costume: a bound that
+          // fails OPEN while reading as though it fails closed. Chunk 2 found
+          // five of them. The test for any guard here is what happens when the
+          // GUARD fails, and "it proceeds with the value it was computing" is an
+          // allow.
+          if (typeof ask !== 'function') {
+            setError('The Master’s access level was not changed: this page cannot show the confirmation that granting write access requires.');
+            return;
+          }
+          if (!ask(writeWarningText(fresh.settings))) return;
         }
 
         const saved = await deps.apiMutate('/api/config', 'PATCH', { master: { accessLevel: level } });

@@ -324,7 +324,9 @@ describe('#755 the access toggle is live, and paints only from server state', ()
       title: 'M',
       api,
       apiMutate,
-      confirm: (text) => { prompts.push(text); return opts.confirm !== false; }
+      confirm: opts.noConfirm
+        ? null
+        : (text) => { prompts.push(text); return opts.confirm !== false; }
     });
     bar.mount();
     const el = (suffix) => doc.getElementById(prefix + suffix);
@@ -567,6 +569,44 @@ describe('#755 the access toggle is live, and paints only from server state', ()
     await flush();
     assert.equal(calls.some((c) => c[0] === 'PATCH'), false);
     assert.equal(el('AccessRead').getAttribute('aria-pressed'), 'true', 'still read-only');
+  });
+
+  it('with no way to confirm, write is REFUSED rather than granted silently', async () => {
+    // The recurring defect of this whole issue, caught in this chunk's own code:
+    // `typeof ask === 'function' && !ask(...)` reads as "warn before granting
+    // write" and, with nothing to warn WITH, evaluates false and carries
+    // straight on to fleet-wide write access unconfirmed. A guard that fails by
+    // proceeding with the value it was computing is an allow.
+    //
+    // `global.confirm` is undefined here, which is what makes this reachable at
+    // all in a non-browser context — but the shape is wrong regardless of how
+    // often the branch is hit.
+    //
+    // THE MUTATION THIS CATCHES: folding the two checks back into one `&&`.
+    const { el, calls } = mountedBar({ statuses: [{ settings: settings() }], noConfirm: true });
+    el('AccessWrite').dispatch('click');
+    await flush();
+    assert.equal(calls.some((c) => c[0] === 'PATCH'), false,
+      'no confirmation available must mean no write');
+    assert.equal(el('AccessRead').getAttribute('aria-pressed'), 'true', 'still read-only');
+    assert.equal(el('Error').hidden, false, 'and the refusal is stated, not silent');
+  });
+
+  it('the same missing-confirmation path does NOT block the safe direction', async () => {
+    // Returning to read-only is never gated, so a page that cannot confirm must
+    // still be able to revoke. Denying both directions would leave a master
+    // stuck at write with no way back — the failure the fix above must not
+    // introduce while closing the one it targets.
+    //
+    // THE MUTATION THIS CATCHES: hoisting the confirmation-availability check
+    // out of the `level === 'write'` branch, which is the tidier-looking
+    // refactor and turns a safety fix into a lockout.
+    const { el, calls } = mountedBar({
+      statuses: [{ settings: settings({ accessLevel: 'write' }) }], noConfirm: true
+    });
+    el('AccessRead').dispatch('click');
+    await flush();
+    assert.equal(calls.some((c) => c[0] === 'PATCH'), true, 'revocation is always available');
   });
 
   it('a failed PATCH leaves the toggle where the server last put it, and says so', async () => {
