@@ -776,8 +776,21 @@ describe('readMasterIdentityFreshness — has the RUNNING Master read this? (#96
     fs.utimesSync(master.masterIdentityPath(home), past, past);
 
     master.refreshMasterIdentity({ home, enginesLib: { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' } });
-    assert.equal(fs.statSync(master.masterIdentityPath(home)).mtimeMs, past.getTime(),
-      'an ensure that changes nothing must not touch the identity mtime');
+    // Compared with a tolerance rather than exactly, because an exact comparison
+    // scores the host's clock plumbing instead of the contract. `utimesSync`
+    // hands the kernel a float of SECONDS, and a millisecond value that is not
+    // representable in that float comes back off by a fraction: ext4 stored
+    // 1787039343102 and returned 1787039343101.999, so CI went red on Linux
+    // while macOS — where the same 2000-value probe drifts on none of them —
+    // stayed green. The code under test never ran differently.
+    //
+    // The tolerance costs the assertion nothing. The mutation it exists to catch
+    // is an unconditional `writeFileSync`, which sets the mtime to NOW — 60s
+    // from `past` by construction above. Sub-millisecond and sixty seconds are
+    // not close together, so the guard still fails the moment the write returns.
+    const rewritten = fs.statSync(master.masterIdentityPath(home)).mtimeMs;
+    assert.ok(Math.abs(rewritten - past.getTime()) < 2,
+      `an ensure that changes nothing must not touch the identity mtime (got ${rewritten}, expected ~${past.getTime()})`);
   });
 
   it('a read that failed on a LIVE session is unknown, not "no such session"', () => {
