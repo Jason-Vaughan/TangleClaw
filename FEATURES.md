@@ -279,3 +279,10 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 ## TODO (auto-stubbed 2026-08-16)
 
 - **TBD** — touched in this session: `test/master-fleet-map.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-08-18)
+
+- **TBD** — touched in this session: `scripts/verify-update-beacon-restart.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/_api-helper-globals.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/master-guard-source.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/master-pane-frontend.test.js`. <!-- describe -->
