@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.7.0] - 2026-08-18
+
 ### Added
 
 - **The Master control bar can stop the Master (#968, #768 chunk 3).** `POST /api/master/kill` plus
@@ -440,6 +442,13 @@ All notable changes to TangleClaw are documented in this file.
   which is the #716 bug class exactly.
 
 ### Internal
+
+- **The README's two clone pins now name v5.7.0, and the gap that lets them rot is filed (#976).**
+  Both Quickstart snippets hardcode `--branch vX.Y.Z`, nothing parses them, and the wrap's version
+  step writes `version.json` and `CHANGELOG.md` only — so each release leaves the install
+  instruction pointing at the release before it. #965 found them six minor versions back and
+  proposed a source-scanning guard without filing it; cutting this release is the first time since
+  that the bump had to be done by hand, so the follow-up is now #976 rather than a PR-body aside.
 
 - **The identity-mtime guard stopped comparing filesystem timestamps exactly (#974).** It scored the
   host's clock plumbing rather than the contract, and it had `main` red from #970 onward:
