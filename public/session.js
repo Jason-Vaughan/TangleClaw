@@ -4734,7 +4734,11 @@ function bindEvents() {
     // The bar owns a status line, so a failed open is now VISIBLE rather than
     // console-only. Before this, a Master whose status fetch failed looked
     // exactly like a gear that does nothing.
-    onOpenError: (message) => { if (masterBar) masterBar.setError(message); }
+    onOpenError: (message) => { if (masterBar) masterBar.setError(message); },
+    // The gear and the bar are two controls for one setting, and on this
+    // surface the gear sits INSIDE the bar. A save here must move the toggle,
+    // or the operator watches it keep saying the old level.
+    onSaved: () => { if (masterBar) masterBar.loadAccess(); }
   });
   masterSettings.mount();
 

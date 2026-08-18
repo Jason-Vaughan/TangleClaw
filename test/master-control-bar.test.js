@@ -29,6 +29,33 @@ const UI = read('ui.js');
 const SESSION_JS = read('session.js');
 const SW = read('sw.js');
 
+/**
+ * A declaration plus its balanced body — a function, or a factory call's
+ * argument object.
+ *
+ * Brace-matched, never a fixed-size window or a cut to the next `\n}\n`. Both
+ * cheaper forms were tried in this file and both landed in the WRONG REGION: the
+ * newline cut matched the close of a shorter function two definitions earlier,
+ * and a 900-character window anchored on a bare identifier started at a COMMENT
+ * mentioning it, 300 characters before the call. Neither failed loudly — each
+ * asserted confidently about text nobody meant, one reporting a present thing as
+ * missing.
+ *
+ * @param {string} decl - Declaration or call text to find.
+ * @param {string} src - Source to slice from.
+ * @returns {string} The declaration plus its balanced body.
+ */
+function lift(decl, src) {
+  const start = src.indexOf(decl);
+  assert.notEqual(start, -1, `${decl} must exist`);
+  let depth = 0;
+  for (let i = src.indexOf('{', start); i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+  }
+  return assert.fail(`${decl} body must close`);
+}
+
 const G = loadApiHelperGlobals();
 
 describe('#768 one implementation, two surfaces', () => {
@@ -682,9 +709,8 @@ describe('#755 both surfaces drive the live toggle, and neither grows a timer', 
     // "the component supports it" is not the same as "both callers pass it".
     for (const [name, src, root] of [['ui.js', UI, "rootId: 'masterPanelBar'"],
       ['session.js', SESSION_JS, "rootId: 'masterDrawerBar'"]]) {
-      const at = src.indexOf(root);
-      assert.ok(at > -1, `${name} must mount the bar`);
-      const block = src.slice(at, at + 500);
+      const block = lift('window.tcCreateMasterControlBar({', src);
+      assert.ok(block.includes(root), `${name}'s bar must be the one at ${root}`);
       assert.match(block, /apiMutate/, `${name} must pass apiMutate to the bar`);
     }
   });
@@ -710,30 +736,6 @@ describe('#755 both surfaces drive the live toggle, and neither grows a timer', 
     assert.ok(landingAt < uiAt,
       'landing.js declares apiMutate; ui.js consumes it at top level, so it must load first');
   });
-
-  /**
-   * A function's declaration plus its balanced body.
-   *
-   * Brace-matched rather than sliced to the next `\n}\n`: the first version of
-   * this guard did exactly that, matched the close of a DIFFERENT and much
-   * shorter function two definitions earlier, and reported the poll refresh as
-   * missing when it was there. A cheap cut that lands in the wrong region does
-   * not fail loudly — it asserts confidently about text nobody meant.
-   *
-   * @param {string} decl - Declaration to find.
-   * @param {string} src - Source to slice from.
-   * @returns {string} Declaration plus balanced body.
-   */
-  function lift(decl, src) {
-    const start = src.indexOf(decl);
-    assert.notEqual(start, -1, `${decl} must exist`);
-    let depth = 0;
-    for (let i = src.indexOf('{', start); i < src.length; i++) {
-      if (src[i] === '{') depth++;
-      else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-    }
-    return assert.fail(`${decl} body must close`);
-  }
 
   it('the session page repaints the level on its EXISTING poll chain', () => {
     // Done-when 4: a flip in one session's bar reaches another's. The mechanism
@@ -778,6 +780,55 @@ describe('#755 both surfaces drive the live toggle, and neither grows a timer', 
       'it must paint the access controls from the status it already has');
     assert.doesNotMatch(body, /loadAccess/,
       'and must not issue a second /api/master/status for the same paint');
+  });
+
+  it('saving in the gear moves the toggle beside it', () => {
+    // The gear sits INSIDE the bar, so these are two controls for one setting
+    // visible in the same glance. Without this the operator saves `write` in the
+    // modal and watches the toggle two inches away keep saying READ, which reads
+    // as the save having failed.
+    //
+    // Asserted per page, because "the component supports a callback" is not the
+    // same as "both callers wire it" — and this is the surface pair #768 exists
+    // to stop drifting.
+    //
+    // THE MUTATION THIS CATCHES: adding `onSaved` to the component and wiring it
+    // on one page only, which is the exact shape of every defect #768 removed.
+    for (const [name, src] of [['ui.js', UI], ['session.js', SESSION_JS]]) {
+      const block = lift('window.tcCreateMasterSettings({', src);
+      assert.match(block, /onSaved:/, `${name} must pass onSaved`);
+      assert.match(block, /masterBar\.loadAccess\(\)/,
+        `${name}'s onSaved must repaint the bar's access controls`);
+    }
+  });
+
+  it('the settings component actually fires onSaved — and only when the save worked', async () => {
+    // The wiring test above reads SOURCE, which cannot tell a callback that
+    // fires from one that is merely passed. This drives the real component.
+    //
+    // THE MUTATION THIS CATCHES: moving the call outside the success branch, so
+    // a failed save repaints the bar and makes the failure look like a change.
+    /** @param {*} patchResult - What the PATCH resolves to. */
+    const save = async (patchResult) => {
+      let fired = 0;
+      const doc = {
+        getElementById: () => null,
+        querySelector: () => ({ value: 'write' })
+      };
+      const settings = G.tcCreateMasterSettings({
+        api: Object.assign(async () => null, { lastError: 'nope' }),
+        apiMutate: async () => patchResult,
+        esc: (v) => v,
+        buildEngineOptions: () => '',
+        state: { engines: [] },
+        document: doc,
+        onSaved: () => { fired++; }
+      });
+      await settings.save();
+      return fired;
+    };
+    assert.equal(await save({ ok: true }), 1, 'a successful save must notify the surface');
+    assert.equal(await save(null), 0, 'a failed save changed nothing, so it must notify nothing');
   });
 
   it('the segments meet the touch-target minimum the mobile Direction binds', () => {

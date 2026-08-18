@@ -3517,7 +3517,11 @@ const masterSettings = window.tcCreateMasterSettings({
   esc,
   buildEngineOptions,
   state,
-  onOpenError: (message) => { setMasterStatus('down', message, true); if (masterBar) masterBar.setError(message); }
+  onOpenError: (message) => { setMasterStatus('down', message, true); if (masterBar) masterBar.setError(message); },
+  // The gear and the bar are two controls for one setting, and on this
+  // surface the gear sits INSIDE the bar. A save here must move the toggle,
+  // or the operator watches it keep saying the old level.
+  onSaved: () => { if (masterBar) masterBar.loadAccess(); }
 });
 
 // The Master control bar. Same component the session drawer mounts, so the two

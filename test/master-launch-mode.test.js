@@ -122,7 +122,7 @@ async function save(fields) {
   // The toast text is part of the contract, not decoration: it is what tells
   // the operator the change is deferred to the next master start. Discarding
   // it here is what let that half of the fix ship unguarded.
-  const status = { saveMessage: null };
+  const status = { saveMessage: null, savedNotifications: 0 };
   const els = {
     masterEngineSelect: { value: fields.engine || '' },
     masterScopeSelect: { value: fields.scope || '' },
@@ -139,7 +139,12 @@ async function save(fields) {
     },
     apiMutate: async (_p, _m, body) => { sent = body; return { ok: true }; },
     api: { lastError: null },
-    _setMasterRulesStatus: (msg) => { status.saveMessage = msg; }
+    _setMasterRulesStatus: (msg) => { status.saveMessage = msg; },
+    // The factory hoists every dep to a bare local, so this sandbox has to model
+    // that scope. `onSaved` joined it in #755 chunk 3 — the bar repaints when the
+    // gear saves. Recorded rather than a bare no-op so the count is available to
+    // whoever needs it here later; this file's own subject is launch mode.
+    onSaved: () => { status.savedNotifications++; }
   };
   sandbox.window = sandbox;
   vm.createContext(sandbox);

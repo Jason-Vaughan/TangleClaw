@@ -1519,6 +1519,8 @@
    * @param {object} deps
    * @param {Function} deps.api - GET helper returning parsed JSON or null.
    * @param {Function} deps.apiMutate - Mutating helper (url, method, body).
+   * @param {Function} [deps.onSaved] - Called after a SUCCESSFUL settings save,
+   *   so the surface can repaint anything else showing the same facts.
    * @param {Function} deps.esc - HTML-escaping function.
    * @param {Function} deps.buildEngineOptions - (engineList, selectedId) => options HTML.
    * @param {object} [deps.state] - Carries `engines` for the engine picker.
@@ -1536,6 +1538,13 @@
     const buildEngineOptions = deps.buildEngineOptions;
     const state = deps.state || { engines: [] };
     const onOpenError = deps.onOpenError || function () {};
+    // Hoisted to a bare local, and defaulted to a no-op, for the reason every
+    // dep above it is: `saveMasterSettings` is LIFTED OUT of this closure and
+    // evaluated alone in a vm sandbox by `test/master-launch-mode.test.js`, so a
+    // `deps.` reference inside it is a ReferenceError there. The first shape of
+    // this reached for `deps.onSaved` directly and turned three passing tests
+    // red — the file's uniform hoisting is a contract, not a style.
+    const onSaved = deps.onSaved || function () {};
     const doc = deps.document || global.document;
     // Named `confirm` so the moved call sites below read exactly as they did on
     // the dashboard; injectable so a test can drive the eyes-open paths.
@@ -1898,6 +1907,21 @@
       const data = await apiMutate('/api/config', 'PATCH', { master: masterPatch });
       if (data) {
         _setMasterRulesStatus('Settings saved — engine, launch mode and scope apply on next master start', true);
+        // Tell the surface the level may have moved (#755 chunk 3). The bar and
+        // this modal are two controls for ONE setting, often visible at the same
+        // moment on the same screen — the gear sits IN the bar. Without this the
+        // operator saves `write` here and watches the toggle two inches away go
+        // on saying READ, which reads as the save having failed.
+        //
+        // A callback rather than this component reaching for the bar: the modal
+        // is mounted by both pages and must not know what else they render. It
+        // is also why the bar re-fetches instead of being handed the level —
+        // one source of truth for what is in force stays the server.
+        //
+        // Inside the success branch on purpose: a save that failed changed
+        // nothing, and repainting there would make a failed save look like it
+        // had done something.
+        onSaved();
       } else {
         _setMasterRulesStatus(api.lastError || 'Save failed', false);
       }
