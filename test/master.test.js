@@ -422,6 +422,54 @@ describe('getMasterStatus', () => {
 // hand-writing the two files. A hand-built fixture would encode this test's
 // belief about what the writer produces, and #755's recurring failure has been
 // exactly a fix and a test sharing a premise.
+describe('_looksEditedFrom — is this rule an EDIT of a superseded baseline?', () => {
+  // The detector that decides whether to tell the operator their Hard rule may
+  // now contradict the access level. It replaced a `startsWith(was.slice(0, 60))`
+  // prefix match, which missed the likeliest edit of all: rewording the OPENING
+  // of the sentence.
+  //
+  // Consequence of either error is one log line, so a rough word-bag threshold is
+  // the right tool rather than a diff — but "cheap" is not "untested", and this
+  // was the one function in its commit with no guard.
+  const WAS = 'Read-only. Use only GET endpoints and never mutate any project you do not own.';
+
+  it('matches an edit that reworded the OPENING — the case the prefix match missed', () => {
+    // THE MUTATION THIS CATCHES: reverting to `startsWith(was.slice(0, 60))`,
+    // which is green for a trailing edit and blind to this one.
+    assert.equal(
+      master._looksEditedFrom('Mostly read-only. Use only GET endpoints and never mutate any project you do not own.', WAS),
+      true);
+  });
+
+  it('matches an edit to the tail, which the prefix match already caught', () => {
+    assert.equal(
+      master._looksEditedFrom(WAS + ' Ask me before anything else.', WAS), true);
+  });
+
+  it('does NOT match an unrelated operator rule', () => {
+    // The other direction, and the one that would make the notice noise: a rule
+    // sharing a handful of common words must not read as an edit.
+    //
+    // THE MUTATION THIS CATCHES: dropping the threshold toward zero, which makes
+    // every rule an "edit" and puts the notice in front of everyone.
+    for (const other of [
+      'Always use the project group scope when summarising status.',
+      'Never start a session on a project you do not own.',
+      ''
+    ]) {
+      assert.equal(master._looksEditedFrom(other, WAS), false, `must not match: ${other}`);
+    }
+  });
+
+  it('an empty superseded text matches nothing, rather than everything', () => {
+    // A zero-length original makes `kept / original.length` a divide-by-zero that
+    // evaluates NaN — and `NaN >= 0.66` is false, so it happens to be safe. Pinned
+    // because "happens to be safe" is not a property, and the guard clause that
+    // makes it deliberate is the thing under test.
+    assert.equal(master._looksEditedFrom('anything at all', ''), false);
+  });
+});
+
 describe('readMasterGuardPosture — a degraded guard is visible (#755 chunk 3, R-15)', () => {
   const STRUCTURAL = { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' };
   const INSTRUCTIONAL = { resolveDefaultEngine: () => 'gemini', reconcileLaunchMode: () => 'default' };

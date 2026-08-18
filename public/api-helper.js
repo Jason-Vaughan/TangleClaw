@@ -2455,7 +2455,17 @@
         const tag = TC_MASTER_GUARD_DEGRADED[settings.guardDegradedCode];
         setWarning((tag ? tag + ' — ' : '') + settings.guardDegradedReason);
       } else if (pending) {
-        setWarning('This engine carries the access level in the master’s instructions rather than a write guard, so a change here applies the next time the master session starts.');
+        // THREE states, not two — the same split `bindsAt` and `writeWarningText`
+        // make, and for the same reason. `pending` is true both when the server
+        // SAID `next-ensure` and when the field is absent (payload skew), and
+        // only the first of those licenses naming the mechanism. Printing the
+        // instructional sentence on an absent field tells a Claude master it has
+        // no write guard, which is the false claim R-6 removed from the other two
+        // call sites — and this branch reintroduced it two functions away, which
+        // is what "one call site is not the family" looks like in practice.
+        setWarning(settings.levelAppliesAt === 'next-ensure'
+          ? 'This engine carries the access level in the master’s instructions rather than a write guard, so a change here applies the next time the master session starts.'
+          : 'A change here applies the next time the master session starts.');
       } else {
         setWarning('');
       }

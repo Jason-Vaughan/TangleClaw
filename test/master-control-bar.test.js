@@ -538,6 +538,30 @@ describe('#755 the access toggle is live, and paints only from server state', ()
     assert.equal(el('Warn').hidden, true);
   });
 
+  it('a pending warning with no stated mechanism does not invent one', () => {
+    // `pending` is true both when the server SAID `next-ensure` and when the
+    // field is ABSENT (payload skew — a cached client against an older server).
+    // Only the first licenses naming the mechanism. Printing the instructional
+    // sentence on an absent field tells a Claude master it has no write guard,
+    // which is the false claim removed from the modal hint and the confirmation
+    // in the same commit — and this branch reintroduced it two functions away.
+    //
+    // THE MUTATION THIS CATCHES: collapsing the two back into one sentence.
+    const { bar, el } = mountedBar();
+    const skewed = settings();
+    delete skewed.levelAppliesAt;
+    bar.setAccess(skewed);
+    assert.equal(el('Access').classList.contains('is-pending'), true,
+      'absence is still cautious about WHEN');
+    assert.doesNotMatch(el('Warn').textContent, /rather than a write guard/,
+      'but must not assert a mechanism the payload did not state');
+    assert.match(el('Warn').textContent, /next time the master session starts/);
+
+    bar.setAccess(settings({ enforcement: 'instructional', levelAppliesAt: 'next-ensure' }));
+    assert.match(el('Warn').textContent, /rather than a write guard/,
+      'a STATED instructional binding does explain the mechanism');
+  });
+
   it('a degraded guard outranks a pending one in the single warning line', () => {
     // Both conditions can hold at once and there is one line. "Nothing is
     // enforcing" is not softened by "and it would arrive at the next start", so
