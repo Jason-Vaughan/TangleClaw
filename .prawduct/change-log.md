@@ -26,6 +26,52 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-18 — #968: a level change reaches the Master, and the bar says when it has not
+
+<!-- prawduct: type=bugfix | scope=master-level-takes-effect-968 | chunks=01,02 -->
+
+The first real use of #755 found it: the toggle moved, the guard permitted the write, and the Master
+refused anyway. It was refusing itself — the change path refreshed the guard and not the identity, so
+the Master read `read-only` from month-old instructions and never attempted the write the guard was
+waiting to allow.
+
+Three things generalise:
+
+- **"One call site is not the family" applies to ARTIFACTS, not just code sites.** #755 chunk 1 made
+  the guard immediate and chunk 2 put the level into the identity; the change path refreshed one of
+  the two, and every test in the suite read one of the artifacts that WAS being written. The fix was
+  to delete the partial refresher rather than add a third write to it.
+- **A detector that fires on the healthy path is worse than no detector.** The first shape of the
+  staleness check compared the identity's mtime to the session start — and the identity was rewritten
+  unconditionally on every ensure, which both surfaces fire on drawer open. It would have shown
+  "restart to apply" permanently, which is the exact permanent nag the ruling behind it rejected.
+  Caught by review, not by me. Write-if-changed; the mtime is load-bearing, so not touching it is
+  part of the contract.
+- **Verify a mechanism before offering it as an option.** The tmux session-start comparison was
+  probed before it was put to the operator as a choice, and the probe found more than the bug: the
+  live Master had been running a month against instructions rewritten the day before, so *nothing*
+  regenerated in that month had reached it.
+
+Also learned: `tmux display-message` does not fail on an absent session — it answers for the attached
+client — so an exact-match target cannot protect it and the caller must check existence separately.
+The codebase already documented this at one call site; the new one repeated the mistake. It cannot be
+held behaviourally in a headless run (no attached client to fall back to), so a source-level guard
+holds it, and the guard had to strip comments first because both callers explain the hazard in prose
+directly above the check.
+
+**Chunk 2 — Master Kill (also #768 chunk 3).** `POST /api/master/kill` plus the bar's Kill button,
+which shipped dim from #768 waiting for this route. It is the remedy chunk 1 makes load-bearing: the
+guard binds a level change at once, the running Master does not, so restarting it is what makes it
+act. Killing an absent Master is SUCCESS — the operator's intent is "not running" and it already
+holds — while a tmux that will not answer refuses, because a kill that could not be confirmed is not
+a kill, and `hasSession` would have flattened that wedge into "already stopped" during exactly the
+condition where the Master is most likely still running. `kill` leaving `tcMasterPendingReasons` is
+the assertion that the pending treatment came off WITH the backend rather than beside it — the same
+pattern `access` set in #755.
+
+**Classification:** bugfix
+
+
 ## 2026-08-17 — #755: the Master's access level becomes real (chunks 1–3)
 
 <!-- prawduct: type=feat | scope=master-access-level-755 | chunks=01,02,03 -->

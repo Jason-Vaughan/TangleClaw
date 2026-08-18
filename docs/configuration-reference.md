@@ -53,8 +53,11 @@ Master's control bar.
 
 **Enforcement is engine-dependent, and the difference is real.** On the Claude engine the level is
 STRUCTURAL: a generated `PreToolUse` hook reads it from `<master home>/.access-level` on every tool
-call, so a change binds on the Master's next write attempt with no restart, and every way of failing
-to read it degrades to read-only. On every other engine it is INSTRUCTIONAL — the level is prose in
+call, so the GUARD applies a change on the Master's next write attempt, and every way of failing to
+read it degrades to read-only. **The running Master is a separate question:** it reads its own
+instructions once, at launch, so it keeps acting on the level it started with until it restarts —
+the guard will permit a write the Master itself still believes it may not make. Restart the Master
+after changing this. On every other engine it is INSTRUCTIONAL — the level is prose in
 the regenerated identity, so it arrives at the next master start and nothing structurally enforces
 it. `GET /api/master/status` reports which of the two is running, and both the control bar and the
 settings modal show it, so the weaker case is never displayed as the stronger one.

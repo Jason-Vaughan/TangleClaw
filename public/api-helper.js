@@ -1593,7 +1593,7 @@
       // false: there IS a write guard. An absent field must never ship as a
       // claim about the engine, so the unknown case says only the cautious WHEN.
       const bindsAt = s.levelAppliesAt === 'next-tool-call'
-        ? 'Takes effect on the master’s next tool call — no restart.'
+        ? 'The write guard applies it on the master’s next tool call. The running master keeps the instructions it started with until it restarts, so restart it for the master itself to act on the change.'
         : s.levelAppliesAt === 'next-ensure'
           ? 'Takes effect the next time the master session starts, since this engine carries the level in its instructions rather than a write guard.'
           : 'Takes effect the next time the master session starts.';
@@ -2069,8 +2069,11 @@
     // than being left beside a live control, which is the worst of both (a
     // reason for an absence that is not absent).
     upload: 'Uploads resolve through a registered project, and the Master is not one.',
-    wrap: "Wrap is a git pipeline and the Master has no checkout — what it should mean here isn't decided yet.",
-    kill: 'The Master API has no kill route yet.'
+    // `kill` left this table when `POST /api/master/kill` landed (#968), for the
+    // same reason `access` did: a reason rendered beside a working control is its
+    // own falsehood, and the entry's REMOVAL is what proves the pending treatment
+    // came off WITH the backend rather than beside it.
+    wrap: "Wrap is a git pipeline and the Master has no checkout — what it should mean here isn't decided yet."
   };
 
   /**
@@ -2094,6 +2097,25 @@
     'level-unreadable': 'READ-ONLY',
     'level-mismatch': 'MISMATCH'
   };
+
+  /**
+   * A short, local date for a timestamp the operator has to act on.
+   *
+   * Full ISO in a one-line warning is noise; the day is the part that makes
+   * "started before these instructions" concrete. Falls back to the raw value
+   * rather than throwing, because a warning that cannot render is worse than one
+   * that renders awkwardly.
+   *
+   * @param {string} iso - ISO timestamp.
+   * @returns {string} e.g. `17 Jul`.
+   */
+  function _tcShortDate(iso) {
+    try {
+      return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+    } catch (err) {
+      return String(iso);
+    }
+  }
 
   /**
    * The access toggle's segments — the ONE place a segment and the level it
@@ -2186,7 +2208,8 @@
       <button class="banner-btn" id="${p}SettingsBtn"
               aria-label="Master settings" title="Master settings">&#9881;</button>
       ${pend('Wrap', 'banner-btn btn-wrap', 'Wrap')}
-      ${pend('Kill', 'banner-btn btn-kill', 'Kill')}
+      <button type="button" class="banner-btn btn-kill" id="${p}KillBtn"
+              title="Stop the Master session. Its memory/ files survive; the conversation does not.">Kill</button>
       <span class="master-bar-error" id="${p}Error" role="status" hidden></span>
       <span class="master-bar-warn" id="${p}Warn" role="status" hidden></span>`;
   }
@@ -2255,6 +2278,8 @@
         const seg = el(spec.suffix);
         if (seg) seg.addEventListener('click', () => flip(spec.level));
       }
+      const kill = el('KillBtn');
+      if (kill) kill.addEventListener('click', killMaster);
       // Establish the resting state in CODE rather than leaning on the markup's
       // attributes. The component then owns its own initial appearance, which
       // means one source for "what does this say before anything answers"
@@ -2451,9 +2476,25 @@
       // nothing, where an operator reads "broken" or "read-only" at random.
       if (!settings) {
         setWarning('The Master’s status could not be read, so its access level is unknown — the toggle is inactive until it answers.');
+      } else if (settings.identityStale === true) {
+        // Ranked ABOVE the guard posture on purpose. A degraded guard is a
+        // boundary that is not holding; a stale identity is the Master not
+        // acting on the level at all — which is the state an operator hits
+        // first, and the one that reads as "the toggle did nothing" (#968).
+        // The date is what makes it actionable rather than a shrug: a session
+        // started weeks ago has missed every rule and scope change since.
+        setWarning('NOT IN EFFECT — the running Master started before these instructions were written'
+          + (settings.identityWrittenAt ? ` (${_tcShortDate(settings.identityWrittenAt)})` : '')
+          + ', and reads them only at launch. Restart it to apply.');
       } else if (settings.guardDegraded) {
         const tag = TC_MASTER_GUARD_DEGRADED[settings.guardDegradedCode];
         setWarning((tag ? tag + ' — ' : '') + settings.guardDegradedReason);
+      } else if (settings.identityStale === null) {
+        // BELOW `guardDegraded`, deliberately. An UNKNOWN must never suppress a
+        // CONFIRMED "nothing is enforcing" — the first ordering here put this
+        // branch above it, so a tmux that would not answer hid a boundary that
+        // was measurably absent. Unknown outranks only the healthy states.
+        setWarning('Could not confirm the running Master has picked up its current instructions — tmux did not answer.');
       } else if (pending) {
         // THREE states, not two — the same split `bindsAt` and `writeWarningText`
         // make, and for the same reason. `pending` is true both when the server
@@ -2492,7 +2533,7 @@
       // Same three states as the modal's hint, and for the same reason: the
       // unknown case must not assert a mechanism. See `bindsAt` above.
       const binds = settings && settings.levelAppliesAt === 'next-tool-call'
-        ? 'It binds on the Master’s next tool call — no restart.'
+        ? 'The write guard binds on the Master’s next tool call. The RUNNING Master keeps the instructions it started with, so restart it or it will go on refusing writes it is now allowed to make.'
         : settings && settings.levelAppliesAt === 'next-ensure'
           ? 'It arrives the next time the master session starts, since this engine carries the level in its instructions rather than a write guard.'
           : 'It arrives the next time the master session starts.';
@@ -2606,6 +2647,85 @@
         const btn = el(spec.suffix);
         if (btn) btn.disabled = on || !access || !access.accessLevel;
       }
+      // Kill too. It shares the same in-flight latch, so leaving it pressable
+      // meant the latch silently did the work a disabled control should be
+      // doing — and the operator got no feedback that the first press was
+      // still running. Unlike the segments it does not depend on a known level:
+      // stopping a Master whose status could not be read is still meaningful.
+      const kill = el('KillBtn');
+      if (kill) kill.disabled = on;
+    }
+
+    /**
+     * Stop the Master session.
+     *
+     * The remedy the access toggle needs: a level change binds on the guard at
+     * once, but the running Master reads its instructions only at launch, so it
+     * has to restart before it will ACT on the new level (#968). The bar says
+     * when that is true; this is the control that fixes it.
+     *
+     * Confirmed, because it is destructive and GLOBAL — there is exactly one
+     * Master, so this stops it for every session drawer and the dashboard, not
+     * just this surface. The confirmation names what is lost and what is not:
+     * the Master's durable notes under `memory/` are a data directory and
+     * survive; the conversation does not, which is the point of restarting.
+     *
+     * Repaints the ACCESS controls from server state afterwards, never from the
+     * click — the same rule the toggle follows. The status line and dot are
+     * painted here directly, because `loadAccess` only reaches `setAccess`; an
+     * earlier version of this sentence claimed the whole bar repainted, which
+     * was not true of either.
+     *
+     * @returns {Promise<void>}
+     */
+    async function killMaster() {
+      if (busy || !deps.apiMutate) return;
+      busy = true;
+      setBusy(true);
+      try {
+        setError('');
+        const ask = deps.confirm || global.confirm;
+        // NO CONFIRMATION MEANS NO KILL. The same fail-closed shape the write
+        // grant uses: a check written as `typeof ask === 'function' && !ask(...)`
+        // reads as "confirm before stopping it" and stops it silently when there
+        // is nothing to confirm with.
+        if (typeof ask !== 'function') {
+          setError('The Master was not stopped: this page cannot show the confirmation that requires.');
+          return;
+        }
+        if (!ask('Stop the Project Master?\n\n'
+          + 'There is exactly one Master, so this stops it EVERYWHERE — every session drawer and '
+          + 'the dashboard.\n\n'
+          + 'Its durable notes under memory/ survive. The conversation it is holding does not — '
+          + 'which is what restarting it is for. Reopening the drawer starts it again.')) return;
+
+        const result = await deps.apiMutate('/api/master/kill', 'POST', {});
+        if (!result) {
+          setError((deps.api && deps.api.lastError) || 'The Master could not be stopped.');
+          return;
+        }
+        // Worded from `killed`, not `wasRunning`, and this is DEFENSIVE rather than
+        // load-bearing — said plainly because a comment claiming otherwise would
+        // be the kind of false confidence this issue is about. Under the route's
+        // current contract the two cannot differ in a 200: a confirmed kill is
+        // `{killed: true, wasRunning: true}`, an absent master is both false, and
+        // the case where they diverge — running, but tmux would not confirm — is
+        // a 500 that lands in the error branch above and never reaches here.
+        // Mutating this line therefore changes nothing observable, which was
+        // measured, not assumed. It reads from `killed` anyway because that is
+        // the field that MEANS "this call stopped it", so a future 200 carrying
+        // an unconfirmed kill would word itself correctly instead of quietly.
+        // The property that IS testable — a refusal never reading as a stop — is
+        // pinned by 'an UNCONFIRMED kill is not reported as "Master stopped"'.
+        setStatus('', result.killed ? 'Master stopped' : 'Master was not running', true);
+        // From the server, not from the fact that a kill returned 200 — the same
+        // discipline as the toggle. A repaint is also how the stale-identity
+        // warning clears, since a fresh session reads the current instructions.
+        await loadAccess();
+      } finally {
+        busy = false;
+        setBusy(false);
+      }
     }
 
     /**
@@ -2644,7 +2764,7 @@
       setModel(st, engineId);
     }
 
-    return { mount, setStatus, setModel, setError, setWarning, setAccess, loadAccess, loadModel };
+    return { mount, setStatus, setModel, setError, setWarning, setAccess, loadAccess, loadModel, killMaster };
   }
 
   global.tcSetRulesStatus = tcSetRulesStatus;

@@ -931,16 +931,30 @@ describe('API endpoints', () => {
 
         // The other failure class must NOT claim that. Once the level file is
         // written the guard reads it per tool call, so the new level IS in
-        // force and only the guard restoration is in doubt — saying "still
+        // force and only the refresh that follows is in doubt — saying "still
         // enforcing read-only" there would be the false-reassurance direction.
-        const late = new Error('guard write failed');
+        //
+        // The message stopped naming the write guard specifically when
+        // `levelApplied` widened (#968): the flag now covers the identity write
+        // and the memory scaffold too, and a failure at either is far likelier
+        // than at the guard. A message that named only the guard would send the
+        // operator looking at the one artifact that is probably fine.
+        const late = new Error('identity write failed');
         late.levelApplied = true;
         master.applyMasterAccessLevel = () => { throw late; };
         const second = await request(server, 'PATCH', '/api/config', { master: { accessLevel: 'write' } });
         assert.equal(second.status, 500);
         assert.doesNotMatch(second.data.error, /still enforcing/);
         assert.match(second.data.error, /is now "write"/);
-        assert.match(second.data.error, /guard could not be re-provisioned/);
+        assert.match(second.data.error, /refresh that should have followed it did not finish/);
+        // A `doesNotMatch(/^[^]*only[^]*write guard/)` sat here and was VACUOUS:
+        // it required a literal "only" before "write guard", which the old
+        // message never contained, so it passed against the exact wording it
+        // claimed to ban. Removed rather than repaired — the positive assertion
+        // above already fails on a revert, and a guard that looks like a second
+        // check while testing nothing is worse than one fewer check.
+        assert.match(second.data.error, /Restart the master session/,
+          'and it must say what to do about it');
       } finally {
         // Order matters, and getting it wrong is what the neighbouring comment
         // warns about: the cleanup PATCH still carries a CHANGED level, so with

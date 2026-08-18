@@ -810,6 +810,124 @@ describe('tmux', () => {
       });
     });
 
+    it('should check existence before every display-message, since -t cannot', () => {
+      // STRUCTURAL, and deliberately so — the behavioural test below CANNOT hold
+      // this. `display-message` falls back to the ATTACHED CLIENT's session, and
+      // a headless test run has no attached client, so removing the existence
+      // check leaves that test green. Measured: the guard was mutated away and
+      // the behavioural assertions did not move.
+      //
+      // Same reasoning as this file's `-t` site sweep two tests down — reading
+      // the source is the only way to hold a property whose misuse is silent.
+      //
+      // THE MUTATION THIS CATCHES: dropping the `probeSession`/`hasSession` check
+      // from any display-message caller, which is the exact #968 defect.
+      // Comments STRIPPED first. Both callers explain the hazard in prose
+      // directly above the guard, so scanning raw source finds the word
+      // `display-message` before the check and reports a correctly-guarded
+      // function as unguarded — which is what the first version of this test
+      // did. A guard that reads documentation as implementation cannot be
+      // trusted in either direction.
+      const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'tmux.js'), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
+      const callers = [...src.matchAll(/function (\w+)\(([\s\S]*?)\n\}/g)]
+        .filter(([body]) => /display-message/.test(body));
+      assert.ok(callers.length >= 2,
+        `expected the display-message callers to be found, got ${callers.length}`);
+      for (const [body, name] of callers) {
+        const at = body.indexOf('display-message');
+        const before = body.slice(0, at);
+        assert.match(before, /hasSession\(|probeSession\(/,
+          `${name}() must establish the session exists BEFORE display-message — `
+          + 'that command answers for the attached client instead of failing');
+      }
+    });
+
+    it('should use an injected probe instead of asking tmux again', () => {
+      // The other half of the spawn fix. Its caller already asked this exact
+      // question, and re-asking spawns another tmux on an install whose
+      // recurring failure is running out of PTYs.
+      //
+      // Driven with a probe that says NOT LIVE for a session that really IS
+      // live: if the injected probe were ignored, the real one would answer live
+      // and a timestamp would come back. The answer proves which was used.
+      //
+      // THE MUTATION THIS CATCHES: dropping `options.probe ||`.
+      withNeighbour(() => {
+        const answer = tmux.sessionCreatedAt(longer, {
+          probe: { live: false, answered: true, cause: null }
+        });
+        assert.equal(answer.createdAt, null,
+          'the injected probe must be believed over a fresh one');
+      });
+    });
+
+    it('should name a cause when a LIVE session\'s timestamp read fails', () => {
+      // STRUCTURAL, for the same reason the existence check above is: the branch
+      // needs `has-session` to succeed and `display-message` to fail without
+      // timing out, which cannot be arranged from a test without racing a kill
+      // between the two calls.
+      //
+      // It matters because the bare negative shape — `answered: true`,
+      // `createdAt: null`, no cause — means "no such session" to every caller,
+      // and a live session whose read failed is not that. Its consumer treats a
+      // named cause as unknown; an unnamed one would read as "nothing to be
+      // stale about".
+      //
+      // THE MUTATION THIS CATCHES: returning `cause: null` from that catch.
+      const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'tmux.js'), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
+      const fn = src.slice(src.indexOf('function sessionCreatedAt'));
+      const body = fn.slice(0, fn.indexOf('\n}'));
+      // The CATCH block specifically. A whole-function scan is satisfied by the
+      // `unparseable` return — which is also an answered-negative with a cause —
+      // so it passed while the catch was mutated back to a bare null. Measured.
+      const catchAt = body.indexOf('} catch (err) {');
+      assert.notEqual(catchAt, -1, 'the failed-read catch must still exist');
+      const catchBody = body.slice(catchAt);
+      const answered = [...catchBody.matchAll(/answered: true, cause: ([^ }]+)/g)].map((m) => m[1]);
+      assert.equal(answered.length, 1,
+        `expected exactly one answered-negative return in the catch, got ${answered.length}`);
+      assert.notEqual(answered[0], 'null',
+        'the failed-read return must name a cause, or it is indistinguishable from "no such session"');
+    });
+
+    it('should not report an absent session\'s creation time from a neighbour', () => {
+      // THE REGRESSION THIS EXISTS FOR: `display-message` does not fail on an
+      // absent session — it answers for the attached client — so without an
+      // explicit existence check `sessionCreatedAt` hands back SOME OTHER
+      // session's start time. Its caller compares that against a file's mtime to
+      // decide whether a running process has read the file, so a borrowed
+      // timestamp is not a wrong number, it is a confident wrong answer.
+      //
+      // NOTE what this does and does not prove. It pins the answer for an absent
+      // session in a headless run. It does NOT reproduce the attached-client
+      // fallback — mutating the existence guard away leaves this green, which was
+      // measured rather than assumed — so the structural guard above is what
+      // actually holds that property.
+      withNeighbour(() => {
+        const answer = tmux.sessionCreatedAt(base);
+        assert.equal(answer.answered, true, 'tmux ran and gave a real negative');
+        assert.equal(answer.createdAt, null,
+          `sessionCreatedAt('${base}') must not borrow '${longer}'s start time`);
+      });
+    });
+
+    it('should report a real session\'s creation time', () => {
+      // The positive control. Without it, a function that always returned
+      // `{createdAt: null}` would pass the negative above.
+      withNeighbour(() => {
+        const answer = tmux.sessionCreatedAt(longer);
+        assert.equal(answer.answered, true);
+        assert.equal(typeof answer.createdAt, 'number');
+        const skew = Math.abs(Date.now() / 1000 - answer.createdAt);
+        assert.ok(skew < 600,
+          `a session created moments ago must report a recent timestamp, got skew ${skew}s`);
+      });
+    });
+
     it('should refuse to capture a prefix-matched neighbour', () => {
       withNeighbour(() => {
         assert.throws(
@@ -832,7 +950,12 @@ describe('tmux', () => {
 
       // An exact floor, not a lower bound: a site DISAPPEARING is as much a
       // regression as one losing its wrapper, and `>=` would wave that through.
-      assert.equal(targets.length, 20, `expected 20 -t sites in lib/tmux.js, found ${targets.length}`);
+      // 21 since #968 added `sessionCreatedAt`, which reads a live session's start
+      // time so a caller can tell whether that session predates a file it only
+      // reads at launch. Bumping this number is the acknowledgement the tripwire
+      // asks for — it fired correctly, and the `_target` loop below already
+      // confirmed the new site is wrapped.
+      assert.equal(targets.length, 21, `expected 21 -t sites in lib/tmux.js, found ${targets.length}`);
       for (const expr of targets) {
         assert.match(
           expr,

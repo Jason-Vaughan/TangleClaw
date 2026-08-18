@@ -355,8 +355,36 @@ describe('C1 — per-project plugin migration (#262)', () => {
     it('THROWS rather than executing a non-literal value', () => {
       // literal_eval, not eval: a computed reference is unreadable BY DESIGN,
       // and unreadable must surface as a failure rather than run.
+      //
+      // Asserted by a CANARY, not by a message. The previous version matched
+      // Python's `ValueError: malformed node`, which only reaches this
+      // assertion if the child's stderr is appended to the thrown Error — and
+      // whether it is depends on the Node build, not on the code under test. It
+      // failed on a developer machine while passing in CI (#969), and the worse
+      // half is the other direction: a guard pinned to host plumbing can go
+      // GREEN while the refusal it names is gone.
+      //
+      // What this CAN assert is the refusal. What it cannot assert, and a first
+      // attempt here wrongly did, is "it did not execute": the reader hands
+      // `literal_eval` an AST NODE, and swapping in `eval` raises on a node
+      // rather than running it, so a side-effect canary stays clean either way.
+      // That mutation was run and came back GREEN — the canary measured nothing,
+      // which is worse than not having one, so it is gone rather than shipped as
+      // reassurance.
+      // AND THIS ASSERTION IS ITSELF WEAK — measured, not assumed. Making the
+      // reader lenient (catch the ValueError and emit `{}`) also leaves this
+      // GREEN, because the caller throws downstream for a different reason. The
+      // mutated snippet was compile-checked first, so that is a real miss and not
+      // a broken mutation.
+      //
+      // Left as the honest floor rather than dressed up: it pins that a computed
+      // reference does not sail through, and nothing more. Asserting WHICH
+      // failure needs the reader to raise a typed refusal instead of letting a
+      // subprocess error escape, which is a change to the helper rather than to
+      // its test. #969 carries it.
       const f = write('computed.py', 'import os\nINSTALL_REFERENCE = os.environ.copy()\n');
-      assert.throws(() => extractUpstreamInstallReference(f), /ValueError: malformed node/);
+      assert.throws(() => extractUpstreamInstallReference(f),
+        'a computed reference must be refused, not returned');
     });
   });
 

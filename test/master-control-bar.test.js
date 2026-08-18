@@ -19,6 +19,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { spawnSync } = require('node:child_process');
 const loadApiHelperGlobals = require('./_api-helper-globals');
 const { makeDocument, withIdParsingInnerHTML } = require('./_mini-dom');
 
@@ -128,7 +129,7 @@ describe('#768 controls with no backend are absent WITH a reason', () => {
     // The rule from #755/#741: never present-and-inert. A disabled control that
     // states why is the honest middle — the operator sees the bar's final shape
     // without being able to press something that would do nothing.
-    for (const key of ['Upload', 'Wrap', 'Kill']) {
+    for (const key of ['Upload', 'Wrap']) {
       const m = new RegExp(`<button[^>]*id="masterPanel${key}Btn"[^>]*>`).exec(bar);
       assert.ok(m, `${key} must render`);
       // A STANDALONE attribute, not `\bdisabled\b` — that also matches inside
@@ -148,7 +149,7 @@ describe('#768 controls with no backend are absent WITH a reason', () => {
     // it is a live control rather than an absence needing a reason. Removing it
     // here is not weakening the guard: the rule is about controls with NO route,
     // and a reason rendered beside a working control is its own falsehood.
-    for (const key of ['Upload', 'Wrap', 'Kill', 'Medusa']) {
+    for (const key of ['Upload', 'Wrap', 'Medusa']) {
       assert.match(bar, new RegExp(`aria-describedby="masterPanel${key}Why"`),
         `${key} must reference a description`);
       assert.match(bar, new RegExp(`id="masterPanel${key}Why"`),
@@ -172,8 +173,11 @@ describe('#768 controls with no backend are absent WITH a reason', () => {
     // control that works must not still carry an explanation for why it cannot.
     // This list shrinking is how a shipped backend is proved to have taken the
     // pending treatment WITH it, rather than beside it.
+    // `kill` is GONE (#968) alongside `access` (#755). Each removal is the
+    // assertion that a shipped backend took its control's pending treatment WITH
+    // it rather than leaving a reason beside a working button.
     assert.deepEqual(Object.keys(G.tcMasterPendingReasons).sort(),
-      ['kill', 'medusa', 'upload', 'wrap']);
+      ['medusa', 'upload', 'wrap']);
   });
 });
 
@@ -320,7 +324,9 @@ describe('#755 the access toggle is live, and paints only from server state', ()
     guardLevel: 'read-only',
     guardDegraded: false,
     guardDegradedCode: null,
-    guardDegradedReason: null
+    guardDegradedReason: null,
+    identityStale: false,
+    identityWrittenAt: null
   }, over || {});
 
   /**
@@ -562,6 +568,85 @@ describe('#755 the access toggle is live, and paints only from server state', ()
       'a STATED instructional binding does explain the mechanism');
   });
 
+  it('a stale identity says the change is NOT IN EFFECT, and when it was written (#968)', () => {
+    // The bug the operator hit: the toggle moved, the guard permitted the write,
+    // and the Master went on refusing because it reads its instructions only at
+    // launch. The bar has to say that, or the toggle looks like it did nothing.
+    //
+    // THE MUTATION THIS CATCHES: rendering only the guard posture and ignoring
+    // identityStale — which is the shipped behaviour this fixes, and which every
+    // other assertion in this file allows.
+    const { bar, el } = mountedBar();
+    bar.setAccess(settings({
+      accessLevel: 'write',
+      identityStale: true,
+      identityWrittenAt: '2026-07-17T12:00:00.000Z'
+    }));
+    assert.equal(el('Warn').hidden, false);
+    assert.match(el('Warn').textContent, /NOT IN EFFECT/);
+    assert.match(el('Warn').textContent, /Restart it to apply/);
+    assert.match(el('Warn').textContent, /Jul/,
+      'and it names WHEN, so the operator can see how far behind the Master is');
+  });
+
+  it('a stale identity outranks a degraded guard — it is the state hit first', () => {
+    // Both can hold at once and there is one line. A degraded guard is a
+    // boundary not holding; a stale identity is the Master not acting on the
+    // level at all, which is what reads as "the toggle did nothing".
+    //
+    // THE MUTATION THIS CATCHES: ordering guardDegraded first, which hides the
+    // reason the operator is actually looking at the bar.
+    const { bar, el } = mountedBar();
+    bar.setAccess(settings({
+      identityStale: true,
+      guardDegraded: true,
+      guardDegradedCode: 'guard-missing',
+      guardDegradedReason: 'nothing is bounding this master'
+    }));
+    assert.match(el('Warn').textContent, /NOT IN EFFECT/);
+  });
+
+  it('an unconfirmable identity says so rather than reassuring', () => {
+    // tmux did not answer. The #905 discipline again: silence here would render
+    // "all good" from a read that never happened.
+    //
+    // THE MUTATION THIS CATCHES: treating null like false, which is the tidier
+    // two-state version and goes quiet during exactly the tmux wedge this
+    // install hits.
+    const { bar, el } = mountedBar();
+    bar.setAccess(settings({ identityStale: null }));
+    assert.equal(el('Warn').hidden, false);
+    assert.match(el('Warn').textContent, /Could not confirm/);
+  });
+
+  it('a confirmed "not enforced" outranks an unconfirmable identity', () => {
+    // Both are non-healthy and there is one line. An UNKNOWN must never suppress
+    // a CONFIRMED absence — the first ordering here put the unknown branch above
+    // the guard posture, so a tmux that would not answer hid a boundary that was
+    // measurably gone.
+    //
+    // THE MUTATION THIS CATCHES: ranking `identityStale === null` above
+    // `guardDegraded`, which was the shipped ordering and which no test held.
+    const { bar, el } = mountedBar();
+    bar.setAccess(settings({
+      identityStale: null,
+      guardDegraded: true,
+      guardDegradedCode: 'guard-missing',
+      guardDegradedReason: 'nothing is bounding this master'
+    }));
+    assert.match(el('Warn').textContent, /nothing is bounding/,
+      'the measured absence is what the operator must see');
+    assert.doesNotMatch(el('Warn').textContent, /Could not confirm/);
+  });
+
+  it('a fresh identity says nothing at all', () => {
+    // The positive control: without it, a warning that ALWAYS renders would pass
+    // all three tests above.
+    const { bar, el } = mountedBar();
+    bar.setAccess(settings());
+    assert.equal(el('Warn').hidden, true);
+  });
+
   it('a degraded guard outranks a pending one in the single warning line', () => {
     // Both conditions can hold at once and there is one line. "Nothing is
     // enforcing" is not softened by "and it would arrive at the next start", so
@@ -676,6 +761,11 @@ describe('#755 the access toggle is live, and paints only from server state', ()
     assert.match(prompts[0], /one Master/i, 'it must say the change is global');
     assert.match(prompts[0], /EVERYWHERE|every session/i);
     assert.match(prompts[0], /next tool call/, 'and when it binds, from the server');
+    // The operator read this dialog, flipped to write, and hit a Master that
+    // refused anyway — because the sentence said "no restart". The restart is
+    // the single most actionable thing in it (#968).
+    assert.match(prompts[0], /restart/i,
+      'and that the RUNNING Master must be restarted before it acts on the change');
   });
 
   it('the warning reads the engine\'s binding moment rather than promising immediacy', async () => {
@@ -849,6 +939,108 @@ describe('#755 the access toggle is live, and paints only from server state', ()
     assert.match(el('Warn').textContent, /permitting LESS/);
   });
 
+  it('Kill confirms, posts, and repaints from the server (#968)', async () => {
+    // The remedy the access toggle needs. Repaints from a status read rather
+    // than from the fact that a kill returned 200 — the same rule the toggle
+    // follows, and it is also how the stale-identity warning clears, since a
+    // fresh session reads the current instructions.
+    //
+    // THE MUTATION THIS CATCHES: skipping the post-kill repaint, which leaves the
+    // bar asserting a stale-identity warning about a Master that no longer
+    // exists.
+    const { doc, el, calls } = mountedBar({ statuses: [{ settings: settings() }] });
+    el('KillBtn').dispatch('click');
+    await flush();
+    assert.ok(calls.some((c) => c[0] === 'POST' && c[1] === '/api/master/kill'),
+      'it must actually call the kill route');
+    assert.ok(calls.some((c) => c[0] === 'GET' && c[1] === '/api/master/status'),
+      'and repaint from the server afterwards');
+    assert.ok(doc, 'sanity');
+  });
+
+  it('an UNCONFIRMED kill is not reported as "Master stopped"', async () => {
+    // The gap three reviewers converged on, at the surface end. The route refuses
+    // when tmux will not confirm, and the bar must word the outcome from `killed`
+    // rather than `wasRunning` — they differ in exactly that case, and
+    // `wasRunning` alone prints "Master stopped" about a Master most likely still
+    // up. This is also what gives `killed` a reader.
+    //
+    // WHAT THIS PINS, precisely: the refusal path shows the error and paints NO
+    // status. It does NOT catch wording the line from `wasRunning` — measured,
+    // and the api-helper comment says why: a refusal is a 500, so `apiMutate`
+    // returns null and the status line is never reached. Under the route's
+    // contract a 200 always has `killed === wasRunning`, so that mutation is
+    // unobservable rather than uncaught. Claiming otherwise here would be the
+    // false-confidence this issue is about.
+    const { doc, el } = mountedBar({ statuses: [{ settings: settings() }], patch: null });
+    el('KillBtn').dispatch('click');
+    await flush();
+    const line = doc.getElementById('masterPanelStatusText').textContent;
+    assert.doesNotMatch(line, /Master stopped/,
+      'a refusal must never read as a completed kill');
+    assert.equal(el('Error').hidden, false, 'and the refusal is visible');
+  });
+
+  it('Kill is disabled while a press is in flight', async () => {
+    // It shares the access toggle's in-flight latch, so leaving it pressable
+    // meant the latch silently did a disabled control's job and the operator got
+    // no signal that the first press was still running.
+    //
+    // Asserted mid-flight, with a confirmation that inspects the button at the
+    // moment the handler is inside its own guard — a check after `flush()` would
+    // pass against a control that was never disabled at all.
+    //
+    // THE MUTATION THIS CATCHES: dropping Kill from `setBusy`.
+    let disabledDuring = null;
+    const { doc, ids } = makeDocument(['masterPanelBar']);
+    withIdParsingInnerHTML(ids.masterPanelBar, doc);
+    const bar = G.tcCreateMasterControlBar({
+      doc,
+      rootId: 'masterPanelBar',
+      prefix: 'masterPanel',
+      title: 'M',
+      api: async () => ({ settings: settings() }),
+      apiMutate: async () => ({ killed: true, wasRunning: true }),
+      confirm: () => {
+        disabledDuring = doc.getElementById('masterPanelKillBtn').disabled;
+        return true;
+      }
+    });
+    bar.mount();
+    doc.getElementById('masterPanelKillBtn').dispatch('click');
+    await flush();
+    assert.equal(disabledDuring, true,
+      'Kill must be disabled while its own press is still running');
+  });
+
+  it('a declined confirmation kills nothing', async () => {
+    // Destructive AND global — there is exactly one Master.
+    //
+    // THE MUTATION THIS CATCHES: ignoring the confirmation's return value.
+    const { el, calls, prompts } = mountedBar({
+      statuses: [{ settings: settings() }], confirm: false
+    });
+    el('KillBtn').dispatch('click');
+    await flush();
+    assert.equal(prompts.length, 1, 'it must ask');
+    assert.match(prompts[0], /EVERYWHERE|every session/i, 'and say the stop is global');
+    assert.match(prompts[0], /memory\//, 'and name what SURVIVES, not just what is lost');
+    assert.equal(calls.some((c) => c[0] === 'POST'), false, 'and kill nothing when declined');
+  });
+
+  it('with no way to confirm, the Master is NOT stopped', async () => {
+    // Same fail-closed shape as the write grant: `typeof ask === 'function' &&
+    // !ask(...)` reads as "confirm before stopping" and stops it silently when
+    // there is nothing to confirm with.
+    //
+    // THE MUTATION THIS CATCHES: folding the availability check into the `&&`.
+    const { el, calls } = mountedBar({ statuses: [{ settings: settings() }], noConfirm: true });
+    el('KillBtn').dispatch('click');
+    await flush();
+    assert.equal(calls.some((c) => c[0] === 'POST'), false);
+    assert.equal(el('Error').hidden, false, 'and it says why, rather than doing nothing quietly');
+  });
+
   it('a second press while one is in flight does not send a second PATCH', async () => {
     // THE MUTATION THIS CATCHES: dropping the in-flight latch. Two PATCHes race
     // and the toggle settles on whichever status answered last — a level nobody
@@ -997,6 +1189,118 @@ describe('#755 both surfaces drive the live toggle, and neither grows a timer', 
     };
     assert.equal(await save({ ok: true }), 1, 'a successful save must notify the surface');
     assert.equal(await save(null), 0, 'a failed save changed nothing, so it must notify nothing');
+  });
+
+  it('no surface claims the change needs no restart — the whole family (#968)', () => {
+    // The string the operator actually read before hitting the bug, and the one
+    // thing a structural master must not say: the guard binds immediately, the
+    // Master does not.
+    //
+    // SCANS EVERY TRACKED MEMBER. The first version read only `api-helper.js` and
+    // reported the family held while `docs/configuration-reference.md`, both
+    // halves of ADR 0008, the `[Unreleased]` CHANGELOG entry and `FEATURES.md`
+    // all still carried it — the CHANGELOG one would have PUBLISHED the
+    // disproved claim. A family guard that knows about one member is how the
+    // claim survived in the first place.
+    //
+    // TRACKED is the operative word. A sixth member, `.prawduct/artifacts/
+    // api-contract.md`, was briefly added here and had to come out: `.gitignore`
+    // is `.prawduct/*`, so that file exists in no clone and the guard would have
+    // thrown ENOENT in CI while passing locally — this worktree symlinks
+    // `.prawduct/artifacts` into the primary checkout, which is exactly the
+    // "passes on the machine that wrote it" trap `test/degraded-reads-frontend.
+    // test.js` already documents about the same directory. Its claim IS fixed;
+    // it simply cannot be held from a test. Everything listed below is tracked —
+    // asserted, not assumed, by the readability check itself.
+    //
+    // Bans the CLAIM, not the phrase: the corrected docs quote the old wording
+    // to explain what changed, and a bare /no restart/ would forbid saying what
+    // was fixed.
+    const CLAIMS = [
+      /next tool call\s*—\s*no restart/i,
+      /next write attempt with no restart/i,
+      /next tool call with no restart/i,
+      /with no restart and no re-ensure/i
+    ];
+    // Seven now: `README.md` carried the claim in the operator's first-contact
+    // document, and `lib/master.js`'s own JSDoc matched the banned patterns —
+    // both escaped every earlier widening. The family has been bigger than the
+    // last count of it three times running, which is the argument for deriving
+    // it rather than listing it; that derivation is #968's own follow-up work,
+    // not this branch's.
+    const FAMILY = ['public/api-helper.js', 'docs/configuration-reference.md',
+      'docs/adr/0008-project-master-session-model.md', 'CHANGELOG.md', 'FEATURES.md',
+      'README.md', 'lib/master.js'];
+    for (const rel of FAMILY) {
+      const abs = path.join(__dirname, '..', rel);
+      // TRACKED, not merely present. Existence is the weaker property and would
+      // not have caught the member this list already lost: in this worktree
+      // `.prawduct/artifacts` is a symlink into the primary checkout, so a
+      // gitignored file passes `existsSync` here and still ENOENTs in CI. Asking
+      // git is what makes the claim above true rather than nearly true.
+      const tracked = spawnSync('git', ['ls-files', '--error-unmatch', rel],
+        { cwd: path.join(__dirname, '..'), encoding: 'utf8' });
+      assert.equal(tracked.status, 0,
+        `${rel} is not tracked by git, so this guard would pass locally and fail in CI — `
+        + 'a family member has to exist in every clone');
+      const body = fs.readFileSync(abs, 'utf8');
+      for (const claim of CLAIMS) {
+        assert.doesNotMatch(body, claim,
+          `${rel} still says a level change needs no restart — the running Master reads its `
+          + 'instructions only at launch');
+      }
+    }
+  });
+
+  it('the modal hint and the confirmation each RENDER the restart, structurally', () => {
+    // Behavioural, because the source form of this guard was too coarse: both
+    // functions contain the word "restart" for unrelated reasons (the engine hint
+    // says "restart via tmux"), so reverting the access-level sentence alone left
+    // a source scan green. Measured — that mutation was run.
+    //
+    // THE MUTATION THIS CATCHES: dropping the restart clause from `bindsAt` OR
+    // from `writeWarningText`, one at a time.
+    const body = { innerHTML: '' };
+    const component = G.tcCreateMasterSettings({
+      api: async () => null, apiMutate: async () => null,
+      esc: (v) => String(v), buildEngineOptions: () => '', state: { engines: [] },
+      document: { getElementById: () => body, querySelector: () => null }
+    });
+    component.renderBody({
+      accessLevel: 'read-only', accessLevels: ['read-only', 'suggest', 'write'],
+      enabledAccessLevels: ['read-only', 'suggest', 'write'],
+      enforcement: 'structural', levelAppliesAt: 'next-tool-call',
+      launchModes: [], scope: 'all', autoStart: false
+    }, []);
+    const hint = body.innerHTML.slice(body.innerHTML.indexOf('read-only'),
+      body.innerHTML.indexOf('read-only') + 900);
+    assert.match(hint, /restart/i,
+      "the modal's tier hint must say the running master needs restarting");
+    // The confirmation's half of this is asserted where `mountedBar` lives —
+    // see 'warns on the way IN to write', which drives the real dialog.
+  });
+
+  it('every place that describes when a level change lands also names the restart', () => {
+    // The positive half, and it is PER-SITE. The first version asserted one
+    // matching occurrence anywhere in `api-helper.js`, so reverting a single
+    // call site left it green — it did not hold the family it was named for.
+    //
+    // THE MUTATION THIS CATCHES: dropping the restart clause from `bindsAt` OR
+    // from `writeWarningText` alone.
+    const helper = read('api-helper.js');
+    for (const fn of ['function renderMasterSettingsBody', 'function writeWarningText']) {
+      const body = lift(fn, helper);
+      assert.match(body, /restart/i,
+        `${fn} describes when a change takes effect and must name the restart`);
+    }
+  });
+
+  it('the Kill button ships as a real control, with no pending treatment', () => {
+    const markup = G.tcMasterControlBarMarkup('masterPanel', {});
+    const m = /<button[^>]*id="masterPanelKillBtn"[^>]*>/.exec(markup);
+    assert.ok(m, 'Kill must render as a real button');
+    assert.doesNotMatch(m[0], /\sdisabled(?=[\s>])/, 'and be pressable');
+    assert.doesNotMatch(m[0], /aria-disabled/);
   });
 
   it('the segments meet the touch-target minimum the mobile Direction binds', () => {

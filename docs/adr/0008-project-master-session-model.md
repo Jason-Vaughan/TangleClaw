@@ -11,7 +11,8 @@ instructional, and the enforced token scope remains a G2+ concern. See "The read
 below for the original v1 posture this amends.
 **Amended again 2026-08-17 (#755):** that guard is no longer fixed at read-only. It reads the
 operator's access level from `<master home>/.access-level` on every invocation and maps it to
-deny / ask / allow, so a change binds on the master's next write attempt with no restart; every
+deny / ask / allow, so the guard applies a change on the master's next write attempt — though the
+running master keeps the instructions it launched with until it restarts (#968); every
 unreadable level degrades to read-only, and the guard's own control surface is refused below the
 write tier so no single confirmation can raise it. **That control surface includes TangleClaw's own
 `config.json`** — `.access-level` is a copy the next ensure rewrites from it, and the config sits
@@ -59,9 +60,11 @@ singleton beside the project machinery, not inside it:
 1. **Reserved tmux session `tangleclaw-master`** (exported constant). Project names come from the
    projects table, so the name cannot collide; the dashboard's session machinery never sees it.
 2. **No `sessions` row, no project.** The master is invisible to wrap, watchdog, dashboard cards,
-   and ownership — deliberately. Its lifecycle API is two operator routes: `POST
-   /api/master/ensure` (idempotent create-or-refresh) and `GET /api/master/status` (liveness truth
-   straight from tmux — no DB row to drift). A structural test pins that `lib/master.js` never
+   and ownership — deliberately. Its lifecycle API is three operator routes: `POST
+   /api/master/ensure` (idempotent create-or-refresh), `GET /api/master/status` (liveness truth
+   straight from tmux — no DB row to drift), and `POST /api/master/kill` (#968 — idempotent, and
+   refusing rather than claiming a kill tmux would not confirm, since a level change binds on the
+   guard at once but the running master only reads its instructions at launch). A structural test pins that `lib/master.js` never
    touches the sessions store.
 3. **Dedicated home `~/.tangleclaw/master/`** — a data directory, never a repo clone. A clone
    would share git HEAD with dev sessions (the documented shared-worktree hazard) and hand the
@@ -89,8 +92,11 @@ singleton beside the project machinery, not inside it:
 > longer describes is the **file-write** boundary, which is now a real, selectable tier rather than a
 > fixed posture: `read-only`, `suggest` (each write outside the master home's memory directory stops
 > for operator confirmation) and `write`. The `PreToolUse` guard reads the level from a file in the
-> master home on every invocation, so a change binds on the master's next tool call with no restart,
-> and every unreadable level degrades to `read-only`. Measured against Claude Code 2.1.233: a hook
+> master home on every invocation, so the guard applies a change on the master's next tool call,
+> and every unreadable level degrades to `read-only`. (Amended #968: that is true of the GUARD. A
+> running master reads its identity only at launch, so it keeps the level it started with until it
+> restarts — the original wording said "no restart", which was the opposite of what an operator
+> needs to do.) Measured against Claude Code 2.1.233: a hook
 > decision outranks the `bypassPermissions` launch mode, so the tier means the same thing on every
 > launch mode. Still Claude-only — on other engines this remains instructional, and the API says so.
 

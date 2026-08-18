@@ -365,9 +365,20 @@ function jsonResponse(res, status, data) {
  * @param {number} status - HTTP status code
  * @param {string} message - Error message
  * @param {string} code - Machine-readable error code
+ * @param {object} [extra] - Extra fields merged into the body, for refusals that
+ *   share a code and differ by detail (e.g. the master kill's two 500s). It
+ *   cannot override `error` or `code` — see below.
  */
-function errorResponse(res, status, message, code) {
-  jsonResponse(res, status, { error: message, code });
+function errorResponse(res, status, message, code, extra) {
+  // `extra` carries fields a client needs to tell two refusals apart when they
+  // share a code — the master kill's two 500s differ only by `cause`.
+  //
+  // Spread FIRST, so `error` and `code` always win. Spreading it last read as
+  // harmless with one caller passing `{ cause }`, and quietly meant any future
+  // caller could blank the two fields every client branches on — a hazard that
+  // looks safe while it has no reach, which is the shape this whole issue is
+  // about. Made impossible rather than documented.
+  jsonResponse(res, status, { ...(extra || {}), error: message, code });
 }
 
 // ── Body Parser ──
@@ -613,6 +624,26 @@ route('POST', '/api/master/ensure', (_req, res) => {
       ? 'MASTER_LIVENESS_UNKNOWN'
       : 'MASTER_ENSURE_FAILED';
     return errorResponse(res, 500, result.error, code);
+  }
+  jsonResponse(res, 200, result);
+});
+
+// POST /api/master/kill — stop the master's tmux session. Idempotent: an absent
+// master is success, because the operator's intent is "not running". The remedy
+// for #968 — a level change binds on the guard at once, but the running master
+// reads its instructions only at launch, so it has to restart to act on one.
+route('POST', '/api/master/kill', (_req, res) => {
+  const result = master.killMasterSession();
+  if (result.error) {
+    // Same distinction ensure draws, and for the same reason: tmux declining to
+    // answer is not "the master is stopped". Saying it was would tell the
+    // operator their master is down during exactly the wedge where it is most
+    // likely still running.
+    // The CAUSE travels too. One code covers both refusals — tmux never answered
+    // the probe, or the session was live and the kill went unconfirmed — and
+    // without the cause a client cannot tell a timeout from the second case,
+    // which are different things to tell the operator.
+    return errorResponse(res, 500, result.error, 'MASTER_LIVENESS_UNKNOWN', { cause: result.cause });
   }
   jsonResponse(res, 200, result);
 });
@@ -1140,8 +1171,8 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
       // bolted onto the first. The response is still a 500; it just happens
       // after the rest of the save has finished doing what it was asked.
       masterLevelError = err.levelApplied
-        ? `The master's access level is now "${newMasterAccessLevel}", but its write guard could not be re-provisioned. `
-          + 'If the master altered the guard while it had write access, restart the master session to restore it.'
+        ? `The master's access level is now "${newMasterAccessLevel}", but the refresh that should have followed it did not finish. `
+          + 'Its identity, its memory scaffold or its write guard may be a step behind. Restart the master session to bring them back into line.'
         : `Settings were saved, but the master's access level could not be applied — it is still enforcing "${oldMasterAccessLevel}". `
           + 'Restart the master session to reconcile it.';
     }

@@ -81,6 +81,13 @@ function fakeTmux({ alive = false, answered = true, createSession } = {}) {
   return {
     calls,
     probeSession,
+    // Modelled because `getMasterStatus` asks it (#968). Defaults to "answered,
+    // no such session", which is the neutral honest answer for a stub that is
+    // not modelling a live session's age — it yields `identityStale: false`, so
+    // tests that do not care about freshness keep a boring payload. Tests that
+    // DO care override this rather than the code defending against a stub that
+    // does not model the module.
+    sessionCreatedAt: () => ({ createdAt: null, answered, cause: answered ? null : 'read-timed-out' }),
     hasSession: () => probeSession().live,
     createSession: (name, opts) => {
       calls.push({ name, opts });
@@ -467,6 +474,419 @@ describe('_looksEditedFrom — is this rule an EDIT of a superseded baseline?', 
     // because "happens to be safe" is not a property, and the guard clause that
     // makes it deliberate is the thing under test.
     assert.equal(master._looksEditedFrom('anything at all', ''), false);
+  });
+});
+
+describe('#968 a level change reaches the Master\'s own instructions', () => {
+  const STRUCTURAL_968 = { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' };
+  const homes968 = [];
+  const mk = () => {
+    const h = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-968-'));
+    homes968.push(h);
+    return h;
+  };
+  after(() => { for (const h of homes968) fs.rmSync(h, { recursive: true, force: true }); });
+
+  /** @param {string} home @returns {string} The identity's access-level section. */
+  const levelSection = (home) => {
+    const md = fs.readFileSync(path.join(home, 'CLAUDE.md'), 'utf8');
+    const at = md.indexOf('## Your current access level');
+    assert.notEqual(at, -1, 'the identity must carry an access-level section at all');
+    return md.slice(at, at + 400);
+  };
+
+  it('rewrites CLAUDE.md, not only the level file and the guard', () => {
+    // THE BUG, and the mutation that must go red: reverting this path to write
+    // the level file and the guardrails without refreshing the identity. Every
+    // other assertion in this suite stayed green while it shipped, because they
+    // all read the level file or the guard — the two artifacts that WERE being
+    // written. The Master reads a third one.
+    const home = mk();
+    master.applyMasterAccessLevel('read-only', { home, enginesLib: STRUCTURAL_968 });
+    assert.match(levelSection(home), /\*\*read-only\*\*/, 'precondition');
+
+    master.applyMasterAccessLevel('write', { home, enginesLib: STRUCTURAL_968 });
+    const after = levelSection(home);
+    assert.match(after, /\*\*write\*\*/,
+      'the identity must state the level the operator just chose');
+    assert.doesNotMatch(after, /\*\*read-only\*\*/,
+      'and must not still assert the old one — the Master reads this and refuses itself');
+  });
+
+  it('still writes the level file and the guard it delegated away', () => {
+    // The delegation must not LOSE what the partial path did. Asserted because
+    // "one refresher instead of two" is only an improvement if the one does
+    // everything the two did.
+    const home = mk();
+    master.applyMasterAccessLevel('write', { home, enginesLib: STRUCTURAL_968 });
+    assert.equal(fs.readFileSync(master.masterAccessLevelPath(home), 'utf8').trim(), 'write');
+    assert.equal(fs.existsSync(master.masterGuardScriptPath(home)), true);
+    assert.equal(master.readMasterGuardPosture('write', 'structural', { home }).guardDegraded, false,
+      'and the three artifacts must agree afterwards');
+  });
+
+  it('REVOKING write puts read-only back in the identity — the direction #968 was reported from', () => {
+    // Granting was asserted; revoking was not, and revoking is the direction that
+    // matters most: a Master left believing it may write, after the operator took
+    // that away, is the failure with teeth. It is also the exact blind spot this
+    // issue was reported from, one step along.
+    //
+    // THE MUTATION THIS CATCHES: refreshing the identity only when the level
+    // rises — which passes every grant test in this file.
+    const home = mk();
+    master.applyMasterAccessLevel('write', { home, enginesLib: STRUCTURAL_968 });
+    assert.match(levelSection(home), /\*\*write\*\*/, 'precondition');
+
+    master.applyMasterAccessLevel('read-only', { home, enginesLib: STRUCTURAL_968 });
+    const after = levelSection(home);
+    assert.match(after, /\*\*read-only\*\*/);
+    assert.doesNotMatch(after, /\*\*write\*\*/,
+      'a revoked master must not go on being told it may write');
+    assert.equal(fs.readFileSync(master.masterAccessLevelPath(home), 'utf8').trim(), 'read-only',
+      'and the guard must agree with the identity');
+  });
+
+  it('the identity follows the level ARGUMENT, not whatever config happens to say', () => {
+    // The change path saves config and then passes the level it saved, so the
+    // two agree in production. Passing it explicitly means they cannot disagree
+    // even for the width of a write — and this pins that the argument is what
+    // renders, since the test store's config says read-only throughout.
+    //
+    // THE MUTATION THIS CATCHES: dropping the `accessLevel` override so the
+    // refresher falls back to config, which would silently re-introduce the bug
+    // for any caller whose config write has not landed yet.
+    const home = mk();
+    master.applyMasterAccessLevel('suggest', { home, enginesLib: STRUCTURAL_968 });
+    assert.match(levelSection(home), /\*\*suggest\*\*/);
+  });
+
+  it('an instructional master gets the identity refresh too — it is the whole boundary there', () => {
+    // On a non-Claude master the prose IS the enforcement, so a stale identity
+    // is not a cosmetic problem, it is the boundary being wrong.
+    const home = mk();
+    master.applyMasterAccessLevel('write', {
+      home, enginesLib: { resolveDefaultEngine: () => 'gemini', reconcileLaunchMode: () => 'default' }
+    });
+    assert.match(levelSection(home), /\*\*write\*\*/);
+    assert.equal(fs.existsSync(master.masterGuardScriptPath(home)), false,
+      'and it still gets no guard it never had');
+  });
+});
+
+describe('killMasterSession — the remedy #968 makes load-bearing', () => {
+  /** @param {object} probe - What the stubbed probe reports. */
+  const stub = (probe, killed = true) => {
+    const calls = [];
+    return {
+      lib: {
+        probeSession: () => probe,
+        killSession: (n) => { calls.push(n); return killed; }
+      },
+      calls
+    };
+  };
+
+  it('kills a live session', () => {
+    const { lib, calls } = stub({ live: true, answered: true, cause: null });
+    const r = master.killMasterSession({ tmuxLib: lib });
+    assert.equal(r.killed, true);
+    assert.equal(r.wasRunning, true);
+    assert.deepEqual(calls, ['tangleclaw-master'], 'and kills the RESERVED session, not another');
+  });
+
+  it('an absent Master is SUCCESS, not an error', () => {
+    // The operator's intent is "not running", and it already is. Reporting that
+    // as a failure would make the honest case look broken.
+    //
+    // THE MUTATION THIS CATCHES: returning an error for the absent case, which
+    // is the reflex reading of "nothing to kill".
+    const { lib, calls } = stub({ live: false, answered: true, cause: null });
+    const r = master.killMasterSession({ tmuxLib: lib });
+    assert.equal(r.error, undefined, 'not an error');
+    assert.equal(r.killed, false, 'but honest that THIS call did not do the killing');
+    assert.equal(r.wasRunning, false);
+    assert.deepEqual(calls, [], 'and it must not ask tmux to kill something absent');
+  });
+
+  it('a kill tmux would not CONFIRM is refused, even though the session was live', () => {
+    // The gap three reviewers found independently. `killMasterSession` keeps the
+    // three-state discipline and then calls `tmux.killSession`, whose first line
+    // re-asks with the TWO-state `hasSession` — which answers "not there" both
+    // for a session that ended and for a tmux that stopped answering. So the
+    // wedge arrives one call later, and reporting it as success prints "Master
+    // stopped" about a Master most likely still running.
+    //
+    // `wasRunning` stays true because that part WAS established; only the kill is
+    // unconfirmed. This is also what gives `killed` a reader.
+    //
+    // THE MUTATION THIS CATCHES: returning `{ killed, wasRunning: true }` from
+    // the tmux result directly, which is what shipped and which every other kill
+    // test allows — none of them passes `killed = false`.
+    const { lib } = stub({ live: true, answered: true, cause: null }, false);
+    const r = master.killMasterSession({ tmuxLib: lib });
+    assert.equal(r.killed, false);
+    assert.equal(r.wasRunning, true, 'liveness WAS established; only the kill was not');
+    assert.ok(r.error, 'and it must not read as a successful kill');
+    assert.equal(r.cause, 'kill-unconfirmed');
+  });
+
+  it('refuses when tmux did not answer — an unconfirmed kill is not a kill', () => {
+    // `hasSession` flattens a wedged tmux into "not there", and this install
+    // reaches that wedge (#94/#144/#380). Built on it, the route would report
+    // "already stopped" during exactly the condition where the Master is most
+    // likely still running.
+    //
+    // THE MUTATION THIS CATCHES: using hasSession, or folding `!answered` into
+    // the absent branch — both of which make this case silently claim success.
+    const { lib, calls } = stub({ live: false, answered: false, cause: 'read-timed-out' });
+    const r = master.killMasterSession({ tmuxLib: lib });
+    assert.ok(r.error, 'it must refuse rather than claim a kill it cannot confirm');
+    assert.deepEqual(r.incomplete, ['exists'],
+      'named in the same vocabulary ensure uses, so one client branch covers both');
+    assert.equal(r.killed, false);
+    assert.deepEqual(calls, [], 'and nothing was killed');
+  });
+});
+
+describe('readMasterIdentityFreshness — has the RUNNING Master read this? (#968)', () => {
+  const homes = [];
+  const mk = () => {
+    const h = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-fresh-'));
+    homes.push(h);
+    return h;
+  };
+  after(() => { for (const h of homes) fs.rmSync(h, { recursive: true, force: true }); });
+
+  /** @param {object} answer - What the stubbed tmux reports. */
+  const tmuxAt = (answer) => ({ sessionCreatedAt: () => answer, probeSession: () => ({ live: true, answered: true, cause: null }) });
+
+  /** Write an identity whose mtime is `offsetSec` from now. */
+  const identityAt = (home, offsetSec) => {
+    const f = master.masterIdentityPath(home);
+    fs.writeFileSync(f, '# identity');
+    const when = new Date(Date.now() + offsetSec * 1000);
+    fs.utimesSync(f, when, when);
+    return Math.floor(when.getTime() / 1000);
+  };
+
+  it('an identity written AFTER the session started has reached nobody', () => {
+    // The reported bug's shape: the file is right and the running Master is
+    // acting on what it read at launch.
+    //
+    // THE MUTATION THIS CATCHES: comparing the other way round, which reports
+    // every freshly-restarted Master as stale and every stale one as fine.
+    const home = mk();
+    const written = identityAt(home, 0);
+    const p = master.readMasterIdentityFreshness({
+      home, tmuxLib: tmuxAt({ createdAt: written - 3600, answered: true, cause: null })
+    });
+    assert.equal(p.identityStale, true);
+    assert.ok(p.identityWrittenAt, 'and it names WHEN, or the operator cannot judge how far behind');
+  });
+
+  it('an identity the session already read is not stale', () => {
+    const home = mk();
+    const written = identityAt(home, -3600);
+    const p = master.readMasterIdentityFreshness({
+      home, tmuxLib: tmuxAt({ createdAt: written + 60, answered: true, cause: null })
+    });
+    assert.equal(p.identityStale, false);
+  });
+
+  it('tmux not answering is UNKNOWN, never "fine"', () => {
+    // The #905 discipline: a caller that renders "all good" from a read that
+    // never happened writes a fact nobody has.
+    //
+    // THE MUTATION THIS CATCHES: folding the unanswered case into `false`, which
+    // is the tidier two-state version and silently reassures during exactly the
+    // tmux wedge this install hits (#94/#144/#380).
+    const home = mk();
+    identityAt(home, 0);
+    const p = master.readMasterIdentityFreshness({
+      home, tmuxLib: tmuxAt({ createdAt: null, answered: false, cause: 'read-timed-out' })
+    });
+    assert.equal(p.identityStale, null);
+    assert.ok(p.identityWrittenAt, 'the timestamp is still known even when the comparison is not');
+  });
+
+  it('an unparseable answer is UNKNOWN, not "no session"', () => {
+    // tmux answered, but with nothing usable. Folding that into "there is no
+    // session" would report a live Master as never stale — same consequence as
+    // the timeout (the comparison could not be made), different cause.
+    //
+    // THE MUTATION THIS CATCHES: keying only on `answered`, which leaves `cause`
+    // with no consumer at all — a field nothing reads is its own smell.
+    const home = mk();
+    identityAt(home, 0);
+    const p = master.readMasterIdentityFreshness({
+      home, tmuxLib: tmuxAt({ createdAt: null, answered: true, cause: 'unparseable' })
+    });
+    assert.equal(p.identityStale, null);
+  });
+
+  it('a failure AFTER the level lands is flagged as level-applied, wherever it happens', () => {
+    // The route branches on `err.levelApplied` to choose between "nothing
+    // changed" and "the new level is in force but the refresh did not finish".
+    // Moving the level write to the top of the refresh made everything below it
+    // capable of throwing with the level already on disk — and the flag was set
+    // in ONE place, the guard write, so a failure in seeding or the identity
+    // write reported the reassuring sentence about a guard that was already
+    // permitting writes.
+    //
+    // Injected at the identity write, which is squarely in the middle of the
+    // reordered region — not at the guard write, where the old flag already sat
+    // and which would pass either way.
+    //
+    // THE MUTATION THIS CATCHES: narrowing the try back to the guard write.
+    const home = mk();
+    fs.mkdirSync(path.join(home, 'CLAUDE.md'), { recursive: true });
+    let caught = null;
+    try {
+      master.refreshMasterIdentity({
+        home,
+        accessLevel: 'write',
+        enginesLib: { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' }
+      });
+    } catch (err) {
+      caught = err;
+    }
+    assert.ok(caught, 'precondition: the identity write must actually fail');
+    assert.equal(fs.readFileSync(master.masterAccessLevelPath(home), 'utf8').trim(), 'write',
+      'precondition: the level landed before the failure — that is what makes the flag necessary');
+    assert.equal(caught.levelApplied, true,
+      'the caller must be told the level IS in force, not that nothing changed');
+  });
+
+  it('an identity rewritten with IDENTICAL content does not become stale', () => {
+    // The defect the review caught, and the one that would have made this whole
+    // feature a permanent nag: `refreshMasterIdentity` runs on every ensure —
+    // which both surfaces fire on drawer open, and which runs at boot — so an
+    // unconditional write bumped the mtime past the session start every time.
+    // The bar would have read "NOT IN EFFECT … Restart it to apply" forever, on
+    // a perfectly healthy Master. `buildMasterClaudeMd` is deterministic, so the
+    // mtime is load-bearing and not touching it is part of the contract.
+    //
+    // THE MUTATION THIS CATCHES: reverting to an unconditional writeFileSync.
+    const home = mk();
+    master.refreshMasterIdentity({ home, enginesLib: { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' } });
+    const first = fs.statSync(master.masterIdentityPath(home)).mtimeMs;
+    // Push the recorded mtime back so an unconditional rewrite is detectable
+    // without sleeping for a filesystem tick.
+    const past = new Date(first - 60000);
+    fs.utimesSync(master.masterIdentityPath(home), past, past);
+
+    master.refreshMasterIdentity({ home, enginesLib: { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' } });
+    assert.equal(fs.statSync(master.masterIdentityPath(home)).mtimeMs, past.getTime(),
+      'an ensure that changes nothing must not touch the identity mtime');
+  });
+
+  it('a read that failed on a LIVE session is unknown, not "no such session"', () => {
+    // `probeSession` confirmed the session is live, then the timestamp read
+    // failed without timing out. The bare negative shape (`answered: true`,
+    // `createdAt: null`) means "no such session" everywhere else, and reading it
+    // that way here would report a live Master as never stale — a report
+    // reassuring from a read that did not happen.
+    //
+    // THE MUTATION THIS CATCHES: dropping `read-failed` from the unknown set, or
+    // having tmux return a bare null for that case.
+    const home = mk();
+    identityAt(home, 0);
+    const p = master.readMasterIdentityFreshness({
+      home, tmuxLib: tmuxAt({ createdAt: null, answered: true, cause: 'read-failed' })
+    });
+    assert.equal(p.identityStale, null);
+  });
+
+  it('a stat failure that is NOT "absent" reports unknown, not "nothing is stale"', () => {
+    // Changed behavior that shipped without a test: only ENOENT means nothing
+    // has been generated. EACCES, EIO or ENOTDIR mean the identity may well
+    // exist and could not be read, and answering "nothing is stale" there is a
+    // report reassuring from a read that never happened.
+    //
+    // Driven with ENOTDIR because it is portable and needs no permission games:
+    // a home whose parent component is a regular FILE.
+    //
+    // THE MUTATION THIS CATCHES: collapsing the branch back to a bare `return
+    // none`, which leaves every existing stat test green — the only other one
+    // exercises the ENOENT arm.
+    const notADir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-enotdir-'));
+    homes.push(notADir);
+    const asFile = path.join(notADir, 'afile');
+    fs.writeFileSync(asFile, 'not a directory');
+    const p = master.readMasterIdentityFreshness({
+      home: path.join(asFile, 'home'),
+      tmuxLib: tmuxAt({ createdAt: 1, answered: true, cause: null })
+    });
+    assert.equal(p.identityStale, null,
+      'an unreadable identity is unknown; only an ABSENT one is "nothing is stale"');
+    assert.equal(p.identityWrittenAt, null,
+      'and it must not report a write time it could not read');
+  });
+
+  it('no running Master, and no identity at all, are both "nothing is stale"', () => {
+    // Nothing is running to hold a stale belief, and an operator who has never
+    // opened the Master must not meet a warning about it.
+    const home = mk();
+    identityAt(home, 0);
+    assert.equal(master.readMasterIdentityFreshness({
+      home, tmuxLib: tmuxAt({ createdAt: null, answered: true, cause: null })
+    }).identityStale, false, 'answered, no session');
+
+    const bare = mk();
+    assert.equal(master.readMasterIdentityFreshness({
+      home: bare, tmuxLib: tmuxAt({ createdAt: 1, answered: true, cause: null })
+    }).identityStale, false, 'no identity on disk');
+  });
+
+  it('getMasterStatus probes tmux ONCE, not once per question', () => {
+    // The freshness read guards session existence itself, so without reusing the
+    // caller's probe a single status read spawned three tmux subprocesses where
+    // it used to spawn one — on an install whose recurring failure mode is PTY
+    // exhaustion (#94/#144/#380), and on a page that polls this route.
+    //
+    // THE MUTATION THIS CATCHES: dropping `options.probe` so `sessionCreatedAt`
+    // probes again. Nothing else in the suite counts spawns, so that regression
+    // is otherwise invisible.
+    const home = mk();
+    identityAt(home, 0);
+    // Asserts the probe is HANDED OVER, which is the half this module owns.
+    // Counting real spawns is not available from here: `sessionCreatedAt` calls
+    // tmux.js's module-local `probeSession`, so any stub that could count it is
+    // also a stub of the function under test — the fixture would not reach the
+    // subject. `test/tmux.test.js` owns the other half.
+    let passedProbe;
+    let probes = 0;
+    const counting = Object.assign(fakeTmux({ alive: true }), {
+      probeSession: () => { probes++; return { live: true, answered: true, cause: null }; },
+      sessionCreatedAt: (name, opts) => {
+        passedProbe = opts && opts.probe;
+        return { createdAt: 1, answered: true, cause: null };
+      }
+    });
+    master.getMasterStatus({
+      home, tmuxLib: counting,
+      enginesLib: { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' }
+    });
+    assert.equal(probes, 1, `the status read itself must probe once, not ${probes} times`);
+    assert.ok(passedProbe && passedProbe.answered,
+      'and it must hand that probe on, or the freshness read spawns another tmux');
+  });
+
+  it('getMasterStatus carries it, so a surface can render it', () => {
+    // THE MUTATION THIS CATCHES: computing the freshness and not spreading it
+    // into settings — every unit test above stays green while the only consumer
+    // that matters receives nothing.
+    const home = mk();
+    const written = identityAt(home, 0);
+    const s = master.getMasterStatus({
+      home,
+      enginesLib: { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' },
+      tmuxLib: Object.assign(fakeTmux({ alive: true }), {
+        sessionCreatedAt: () => ({ createdAt: written - 60, answered: true, cause: null })
+      })
+    }).settings;
+    assert.equal(s.identityStale, true);
+    assert.ok(s.identityWrittenAt);
   });
 });
 
@@ -2038,6 +2458,64 @@ describe('master API routes over HTTP', () => {
       assert.equal(bad.data.code, 'MASTER_ENSURE_FAILED');
     } finally {
       master.ensureMasterSession = original;
+    }
+  });
+
+  it('errorResponse: extra can never blank error or code', () => {
+    // Driven against `errorResponse` DIRECTLY, because no route reaches this
+    // property: the one caller passing an `extra` passes `{ cause }`, which
+    // contains neither field, so a route-level test stays green whichever order
+    // the spread uses.
+    //
+    // I learned that the hard way here — the mutation I first ran changed the
+    // spread order AND made the caller shadow `code`, so its red proved the
+    // caller change. A compound mutation proves less than it looks like, and the
+    // comment it justified claimed coverage that did not exist.
+    //
+    // THE MUTATION THIS CATCHES: spreading `extra` last, on its own.
+    const { errorResponse } = require('../server');
+    let body = null;
+    const res = { writeHead() {}, end(b) { body = JSON.parse(b); } };
+    errorResponse(res, 500, 'the real message', 'REAL_CODE',
+      { cause: 'read-timed-out', error: 'clobbered', code: 'CLOBBERED' });
+    assert.equal(body.error, 'the real message', 'a caller must not be able to replace the message');
+    assert.equal(body.code, 'REAL_CODE', 'nor the code every client branches on');
+    assert.equal(body.cause, 'read-timed-out', 'while the extra it legitimately carries survives');
+  });
+
+  it('POST /api/master/kill: 200 whether it killed or found nothing, 500 when tmux is silent', async () => {
+    // Stubbed for the same reason ensure is: reaching the real one from a test
+    // would kill the operator's actual Master session.
+    //
+    // The three outcomes are the whole contract. An ABSENT master is 200 —
+    // "not running" is what the operator asked for and it already holds — while
+    // a tmux that would not answer is 500 with the SAME code ensure uses, so a
+    // client branches on one vocabulary. Reporting the silent case as a
+    // successful kill would tell the operator their Master is stopped during
+    // exactly the wedge where it is most likely still running.
+    const original = master.killMasterSession;
+    try {
+      master.killMasterSession = () => ({ killed: true, wasRunning: true, tmuxSession: 'tangleclaw-master', incomplete: [], cause: null });
+      const killed = await request('POST', '/api/master/kill');
+      assert.equal(killed.status, 200);
+      assert.equal(killed.data.killed, true);
+
+      master.killMasterSession = () => ({ killed: false, wasRunning: false, tmuxSession: 'tangleclaw-master', incomplete: [], cause: null });
+      const absent = await request('POST', '/api/master/kill');
+      assert.equal(absent.status, 200, 'an absent master is success, not an error');
+      assert.equal(absent.data.wasRunning, false);
+
+      master.killMasterSession = () => ({ killed: false, wasRunning: false, tmuxSession: 'tangleclaw-master', incomplete: ['exists'], cause: 'read-timed-out', error: 'tmux did not answer' });
+      const unknown = await request('POST', '/api/master/kill');
+      assert.equal(unknown.status, 500);
+      assert.equal(unknown.data.code, 'MASTER_LIVENESS_UNKNOWN',
+        'the same code ensure uses — one client branch covers both');
+      assert.equal(unknown.data.cause, 'read-timed-out',
+        'and the CAUSE travels, or a client cannot tell this refusal from the '
+        + 'unconfirmed-kill one that shares its code');
+      assert.ok(unknown.data.error, 'and the error text still travels beside it');
+    } finally {
+      master.killMasterSession = original;
     }
   });
 });

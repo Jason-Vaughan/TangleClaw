@@ -6,6 +6,31 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **The Master control bar can stop the Master (#968, #768 chunk 3).** `POST /api/master/kill` plus
+  the bar's Kill button, which shipped dim from #768 waiting for exactly this route. It is the remedy
+  the access level needs: the write guard binds a change on the Master's next tool call, but the
+  running Master reads its instructions only at launch, so it has to restart before it will *act* on
+  a new level. Until now the only way was `tmux kill-session -t tangleclaw-master` typed by hand,
+  which is not an answer for a product whose primary client is a phone.
+
+  **Killing a Master that is not running is success, not an error** — the operator's intent is "not
+  running" and it already holds — and the response says whether *this* call did the killing, so the
+  honest case does not read as a failure. **A kill that could not be confirmed is not a kill:**
+  liveness comes from the three-state probe, never from `hasSession`, which flattens a wedged tmux
+  server into "not there". Built on the flattened answer, the route would have reported "already
+  stopped" during exactly the PTY-exhaustion wedge this install reaches, when the Master is most
+  likely still running. That case refuses with the same `MASTER_LIVENESS_UNKNOWN` code `ensure`
+  already uses, so a client branches on one vocabulary rather than two.
+
+  The confirmation names what survives as well as what is lost: the Master's durable notes under
+  `memory/` are a data directory and are untouched; the conversation it is holding is not, which is
+  the point of restarting it. Reopening the drawer starts it again, with a fresh identity — so the
+  bar's "restart to apply" warning clears by doing the thing it asks for.
+
+  The refusal's `cause` travels in the 500 body, because one code covers both refusals — tmux never
+  answered the probe, or the session was live and the kill went unconfirmed — and those are different
+  things to tell an operator.
+
 - **The Master's access level is real, and changing it binds on its next tool call (#755, chunk 1).**
   `suggest` and `write` had been rendered in the settings modal and rejected by the server since the
   tier was specified — a picker with two permanently-disabled options. They are selectable now,
@@ -17,7 +42,9 @@ All notable changes to TangleClaw are documented in this file.
   home on every invocation and maps it to the three `PreToolUse` outcomes: `read-only` denies
   outside `memory/`, `suggest` **asks** — the confirmation in the master's own terminal is what makes
   it "propose, don't execute" — and `write` allows. So a flip is in force for the master's very next
-  write attempt, with no restart and no re-ensure.
+  write attempt, with no re-ensure. (Amended before release by #968: that is true of the GUARD. The
+  running master reads its instructions only at launch, so it must be restarted before it will act
+  on the new level — the original wording here said "no restart".)
 
   **Every failure path degrades to read-only, and that is the acceptance criterion rather than a
   nicety.** The harness fails OPEN on hook crashes, which is why the existing guard ends every
@@ -306,6 +333,35 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **The Master no longer refuses writes it is allowed to make (#968).** Flipping the access level to
+  `write` moved the toggle, satisfied the server, and left the Master saying it had no write access.
+  It was refusing *itself*: the change path wrote the level file and regenerated the guard but never
+  refreshed the Master's identity, so `CLAUDE.md` kept whatever level was current at the last ensure.
+  The Master reads its own instructions, saw `read-only`, and declined without ever attempting a
+  write — so the guard, which was correctly answering *allow*, was never consulted.
+
+  The change path now delegates to the one full identity refresher rather than keeping a partial one,
+  because keeping a partial one is what let the three artifacts drift apart. The level is written
+  first, so a failure part-way leaves the guard reading the *tighter* value rather than still
+  permitting the old one.
+
+  **And the surfaces stopped promising the opposite.** The confirmation shown before granting write
+  told the operator the change bound on the Master's next tool call and needed *"no restart"* — the
+  single most misleading sentence available, since the restart is exactly what they needed to do. That claim is gone from the
+  confirmation, the settings modal, the configuration reference, ADR 0008, FEATURES, the README and
+  `lib/master.js`'s own JSDoc — and a guard now holds every tracked one of them together rather than
+  one at a time. (Written without a number on purpose: that family was five, then six, then seven
+  inside this one branch.)
+
+  **The bar says when it matters, rather than always.** `/api/master/status` compares the Master's
+  tmux session start time against its identity's mtime and reports whether the *running* Master has
+  actually read its current instructions; the bar shows `NOT IN EFFECT — the running Master started
+  before these instructions were written (17 Jul). Restart it to apply.` only when that is true, and
+  says so plainly when tmux will not answer rather than implying all is well. It catches every cause
+  of a stale identity — an edited Hard rule, a scope change — not only a level flip. On the machine
+  this was found on, the Master had been running for a month against instructions rewritten the day
+  before.
+
 - **A session learns about a release when it happens, not up to four hours later (#954).** The
   update beacon polls every five minutes on both the dashboard and every session page, but on the
   session page every one of those reads was a pure cache read — `GET /api/update-status`, documented
@@ -384,6 +440,17 @@ All notable changes to TangleClaw are documented in this file.
   which is the #716 bug class exactly.
 
 ### Internal
+
+- **A refusal guard in the plugin-migration suite stopped depending on how Node formats an error
+  (#969).** It matched Python's `ValueError` text, which only reaches the assertion when a child
+  process's stderr is appended to the thrown error — a property of the Node build, not of the code
+  under test, so it failed on a developer machine while passing in CI. It asserts the refusal itself
+  now. **The guard is still weak and that is written beside it rather than papered over:** two
+  compile-checked mutations both stay green — swapping `literal_eval` for `eval`, which is the
+  regression the test is *named* for, because the reader passes an AST node and `eval` raises on a
+  node rather than running it; and a lenient reader emitting `{}`, because the caller throws
+  downstream anyway. Making it meaningful needs a typed refusal from the reader, which is tracked on
+  #969.
 
 - **The Master settings modal is styled on the session page (#768 chunk 2, carried from chunk 1's
   review).** The modal's markup was single-sourced into a shared component while its styles stayed in
