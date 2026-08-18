@@ -617,6 +617,22 @@ route('POST', '/api/master/ensure', (_req, res) => {
   jsonResponse(res, 200, result);
 });
 
+// POST /api/master/kill — stop the master's tmux session. Idempotent: an absent
+// master is success, because the operator's intent is "not running". The remedy
+// for #968 — a level change binds on the guard at once, but the running master
+// reads its instructions only at launch, so it has to restart to act on one.
+route('POST', '/api/master/kill', (_req, res) => {
+  const result = master.killMasterSession();
+  if (result.error) {
+    // Same distinction ensure draws, and for the same reason: tmux declining to
+    // answer is not "the master is stopped". Saying it was would tell the
+    // operator their master is down during exactly the wedge where it is most
+    // likely still running.
+    return errorResponse(res, 500, result.error, 'MASTER_LIVENESS_UNKNOWN');
+  }
+  jsonResponse(res, 200, result);
+});
+
 // POST /api/master/rules/restore-defaults — replace every master Hard rule
 // with the shipped baseline (the recovery path if an edit ever weakened the
 // boundary). History survives in session_rule_versions. A live master picks

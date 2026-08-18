@@ -6,6 +6,27 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Added
 
+- **The Master control bar can stop the Master (#968, #768 chunk 3).** `POST /api/master/kill` plus
+  the bar's Kill button, which shipped dim from #768 waiting for exactly this route. It is the remedy
+  the access level needs: the write guard binds a change on the Master's next tool call, but the
+  running Master reads its instructions only at launch, so it has to restart before it will *act* on
+  a new level. Until now the only way was `tmux kill-session -t tangleclaw-master` typed by hand,
+  which is not an answer for a product whose primary client is a phone.
+
+  **Killing a Master that is not running is success, not an error** — the operator's intent is "not
+  running" and it already holds — and the response says whether *this* call did the killing, so the
+  honest case does not read as a failure. **A kill that could not be confirmed is not a kill:**
+  liveness comes from the three-state probe, never from `hasSession`, which flattens a wedged tmux
+  server into "not there". Built on the flattened answer, the route would have reported "already
+  stopped" during exactly the PTY-exhaustion wedge this install reaches, when the Master is most
+  likely still running. That case refuses with the same `MASTER_LIVENESS_UNKNOWN` code `ensure`
+  already uses, so a client branches on one vocabulary rather than two.
+
+  The confirmation names what survives as well as what is lost: the Master's durable notes under
+  `memory/` are a data directory and are untouched; the conversation it is holding is not, which is
+  the point of restarting it. Reopening the drawer starts it again, with a fresh identity — so the
+  bar's "restart to apply" warning clears by doing the thing it asks for.
+
 - **The Master's access level is real, and changing it binds on its next tool call (#755, chunk 1).**
   `suggest` and `write` had been rendered in the settings modal and rejected by the server since the
   tier was specified — a picker with two permanently-disabled options. They are selectable now,

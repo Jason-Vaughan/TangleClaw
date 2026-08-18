@@ -2069,8 +2069,11 @@
     // than being left beside a live control, which is the worst of both (a
     // reason for an absence that is not absent).
     upload: 'Uploads resolve through a registered project, and the Master is not one.',
-    wrap: "Wrap is a git pipeline and the Master has no checkout — what it should mean here isn't decided yet.",
-    kill: 'The Master API has no kill route yet.'
+    // `kill` left this table when `POST /api/master/kill` landed (#968), for the
+    // same reason `access` did: a reason rendered beside a working control is its
+    // own falsehood, and the entry's REMOVAL is what proves the pending treatment
+    // came off WITH the backend rather than beside it.
+    wrap: "Wrap is a git pipeline and the Master has no checkout — what it should mean here isn't decided yet."
   };
 
   /**
@@ -2205,7 +2208,8 @@
       <button class="banner-btn" id="${p}SettingsBtn"
               aria-label="Master settings" title="Master settings">&#9881;</button>
       ${pend('Wrap', 'banner-btn btn-wrap', 'Wrap')}
-      ${pend('Kill', 'banner-btn btn-kill', 'Kill')}
+      <button type="button" class="banner-btn btn-kill" id="${p}KillBtn"
+              title="Stop the Master session. Its memory/ files survive; the conversation does not.">Kill</button>
       <span class="master-bar-error" id="${p}Error" role="status" hidden></span>
       <span class="master-bar-warn" id="${p}Warn" role="status" hidden></span>`;
   }
@@ -2274,6 +2278,8 @@
         const seg = el(spec.suffix);
         if (seg) seg.addEventListener('click', () => flip(spec.level));
       }
+      const kill = el('KillBtn');
+      if (kill) kill.addEventListener('click', killMaster);
       // Establish the resting state in CODE rather than leaning on the markup's
       // attributes. The component then owns its own initial appearance, which
       // means one source for "what does this say before anything answers"
@@ -2644,6 +2650,61 @@
     }
 
     /**
+     * Stop the Master session.
+     *
+     * The remedy the access toggle needs: a level change binds on the guard at
+     * once, but the running Master reads its instructions only at launch, so it
+     * has to restart before it will ACT on the new level (#968). The bar says
+     * when that is true; this is the control that fixes it.
+     *
+     * Confirmed, because it is destructive and GLOBAL — there is exactly one
+     * Master, so this stops it for every session drawer and the dashboard, not
+     * just this surface. The confirmation names what is lost and what is not:
+     * the Master's durable notes under `memory/` are a data directory and
+     * survive; the conversation does not, which is the point of restarting.
+     *
+     * Repaints from server state afterwards, never from the click — the same
+     * rule the toggle follows, and for the same reason.
+     *
+     * @returns {Promise<void>}
+     */
+    async function killMaster() {
+      if (busy || !deps.apiMutate) return;
+      busy = true;
+      try {
+        setError('');
+        const ask = deps.confirm || global.confirm;
+        // NO CONFIRMATION MEANS NO KILL. The same fail-closed shape the write
+        // grant uses: a check written as `typeof ask === 'function' && !ask(...)`
+        // reads as "confirm before stopping it" and stops it silently when there
+        // is nothing to confirm with.
+        if (typeof ask !== 'function') {
+          setError('The Master was not stopped: this page cannot show the confirmation that requires.');
+          return;
+        }
+        if (!ask('Stop the Project Master?\n\n'
+          + 'There is exactly one Master, so this stops it EVERYWHERE — every session drawer and '
+          + 'the dashboard.\n\n'
+          + 'Its durable notes under memory/ survive. The conversation it is holding does not — '
+          + 'which is what restarting it is for. Reopening the drawer starts it again.')) return;
+
+        const result = await deps.apiMutate('/api/master/kill', 'POST', {});
+        if (!result) {
+          setError((deps.api && deps.api.lastError) || 'The Master could not be stopped.');
+          return;
+        }
+        setStatus('', result.wasRunning ? 'Master stopped' : 'Master was not running', true);
+        // From the server, not from the fact that a kill returned 200 — the same
+        // discipline as the toggle. A repaint is also how the stale-identity
+        // warning clears, since a fresh session reads the current instructions.
+        await loadAccess();
+      } finally {
+        busy = false;
+        setBusy(false);
+      }
+    }
+
+    /**
      * Fetch the Master's status and paint the access controls from it.
      *
      * The surfaces call this at the moments they have: the dashboard on open and
@@ -2679,7 +2740,7 @@
       setModel(st, engineId);
     }
 
-    return { mount, setStatus, setModel, setError, setWarning, setAccess, loadAccess, loadModel };
+    return { mount, setStatus, setModel, setError, setWarning, setAccess, loadAccess, loadModel, killMaster };
   }
 
   global.tcSetRulesStatus = tcSetRulesStatus;

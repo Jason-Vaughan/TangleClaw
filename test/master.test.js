@@ -552,6 +552,59 @@ describe('#968 a level change reaches the Master\'s own instructions', () => {
   });
 });
 
+describe('killMasterSession — the remedy #968 makes load-bearing', () => {
+  /** @param {object} probe - What the stubbed probe reports. */
+  const stub = (probe, killed = true) => {
+    const calls = [];
+    return {
+      lib: {
+        probeSession: () => probe,
+        killSession: (n) => { calls.push(n); return killed; }
+      },
+      calls
+    };
+  };
+
+  it('kills a live session', () => {
+    const { lib, calls } = stub({ live: true, answered: true, cause: null });
+    const r = master.killMasterSession({ tmuxLib: lib });
+    assert.equal(r.killed, true);
+    assert.equal(r.wasRunning, true);
+    assert.deepEqual(calls, ['tangleclaw-master'], 'and kills the RESERVED session, not another');
+  });
+
+  it('an absent Master is SUCCESS, not an error', () => {
+    // The operator's intent is "not running", and it already is. Reporting that
+    // as a failure would make the honest case look broken.
+    //
+    // THE MUTATION THIS CATCHES: returning an error for the absent case, which
+    // is the reflex reading of "nothing to kill".
+    const { lib, calls } = stub({ live: false, answered: true, cause: null });
+    const r = master.killMasterSession({ tmuxLib: lib });
+    assert.equal(r.error, undefined, 'not an error');
+    assert.equal(r.killed, false, 'but honest that THIS call did not do the killing');
+    assert.equal(r.wasRunning, false);
+    assert.deepEqual(calls, [], 'and it must not ask tmux to kill something absent');
+  });
+
+  it('refuses when tmux did not answer — an unconfirmed kill is not a kill', () => {
+    // `hasSession` flattens a wedged tmux into "not there", and this install
+    // reaches that wedge (#94/#144/#380). Built on it, the route would report
+    // "already stopped" during exactly the condition where the Master is most
+    // likely still running.
+    //
+    // THE MUTATION THIS CATCHES: using hasSession, or folding `!answered` into
+    // the absent branch — both of which make this case silently claim success.
+    const { lib, calls } = stub({ live: false, answered: false, cause: 'read-timed-out' });
+    const r = master.killMasterSession({ tmuxLib: lib });
+    assert.ok(r.error, 'it must refuse rather than claim a kill it cannot confirm');
+    assert.deepEqual(r.incomplete, ['exists'],
+      'named in the same vocabulary ensure uses, so one client branch covers both');
+    assert.equal(r.killed, false);
+    assert.deepEqual(calls, [], 'and nothing was killed');
+  });
+});
+
 describe('readMasterIdentityFreshness — has the RUNNING Master read this? (#968)', () => {
   const homes = [];
   const mk = () => {
@@ -723,6 +776,8 @@ describe('readMasterIdentityFreshness — has the RUNNING Master read this? (#96
     });
     assert.equal(p.identityStale, null,
       'an unreadable identity is unknown; only an ABSENT one is "nothing is stale"');
+    assert.equal(p.identityWrittenAt, null,
+      'and it must not report a write time it could not read');
   });
 
   it('no running Master, and no identity at all, are both "nothing is stale"', () => {
@@ -2326,6 +2381,38 @@ describe('master API routes over HTTP', () => {
       assert.equal(bad.data.code, 'MASTER_ENSURE_FAILED');
     } finally {
       master.ensureMasterSession = original;
+    }
+  });
+
+  it('POST /api/master/kill: 200 whether it killed or found nothing, 500 when tmux is silent', async () => {
+    // Stubbed for the same reason ensure is: reaching the real one from a test
+    // would kill the operator's actual Master session.
+    //
+    // The three outcomes are the whole contract. An ABSENT master is 200 —
+    // "not running" is what the operator asked for and it already holds — while
+    // a tmux that would not answer is 500 with the SAME code ensure uses, so a
+    // client branches on one vocabulary. Reporting the silent case as a
+    // successful kill would tell the operator their Master is stopped during
+    // exactly the wedge where it is most likely still running.
+    const original = master.killMasterSession;
+    try {
+      master.killMasterSession = () => ({ killed: true, wasRunning: true, tmuxSession: 'tangleclaw-master', incomplete: [], cause: null });
+      const killed = await request('POST', '/api/master/kill');
+      assert.equal(killed.status, 200);
+      assert.equal(killed.data.killed, true);
+
+      master.killMasterSession = () => ({ killed: false, wasRunning: false, tmuxSession: 'tangleclaw-master', incomplete: [], cause: null });
+      const absent = await request('POST', '/api/master/kill');
+      assert.equal(absent.status, 200, 'an absent master is success, not an error');
+      assert.equal(absent.data.wasRunning, false);
+
+      master.killMasterSession = () => ({ killed: false, wasRunning: false, tmuxSession: 'tangleclaw-master', incomplete: ['exists'], cause: 'read-timed-out', error: 'tmux did not answer' });
+      const unknown = await request('POST', '/api/master/kill');
+      assert.equal(unknown.status, 500);
+      assert.equal(unknown.data.code, 'MASTER_LIVENESS_UNKNOWN',
+        'the same code ensure uses — one client branch covers both');
+    } finally {
+      master.killMasterSession = original;
     }
   });
 });

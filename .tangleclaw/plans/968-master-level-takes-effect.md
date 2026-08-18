@@ -110,6 +110,16 @@ way.
    one. Guarded so the family cannot lose a member again.
 4. Suite green; every new guard mutated.
 
+### Carried into chunk 2 from chunk 1's final review — ride its commit or they are a drop
+
+- **The family guard asserts EXISTENCE, and its comment claims TRACKED-ness.** Those are different:
+  in this worktree `.prawduct/artifacts` is a symlink into the primary, so the gitignored member
+  would have passed `existsSync` here and still gone red in CI — with a better message than ENOENT,
+  but red. Derive `FAMILY` from `git ls-files`, or add `git ls-files --error-unmatch`, so the comment
+  becomes true rather than nearly true.
+- **The ENOTDIR test asserts `identityStale === null` but not `identityWrittenAt === null`**, though
+  the branch returns both.
+
 ### Chunk 2 — Master Kill (#768 chunk 3)
 
 **Type:** `feature` · **Critic mode:** `cumulative-final` · **Visual change:** **yes**
@@ -159,7 +169,8 @@ The remedy for chunk 1's residual, and the smallest of the bar's three missing b
 
 ## Status
 
-- [ ] Chunk 1 — the level reaches the Master; no surface promises "no restart"
+- [x] Chunk 1 — the level reaches the Master; no surface promises "no restart" — **DONE 2026-08-18**,
+      branch `fix/968-master-level-takes-effect`. Four review rounds: 7 blocking → 1 → 2 → clean.
 - [ ] Chunk 2 — Master Kill
 
 ## Related

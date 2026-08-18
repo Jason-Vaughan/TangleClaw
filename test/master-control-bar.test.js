@@ -19,6 +19,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { spawnSync } = require('node:child_process');
 const loadApiHelperGlobals = require('./_api-helper-globals');
 const { makeDocument, withIdParsingInnerHTML } = require('./_mini-dom');
 
@@ -128,7 +129,7 @@ describe('#768 controls with no backend are absent WITH a reason', () => {
     // The rule from #755/#741: never present-and-inert. A disabled control that
     // states why is the honest middle — the operator sees the bar's final shape
     // without being able to press something that would do nothing.
-    for (const key of ['Upload', 'Wrap', 'Kill']) {
+    for (const key of ['Upload', 'Wrap']) {
       const m = new RegExp(`<button[^>]*id="masterPanel${key}Btn"[^>]*>`).exec(bar);
       assert.ok(m, `${key} must render`);
       // A STANDALONE attribute, not `\bdisabled\b` — that also matches inside
@@ -148,7 +149,7 @@ describe('#768 controls with no backend are absent WITH a reason', () => {
     // it is a live control rather than an absence needing a reason. Removing it
     // here is not weakening the guard: the rule is about controls with NO route,
     // and a reason rendered beside a working control is its own falsehood.
-    for (const key of ['Upload', 'Wrap', 'Kill', 'Medusa']) {
+    for (const key of ['Upload', 'Wrap', 'Medusa']) {
       assert.match(bar, new RegExp(`aria-describedby="masterPanel${key}Why"`),
         `${key} must reference a description`);
       assert.match(bar, new RegExp(`id="masterPanel${key}Why"`),
@@ -172,8 +173,11 @@ describe('#768 controls with no backend are absent WITH a reason', () => {
     // control that works must not still carry an explanation for why it cannot.
     // This list shrinking is how a shipped backend is proved to have taken the
     // pending treatment WITH it, rather than beside it.
+    // `kill` is GONE (#968) alongside `access` (#755). Each removal is the
+    // assertion that a shipped backend took its control's pending treatment WITH
+    // it rather than leaving a reason beside a working button.
     assert.deepEqual(Object.keys(G.tcMasterPendingReasons).sort(),
-      ['kill', 'medusa', 'upload', 'wrap']);
+      ['medusa', 'upload', 'wrap']);
   });
 });
 
@@ -935,6 +939,53 @@ describe('#755 the access toggle is live, and paints only from server state', ()
     assert.match(el('Warn').textContent, /permitting LESS/);
   });
 
+  it('Kill confirms, posts, and repaints from the server (#968)', async () => {
+    // The remedy the access toggle needs. Repaints from a status read rather
+    // than from the fact that a kill returned 200 — the same rule the toggle
+    // follows, and it is also how the stale-identity warning clears, since a
+    // fresh session reads the current instructions.
+    //
+    // THE MUTATION THIS CATCHES: skipping the post-kill repaint, which leaves the
+    // bar asserting a stale-identity warning about a Master that no longer
+    // exists.
+    const { doc, el, calls } = mountedBar({ statuses: [{ settings: settings() }] });
+    el('KillBtn').dispatch('click');
+    await flush();
+    assert.ok(calls.some((c) => c[0] === 'POST' && c[1] === '/api/master/kill'),
+      'it must actually call the kill route');
+    assert.ok(calls.some((c) => c[0] === 'GET' && c[1] === '/api/master/status'),
+      'and repaint from the server afterwards');
+    assert.ok(doc, 'sanity');
+  });
+
+  it('a declined confirmation kills nothing', async () => {
+    // Destructive AND global — there is exactly one Master.
+    //
+    // THE MUTATION THIS CATCHES: ignoring the confirmation's return value.
+    const { el, calls, prompts } = mountedBar({
+      statuses: [{ settings: settings() }], confirm: false
+    });
+    el('KillBtn').dispatch('click');
+    await flush();
+    assert.equal(prompts.length, 1, 'it must ask');
+    assert.match(prompts[0], /EVERYWHERE|every session/i, 'and say the stop is global');
+    assert.match(prompts[0], /memory\//, 'and name what SURVIVES, not just what is lost');
+    assert.equal(calls.some((c) => c[0] === 'POST'), false, 'and kill nothing when declined');
+  });
+
+  it('with no way to confirm, the Master is NOT stopped', async () => {
+    // Same fail-closed shape as the write grant: `typeof ask === 'function' &&
+    // !ask(...)` reads as "confirm before stopping" and stops it silently when
+    // there is nothing to confirm with.
+    //
+    // THE MUTATION THIS CATCHES: folding the availability check into the `&&`.
+    const { el, calls } = mountedBar({ statuses: [{ settings: settings() }], noConfirm: true });
+    el('KillBtn').dispatch('click');
+    await flush();
+    assert.equal(calls.some((c) => c[0] === 'POST'), false);
+    assert.equal(el('Error').hidden, false, 'and it says why, rather than doing nothing quietly');
+  });
+
   it('a second press while one is in flight does not send a second PATCH', async () => {
     // THE MUTATION THIS CATCHES: dropping the in-flight latch. Two PATCHes race
     // and the toggle settles on whichever status answered last — a level nobody
@@ -1120,12 +1171,16 @@ describe('#755 both surfaces drive the live toggle, and neither grows a timer', 
       'docs/adr/0008-project-master-session-model.md', 'CHANGELOG.md', 'FEATURES.md'];
     for (const rel of FAMILY) {
       const abs = path.join(__dirname, '..', rel);
-      // Fails loudly rather than skipping. A guard that quietly passes over a
-      // member it cannot read is the same as not having that member — and
-      // silently-skipped is how the gitignored entry would have hidden.
-      assert.equal(fs.existsSync(abs), true,
-        `${rel} must exist in every clone for this guard to mean anything — `
-        + 'if it is gitignored it cannot be a member');
+      // TRACKED, not merely present. Existence is the weaker property and would
+      // not have caught the member this list already lost: in this worktree
+      // `.prawduct/artifacts` is a symlink into the primary checkout, so a
+      // gitignored file passes `existsSync` here and still ENOENTs in CI. Asking
+      // git is what makes the claim above true rather than nearly true.
+      const tracked = spawnSync('git', ['ls-files', '--error-unmatch', rel],
+        { cwd: path.join(__dirname, '..'), encoding: 'utf8' });
+      assert.equal(tracked.status, 0,
+        `${rel} is not tracked by git, so this guard would pass locally and fail in CI — `
+        + 'a family member has to exist in every clone');
       const body = fs.readFileSync(abs, 'utf8');
       for (const claim of CLAIMS) {
         assert.doesNotMatch(body, claim,
@@ -1176,6 +1231,14 @@ describe('#755 both surfaces drive the live toggle, and neither grows a timer', 
       assert.match(body, /restart/i,
         `${fn} describes when a change takes effect and must name the restart`);
     }
+  });
+
+  it('the Kill button ships as a real control, with no pending treatment', () => {
+    const markup = G.tcMasterControlBarMarkup('masterPanel', {});
+    const m = /<button[^>]*id="masterPanelKillBtn"[^>]*>/.exec(markup);
+    assert.ok(m, 'Kill must render as a real button');
+    assert.doesNotMatch(m[0], /\sdisabled(?=[\s>])/, 'and be pressable');
+    assert.doesNotMatch(m[0], /aria-disabled/);
   });
 
   it('the segments meet the touch-target minimum the mobile Direction binds', () => {

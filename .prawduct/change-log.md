@@ -59,6 +59,16 @@ held behaviourally in a headless run (no attached client to fall back to), so a 
 holds it, and the guard had to strip comments first because both callers explain the hazard in prose
 directly above the check.
 
+**Chunk 2 — Master Kill (also #768 chunk 3).** `POST /api/master/kill` plus the bar's Kill button,
+which shipped dim from #768 waiting for this route. It is the remedy chunk 1 makes load-bearing: the
+guard binds a level change at once, the running Master does not, so restarting it is what makes it
+act. Killing an absent Master is SUCCESS — the operator's intent is "not running" and it already
+holds — while a tmux that will not answer refuses, because a kill that could not be confirmed is not
+a kill, and `hasSession` would have flattened that wedge into "already stopped" during exactly the
+condition where the Master is most likely still running. `kill` leaving `tcMasterPendingReasons` is
+the assertion that the pending treatment came off WITH the backend rather than beside it — the same
+pattern `access` set in #755.
+
 **Classification:** bugfix
 
 
