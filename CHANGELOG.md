@@ -4,7 +4,17 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
-## [5.7.0] - 2026-08-18
+## [5.8.0] - 2026-08-18
+
+### Added
+- **Governance Layer & Drift Detection (#595)**: Added a boot-time drift detector that compares TangleClaw's own `CLAUDE.md` against `data/global-rules.md` to prevent silent drift of global rules. Added a "Rule Delivery Verification" ledger to the Project Settings modal to track if sessions successfully received their injected rule blocks at launch.
+
+### Fixed
+- **Shared Documents Injection (#947)**: Fixed a bug where `injectIntoConfig` dropped the content of shared documents for plugin-governed projects.
+- **Learnings Recurrence Loop (#750)**: Fixed a 100% false-negative exact-match bug in the learnings pipeline by normalizing topic strings, successfully reconnecting the session self-improvement loop.
+- **Strict Quality Floors (#177)**: Rewrote `WRAP_STEP_PATTERNS` to cover all 14 pipeline steps. The quality scanner now strictly increments `stepsMissing` for unknown steps instead of silently auto-passing them.
+- **Auto Mode for Feature PRs (#213)**: Edited `global-rules.md` to allow Auto Mode to default `--auto` on feature PRs and refactors, removing manual wait steps.
+- Swept and closed 6 stale issues and rehomed obsolete issues as part of the Post-v5 roadmap completion.
 
 ### Added
 
