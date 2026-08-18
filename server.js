@@ -3438,14 +3438,14 @@ route('GET', '/api/sessions/:project/medusa/messages', (req, res, params) => {
 // POST /api/sessions/:project/medusa/read — mark this session's inbox read,
 // clearing the unread badge (MED-2K9P Chunk 02). Fired when the operator opens
 // the read panel. Idempotent; a session with no listener is a safe no-op.
-route('POST', '/api/sessions/:project/medusa/read', (_req, res, params) => {
+route('POST', '/api/sessions/:project/medusa/read', (_req, res, params, body) => {
   const project = store.projects.getByName(params.project);
   if (!project) {
     return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
   }
   const active = store.sessions.getActive(project.id);
   const sessionId = active ? active.id : null;
-  if (sessionId != null) medusa.markRead(sessionId);
+  if (sessionId != null) medusa.markRead(sessionId, body && body.ids);
   jsonResponse(res, 200, medusa.getStatus(sessionId));
 });
 
