@@ -2817,3 +2817,4 @@ body.setup-active { overflow: hidden; }
   border-top: 1px dashed var(--tc-border-light);
 }
 
+.btn-success { background-color: #28a745 !important; color: white !important; border-color: #28a745 !important; }

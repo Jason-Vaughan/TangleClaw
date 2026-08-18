@@ -2960,15 +2960,11 @@ function insertFromPasteCatcher() {
 
 // ── Upload Modal ──
 
-let uploadFileData = null;
-let uploadFileName = null;
 
-/**
- * Open the upload modal and load recent uploads.
- */
+let uploadFiles = [];
+
 async function openUploadModal() {
-  uploadFileData = null;
-  uploadFileName = null;
+  uploadFiles = [];
   document.getElementById('uploadFile').value = '';
   document.getElementById('uploadPreview').classList.add('hidden');
   document.getElementById('uploadResult').classList.add('hidden');
@@ -2982,115 +2978,91 @@ async function openUploadModal() {
   if (data && data.uploads && data.uploads.length > 0) {
     historyEl.innerHTML = '<div class="upload-history-title">Recent uploads</div>' +
       data.uploads.slice(0, 5).map(u => {
-        // Flag-only secret indicator (#343, CC-4): the file is never scrubbed —
-        // the badge says "a credential pattern was detected, review it."
-        const secretBadge = u.secretsFlagged
-          ? `<span class="badge badge-secret" title="&#9888; possible secret detected (${esc((u.secretTypes || []).join(', '))}) — flag only, file not modified">&#9888; secret?</span>`
+        const secretBadge = u.secretMatches && u.secretMatches.length > 0 
+          ? ` <span class="secret-badge" title="Secrets detected: ${u.secretMatches.map(m=>m.rule).join(', ')}">⚠️ SECRETS</span>` 
           : '';
         return `<div class="upload-history-item" role="button" tabindex="0" data-path="${esc(u.path)}" title="Click to copy path: ${esc(u.path)}"><code>${esc(u.name)}</code>${secretBadge}<span class="upload-history-size">${formatSize(u.size)}</span></div>`;
       }).join('');
-    // Click / Enter / Space on a history item copies its local path — the same
-    // "Tell your AI assistant" affordance the post-upload result offers (#338).
-    // `.on*` assignment (not addEventListener) is idempotent across re-opens.
-    const copyFromTarget = (target) => {
-      const item = target && target.closest ? target.closest('.upload-history-item') : null;
-      if (item && item.dataset.path) copyUploadPath(item.dataset.path);
-    };
-    historyEl.onclick = (e) => copyFromTarget(e.target);
-    historyEl.onkeydown = (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); copyFromTarget(e.target); }
-    };
   } else {
     historyEl.innerHTML = '';
-    historyEl.onclick = null;
-    historyEl.onkeydown = null;
   }
-}
-
-/**
- * Copy an upload's local path to the clipboard with toast feedback (#338).
- * Mirrors the post-upload "Tell your AI assistant" affordance so a file from
- * the Recent uploads history can be re-grabbed without re-uploading.
- * @param {string} pathStr - The upload's absolute local path.
- * @returns {Promise<void>}
- */
-async function copyUploadPath(pathStr) {
-  const toast = document.getElementById('toast');
-  const flash = (msg, cls) => {
-    if (!toast) return;
-    toast.textContent = msg;
-    toast.className = `toast ${cls} visible`;
-    setTimeout(() => { toast.classList.remove('visible'); }, 3000);
-  };
-  const ok = await tcCopyToClipboard(pathStr);
-  flash(
-    ok ? 'Upload path copied to clipboard' : 'Could not copy — select the path manually',
-    ok ? 'toast-ok' : 'toast-warn'
-  );
-}
-
-function closeUploadModal() {
-  document.getElementById('uploadModal').classList.remove('open');
 }
 
 function handleFileSelect(e) {
-  const file = e.target.files[0];
-  if (!file) return;
+  const files = Array.from(e.target.files);
+  if (files.length === 0) return;
 
-  uploadFileName = file.name;
-  const reader = new FileReader();
-  reader.onload = (ev) => {
-    // Extract base64 from data URL
-    const dataUrl = ev.target.result;
-    uploadFileData = dataUrl.split(',')[1];
-
-    // Show preview for images
-    const previewEl = document.getElementById('uploadPreview');
-    const imgEl = document.getElementById('uploadPreviewImg');
-    if (file.type.startsWith('image/')) {
-      imgEl.src = dataUrl;
-      previewEl.classList.remove('hidden');
-    } else {
-      previewEl.classList.add('hidden');
-    }
-
-    document.getElementById('uploadSubmitBtn').disabled = false;
-    document.getElementById('uploadResult').classList.add('hidden');
-    document.getElementById('uploadError').classList.add('hidden');
-  };
-  reader.readAsDataURL(file);
+  uploadFiles = [];
+  let loaded = 0;
+  
+  for (const file of files) {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target.result;
+      const fileData = dataUrl.split(',')[1];
+      uploadFiles.push({ name: file.name, data: fileData, type: file.type });
+      loaded++;
+      
+      if (loaded === files.length) {
+        const previewEl = document.getElementById('uploadPreview');
+        const imgEl = document.getElementById('uploadPreviewImg');
+        if (files.length === 1 && files[0].type.startsWith('image/')) {
+          imgEl.src = files[0].type ? `data:${files[0].type};base64,${uploadFiles[0].data}` : `data:image/png;base64,${uploadFiles[0].data}`;
+          previewEl.classList.remove('hidden');
+        } else {
+          previewEl.classList.add('hidden');
+          // maybe show a list of files?
+          previewEl.innerHTML = '<div style="padding:10px;">' + files.length + ' files selected</div>';
+          previewEl.classList.remove('hidden');
+        }
+        document.getElementById('uploadSubmitBtn').disabled = false;
+        document.getElementById('uploadResult').classList.add('hidden');
+        document.getElementById('uploadError').classList.add('hidden');
+      }
+    };
+    reader.readAsDataURL(file);
+  }
 }
 
 async function submitUpload() {
-  if (!uploadFileData || !uploadFileName) return;
+  if (uploadFiles.length === 0) return;
 
   const btn = document.getElementById('uploadSubmitBtn');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>';
+  btn.innerHTML = '<span class="spinner"></span> Uploading...';
 
-  const result = await apiMutate('/api/upload', 'POST', {
-    project: projectName,
-    filename: uploadFileName,
-    data: uploadFileData
-  });
-
-  btn.textContent = 'Upload';
-
-  if (!result) {
-    document.getElementById('uploadError').textContent = 'Upload failed.';
-    document.getElementById('uploadError').classList.remove('hidden');
-    btn.disabled = false;
-    return;
+  const paths = [];
+  for (const file of uploadFiles) {
+    const result = await apiMutate('/api/upload', 'POST', {
+      project: projectName,
+      filename: file.name,
+      data: file.data
+    });
+    if (!result) {
+      document.getElementById('uploadError').textContent = 'Upload failed for ' + file.name;
+      document.getElementById('uploadError').classList.remove('hidden');
+      btn.textContent = 'Upload';
+      btn.disabled = false;
+      return;
+    }
+    paths.push(result.path);
   }
+
+  // Visual success feedback
+  btn.textContent = 'Uploaded!';
+  btn.classList.add('btn-success');
+  setTimeout(() => {
+    btn.textContent = 'Upload';
+    btn.classList.remove('btn-success');
+  }, 2000);
 
   // Show result path
   const resultEl = document.getElementById('uploadResult');
-  document.getElementById('uploadResultPath').textContent = result.path;
+  document.getElementById('uploadResultPath').innerHTML = paths.join('<br>');
   resultEl.classList.remove('hidden');
 
   // Reset for next upload
-  uploadFileData = null;
-  uploadFileName = null;
+  uploadFiles = [];
   document.getElementById('uploadFile').value = '';
   document.getElementById('uploadPreview').classList.add('hidden');
 }
@@ -3268,6 +3240,18 @@ async function confirmWrap() {
   // than this instant is some previous wrap's outcome, not this one's.
   const postStartedAt = Date.now();
 
+  // V1 and V2 both enter the wrapping state immediately (#771).
+  // The V2 POST blocks for the full duration of the wrap. This state
+  // is the only visible indication the pipeline is running until the
+  // SSE stream paints the drawer (#185).
+  sessionState.wrapping = true;
+  showWrappingState();
+
+  // #185: Open drawer empty and stream progress via SSE immediately
+  currentWrapPipelineResult = { results: [] };
+  openWrapDrawer(currentWrapPipelineResult, pw);
+  startWrapSse();
+
   try {
     const data = await apiMutate(
       `/api/sessions/${encodeURIComponent(projectName)}/wrap`,
@@ -3285,6 +3269,7 @@ async function confirmWrap() {
       if (!handled) {
         // Genuine failure (bad password, no session) — surface inline and
         // let `finally` re-enable so the operator can fix and retry.
+        clearWrappingState();
         document.getElementById('wrapError').textContent = api.lastError || 'Wrap failed. Check password.';
         document.getElementById('wrapError').classList.remove('hidden');
       }
@@ -3300,6 +3285,8 @@ async function confirmWrap() {
       // Hand the password down so retries can re-authenticate without
       // re-prompting (M1 — the wrap endpoint enforces deleteProtected on
       // every call, V1 and V2 alike).
+      clearWrappingState();
+      // SSE pipeline-done might have already drawn it, but fallback just in case:
       openWrapDrawer(data.pipelineResult, pw);
       return;
     }
