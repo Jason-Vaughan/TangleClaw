@@ -1276,6 +1276,31 @@ async function loadProjectRules(projectId) {
     if (projectRulesTargetId !== projectId) return;
     renderProjectRulesList(kind, rules);
   }
+
+  // Load verified delivery ledger
+  try {
+    const deliveriesData = await api(`/api/session-rules/deliveries?projectId=${encodeURIComponent(projectId)}`);
+    if (projectRulesTargetId !== projectId) return;
+    const list = document.getElementById('projRuleDeliveriesList');
+    if (list && deliveriesData && deliveriesData.deliveries) {
+      if (deliveriesData.deliveries.length === 0) {
+        list.innerHTML = '<p class="session-rules-empty">No delivery records found.</p>';
+      } else {
+        list.innerHTML = deliveriesData.deliveries.slice(0, 5).map((d) => {
+          const outcomeClass = d.outcome === 'delivered' ? 'rules-status-ok' : (d.outcome === 'skipped' ? 'rules-status-err' : '');
+          return `<div class="session-rule-item">
+            <div class="session-rule-content">
+              <strong>${esc(d.sessionId)}</strong>: <span class="${outcomeClass}">${esc(d.outcome)}</span>
+              ${d.skipReason ? `<br><small class="session-rule-meta">Reason: ${esc(d.skipReason)}</small>` : ''}
+              <br><small class="session-rule-meta">Channel: ${esc(d.channel)} | Digest: <code>${esc(d.digest ? d.digest.slice(0, 8) : 'none')}</code> | Rules: ${d.ruleIds ? d.ruleIds.length : 0}</small>
+            </div>
+          </div>`;
+        }).join('');
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load rule deliveries', err);
+  }
 }
 
 /**
