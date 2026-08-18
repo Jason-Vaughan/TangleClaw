@@ -1,7 +1,13 @@
 # Plan — #755: the Master's access level becomes real
 
-**Status:** ALL THREE CHUNKS BUILT AND REVIEWED — 2026-08-17, branch `feat/755-access-level`,
-awaiting PR. **Milestone:** Master Control (#829). **Issue:** #755. **Successor:** #966.
+**Status:** ARCHIVED — completed 2026-08-17. All three chunks built, reviewed and shipped on
+`feat/755-access-level`; archived on that branch so the retirement merges atomically with the work
+rather than needing a bookkeeping commit on `main` afterwards.
+**Milestone:** Master Control (#829). **Issue:** #755. **Successor:** #966.
+
+> Archived by hand rather than by `prawduct-hook archive-plan`, which only acts inside
+> `.prawduct/artifacts`. TangleClaw keeps plans in tracked `.tangleclaw/plans/` by its own global
+> rule, so `.tangleclaw/plans/archive/` is the destination that rule names.
 **Predecessors:** #756 (launch mode, shipped v5.5.0) · #768 chunks 1–2 (the shared settings
 component and the control bar, shipped 2026-08-17 — the bar's READ/WRITE toggle ships **dim** and
 this plan is what lights it).
