@@ -958,6 +958,23 @@ describe('#755 the access toggle is live, and paints only from server state', ()
     assert.ok(doc, 'sanity');
   });
 
+  it('an UNCONFIRMED kill is not reported as "Master stopped"', async () => {
+    // The gap three reviewers converged on, at the surface end. The route refuses
+    // when tmux will not confirm, and the bar must word the outcome from `killed`
+    // rather than `wasRunning` — they differ in exactly that case, and
+    // `wasRunning` alone prints "Master stopped" about a Master most likely still
+    // up. This is also what gives `killed` a reader.
+    //
+    // THE MUTATION THIS CATCHES: wording the status line from `wasRunning`.
+    const { doc, el } = mountedBar({ statuses: [{ settings: settings() }], patch: null });
+    el('KillBtn').dispatch('click');
+    await flush();
+    const line = doc.getElementById('masterPanelStatusText').textContent;
+    assert.doesNotMatch(line, /Master stopped/,
+      'a refusal must never read as a completed kill');
+    assert.equal(el('Error').hidden, false, 'and the refusal is visible');
+  });
+
   it('a declined confirmation kills nothing', async () => {
     // Destructive AND global — there is exactly one Master.
     //
@@ -1167,8 +1184,15 @@ describe('#755 both surfaces drive the live toggle, and neither grows a timer', 
       /next tool call with no restart/i,
       /with no restart and no re-ensure/i
     ];
+    // Seven now: `README.md` carried the claim in the operator's first-contact
+    // document, and `lib/master.js`'s own JSDoc matched the banned patterns —
+    // both escaped every earlier widening. The family has been bigger than the
+    // last count of it three times running, which is the argument for deriving
+    // it rather than listing it; that derivation is #968's own follow-up work,
+    // not this branch's.
     const FAMILY = ['public/api-helper.js', 'docs/configuration-reference.md',
-      'docs/adr/0008-project-master-session-model.md', 'CHANGELOG.md', 'FEATURES.md'];
+      'docs/adr/0008-project-master-session-model.md', 'CHANGELOG.md', 'FEATURES.md',
+      'README.md', 'lib/master.js'];
     for (const rel of FAMILY) {
       const abs = path.join(__dirname, '..', rel);
       // TRACKED, not merely present. Existence is the weaker property and would

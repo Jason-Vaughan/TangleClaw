@@ -525,6 +525,27 @@ describe('#968 a level change reaches the Master\'s own instructions', () => {
       'and the three artifacts must agree afterwards');
   });
 
+  it('REVOKING write puts read-only back in the identity — the direction #968 was reported from', () => {
+    // Granting was asserted; revoking was not, and revoking is the direction that
+    // matters most: a Master left believing it may write, after the operator took
+    // that away, is the failure with teeth. It is also the exact blind spot this
+    // issue was reported from, one step along.
+    //
+    // THE MUTATION THIS CATCHES: refreshing the identity only when the level
+    // rises — which passes every grant test in this file.
+    const home = mk();
+    master.applyMasterAccessLevel('write', { home, enginesLib: STRUCTURAL_968 });
+    assert.match(levelSection(home), /\*\*write\*\*/, 'precondition');
+
+    master.applyMasterAccessLevel('read-only', { home, enginesLib: STRUCTURAL_968 });
+    const after = levelSection(home);
+    assert.match(after, /\*\*read-only\*\*/);
+    assert.doesNotMatch(after, /\*\*write\*\*/,
+      'a revoked master must not go on being told it may write');
+    assert.equal(fs.readFileSync(master.masterAccessLevelPath(home), 'utf8').trim(), 'read-only',
+      'and the guard must agree with the identity');
+  });
+
   it('the identity follows the level ARGUMENT, not whatever config happens to say', () => {
     // The change path saves config and then passes the level it saved, so the
     // two agree in production. Passing it explicitly means they cannot disagree
@@ -585,6 +606,28 @@ describe('killMasterSession — the remedy #968 makes load-bearing', () => {
     assert.equal(r.killed, false, 'but honest that THIS call did not do the killing');
     assert.equal(r.wasRunning, false);
     assert.deepEqual(calls, [], 'and it must not ask tmux to kill something absent');
+  });
+
+  it('a kill tmux would not CONFIRM is refused, even though the session was live', () => {
+    // The gap three reviewers found independently. `killMasterSession` keeps the
+    // three-state discipline and then calls `tmux.killSession`, whose first line
+    // re-asks with the TWO-state `hasSession` — which answers "not there" both
+    // for a session that ended and for a tmux that stopped answering. So the
+    // wedge arrives one call later, and reporting it as success prints "Master
+    // stopped" about a Master most likely still running.
+    //
+    // `wasRunning` stays true because that part WAS established; only the kill is
+    // unconfirmed. This is also what gives `killed` a reader.
+    //
+    // THE MUTATION THIS CATCHES: returning `{ killed, wasRunning: true }` from
+    // the tmux result directly, which is what shipped and which every other kill
+    // test allows — none of them passes `killed = false`.
+    const { lib } = stub({ live: true, answered: true, cause: null }, false);
+    const r = master.killMasterSession({ tmuxLib: lib });
+    assert.equal(r.killed, false);
+    assert.equal(r.wasRunning, true, 'liveness WAS established; only the kill was not');
+    assert.ok(r.error, 'and it must not read as a successful kill');
+    assert.equal(r.cause, 'kill-unconfirmed');
   });
 
   it('refuses when tmux did not answer — an unconfirmed kill is not a kill', () => {
@@ -793,6 +836,40 @@ describe('readMasterIdentityFreshness — has the RUNNING Master read this? (#96
     assert.equal(master.readMasterIdentityFreshness({
       home: bare, tmuxLib: tmuxAt({ createdAt: 1, answered: true, cause: null })
     }).identityStale, false, 'no identity on disk');
+  });
+
+  it('getMasterStatus probes tmux ONCE, not once per question', () => {
+    // The freshness read guards session existence itself, so without reusing the
+    // caller's probe a single status read spawned three tmux subprocesses where
+    // it used to spawn one — on an install whose recurring failure mode is PTY
+    // exhaustion (#94/#144/#380), and on a page that polls this route.
+    //
+    // THE MUTATION THIS CATCHES: dropping `options.probe` so `sessionCreatedAt`
+    // probes again. Nothing else in the suite counts spawns, so that regression
+    // is otherwise invisible.
+    const home = mk();
+    identityAt(home, 0);
+    // Asserts the probe is HANDED OVER, which is the half this module owns.
+    // Counting real spawns is not available from here: `sessionCreatedAt` calls
+    // tmux.js's module-local `probeSession`, so any stub that could count it is
+    // also a stub of the function under test — the fixture would not reach the
+    // subject. `test/tmux.test.js` owns the other half.
+    let passedProbe;
+    let probes = 0;
+    const counting = Object.assign(fakeTmux({ alive: true }), {
+      probeSession: () => { probes++; return { live: true, answered: true, cause: null }; },
+      sessionCreatedAt: (name, opts) => {
+        passedProbe = opts && opts.probe;
+        return { createdAt: 1, answered: true, cause: null };
+      }
+    });
+    master.getMasterStatus({
+      home, tmuxLib: counting,
+      enginesLib: { resolveDefaultEngine: () => 'claude', reconcileLaunchMode: () => 'default' }
+    });
+    assert.equal(probes, 1, `the status read itself must probe once, not ${probes} times`);
+    assert.ok(passedProbe && passedProbe.answered,
+      'and it must hand that probe on, or the freshness read spawns another tmux');
   });
 
   it('getMasterStatus carries it, so a surface can render it', () => {

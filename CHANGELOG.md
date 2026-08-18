@@ -435,6 +435,17 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- **A refusal guard in the plugin-migration suite stopped depending on how Node formats an error
+  (#969).** It matched Python's `ValueError` text, which only reaches the assertion when a child
+  process's stderr is appended to the thrown error — a property of the Node build, not of the code
+  under test, so it failed on a developer machine while passing in CI. It asserts the refusal itself
+  now. **The guard is still weak and that is written beside it rather than papered over:** two
+  compile-checked mutations both stay green — swapping `literal_eval` for `eval`, which is the
+  regression the test is *named* for, because the reader passes an AST node and `eval` raises on a
+  node rather than running it; and a lenient reader emitting `{}`, because the caller throws
+  downstream anyway. Making it meaningful needs a typed refusal from the reader, which is tracked on
+  #969.
+
 - **The Master settings modal is styled on the session page (#768 chunk 2, carried from chunk 1's
   review).** The modal's markup was single-sourced into a shared component while its styles stayed in
   `style.css`, so it rendered unstyled on the session page — invisible only because nothing there

@@ -2693,7 +2693,20 @@
           setError((deps.api && deps.api.lastError) || 'The Master could not be stopped.');
           return;
         }
-        setStatus('', result.wasRunning ? 'Master stopped' : 'Master was not running', true);
+        // Worded from `killed`, not `wasRunning`, and this is DEFENSIVE rather than
+        // load-bearing — said plainly because a comment claiming otherwise would
+        // be the kind of false confidence this issue is about. Under the route's
+        // current contract the two cannot differ in a 200: a confirmed kill is
+        // `{killed: true, wasRunning: true}`, an absent master is both false, and
+        // the case where they diverge — running, but tmux would not confirm — is
+        // a 500 that lands in the error branch above and never reaches here.
+        // Mutating this line therefore changes nothing observable, which was
+        // measured, not assumed. It reads from `killed` anyway because that is
+        // the field that MEANS "this call stopped it", so a future 200 carrying
+        // an unconfirmed kill would word itself correctly instead of quietly.
+        // The property that IS testable — a refusal never reading as a stop — is
+        // pinned by 'an UNCONFIRMED kill is not reported as "Master stopped"'.
+        setStatus('', result.killed ? 'Master stopped' : 'Master was not running', true);
         // From the server, not from the fact that a kill returned 200 — the same
         // discipline as the toggle. A repaint is also how the stale-identity
         // warning clears, since a fresh session reads the current instructions.

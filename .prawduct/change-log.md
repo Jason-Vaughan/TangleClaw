@@ -28,7 +28,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 ## 2026-08-18 — #968: a level change reaches the Master, and the bar says when it has not
 
-<!-- prawduct: type=bugfix | scope=master-level-takes-effect-968 | chunks=01 -->
+<!-- prawduct: type=bugfix | scope=master-level-takes-effect-968 | chunks=01,02 -->
 
 The first real use of #755 found it: the toggle moved, the guard permitted the write, and the Master
 refused anyway. It was refusing itself — the change path refreshed the guard and not the identity, so

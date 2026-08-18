@@ -134,8 +134,8 @@ The remedy for chunk 1's residual, and the smallest of the bar's three missing b
   the assertion that the pending treatment came off WITH the backend rather than beside it (the
   pattern #755 chunk 3 established for `access`).
 - **Confirm before killing.** Destructive and global — there is exactly one Master. The Master's
-  durable memory under `memory/` survives; its in-session context does not, and the confirmation
-  should say so rather than leaving the operator to guess what is lost.
+  durable memory directory under the master home survives; its in-session context does not, and the
+  confirmation should say so rather than leaving the operator to guess what is lost.
 - **After a kill the bar repaints from server state** — same rule as the access toggle, no optimistic
   paint. Reopening the drawer runs `ensure`, which relaunches with a fresh identity.
 
@@ -143,8 +143,8 @@ The remedy for chunk 1's residual, and the smallest of the bar's three missing b
 1. Kill a live Master from both surfaces; the tmux session is gone and the bar says so.
 2. Kill an absent Master; success, no error.
 3. tmux unreachable → the bar does not claim the Master was killed.
-4. Flip to `write` → Kill → reopen → the Master writes outside `memory/`. **The end-to-end this
-   whole plan exists for**, and it is operator-verified, not asserted.
+4. Flip to `write` → Kill → reopen → the Master writes outside its memory directory. **The
+   end-to-end this whole plan exists for**, and it is operator-verified, not asserted.
 5. `/prawduct:critic cumulative`, then `/prawduct:pr`.
 
 ### Not in this plan
@@ -171,7 +171,7 @@ The remedy for chunk 1's residual, and the smallest of the bar's three missing b
 
 - [x] Chunk 1 — the level reaches the Master; no surface promises "no restart" — **DONE 2026-08-18**,
       branch `fix/968-master-level-takes-effect`. Four review rounds: 7 blocking → 1 → 2 → clean.
-- [ ] Chunk 2 — Master Kill
+- [x] Chunk 2 — Master Kill — **DONE 2026-08-18**, same branch
 
 ## Related
 

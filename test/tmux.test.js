@@ -844,6 +844,25 @@ describe('tmux', () => {
       }
     });
 
+    it('should use an injected probe instead of asking tmux again', () => {
+      // The other half of the spawn fix. Its caller already asked this exact
+      // question, and re-asking spawns another tmux on an install whose
+      // recurring failure is running out of PTYs.
+      //
+      // Driven with a probe that says NOT LIVE for a session that really IS
+      // live: if the injected probe were ignored, the real one would answer live
+      // and a timestamp would come back. The answer proves which was used.
+      //
+      // THE MUTATION THIS CATCHES: dropping `options.probe ||`.
+      withNeighbour(() => {
+        const answer = tmux.sessionCreatedAt(longer, {
+          probe: { live: false, answered: true, cause: null }
+        });
+        assert.equal(answer.createdAt, null,
+          'the injected probe must be believed over a fresh one');
+      });
+    });
+
     it('should name a cause when a LIVE session\'s timestamp read fails', () => {
       // STRUCTURAL, for the same reason the existence check above is: the branch
       // needs `has-session` to succeed and `display-message` to fail without
