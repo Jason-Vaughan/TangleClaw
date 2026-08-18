@@ -832,7 +832,12 @@ describe('tmux', () => {
 
       // An exact floor, not a lower bound: a site DISAPPEARING is as much a
       // regression as one losing its wrapper, and `>=` would wave that through.
-      assert.equal(targets.length, 20, `expected 20 -t sites in lib/tmux.js, found ${targets.length}`);
+      // 21 since #968 added `sessionCreatedAt`, which reads a live session's start
+      // time so a caller can tell whether that session predates a file it only
+      // reads at launch. Bumping this number is the acknowledgement the tripwire
+      // asks for — it fired correctly, and the `_target` loop below already
+      // confirmed the new site is wrapped.
+      assert.equal(targets.length, 21, `expected 21 -t sites in lib/tmux.js, found ${targets.length}`);
       for (const expr of targets) {
         assert.match(
           expr,
