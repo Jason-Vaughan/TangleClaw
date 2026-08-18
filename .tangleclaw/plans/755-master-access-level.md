@@ -448,10 +448,15 @@ so the failure presented as every test dying at once.
 
 ### Chunk 3, as built
 
-Ten commits, `d8553b0`…`5e4a8dd`. One cumulative review
-(`rev-20260818T025747Z-852f9fb8`, 0 blocking / 13 warning / 12 note) and two verify passes — the
-second because the first found that a fix had reintroduced, two functions away, the exact false
-sentence it was removing elsewhere.
+Commits `d8553b0` through this chunk's last (`git log --oneline d8553b0~1..`). One cumulative review
+(`rev-20260818T025747Z-852f9fb8`, 0 blocking / 13 warning / 12 note) and the verify passes that
+followed it, the second of which existed because the first found that a fix had reintroduced, two
+functions away, the exact false sentence it was removing elsewhere.
+
+*Written relationally on purpose.* An earlier draft of this paragraph carried a commit count and a
+pass count, and both went stale twice while the chunk was closing — because each correction is
+itself a commit, so a mid-loop count cannot be made self-consistent. Nothing reads these numbers;
+the command that regenerates them is the honest form.
 
 **Two operator rulings had to be taken before any code**, because the chunk opened on two states no
 plan covered: what the two-segment bar shows at `suggest` (a readout, not a third segment), and how

@@ -691,6 +691,13 @@ describe('#755 the access toggle is live, and paints only from server state', ()
     await flush();
     assert.doesNotMatch(prompts[0], /next tool call/);
     assert.match(prompts[0], /next time the master session starts/i);
+    // The POSITIVE half. Without it, this pair pins only that `next-ensure` is
+    // not immediate — and dropping the mechanism sentence entirely, collapsing
+    // the three states in the OTHER direction, would stay green. Both sibling
+    // call sites pin their positive branch; this one was the half-covered member
+    // of the family, which is the same shape the family test above is about.
+    assert.match(prompts[0], /rather than a write guard/,
+      'a STATED instructional binding must explain the mechanism, not just the timing');
   });
 
   it('the confirmation is cautious about WHEN and silent about WHY when the field is absent', () => {
