@@ -649,6 +649,28 @@ describe('#755 both surfaces drive the live toggle, and neither grows a timer', 
     }
   });
 
+  it('the dashboard\'s apiMutate is initialized before ui.js evaluates', () => {
+    // A load-order contract this change CREATED, so it gets a guard.
+    //
+    // `apiMutate` is a top-level `const` in landing.js, shared across the page's
+    // classic scripts. Every other ui.js use of it is inside a function, so it
+    // resolves at call time and the order never mattered. Passing it into the
+    // bar's factory is TOP-LEVEL code: if ui.js ever loaded first it would hit
+    // the temporal dead zone and throw at parse-time-adjacent evaluation, taking
+    // the whole dashboard down before anything rendered.
+    //
+    // THE MUTATION THIS CATCHES: reordering the two <script> tags in
+    // index.html — a change that looks like tidying and produces a blank page.
+    // Note what the sibling test above CANNOT catch: it greps for the token
+    // `apiMutate` in the source, which is present either way.
+    assert.match(UI, /apiMutate/, 'precondition: ui.js references it at all');
+    const landingAt = INDEX.indexOf('/landing.js');
+    const uiAt = INDEX.indexOf('/ui.js');
+    assert.ok(landingAt > -1 && uiAt > -1, 'both scripts must be on the page');
+    assert.ok(landingAt < uiAt,
+      'landing.js declares apiMutate; ui.js consumes it at top level, so it must load first');
+  });
+
   /**
    * A function's declaration plus its balanced body.
    *
