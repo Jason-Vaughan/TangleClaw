@@ -2461,6 +2461,28 @@ describe('master API routes over HTTP', () => {
     }
   });
 
+  it('errorResponse: extra can never blank error or code', () => {
+    // Driven against `errorResponse` DIRECTLY, because no route reaches this
+    // property: the one caller passing an `extra` passes `{ cause }`, which
+    // contains neither field, so a route-level test stays green whichever order
+    // the spread uses.
+    //
+    // I learned that the hard way here — the mutation I first ran changed the
+    // spread order AND made the caller shadow `code`, so its red proved the
+    // caller change. A compound mutation proves less than it looks like, and the
+    // comment it justified claimed coverage that did not exist.
+    //
+    // THE MUTATION THIS CATCHES: spreading `extra` last, on its own.
+    const { errorResponse } = require('../server');
+    let body = null;
+    const res = { writeHead() {}, end(b) { body = JSON.parse(b); } };
+    errorResponse(res, 500, 'the real message', 'REAL_CODE',
+      { cause: 'read-timed-out', error: 'clobbered', code: 'CLOBBERED' });
+    assert.equal(body.error, 'the real message', 'a caller must not be able to replace the message');
+    assert.equal(body.code, 'REAL_CODE', 'nor the code every client branches on');
+    assert.equal(body.cause, 'read-timed-out', 'while the extra it legitimately carries survives');
+  });
+
   it('POST /api/master/kill: 200 whether it killed or found nothing, 500 when tmux is silent', async () => {
     // Stubbed for the same reason ensure is: reaching the real one from a test
     // would kill the operator's actual Master session.
@@ -2491,11 +2513,7 @@ describe('master API routes over HTTP', () => {
       assert.equal(unknown.data.cause, 'read-timed-out',
         'and the CAUSE travels, or a client cannot tell this refusal from the '
         + 'unconfirmed-kill one that shares its code');
-      // `extra` must not be able to blank the two fields every client branches
-      // on. It is spread FIRST for that reason; spreading it last read as
-      // harmless with one caller and quietly allowed the override.
-      assert.equal(unknown.data.code, 'MASTER_LIVENESS_UNKNOWN');
-      assert.ok(unknown.data.error, 'error and code survive alongside the extra field');
+      assert.ok(unknown.data.error, 'and the error text still travels beside it');
     } finally {
       master.killMasterSession = original;
     }
