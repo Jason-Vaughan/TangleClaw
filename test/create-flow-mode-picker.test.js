@@ -126,6 +126,7 @@ describe('create flow routes through the launch gate (#401)', () => {
     sandbox.window = sandbox;
     vm.createContext(sandbox);
     vm.runInContext([
+      liftFunction(LANDING_SRC, 'function proceedWithLaunchModeCheck(name, project, continuityMode)'),
       liftFunction(LANDING_SRC, 'async function launchProject(name)'),
       'globalThis.launchProject = launchProject;'
     ].join('\n'), sandbox);
@@ -159,6 +160,7 @@ describe('create flow routes through the launch gate (#401)', () => {
     sandbox.window = sandbox;
     vm.createContext(sandbox);
     vm.runInContext([
+      liftFunction(LANDING_SRC, 'function proceedWithLaunchModeCheck(name, project, continuityMode)'),
       liftFunction(LANDING_SRC, 'async function launchProject(name)'),
       'globalThis.launchProject = launchProject;'
     ].join('\n'), sandbox);

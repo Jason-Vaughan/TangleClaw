@@ -487,6 +487,35 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
     </div>
   </div>
 
+  <!-- Continuity Launch Modal -->
+  <div class="modal-backdrop" id="continuityLaunchModal">
+    <div class="modal-content" role="dialog" aria-label="Launch session" aria-modal="true" style="max-width:440px">
+      <h3 class="modal-title">Launch Session</h3>
+      <p class="modal-text" id="continuityLaunchText"></p>
+      <div class="launch-mode-list">
+        <label class="launch-mode-option">
+          <input type="radio" name="continuityMode" value="continue" checked>
+          <div class="launch-mode-info">
+            <span class="launch-mode-label">Continue where you left off</span>
+            <span class="launch-mode-desc">Agent opens by diffing and confirming the next action</span>
+          </div>
+        </label>
+        <label class="launch-mode-option">
+          <input type="radio" name="continuityMode" value="fresh">
+          <div class="launch-mode-info">
+            <span class="launch-mode-label">Fresh start</span>
+            <span class="launch-mode-desc">Open a clean session with no inherited action</span>
+          </div>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeContinuityLaunchModal()">Cancel</button>
+        <button class="btn btn-primary" id="continuityLaunchConfirmBtn" onclick="confirmContinuityLaunch()">Next</button>
+      </div>
+    </div>
+  </div>
+
+
   <!-- Settings Modal -->
   <div class="modal-backdrop" id="settingsModal">
     <div class="modal-content settings-modal" role="dialog" aria-label="Project settings" aria-modal="true">

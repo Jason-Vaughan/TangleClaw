@@ -3302,6 +3302,7 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
     engineOverride: body ? body.engineOverride : null,
     mode: body ? body.mode : undefined,
     launchMode: body ? body.launchMode : undefined,
+    continuityMode: body ? body.continuityMode : undefined,
     owner
   });
 

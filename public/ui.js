@@ -336,6 +336,7 @@ function renderCard(project) {
         <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); openDelete('${n}')" title="Delete project">&times;</button>
       </span>
     </div>
+    ${project.continuityIndex && project.continuityIndex.nextAction ? `<div class="card-preview"><strong>Next:</strong> ${esc(project.continuityIndex.nextAction)}</div>` : ''}
   </article>`;
 }
 

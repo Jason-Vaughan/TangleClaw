@@ -1105,27 +1105,25 @@ function navigateToSession(name, opts) {
   window.location.href = `/session/${encodeURIComponent(name)}${suffix}`;
 }
 
-async function launchProject(name) {
-  const project = state.projects.find(p => p.name === name);
-  if (project && project.session && project.session.active) {
-    return navigateToSession(name);
-  }
+let continuityLaunchTarget = null;
+let pendingContinuityMode = null;
 
-  // Check if engine has launch modes — show picker if so. Disabled modes
-  // (Phase 1 of #210 ships openclaw's launchModes block scaffolded but with
-  // every mode marked `disabled: true` until Phase 2 wires the propagation
-  // to ClawBridge through the SSH tunnel) don't count toward the picker
-  // gate; an engine whose modes are ALL disabled launches with no mode.
-  // #459: openclaw engines are pickerHidden and absent from state.engines,
-  // so a legacy openclaw-bound project skips the mode picker here and
-  // launches with default mode — acceptable degradation for a deprecated
-  // binding pattern (zero such projects existed at cutover).
-  // Per-project picker opt-out: launch directly with no mode picker. The mode
-  // is deliberately NOT sent — the server resolves the project's configured
-  // defaultLaunchMode (lib/sessions.js), keeping one resolution path for the
-  // UI, ClawBridge, and raw API launches alike.
+function closeContinuityLaunchModal() {
+  document.getElementById('continuityLaunchModal').classList.remove('open');
+}
+
+function confirmContinuityLaunch() {
+  const mode = document.querySelector('input[name="continuityMode"]:checked').value;
+  pendingContinuityMode = mode;
+  closeContinuityLaunchModal();
+  const name = continuityLaunchTarget;
+  const project = state.projects.find(p => p.name === name);
+  proceedWithLaunchModeCheck(name, project, mode);
+}
+
+function proceedWithLaunchModeCheck(name, project, continuityMode) {
   if (project && project.showLaunchModePicker === false) {
-    return doLaunchProject(name, null);
+    return doLaunchProject(name, null, continuityMode);
   }
 
   const engineId = project ? (project.engineId || (state.config && state.config.defaultEngine) || 'claude') : 'claude';
@@ -1133,12 +1131,29 @@ async function launchProject(name) {
   if (engine && engine.launchModes) {
     const enabledModes = Object.values(engine.launchModes).filter(m => !m.disabled);
     if (enabledModes.length > 1) {
-      openLaunchModeModal(name, engine);
+      openLaunchModeModal(name, engine, continuityMode);
       return;
     }
   }
 
-  await doLaunchProject(name, null);
+  doLaunchProject(name, null, continuityMode);
+}
+
+async function launchProject(name) {
+  const project = state.projects.find(p => p.name === name);
+  if (project && project.session && project.session.active) {
+    return navigateToSession(name);
+  }
+
+  if (project && project.continuityIndex && project.continuityIndex.nextAction) {
+    continuityLaunchTarget = name;
+    document.getElementById('continuityLaunchText').innerHTML =
+      `Launch <strong>${esc(name)}</strong>?`;
+    document.getElementById('continuityLaunchModal').classList.add('open');
+    return;
+  }
+
+  proceedWithLaunchModeCheck(name, project, null);
 }
 
 /**
@@ -1146,7 +1161,7 @@ async function launchProject(name) {
  * @param {string} name - Project name
  * @param {string|null} launchMode - Launch mode key or null for default
  */
-async function doLaunchProject(name, launchMode) {
+async function doLaunchProject(name, launchMode, continuityMode) {
   // Immediate visual feedback — swap button text to "Launching…" and disable
   const btn = document.querySelector(`button[onclick*="launchProject('${name}')"]`);
   const originalText = btn ? btn.textContent : '';
@@ -1158,6 +1173,7 @@ async function doLaunchProject(name, launchMode) {
   const toast = document.getElementById('toast');
   const body = {};
   if (launchMode) body.launchMode = launchMode;
+  if (continuityMode) body.continuityMode = continuityMode;
 
   try {
     const res = await fetch(`/api/sessions/${encodeURIComponent(name)}`, {
@@ -1198,7 +1214,8 @@ let selectedLaunchMode = null;
  * @param {string} name - Project name
  * @param {object} engine - Engine object with launchModes
  */
-function openLaunchModeModal(name, engine) {
+function openLaunchModeModal(name, engine, continuityMode = null) {
+  pendingContinuityMode = continuityMode;
   launchModeTarget = name;
   selectedLaunchMode = engine.defaultLaunchMode || Object.keys(engine.launchModes)[0];
 
@@ -1251,7 +1268,7 @@ async function confirmLaunchMode() {
   const name = launchModeTarget;
   const mode = selectedLaunchMode;
   closeLaunchModeModal();
-  await doLaunchProject(name, mode);
+  await doLaunchProject(name, mode, pendingContinuityMode);
 }
 
 function wrapProject(name) {
