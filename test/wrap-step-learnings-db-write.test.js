@@ -179,6 +179,30 @@ describe('wrap-step learnings-db-write (#466)', () => {
       assert.equal(store.learnings.list(project.id).length, 2);
     });
 
+    it('confirms a recurring learning based on topic match, ignoring body differences', async () => {
+      // 1. Insert an existing provisional learning from yesterday
+      store.learnings.create({
+        projectId: project.id,
+        content: `## ${YESTERDAY} — the same topic\nold body.\n`,
+        tier: 'provisional',
+        sourceSession: null
+      });
+
+      // 2. Wrap writes a new learning today with the same topic but a different body
+      fs.writeFileSync(learningsPath, `# T\n\n## ${TODAY} — The Same Topic  \nnew body.\n`);
+      const r = await step.run({ project });
+
+      assert.equal(r.status, 'done');
+      assert.equal(r.output.confirmed, 1);
+      assert.equal(r.output.inserted, 0); // Confirms instead of inserting a near-twin
+      
+      const rows = store.learnings.list(project.id);
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].tier, 'active');
+      // Content remains the old one because confirm() doesn't overwrite
+      assert.match(rows[0].content, /old body/);
+    });
+
     it('attributes source_session to the active session when one exists', async () => {
       const session = store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'learnings-db-test' });
       fs.writeFileSync(learningsPath, `# T\n\n## ${TODAY} — attributed\nbody.\n`);

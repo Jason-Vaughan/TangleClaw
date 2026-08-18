@@ -6328,6 +6328,29 @@ if (require.main === module) {
     }
   }
 
+  // Drift detector (#595): TangleClaw's own CLAUDE.md is hand-maintained because
+  // the Prawduct plugin governs this repo. Compare it against data/global-rules.md
+  // at boot so edits made via the API/UI don't silently fail to govern TC itself.
+  try {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const tcClaudeMdPath = path.join(process.cwd(), 'CLAUDE.md');
+    const globalRulesPath = path.join(process.cwd(), 'data', 'global-rules.md');
+    
+    if (fs.existsSync(tcClaudeMdPath) && fs.existsSync(globalRulesPath)) {
+      const claudeMdContent = fs.readFileSync(tcClaudeMdPath, 'utf8');
+      const globalRulesContent = fs.readFileSync(globalRulesPath, 'utf8').trim();
+      
+      if (!claudeMdContent.includes(globalRulesContent)) {
+        log.warn('DRIFT DETECTED: TangleClaw\'s own CLAUDE.md is out of sync with data/global-rules.md', {
+          advisory: 'Global rules were edited but not synced to TC\'s engine config. Run a sync or hand-edit CLAUDE.md to match.'
+        });
+      }
+    }
+  } catch (err) {
+    log.warn('Global rules drift detection failed', { error: err.message });
+  }
+
   // Run retention policy on startup (purge old eval data)
   try {
     const retentionDays = store.DEFAULT_PROJECT_CONFIG.evalAuditMode.retentionDays || 90;
