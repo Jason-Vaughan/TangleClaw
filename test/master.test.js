@@ -321,10 +321,22 @@ describe('ensureMasterSession', () => {
 });
 
 describe('getMasterStatus', () => {
+  // A home that does not exist, passed to every call below.
+  //
+  // Since #755 chunk 3 the payload includes a readback of the guard's ACTUAL
+  // posture, which without an override reads the operator's real
+  // `~/.tangleclaw/master`. Nothing here asserts those fields, so the omission
+  // would not fail — it would just make this block's payload depend on whether
+  // this machine has a master and what level it happens to sit at. That is the
+  // "a branch that depends on a file which happens to exist on this machine"
+  // trap, and it has already cost this issue one CI failure. An absent home
+  // reports no guard posture at all, which is the deterministic answer.
+  const NO_HOME = path.join(os.tmpdir(), 'tc-master-status-no-home-does-not-exist');
+
   it('reports liveness straight from tmux', () => {
-    assert.equal(master.getMasterStatus({ tmuxLib: fakeTmux({ alive: true }) }).exists, true);
-    assert.equal(master.getMasterStatus({ tmuxLib: fakeTmux({ alive: false }) }).exists, false);
-    assert.equal(master.getMasterStatus({ tmuxLib: fakeTmux() }).tmuxSession, 'tangleclaw-master');
+    assert.equal(master.getMasterStatus({ tmuxLib: fakeTmux({ alive: true }), home: NO_HOME }).exists, true);
+    assert.equal(master.getMasterStatus({ tmuxLib: fakeTmux({ alive: false }), home: NO_HOME }).exists, false);
+    assert.equal(master.getMasterStatus({ tmuxLib: fakeTmux(), home: NO_HOME }).tmuxSession, 'tangleclaw-master');
   });
 
   it('carries the effective settings for the panel/settings UI', () => {
@@ -332,7 +344,7 @@ describe('getMasterStatus', () => {
     // resolution (#707); without it this asserts against whichever CLIs the host
     // happens to have installed, and fails on a machine with none — which is the
     // machine class the resolver exists for.
-    const s = master.getMasterStatus({ tmuxLib: fakeTmux(), enginesLib: availableEngines }).settings;
+    const s = master.getMasterStatus({ tmuxLib: fakeTmux(), enginesLib: availableEngines, home: NO_HOME }).settings;
     assert.equal(s.accessLevel, 'read-only');
     assert.deepEqual(s.accessLevels, ['read-only', 'suggest', 'write']);
     // All three are selectable since #755 gave each one real enforcement in the
@@ -358,7 +370,8 @@ describe('getMasterStatus', () => {
     // front of an operator whose master has no write guard at all.
     const s = master.getMasterStatus({
       tmuxLib: fakeTmux(),
-      enginesLib: { resolveDefaultEngine: () => 'gemini', reconcileLaunchMode: () => 'default' }
+      enginesLib: { resolveDefaultEngine: () => 'gemini', reconcileLaunchMode: () => 'default' },
+      home: NO_HOME
     }).settings;
     assert.equal(s.enforcement, 'instructional');
     assert.equal(s.levelAppliesAt, 'next-ensure');
@@ -373,7 +386,7 @@ describe('getMasterStatus', () => {
     // THE MUTATION THIS CATCHES: `exists: probe.live` instead of the answered
     // ternary — which is `hasSession` again, and reports a running master as
     // absent for as long as the wedge lasts.
-    const status = master.getMasterStatus({ tmuxLib: fakeTmux({ alive: true, answered: false }) });
+    const status = master.getMasterStatus({ tmuxLib: fakeTmux({ alive: true, answered: false }), home: NO_HOME });
 
     assert.equal(status.exists, null,
       'a liveness nobody could establish must not be reported as an absence');
@@ -388,7 +401,7 @@ describe('getMasterStatus', () => {
     // its existence instead of reading its value — the argument
     // `lib/sessions.js` already makes for its own wrapping payload.
     for (const alive of [true, false]) {
-      const status = master.getMasterStatus({ tmuxLib: fakeTmux({ alive }) });
+      const status = master.getMasterStatus({ tmuxLib: fakeTmux({ alive }), home: NO_HOME });
       assert.deepEqual(status.incomplete, [], `incomplete must be [] when alive=${alive}`);
       assert.equal(status.cause, null);
       assert.equal(status.exists, alive, 'an ANSWERED negative is still a real false');
