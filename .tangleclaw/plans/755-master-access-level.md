@@ -448,8 +448,10 @@ so the failure presented as every test dying at once.
 
 ### Chunk 3, as built
 
-Ten commits, `d8553b0`…the disposition batch. One cumulative review
-(`rev-20260818T025747Z-852f9fb8`, 0 blocking / 13 warning / 12 note) plus its verify pass.
+Ten commits, `d8553b0`…`5e4a8dd`. One cumulative review
+(`rev-20260818T025747Z-852f9fb8`, 0 blocking / 13 warning / 12 note) and two verify passes — the
+second because the first found that a fix had reintroduced, two functions away, the exact false
+sentence it was removing elsewhere.
 
 **Two operator rulings had to be taken before any code**, because the chunk opened on two states no
 plan covered: what the two-segment bar shows at `suggest` (a readout, not a third segment), and how
