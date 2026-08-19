@@ -3285,16 +3285,23 @@ async function confirmWrap() {
   const postStartedAt = Date.now();
 
   // V1 and V2 both enter the wrapping state immediately (#771).
-  // The V2 POST blocks for the full duration of the wrap. This state
-  // is the only visible indication the pipeline is running until the
-  // SSE stream paints the drawer (#185).
+  // The V2 POST blocks for the full duration of the wrap, so this state is the
+  // only visible indication the pipeline is running until the POST returns.
   sessionState.wrapping = true;
   showWrappingState();
 
-  // #185: Open drawer empty and stream progress via SSE immediately
-  currentWrapPipelineResult = { results: [] };
-  openWrapDrawer(currentWrapPipelineResult, pw);
-  startWrapSse();
+  // #185 shipped the SERVER half of live wrap progress — GET /wrap/stream, and
+  // the registry hooks the runner feeds — but no client was ever written. This
+  // called `startWrapSse()`, which is defined nowhere, so it threw a
+  // ReferenceError HERE: after the spinner was shown and an empty drawer was
+  // opened, and BEFORE the POST below. The wrap never started, and because the
+  // throw skipped the `finally`, `wrapInFlight` stayed true and Cancel was
+  // permanently disabled. `node --check` passes on it, so CI stayed green.
+  //
+  // Restored to the honest blocking behaviour: the drawer opens when the POST
+  // returns a pipelineResult. Re-land the optimistic open together with a real
+  // EventSource client, not before it — an empty drawer with no stream feeding
+  // it is worse than a drawer that arrives late.
 
   try {
     const data = await apiMutate(
