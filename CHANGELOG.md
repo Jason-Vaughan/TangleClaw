@@ -11,6 +11,10 @@ All notable changes to TangleClaw are documented in this file.
 - **Medusa Switchboard Integration (#945)**: Shared documents are now watched via `fs.watch` on the server and Medusa pings connected sessions when the file changes, removing the refresh-or-restart step for cross-session updates.
 
 ### Fixed
+- **v5.7.0's release section is back in the CHANGELOG, and v5.8.0 no longer claims its features (#597, #598).** A squash dropped the `## [5.7.0]` heading and left its 527-line body sitting inside `## [5.8.0]`. Because `lib/changelog-notes.js` extracts by heading, the published v5.8.0 release page went out republishing every v5.7.0 feature as new — 537 lines for a release whose own content is nine. The heading is restored at a split point **proven, not guessed**: lines 33–559 were byte-identical to the v5.7.0 tag's published release body, so the boundary came from the artifact rather than from reading the prose.
+
+  **A new structural invariant (#6) now fails the suite on the shape rather than on its consequences.** Keep a Changelog gives a release at most one of each subsection, so a section carrying `### Added` twice is the seam where one release swallowed another — the visible tell both times this has happened. Fenced blocks are skipped, since this changelog quotes markdown. Nineteen pre-existing violations, all in frozen 3.x sections, are baselined by version with the rule written beside them that nothing new may join; a released section is immutable history, and rewriting it to satisfy a test would edit the record. Verified by re-inflicting the original wound: delete the `## [5.7.0]` heading and the invariant fails.
+
 - **Master Session Recovery (#342, #372, #348)**: Hardened the Master session update loop against orphaned tmux states and lingering cache files.
 
 - **The Recent-uploads history is clickable again — the multi-file rewrite removed the handlers but kept the button markup (#338, #770).** Each item still rendered with `role="button" tabindex="0" data-path=...`, and `historyEl.onclick`, `historyEl.onkeydown`, and `copyUploadPath()` had all been deleted. That combination is worse than dropping the feature outright: a screen reader still announces a button, a keyboard user can still tab to it and press Enter, and nothing happens — a broken affordance that advertises itself as working. The handlers and the clipboard helper are restored, along with the `onclick = null` / `onkeydown = null` teardown on the empty-history branch that keeps re-opens from stacking stale listeners.
@@ -29,6 +33,8 @@ All notable changes to TangleClaw are documented in this file.
 - **Strict Quality Floors (#177)**: Rewrote `WRAP_STEP_PATTERNS` to cover all 14 pipeline steps. The quality scanner now strictly increments `stepsMissing` for unknown steps instead of silently auto-passing them.
 - **Auto Mode for Feature PRs (#213)**: Edited `global-rules.md` to allow Auto Mode to default `--auto` on feature PRs and refactors, removing manual wait steps.
 - Swept and closed 6 stale issues and rehomed obsolete issues as part of the Post-v5 roadmap completion.
+
+## [5.7.0] - 2026-08-18
 
 ### Added
 
