@@ -286,3 +286,15 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - **TBD** — touched in this session: `test/_api-helper-globals.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/master-guard-source.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/master-pane-frontend.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-08-18)
+
+- **TBD** — touched in this session: `test/changelog-released-immutable.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/changelog-structure.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/engine-launch-modes.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/fixtures/changelog-released-sections.lock.json`. <!-- describe -->
+- **TBD** — touched in this session: `test/launch-mode-picker.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/orphan-hooks.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/readme-version-pins.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-confirm-calls-defined.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/z-index-scale.test.js`. <!-- describe -->
