@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.9.0] - 2026-08-19
+
 ### Added
 - **Live Wrap Progress via SSE (#185, #771)**: The Wrap button now immediately shows a "Wrapping..." state and streams live progress row-by-row into the Wrap Drawer using Server-Sent Events, removing the silent blocking period.
 - **Project Engine Filter (#790)**: Added an LLM engine filter dropdown to the project view that automatically populates based on loaded projects.
@@ -11,6 +13,8 @@ All notable changes to TangleClaw are documented in this file.
 - **Medusa Switchboard Integration (#945)**: Shared documents are now watched via `fs.watch` on the server and Medusa pings connected sessions when the file changes, removing the refresh-or-restart step for cross-session updates.
 
 ### Fixed
+- **The README's clone pins can no longer go stale silently (#976).** Both Quickstart snippets hardcode `--branch vX.Y.Z`, and nothing updated them: the wrap's version step writes `version.json` and `CHANGELOG.md` only. #965 found them six minor versions back; v5.8.0 then shipped leaving both on `v5.7.0`. A source-scanning test now fails the suite when a pin disagrees with `version.json` — no install step, no network. It carries a **vacuity guard as well as a staleness one**: deleting every pin would otherwise make "all pins match" trivially true, and the guard would pass while the README told nobody what to clone. Both mutations were run and both fail.
+
 - **v5.7.0's release section is back in the CHANGELOG, and v5.8.0 no longer claims its features (#597, #598).** A squash dropped the `## [5.7.0]` heading and left its 527-line body sitting inside `## [5.8.0]`. Because `lib/changelog-notes.js` extracts by heading, the published v5.8.0 release page went out republishing every v5.7.0 feature as new — 537 lines for a release whose own content is nine. The heading is restored at a split point **proven, not guessed**: lines 33–559 were byte-identical to the v5.7.0 tag's published release body, so the boundary came from the artifact rather than from reading the prose.
 
   **A new structural invariant (#6) now fails the suite on the shape rather than on its consequences.** Keep a Changelog gives a release at most one of each subsection, so a section carrying `### Added` twice is the seam where one release swallowed another — the visible tell both times this has happened. Fenced blocks are skipped, since this changelog quotes markdown. Nineteen pre-existing violations, all in frozen 3.x sections, are baselined by version with the rule written beside them that nothing new may join; a released section is immutable history, and rewriting it to satisfy a test would edit the record. Verified by re-inflicting the original wound: delete the `## [5.7.0]` heading and the invariant fails.
