@@ -31,8 +31,8 @@
   /* Z-Index Scale */
   --z-drawer-backdrop: 290;
   --z-drawer: 300;
-  --z-toast: 400;
-  --z-modal-backdrop: 450;
+  --z-modal-backdrop: 400;
+  --z-toast: 450;
   --z-unreachable: 500;
 }
 
