@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Added a Launch button to the Master control bar (#995).**
+  The Master control bar now supports launching a fresh Master session directly, replacing the less-discoverable drawer-reopen workflow. The Launch button is mutually exclusive with Kill and driven by the existing liveness probe, ensuring accurate presentation even when tmux is unresponsive.
+
 ### Fixed
 - Fixed the Settings modal rendering behind the Master drawer by defining a unified `z-index` scale for both the session and dashboard views (#985).
 
