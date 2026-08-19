@@ -9,6 +9,22 @@ All notable changes to TangleClaw are documented in this file.
   The Master control bar now supports launching a fresh Master session directly, replacing the less-discoverable drawer-reopen workflow. The Launch button is mutually exclusive with Kill and driven by the existing liveness probe, ensuring accurate presentation even when tmux is unresponsive.
 
 ### Changed
+- **Auto mode's description now matches what the classifier actually does (#596).** The text an
+  operator reads when choosing how much autonomy to hand a session had been wrong in two different
+  directions. "Full autonomy with safety classifier" overstated it — `claude auto-mode defaults`
+  ships **17 allow, 66 soft_deny and 1 hard_deny** rules, which is not full autonomy. Its
+  replacement, "Auto-approves safe actions; prompts for dangerous ones", was worse *because it was
+  more specific*: it describes allow and soft_deny and silently drops hard_deny, so an operator
+  would believe they will be prompted about anything risky when some actions are simply refused. A
+  confident sentence is harder to doubt than a vague one.
+
+  It now reads **"Classifier-gated: auto-approves, prompts, or refuses per rule"** — three outcomes,
+  and it keeps the word *classifier*, which is the binary's own vocabulary and the pointer to
+  `claude auto-mode config` where the real rules live. The guard pins the **substance** rather than
+  the prose: the description must name the classifier and must not resurrect the full-autonomy
+  claim, with the `auto-mode defaults` output recorded beside it so the next reader checks the
+  binary instead of rewriting from intuition. Both historical versions fail it.
+
 - **Facelifted the per-launch Launch Mode modal (#596).**
   The per-launch Launch Mode modal has been updated to match the current dashboard design language. It now uses the `var(--elevated-bg)` border and `var(--radius-btn)` curvature consistent with project cards and other modern interactive elements, while preserving its underlying semantic structure and functionality.
   - Test coverage was completely rebuilt around this modal. Tests now guarantee that the frontend maps the selections to flags the backend engine *actually accepts*.

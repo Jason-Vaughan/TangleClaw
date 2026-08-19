@@ -74,7 +74,34 @@ describe('Engine Launch Modes (#596)', () => {
     
     // Check bypass warning
     assert.match(modes.bypassPermissions.warning || '', /isolated environments/i);
-    // Check auto description
-    assert.match(modes.auto.description || '', /Auto-approves safe actions; prompts for dangerous ones/i);
+    // Auto's description is SAFETY text — it is what an operator reads when
+    // deciding how much autonomy to hand a session — so it is pinned on
+    // substance rather than on exact prose, and the substance comes from the
+    // binary rather than from intuition:
+    //
+    //   $ claude auto-mode defaults
+    //     allow      -> 17 rules
+    //     soft_deny  -> 66 rules
+    //     hard_deny  ->  1 rule
+    //
+    // THREE outcomes, not two. Both previous descriptions got this wrong in
+    // opposite directions: "Full autonomy with safety classifier" overstates
+    // the autonomy (66 soft-deny rules is not full autonomy), and
+    // "Auto-approves safe actions; prompts for dangerous ones" silently drops
+    // hard_deny — actions the classifier REFUSES outright rather than prompting
+    // for, which tells an operator they will be asked about anything risky when
+    // they will not. The second was worse precisely because it was more
+    // specific: a confident sentence is harder to doubt than a vague one.
+    //
+    // So: it must name the classifier (the binary's own vocabulary, and the
+    // pointer to `claude auto-mode config` where the real rules live), and it
+    // must not resurrect the full-autonomy claim.
+    //
+    // THE MUTATION THIS CATCHES: rewriting this description from intuition
+    // without reading `claude auto-mode defaults` first.
+    assert.match(modes.auto.description || '', /classifier/i,
+      'auto is classifier-gated — the description must say so, so an operator knows where to look');
+    assert.doesNotMatch(modes.auto.description || '', /full autonomy/i,
+      'auto is not full autonomy: `claude auto-mode defaults` ships 66 soft-deny and 1 hard-deny rules');
   });
 });
