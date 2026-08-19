@@ -21,6 +21,9 @@ All notable changes to TangleClaw are documented in this file.
 
   A guard now scans the wrap-confirm path and fails when it calls anything undefined. It is scoped to that path rather than the whole file on purpose: a whole-file scan produces false positives from prose and browser globals, and a guard nobody trusts gets deleted. Verified both ways — re-adding `startWrapSse()` fails it, and breaking the extraction fails a separate vacuity assertion rather than silently passing on zero calls.
 
+### Internal
+- **Graduated the Feature Index's whole auto-stubbed backlog — 23 entries across six `## TODO (auto-stubbed …)` blocks dating back to 2026-08-15.** The wrap's stubber appends a `**TBD** — touched in this session: <path>` placeholder whenever a session touches a new file, and describing them had been deferred long enough that the index advertised coverage it did not describe — including guards as load-bearing as `test/changelog-released-immutable.test.js`, `test/wrap-confirm-calls-defined.test.js` and `test/orphan-hooks.test.js`. Each entry was described from the file itself rather than from its name, then filed under `## Tests` (22) or `## CLI / Tooling` (1); all six now-empty TODO headings are gone. Doc-only, no behaviour change.
+
 ## [5.11.0] - 2026-08-19
 
 ### Added
