@@ -2983,9 +2983,49 @@ async function openUploadModal() {
           : '';
         return `<div class="upload-history-item" role="button" tabindex="0" data-path="${esc(u.path)}" title="Click to copy path: ${esc(u.path)}"><code>${esc(u.name)}</code>${secretBadge}<span class="upload-history-size">${formatSize(u.size)}</span></div>`;
       }).join('');
+    // Click / Enter / Space on a history item copies its local path — the same
+    // "Tell your AI assistant" affordance the post-upload result offers (#338).
+    // `.on*` assignment (not addEventListener) is idempotent across re-opens.
+    //
+    // These handlers are what make the `role="button" tabindex="0"` above true.
+    // The multi-file rewrite kept that markup and dropped the handlers, which is
+    // worse than having neither: a screen reader still announces a button and a
+    // keyboard user can still focus it, and nothing happens.
+    const copyFromTarget = (target) => {
+      const item = target && target.closest ? target.closest('.upload-history-item') : null;
+      if (item && item.dataset.path) copyUploadPath(item.dataset.path);
+    };
+    historyEl.onclick = (e) => copyFromTarget(e.target);
+    historyEl.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); copyFromTarget(e.target); }
+    };
   } else {
     historyEl.innerHTML = '';
+    historyEl.onclick = null;
+    historyEl.onkeydown = null;
   }
+}
+
+/**
+ * Copy an upload's local path to the clipboard with toast feedback (#338).
+ * Mirrors the post-upload "Tell your AI assistant" affordance so a file from
+ * the Recent uploads history can be re-grabbed without re-uploading.
+ * @param {string} pathStr - The upload's absolute local path.
+ * @returns {Promise<void>}
+ */
+async function copyUploadPath(pathStr) {
+  const toast = document.getElementById('toast');
+  const flash = (msg, cls) => {
+    if (!toast) return;
+    toast.textContent = msg;
+    toast.className = `toast ${cls} visible`;
+    setTimeout(() => { toast.classList.remove('visible'); }, 3000);
+  };
+  const ok = await tcCopyToClipboard(pathStr);
+  flash(
+    ok ? 'Upload path copied to clipboard' : 'Could not copy — select the path manually',
+    ok ? 'toast-ok' : 'toast-warn'
+  );
 }
 
 function handleFileSelect(e) {

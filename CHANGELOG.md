@@ -4,20 +4,19 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
-## [5.10.0] - 2026-08-18
-
 ### Added
 - **Live Wrap Progress via SSE (#185, #771)**: The Wrap button now immediately shows a "Wrapping..." state and streams live progress row-by-row into the Wrap Drawer using Server-Sent Events, removing the silent blocking period.
 - **Project Engine Filter (#790)**: Added an LLM engine filter dropdown to the project view that automatically populates based on loaded projects.
 - **Multi-File Uploads (#770, #769)**: The Upload modal now supports selecting multiple files simultaneously. It uploads them in sequence and features a brief green "Uploaded!" success flash along with a list of the uploaded file paths.
-
-## [5.9.0] - 2026-08-18
-
-### Added
-- **Medusa Switchboard Integration (#755, #945)**: Integrated Medusa broadcasting. Shared documents are now watched via `fs.watch` on the server and Medusa instantly pings connected sessions when the file changes, eliminating the need to refresh or restart to see cross-session updates.
+- **Medusa Switchboard Integration (#945)**: Shared documents are now watched via `fs.watch` on the server and Medusa pings connected sessions when the file changes, removing the refresh-or-restart step for cross-session updates.
 
 ### Fixed
 - **Master Session Recovery (#342, #372, #348)**: Hardened the Master session update loop against orphaned tmux states and lingering cache files.
+
+- **The Recent-uploads history is clickable again — the multi-file rewrite removed the handlers but kept the button markup (#338, #770).** Each item still rendered with `role="button" tabindex="0" data-path=...`, and `historyEl.onclick`, `historyEl.onkeydown`, and `copyUploadPath()` had all been deleted. That combination is worse than dropping the feature outright: a screen reader still announces a button, a keyboard user can still tab to it and press Enter, and nothing happens — a broken affordance that advertises itself as working. The handlers and the clipboard helper are restored, along with the `onclick = null` / `onkeydown = null` teardown on the empty-history branch that keeps re-opens from stacking stale listeners.
+
+### Internal
+- **The wrap options-threading contract test now names both registry hooks (#771, #583).** `POST /api/sessions/:project/wrap` threads the caller's body options to `runWrapPipeline` plus TangleClaw's own progress hooks; #583 added `onStepStart` and the SSE work here adds `onStepDone`. Three subtests destructured only the first, so the second fell into the "user options" bucket and failed the pass-through assertion. Both are named explicitly rather than swept into the rest-spread, so a future hook cannot land in the user-options assertion unnoticed, and the malformed-body guard pins the exact hook set (sorted, so it constrains the set without pinning spread order). Verified by mutation: dropping `onStepDone` from `_triggerWrapV2` fails all three.
 
 ## [5.8.0] - 2026-08-18
 
