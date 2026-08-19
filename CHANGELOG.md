@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.11.1] - 2026-08-19
+
 ### Fixed
 - **Renaming a SessionStart hook script orphaned every settings.json already written, in every managed project (#1007).** Train 5 (#982) split the hook scripts per engine — `sessionstart-prime.sh` → `sessionstart-prime-claude.sh`, same for rules — and updated `TC_HOOK_SCRIPTS`, the guards and the FEATURES.md citations. It did not add the pre-rename basenames to `TC_LEGACY_HOOK_MARKERS`, and that omission is the whole bug.
 
