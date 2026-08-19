@@ -4,6 +4,9 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Fixed the Settings modal rendering behind the Master drawer by defining a unified `z-index` scale for both the session and dashboard views (#985).
+
 ## [5.10.0] - 2026-08-19
 
 ### Added
