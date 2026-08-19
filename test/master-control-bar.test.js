@@ -1327,8 +1327,33 @@ describe('#755 both surfaces drive the live toggle, and neither grows a timer', 
     assert.equal(el('KillBtn').classList.contains('hidden'), true, 'Kill hidden when down');
 
     bar.setStatus('');
+    // Rationale for unknown state:
+    // Showing Kill on an unknown state is the safer default. The kill route (#968) 
+    // refuses safely with MASTER_LIVENESS_UNKNOWN, whereas showing Launch on an 
+    // unknown state risks spawning a second Master over one that could just be wedged.
     assert.equal(el('LaunchBtn').classList.contains('hidden'), true, 'Launch hidden when unknown');
     assert.equal(el('KillBtn').classList.contains('hidden'), false, 'Kill shown when unknown');
+  });
+
+  it('wires the Launch button to deps.onRetry only if provided', () => {
+    let fired = 0;
+    const { doc: doc1, ids: ids1 } = makeDocument(['root1']);
+    withIdParsingInnerHTML(ids1.root1, doc1);
+    const bar1 = G.tcCreateMasterControlBar({ 
+      doc: doc1, rootId: 'root1', prefix: 'masterPanel', onRetry: () => fired++ 
+    });
+    bar1.mount();
+    doc1.getElementById('masterPanelLaunchBtn').dispatch('click');
+    assert.equal(fired, 1, 'Launch button must invoke deps.onRetry when provided');
+
+    const { doc: doc2, ids: ids2 } = makeDocument(['root2']);
+    withIdParsingInnerHTML(ids2.root2, doc2);
+    const bar2 = G.tcCreateMasterControlBar({ 
+      doc: doc2, rootId: 'root2', prefix: 'masterPanel2' 
+    });
+    bar2.mount();
+    assert.doesNotThrow(() => doc2.getElementById('masterPanel2LaunchBtn').dispatch('click'), 
+      'Launch button must not crash when clicked without deps.onRetry');
   });
 
   it('the segments meet the touch-target minimum the mobile Direction binds', () => {
