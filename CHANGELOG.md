@@ -12,6 +12,22 @@ All notable changes to TangleClaw are documented in this file.
 - **Multi-File Uploads (#770, #769)**: The Upload modal now supports selecting multiple files simultaneously. It uploads them in sequence and features a brief green "Uploaded!" success flash along with a list of the uploaded file paths.
 - **Medusa Switchboard Integration (#945)**: Shared documents are now watched via `fs.watch` on the server and Medusa pings connected sessions when the file changes, removing the refresh-or-restart step for cross-session updates.
 
+- **Launch posture is picked at project creation, from flags the engine itself declares (train 5).**
+  The create wizard gains a First-Session Settings step whose Launch Posture options are read from
+  the chosen engine's own `launchModes` rather than from a hardcoded Claude-shaped list, so each
+  engine offers the postures it actually has: Claude's `plan`/`acceptEdits`/`auto`, Codex's
+  `fullAuto` (`--ask-for-approval never --sandbox workspace-write`) and `bypassPermissions`
+  (`--dangerously-bypass-approvals-and-sandbox`), Antigravity's `sandbox`/`bypassPermissions`,
+  Aider's `yesAlways`. Modes carrying a `warning` render it, and disabled modes are filtered out
+  rather than shown dead.
+
+- **The SessionStart prime and rules hooks are per-engine scripts (train 5).**
+  `sessionstart-prime.sh` and `sessionstart-rules.sh` became
+  `sessionstart-prime-{claude,codex}.sh` and `sessionstart-rules-{claude,codex}.sh`, selected by the
+  profile's `silentPrimeScript` / `silentRulesScript` with the Claude scripts as the fallback. One
+  shared script could only ever emit one engine's startup envelope; splitting them is what lets a
+  non-Claude engine have a silent prime at all instead of falling back to pasting it into the pane.
+
 ### Fixed
 - **The README's clone pins can no longer go stale silently (#976).** Both Quickstart snippets hardcode `--branch vX.Y.Z`, and nothing updated them: the wrap's version step writes `version.json` and `CHANGELOG.md` only. #965 found them six minor versions back; v5.8.0 then shipped leaving both on `v5.7.0`. A source-scanning test now fails the suite when a pin disagrees with `version.json` — no install step, no network. It carries a **vacuity guard as well as a staleness one**: deleting every pin would otherwise make "all pins match" trivially true, and the guard would pass while the README told nobody what to clone. Both mutations were run and both fail.
 
@@ -24,6 +40,8 @@ All notable changes to TangleClaw are documented in this file.
 - **The Recent-uploads history is clickable again — the multi-file rewrite removed the handlers but kept the button markup (#338, #770).** Each item still rendered with `role="button" tabindex="0" data-path=...`, and `historyEl.onclick`, `historyEl.onkeydown`, and `copyUploadPath()` had all been deleted. That combination is worse than dropping the feature outright: a screen reader still announces a button, a keyboard user can still tab to it and press Enter, and nothing happens — a broken affordance that advertises itself as working. The handlers and the clipboard helper are restored, along with the `onclick = null` / `onkeydown = null` teardown on the empty-history branch that keeps re-opens from stacking stale listeners.
 
 ### Internal
+- **Four guards that named the pre-rename hook script were updated, and re-verified against the regression they exist for (#759, train 5).** `test/api-projects.test.js`, `test/projects.test.js`, `test/sessionstart-prime-claude-hook.test.js` and three `FEATURES.md` citations all still said `sessionstart-prime.sh`. Renaming a file the assertions name is not the same as weakening them, and the difference was checked rather than asserted: with the filename updated, dropping the quotes around the hook path — #759's actual regression, an install path containing a space — still fails all three. Two code comments naming the old path were corrected too, since a comment citing a file that no longer exists is worse than no comment.
+
 - **The wrap options-threading contract test now names both registry hooks (#771, #583).** `POST /api/sessions/:project/wrap` threads the caller's body options to `runWrapPipeline` plus TangleClaw's own progress hooks; #583 added `onStepStart` and the SSE work here adds `onStepDone`. Three subtests destructured only the first, so the second fell into the "user options" bucket and failed the pass-through assertion. Both are named explicitly rather than swept into the rest-spread, so a future hook cannot land in the user-options assertion unnoticed, and the malformed-body guard pins the exact hook set (sorted, so it constrains the set without pinning spread order). Verified by mutation: dropping `onStepDone` from `_triggerWrapV2` fails all three.
 
 ## [5.8.0] - 2026-08-18

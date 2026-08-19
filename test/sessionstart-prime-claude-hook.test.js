@@ -199,7 +199,7 @@ describe('#759 hook commands survive a TangleClaw path containing a space', () =
     const commands = allCommands(hooks);
     assert.equal(commands.length, 1, 'with no rule shards, only the prime hook is emitted');
     const command = commands[0].replace(/\{\{TANGLECLAW_DIR\}\}/g, dir);
-    assert.match(command, /sessionstart-prime\.sh/);
+    assert.match(command, /sessionstart-prime-claude\.sh/);
     execFileSync('/bin/sh', ['-c', command], { stdio: ['pipe', 'pipe', 'pipe'] });
   });
 });
