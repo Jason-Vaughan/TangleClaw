@@ -69,7 +69,7 @@
         "auto",
         "--enable-auto-mode"
       ],
-      "description": "Full autonomy with safety classifier"
+      "description": "Auto-approves safe actions; prompts for dangerous ones"
     },
     "bypassPermissions": {
       "label": "Bypass",

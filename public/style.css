@@ -2044,20 +2044,24 @@ body {
   gap: 12px;
   padding: 12px;
   background: var(--card-bg);
-  border: 1px solid transparent;
-  border-radius: 8px;
+  border: 1px solid var(--elevated-bg);
+  border-radius: var(--radius-btn);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: border-color 0.15s, background 0.15s;
 }
 .launch-mode-option:hover { 
-  background: var(--elevated-bg); 
+  border-color: #444; 
 }
 .launch-mode-option:has(input[type="radio"]:checked) {
   background: var(--elevated-bg);
   border-color: var(--primary);
 }
+.launch-mode-option:focus-within {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
 .launch-mode-option input[type="radio"] {
-  margin-top: 3px;
+  margin-top: 2px;
   width: 16px;
   height: 16px;
   accent-color: var(--primary);
@@ -2069,18 +2073,19 @@ body {
   gap: 2px;
 }
 .launch-mode-label {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 600;
   color: var(--text);
 }
 .launch-mode-desc {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
 }
 .launch-mode-warning {
   font-size: 11px;
   color: var(--danger);
   font-style: italic;
+  margin-top: 4px;
 }
 
 /* ── Create Project modal chrome (header / title / body) ── */
