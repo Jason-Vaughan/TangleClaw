@@ -5517,6 +5517,21 @@ async function handleRequest(req, res) {
       if (!resolved) {
         return errorResponse(res, 404, 'OpenClaw connection not found', 'NOT_FOUND');
       }
+      // #1012 — the bare `/openclaw-direct/<connId>` form serves the Control UI
+      // index, whose script tag is RELATIVE (`src="./assets/index-*.js"`). From a
+      // base with no trailing slash the browser resolves that to
+      // `/openclaw-direct/assets/...`, where `parts[2]` above reads "assets" as the
+      // connection id, misses, and 404s the bundle. The page then renders but the
+      // `openclaw-app` component never registers, and OpenClaw's own error card
+      // blames a browser extension — a misdiagnosis three layers from the cause.
+      // Redirect to the canonical slashed form so relative assets resolve from any
+      // entry point (a link, a bookmark, a hand-typed URL), not just from the
+      // `/chat` sub-path today's UI happens to use.
+      if (parts.length === 3) {
+        const query = req.url.includes('?') ? '?' + req.url.split('?').slice(1).join('?') : '';
+        res.writeHead(301, { Location: pathname + '/' + query });
+        return res.end();
+      }
       const subPath = parts.slice(3).join('/');
       const targetPath = '/' + subPath + (req.url.includes('?') ? '?' + req.url.split('?')[1] : '');
 
