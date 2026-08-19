@@ -4,6 +4,15 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **The Wrap button was inert: it spun forever, opened an empty drawer, and could not be cancelled.** `public/session.js` called `startWrapSse()`, which is defined nowhere — #185 shipped the SERVER half of live wrap progress (`GET /wrap/stream`, the registry hooks the runner feeds) and no client was ever written. The call sat between the optimistic UI and the POST, so a ReferenceError fired *after* the spinner appeared and an empty drawer opened, and *before* the wrap request went out. The pipeline never started, and because the throw skipped the `finally`, `wrapInFlight` stayed `true` and Cancel remained permanently disabled.
+
+  **`node --check` passes on an undefined call** — it is a runtime error, not a syntax one — so the whole suite stayed green while the product's session-ending path was broken. It shipped in v5.11.0 and broke the first wrap attempted after it.
+
+  Restored to the honest blocking behaviour: the drawer opens when the POST returns its `pipelineResult`. The optimistic open should re-land *with* a real `EventSource` client, not before one — an empty drawer with nothing feeding it is worse than a drawer that arrives late.
+
+  A guard now scans the wrap-confirm path and fails when it calls anything undefined. It is scoped to that path rather than the whole file on purpose: a whole-file scan produces false positives from prose and browser globals, and a guard nobody trusts gets deleted. Verified both ways — re-adding `startWrapSse()` fails it, and breaking the extraction fails a separate vacuity assertion rather than silently passing on zero calls.
+
 ## [5.11.0] - 2026-08-19
 
 ### Added
