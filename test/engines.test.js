@@ -1984,6 +1984,94 @@ describe('engines', () => {
       });
     });
 
+    describe('syncEngineHooks retires PRE-RENAME SessionStart entries (#1007)', () => {
+      // Train 5 (#982) renamed the SessionStart scripts per engine. Ownership is
+      // decided by basename, so every entry written before that rename stopped
+      // matching and `_mergeBaselineHooks` filed TangleClaw's own hooks as foreign
+      // — preserving a path that no longer exists, on every regen, forever. 25 dead
+      // entries across 24 projects, each one a hook error at every session start.
+      const staleEntry = (script, installPath = '/Users/x/TangleClaw') => ({
+        matcher: 'startup',
+        hooks: [{ type: 'command', command: `"${installPath}/data/hooks/${script}"` }]
+      });
+
+      it('removes the pre-rename prime and rules entries instead of preserving them', () => {
+        const p = mkProject(
+          { hooks: { SessionStart: [staleEntry('sessionstart-prime.sh'), staleEntry('sessionstart-rules.sh')] } },
+          { engine: 'claude', silentPrime: false }
+        );
+
+        engines.syncEngineHooks(p);
+
+        const written = JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.json'), 'utf8'));
+        assert.equal(written.hooks, undefined,
+          'the pre-rename entries must be retired, not preserved as foreign operator hooks');
+      });
+
+      it('retires a pre-rename entry naming a PRE-MOVE install path', () => {
+        // The older orphans (`TangleClaw-v3/...`) are unrecognised twice over: wrong
+        // basename AND wrong install path. Ownership is by basename precisely so the
+        // path cannot matter, so retiring these needs no separate rule — but it does
+        // need a guard, because it is the case a path-scoped fix would silently miss.
+        const p = mkProject(
+          { hooks: { SessionStart: [staleEntry('sessionstart-prime.sh', '/Users/x/TangleClaw-v3')] } },
+          { engine: 'claude', silentPrime: false }
+        );
+
+        engines.syncEngineHooks(p);
+
+        const written = JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.json'), 'utf8'));
+        assert.equal(written.hooks, undefined, 'a pre-move orphan must be retired regardless of its install path');
+      });
+
+      it('replaces rather than accumulates: a stale entry beside a live one leaves only the live one', () => {
+        // The exact on-disk shape this bug produced — four SessionStart entries where
+        // two name deleted scripts. Reproduced here so a regression is caught as the
+        // duplication it is, not just as a leftover.
+        const p = mkProject(
+          { hooks: { SessionStart: [staleEntry('sessionstart-prime.sh'), tcOwnedHook()] } },
+          { engine: 'claude', silentPrime: true }
+        );
+
+        engines.syncEngineHooks(p);
+
+        const written = JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.json'), 'utf8'));
+        const commands = written.hooks.SessionStart.flatMap((e) => e.hooks.map((h) => h.command));
+        assert.ok(!commands.some((c) => /data\/hooks\/sessionstart-(prime|rules)\.sh"/.test(c)),
+          `a pre-rename entry survived beside the live one: ${JSON.stringify(commands)}`);
+        assert.ok(commands.some((c) => c.includes('sessionstart-prime-claude.sh')),
+          'the current prime entry must still be emitted');
+      });
+
+      it('no retirement marker matches a script TangleClaw currently emits', () => {
+        // The markers are matched as substrings, so an unscoped `sessionstart-prime.sh`
+        // is the obvious shape of this fix and is wrong in the worst way — it would
+        // retire the very hook the fix exists to keep. Read off the two REAL lists so
+        // widening a marker, or adding an emitted script a marker happens to cover,
+        // goes red here rather than in a silent session-start regression.
+        for (const marker of engines._TC_LEGACY_HOOK_MARKERS) {
+          for (const script of engines._TC_HOOK_SCRIPTS) {
+            assert.ok(!`data/hooks/${script}`.includes(marker),
+              `retirement marker "${marker}" matches currently-emitted "${script}" — `
+              + 'syncing a project would delete its live hook');
+          }
+        }
+      });
+
+      it('every retired basename stays retired — a rename must not drop its predecessor', () => {
+        // The class, not the instance. This bug was one line of omission: a rename
+        // that updated the emitted names and forgot the retirement list. Nothing
+        // structurally prevents the next rename from repeating it, so the names TC
+        // has ever emitted are pinned here.
+        const retired = ['data/hooks/sessionstart-prime.sh', 'data/hooks/sessionstart-rules.sh'];
+        for (const marker of retired) {
+          assert.ok(engines._TC_LEGACY_HOOK_MARKERS.includes(marker),
+            `${marker} was emitted by a past TangleClaw and must stay in the retirement list `
+            + 'or every settings.json written before the rename keeps a dead hook');
+        }
+      });
+    });
+
     describe('syncEngineHooks resolves the engine from the DB, projConfig only as fallback', () => {
       it('registered non-claude project with no projConfig engine key takes the cleanup branch', () => {
         // Sibling of the boot-sync engine fix: a registered codex project whose
