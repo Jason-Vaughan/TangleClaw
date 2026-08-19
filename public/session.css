@@ -27,6 +27,13 @@
   --radius-card: 10px;
   --radius-modal: 12px;
   --radius-pill: 14px;
+  
+  /* Z-Index Scale */
+  --z-drawer-backdrop: 290;
+  --z-drawer: 300;
+  --z-toast: 400;
+  --z-modal-backdrop: 450;
+  --z-unreachable: 500;
 }
 
 /* ── Light Theme ── */
@@ -825,7 +832,7 @@ body {
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.5);
-  z-index: 290;
+  z-index: var(--z-drawer-backdrop);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.3s;
@@ -839,7 +846,7 @@ body {
   bottom: 0;
   left: 0;
   right: 0;
-  z-index: 300;
+  z-index: var(--z-drawer);
   background: var(--card-bg);
   border: 1px solid var(--elevated-bg);
   border-radius: var(--radius-modal) var(--radius-modal) 0 0;
@@ -945,7 +952,7 @@ body {
   bottom: 0;
   left: 0;
   right: 0;
-  z-index: 300;
+  z-index: var(--z-drawer);
   background: var(--card-bg);
   border: 1px solid var(--elevated-bg);
   border-radius: var(--radius-modal) var(--radius-modal) 0 0;
@@ -1011,7 +1018,7 @@ body {
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.7);
-  z-index: 200;
+  z-index: var(--z-modal-backdrop);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1530,7 +1537,7 @@ body {
   bottom: 0;
   left: 0;
   right: 0;
-  z-index: 300;
+  z-index: var(--z-drawer);
   background: var(--card-bg);
   border: 1px solid var(--elevated-bg);
   border-radius: var(--radius-modal) var(--radius-modal) 0 0;
@@ -1724,7 +1731,7 @@ body {
   bottom: 0;
   left: 0;
   right: 0;
-  z-index: 300;
+  z-index: var(--z-drawer);
   background: var(--card-bg);
   border: 1px solid var(--elevated-bg);
   border-radius: var(--radius-modal) var(--radius-modal) 0 0;

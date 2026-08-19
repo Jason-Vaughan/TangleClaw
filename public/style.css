@@ -27,6 +27,13 @@
   --radius-card: 10px;
   --radius-modal: 12px;
   --radius-pill: 14px;
+  
+  /* Z-Index Scale */
+  --z-drawer-backdrop: 290;
+  --z-drawer: 300;
+  --z-toast: 400;
+  --z-modal-backdrop: 450;
+  --z-unreachable: 500;
 }
 
 /* ── Light Theme ── */
@@ -1897,7 +1904,7 @@ body {
 .unreachable-state {
   position: fixed;
   inset: 0;
-  z-index: 500;
+  z-index: var(--z-unreachable);
   display: none;
   align-items: center;
   justify-content: center;
@@ -1930,7 +1937,7 @@ body {
   top: 0;
   left: 0;
   right: 0;
-  z-index: 400;
+  z-index: var(--z-toast);
   padding: calc(env(safe-area-inset-top, 0px) + 10px) 16px 10px;
   font-size: 13px;
   font-weight: 600;
@@ -1947,7 +1954,7 @@ body {
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.7);
-  z-index: 200;
+  z-index: var(--z-modal-backdrop);
   display: flex;
   align-items: center;
   justify-content: center;
