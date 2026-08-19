@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.11.2] - 2026-08-19
+
 ### Fixed
 - **`/openclaw-direct/<connId>` without a trailing slash 404'd its own app bundle, and the failure surfaced as a browser-extension warning from another repo (#1012).** The bare form served the OpenClaw Control UI index, whose script tag is relative — `src="./assets/index-DUOiCYMK.js"`. From a base with no trailing slash the browser resolves that to `/openclaw-direct/assets/...`, where the proxy reads path segment 2 as the connection id, looks up a connection literally named `assets`, misses, and 404s the bundle.
 
