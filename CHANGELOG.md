@@ -4,6 +4,15 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **`/openclaw-direct/<connId>` without a trailing slash 404'd its own app bundle, and the failure surfaced as a browser-extension warning from another repo (#1012).** The bare form served the OpenClaw Control UI index, whose script tag is relative — `src="./assets/index-DUOiCYMK.js"`. From a base with no trailing slash the browser resolves that to `/openclaw-direct/assets/...`, where the proxy reads path segment 2 as the connection id, looks up a connection literally named `assets`, misses, and 404s the bundle.
+
+  The page then renders with no `openclaw-app` custom element ever registering, and OpenClaw's own error card blames "a browser extension or early content script" — a misdiagnosis three layers from the cause, in a repo that cannot see TangleClaw's routing. The bare form now 301s to the canonical slashed URL, query string preserved, so relative assets resolve from any entry point rather than only from the `/chat` sub-path today's UI happens to use.
+
+  Guards pin the redirect, the query-string carry, that a sub-path still proxies rather than redirecting (redirecting `/chat` would loop the UI's own frame src), that an unknown connection still 404s ahead of the redirect, and — the reason the redirect exists — that the unslashed asset path is genuinely broken. Mutation-verified: removing the branch reds two of them rather than leaving them vacuously green.
+
+  This is the deterministic half of #1012. The reported blocker's other half — a tunnel that drops mid-load leaves the UI on "starting tunnel" with no honest terminal state — remains open there.
+
 ## [5.11.1] - 2026-08-19
 
 ### Fixed
