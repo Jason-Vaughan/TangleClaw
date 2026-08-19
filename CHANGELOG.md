@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.10.0] - 2026-08-19
+
 ### Added
 - **Launch posture is picked at project creation, from flags the engine itself declares (train 5).**
   The create wizard gains a First-Session Settings step whose Launch Posture options are read from
