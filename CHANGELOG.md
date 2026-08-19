@@ -5,6 +5,14 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **Renaming a SessionStart hook script orphaned every settings.json already written, in every managed project (#1007).** Train 5 (#982) split the hook scripts per engine — `sessionstart-prime.sh` → `sessionstart-prime-claude.sh`, same for rules — and updated `TC_HOOK_SCRIPTS`, the guards and the FEATURES.md citations. It did not add the pre-rename basenames to `TC_LEGACY_HOOK_MARKERS`, and that omission is the whole bug.
+
+  Hook ownership is decided by basename, so a rename changes the identity. TangleClaw's own pre-rename entries stopped matching, `_isTangleClawHookEntry()` classified them as operator-authored, and `_mergeBaselineHooks()` preserved them verbatim — which is correct behaviour for a foreign hook and the entire point of the #752 fix. Every config regen therefore re-preserved a path that no longer existed and appended the live entry beside it. **25 dead entries across 24 projects**, each firing `No such file or directory` at every session start. Five of them were older orphans naming a pre-move install path, unrecognised for both reasons at once.
+
+  No data was lost: both scripts are stateless readers that `cat` a file under `.tangleclaw/` and always `exit 0`, the renames were byte-identical, and the live entries ran alongside the dead ones the whole time. Prime and rules delivered in full.
+
+  Affected projects clean themselves on the next config sync. The ownership comment now states that a rename *requires* retiring the old basename, and guards pin both halves of that contract: every name TangleClaw has ever emitted stays in the retirement list, and no retirement marker may match a name it currently emits — the unscoped version of this fix would have deleted the live hook instead. Each marker carries its `data/hooks/` directory so it cannot substring-match the variant that replaced it. Both failure shapes were re-inflicted and both fail.
+
 - **The Wrap button was inert: it spun forever, opened an empty drawer, and could not be cancelled.** `public/session.js` called `startWrapSse()`, which is defined nowhere — #185 shipped the SERVER half of live wrap progress (`GET /wrap/stream`, the registry hooks the runner feeds) and no client was ever written. The call sat between the optimistic UI and the POST, so a ReferenceError fired *after* the spinner appeared and an empty drawer opened, and *before* the wrap request went out. The pipeline never started, and because the throw skipped the `finally`, `wrapInFlight` stayed `true` and Cancel remained permanently disabled.
 
   **`node --check` passes on an undefined call** — it is a runtime error, not a syntax one — so the whole suite stayed green while the product's session-ending path was broken. It shipped in v5.11.0 and broke the first wrap attempted after it.
