@@ -2806,3 +2806,15 @@ body.setup-active { overflow: hidden; }
   align-items: center;
   gap: 12px;
 }
+
+.card-preview {
+  font-size: 0.85em;
+  color: var(--tc-text-muted);
+  padding: 4px 12px 6px 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-top: 1px dashed var(--tc-border-light);
+}
+
+.btn-success { background-color: #28a745 !important; color: white !important; border-color: #28a745 !important; }

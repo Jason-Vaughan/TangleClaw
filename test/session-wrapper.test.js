@@ -683,3 +683,14 @@ describe('Session Wrapper UI', () => {
     });
   });
 });
+
+describe('initSession regression check', () => {
+  it('restores closeUploadModal to prevent blank-screen', () => {
+    const fsNode = require('node:fs');
+    const pathNode = require('node:path');
+    const jsContent = fsNode.readFileSync(pathNode.join(__dirname, '..', 'public', 'session.js'), 'utf8');
+    const assert = require('node:assert/strict');
+    assert.ok(jsContent.includes('function closeUploadModal()'), 'Must declare closeUploadModal');
+    assert.ok(jsContent.includes("document.getElementById('uploadModal').classList.remove('open')"), 'Must hide upload modal');
+  });
+});

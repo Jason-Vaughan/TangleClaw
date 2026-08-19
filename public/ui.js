@@ -336,6 +336,7 @@ function renderCard(project) {
         <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); openDelete('${n}')" title="Delete project">&times;</button>
       </span>
     </div>
+    ${project.continuityIndex && project.continuityIndex.nextAction ? `<div class="card-preview"><strong>Next:</strong> ${esc(project.continuityIndex.nextAction)}</div>` : ''}
   </article>`;
 }
 
@@ -3641,6 +3642,15 @@ $('groupDeleteModal').addEventListener('click', (e) => { if (e.target === e.curr
 $('docCancelBtn').addEventListener('click', closeDocModal);
 $('docSaveBtn').addEventListener('click', saveDoc);
 $('docModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeDocModal(); });
+
+
+const engineFilterEl = document.getElementById('engineFilter');
+if (engineFilterEl) {
+  engineFilterEl.addEventListener('change', (e) => {
+    state.activeEngine = e.target.value;
+    renderProjects();
+  });
+}
 
 let filterTimer = null;
 $('filterInput').addEventListener('input', (e) => {

@@ -3302,6 +3302,7 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
     engineOverride: body ? body.engineOverride : null,
     mode: body ? body.mode : undefined,
     launchMode: body ? body.launchMode : undefined,
+    continuityMode: body ? body.continuityMode : undefined,
     owner
   });
 
@@ -3761,6 +3762,41 @@ function _wrapResultPayload(projectName, result) {
   if (!result.ok && result.error) payload.error = result.error;
   return payload;
 }
+
+
+// GET /api/sessions/:project/wrap/stream — SSE stream for live wrap progress (#185).
+route('GET', '/api/sessions/:project/wrap/stream', (req, res, params) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive'
+  });
+  
+  // Send initial state
+  const status = store.sessions.getWrapRunStatus(params.project);
+  res.write('data: ' + JSON.stringify({ type: 'init', status }) + '\n\n');
+
+  // Keep-alive ping to prevent proxy timeout
+  const interval = setInterval(() => {
+    res.write(': ping\n\n');
+  }, 15000);
+  
+  const handler = (payload) => {
+    res.write('data: ' + JSON.stringify(payload) + '\n\n');
+    if (payload.type === 'pipeline-done') {
+      res.end();
+    }
+  };
+  
+  // Re-use wrapRunRegistry events if required. Since we only require store, let's get wrapRunRegistry via store or require it.
+  const wrapRunRegistry = require('./lib/wrap-run-registry');
+  wrapRunRegistry.events.on(params.project, handler);
+  
+  req.on('close', () => {
+    clearInterval(interval);
+    wrapRunRegistry.events.off(params.project, handler);
+  });
+});
 
 // GET /api/sessions/:project/wrap/status — Wrap-run state (#583). Lets a
 // client whose wrap POST connection died (proxy 502, page reload, phone
