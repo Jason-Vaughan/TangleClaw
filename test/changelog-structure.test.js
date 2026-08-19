@@ -35,6 +35,49 @@ function compareSemver(a, b) {
   return 0;
 }
 
+/**
+ * Find release sections that carry the same `###` subsection twice.
+ *
+ * This is the tell for a section ABSORPTION: a squash merge lands a branch's
+ * CHANGELOG edit under the wrong heading, the older release's `## [X.Y.Z]`
+ * line is dropped, and its whole body ends up inside the newer section. The
+ * result reads as one enormous release and, because `lib/changelog-notes.js`
+ * extracts by heading, the newer version's GitHub Release republishes the
+ * older one's notes verbatim.
+ *
+ * It has happened twice: #598/#597, and again when v5.7.0's 527-line body was
+ * absorbed into `## [5.8.0]` — which published a v5.8.0 release page claiming
+ * every v5.7.0 feature as new. A duplicated `### Added` was the visible seam
+ * both times, because Keep a Changelog gives each section at most one of each.
+ *
+ * Fenced blocks are skipped: this changelog quotes markdown, so a `### ` line
+ * inside a fence is content, not a heading.
+ *
+ * @param {string} text - Full CHANGELOG.md contents.
+ * @returns {Array<{section: string, subsection: string, line: number}>}
+ */
+function findDuplicateSubsections(text) {
+  const violations = [];
+  let section = null;
+  let seen = new Set();
+  let inFence = false;
+  text.split('\n').forEach((line, i) => {
+    if (/^\s*(```|~~~)/.test(line)) { inFence = !inFence; return; }
+    if (inFence) return;
+    if (/^## /.test(line)) {
+      section = line.replace(/^##\s+/, '').trim();
+      seen = new Set();
+      return;
+    }
+    const m = line.match(/^###\s+(.+?)\s*$/);
+    if (!m || section === null) return;
+    const name = m[1];
+    if (seen.has(name)) violations.push({ section, subsection: name, line: i + 1 });
+    else seen.add(name);
+  });
+  return violations;
+}
+
 function findOrphanBanners(text) {
   let currentSection = null;
   const orphans = [];
@@ -136,6 +179,32 @@ describe('CHANGELOG.md structural invariants (#168)', () => {
     );
   });
 
+  // Sections that already carried repeated subsections before this guard existed.
+  // They are all 3.x, they pre-date the current release process, and a released
+  // section is immutable history — rewriting them would edit the record to satisfy
+  // a test. Keyed by version rather than line number so the baseline does not rot
+  // as the file grows above them. NOTHING NEW MAY JOIN THIS LIST: a duplicate in
+  // any other section is an absorption and fails.
+  const PRE_GUARD_SECTIONS = new Set(['3.20.0', '3.18.0', '3.16.0', '3.13.0', '3.0.1']);
+
+  it('no release section carries the same ### subsection twice (invariant #6 — absorption)', () => {
+    const violations = findDuplicateSubsections(changelog)
+      .filter((v) => {
+        const m = v.section.match(/^\[(\d+\.\d+\.\d+)\]/);
+        return !(m && PRE_GUARD_SECTIONS.has(m[1]));
+      });
+    assert.equal(
+      violations.length,
+      0,
+      violations.length === 0
+        ? ''
+        : 'a repeated ### subsection means one release section swallowed another (a squash '
+          + 'dropped the older `## [X.Y.Z]` heading). The newer version then publishes the older '
+          + "one's notes as its own. Offenders: "
+          + violations.map((v) => `"${v.section}" repeats "### ${v.subsection}" at line ${v.line}`).join('; ')
+    );
+  });
+
   it('no release banner (> 🛟 / > 🚀) floats outside a released-version section (invariant #1)', () => {
     const orphans = findOrphanBanners(changelog);
     assert.equal(
@@ -198,6 +267,50 @@ describe('CHANGELOG.md invariant detectors flag the post-#166 / pre-#167 regress
     const dupes = findDuplicateHeadings(parseReleaseHeadings(DUPED));
     assert.equal(dupes.length, 1);
     assert.equal(dupes[0].versionString, '3.16.0');
+  });
+
+  it('an absorbed release section is detected (invariant #6 — the v5.7.0-into-v5.8.0 shape)', () => {
+    // The exact wound: [5.8.0] keeps its own Added/Fixed, then [5.7.0]'s heading
+    // is gone and its Added/Changed body continues inside the same section.
+    const absorbed = [
+      '## [Unreleased]',
+      '',
+      '## [5.8.0] - 2026-08-18',
+      '',
+      '### Added',
+      '- 5.8.0 own entry',
+      '',
+      '### Fixed',
+      '- 5.8.0 own fix',
+      '',
+      '### Added',
+      "- 5.7.0's entry, absorbed when the squash dropped its heading",
+      '',
+      '### Changed',
+      "- 5.7.0's change",
+      '',
+    ].join('\n');
+    const violations = findDuplicateSubsections(absorbed);
+    assert.equal(violations.length, 1, 'the repeated ### Added must be flagged');
+    assert.equal(violations[0].section, '[5.8.0] - 2026-08-18');
+    assert.equal(violations[0].subsection, 'Added');
+  });
+
+  it('a ### line inside a fenced block is content, not a subsection (invariant #6 false-positive guard)', () => {
+    const fenced = [
+      '## [1.0.0] - 2026-01-01',
+      '',
+      '### Added',
+      '- an entry that quotes markdown:',
+      '',
+      '  ```markdown',
+      '  ### Added',
+      '  ### Added',
+      '  ```',
+      '',
+    ].join('\n');
+    assert.deepEqual(findDuplicateSubsections(fenced), [],
+      'repeated headings inside a fence are quoted content and must not trip the detector');
   });
 
   it('a buried second [Unreleased] heading is detected (invariant #5 — #281 shape)', () => {
