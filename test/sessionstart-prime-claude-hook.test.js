@@ -7,9 +7,9 @@ const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 
-const HOOK_SCRIPT = path.join(__dirname, '..', 'data', 'hooks', 'sessionstart-prime.sh');
+const HOOK_SCRIPT = path.join(__dirname, '..', 'data', 'hooks', 'sessionstart-prime-claude.sh');
 
-describe('sessionstart-prime.sh hook script (#103)', () => {
+describe('sessionstart-prime-claude.sh hook script (#103)', () => {
   let projectDir;
 
   beforeEach(() => {
@@ -158,7 +158,7 @@ describe('#759 hook commands survive a TangleClaw path containing a space', () =
     fixtureRoots.push(root);
     const dir = path.join(root, 'Mobile Documents', 'TangleClaw');
     fs.mkdirSync(path.join(dir, 'data', 'hooks'), { recursive: true });
-    for (const name of ['sessionstart-prime.sh', 'sessionstart-rules.sh']) {
+    for (const name of ['sessionstart-prime-claude.sh', 'sessionstart-rules-claude.sh']) {
       const p = path.join(dir, 'data', 'hooks', name);
       fs.writeFileSync(p, '#!/bin/sh\nexit 0\n');
       fs.chmodSync(p, 0o755);
@@ -199,7 +199,7 @@ describe('#759 hook commands survive a TangleClaw path containing a space', () =
     const commands = allCommands(hooks);
     assert.equal(commands.length, 1, 'with no rule shards, only the prime hook is emitted');
     const command = commands[0].replace(/\{\{TANGLECLAW_DIR\}\}/g, dir);
-    assert.match(command, /sessionstart-prime\.sh/);
+    assert.match(command, /sessionstart-prime-claude\.sh/);
     execFileSync('/bin/sh', ['-c', command], { stdio: ['pipe', 'pipe', 'pipe'] });
   });
 });

@@ -4,6 +4,28 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Launch posture is picked at project creation, from flags the engine itself declares (train 5).**
+  The create wizard gains a First-Session Settings step whose Launch Posture options are read from
+  the chosen engine's own `launchModes` rather than from a hardcoded Claude-shaped list, so each
+  engine offers the postures it actually has: Claude's `plan`/`acceptEdits`/`auto`, Codex's
+  `fullAuto` (`--ask-for-approval never --sandbox workspace-write`) and `bypassPermissions`
+  (`--dangerously-bypass-approvals-and-sandbox`), Antigravity's `sandbox`/`bypassPermissions`,
+  Aider's `yesAlways`. Modes carrying a `warning` render it, and disabled modes are filtered out
+  rather than shown dead.
+
+- **The SessionStart prime and rules hooks are per-engine scripts (train 5).**
+  `sessionstart-prime.sh` and `sessionstart-rules.sh` became
+  `sessionstart-prime-{claude,codex}.sh` and `sessionstart-rules-{claude,codex}.sh`, selected by the
+  profile's `silentPrimeScript` / `silentRulesScript` with the Claude scripts as the fallback. One
+  shared script could only ever emit one engine's startup envelope; splitting them is what lets a
+  non-Claude engine have a silent prime at all instead of falling back to pasting it into the pane.
+
+### Internal
+- **Released CHANGELOG sections are now pinned by content hash, because the structural invariant provably misses half the shape.** Release-section corruption happened three times in one day: a squash dropped the `## [5.7.0]` heading and folded its body into `## [5.8.0]`, and then a rebase twice merged this branch's entries into the **already-published** `## [5.9.0]`. Invariant #6 catches only the first — a section that swallows another leaves a duplicated `### Added` as the seam, while a rebase merging into a released section's *existing* subsections duplicates nothing and stays invisible to it. The new guard locks a hash of every dated section's body in `test/fixtures/changelog-released-sections.lock.json` and fails on three distinct events: a released section edited after publication, a release heading that vanished, and a released section missing from the lock. Cutting a release adds a NEW section, so the lock line is added with the release PR; a failure naming an *older* version is the bug, not a stale lock, and the message says so. Both real shapes were re-inflicted and both fail.
+
+- **Four guards that named the pre-rename hook script were updated, and re-verified against the regression they exist for (#759, train 5).** `test/api-projects.test.js`, `test/projects.test.js`, `test/sessionstart-prime-claude-hook.test.js` and three `FEATURES.md` citations all still said `sessionstart-prime.sh`. Renaming a file the assertions name is not the same as weakening them, and the difference was checked rather than asserted: with the filename updated, dropping the quotes around the hook path — #759's actual regression, an install path containing a space — still fails all three. Two code comments naming the old path were corrected too, since a comment citing a file that no longer exists is worse than no comment.
+
 ## [5.9.0] - 2026-08-19
 
 ### Added

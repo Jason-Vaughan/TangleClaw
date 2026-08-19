@@ -2034,15 +2034,25 @@ body {
 .launch-mode-option {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 12px;
+  padding: 12px;
   background: var(--card-bg);
-  border-radius: var(--radius-btn);
+  border: 1px solid transparent;
+  border-radius: 8px;
   cursor: pointer;
+  transition: all 0.15s ease;
 }
-.launch-mode-option:hover { background: var(--card-hover); }
+.launch-mode-option:hover { 
+  background: var(--elevated-bg); 
+}
+.launch-mode-option:has(input[type="radio"]:checked) {
+  background: var(--elevated-bg);
+  border-color: var(--primary);
+}
 .launch-mode-option input[type="radio"] {
-  margin-top: 2px;
+  margin-top: 3px;
+  width: 16px;
+  height: 16px;
   accent-color: var(--primary);
   flex-shrink: 0;
 }

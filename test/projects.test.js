@@ -3207,7 +3207,7 @@ describe('projects', () => {
       assert.equal(settings.hooks.SessionStart.length, 1);
       assert.equal(settings.hooks.SessionStart[0].matcher, 'startup');
       const cmd = settings.hooks.SessionStart[0].hooks[0].command;
-      assert.match(cmd, /"[^"]*\/data\/hooks\/sessionstart-prime\.sh"$/,
+      assert.match(cmd, /"[^"]*\/data\/hooks\/sessionstart-prime-claude\.sh"$/,
         'the command must be a QUOTED absolute path — an unquoted one breaks the moment the install path contains a space (#759)')
       assert.equal(cmd.includes('{{TANGLECLAW_DIR}}'), false, 'placeholder should be resolved');
     });

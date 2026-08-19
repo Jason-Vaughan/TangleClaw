@@ -25,7 +25,7 @@ const engines = require('../lib/engines');
 setLevel('error');
 
 /** A hook entry TangleClaw emits, as it appears on disk after placeholder resolution. */
-function tcEntry(script = 'sessionstart-prime.sh', arg = '') {
+function tcEntry(script = 'sessionstart-prime-claude.sh', arg = '') {
   return {
     matcher: 'startup',
     hooks: [{
@@ -54,7 +54,7 @@ describe('_isTangleClawHookEntry', () => {
     // beside an unrecognized old one.
     const moved = {
       matcher: 'startup',
-      hooks: [{ type: 'command', command: '"/opt/tc/data/hooks/sessionstart-prime.sh"' }]
+      hooks: [{ type: 'command', command: '"/opt/tc/data/hooks/sessionstart-prime-claude.sh"' }]
     };
     assert.equal(engines._isTangleClawHookEntry(moved), true);
   });

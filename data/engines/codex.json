@@ -22,14 +22,38 @@
     "shellCommand": "codex",
     "args": [],
     "env": {},
-    "preKeys": ["Enter", "Enter"],
+    "preKeys": [
+      "Enter",
+      "Enter"
+    ],
     "preKeyDelay": 3000,
     "startupDelay": 2000
   },
   "launchModes": {
-    "default": { "label": "Interactive", "args": [], "description": "Asks for approval per action" },
-    "fullAuto": { "label": "Full Auto", "args": ["--ask-for-approval", "never", "--sandbox", "workspace-write"], "description": "Never asks for approval, still sandboxed to the workspace", "warning": "Sandboxed but unattended — review the generated diffs before merging." },
-    "bypassPermissions": { "label": "Bypass", "args": ["--dangerously-bypass-approvals-and-sandbox"], "description": "Skips every approval AND the sandbox (containers/VMs only)", "warning": "Only use in isolated environments" }
+    "default": {
+      "label": "Interactive",
+      "args": [],
+      "description": "Asks for approval per action"
+    },
+    "fullAuto": {
+      "label": "Full Auto",
+      "args": [
+        "--ask-for-approval",
+        "never",
+        "--sandbox",
+        "workspace-write"
+      ],
+      "description": "Never asks for approval, still sandboxed to the workspace",
+      "warning": "Sandboxed but unattended — review the generated diffs before merging."
+    },
+    "bypassPermissions": {
+      "label": "Bypass",
+      "args": [
+        "--dangerously-bypass-approvals-and-sandbox"
+      ],
+      "description": "Skips every approval AND the sandbox (containers/VMs only)",
+      "warning": "Only use in isolated environments"
+    }
   },
   "defaultLaunchMode": "default",
   "persistent": null,
@@ -37,12 +61,15 @@
     "supportsSlashCommands": false,
     "supportsPrimePrompt": true,
     "supportsConfigFile": true,
-    "supportsCoAuthor": true
+    "supportsCoAuthor": true,
+    "supportsSilentPrime": true
   },
   "statusPage": {
     "adapter": "atlassian",
     "url": "https://status.openai.com/api/v2/summary.json",
     "componentId": "01JVCV8YSWZFRSM1G5CVP253SK",
     "componentName": "Codex"
-  }
+  },
+  "silentPrimeScript": "sessionstart-prime-codex.sh",
+  "silentRulesScript": "sessionstart-rules-codex.sh"
 }

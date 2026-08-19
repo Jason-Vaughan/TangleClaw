@@ -1895,7 +1895,7 @@ describe('engines', () => {
     // indistinguishable from an operator's hook — so once hooks are MERGED rather
     // than replaced (#752) they no longer discriminate anything. Ownership is the
     // whole question now, so the fixture has to carry it.
-    const tcOwnedHook = (script = 'sessionstart-prime.sh') => ({
+    const tcOwnedHook = (script = 'sessionstart-prime-claude.sh') => ({
       matcher: 'startup',
       hooks: [{ type: 'command', command: `"/Users/x/TangleClaw/data/hooks/${script}"` }]
     });
@@ -2465,7 +2465,7 @@ describe('engines', () => {
       fs.mkdirSync(claudeDir, { recursive: true });
       fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({
         permissions: { allow: [] },
-        hooks: { SessionStart: [{ matcher: 'startup', hooks: [{ type: 'command', command: '"/Users/x/TangleClaw/data/hooks/sessionstart-prime.sh"' }] }] }
+        hooks: { SessionStart: [{ matcher: 'startup', hooks: [{ type: 'command', command: '"/Users/x/TangleClaw/data/hooks/sessionstart-prime-claude.sh"' }] }] }
       }, null, 2));
       fs.writeFileSync(path.join(projectDir, '.tangleclaw', 'project.json'), JSON.stringify({
         engine: 'claude',
@@ -2528,18 +2528,18 @@ describe('engines', () => {
       const result = engines._buildBaselineHooks({ silentPrime: true }, supportingProfile, 3);
       assert.equal(result.SessionStart.length, 4, 'one prime entry plus one per shard');
       const commands = result.SessionStart.map((e) => e.hooks[0].command);
-      assert.match(commands[0], /"[^"]*\/data\/hooks\/sessionstart-prime\.sh"$/);
+      assert.match(commands[0], /"[^"]*\/data\/hooks\/sessionstart-prime-claude\.sh"$/);
       // Each shard gets its OWN entry: the engine caps each hook's output
       // separately, so one hook emitting every shard would be capped as one.
-      assert.match(commands[1], /sessionstart-rules\.sh" 1$/);
-      assert.match(commands[2], /sessionstart-rules\.sh" 2$/);
-      assert.match(commands[3], /sessionstart-rules\.sh" 3$/);
+      assert.match(commands[1], /sessionstart-rules-claude\.sh" 1$/);
+      assert.match(commands[2], /sessionstart-rules-claude\.sh" 2$/);
+      assert.match(commands[3], /sessionstart-rules-claude\.sh" 3$/);
     });
 
     it('registers no rules hook when the project has no rules', () => {
       const result = engines._buildBaselineHooks({ silentPrime: true }, supportingProfile, 0);
       assert.equal(result.SessionStart.length, 1, 'only the prime hook');
-      assert.match(result.SessionStart[0].hooks[0].command, /"[^"]*\/data\/hooks\/sessionstart-prime\.sh"$/);
+      assert.match(result.SessionStart[0].hooks[0].command, /"[^"]*\/data\/hooks\/sessionstart-prime-claude\.sh"$/);
     });
 
     it('registers no rules hook for an engine that cannot take a silent prime', () => {
@@ -2565,7 +2565,7 @@ describe('engines', () => {
       const result = engines._buildBaselineHooks({ silentPrime: true }, supportingProfile);
       const cmd = result.SessionStart[0].hooks[0].command;
       assert.ok(cmd.includes('{{TANGLECLAW_DIR}}'), 'should use placeholder for portability');
-      assert.match(cmd, /"[^"]*\/data\/hooks\/sessionstart-prime\.sh"$/,
+      assert.match(cmd, /"[^"]*\/data\/hooks\/sessionstart-prime-claude\.sh"$/,
         'the command must be a QUOTED absolute path — an unquoted one breaks the moment the install path contains a space (#759)')
     });
 
@@ -2607,7 +2607,7 @@ describe('engines', () => {
       const settings = readSettings();
       assert.equal(settings.hooks.SessionStart.length, 1);
       assert.equal(settings.hooks.SessionStart[0].matcher, 'startup');
-      assert.match(settings.hooks.SessionStart[0].hooks[0].command, /"[^"]*\/data\/hooks\/sessionstart-prime\.sh"$/,
+      assert.match(settings.hooks.SessionStart[0].hooks[0].command, /"[^"]*\/data\/hooks\/sessionstart-prime-claude\.sh"$/,
         'the command must be a QUOTED absolute path — an unquoted one breaks the moment the install path contains a space (#759)')
     });
 
@@ -2626,7 +2626,7 @@ describe('engines', () => {
         const entries = readSettings().hooks.SessionStart;
         assert.equal(entries.length, 2, 'prime hook plus one rules hook');
         const rulesCmd = entries[1].hooks[0].command;
-        assert.match(rulesCmd, /sessionstart-rules\.sh" 1$/);
+        assert.match(rulesCmd, /sessionstart-rules-claude\.sh" 1$/);
         assert.match(rulesCmd, /^"/, 'the path is quoted, so an install directory with a space still runs');
         assert.equal(rulesCmd.includes('{{TANGLECLAW_DIR}}'), false,
           'the placeholder must be resolved before the engine reads it');
@@ -2687,7 +2687,7 @@ describe('engines', () => {
         engines.syncEngineHooks(projectDir);
         const entries = readSettings().hooks.SessionStart;
         assert.equal(entries.length, 1, 'a rules-query failure must not cost the session its prime');
-        assert.match(entries[0].hooks[0].command, /"[^"]*\/data\/hooks\/sessionstart-prime\.sh"$/);
+        assert.match(entries[0].hooks[0].command, /"[^"]*\/data\/hooks\/sessionstart-prime-claude\.sh"$/);
       } finally {
         store.sessionRules.listActiveForProject = real;
         store.projects.delete(project.id);
@@ -2719,7 +2719,7 @@ describe('engines', () => {
       const quoted = /^"(.+)"$/.exec(cmd);
       assert.ok(quoted, 'the command must be a QUOTED path — unquoted breaks on a space (#759)');
       assert.ok(path.isAbsolute(quoted[1]), 'resolved path should be absolute');
-      assert.match(quoted[1], /\/data\/hooks\/sessionstart-prime\.sh$/)
+      assert.match(quoted[1], /\/data\/hooks\/sessionstart-prime-claude\.sh$/)
     });
 
     it('does not run for non-claude engines even with silentPrime enabled', () => {

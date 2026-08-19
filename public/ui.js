@@ -2062,7 +2062,7 @@ async function saveGlobalSettings() {
 // ── Create Project Drawer ──
 
 let createStep = 0;
-let createData = { name: '', engine: '', tags: '' };
+let createData = { name: '', engine: '', defaultLaunchMode: 'default', silentPrime: true, tags: '' };
 
 function openCreateModal() {
   createStep = 0;
@@ -2073,6 +2073,8 @@ function openCreateModal() {
     // short-circuited the server's resolver and created projects bound to an
     // engine the machine does not have (#707).
     engine: resolvePickerEngine(state.engines, state.config ? state.config.defaultEngine : ''),
+    defaultLaunchMode: 'default',
+    silentPrime: true,
     tags: ''
   };
   renderCreateStep();
@@ -2118,6 +2120,49 @@ function renderCreateStep() {
         <button class="btn btn-primary" style="flex:1" onclick="createNext()">Next</button>
       </div>`;
   } else if (createStep === 2) {
+    document.getElementById('createTitle').textContent = 'First-Session Settings';
+    const profile = (state.engines || []).find(e => e.id === createData.engine);
+    
+    let launchModeHtml = '';
+    const modes = profile && profile.launchModes ? profile.launchModes : null;
+    if (modes) {
+      const enabledEntries = Object.entries(modes).filter(([, m]) => !m.disabled);
+      if (enabledEntries.length > 0) {
+        const opts = enabledEntries.map(([key, m]) =>
+          `<option value="${esc(key)}" ${key === createData.defaultLaunchMode ? 'selected' : ''}>${esc(m.label || key)}${m.warning ? ' ⚠' : ''}</option>`
+        ).join('');
+        launchModeHtml = `
+          <div class="form-group">
+            <label class="form-label" for="createLaunchMode">Launch Posture</label>
+            <select class="form-select" id="createLaunchMode">${opts}</select>
+            <div class="form-hint">The default mode this project launches in.</div>
+          </div>`;
+      }
+    }
+
+    let silentPrimeHtml = '';
+    if (profile && profile.capabilities && profile.capabilities.supportsSilentPrime) {
+      silentPrimeHtml = `
+        <div class="form-group">
+          <label class="gs-toggle-label">
+            <span>Silent Prime</span>
+            <input type="checkbox" id="createSilentPrime" ${createData.silentPrime ? 'checked' : ''}>
+            <span class="toggle-switch"></span>
+          </label>
+          <div class="form-hint">Skip the initial context prime prompt.</div>
+        </div>`;
+    }
+
+    body.innerHTML = `
+      ${launchModeHtml}
+      ${silentPrimeHtml}
+      ${!launchModeHtml && !silentPrimeHtml ? '<div class="form-hint">No first-session settings for this engine.</div><br>' : ''}
+      <div style="display:flex;gap:8px">
+        <button class="btn" style="flex:1" onclick="createBack()">Back</button>
+        <button class="btn btn-primary" style="flex:1" onclick="createNext()">Next</button>
+      </div>`;
+
+  } else if (createStep === 3) {
     document.getElementById('createTitle').textContent = 'Tags & Create';
     body.innerHTML = `
       <div class="form-group">
@@ -2152,13 +2197,18 @@ function createNext() {
     createData.name = name;
   } else if (createStep === 1) {
     createData.engine = document.getElementById('createEngine').value;
+  } else if (createStep === 2) {
+    const modeEl = document.getElementById('createLaunchMode');
+    if (modeEl) createData.defaultLaunchMode = modeEl.value;
+    const silentEl = document.getElementById('createSilentPrime');
+    if (silentEl) createData.silentPrime = silentEl.checked;
   }
   createStep++;
   renderCreateStep();
 }
 
 function createBack() {
-  if (createStep === 2) createData.tags = document.getElementById('createTags').value;
+  if (createStep === 3) createData.tags = document.getElementById('createTags').value;
   createStep--;
   renderCreateStep();
 }
@@ -2173,6 +2223,8 @@ async function submitCreate() {
   const result = await apiMutate('/api/projects', 'POST', {
     name: createData.name,
     engine: createData.engine,
+    defaultLaunchMode: createData.defaultLaunchMode,
+    silentPrime: createData.silentPrime,
     tags
   });
 
