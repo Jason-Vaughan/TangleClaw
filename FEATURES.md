@@ -188,6 +188,7 @@ fails any auto-stub section older than 14 days.
 - **Clean-room cutover VRF** — the operator-run verification procedure for the AUTH-1 ingress cutover: the phase scripts, their acceptance checkboxes, and the scored matrix saying which phases actually ran. Runs on a throwaway habitat macOS guest so nothing touches the live install, its projects, DB or hand-edited Caddyfile (#397); also the standing recipe for driving the tart guests. `deploy/VRF-auth-1-cutover.md`.
 - **Setup guide** — operator-facing first-install walkthrough, and the checklist for confirming an existing install is set up the way its operator believes. Assumes no web-server background. `docs/setup-guide.md`.
 - **Security policy** — how to report a vulnerability in TangleClaw responsibly, and what is in scope. `SECURITY.md`.
+- **Update-beacon restart verification** — integration check for #954 / #955 driven against real parts instead of stubs: a real git binary and a real bare repo standing in for origin (so `git ls-remote --tags` genuinely runs), the real `lib/update-checker.js` including its throttle, single-flight and cache, a real HTTP server carrying the real route bodies, and real `fetch`. `scripts/verify-update-beacon-restart.js`.
 
 ## Tests
 
@@ -258,44 +259,25 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/_dir-scanner-stderr-child.js` — fixture scanner child that writes real stderr over a real pipe (#884), so the supervisor's re-emission is tested rather than stubbed: WARN and DEBUG lines to prove the level is read not flattened, one line split across two writes to prove a partial is held until its newline, an unparseable line to prove it is not dropped, and an over-4096-byte flood before a nonzero exit to prove the death buffer keeps the tail rather than the head.
 - `test/reconnect-policy.test.js` — the shared reconnect policy (#941): the elapsed-time ceiling pinned in BOTH directions (many fast attempts must not escalate; one slow attempt must), two tabs on different cadences reaching one verdict, jitter bounds swept across the randomness range, `begin()` idempotence, and the re-entrancy case where a probe recovers mid-flight. Also pins that each page wires the shared policy rather than growing its own loop again — the actual root cause.
 - `test/session-unreachable-state.test.js` — the session page's escalation (#941), including the design constraint as two structural facts: the banner is ordered before the terminal viewport in flow, and is not positioned out of flow. There is no layout engine here, so "does not cover the terminal" is asserted as the properties that make it true.
-
-## TODO (auto-stubbed 2026-08-15)
-
-- **TBD** — touched in this session: `test/api-update-apply.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/create-flow-mode-picker.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/setup-scan-own-install.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/setup-wizard-git-unknown.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/ub-self-update-action.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/update-applier.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-08-15)
-
-- **TBD** — touched in this session: `test/session-update-poll.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/update-release-link.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-08-16)
-
+- `test/api-update-apply.test.js` — `POST /api/update/apply` (UB #228/#229), driving the real applier through its `_internal` seam against a mock res that captures the status and the parsed JSON body.
+- `test/create-flow-mode-picker.test.js` — #401: creating a project must route through the launch gate rather than auto-launch with a raw default. The issue's own hypothesis (a fresh-install profile-seeding gap) was wrong — the mechanism was `submitCreate`, not the picker gate.
+- `test/setup-scan-own-install.test.js` — #708: the first-run scan must not offer the running TangleClaw checkout as a candidate project. The clone carries both detection markers and the wizard pre-checks every detected entry, so it self-attached silently.
+- `test/setup-wizard-git-unknown.test.js` — #909: a working tree the scanner could not read (`dirty === null`) must render as unknown, not clean. The wizard's two-way branch drew the unestablished third value exactly like `false`.
+- `test/ub-self-update-action.test.js` — the UB self-update action (#228/#229), including the parts that can only be pinned rather than run. Renamed from `ub-self-update-pill.test.js` once #931 moved the flow into `public/update-beacon.js`; also pins one flow rather than one per page.
+- `test/update-applier.test.js` — `applyUpdate` guards and happy path against a git stub keyed by `args.join(' ')`, where an unanticipated git call throws an explicit guard so an unexpected call fails loudly instead of passing silently.
+- `test/session-update-poll.test.js` — #931 / #954 / #955: a session re-reads update status on a cadence rather than once at page load, that read is a real measurement instead of a recital of the 30-minute cache, and a non-answer costs seconds rather than a full interval.
+- `test/update-release-link.test.js` — #149: the update notice's clickable release link across both surfaces — `releaseUrl` derived from `git remote get-url origin` so a fork install links to its own fork, and the beacon's linked version label.
 - **Master settings modal, lift-and-run coverage** — `test/master-launch-mode.test.js` lifts the real `renderMasterSettingsBody` and `saveMasterSettings` out of `public/api-helper.js` and executes them, so a rendered `<option>` is told apart from a string that merely appears in the file; `test/master-settings-mount.test.js` runs `mount()` against an injectable document to cover injection, adoption and idempotence. Tests: `test/master-launch-mode.test.js`, `test/master-settings-mount.test.js`, `test/_mini-dom.js`.
-
-## TODO (auto-stubbed 2026-08-16)
-
-- **TBD** — touched in this session: `test/master-fleet-map.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-08-18)
-
-- **TBD** — touched in this session: `scripts/verify-update-beacon-restart.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/_api-helper-globals.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/master-guard-source.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/master-pane-frontend.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-08-18)
-
-- **TBD** — touched in this session: `test/changelog-released-immutable.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/changelog-structure.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/engine-launch-modes.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/fixtures/changelog-released-sections.lock.json`. <!-- describe -->
-- **TBD** — touched in this session: `test/launch-mode-picker.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/orphan-hooks.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/readme-version-pins.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-confirm-calls-defined.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/z-index-scale.test.js`. <!-- describe -->
+- `test/master-fleet-map.test.js` — #950: the fleet map carries state and says where it has none. The defect class is not a missing field but an unknown and an absence rendering identically; also pins the identity-only pass declaring itself, and what the map already did still working.
+- `test/_api-helper-globals.js` — loads `public/api-helper.js` (a browser script that assigns factories onto `window`, not a module) and hands back the globals it publishes, so a component test runs the real renderer instead of restating a copy of its markup.
+- `test/master-guard-source.test.js` — a TEXT scan of `lib/master.js`, deliberately without requiring it: a backtick anywhere inside `buildMasterGuardScript`'s template literal — a comment included — ends the string early and makes the module a require-time syntax error. That happened three times while #755 was built.
+- `test/master-pane-frontend.test.js` — chunk G slice 2 (#331): the landing-page Project Master pane, covering its markup and the ensure-then-attach flow, where the ttyd iframe attaches to the reserved `tangleclaw-master` tmux session only after `POST /api/master/ensure` succeeds.
+- `test/changelog-released-immutable.test.js` — released CHANGELOG sections are immutable, pinned by content hash. A released section was published to a GitHub Release when its tag landed and `lib/changelog-notes.js` reads it by heading, so a later edit makes the file disagree with the page installers read. Three corruptions in one day motivated it.
+- `test/changelog-structure.test.js` — CHANGELOG.md structural invariants (#168), plus detectors for the post-#166 / pre-#167 regression shape where an edit consumed an adjacent release heading.
+- `test/fixtures/changelog-released-sections.lock.json` — the content-hash lock `test/changelog-released-immutable.test.js` reads: one hash per released version heading, so editing a published section, dropping a heading, or omitting a released section from the lock all fail.
+- `test/engine-launch-modes.test.js` — #596: every engine declaring `launchModes` has a default, each listed mode maps to the launch flags the engine binary actually accepts, and Claude defines all five permission modes.
+- `test/launch-mode-picker.test.js` — #596: the picker renders every enabled mode from the engine profile with the default checked, warns on `bypassPermissions`, and wires the Launch button to `doLaunchProject` with the selected mode.
+- `test/orphan-hooks.test.js` — #145 chunk 2: `_extractClaudeProjectDirPaths` over `$CLAUDE_PROJECT_DIR` and `${CLAUDE_PROJECT_DIR}` command references — multiple refs per command, and no false hits on commands carrying none — and the orphan-hook helpers built on it.
+- `test/readme-version-pins.test.js` — #976: the README's two hardcoded clone pins must track `version.json`. `lib/wrap-steps/version-bump.js` never touched the README, so every release left the install instruction pointing at the release before it; it drifted twice before the guard existed.
+- `test/wrap-confirm-calls-defined.test.js` — the wrap-confirm path must call only functions that exist. #185 left `startWrapSse()` called from `public/session.js` with no definition anywhere, throwing a ReferenceError positioned between the optimistic UI and the POST — a runtime error `node --check` cannot see.
+- `test/z-index-scale.test.js` — parses the z-index scale out of `public/style.css` and `public/session.css` and enforces the exact ordering: drawer-backdrop < drawer < modal-backdrop < toast < unreachable.
