@@ -3024,6 +3024,10 @@ function handleFileSelect(e) {
   }
 }
 
+function closeUploadModal() {
+  document.getElementById('uploadModal').classList.remove('open');
+}
+
 async function submitUpload() {
   if (uploadFiles.length === 0) return;
 
