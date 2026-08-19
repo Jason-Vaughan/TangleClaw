@@ -203,6 +203,14 @@
   background: var(--danger-dark);
   color: #fff;
 }
+.banner-btn.btn-launch {
+  color: var(--primary);
+  border-color: var(--primary-dark);
+}
+.banner-btn.btn-launch:active {
+  background: var(--primary-dark);
+  color: #fff;
+}
 .banner-btn:disabled {
   opacity: 0.4;
   pointer-events: none;

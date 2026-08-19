@@ -1303,6 +1303,34 @@ describe('#755 both surfaces drive the live toggle, and neither grows a timer', 
     assert.doesNotMatch(m[0], /aria-disabled/);
   });
 
+  it('the Launch button ships as a real control, hidden by default, with correct title', () => {
+    const markup = G.tcMasterControlBarMarkup('masterPanel', {});
+    const m = /<button[^>]*id="masterPanelLaunchBtn"[^>]*>/.exec(markup);
+    assert.ok(m, 'Launch must render as a real button');
+    assert.match(m[0], /hidden/, 'Launch must be hidden by default');
+    assert.match(m[0], /title="Start a fresh Master session\. Its memory\/ files survive; the conversation does not\."/, 'Must specify fresh conversation');
+  });
+
+  it('toggles Launch and Kill visibility mutually exclusively based on status', () => {
+    const { doc, ids } = makeDocument(['root']);
+    withIdParsingInnerHTML(ids.root, doc);
+    const bar = G.tcCreateMasterControlBar({ doc, rootId: 'root', prefix: 'masterPanel' });
+    bar.mount();
+    const el = (s) => doc.getElementById('masterPanel' + s);
+
+    bar.setStatus('live');
+    assert.equal(el('LaunchBtn').classList.contains('hidden'), true, 'Launch hidden when live');
+    assert.equal(el('KillBtn').classList.contains('hidden'), false, 'Kill shown when live');
+
+    bar.setStatus('down');
+    assert.equal(el('LaunchBtn').classList.contains('hidden'), false, 'Launch shown when down');
+    assert.equal(el('KillBtn').classList.contains('hidden'), true, 'Kill hidden when down');
+
+    bar.setStatus('');
+    assert.equal(el('LaunchBtn').classList.contains('hidden'), true, 'Launch hidden when unknown');
+    assert.equal(el('KillBtn').classList.contains('hidden'), false, 'Kill shown when unknown');
+  });
+
   it('the segments meet the touch-target minimum the mobile Direction binds', () => {
     // `nonfunctional-requirements.md` § Direction: "Interactive elements are
     // ≥44×44px", ratified, no exception covering this surface — the bar renders

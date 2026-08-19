@@ -2208,6 +2208,8 @@
       <button class="banner-btn" id="${p}SettingsBtn"
               aria-label="Master settings" title="Master settings">&#9881;</button>
       ${pend('Wrap', 'banner-btn btn-wrap', 'Wrap')}
+      <button type="button" class="banner-btn btn-launch hidden" id="${p}LaunchBtn"
+              title="Start a fresh Master session. Its memory/ files survive; the conversation does not.">Launch</button>
       <button type="button" class="banner-btn btn-kill" id="${p}KillBtn"
               title="Stop the Master session. Its memory/ files survive; the conversation does not.">Kill</button>
       <span class="master-bar-error" id="${p}Error" role="status" hidden></span>
@@ -2278,6 +2280,8 @@
         const seg = el(spec.suffix);
         if (seg) seg.addEventListener('click', () => flip(spec.level));
       }
+      const launch = el('LaunchBtn');
+      if (launch && deps.onRetry) launch.addEventListener('click', deps.onRetry);
       const kill = el('KillBtn');
       if (kill) kill.addEventListener('click', killMaster);
       // Establish the resting state in CODE rather than leaning on the markup's
@@ -2312,6 +2316,18 @@
       if (t && text !== undefined) t.textContent = text;
       const retry = el('RetryBtn');
       if (retry) retry.classList.toggle('hidden', !showRetry);
+
+      const kill = el('KillBtn');
+      const launch = el('LaunchBtn');
+      if (kill && launch) {
+        if (status === 'down') {
+          kill.classList.add('hidden');
+          launch.classList.remove('hidden');
+        } else if (status === 'live' || status === '') {
+          kill.classList.remove('hidden');
+          launch.classList.add('hidden');
+        }
+      }
     }
 
     /**
@@ -2654,6 +2670,8 @@
       // stopping a Master whose status could not be read is still meaningful.
       const kill = el('KillBtn');
       if (kill) kill.disabled = on;
+      const launch = el('LaunchBtn');
+      if (launch) launch.disabled = on;
     }
 
     /**
