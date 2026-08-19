@@ -8,6 +8,12 @@ All notable changes to TangleClaw are documented in this file.
 - **Added a Launch button to the Master control bar (#995).**
   The Master control bar now supports launching a fresh Master session directly, replacing the less-discoverable drawer-reopen workflow. The Launch button is mutually exclusive with Kill and driven by the existing liveness probe, ensuring accurate presentation even when tmux is unresponsive.
 
+### Changed
+- **Facelifted the per-launch Launch Mode modal (#596).**
+  The per-launch Launch Mode modal has been updated to match the current dashboard design language. It now uses the `var(--elevated-bg)` border and `var(--radius-btn)` curvature consistent with project cards and other modern interactive elements, while preserving its underlying semantic structure and functionality.
+  - Test coverage was completely rebuilt around this modal. Tests now guarantee that the frontend maps the selections to flags the backend engine *actually accepts*.
+  - A regression pin was added ensuring that every listed mode successfully maps to an actual `launchMode` command.
+
 ### Fixed
 - **A session that simply died kept its Medusa listener, so peers were messaging a ghost (#1000).** Two of the three end paths — an explicit kill and a wrap teardown — released the session's Medusa presence. The third, the branch where `getSessionStatus` observes that the pane is gone, persisted `markCrashed` and released nothing. The listener kept its WebSocket open, so the dead workspace stayed in the roster reporting `connected: true` alongside the live one, four seconds apart in `lastSeen` and indistinguishable from it.
 
