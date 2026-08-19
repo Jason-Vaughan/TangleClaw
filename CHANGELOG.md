@@ -9,6 +9,14 @@ All notable changes to TangleClaw are documented in this file.
   The Master control bar now supports launching a fresh Master session directly, replacing the less-discoverable drawer-reopen workflow. The Launch button is mutually exclusive with Kill and driven by the existing liveness probe, ensuring accurate presentation even when tmux is unresponsive.
 
 ### Fixed
+- **A session that simply died kept its Medusa listener, so peers were messaging a ghost (#1000).** Two of the three end paths — an explicit kill and a wrap teardown — released the session's Medusa presence. The third, the branch where `getSessionStatus` observes that the pane is gone, persisted `markCrashed` and released nothing. The listener kept its WebSocket open, so the dead workspace stayed in the roster reporting `connected: true` alongside the live one, four seconds apart in `lastSeen` and indistinguishable from it.
+
+  **The leak is worse than a stale record, because the listener is a live consumer.** A peer addressing the dead workspace got `{"status":"received"}` from the hub and the message was filed into an inbox no agent would ever read — a delivery that genuinely succeeded, to nobody. Nothing reported a problem, and the peer that had restarted no longer had the context to notice it never heard from you. Hit live: a long re-orientation brief was acknowledged as received and never arrived.
+
+  The fix is one call beside `markCrashed`, on the principle that the branch persisting "this session has ended" is the one that must release what it held. The guard asserts the **real effect** — that the listener is actually off — rather than that a function was called, since a spy would still pass if the call were wired to something that released nothing. Verified by mutation: removing the call fails it.
+
+  Until an install picks this up, resolve a peer's workspace id from `GET /api/sessions/:project/medusa/status` immediately before sending. The roster is not authoritative.
+
 - Fixed the Settings modal rendering behind the Master drawer by defining a unified `z-index` scale for both the session and dashboard views (#985).
 
 ## [5.10.0] - 2026-08-19

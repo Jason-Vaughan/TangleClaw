@@ -69,6 +69,31 @@ function withProbe(verdict, fn) {
   }
 }
 
+
+/**
+ * Minimal WebSocket double for the leak guard: the listener only ever attaches
+ * handlers, sends frames, and closes. Nothing here reaches a network.
+ */
+class FakeWS {
+  /** @param {string} url - Requested URL. */
+  constructor(url) {
+    this.url = url;
+    this.readyState = 1;
+    /** @type {string[]} */
+    this.sent = [];
+    this._h = Object.create(null);
+  }
+
+  /** @param {string} t - Event type. @param {Function} h - Handler. @returns {void} */
+  addEventListener(t, h) { (this._h[t] || (this._h[t] = [])).push(h); }
+
+  /** @param {string} d - Serialized frame. @returns {void} */
+  send(d) { this.sent.push(d); }
+
+  /** @returns {void} */
+  close() { this.readyState = 3; }
+}
+
 const UNREACHABLE = { live: false, answered: false, cause: 'read-timed-out' };
 const ALIVE = { live: true, answered: true, cause: null };
 const GONE = { live: false, answered: true, cause: null };
@@ -113,6 +138,47 @@ describe('an active session whose pane could not be reached (#907)', () => {
         'a REACHED pane produces a real reading — this must not become "always unknown"');
     } finally {
       store.sessions.kill(session.id, 'test cleanup');
+    }
+  });
+
+  it('releases the session\'s Medusa presence when the pane is gone (#1000)', () => {
+    // The leak: `markCrashed` persisted "this session has ended" while its
+    // Medusa listener kept its WebSocket open, so the dead workspace stayed in
+    // the roster reporting `connected: true`. That is worse than a stale
+    // record — the leaked listener is a LIVE consumer, so a peer addressing it
+    // gets `{"status":"received"}` back and the message is filed into an inbox
+    // no agent will ever read. A delivery that genuinely succeeded, to a ghost.
+    //
+    // Asserted on the real effect (the listener is actually off) rather than on
+    // "forgetSession was called", because a spy would still pass if the call
+    // were wired to something that did not release anything.
+    //
+    // THE MUTATION THIS CATCHES: removing the `_teardownMedusa(project, active)`
+    // call from the crashed branch of `getSessionStatus`.
+    const medusa = require('../lib/medusa');
+    const session = store.sessions.start({
+      projectId, engineId: 'claude', tmuxSession: 'tc-unknown-medusa'
+    });
+    const sid = String(session.id);
+    try {
+      medusa.startSession({
+        projectPath: path.join(projectsDir, 'unknown-status'),
+        sessionId: sid,
+        name: 'Leak Guard',
+        wsFactory: (u) => new FakeWS(u)
+      });
+      assert.notEqual(medusa.getStatus(sid).state, 'off',
+        'precondition: the listener must actually be running, or the assertion below is vacuous');
+
+      withProbe(GONE, () => sessions.getSessionStatus('unknown-status'));
+
+      assert.equal(medusa.getStatus(sid).state, 'off',
+        'a session whose pane died must not keep a live Medusa listener holding its workspace open');
+    } finally {
+      medusa.forgetSession({ projectPath: path.join(projectsDir, 'unknown-status'), sessionId: sid });
+      if (store.sessions.get(session.id).status === 'active') {
+        store.sessions.kill(session.id, 'test cleanup');
+      }
     }
   });
 
