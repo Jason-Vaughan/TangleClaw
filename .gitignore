@@ -135,3 +135,6 @@ logs/
 # no plugin reference, TC will generate a CLAUDE.md rather than leave it alone.
 # That coupling is issue #833; revisit this line when #833 is decided.
 CLAUDE.md
+
+# Prawduct session files
+.prawduct/.critic-partials-archive/
