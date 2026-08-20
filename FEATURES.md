@@ -281,3 +281,7 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/readme-version-pins.test.js` — #976: the README's two hardcoded clone pins must track `version.json`. `lib/wrap-steps/version-bump.js` never touched the README, so every release left the install instruction pointing at the release before it; it drifted twice before the guard existed.
 - `test/wrap-confirm-calls-defined.test.js` — the wrap-confirm path must call only functions that exist. #185 left `startWrapSse()` called from `public/session.js` with no definition anywhere, throwing a ReferenceError positioned between the optimistic UI and the POST — a runtime error `node --check` cannot see.
 - `test/z-index-scale.test.js` — parses the z-index scale out of `public/style.css` and `public/session.css` and enforces the exact ordering: drawer-backdrop < drawer < modal-backdrop < toast < unreachable.
+
+## TODO (auto-stubbed 2026-08-20)
+
+- **TBD** — touched in this session: `test/openclaw-direct-trailing-slash.test.js`. <!-- describe -->
