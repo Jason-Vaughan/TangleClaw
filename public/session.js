@@ -3037,8 +3037,7 @@ function handleFileSelect(e) {
   let failed = false;
 
   const finishIfComplete = () => {
-    if (loaded + (failed ? 1 : 0) < files.length) return;
-    if (failed) return; // onerror already reset the modal for this selection
+    if (failed || loaded < files.length) return;
     const previewEl = document.getElementById('uploadPreview');
     const imgEl = document.getElementById('uploadPreviewImg');
     if (files.length === 1 && files[0].type.startsWith('image/')) {
