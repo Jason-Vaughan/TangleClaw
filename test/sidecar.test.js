@@ -253,4 +253,67 @@ describe('sidecar', () => {
       assert.ok(!sidecar._pollers.has(connId));
     });
   });
+
+  // ── #1024: connection churn against a failing gateway ──
+  //
+  // The poller used to `fetch` with an AbortController and re-dial on a fixed
+  // 10s cadence. An aborted request destroys its socket, so against a slow or
+  // unreachable gateway EVERY poll left a socket in TIME_WAIT — one per tick,
+  // forever, with no reuse and no slowdown.
+  describe('poll connection churn (#1024)', () => {
+    it('reuses one pooled connection instead of dialling per poll', () => {
+      const agent = sidecar._agent;
+      assert.ok(agent, 'a shared agent must exist — global fetch cannot be pooled without undici');
+      assert.equal(agent.keepAlive, true, 'keepAlive is what makes a poll reuse the previous socket');
+      assert.equal(agent.maxSockets, 1,
+        'polls for one connection are serial, so a second socket would only duplicate the pooled one');
+      assert.ok(agent.options.keepAliveMsecs > 0, 'a pooled socket must be kept warm between ticks');
+    });
+
+    it('backs off exponentially while a gateway keeps failing', () => {
+      const id = 'conn-backoff';
+      const base = 10000;
+      sidecar._failures.delete(id);
+
+      assert.equal(sidecar._backoffMs(id, base), base, 'a healthy connection polls at its base interval');
+
+      sidecar._failures.set(id, 1);
+      assert.equal(sidecar._backoffMs(id, base), base * 2);
+      sidecar._failures.set(id, 3);
+      assert.equal(sidecar._backoffMs(id, base), base * 8);
+
+      sidecar._failures.delete(id);
+    });
+
+    it('caps the backoff so a dead gateway is still probed occasionally', () => {
+      const id = 'conn-cap';
+      sidecar._failures.set(id, 99);
+      const delay = sidecar._backoffMs(id, 10000);
+      assert.equal(delay, sidecar.MAX_POLL_INTERVAL_MS,
+        'an unbounded doubling would eventually stop probing a recoverable gateway altogether');
+      assert.ok(delay > 10000, 'the cap must still be slower than the base interval, or backoff does nothing');
+      sidecar._failures.delete(id);
+    });
+
+    it('counts a failed poll and clears the count on success', async () => {
+      const connId = createConn('ChurnClaw', 59999); // nothing listening
+      assert.equal(sidecar._failures.get(connId) || 0, 0);
+
+      const r1 = await sidecar.pollProcesses(connId, { timeoutMs: 300 });
+      assert.equal(r1.ok, false, 'poll against a closed port must fail');
+      assert.equal(sidecar._failures.get(connId), 1, 'a failure must be counted, or backoff never engages');
+
+      const r2 = await sidecar.pollProcesses(connId, { timeoutMs: 300 });
+      assert.equal(r2.ok, false);
+      assert.equal(sidecar._failures.get(connId), 2, 'consecutive failures must accumulate');
+    });
+
+    it('stopPolling clears the failure count so a restart is not born backed off', () => {
+      const connId = createConn('ResetClaw');
+      sidecar._failures.set(connId, 5);
+      sidecar.stopPolling(connId);
+      assert.equal(sidecar._failures.get(connId), undefined,
+        'a stopped poller keeping its failure count would resume at a 5-minute delay');
+    });
+  });
 });
