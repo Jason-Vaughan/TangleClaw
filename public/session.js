@@ -3036,8 +3036,10 @@ function handleFileSelect(e) {
   let loaded = 0;
   let failed = false;
 
+  // Only ever called from onload, which already returns early once `failed`
+  // is set — so this only has to gate on the completion count.
   const finishIfComplete = () => {
-    if (failed || loaded < files.length) return;
+    if (loaded < files.length) return;
     const previewEl = document.getElementById('uploadPreview');
     const imgEl = document.getElementById('uploadPreviewImg');
     if (files.length === 1 && files[0].type.startsWith('image/')) {
@@ -3314,9 +3316,12 @@ async function confirmWrap() {
   // permanently disabled. `node --check` passes on it, so CI stayed green.
   //
   // Restored to the honest blocking behaviour: the drawer opens when the POST
-  // returns a pipelineResult. Re-land the optimistic open together with a real
-  // EventSource client, not before it — an empty drawer with no stream feeding
-  // it is worse than a drawer that arrives late.
+  // returns a pipelineResult. The server-side SSE plumbing this call would
+  // have used (the /wrap/stream route and the registry's event emitter) was
+  // itself dead code with this as its only caller, and was removed in the
+  // #990 review — re-landing live progress means building BOTH sides again,
+  // not just a client against what's here. An empty drawer with no stream
+  // feeding it is worse than a drawer that arrives late.
 
   try {
     const data = await apiMutate(

@@ -130,7 +130,20 @@ immutability guard must not fire on this — we're adding, not touching v5.9.0).
 - [x] Chunk 6 — FEATURES.md + vestigial assertion (also caught: commit's "Next Action preview" claim doesn't match shipped code — noted in FEATURES.md and CHANGELOG, not separately fixed)
 - [x] Chunk 7 — CHANGELOG correction entry
 
-All chunks complete. Full suite: 6508 pass / 0 fail / 1 skipped (baseline was 6501/0/1). Next: `/prawduct:critic` cumulative, then PR.
+All chunks complete. Full suite: 6508 pass / 0 fail / 1 skipped (baseline was 6501/0/1).
+
+## Critic review (cumulative, commit bfae801)
+
+`rev-20260820T181429Z-411d7e43` — 0 blocking, 2 warning, 2 note. All 4 dispositioned:
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | accepted | fixed — JSDoc added to closeSharedDocWatcher |
+| R-2 | note | accepted | fixed — removed the dead `failed \|\|` clause, added a comment explaining why it was safe to drop |
+| R-3 | warning | accepted | fixed — comment now says the server-side SSE plumbing was also removed, not just awaiting a client |
+| R-4 | note | accepted | DOC-2Q7X is already flagged as an approximate floor (updated earlier today by the norm health sweep); one resolved citation among ~16 known sites doesn't warrant another backlog round-trip |
+
+Next: commit the 3 fixes as one commit, `verify-resolutions`, then PR.
 
 ## Context (cross-session handoff)
 

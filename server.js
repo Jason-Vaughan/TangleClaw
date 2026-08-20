@@ -69,6 +69,16 @@ async function broadcastSharedDocUpdate(docId) {
   }
 }
 
+/**
+ * Close and forget a shared doc's fs.watch handle and any pending debounce
+ * timer. Called on delete, and on retarget (before opening the watcher on
+ * the doc's new filePath) — without this, an edited or deleted doc leaked
+ * one live fs.watch handle per doc for the life of the server process (#990
+ * review).
+ *
+ * @param {string} docId - Shared doc id
+ * @returns {void}
+ */
 function closeSharedDocWatcher(docId) {
   const entry = sharedDocWatchers.get(docId);
   if (entry) {
