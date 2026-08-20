@@ -694,3 +694,61 @@ describe('initSession regression check', () => {
     assert.ok(jsContent.includes("document.getElementById('uploadModal').classList.remove('open')"), 'Must hide upload modal');
   });
 });
+
+describe('Multi-file upload FileReader error handling (#990 review — no onerror shipped a permanent hang)', () => {
+  /**
+   * Extract a function's body from source by walking brace depth (this
+   * codebase has no browser test harness — public/*.js is covered by
+   * source probes, see test/paste-affordance.test.js).
+   * @param {string} src - File source
+   * @param {string} marker - Text locating the function (e.g. 'function foo(')
+   * @returns {string} the body including braces; '' when not found
+   */
+  function functionBody(src, marker) {
+    const start = src.indexOf(marker);
+    if (start === -1) return '';
+    const bodyStart = src.indexOf('{', start);
+    let depth = 0;
+    for (let i = bodyStart; i < src.length; i++) {
+      if (src[i] === '{') depth++;
+      else if (src[i] === '}') {
+        depth--;
+        if (depth === 0) return src.slice(bodyStart, i + 1);
+      }
+    }
+    return '';
+  }
+
+  let body;
+  before(() => {
+    const jsContent = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
+    body = functionBody(jsContent, 'function handleFileSelect(');
+    assert.ok(body, 'handleFileSelect must exist');
+  });
+
+  it('registers a reader.onerror handler', () => {
+    assert.ok(body.includes('reader.onerror'),
+      'a failed FileReader read must be handled — previously it left `loaded` short forever with no error shown and no way to recover');
+  });
+
+  it('the error path shows a visible message and does not leave the submit button permanently disabled with no explanation', () => {
+    assert.match(body, /reader\.onerror\s*=[\s\S]*?uploadError[\s\S]*?classList\.remove\(['"]hidden['"]\)/,
+      'the error must reach the visible uploadError element, not just be swallowed');
+  });
+
+  it('the error path resets the batch so the operator can retry instead of being stuck', () => {
+    const onerrorBody = functionBody(body, 'reader.onerror =');
+    assert.ok(onerrorBody, 'reader.onerror must be an assignable function body');
+    assert.ok(onerrorBody.includes('uploadFiles = []'),
+      'a failed read must clear the partial batch — a stale uploadFiles array would submit the wrong/incomplete files');
+    assert.ok(onerrorBody.includes(".value = ''"),
+      'the file input must be cleared so re-selecting the same file(s) fires change again');
+  });
+
+  it('onload guards against completing a batch after a sibling file already errored', () => {
+    const onloadBody = functionBody(body, 'reader.onload =');
+    assert.ok(onloadBody, 'reader.onload must be an assignable function body');
+    assert.ok(onloadBody.includes('if (failed) return'),
+      'onload must not push a file onto uploadFiles or flip loaded/completion state after failed=true');
+  });
+});

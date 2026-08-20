@@ -22,18 +22,29 @@ const store = require('./lib/store');
 const sharedDocWatchers = new Map();
 const docDebounceTimers = new Map();
 
+/**
+ * Notify every live session whose project shares the doc's group. Shared by
+ * the fs.watch debounce path and `POST /api/shared-docs/:id/notify` — the two
+ * used to reimplement this lookup/filter/broadcast sequence separately and
+ * had already drifted (#990 review).
+ *
+ * @param {string} docId - Shared doc id
+ * @returns {Promise<{notified: number, errors: string[]}>} count of sessions
+ *   actually notified, plus one message per failed notification
+ */
 async function broadcastSharedDocUpdate(docId) {
   try {
     const doc = store.sharedDocs.get(docId);
-    if (!doc || !doc.groupId) return 0;
-    
+    if (!doc || !doc.groupId) return { notified: 0, errors: [] };
+
     const projectsInGroup = store.projects.list({ groupId: doc.groupId });
     const projectIds = new Set(projectsInGroup.map(p => p.id));
-    
+
     const liveSessions = store.sessions.listLiveAll();
     const targetSessions = liveSessions.filter(s => projectIds.has(s.projectId));
-    
+
     let notified = 0;
+    const errors = [];
     for (const session of targetSessions) {
       const status = medusa.getStatus(session.id);
       if (status && status.state === 'listening' && status.workspaceId) {
@@ -44,35 +55,61 @@ async function broadcastSharedDocUpdate(docId) {
           });
           notified++;
         } catch (e) {
+          const msg = `Failed for session ${session.id}: ${e.message}`;
+          errors.push(msg);
           log.warn('Failed to notify session', { sessionId: session.id, error: e.message });
         }
       }
     }
     if (notified > 0) log.info('Broadcasted shared doc update', { docId: doc.id, notified });
-    return notified;
+    return { notified, errors };
   } catch (err) {
     log.error('Broadcast failed', { error: err.stack });
-    return 0;
+    return { notified: 0, errors: [err.message] };
+  }
+}
+
+function closeSharedDocWatcher(docId) {
+  const entry = sharedDocWatchers.get(docId);
+  if (entry) {
+    try { entry.watcher.close(); } catch (e) { /* already closed */ }
+    sharedDocWatchers.delete(docId);
+  }
+  if (docDebounceTimers.has(docId)) {
+    clearTimeout(docDebounceTimers.get(docId));
+    docDebounceTimers.delete(docId);
   }
 }
 
 function refreshSharedDocWatchers() {
   const docs = store.sharedDocs.list();
+  const liveIds = new Set(docs.map(d => d.id));
+  // A doc deleted since the last refresh still has a watcher/timer if the
+  // route that removed it forgot to clean up — close it here too, so this
+  // function stays a true "watchers now match the live doc set" sync point
+  // even if a future call site skips the per-route cleanup.
+  for (const watchedId of [...sharedDocWatchers.keys()]) {
+    if (!liveIds.has(watchedId)) closeSharedDocWatcher(watchedId);
+  }
   for (const doc of docs) {
-    if (doc.filePath && !sharedDocWatchers.has(doc.id)) {
-      try {
-        const watcher = fs.watch(doc.filePath, (eventType) => {
-          if (eventType === 'change') {
-            if (docDebounceTimers.has(doc.id)) clearTimeout(docDebounceTimers.get(doc.id));
-            docDebounceTimers.set(doc.id, setTimeout(() => {
-               broadcastSharedDocUpdate(doc.id);
-            }, 500));
-          }
-        });
-        sharedDocWatchers.set(doc.id, watcher);
-      } catch (e) {
-        log.warn('Failed to watch shared doc', { path: doc.filePath, error: e.message });
-      }
+    const existing = sharedDocWatchers.get(doc.id);
+    if (existing && existing.filePath === doc.filePath) continue;
+    // Either no watcher yet, or the doc's filePath changed since the watcher
+    // was created — close the stale one (if any) and re-target on the current path.
+    if (existing) closeSharedDocWatcher(doc.id);
+    if (!doc.filePath) continue;
+    try {
+      const watcher = fs.watch(doc.filePath, (eventType) => {
+        if (eventType === 'change') {
+          if (docDebounceTimers.has(doc.id)) clearTimeout(docDebounceTimers.get(doc.id));
+          docDebounceTimers.set(doc.id, setTimeout(() => {
+             broadcastSharedDocUpdate(doc.id);
+          }, 500));
+        }
+      });
+      sharedDocWatchers.set(doc.id, { watcher, filePath: doc.filePath });
+    } catch (e) {
+      log.warn('Failed to watch shared doc', { path: doc.filePath, error: e.message });
     }
   }
 }
@@ -3764,40 +3801,6 @@ function _wrapResultPayload(projectName, result) {
 }
 
 
-// GET /api/sessions/:project/wrap/stream — SSE stream for live wrap progress (#185).
-route('GET', '/api/sessions/:project/wrap/stream', (req, res, params) => {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive'
-  });
-  
-  // Send initial state
-  const status = store.sessions.getWrapRunStatus(params.project);
-  res.write('data: ' + JSON.stringify({ type: 'init', status }) + '\n\n');
-
-  // Keep-alive ping to prevent proxy timeout
-  const interval = setInterval(() => {
-    res.write(': ping\n\n');
-  }, 15000);
-  
-  const handler = (payload) => {
-    res.write('data: ' + JSON.stringify(payload) + '\n\n');
-    if (payload.type === 'pipeline-done') {
-      res.end();
-    }
-  };
-  
-  // Re-use wrapRunRegistry events if required. Since we only require store, let's get wrapRunRegistry via store or require it.
-  const wrapRunRegistry = require('./lib/wrap-run-registry');
-  wrapRunRegistry.events.on(params.project, handler);
-  
-  req.on('close', () => {
-    clearInterval(interval);
-    wrapRunRegistry.events.off(params.project, handler);
-  });
-});
-
 // GET /api/sessions/:project/wrap/status — Wrap-run state (#583). Lets a
 // client whose wrap POST connection died (proxy 502, page reload, phone
 // lock) reattach: `running` + `currentStepId` while the pipeline runs,
@@ -4312,38 +4315,7 @@ route('POST', '/api/shared-docs/:id/notify', async (_req, res, params) => {
     const doc = store.sharedDocs.get(params.id);
     if (!doc) return errorResponse(res, 404, 'Shared document not found', 'NOT_FOUND');
 
-    if (!doc.groupId) return jsonResponse(res, 200, { success: true, notifiedCount: 0 });
-
-    const projectsInGroup = store.projects.list({ groupId: doc.groupId });
-    const projectIds = new Set(projectsInGroup.map(p => p.id));
-
-    const liveSessions = store.sessions.listLiveAll();
-    const targetSessions = liveSessions.filter(s => projectIds.has(s.projectId));
-
-    let notified = 0;
-    const errors = [];
-    for (const session of targetSessions) {
-      const status = medusa.getStatus(session.id);
-      if (status && status.state === 'listening' && status.workspaceId) {
-        try {
-          await medusa.sendSystemMessage({
-            to: status.workspaceId,
-            message: JSON.stringify({
-              type: 'system',
-              event: 'shared_doc_updated',
-              doc: doc.name
-            })
-          });
-          notified++;
-        } catch (e) {
-          errors.push(`Failed for session ${session.id}: ${e.message}`);
-        }
-      }
-    }
-
-    if (errors.length > 0) {
-      log.warn('Some notifications failed', { errors });
-    }
+    const { notified, errors } = await broadcastSharedDocUpdate(params.id);
     jsonResponse(res, 200, { success: true, notifiedCount: notified, errors: errors.length > 0 ? errors : undefined });
   } catch (err) {
     log.error('Failed to notify shared-doc update', { error: err.stack });
@@ -4355,6 +4327,7 @@ route('POST', '/api/shared-docs/:id/notify', async (_req, res, params) => {
 route('DELETE', '/api/shared-docs/:id', (_req, res, params) => {
   try {
     store.sharedDocs.delete(params.id);
+    closeSharedDocWatcher(params.id);
     jsonResponse(res, 200, { ok: true, id: params.id });
   } catch (err) {
     if (err.code === 'NOT_FOUND') {
@@ -6733,4 +6706,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, serverProtocol, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, _setRestartScheduler, _setCutoverSpawner, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty };
+module.exports = { createServer, serverProtocol, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, _setRestartScheduler, _setCutoverSpawner, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers };

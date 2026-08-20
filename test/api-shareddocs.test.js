@@ -8,7 +8,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
-const { createServer } = require('../server');
+const { createServer, _sharedDocWatchers, _sharedDocDebounceTimers } = require('../server');
 
 setLevel('error');
 
@@ -74,6 +74,11 @@ describe('API /api/shared-docs', () => {
   });
 
   after(async () => {
+    // Any doc created with a real (existing) filePath in these tests gets a
+    // live fs.watch handle, which keeps the process's event loop alive past
+    // suite completion unless closed here.
+    for (const { watcher } of _sharedDocWatchers.values()) watcher.close();
+    for (const timer of _sharedDocDebounceTimers.values()) clearTimeout(timer);
     await new Promise((resolve) => server.close(resolve));
     store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -196,6 +201,45 @@ describe('API /api/shared-docs', () => {
   it('DELETE /api/shared-docs/:id returns 404 for unknown id', async () => {
     const { status } = await request(server, 'DELETE', '/api/shared-docs/nonexistent');
     assert.equal(status, 404);
+  });
+
+  it('PUT /api/shared-docs/:id re-targets the watcher when filePath changes (regression, #990 review)', async () => {
+    const fileA = path.join(tmpDir, 'watch-a.md');
+    const fileB = path.join(tmpDir, 'watch-b.md');
+    fs.writeFileSync(fileA, 'a');
+    fs.writeFileSync(fileB, 'b');
+
+    const createRes = await request(server, 'POST', '/api/shared-docs', {
+      groupId, name: 'Retarget', filePath: fileA
+    });
+    const docId = createRes.data.id;
+    assert.equal(_sharedDocWatchers.get(docId).filePath, fileA,
+      'watcher should be watching the doc\'s initial filePath');
+
+    await request(server, 'PUT', `/api/shared-docs/${docId}`, { filePath: fileB });
+    assert.equal(_sharedDocWatchers.get(docId).filePath, fileB,
+      'watcher must re-target to the new filePath after an update — the old bug left it ' +
+      'watching fileA forever, silently dropping notifications for the doc\'s real content');
+  });
+
+  it('DELETE /api/shared-docs/:id closes its watcher and clears its debounce timer (regression, #990 review)', async () => {
+    const file = path.join(tmpDir, 'watch-delete.md');
+    fs.writeFileSync(file, 'x');
+
+    const createRes = await request(server, 'POST', '/api/shared-docs', {
+      groupId, name: 'ToDeleteWatched', filePath: file
+    });
+    const docId = createRes.data.id;
+    assert.ok(_sharedDocWatchers.has(docId), 'watcher should exist right after create');
+
+    // Force a pending debounce timer, then delete before it fires.
+    _sharedDocDebounceTimers.set(docId, setTimeout(() => {}, 60000));
+
+    await request(server, 'DELETE', `/api/shared-docs/${docId}`);
+    assert.ok(!_sharedDocWatchers.has(docId),
+      'watcher must be closed and removed on delete — the old bug leaked one fs.watch handle per deleted doc');
+    assert.ok(!_sharedDocDebounceTimers.has(docId),
+      'pending debounce timer must be cleared on delete, not left to fire against a deleted doc');
   });
 });
 

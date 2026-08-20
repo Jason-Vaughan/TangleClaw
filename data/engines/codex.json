@@ -62,14 +62,12 @@
     "supportsPrimePrompt": true,
     "supportsConfigFile": true,
     "supportsCoAuthor": true,
-    "supportsSilentPrime": true
+    "supportsSilentPrime": false
   },
   "statusPage": {
     "adapter": "atlassian",
     "url": "https://status.openai.com/api/v2/summary.json",
     "componentId": "01JVCV8YSWZFRSM1G5CVP253SK",
     "componentName": "Codex"
-  },
-  "silentPrimeScript": "sessionstart-prime-codex.sh",
-  "silentRulesScript": "sessionstart-rules-codex.sh"
+  }
 }
