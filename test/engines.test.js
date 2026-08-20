@@ -908,6 +908,24 @@ describe('engines', () => {
         assert.ok(codex.launchModes.bypassPermissions.warning, 'bypass must carry a warning');
       });
 
+      it('codex does not advertise supportsSilentPrime (#990 review regression)', () => {
+        // `_buildBaselineHooks` is only ever invoked with the 'claude' engine's
+        // own profile — `syncEngineHooks` clears .claude/settings.json hooks
+        // for every other engine instead of populating them. A non-claude
+        // profile declaring `supportsSilentPrime: true` was previously a live
+        // lie: `public/ui.js`/`lib/projects.js` read the flag generically to
+        // enable a "Silent Prime" UI toggle, so an operator could turn it on
+        // for a Codex project and nothing would ever happen — no hooks, no
+        // honest skip reason. This pins the fix (capability turned off) and,
+        // in-depth, that the gate inside `_buildBaselineHooks` itself would
+        // also refuse to emit hooks for a profile shaped like codex's.
+        const codex = engines.listWithAvailability().find(e => e.id === 'codex');
+        assert.equal(codex.capabilities.supportsSilentPrime, false);
+
+        const hooks = engines._buildBaselineHooks({ silentPrime: true }, codex, 0);
+        assert.deepEqual(hooks, {}, 'a profile without supportsSilentPrime must never emit the prime/rules hooks');
+      });
+
       it('every engine with launchModes has a default key that matches defaultLaunchMode', () => {
         const list = engines.listWithAvailability();
         const withModes = list.filter(e => e.launchModes);

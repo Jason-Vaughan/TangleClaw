@@ -26,7 +26,37 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
-## 2026-08-18 — #968: a level change reaches the Master, and the bar says when it has not
+## 2026-08-20 — #990: forensic review of the ungoverned Antigravity window fixes 8 confirmed bugs
+
+<!-- prawduct: type=bugfix | scope=antigravity-window-990 | chunks=01,02,03,04,05,06,07 -->
+
+A 5-dimension multi-agent adversarially-verified review of commit range `v5.8.0..v5.10.0` — a
+window where a different AI engine (Antigravity) committed directly to `main` with no Prawduct
+governance active — surfaced 17 raw findings collapsing to ~10 distinct root issues. One
+(`startWrapSse` ReferenceError) was already fixed post-v5.10.0 by #1005. This work fixes the rest,
+confirmed still live on `main`:
+
+- Shared-doc `fs.watch` handles never re-targeted on a `filePath` edit and leaked on delete — the
+  most severe finding, independently corroborated by 4 of 5 review dimensions.
+- `codex.json` advertised `capabilities.supportsSilentPrime: true`, but `syncEngineHooks()` clears
+  hooks for any non-`claude` engine instead of writing them — not dead code, a live UI lie: an
+  operator could enable "Silent Prime" for a Codex project and nothing would happen. Turned off;
+  real support filed as backlog ENG-8V3N.
+- Multi-file upload had no `FileReader.onerror` — a failed read hung the modal forever.
+- CHANGELOG's `## [5.9.0]` "Master Session Recovery" `### Fixed` entry was fabricated (no such fix
+  exists anywhere in history) — corrected via an `[Unreleased]` note, without touching the locked
+  released section.
+- Removed the dead live-wrap-progress SSE subsystem (zero consumers since #1005 removed its only
+  client) and deduped shared-doc notify logic between two drifting implementations.
+
+Cumulative Critic review (`rev-20260820T181429Z-411d7e43`): 0 blocking, 2 warning + 2 note, all
+fixed and re-verified clean. Full suite: 6508 pass / 0 fail / 1 skipped.
+
+One thing worth naming for the next reader of this repo's history: two of the fixes above exist
+*because* re-checking a claim rather than trusting it surfaced something worse than reported — the
+Codex "dead code" finding turned out to be a live capability lie, and a shipped commit's own
+message ("Added Next Action preview") didn't match what the diff actually built (documented
+honestly in `FEATURES.md` rather than propagated).
 
 <!-- prawduct: type=bugfix | scope=master-level-takes-effect-968 | chunks=01,02 -->
 

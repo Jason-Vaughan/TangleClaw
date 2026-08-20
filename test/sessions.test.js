@@ -2973,19 +2973,16 @@ describe('sessions', () => {
         // #583 amended the threading contract: user options pass through
         // unchanged, PLUS the wrap-run registry's progress hook rides
         // along (and nothing else).
-        const { onStepStart, onStepDone, ...userOptions } = receivedOptions;
+        const { onStepStart, ...userOptions } = receivedOptions;
         assert.deepEqual(userOptions, opts,
           'user options must reach runWrapPipeline unchanged');
         assert.equal(typeof onStepStart, 'function', 'has onStepStart');
-        assert.equal(typeof onStepDone, 'function', 'has onStepDone');
-        assert.ok(true,
-          '#583: the registry progress hook is threaded to the runner');
 
         // Omitted options still reach the runner carrying ONLY the hook —
         // no user keys invented.
         receivedOptions = 'sentinel-not-set';
         await sessions.triggerWrap('prime-test');
-        assert.deepEqual(Object.keys(receivedOptions).sort(), ['onStepStart', 'onStepDone'].sort(),
+        assert.deepEqual(Object.keys(receivedOptions).sort(), ['onStepStart'],
           'omitted options add only the #583 progress hook');
 
         // A caller-supplied hook (an HTTP body can only carry JSON,

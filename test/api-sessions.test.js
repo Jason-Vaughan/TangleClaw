@@ -260,16 +260,13 @@ describe('api-sessions', () => {
         });
         assert.equal(res.status, 200);
         assert.equal(res.body.ok, true);
-        // #583 amended the threading contract: body options pass through
-        // unchanged, plus the wrap-run registry's progress hooks ride along.
-        // #771 added a SECOND hook (onStepDone) when the drawer began streaming
-        // per-step results, so the contract is two hooks, not one — both are
-        // named here rather than swept into `userOptions`, which would let a
+        // #583's threading contract: body options pass through unchanged,
+        // plus the wrap-run registry's progress hook rides along — named
+        // here rather than swept into `userOptions`, which would let a
         // future hook land in the user-options assertion unnoticed.
-        const { onStepStart, onStepDone, ...userOptions } = receivedOptions;
+        const { onStepStart, ...userOptions } = receivedOptions;
         assert.deepEqual(userOptions, { skipTests: true, prHandling: { 42: 'defer' } });
         assert.equal(typeof onStepStart, 'function', '#583 progress hook threaded to the runner');
-        assert.equal(typeof onStepDone, 'function', '#771 per-step completion hook threaded to the runner');
         assert.ok(res.body.pipelineResult, 'response must surface pipelineResult');
         assert.equal(res.body.pipelineResult.commitSha, 'deadbeef');
         assert.equal(res.body.status, 'wrapping');
@@ -364,10 +361,9 @@ describe('api-sessions', () => {
         });
         assert.equal(res.status, 200);
         // #583: user options unchanged + the registry progress hook.
-        const { onStepStart, onStepDone, ...userOptions } = receivedOptions;
+        const { onStepStart, ...userOptions } = receivedOptions;
         assert.deepEqual(userOptions, { prHandling: { '42': 'merge', '43': 'defer' } });
         assert.equal(typeof onStepStart, 'function');
-        assert.equal(typeof onStepDone, 'function');
 
         // Pin the key-type contract: string-keyed PR numbers reach the
         // runner unchanged, matching `_normalizeHandling`'s
@@ -403,13 +399,10 @@ describe('api-sessions', () => {
         });
         assert.equal(res.status, 200);
         // #583: a discarded options body still reaches the runner carrying
-        // ONLY the registry progress hooks (#583's onStepStart and #771's
-        // onStepDone) — no user keys are invented from the malformed body.
-        // Sorted so the assertion pins the exact SET without also pinning the
-        // spread order, which is an implementation detail; an extra or missing
-        // key still fails.
-        assert.deepEqual(Object.keys(received).sort(), ['onStepDone', 'onStepStart'],
-          'non-object options bodies must be discarded before reaching the runner (only the registry hooks remain)');
+        // ONLY the registry progress hook (onStepStart) — no user keys are
+        // invented from the malformed body.
+        assert.deepEqual(Object.keys(received).sort(), ['onStepStart'],
+          'non-object options bodies must be discarded before reaching the runner (only the registry hook remains)');
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
         const wrapping = store.sessions.getWrapping(project.id);
