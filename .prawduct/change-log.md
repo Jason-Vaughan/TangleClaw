@@ -26,6 +26,42 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-20 — #1024: the sidecar poller stops burning a socket per tick
+
+<!-- prawduct: type=bugfix | scope=sidecar-poll-churn-1024 -->
+
+`lib/sidecar.js` polled each OpenClaw gateway with global `fetch` + an `AbortController`. An
+aborted request destroys its socket, so every poll against a slow or unreachable gateway opened a
+fresh TCP connection and abandoned it in `TIME_WAIT` — at a fixed 10s cadence, forever, with no
+reuse and no slowdown.
+
+Two changes. Polls now go through a shared keep-alive `node:http` agent (`maxSockets: 1`, since
+polls for one connection are serial). And consecutive failures double the interval, capped at five
+minutes, reset on the first success — which required turning `setInterval` into a self-rescheduling
+`setTimeout`, so the delay is recomputed per tick and slow polls can no longer overlap.
+
+`node:http` rather than a pooled `fetch` is forced by this product's own no-npm-dependency norm:
+Node exposes no dispatcher API for global `fetch` without undici, so the only zero-dependency way
+to attach a connection pool is the builtin client.
+
+**A regression test caught a defect in the fix itself**, which is the part worth carrying forward.
+I first cleared the failure count inside `stopPolling`'s `_pollers.has()` guard. But
+`pollProcesses` is also called directly by the route layer, so a count can accumulate with no
+poller attached — and the next `startPolling` would inherit it and open *already backed off to
+minutes*. The test asserting "a restart is not born backed off" failed, and it failed for the right
+reason. Now cleared unconditionally.
+
+**Scoping held under pressure.** This surfaced during a habitat outage where the host kernel had
+stopped reaping `TIME_WAIT` and its ephemeral range filled, and the peer session's first diagnosis
+attributed it to this poller. It was written from the start as a contributor rather than the cause,
+because the arithmetic never supported it — one poller at a 10s cadence cannot produce 31,274
+sockets over 19 hours. A reboot fixed the outage; the reaper was the cause. The peer session later
+confirmed the producer was host-local and explicitly asked that this issue not be softened. Fixed
+on its own merits.
+
+Each guard was mutated to confirm it can fail: disabling keep-alive, removing the backoff, dropping
+the failure count, and removing the cap each turn the suite red.
+
 ## 2026-08-20 — #990: forensic review of the ungoverned Antigravity window fixes 8 confirmed bugs
 
 <!-- prawduct: type=bugfix | scope=antigravity-window-990 | chunks=01,02,03,04,05,06,07 -->
