@@ -149,6 +149,7 @@ const wrapDefaultPipeline = require('./lib/wrap-default-pipeline');
 const evalAudit = require('./lib/eval-audit');
 const pidfile = require('./lib/pidfile');
 const sidecar = require('./lib/sidecar');
+const openclawApprove = require('./lib/openclaw-approve');
 const openclawVersion = require('./lib/openclaw-version');
 const openclawDetect = require('./lib/openclaw-detect');
 const tunnelMonitor = require('./lib/tunnel-monitor');
@@ -4763,7 +4764,54 @@ route('DELETE', '/api/openclaw/connections/:id/tunnel', async (_req, res, params
   });
 });
 
-// POST /api/openclaw/connections/:id/approve-pending — Auto-approve pending device pairing
+/**
+ * Run one command on an OpenClaw gateway host over SSH, capturing stdout,
+ * stderr and the exit status separately.
+ *
+ * The separation is the point (#1076). The previous implementation ran its
+ * remote command through `| head -1`, and a pipeline's exit status is its LAST
+ * command's — so a `docker` that exited 127 with `No such file or directory`
+ * became a successful `head` with empty output, and TangleClaw reported a
+ * missing binary as a missing container. Anything built on this seam gets to
+ * tell "the command failed" apart from "the command found nothing".
+ *
+ * `opts.secret`, when given, is redacted from the error text so a gateway token
+ * interpolated into the command can never reach a log line.
+ *
+ * @param {object} conn - OpenClaw connection record (`sshKeyPath`, `sshUser`, `host`).
+ * @param {string} command - Command to run on the remote host.
+ * @param {object} [opts] - Options.
+ * @param {number} [opts.timeoutMs=15000] - Abandon the command after this long.
+ * @param {string} [opts.secret] - Value to redact from captured stderr.
+ * @returns {{ok: boolean, stdout: string, stderr: string, code: number}}
+ */
+function _runOnGatewayHost(conn, command, opts = {}) {
+  const { execFileSync } = require('node:child_process');
+  const keyPath = conn.sshKeyPath.replace(/^~/, process.env.HOME || '');
+  const timeout = opts.timeoutMs || 15000;
+  const redact = (text) => (opts.secret ? String(text).split(opts.secret).join('«token»') : String(text));
+
+  try {
+    const stdout = execFileSync('ssh', [
+      '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', '-o', 'StrictHostKeyChecking=no',
+      '-i', keyPath, `${conn.sshUser}@${conn.host}`, command
+    ], { timeout, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+    return { ok: true, stdout: stdout || '', stderr: '', code: 0 };
+  } catch (err) {
+    return {
+      ok: false,
+      stdout: err.stdout ? String(err.stdout) : '',
+      stderr: redact(err.stderr || err.message || ''),
+      code: typeof err.status === 'number' ? err.status : -1
+    };
+  }
+}
+
+// POST /api/openclaw/connections/:id/approve-pending — Auto-approve pending device pairing.
+// Every outcome carries a machine-readable `code` alongside the human `reason`
+// (#1076): the UI needs to tell "docker is missing on the host" from "there is
+// nothing pending", and the previous single `reason` string conflated a failed
+// command with an absent container.
 route('POST', '/api/openclaw/connections/:id/approve-pending', async (_req, res, params) => {
   const conn = store.openclawConnections.get(params.id);
   if (!conn) {
@@ -4774,73 +4822,28 @@ route('POST', '/api/openclaw/connections/:id/approve-pending', async (_req, res,
     return errorResponse(res, 400, 'No gateway token configured — cannot approve pairing', 'BAD_REQUEST');
   }
 
-  const keyPath = conn.sshKeyPath.replace(/^~/, process.env.HOME || '');
-  const { execSync } = require('node:child_process');
+  const result = openclawApprove.approvePending({
+    runRemote: (command, opts) => _runOnGatewayHost(conn, command, opts),
+    port: conn.port,
+    gatewayToken: conn.gatewayToken
+  });
 
-  // List pending devices via the gateway's WebSocket CLI.
-  // Filter by published gateway port so we pick the right container on multi-tenant
-  // hosts (a single Docker host often runs several unrelated stacks side-by-side).
-  // Falls back to head -1 as a safety net if multiple containers somehow publish the
-  // same port (shouldn't happen given PortHub registration).
-  let pending;
-  try {
-    const listOutput = execSync(
-      `ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i "${keyPath}" ${conn.sshUser}@${conn.host} ` +
-      `"\\$HOME/.local/bin/docker ps --filter 'publish=${conn.port}' --format '{{.Names}}' | head -1"`,
-      { timeout: 10000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
-    ).trim();
-
-    if (!listOutput) {
-      return jsonResponse(res, 200, { approved: false, reason: 'No Docker container found' });
-    }
-
-    const containerName = listOutput;
-    const devicesJson = execSync(
-      `ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i "${keyPath}" ${conn.sshUser}@${conn.host} ` +
-      `"\\$HOME/.local/bin/docker exec ${containerName} openclaw devices list --json"`,
-      { timeout: 15000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
-    ).trim();
-
-    pending = JSON.parse(devicesJson).pending || [];
-  } catch (err) {
-    log.warn('Auto-approve: failed to list devices', { error: err.message });
-    return jsonResponse(res, 200, { approved: false, reason: 'Failed to list pending devices' });
+  if (result.approved) {
+    log.info('Auto-approved device pairing', {
+      connection: conn.name, pendingCount: result.count, dockerBin: result.dockerBin
+    });
+  } else {
+    log.warn('Auto-approve did not approve', {
+      connection: conn.name, code: result.code, reason: result.reason
+    });
   }
 
-  if (pending.length === 0) {
-    return jsonResponse(res, 200, { approved: false, reason: 'No pending requests' });
-  }
-
-  // Approve the latest pending request — same publish-port filter as above.
-  // `openclaw devices approve --latest` is a PREVIEW (returns which request
-  // would be approved, doesn't approve); the actual approval requires the
-  // requestId as a positional argument. Sort pending by `ts` desc and use
-  // the most recent one's requestId.
-  const latestPending = pending.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0))[0];
-  const requestId = latestPending && latestPending.requestId;
-  if (!requestId) {
-    return jsonResponse(res, 200, { approved: false, reason: 'Pending entry missing requestId' });
-  }
-
-  try {
-    const containerName = execSync(
-      `ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i "${keyPath}" ${conn.sshUser}@${conn.host} ` +
-      `"\\$HOME/.local/bin/docker ps --filter 'publish=${conn.port}' --format '{{.Names}}' | head -1"`,
-      { timeout: 10000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
-    ).trim();
-
-    execSync(
-      `ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i "${keyPath}" ${conn.sshUser}@${conn.host} ` +
-      `"\\$HOME/.local/bin/docker exec ${containerName} openclaw devices approve ${requestId} --token ${conn.gatewayToken} --json"`,
-      { timeout: 15000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
-    );
-
-    log.info('Auto-approved device pairing', { connection: conn.name, pendingCount: pending.length });
-    return jsonResponse(res, 200, { approved: true, count: pending.length });
-  } catch (err) {
-    log.warn('Auto-approve: failed to approve', { error: err.message });
-    return jsonResponse(res, 200, { approved: false, reason: `Approve failed: ${err.message}` });
-  }
+  return jsonResponse(res, 200, {
+    approved: result.approved,
+    code: result.code,
+    reason: result.reason,
+    count: result.count
+  });
 });
 
 // ── OpenClaw Proxy ──

@@ -149,11 +149,18 @@ function startAutoApprove() {
   let attempts = 0;
   const maxAttempts = 10;
   let stopped = false;
+  let lastOutcome = null;
 
   function next() {
     if (stopped) return;
     attempts++;
-    if (attempts > maxAttempts) return;
+    if (attempts > maxAttempts) {
+      // #1076: this used to `return` with nothing said. The API tells us WHY it
+      // could not approve, and throwing that away left the operator staring at
+      // OpenClaw's pairing card with no sign TangleClaw had tried at all.
+      reportAutoApproveGaveUp(lastOutcome);
+      return;
+    }
 
     setTimeout(async () => {
       if (stopped) return;
@@ -162,6 +169,7 @@ function startAutoApprove() {
         headers: { 'Content-Type': 'application/json' },
         body: '{}'
       });
+      if (result) lastOutcome = result;
 
       if (result && result.approved) {
         showToast('Device paired successfully', 'ok');
@@ -175,10 +183,48 @@ function startAutoApprove() {
         }, 1000);
         return;
       }
+
+      // A host-side fault will not fix itself on the next poll — stop early and
+      // say so, instead of spending nine more identical round-trips first.
+      if (result && TERMINAL_APPROVE_CODES.indexOf(result.code) !== -1) {
+        stopped = true;
+        reportAutoApproveGaveUp(result);
+        return;
+      }
       next();
     }, 3000);
   }
   next();
+}
+
+/**
+ * Outcomes that cannot change by retrying: the gateway host is missing docker,
+ * has no container on that port, or the approve command itself failed. Polling
+ * ten more times learns nothing a human would not already know.
+ * @type {string[]}
+ */
+const TERMINAL_APPROVE_CODES = ['SSH_FAILED', 'DOCKER_NOT_FOUND', 'NO_CONTAINER', 'APPROVE_FAILED'];
+
+/**
+ * Tell the operator that auto-approval stopped, and why — with the manual step.
+ *
+ * Persistent (duration 0): this project bans timer-driven UI lifecycle
+ * (#98, #268), and an explanation the operator has not read must not dismiss
+ * itself. `NO_PENDING` is silent on purpose — nothing pending is the normal,
+ * healthy state on an already-paired connection, not a failure to report.
+ *
+ * @param {{code?: string, reason?: string}|null} outcome - Last API result, if any.
+ * @returns {void}
+ */
+function reportAutoApproveGaveUp(outcome) {
+  if (outcome && outcome.code === 'NO_PENDING') return;
+  const why = (outcome && outcome.reason) ? ` — ${outcome.reason}` : '';
+  showToast(
+    `Could not auto-approve device pairing for this connection${why}. ` +
+    'Approve it manually on the gateway host: run `openclaw devices approve <requestId>` ' +
+    'using the request id shown in the pairing panel.',
+    'warn', 0
+  );
 }
 
 // ── Sidecar: process visibility ──

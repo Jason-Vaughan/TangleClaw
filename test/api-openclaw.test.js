@@ -782,6 +782,68 @@ describe('API /api/openclaw/connections/:id/tunnel', () => {
     assert.equal(status, 400);
     assert.ok(data.error.includes('gateway token'));
   });
+
+  // ── #1076 end-to-end: the route's OUTCOME SHAPE, over real HTTP ──
+  //
+  // These drive the actual route against an unreachable gateway host, so the
+  // SSH attempt genuinely fails. The point is not which failure occurs — it is
+  // that the route reports a FAILURE, with a code, and never claims the absence
+  // of a container it was never able to look for. That false claim ("No Docker
+  // container found") is the whole of #1076 and it cost a wrong investigation.
+
+  it('reports a coded failure — never "No Docker container found" — when the host is unreachable', async () => {
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'UnreachableGateway',
+      host: '192.0.2.1', // TEST-NET-1, RFC 5737: guaranteed unroutable
+      port: 18789,
+      sshUser: 'nobody',
+      sshKeyPath: '/nonexistent/key',
+      gatewayToken: 'tok-e2e'
+    });
+    const connId = created.data.id;
+
+    const { status, data } = await request(server, 'POST', `/api/openclaw/connections/${connId}/approve-pending`);
+    assert.equal(status, 200, 'the route degrades its caller, it does not 5xx');
+    assert.equal(data.approved, false);
+    assert.ok(data.code, 'every outcome carries a machine-readable code');
+    assert.notEqual(data.code, 'NO_CONTAINER',
+      'an SSH that never landed cannot have established that no container exists');
+    assert.notEqual(data.reason, 'No Docker container found',
+      'the exact pre-#1076 lie must never be emitted again');
+    assert.ok(typeof data.reason === 'string' && data.reason.length > 0,
+      'the reason must survive to the client — the UI needs it to tell the operator anything');
+  });
+
+  it('never leaks the gateway token into the response', async () => {
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'TokenLeakGateway',
+      host: '192.0.2.2',
+      port: 18789,
+      sshUser: 'nobody',
+      sshKeyPath: '/nonexistent/key',
+      gatewayToken: 'super-secret-e2e-token'
+    });
+    const { data } = await request(server, 'POST', `/api/openclaw/connections/${created.data.id}/approve-pending`);
+    assert.doesNotMatch(JSON.stringify(data), /super-secret-e2e-token/,
+      'the token is interpolated into a remote command; it must not ride back out in an error');
+  });
+
+  it('the response shape is the contract the viewer reads', async () => {
+    const created = await request(server, 'POST', '/api/openclaw/connections', {
+      name: 'ShapeGateway',
+      host: '192.0.2.3',
+      port: 18789,
+      sshUser: 'nobody',
+      sshKeyPath: '/nonexistent/key',
+      gatewayToken: 'tok-shape'
+    });
+    const { data } = await request(server, 'POST', `/api/openclaw/connections/${created.data.id}/approve-pending`);
+    for (const key of ['approved', 'code', 'reason', 'count']) {
+      assert.ok(Object.prototype.hasOwnProperty.call(data, key), `response must carry \`${key}\``);
+    }
+    assert.equal(typeof data.approved, 'boolean');
+    assert.equal(typeof data.count, 'number');
+  });
 });
 
 describe('UI OpenClaw standalone actions — data shape', () => {
