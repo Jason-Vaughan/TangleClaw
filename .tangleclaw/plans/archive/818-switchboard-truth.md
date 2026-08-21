@@ -1,7 +1,17 @@
 # v5.13.0 — The Switchboard Tells The Truth
 
 **Tracking issue:** [#818](https://github.com/Jason-Vaughan/TangleClaw/issues/818) (rollup) · **Milestone:** Session Switchboard
-**Composed:** 2026-08-21 · **Status:** roster ratified, no car started
+**Composed:** 2026-08-21 · **SHIPPED as [v5.13.0](https://github.com/Jason-Vaughan/TangleClaw/releases/tag/v5.13.0) on 2026-08-21.**
+All six cars merged (#1090 · #1091 · #1092 · #1093 · #1094 · #1095); 14 of the 16 car issues closed
+with the release. **Archived — do not treat as active work.**
+
+**Two items still owed, tracked on #818:** the completion test (the rule replacement drafted at
+`.tangleclaw/plans/818-rule5-replacement.md` is NOT applied — operator-authored, live fleet-wide on
+save) and a live two-session round trip, which nothing in this train has met.
+
+**Left open on evidence, not effort:** #1025 (unbuildable from TangleClaw — Medusa whitelists
+envelope fields) and #934 (closes on Medusa#64, a Bridge-side id overwrite a correct ACK cannot
+survive).
 **Hosted mirror:** https://claude.ai/code/artifact/097ad1cb-6325-4b8c-b547-5a0e97bc259c (updated in place)
 
 ---
