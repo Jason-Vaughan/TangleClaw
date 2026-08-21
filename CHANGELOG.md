@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.14.0] - 2026-08-21
+
 ### Changed
 - **The dashboard's "Next" action moved off the project row and into a disclosure inside the card's detail panel (#1015).** `continuityIndex.nextAction` is written by an engine session at wrap and arrives as real multi-line Markdown — the sampled wraps are four to six bullets carrying inline code and issue refs. The card drew it into a `white-space: nowrap; text-overflow: ellipsis` div, so every bullet flattened onto one run of text, backticks rendered raw, the tail was cut, and rows carrying an action stood at double the height of rows without one.
 
