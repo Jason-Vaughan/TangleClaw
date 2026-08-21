@@ -1218,7 +1218,8 @@ function clearMasterRules() {
 describe('masterSettings normalization', () => {
   it('applies defaults for a missing/partial master block (shallow-merge safety)', () => {
     assert.deepEqual(master.masterSettings({}), {
-      accessLevel: 'read-only', engine: null, launchMode: 'default', scope: 'all', autoStart: false
+      accessLevel: 'read-only', engine: null, launchMode: 'default', scope: 'all', autoStart: false,
+      medusaEnabled: false, medusaWake: false
     });
     const partial = master.masterSettings({ master: { autoStart: true } });
     assert.equal(partial.autoStart, true);

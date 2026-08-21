@@ -806,7 +806,10 @@ describe('API endpoints', () => {
         // #756 added launchMode to the normalized shape. It is stored on every
         // write, not only when patched, so the block never carries a missing
         // field for `_buildLaunchCommand` to receive as undefined.
-        accessLevel: 'read-only', engine: null, launchMode: 'default', scope: 'all', autoStart: true
+        accessLevel: 'read-only', engine: null, launchMode: 'default', scope: 'all', autoStart: true,
+        // #996 added the two switchboard opt-ins, stored on every write for the
+        // same reason — a Master block must never carry a missing field.
+        medusaEnabled: false, medusaWake: false
       });
     });
 

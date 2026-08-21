@@ -118,7 +118,16 @@ function installWorld(overrides = {}) {
     pane: IDLE_PANE,
     injected: [],
     injectResult: { ok: true, error: null },
+    // The Master's seams (#996). `null` = no Master to scan, which keeps every
+    // project-only test exactly as it was; the Master tests set a record.
+    masterRecord: null,
+    masterInjected: [],
     ...overrides
+  };
+  wake._internal.masterWakeRecord = () => world.masterRecord;
+  wake._internal.injectMaster = (command) => {
+    world.masterInjected.push(command);
+    return world.injectResult;
   };
   wake._internal.listLiveAll = () => world.sessions;
   wake._internal.getProject = () => world.project;
@@ -442,5 +451,75 @@ describe('medusa-wake — start/stop lifecycle', () => {
     wake.start({ intervalMs: 60000 }); // no throw, no double timer
     wake.stop();
     wake.stop(); // idempotent
+  });
+});
+
+describe('medusa-wake — the Project Master is scanned like any session (#996)', () => {
+  afterEach(() => wake.stop());
+
+  /** A live Master record, as `lib/master.js#masterWakeRecord` shapes it. */
+  function masterRecord(overrides = {}) {
+    return {
+      id: 'master', isMaster: true, name: 'Project Master', tmuxSession: 'tangleclaw-master',
+      engineId: 'claude', sessionMode: 'tmux', status: 'active', medusaWake: true,
+      apiBase: '/api/master/medusa', ...overrides
+    };
+  }
+
+  it('nudges an idle, opted-in Master through ITS injector, with the Master API paths', () => {
+    const world = installWorld({ sessions: [], masterRecord: masterRecord() });
+    tickThroughDebounce();
+    assert.equal(world.masterInjected.length, 1, 'one nudge for the Master');
+    assert.equal(world.injected.length, 0, 'never through the project injector — the Master owns no project');
+    assert.match(world.masterInjected[0], /GET \/api\/master\/medusa\/messages/);
+    assert.match(world.masterInjected[0], /POST \/api\/master\/medusa\/read/);
+    assert.doesNotMatch(world.masterInjected[0], /\/api\/sessions\//);
+    assert.doesNotMatch(world.masterInjected[0], /hello/, 'message text never rides the nudge');
+  });
+
+  it('does not nudge a Master whose medusaWake is off — the opt-in is read from the record', () => {
+    const world = installWorld({ sessions: [], masterRecord: masterRecord({ medusaWake: false }) });
+    tickThroughDebounce();
+    assert.equal(world.masterInjected.length, 0);
+  });
+
+  it('applies the same idle gate to the Master — a busy Master pane is never typed into', () => {
+    const world = installWorld({ sessions: [], masterRecord: masterRecord(), pane: BUSY_PANE });
+    tickThroughDebounce();
+    assert.equal(world.masterInjected.length, 0);
+  });
+
+  it('nudges once per fresh-mail edge for the Master (watermark), like a project', () => {
+    const world = installWorld({ sessions: [], masterRecord: masterRecord() });
+    tickThroughDebounce();
+    tickThroughDebounce();
+    assert.equal(world.masterInjected.length, 1);
+    world.inbox = world.inbox.concat([{ id: 'm2', from: 'peer', message: 'again' }]);
+    world.status = { ...world.status, unread: 1 };
+    tickThroughDebounce();
+    assert.equal(world.masterInjected.length, 2);
+  });
+
+  it('a Master that is absent (record null) costs the projects nothing', () => {
+    const world = installWorld({ masterRecord: null });
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1, 'the project still gets its nudge');
+    assert.equal(world.masterInjected.length, 0);
+  });
+
+  it('a throwing Master probe is contained — the project scan still runs', () => {
+    const world = installWorld();
+    wake._internal.masterWakeRecord = () => { throw new Error('tmux exploded'); };
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1);
+  });
+
+  it('_nudgeLineFor carries only TC-controlled bytes and the given API base', () => {
+    const line = wake._nudgeLineFor('/api/master/medusa', 3);
+    assert.match(line, /^\[TangleClaw Switchboard\] You have 3 unread/);
+    assert.match(line, /GET \/api\/master\/medusa\/messages/);
+    assert.ok(!line.includes('\n'), 'single line — sendKeys sends one Enter');
+    // The project form is the same text with the project base substituted.
+    assert.equal(wake._nudgeLine('My Proj', 3), wake._nudgeLineFor('/api/sessions/My%20Proj/medusa', 3));
   });
 });
