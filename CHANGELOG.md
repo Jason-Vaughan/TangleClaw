@@ -4,6 +4,15 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **The wake gate read an at-rest affordance as a running fleet, so any idle Claude session stopped waking (#1101).** `_FLEET_RE` matched `← N agents` in the status line. That text is the "press ← to view agents" hint on the **empty-composer** row — it renders *because* the session is at rest, and clears the instant a character is typed. Keying the gate on it inverted the gate: an idle session read `agents-running`, and never recovered, because an idle composer never fills on its own. The comment claimed the cost was "a delayed nudge that the next tick retries"; the retry could not succeed, so the cost was the wake itself.
+
+  Measured, not inferred, across four live states of one session: the hint is present at rest, present while an agent runs, and present after it finishes — and its count never moved, reading `2` with nothing dispatched, `2` with one agent running, and `2` once it completed. It tracks liveness in neither direction. The observed blast radius was six of six Claude sessions, including the Project Master, which made the switchboard's **return** path fail unattended: a reply reaches the initiator's inbox and nothing announces it. One session sat on an undelivered message for 31 minutes and was nudged within seconds of a single space being typed into its pane.
+
+  The gate now keys on Claude Code's **agent block** — the rows rendered above the composer while a fleet is live, which appear when it starts and clear when the last agent finishes. It matches the *unfocused* row (`◯`), because the glyphs mark focus rather than liveness: #783's capture had the agent focused (`◯ main` / `⏺ prawduct-critic`) and the 2026-08-21 capture had main focused (`⏺ main` / `◯ general-purpose`), so keying on `◯` works from either side. `⏺` would be wrong — Claude Code uses it for ordinary transcript lines too. The match is anchored at line start, because the tail is 15 lines of arbitrary transcript rather than a status line, and an unanchored scan let a session block its own nudge merely by *mentioning* agents in its output.
+
+  The hazard #783 identified is unchanged and still guarded: with a subagent focused the busy marker moves into the agent block, so `esc to interrupt` is absent and a bare prompt is rendered — which is why the gate sits above the prompt checks. Regression fixtures are verbatim live captures of all four states, and reverting the regex turns exactly the two new guards red. `lib/medusa-wake.js`, `test/medusa-wake.test.js`.
+
 ## [5.13.0] - 2026-08-21
 
 ### Added

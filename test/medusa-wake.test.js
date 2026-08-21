@@ -169,6 +169,37 @@ const SUBAGENT_FOCUSED_PANE = [
   '  ⏺ prawduct-critic  Composing reviewer.json critic partial   7m 20s · ↓ 133.2k tokens'
 ];
 
+/**
+ * Live captures from 2026-08-21, taken while diagnosing #1101 across four real
+ * states of one session. They are the evidence that `← N agents` is an at-rest
+ * affordance rather than a fleet indicator: it is present in three of the four,
+ * including both states where nothing is running, and its count never changed —
+ * it read `2` with no agent dispatched, `2` with one running, and `2` after it
+ * finished.
+ */
+const AT_REST_WITH_AGENTS_HINT = [
+  '  ...which is why the wake was refused.',
+  '',
+  '❯ ',
+  '  TiLT Claw (main) | Opus 5 (1M context) | 62% left',
+  '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 2 agents'
+];
+
+const AGENT_RUNNING_PANE = [
+  '❯ ',
+  '  TangleClaw (main) | Opus 5 (1M context) | 77% left',
+  '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 2 agents',
+  '',
+  '  ⏺ main',
+  '  ◯ general-purpose  Find lib files lacking tests                    4s'
+];
+
+const AGENTS_FINISHED_PANE = [
+  '❯ ',
+  '  TangleClaw (main) | Opus 5 (1M context) | 77% left',
+  '  ⏵⏵ bypass permissions on (shift+tab to cycle) · /tasks to see subagents · ← 2 agents'
+];
+
 describe('medusa-wake — _assessPane (Claude idle policy, pinned byte-for-byte)', () => {
   it('refuses a pane with a running subagent, even though it reads at-prompt (#783)', () => {
     // The regression this gate exists for. Both of the old policy's signals say
@@ -195,6 +226,46 @@ describe('medusa-wake — _assessPane (Claude idle policy, pinned byte-for-byte)
   it('does not mistake ordinary pane text for a fleet indicator', () => {
     const chatter = ['I asked 2 agents about it earlier', '❯'];
     assert.deepEqual(wake._assessPane(chatter, CLAUDE), { idle: true, reason: 'at-prompt' });
+  });
+
+  it('judges an at-rest pane idle even though the status line offers `← N agents` (#1101)', () => {
+    // The bug this fixture exists for. `← N agents` is the "press ← to view
+    // agents" affordance on the EMPTY-composer hint row — it renders because the
+    // session is at rest, and clears the moment a character is typed. Reading it
+    // as a fleet inverted the gate: idle sessions read busy and never recovered,
+    // because an idle composer never fills on its own.
+    assert.ok(!AT_REST_WITH_AGENTS_HINT.join('\n').includes('esc to interrupt'),
+      'fixture precondition: no busy marker');
+    assert.ok(!/^[ \t]*[◯⏺][ \t]+\S/m.test(AT_REST_WITH_AGENTS_HINT.join('\n')),
+      'fixture precondition: no agent block is rendered');
+    assert.deepEqual(wake._assessPane(AT_REST_WITH_AGENTS_HINT, CLAUDE), { idle: true, reason: 'at-prompt' });
+  });
+
+  it('judges a pane idle once its fleet has finished, while the hint persists (#1101)', () => {
+    // Captured immediately after the last agent completed: the agent block has
+    // cleared, but the hint row still advertises the count — and has gained
+    // `/tasks to see subagents`. Nothing about either text tracks liveness.
+    assert.ok(AGENTS_FINISHED_PANE.join('\n').includes('← 2 agents'),
+      'fixture precondition: the hint really does persist after completion');
+    assert.deepEqual(wake._assessPane(AGENTS_FINISHED_PANE, CLAUDE), { idle: true, reason: 'at-prompt' });
+  });
+
+  it('refuses a pane whose agent block is live, captured with main focused (#1101)', () => {
+    // The other side of #783's capture: there the agent held focus (`◯ main` /
+    // `⏺ prawduct-critic`), here main does (`⏺ main` / `◯ general-purpose`).
+    // The gate must fire from either side, so it keys on the unfocused row.
+    assert.ok(!AGENT_RUNNING_PANE.join('\n').includes('esc to interrupt'),
+      'fixture precondition: the busy marker is absent while the agent runs');
+    assert.ok(AGENT_RUNNING_PANE.some((l) => /^\s*❯\s*$/.test(l)),
+      'fixture precondition: a bare prompt is rendered while the agent runs');
+    assert.deepEqual(wake._assessPane(AGENT_RUNNING_PANE, CLAUDE), { idle: false, reason: 'agents-running' });
+  });
+
+  it('ignores the agent glyph when it is not at the start of a line', () => {
+    // The tail is 15 lines of arbitrary transcript, not a status line, so an
+    // unanchored scan would let ordinary output block a nudge indefinitely.
+    const quoting = ['  the other pane showed ◯ general-purpose in its block', '❯'];
+    assert.deepEqual(wake._assessPane(quoting, CLAUDE), { idle: true, reason: 'at-prompt' });
   });
 
   it('judges a bare-prompt pane with no busy marker idle', () => {
