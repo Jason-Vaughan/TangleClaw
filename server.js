@@ -40,8 +40,27 @@ async function broadcastSharedDocUpdate(docId) {
     const projectsInGroup = store.projects.list({ groupId: doc.groupId });
     const projectIds = new Set(projectsInGroup.map(p => p.id));
 
+    // Never tell a project about a change to a file it owns (#998). A shared doc
+    // can live INSIDE a member project — `ROADMAP_STATE.md` sits in
+    // `TangleClaw-Roadmap`, which is a member of the group watching it — so that
+    // project editing its own file, which is its job, broadcast a message back
+    // to itself. The nudge path does not stop at a badge: `medusa-wake` types
+    // into the pane, so a routine write turned into TangleClaw typing into a
+    // live session while the operator was mid-keystroke.
+    //
+    // Ownership by containment rather than by "who wrote it": `fs.watch` reports
+    // no actor, so the writer is genuinely unknown. The project whose directory
+    // holds the file is the one that cannot learn anything from being told.
+    const owningProjectIds = new Set(
+      projectsInGroup
+        .filter(p => p.path && doc.filePath && isInsideProject(p.path, doc.filePath))
+        .map(p => p.id)
+    );
+
     const liveSessions = store.sessions.listLiveAll();
-    const targetSessions = liveSessions.filter(s => projectIds.has(s.projectId));
+    const targetSessions = liveSessions.filter(
+      s => projectIds.has(s.projectId) && !owningProjectIds.has(s.projectId)
+    );
 
     let notified = 0;
     const errors = [];
@@ -127,6 +146,7 @@ function refreshSharedDocWatchers() {
 
 const system = require('./lib/system');
 const engines = require('./lib/engines');
+const { isInsideProject } = require('./lib/project-paths');
 const gitHooks = require('./lib/git-hooks');
 const gitTemplate = require('./lib/git-template');
 const tmux = require('./lib/tmux');

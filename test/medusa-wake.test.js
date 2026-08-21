@@ -151,7 +151,52 @@ function tickThroughDebounce() {
   for (let i = 0; i < wake.IDLE_TICKS_REQUIRED; i++) wake._internal.tick();
 }
 
+/**
+ * The pane from #783, captured live at the moment a nudge was misrouted: a
+ * session seven minutes into a turn, with `prawduct-critic` focused. Note what
+ * is NOT here — `esc to interrupt` is absent (the turn indicator moved into the
+ * agent block) and the bare prompt IS rendered, which is exactly why the old
+ * policy called this idle.
+ */
+const SUBAGENT_FOCUSED_PANE = [
+  '─────────────────────────────────── @prawduct-critic ──',
+  '❯',
+  '───────────────────────────────────────────────────────',
+  '  710-chunk2 (feat/710-chunk2) | Opus 5 (1M context) | 72% left',
+  '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent',
+  '',
+  '  ◯ main',
+  '  ⏺ prawduct-critic  Composing reviewer.json critic partial   7m 20s · ↓ 133.2k tokens'
+];
+
 describe('medusa-wake — _assessPane (Claude idle policy, pinned byte-for-byte)', () => {
+  it('refuses a pane with a running subagent, even though it reads at-prompt (#783)', () => {
+    // The regression this gate exists for. Both of the old policy's signals say
+    // "safe": no busy marker, bare prompt present. The session was mid-turn.
+    assert.ok(!SUBAGENT_FOCUSED_PANE.join('\n').includes('esc to interrupt'),
+      'fixture precondition: the busy marker really is absent');
+    assert.ok(SUBAGENT_FOCUSED_PANE.some((l) => /^\s*❯\s*$/.test(l)),
+      'fixture precondition: the bare prompt really is rendered');
+    assert.deepEqual(wake._assessPane(SUBAGENT_FOCUSED_PANE, CLAUDE), { idle: false, reason: 'agents-running' });
+  });
+
+  it('refuses while agents run regardless of which view holds focus', () => {
+    // Focus can change between the capture and the paste, so the gate is on the
+    // fleet running at all, not on who is focused right now.
+    const mainFocused = SUBAGENT_FOCUSED_PANE.map((l) => l.replace('@prawduct-critic', 'main'));
+    assert.equal(wake._assessPane(mainFocused, CLAUDE).idle, false);
+  });
+
+  it('reads a plural fleet the same as a single agent', () => {
+    const many = SUBAGENT_FOCUSED_PANE.map((l) => l.replace('← 1 agent', '← 3 agents'));
+    assert.deepEqual(wake._assessPane(many, CLAUDE), { idle: false, reason: 'agents-running' });
+  });
+
+  it('does not mistake ordinary pane text for a fleet indicator', () => {
+    const chatter = ['I asked 2 agents about it earlier', '❯'];
+    assert.deepEqual(wake._assessPane(chatter, CLAUDE), { idle: true, reason: 'at-prompt' });
+  });
+
   it('judges a bare-prompt pane with no busy marker idle', () => {
     assert.deepEqual(wake._assessPane(IDLE_PANE, CLAUDE), { idle: true, reason: 'at-prompt' });
   });
