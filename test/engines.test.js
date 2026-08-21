@@ -1144,6 +1144,81 @@ describe('engines', () => {
     });
   });
 
+  describe('#904 — the switchboard reaches the generated config, on every engine', () => {
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    let projPath;
+    let projName;
+
+    before(() => {
+      // A REAL registered project: the section is route-scoped, and the name
+      // comes from the store rather than the folder basename because a project
+      // may be named differently from its directory.
+      projPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-guide-'));
+      projName = `Switchboard Guide ${Date.now() % 100000}`;
+      store.projects.create({ name: projName, path: projPath, engine: 'claude' });
+    });
+
+    const on = { medusaEnabled: true, rules: { core: { porthubRegistration: true } } };
+    const off = { medusaEnabled: false, rules: { core: { porthubRegistration: true } } };
+
+    it('reaches ALL FOUR generators, not just the markdown one', () => {
+      // PortHub gets ~30 lines with runnable examples in this same file and
+      // Medusa got none, so a real capability was unreachable in practice. A
+      // section added to one generator would be an engine-specific capability,
+      // which this project does not ship.
+      const generated = {
+        claude: engines._generateClaudeMd(on, projPath),
+        gemini: engines._generateGeminiMd(on, undefined, projPath),
+        codex: engines._generateCodexYaml(on, projPath),
+        aider: engines._generateAiderConf(on, projPath)
+      };
+      for (const [name, content] of Object.entries(generated)) {
+        assert.ok(/medusa/i.test(content), `${name} config must mention the switchboard`);
+        assert.ok(content.includes(`/medusa/send`), `${name} config must name the reply endpoint`);
+      }
+    });
+
+    it('states a reachable origin, not a pointer to a guide', () => {
+      const content = engines._generateClaudeMd(on, projPath);
+      assert.match(content, /https?:\/\/localhost:\d+\/api\/sessions\//);
+    });
+
+    it('scopes the endpoints to the project NAME, not its folder', () => {
+      const content = engines._generateClaudeMd(on, projPath);
+      assert.ok(content.includes(encodeURIComponent(projName)),
+        'the routes are name-scoped; a folder-derived guess would hand the session a 404');
+      assert.ok(!content.includes(`/api/sessions/${path.basename(projPath)}/medusa`),
+        'must not address the project by its directory basename');
+    });
+
+    it('says nothing to a project that has not opted in', () => {
+      // #820 made the same flag gate the UI surface. Teaching a session to use a
+      // channel its project has turned off is an instruction it cannot follow.
+      for (const [name, content] of Object.entries({
+        claude: engines._generateClaudeMd(off, projPath),
+        gemini: engines._generateGeminiMd(off, undefined, projPath),
+        codex: engines._generateCodexYaml(off, projPath),
+        aider: engines._generateAiderConf(off, projPath)
+      })) {
+        assert.ok(!/medusa/i.test(content), `${name} config must stay silent when the flag is off`);
+      }
+    });
+
+    it('drops the section rather than guessing when no path is given', () => {
+      const content = engines._generateClaudeMd(on);
+      assert.ok(!/medusa/i.test(content), 'no project path means no resolvable name — omit, never guess');
+    });
+
+    it('renders the aider form as comments so the config stays parseable', () => {
+      const lines = engines._medusaSwitchboardLines(
+        { medusaEnabled: true, medusaProjectName: 'p', serverProtocol: 'http', serverPort: 3102 }, 'comment'
+      );
+      assert.ok(lines.length > 0 && lines.every((l) => l.startsWith('#')), 'comment form must be all #-prefixed');
+    });
+  });
+
   describe('AUTH-4b — service-token injection', () => {
     // Shape-only token, assembled at runtime so it doesn't trip GH push protection.
     const TOKEN = 'tcsk_' + 'A'.repeat(43);
