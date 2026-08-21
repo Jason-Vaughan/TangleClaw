@@ -40,6 +40,13 @@ const STATIC_ASSETS = [
   // (It takes effect on the next worker install; existing workers are already
   // covered because the network-first branch caches what it fetches.)
   '/reconnect-policy.js',
+  // next-markdown.js is dual-listed for the reconnect-policy.js reason above,
+  // and the failure is the same shape: it is a plain `<script src>` on
+  // index.html, so a network-first MISS while the network is down serves the
+  // synthetic JSON 503, the script never defines renderNextMarkdown, and
+  // ui.js throws while drawing the first project card — a blank dashboard
+  // rather than a card without its next action.
+  '/next-markdown.js',
   '/manifest.json'
 ];
 
@@ -84,6 +91,13 @@ const NETWORK_FIRST_PATHS = new Set([
   // network-first index.html; both stay precached above for offline coherence.
   '/ui.js',
   '/style.css',
+  // next-markdown.js is the pure-helper sibling of ui.js, the same lockstep
+  // case wrap-drawer.js has with session.js above: ui.js (network-first) calls
+  // renderNextMarkdown directly at render time, so a stale copy served against
+  // a fresh ui.js throws on a missing global and the project cards stop
+  // rendering. Network-first rather than a CACHE_NAME bump — a bump tears down
+  // and reinstalls the worker in every browser (#710).
+  '/next-markdown.js',
   // setup.js runs the first-run wizard, including the terminal screens that tell an
   // operator whether a login is in force. It was cache-first with no carve-out, so a
   // browser with an active worker kept serving whatever copy it fetched first and any
