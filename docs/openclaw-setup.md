@@ -189,7 +189,10 @@ When an OpenClaw connection has a **Bridge Port** and **Bridge Token** configure
 ### How it works
 
 1. TangleClaw's SSH tunnel forwards the gateway port (18789), plus the configured Bridge Port (typically `3201`) when one is set on the connection. Non-ClawBridge connections leave Bridge Port blank and skip this extra forward (#160).
-2. The sidecar polls `GET /api/processes` on the ClawBridge every 10 seconds
+2. The sidecar polls `GET /api/processes` on the ClawBridge every 10 seconds while the gateway is
+   answering. After a failed poll the interval doubles (capped at 5 minutes) and resets on the next
+   success, so an unreachable gateway is retried slowly rather than re-dialled every 10s — if pills
+   look frozen, check the gateway is up rather than assuming a fixed cadence.
 3. Status pills appear in the OpenClaw viewer banner — colored by status (running, completed, errored)
 4. Click a pill to open the detail panel with timestamps, exit code, working directory, and last output
 

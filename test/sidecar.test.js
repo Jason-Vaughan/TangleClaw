@@ -316,4 +316,75 @@ describe('sidecar', () => {
         'a stopped poller keeping its failure count would resume at a 5-minute delay');
     });
   });
+
+  // ── #1024 follow-up: findings the Critic raised on the fix itself ──
+  describe('poll loop liveness (#1024 R-1/R-2)', () => {
+    const http = require('node:http');
+
+    it('re-arms the loop after every tick, including a failing one', async () => {
+      // R-2: without `.finally(scheduleNext)` the loop runs exactly once and the
+      // whole suite still passes, because _pollers is populated before tick one.
+      const connId = createConn('LoopClaw', 59998); // nothing listening -> every tick fails
+      sidecar.startPolling(connId, 20);
+      await new Promise(r => setTimeout(r, 220));
+      const failures = sidecar._failures.get(connId) || 0;
+      sidecar.stopPolling(connId);
+      assert.ok(failures >= 2,
+        `expected the loop to re-arm and poll repeatedly, saw ${failures} failure(s) — ` +
+        'one means it ran once and never rescheduled');
+    });
+
+    it('settles even when the socket dies after headers but before the body', async () => {
+      // R-1: the original only settled on res.'end' or req.'error'. A socket
+      // closing mid-body fires neither, so the promise hung — and because the
+      // next poll is scheduled from .finally(), one hang killed polling forever.
+      const server = http.createServer((req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': '999' });
+        res.write('{"active":');
+        res.socket.destroy(); // truncate: headers sent, body never completes
+      });
+      await new Promise(r => server.listen(0, '127.0.0.1', r));
+      const port = server.address().port;
+      const connId = createConn('TruncClaw', port);
+
+      const result = await Promise.race([
+        sidecar.pollProcesses(connId, { timeoutMs: 400 }),
+        new Promise(r => setTimeout(() => r('HUNG'), 3000))
+      ]);
+      server.close();
+      assert.notEqual(result, 'HUNG', 'the poll promise must settle on a truncated response, not hang');
+      assert.equal(result.ok, false);
+    });
+
+    it('clears the failure count on a genuinely successful poll', async () => {
+      // R-3: the earlier test named the success path but never exercised it,
+      // leaving `_failures.delete` on success unmutated.
+      const server = http.createServer((req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ active: [], recent: [] }));
+      });
+      await new Promise(r => server.listen(0, '127.0.0.1', r));
+      const port = server.address().port;
+      const connId = createConn('OkClaw', port);
+
+      sidecar._failures.set(connId, 4);
+      const res = await sidecar.pollProcesses(connId, { timeoutMs: 1000 });
+      server.close();
+      assert.equal(res.ok, true, 'poll against a live server must succeed');
+      assert.equal(sidecar._failures.get(connId), undefined,
+        'a success must reset backoff, or a recovered gateway stays polled at 5-minute intervals');
+    });
+
+    it('a poll in flight when polling stops cannot re-set the cleared count', async () => {
+      // R-5: stopPolling does not abort an in-flight request. Its result lands
+      // afterwards and, without the epoch guard, re-sets the count it just saw
+      // cleared — so the next startPolling opens already backed off.
+      const connId = createConn('RaceClaw', 59997); // nothing listening
+      const inflight = sidecar.pollProcesses(connId, { timeoutMs: 400 });
+      sidecar.stopPolling(connId);
+      await inflight;
+      assert.equal(sidecar._failures.get(connId), undefined,
+        'a request that outlived stopPolling must not write its failure back');
+    });
+  });
 });

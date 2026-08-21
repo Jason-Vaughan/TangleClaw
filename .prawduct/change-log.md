@@ -44,12 +44,27 @@ minutes, reset on the first success — which required turning `setInterval` int
 Node exposes no dispatcher API for global `fetch` without undici, so the only zero-dependency way
 to attach a connection pool is the builtin client.
 
-**A regression test caught a defect in the fix itself**, which is the part worth carrying forward.
-I first cleared the failure count inside `stopPolling`'s `_pollers.has()` guard. But
-`pollProcesses` is also called directly by the route layer, so a count can accumulate with no
-poller attached — and the next `startPolling` would inherit it and open *already backed off to
-minutes*. The test asserting "a restart is not born backed off" failed, and it failed for the right
-reason. Now cleared unconditionally.
+**The fix needed its own review, and got two blocking findings.** Worth recording, because both
+were defects introduced BY the fix rather than surviving it.
+
+First: `_getWithAgent` settled only on `res.'end'` or `req.'error'`. When a socket dies after
+response headers but before the body completes, Node destroys the response instead of pushing EOF,
+so neither fires and the promise hangs. Under the old `setInterval` that was survivable; under the
+new chain the next poll is scheduled from `.finally()`, so a single hang ends that connection's
+polling for the life of the process — and nothing restarts it, since every restart path gates on
+`_pollers.has()`, which stays true. A fix strictly worse than the bug. Every terminal event now
+feeds one settle, with a wall-clock backstop.
+
+Second: the self-rescheduling loop — the core behavior change — had no test at all. Deleting
+`.finally(scheduleNext)` left the suite green, because `_pollers` is populated before the first
+tick, so a loop that ran exactly once satisfied every existing assertion.
+
+Also corrected: my justification for clearing the failure count unconditionally claimed
+`pollProcesses` is "called directly by the route layer." It is not — it has no caller outside this
+module. The real race is narrower and is now handled properly with a per-connection epoch:
+`stopPolling` does not abort an in-flight request, so that request's result lands afterwards and
+re-sets the count it just saw cleared. The wrong reason had already reached two change records
+before review caught it.
 
 **Scoping held under pressure.** This surfaced during a habitat outage where the host kernel had
 stopped reaping `TIME_WAIT` and its ephemeral range filled, and the peer session's first diagnosis
@@ -59,8 +74,9 @@ sockets over 19 hours. A reboot fixed the outage; the reaper was the cause. The 
 confirmed the producer was host-local and explicitly asked that this issue not be softened. Fixed
 on its own merits.
 
-Each guard was mutated to confirm it can fail: disabling keep-alive, removing the backoff, dropping
-the failure count, and removing the cap each turn the suite red.
+Eight mutations across the two rounds, each turning the suite red: disabling keep-alive, removing
+the backoff, dropping the failure count, removing the cap, deleting `.finally(scheduleNext)`,
+stripping the response-abort handlers, removing the epoch guard, and never clearing on success.
 
 ## 2026-08-20 — #990: forensic review of the ungoverned Antigravity window fixes 8 confirmed bugs
 
