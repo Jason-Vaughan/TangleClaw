@@ -2,7 +2,7 @@
 
 **Issue:** [#996](https://github.com/Jason-Vaughan/TangleClaw/issues/996) (OPEN, verified 2026-08-21) · **Milestone:** Master Control (#829)
 **Predecessors:** #768 (control bar, Medusa slot shipped as a labelled placeholder) · #755/#968 (access level, server-enforced) · MED-2K9P (session switchboard v1)
-**Status:** plan authored 2026-08-21, awaiting go. Chunk boxes are in `## Status` at the bottom.
+**Status:** chunk 1 BUILT 2026-08-21 (branch `feat/996-master-medusa`); chunk 2 (bar control) next. Chunk boxes are in `## Status` at the bottom.
 
 ## Why this slipped
 
@@ -24,7 +24,7 @@
 
 1. **Routes: a parallel `/api/master/medusa/*` surface, built from the SAME handlers — no synthetic project row, no duplicated bodies.** The ten session routes become `registerMedusaRoutes(prefix, resolveTarget)`; `resolveTarget(params)` returns `{projectPath, sessionId, name}` or a typed error. Sessions pass the existing lookups; the Master passes `{masterHome(), 'master', 'Project Master'}` when its tmux session is live (409 `NO_SESSION` otherwise, same as a project with no session). A fake project row would leak into listings, the dashboard, the fleet map and `listProjects` callers — rejected.
 2. **Identity: pinned to the Master's home via the existing registry** (`~/.tangleclaw/master/.tangleclaw/medusa/registry.json`). Nothing new to build; one test proves kill → ensure yields the same workspace id.
-3. **Access level gates the outbound half, at request time, from the on-disk level.** `read-only` → inbox, read-mark, roster, status, toggle work; `send`, `loop`, `loops/*` return **403 `ACCESS_LEVEL`** naming the level and how to change it. `suggest` and `write` → full. Read from the same `.access-level` file the guard reads, so a flip binds on the next request with no restart (`levelAppliesAt` stays truthful).
+3. **Access level gates the outbound half, at request time.** `read-only` → inbox, read-mark, roster, status, toggle work; `send`, `loop`, `loops/*` return **403 `ACCESS_LEVEL`** naming the level and how to change it. `suggest` and `write` → full. **Shipped reading CONFIG per request rather than the guard's `.access-level` file** (deviation from the drafted line, recorded 2026-08-21): `PATCH /api/config` writes both in one request so the flip still binds with no restart, and config is the authority the operator set — the file is the guard's copy of it, and modelling a second reader of it would only create a place for the two to disagree.
 4. **Loop discipline goes into the generated identity.** `buildMasterClaudeMd` gains a switchboard section mirroring `_medusaPrimeSection` (workspace id, *initiator closes*, *context-not-task*, the `/api/master/medusa/*` paths, "do not open your own WS"). HOWTO.md's "you are not a participant" line flips to the truth.
 
 **Enablement:** `config.master.medusaEnabled` (boolean, default `false`, validated in the master PATCH like `autoStart`) — same opt-in shape as projects' `medusaEnabled`, and the bar toggle persists it. Boot resync + every `ensureMasterSession` start the listener when enabled; `killMasterSession` stops it. **On this install I flip it on as part of delivery** — that is what the operator asked for.
@@ -60,5 +60,5 @@
 - Critic is paused (2026-08-19 ratification); back-run planned. Mutation-verify every guard in lieu.
 
 ## Status
-- [ ] Chunk 1 — backend participant
+- [x] Chunk 1 — backend participant (2026-08-21: route factory + master mount, lifecycle on live∧enabled, home-pinned identity, outbound gate w/ per-request read, identity+HOWTO, wake record, boot resync, PATCH sync. Suite green; 7 mutations red. CHANGELOG `### Added`, FEATURES row.)
 - [ ] Chunk 2 — bar control live

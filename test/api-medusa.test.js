@@ -230,8 +230,13 @@ describe('API — GET /api/sessions/:project/medusa/status', () => {
   it('returns an off status when the project has no active session', async () => {
     const { status, data } = await get('/api/sessions/demo/medusa/status');
     assert.equal(status, 200);
-    // `loops` joined the status payload in MED-2K9P v2 T4 (banner loop view).
-    assert.deepEqual(data, { state: 'off', workspaceId: null, unread: 0, lastError: null, loops: [] });
+    // `loops` joined the status payload in MED-2K9P v2 T4 (banner loop view);
+    // `outbound` joined it in #996 (the access-level verdict a control renders
+    // a disabled send from — always allowed for a project session).
+    assert.deepEqual(data, {
+      state: 'off', workspaceId: null, unread: 0, lastError: null, loops: [],
+      outbound: { allowed: true, reason: null }
+    });
   });
 
   it('honors the ?sessionId= fallback (off for a session with no listener)', async () => {

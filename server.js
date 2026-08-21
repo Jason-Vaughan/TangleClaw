@@ -934,7 +934,7 @@ function validateMasterPatch(patch, config) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
     return { error: 'master must be an object' };
   }
-  const known = ['accessLevel', 'engine', 'launchMode', 'scope', 'autoStart'];
+  const known = ['accessLevel', 'engine', 'launchMode', 'scope', 'autoStart', 'medusaEnabled', 'medusaWake'];
   for (const key of Object.keys(patch)) {
     if (!known.includes(key)) return { error: `master.${key} is not a settable field` };
   }
@@ -965,6 +965,15 @@ function validateMasterPatch(patch, config) {
   }
   if (typeof merged.autoStart !== 'boolean') {
     return { error: 'master.autoStart must be a boolean' };
+  }
+  // Same rule as autoStart, for the same reason: only a real boolean opts the
+  // Master onto the switchboard — a truthy string from a hand-edited config
+  // must not make it addressable by accident.
+  if (typeof merged.medusaEnabled !== 'boolean') {
+    return { error: 'master.medusaEnabled must be a boolean' };
+  }
+  if (typeof merged.medusaWake !== 'boolean') {
+    return { error: 'master.medusaWake must be a boolean' };
   }
   // Validated as a NAME, not against the current engine's honored set. A mode
   // this engine cannot honor is a legitimate stored value — the operator may
@@ -998,7 +1007,9 @@ function validateMasterPatch(patch, config) {
       engine: merged.engine,
       launchMode: merged.launchMode,
       scope: merged.scope,
-      autoStart: merged.autoStart
+      autoStart: merged.autoStart,
+      medusaEnabled: merged.medusaEnabled,
+      medusaWake: merged.medusaWake
     }
   };
 }
@@ -1284,6 +1295,23 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
           + 'Its identity, its memory scaffold or its write guard may be a step behind. Restart the master session to bring them back into line.'
         : `Settings were saved, but the master's access level could not be applied — it is still enforcing "${oldMasterAccessLevel}". `
           + 'Restart the master session to reconcile it.';
+    }
+  }
+
+  // The Master's switchboard listener follows `medusaEnabled` the moment it is
+  // saved (#996), the way the access level does above — not on the next ensure.
+  // One rule (listener ⇔ live ∧ enabled) lives in `syncMasterMedusa`; this only
+  // feeds it the fresh setting against tmux truth. Unanswered tmux → touch
+  // nothing, because starting a listener for a Master that may not exist is
+  // the #836 shape. Failure is logged, never fatal: the save already stood.
+  if ('master' in body) {
+    try {
+      const probe = master.masterLiveness();
+      if (probe.answered) {
+        master.syncMasterMedusa({ live: probe.live, enabled: master.masterSettings(config).medusaEnabled });
+      }
+    } catch (err) {
+      log.warn('Master Medusa listener sync after settings save failed', { error: err.message });
     }
   }
 
@@ -3473,241 +3501,334 @@ route('GET', '/api/sessions/:project/status', (_req, res, params) => {
   jsonResponse(res, 200, status);
 });
 
-// GET /api/sessions/:project/medusa/status — Medusa listener status (MED-2K9P
-// Chunk 01). Thin pass-through to lib/medusa. Resolves the session id from the
-// project's active session (matching how the sessions route family resolves it
-// via store.sessions.getActive); a `?sessionId=` query param is honored as a
-// fallback when no session is active. No active session → an `off` status.
-// MED-2K9P v2 T4: the response also carries `loops` — the session's known
-// loops with live Bridge state — so the banner loop view rides the existing
-// status poll (no new timer). A Bridge failure during the loop fetch degrades
-// honestly: `loops: []` plus a `loopsError` naming the reason, never a silent
-// empty list; the listener status itself is still returned.
-route('GET', '/api/sessions/:project/medusa/status', async (req, res, params) => {
+// ── Medusa switchboard routes — one handler family, two mounts ──
+//
+// Every switchboard verb is the same handler whether the participant is a
+// project session or the Project Master. What differs is how the caller's
+// IDENTITY is resolved — a project's active session row, or the Master's tmux
+// liveness — and whether its access level permits the outbound verbs. So the
+// handlers are written once, against a resolver, and mounted twice:
+// `/api/sessions/:project/medusa/*` and `/api/master/medusa/*`. A synthetic
+// project row for the Master was the smaller diff and the wrong one: it would
+// have leaked a non-project into listings, the dashboard and the fleet map.
+//
+// The resolver contract — `resolve(params, query)` returns one of:
+//   { error: {status, message, code} }  the caller cannot be resolved at all
+//                                       (unknown project);
+//   { target: null, absent, fallbackSessionId? }
+//                                       resolved, but nothing live to act for.
+//                                       `absent` is the clause a 409 is built
+//                                       from ("<absent> to <verb>"), so the
+//                                       message names WHICH participant is
+//                                       missing; `fallbackSessionId` is the
+//                                       `?sessionId=` a read may still honor;
+//   { target: {projectPath, sessionId, name, outbound: {allowed, reason}},
+//     afterToggle? }                    live. `outbound` is the access-level
+//                                       verdict for send/loop; `afterToggle`
+//                                       persists a toggle for a participant
+//                                       whose setting outlives its session.
+//
+// Routes that tolerate an absent target (status / messages / read) degrade to
+// the `off` / empty shape; routes that need one (toggle / roster / send / the
+// loop family) answer 409 `NO_SESSION`.
+
+/**
+ * Resolve a project session as a switchboard participant.
+ * @param {object} params - Route params (`project`).
+ * @param {object} [query] - Parsed query string.
+ * @returns {object} A resolver result (contract above).
+ */
+function resolveProjectMedusaTarget(params, query) {
   const project = store.projects.getByName(params.project);
   if (!project) {
-    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+    return { error: { status: 404, message: `Project "${params.project}" not found`, code: 'NOT_FOUND' } };
   }
   const active = store.sessions.getActive(project.id);
-  const query = parseQuery(reqUrl(req).search);
-  const sessionId = active ? active.id : (query.sessionId ? query.sessionId : null);
-  const status = medusa.getStatus(sessionId);
-  let loops = [];
-  let loopsError = null;
-  if (sessionId != null && status.state !== 'off') {
-    try {
-      loops = await medusa.getLoops({ sessionId });
-    } catch (err) {
-      loopsError = err.message;
+  if (!active) {
+    return {
+      target: null,
+      absent: 'No active session',
+      fallbackSessionId: query && query.sessionId ? query.sessionId : null
+    };
+  }
+  return {
+    target: {
+      projectPath: project.path,
+      sessionId: active.id,
+      name: project.name,
+      // A project session's outbound is never gated here: its authority is the
+      // operator's, exercised inside its own terminal.
+      outbound: { allowed: true, reason: null }
     }
-  }
-  jsonResponse(res, 200, loopsError ? { ...status, loops, loopsError } : { ...status, loops });
-});
+  };
+}
 
-// POST /api/sessions/:project/medusa/toggle — start or stop this session's Medusa
-// listener (MED-2K9P Chunk 02). The banner control's click-toggle. Resolves the
-// active session like the status route (no active session → 409). Body `{enabled}`
-// sets the desired state explicitly (idempotent — safe against double-clicks);
-// omitted → flips the current state. Returns the resulting status. Thin
-// pass-through to lib/medusa; the browser never talks to the Bridge directly.
-route('POST', '/api/sessions/:project/medusa/toggle', (_req, res, params, body) => {
-  const project = store.projects.getByName(params.project);
-  if (!project) {
-    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+/**
+ * Resolve the Project Master as a switchboard participant (#996). Liveness is
+ * tmux truth, three-valued like everywhere else the Master is read: a silent
+ * tmux is an UNKNOWN, refused with its own clause rather than flattened into
+ * "not running".
+ * @returns {object} A resolver result (contract above).
+ */
+function resolveMasterMedusaTarget() {
+  const probe = master.masterLiveness();
+  if (!probe.answered) {
+    return { target: null, absent: 'tmux did not answer, so whether the Project Master is running is unknown; refusing' };
   }
-  const active = store.sessions.getActive(project.id);
-  if (!active) {
-    return errorResponse(res, 409, 'No active session to toggle Medusa for', 'NO_SESSION');
+  if (!probe.live) {
+    return { target: null, absent: 'The Project Master is not running, so there is no session' };
   }
-  const isOn = medusa.getStatus(active.id).state !== 'off';
-  const desired = (body && typeof body.enabled === 'boolean') ? body.enabled : !isOn;
-  if (desired) {
-    medusa.startSession({ projectPath: project.path, sessionId: active.id, name: project.name });
-  } else {
-    medusa.stopSession(active.id);
-  }
-  jsonResponse(res, 200, medusa.getStatus(active.id));
-});
+  const level = master.masterSettings(store.config.load()).accessLevel;
+  return {
+    target: { ...master.masterMedusaTarget(), outbound: master.masterMedusaOutbound(level) },
+    // The Master is killed and restarted routinely (#968), and its bar toggle
+    // is the only control it has — so a toggle persists, or the next restart
+    // silently undoes the operator's click. A project's toggle is
+    // session-scoped on purpose (its durable setting lives in project settings).
+    afterToggle: (enabled) => {
+      const config = store.config.load();
+      config.master = { ...master.masterSettings(config), medusaEnabled: enabled };
+      store.config.save(config);
+    }
+  };
+}
 
-// GET /api/sessions/:project/medusa/messages — this session's received inbox
-// (MED-2K9P Chunk 02). Backs the read panel. A pure read (no mark-read side
-// effect on GET); the read panel clears unread via the POST /read endpoint below.
-// Resolves the session id like the status route; no session → an empty inbox.
-route('GET', '/api/sessions/:project/medusa/messages', (req, res, params) => {
-  const project = store.projects.getByName(params.project);
-  if (!project) {
-    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+/**
+ * Mount the switchboard route family under `prefix`, resolving the
+ * participant through `resolve`. Thin pass-throughs to lib/medusa; the
+ * browser never talks to the Bridge directly.
+ * @param {string} prefix - Route prefix, e.g. `/api/sessions/:project/medusa`.
+ * @param {(params: object, query: object) => object} resolve - Participant resolver.
+ * @returns {void}
+ */
+function registerMedusaRoutes(prefix, resolve) {
+  /**
+   * Answer the two refusal shapes. True when the route has already responded.
+   * @param {import('http').ServerResponse} res - Response.
+   * @param {object} r - Resolver result.
+   * @param {string} verb - What the caller was trying to do, for the 409 clause.
+   * @returns {boolean}
+   */
+  function refused(res, r, verb) {
+    if (r.error) {
+      errorResponse(res, r.error.status, r.error.message, r.error.code);
+      return true;
+    }
+    if (!r.target) {
+      errorResponse(res, 409, `${r.absent} to ${verb}`, 'NO_SESSION');
+      return true;
+    }
+    return false;
   }
-  const active = store.sessions.getActive(project.id);
-  const query = parseQuery(reqUrl(req).search);
-  const sessionId = active ? active.id : (query.sessionId ? query.sessionId : null);
-  const messages = sessionId == null ? [] : medusa.getMessages(sessionId);
-  jsonResponse(res, 200, { messages });
-});
 
-// POST /api/sessions/:project/medusa/read — mark this session's inbox read,
-// clearing the unread badge (MED-2K9P Chunk 02). Fired when the operator opens
-// the read panel. Idempotent; a session with no listener is a safe no-op.
-route('POST', '/api/sessions/:project/medusa/read', (_req, res, params, body) => {
-  const project = store.projects.getByName(params.project);
-  if (!project) {
-    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  /**
+   * The outbound gate — 403 `ACCESS_LEVEL` when the participant's level can
+   * receive but not send. True when the route has already responded.
+   * @param {import('http').ServerResponse} res - Response.
+   * @param {object} target - Resolved target.
+   * @returns {boolean}
+   */
+  function outboundRefused(res, target) {
+    if (target.outbound && target.outbound.allowed === false) {
+      errorResponse(res, 403, target.outbound.reason, 'ACCESS_LEVEL');
+      return true;
+    }
+    return false;
   }
-  const active = store.sessions.getActive(project.id);
-  const sessionId = active ? active.id : null;
-  if (sessionId != null) medusa.markRead(sessionId, body && body.ids);
-  jsonResponse(res, 200, medusa.getStatus(sessionId));
-});
 
-// GET /api/sessions/:project/medusa/roster — the live roster of other registered
-// workspaces this session can message (MED-2K9P Chunk 03), proxied from the Bridge
-// (`GET /workspaces`) with the calling session's own workspace excluded. Requires
-// an active session (409). The browser never calls the Bridge directly.
-route('GET', '/api/sessions/:project/medusa/roster', async (_req, res, params) => {
-  const project = store.projects.getByName(params.project);
-  if (!project) {
-    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
-  }
-  const active = store.sessions.getActive(project.id);
-  if (!active) {
-    return errorResponse(res, 409, 'No active session to list a roster for', 'NO_SESSION');
-  }
-  try {
-    const workspaces = await medusa.getRoster({ sessionId: active.id });
-    jsonResponse(res, 200, { workspaces });
-  } catch (err) {
-    errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_ROSTER_FAILED');
-  }
-});
+  // GET <prefix>/status — listener status (MED-2K9P Chunk 01). No live
+  // participant → an `off` status (a `?sessionId=` query is honored as a
+  // fallback for a project with no active session). MED-2K9P v2 T4: the
+  // response also carries `loops` — the participant's known loops with live
+  // Bridge state — so the banner loop view rides the existing status poll (no
+  // new timer). A Bridge failure during the loop fetch degrades honestly:
+  // `loops: []` plus a `loopsError` naming the reason, never a silent empty
+  // list; the listener status itself is still returned.
+  route('GET', `${prefix}/status`, async (req, res, params) => {
+    const r = resolve(params, parseQuery(reqUrl(req).search));
+    if (r.error) return errorResponse(res, r.error.status, r.error.message, r.error.code);
+    const sessionId = r.target ? r.target.sessionId : (r.fallbackSessionId || null);
+    const status = medusa.getStatus(sessionId);
+    let loops = [];
+    let loopsError = null;
+    if (sessionId != null && status.state !== 'off') {
+      try {
+        loops = await medusa.getLoops({ sessionId });
+      } catch (err) {
+        loopsError = err.message;
+      }
+    }
+    // The outbound verdict travels with the status so a control can render a
+    // disabled send WITH its reason rather than discovering the 403 on click.
+    const outbound = r.target ? r.target.outbound : { allowed: true, reason: null };
+    jsonResponse(res, 200, loopsError ? { ...status, loops, loopsError, outbound } : { ...status, loops, outbound });
+  });
 
-// POST /api/sessions/:project/medusa/send — send a direct message from this
-// session to another workspace (MED-2K9P Chunk 03). Body `{ to, message }`.
-// Requires an active session (409). Returns the HONEST result — `received`
-// (delivered live) or `queued` (recipient offline) — never a blanket "sent";
-// validation and Bridge failures surface as errors, not false successes.
-route('POST', '/api/sessions/:project/medusa/send', async (_req, res, params, body) => {
-  const project = store.projects.getByName(params.project);
-  if (!project) {
-    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
-  }
-  const active = store.sessions.getActive(project.id);
-  if (!active) {
-    return errorResponse(res, 409, 'No active session to send from', 'NO_SESSION');
-  }
-  try {
-    const result = await medusa.sendMessage({
-      sessionId: active.id,
-      to: body && body.to,
-      message: body && body.message
-    });
-    jsonResponse(res, 200, result);
-  } catch (err) {
-    errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_SEND_FAILED');
-  }
-});
+  // POST <prefix>/toggle — start or stop the participant's listener (MED-2K9P
+  // Chunk 02). Body `{enabled}` sets the desired state explicitly (idempotent —
+  // safe against double-clicks); omitted → flips the current state. Returns the
+  // resulting status.
+  route('POST', `${prefix}/toggle`, (_req, res, params, body) => {
+    const r = resolve(params);
+    if (refused(res, r, 'toggle Medusa for')) return;
+    const { target } = r;
+    const isOn = medusa.getStatus(target.sessionId).state !== 'off';
+    const desired = (body && typeof body.enabled === 'boolean') ? body.enabled : !isOn;
+    if (desired) {
+      medusa.startSession({ projectPath: target.projectPath, sessionId: target.sessionId, name: target.name });
+    } else {
+      medusa.stopSession(target.sessionId);
+    }
+    if (typeof r.afterToggle === 'function') r.afterToggle(desired);
+    jsonResponse(res, 200, medusa.getStatus(target.sessionId));
+  });
 
-// POST /api/sessions/:project/medusa/loop — open a Medusa loop from this session
-// to a target workspace (MED-2K9P v2 T3, the setup modal's launch). Body
-// `{ target, task, doneCriteria, mode, guards }`. Requires an active session
-// (409). Returns `{ loop }` — the created loop object; the Bridge itself
-// delivers the loopInvite to the target (durably queued, pushed live when the
-// target is online — Medusa#47 fixed upstream, so TC's out-of-band task notice
-// was dropped, TC#552). Validation and Bridge failures surface as errors,
-// never a false "launched".
-route('POST', '/api/sessions/:project/medusa/loop', async (_req, res, params, body) => {
-  const project = store.projects.getByName(params.project);
-  if (!project) {
-    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
-  }
-  const active = store.sessions.getActive(project.id);
-  if (!active) {
-    return errorResponse(res, 409, 'No active session to open a loop from', 'NO_SESSION');
-  }
-  try {
-    const result = await medusa.openLoop({
-      sessionId: active.id,
-      target: body && body.target,
-      task: body && body.task,
-      doneCriteria: body && body.doneCriteria,
-      mode: body && body.mode,
-      guards: body && body.guards
-    });
-    jsonResponse(res, 200, result);
-  } catch (err) {
-    errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_LOOP_FAILED');
-  }
-});
+  // GET <prefix>/messages — the received inbox (MED-2K9P Chunk 02). A pure
+  // read (no mark-read side effect on GET); the read panel clears unread via
+  // POST /read. No live participant → an empty inbox.
+  route('GET', `${prefix}/messages`, (req, res, params) => {
+    const r = resolve(params, parseQuery(reqUrl(req).search));
+    if (r.error) return errorResponse(res, r.error.status, r.error.message, r.error.code);
+    const sessionId = r.target ? r.target.sessionId : (r.fallbackSessionId || null);
+    const messages = sessionId == null ? [] : medusa.getMessages(sessionId);
+    jsonResponse(res, 200, { messages });
+  });
 
-// POST /api/sessions/:project/medusa/loops/:loopId/force-done — the human
-// kill-switch on a loop this session initiated (MED-2K9P v2 T4). Rides the
-// Bridge's initiator-only close with a structured
-// `closeSignal.reason: 'force-done'` (the Bridge reserves `halted` for its own
-// runaway guards — no external halt transition exists). Bridge rejections pass
-// through with their real status: 403 = not the initiator (the control
-// invariant), 400 = already complete or guard-halted ("a halted loop cannot be
-// closed"), 404 = the Bridge no longer knows the loop.
-route('POST', '/api/sessions/:project/medusa/loops/:loopId/force-done', async (_req, res, params) => {
-  const project = store.projects.getByName(params.project);
-  if (!project) {
-    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
-  }
-  const active = store.sessions.getActive(project.id);
-  if (!active) {
-    return errorResponse(res, 409, 'No active session to end a loop from', 'NO_SESSION');
-  }
-  try {
-    const result = await medusa.forceDoneLoop({ sessionId: active.id, loopId: params.loopId });
-    jsonResponse(res, 200, result);
-  } catch (err) {
-    errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_FORCE_DONE_FAILED');
-  }
-});
+  // POST <prefix>/read — mark the inbox read, clearing the unread badge
+  // (MED-2K9P Chunk 02). Idempotent; no listener is a safe no-op.
+  route('POST', `${prefix}/read`, (_req, res, params, body) => {
+    const r = resolve(params);
+    if (r.error) return errorResponse(res, r.error.status, r.error.message, r.error.code);
+    const sessionId = r.target ? r.target.sessionId : null;
+    if (sessionId != null) medusa.markRead(sessionId, body && body.ids);
+    jsonResponse(res, 200, medusa.getStatus(sessionId));
+  });
 
-// POST /api/sessions/:project/medusa/loops/:loopId/continue — send an initiator
-// FEEDBACK round to continue a supervised loop this session initiated (TC#561 —
-// the FEEDBACK half of the design §1 control spine). Body `{ message }`. Rides
-// the Bridge's `POST /loops/:id/message`; valid only once the target has
-// responded (`state === 'responded'`) — a wrong-state click surfaces the
-// Bridge's 400 verbatim, never a false "sent".
-route('POST', '/api/sessions/:project/medusa/loops/:loopId/continue', async (_req, res, params, body) => {
-  const project = store.projects.getByName(params.project);
-  if (!project) {
-    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
-  }
-  const active = store.sessions.getActive(project.id);
-  if (!active) {
-    return errorResponse(res, 409, 'No active session to continue a loop from', 'NO_SESSION');
-  }
-  try {
-    const result = await medusa.continueLoop({ sessionId: active.id, loopId: params.loopId, message: body && body.message });
-    jsonResponse(res, 200, result);
-  } catch (err) {
-    errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_CONTINUE_FAILED');
-  }
-});
+  // GET <prefix>/roster — the live roster of other registered workspaces this
+  // participant can message (MED-2K9P Chunk 03), proxied from the Bridge
+  // (`GET /workspaces`) with the caller's own workspace excluded. Requires a
+  // live participant (409).
+  route('GET', `${prefix}/roster`, async (_req, res, params) => {
+    const r = resolve(params);
+    if (refused(res, r, 'list a roster for')) return;
+    try {
+      const workspaces = await medusa.getRoster({ sessionId: r.target.sessionId });
+      jsonResponse(res, 200, { workspaces });
+    } catch (err) {
+      errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_ROSTER_FAILED');
+    }
+  });
 
-// POST /api/sessions/:project/medusa/loops/:loopId/closeout — the SATISFIED
-// closeout of a loop this session initiated (TC#561 — the CLOSEOUT half of the
-// control spine). Distinct from force-done (the kill-switch): rides the Bridge
-// close with `closeSignal.reason: 'satisfied'` so the outcome is labeled
-// "ended — marked done", not "ended by force-done". Same initiator-only (403)
-// / already-closed (400) / unknown (404) passthrough.
-route('POST', '/api/sessions/:project/medusa/loops/:loopId/closeout', async (_req, res, params) => {
-  const project = store.projects.getByName(params.project);
-  if (!project) {
-    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
-  }
-  const active = store.sessions.getActive(project.id);
-  if (!active) {
-    return errorResponse(res, 409, 'No active session to close a loop from', 'NO_SESSION');
-  }
-  try {
-    const result = await medusa.closeoutLoop({ sessionId: active.id, loopId: params.loopId });
-    jsonResponse(res, 200, result);
-  } catch (err) {
-    errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_CLOSEOUT_FAILED');
-  }
-});
+  // POST <prefix>/send — send a direct message to another workspace (MED-2K9P
+  // Chunk 03). Body `{ to, message }`. Requires a live participant (409) whose
+  // level may send (403). Returns the HONEST result — `received` (delivered
+  // live) or `queued` (recipient offline) — never a blanket "sent"; validation
+  // and Bridge failures surface as errors, not false successes.
+  route('POST', `${prefix}/send`, async (_req, res, params, body) => {
+    const r = resolve(params);
+    if (refused(res, r, 'send from')) return;
+    if (outboundRefused(res, r.target)) return;
+    try {
+      const result = await medusa.sendMessage({
+        sessionId: r.target.sessionId,
+        to: body && body.to,
+        message: body && body.message
+      });
+      jsonResponse(res, 200, result);
+    } catch (err) {
+      errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_SEND_FAILED');
+    }
+  });
+
+  // POST <prefix>/loop — open a Medusa loop to a target workspace (MED-2K9P v2
+  // T3, the setup modal's launch). Body `{ target, task, doneCriteria, mode,
+  // guards }`. Requires a live participant (409) whose level may send (403).
+  // Returns `{ loop }` — the created loop object; the Bridge itself delivers
+  // the loopInvite to the target (durably queued, pushed live when the target
+  // is online — Medusa#47 fixed upstream, so TC's out-of-band task notice was
+  // dropped, TC#552). Validation and Bridge failures surface as errors, never a
+  // false "launched".
+  route('POST', `${prefix}/loop`, async (_req, res, params, body) => {
+    const r = resolve(params);
+    if (refused(res, r, 'open a loop from')) return;
+    if (outboundRefused(res, r.target)) return;
+    try {
+      const result = await medusa.openLoop({
+        sessionId: r.target.sessionId,
+        target: body && body.target,
+        task: body && body.task,
+        doneCriteria: body && body.doneCriteria,
+        mode: body && body.mode,
+        guards: body && body.guards
+      });
+      jsonResponse(res, 200, result);
+    } catch (err) {
+      errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_LOOP_FAILED');
+    }
+  });
+
+  // POST <prefix>/loops/:loopId/force-done — the human kill-switch on a loop
+  // this participant initiated (MED-2K9P v2 T4). Rides the Bridge's
+  // initiator-only close with a structured `closeSignal.reason: 'force-done'`
+  // (the Bridge reserves `halted` for its own runaway guards — no external halt
+  // transition exists). Bridge rejections pass through with their real status:
+  // 403 = not the initiator (the control invariant), 400 = already complete or
+  // guard-halted ("a halted loop cannot be closed"), 404 = the Bridge no longer
+  // knows the loop.
+  route('POST', `${prefix}/loops/:loopId/force-done`, async (_req, res, params) => {
+    const r = resolve(params);
+    if (refused(res, r, 'end a loop from')) return;
+    if (outboundRefused(res, r.target)) return;
+    try {
+      const result = await medusa.forceDoneLoop({ sessionId: r.target.sessionId, loopId: params.loopId });
+      jsonResponse(res, 200, result);
+    } catch (err) {
+      errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_FORCE_DONE_FAILED');
+    }
+  });
+
+  // POST <prefix>/loops/:loopId/continue — send an initiator FEEDBACK round to
+  // continue a supervised loop this participant initiated (TC#561 — the
+  // FEEDBACK half of the design §1 control spine). Body `{ message }`. Rides
+  // the Bridge's `POST /loops/:id/message`; valid only once the target has
+  // responded (`state === 'responded'`) — a wrong-state click surfaces the
+  // Bridge's 400 verbatim, never a false "sent".
+  route('POST', `${prefix}/loops/:loopId/continue`, async (_req, res, params, body) => {
+    const r = resolve(params);
+    if (refused(res, r, 'continue a loop from')) return;
+    if (outboundRefused(res, r.target)) return;
+    try {
+      const result = await medusa.continueLoop({ sessionId: r.target.sessionId, loopId: params.loopId, message: body && body.message });
+      jsonResponse(res, 200, result);
+    } catch (err) {
+      errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_CONTINUE_FAILED');
+    }
+  });
+
+  // POST <prefix>/loops/:loopId/closeout — the SATISFIED closeout of a loop
+  // this participant initiated (TC#561 — the CLOSEOUT half of the control
+  // spine). Distinct from force-done (the kill-switch): rides the Bridge close
+  // with `closeSignal.reason: 'satisfied'` so the outcome is labeled "ended —
+  // marked done", not "ended by force-done". Same initiator-only (403) /
+  // already-closed (400) / unknown (404) passthrough.
+  route('POST', `${prefix}/loops/:loopId/closeout`, async (_req, res, params) => {
+    const r = resolve(params);
+    if (refused(res, r, 'close a loop from')) return;
+    if (outboundRefused(res, r.target)) return;
+    try {
+      const result = await medusa.closeoutLoop({ sessionId: r.target.sessionId, loopId: params.loopId });
+      jsonResponse(res, 200, result);
+    } catch (err) {
+      errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_CLOSEOUT_FAILED');
+    }
+  });
+}
+
+registerMedusaRoutes('/api/sessions/:project/medusa', resolveProjectMedusaTarget);
+// The Master's mount (#996). Deliberately the SAME family rather than a subset:
+// the outbound gate, not a missing route, is what a read-only Master meets.
+registerMedusaRoutes('/api/master/medusa', resolveMasterMedusaTarget);
+
 
 // POST /api/sessions/:project/wrap-sentinel/ack — Clear a pending typed-wrap
 // request once the session view has opened the wrap drawer, so the poll won't
@@ -6667,6 +6788,10 @@ if (require.main === module) {
     // listeners are in-memory, so without this a server restart silently
     // deregistered every running session from the switchboard.
     sessions.resyncMedusaListeners();
+    // The Master's half of that re-sync (#996): a Master left running across
+    // a TangleClaw restart would otherwise drop off the switchboard until its
+    // next ensure. Probes tmux and starts nothing when tmux does not answer.
+    master.resyncMasterMedusa();
     // Resolve the operator's login PATH once, here, so no request ever pays for
     // it. launchd hands this service `/usr/bin:/bin:/usr/sbin:/sbin`, which
     // contains none of the places an engine CLI actually installs (#346) — and
