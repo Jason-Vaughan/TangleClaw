@@ -338,17 +338,25 @@ describe('sidecar', () => {
       // Settling only on res.'end' or req.'error' is not enough. A socket
       // closing mid-body fires neither, so the promise hung — and because the
       // next poll is scheduled from .finally(), one hang killed polling forever.
+      //
+      // The truncation MUST be a graceful close (FIN), not `socket.destroy()`
+      // (RST). Measured on node v22: RST raises ECONNRESET on the *request*,
+      // which the pre-fix code already settled on, so a destroy()-based fixture
+      // passes against the unfixed code and proves nothing. FIN raises
+      // res.'aborted'/'error'/'close' and nothing request-side — the real hang.
+      // The `timeoutMs` here is also deliberately far below the 3s race: a
+      // timeout-driven settle would be indistinguishable from the fix working.
       const server = http.createServer((req, res) => {
         res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': '999' });
         res.write('{"active":');
-        res.socket.destroy(); // truncate: headers sent, body never completes
+        res.socket.end(); // truncate: headers sent, body never completes
       });
       await new Promise(r => server.listen(0, '127.0.0.1', r));
       const port = server.address().port;
       const connId = createConn('TruncClaw', port);
 
       const result = await Promise.race([
-        sidecar.pollProcesses(connId, { timeoutMs: 400 }),
+        sidecar.pollProcesses(connId, { timeoutMs: 30000 }),
         new Promise(r => setTimeout(() => r('HUNG'), 3000))
       ]);
       server.close();

@@ -472,3 +472,89 @@ describe('clawbridge.getFile', () => {
     assert.ok(result.error);
   });
 });
+
+// ── #1026: every bridge promise must settle, including on a dying socket ──────
+
+describe('clawbridge — a socket that dies mid-response', () => {
+  /**
+   * Serve response headers promising a body, send part of it, then close the
+   * socket gracefully (FIN). This is the truncation that hangs: FIN raises
+   * res.'aborted'/'error'/'close' and NOTHING request-side, so settling on
+   * res.'end' + req.'error' never fires, and `req.setTimeout` cannot rescue it
+   * because that timer is socket-inactivity based and dies with the socket.
+   * (`socket.destroy()`/RST would NOT do — it raises ECONNRESET on the request,
+   * which the pre-fix code already handled, so it passes against the bug.)
+   * @returns {Promise<{port: number, close: () => Promise<void>}>}
+   */
+  async function truncatingBridge() {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': '999' });
+      res.write('{"sessionId":');
+      res.socket.end();
+    });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    return { port: server.address().port, close: () => new Promise((r) => server.close(r)) };
+  }
+
+  /**
+   * Resolve the call's result, or 'HUNG' if it does not settle in `ms`.
+   * @param {Promise<any>} promise
+   * @param {number} ms
+   * @returns {Promise<any|'HUNG'>}
+   */
+  function within(promise, ms) {
+    return Promise.race([promise, new Promise((r) => setTimeout(() => r('HUNG'), ms))]);
+  }
+
+  // The 30s timeoutMs against a 3s race is deliberate in both tests below: a
+  // timeout-driven settle cannot be what makes them pass.
+
+  it('startSession settles rather than hanging', async () => {
+    const s = await truncatingBridge();
+    try {
+      const result = await within(clawbridge.startSession({
+        localPort: s.port, token: null, project: 'p', permissionMode: 'default', timeoutMs: 30000
+      }), 3000);
+      assert.notEqual(result, 'HUNG', 'startSession must settle on a truncated response, not hang');
+      assert.equal(result.ok, false);
+      assert.equal(result.status, 0);
+      assert.equal(result.sessionId, null);
+      assert.ok(result.error, 'carries a reason the caller can log');
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('_requestJson settles rather than hanging, so every verb built on it does', async () => {
+    // getStatus stands in for send/getOutput/getStatus/getFile — they all route
+    // through _requestJson, so the settle guarantee is shared, not per-verb.
+    const s = await truncatingBridge();
+    try {
+      const result = await within(clawbridge.getStatus({
+        localPort: s.port, token: null, project: 'p', timeoutMs: 30000
+      }), 3000);
+      assert.notEqual(result, 'HUNG', 'getStatus must settle on a truncated response, not hang');
+      assert.equal(result.ok, false);
+      assert.equal(result.status, 0);
+      assert.ok(result.error, 'carries a reason the caller can log');
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('still reports a genuine timeout with the bridge-specific wording', async () => {
+    // The refactor onto requestOnce must not flatten a timeout into the
+    // generic termination message operators do not recognise.
+    const server = http.createServer(() => { /* hang */ });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    try {
+      const result = await clawbridge.getStatus({
+        localPort: server.address().port, token: null, project: 'p', timeoutMs: 50
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.error, 'bridge request timed out after 50ms');
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
+  });
+});
