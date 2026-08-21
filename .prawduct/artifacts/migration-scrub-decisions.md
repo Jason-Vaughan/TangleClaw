@@ -101,43 +101,63 @@ Two survivor titles are **upleveled in the plan rather than after the merge**
 (`TST-3M6R`, `UPD-3F7Q`), so each survivor is created already carrying the
 root-cause title and needs no post-merge retitle write.
 
-## Blocking issues (unresolved at the time of writing)
+## Blocking issues
 
-**`.prawduct/backlog.md` is NOT git-tracked.** `.gitignore:10` ignores
-`.prawduct/*` fail-closed and negates only `.prawduct/change-log.md`;
-`git ls-files` does not know the file, and edits to it produce no `git status`
-entry. This falsifies the runbook's Step 1 premise ("the source is git-tracked —
-that is the pre-migration backup") and removes the safety net the `open` scope
-decision rests on: under `open`, the 35 skipped archived items would live in
-exactly one place — this machine's working tree — with no git history, no
-survival across a fresh clone, and no presence in the MG2 export.
+**RESOLVED 2026-08-20.** `.prawduct/backlog.md` was un-ignored and committed to `main`
+at `643c029` (PR #1031), together with the three migration audit files. The
+pre-migration backup the runbook requires genuinely exists, so the
+`--archive-scope open` decision stands on real ground. The negation was scoped to
+those files only — `.prawduct/artifacts/` was **not** un-ignored wholesale, because it
+holds ~54 internal design docs (~1.3 MB, incl. `security-model.md`) in a public repo.
 
-The repo's own `.gitignore` already documents this exact failure mode for a
-different path: "Ignoring plans made every clone of this repo planless."
+### Open — needs an owner decision
 
-Resolve before importing. Options, in the order recommended:
-1. Negate the ignore (`!.prawduct/backlog.md`) and commit the file — restores the
-   runbook premise and matches the existing precedent for `change-log.md`.
-2. Switch to `--archive-scope all` so history lands in the tracker (costs 23 more
-   title rewrites and 35 more issues, and re-preview).
-3. Accept the risk explicitly and record it here.
+**The cutover switch is machine-local.** `.prawduct/project-state.yaml` is **not**
+git-tracked (it falls under the same `.prawduct/*` ignore), so
+`backlog_service_repo: Jason-Vaughan/TangleClaw` exists only in this working tree. On a
+fresh clone — or on elkaholic, where the operator usually works — the scalar reads unset,
+the backlog skill routes to the **markdown backend**, and it reads the frozen file as
+live state. The banner warns a human; nothing warns the tooling.
 
-**Secondary:** this decisions file, the plan and the preview also sit under the
-ignored `.prawduct/artifacts/`, so they are untracked too — weak auditability for
-a record whose whole purpose is to be auditable later.
+Options (same scoping caution as before — do not add a broad negation):
+1. Negate `!.prawduct/project-state.yaml` and commit it. It is ~33 KB of internal project
+   state going into a public repo, so it wants the same review pass `backlog.md` got.
+2. Extract just the backend fact into a small tracked file.
+3. Accept it as per-machine setup and document the one-line fix in the README/onboarding.
+
+## Execution record — 2026-08-20
+
+| Step | Result |
+|---|---|
+| `restructure apply` | **n/a** — no such op exists; the plan applies at create via `--restructure`. |
+| `provision` | 7 labels created (`stage:*` &times;5, `status:submitted`, `status:in-progress`); all 12 pre-existing foreign labels untouched. |
+| `import --archive-scope open` | **41 created, 0 skipped, 0 rejected, 0 collisions**, 41 restructured by plan. Issues **#1032–#1072**, contiguous. No unreconciled-status warning. Pacing: ≥709 REST points, never throttled. |
+| `verify-migration --archive-scope open` | **exit 0** — `source_items: 41`, `aliased: 41`, and `missing` / `unaliasable` / `collisions` / `status_mismatch` / `duplicate_alias` all empty. |
+| Cutover | `backlog_service_repo` set (verified through the plugin's own parser: `post_cutover = True`); frozen-history banner written to `.prawduct/backlog.md`. |
+| Merges | `TST-5N8W` #1068 → #1067 · `UPD-7B4X` #1060 → #1059. Both losers CLOSED carrying `superseded_by`; both survivors OPEN with the upleveled titles. |
+| Links | `MED-8H5W` #1043 parent of #1040/#1041/#1042 (native sub-issues) · `PRW-6T2M` #1064 related #1065 · `TL-3D5K` #1038 related `NRM-5K8T` #1070, with the scope-fold decision recorded as a comment on both. |
+| Cache | `sync` wrote 41 rows with the FTS index built, so post-cutover readers (`find`, `dead-why`, `stalled-transition`, janitor Backlog Health) resolve. |
+
+Fidelity spot-check on `PRW-9K4C` (#1045): parked decision text and both re-open
+conditions preserved verbatim; `original_title` stashed in the block; full facet label
+set present including the `id:PRW-9K4C` alias.
+
+**Do not re-run `import` or `verify-migration` from here.** The import reconciles every
+item to its *markdown* status and would reopen both merged losers; the gate now reads
+those two disposals as `status_mismatch` and exits 4 on a migration that is correct.
 
 ## Status
 
 - [x] Precondition — backlog service present (3.4.0)
-- [x] Step 0 — target confirmed + recorded
+- [x] Step 0 — target confirmed + recorded; label taxonomy provisioned
+- [x] Step 1 — pre-migration backup exists (`643c029`)
 - [x] Step 1b — id validation (76 records, 0 collisions, 0 unaliasable)
 - [x] Step 2/3 — candidates surfaced, dispositions owner-verified
-- [x] Step 3b — restructure plan authored, preview rendered, 0 blocking titles
-- [x] Step 3c — archive scope chosen
-- [ ] **Owner approves the preview in aggregate**
-- [ ] Resolve the git-tracking blocker above
-- [ ] Step 0 — `provision` label taxonomy against the target
-- [ ] Step 4 — import
-- [ ] Step 5 — spot-check
-- [ ] Step 6 — `verify-migration` (exit 0) → set `backlog_service_repo` → frozen-history banner
-- [ ] Step 7 — apply the confirmed merges + links on the tracker
+- [x] Step 3b — restructure plan authored, preview rendered, owner-approved
+- [x] Step 3c — archive scope chosen (`open`)
+- [x] Step 4 — import (41 created)
+- [x] Step 5 — spot-check
+- [x] Step 6 — gate exit 0 → `backlog_service_repo` set → frozen-history banner
+- [x] Step 7 — merges + links applied on the tracker
+- [ ] **Commit the banner** (`.prawduct/backlog.md` is modified and uncommitted)
+- [ ] **Owner decision** — the machine-local cutover switch (see above)

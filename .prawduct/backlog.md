@@ -1,5 +1,34 @@
 # Backlog — TangleClaw
 
+> ## ⚠️ FROZEN HISTORY — this file is no longer the live backlog
+>
+> **Cut over to GitHub Issues on 2026-08-20.** The live backlog for TangleClaw is now
+> **<https://github.com/Jason-Vaughan/TangleClaw/issues>**, reached through the
+> `prawduct-hook backlog` adapter. `backlog_service_repo` is set in
+> `.prawduct/project-state.yaml`, so the backlog skill treats *this file* as history and
+> does not read it for live state. **Do not add items here.**
+>
+> **Read the live backlog instead:**
+>
+> ```sh
+> prawduct-hook backlog list --repo Jason-Vaughan/TangleClaw
+> prawduct-hook backlog pick --repo Jason-Vaughan/TangleClaw
+> prawduct-hook backlog sync --repo Jason-Vaughan/TangleClaw   # build the local cache
+> ```
+>
+> …or use `/prawduct:backlog`, which routes to the service automatically.
+>
+> **Divergence from the tracker is expected, not a bug.** This file is a snapshot of the
+> moment of migration. Dispositions confirmed at the scrub — merges, links, closures —
+> were applied to the *tracker* afterwards and are **not** backported here, so items will
+> show as open below that GitHub has since closed or folded. The tracker wins, always.
+>
+> **35 archived items below were deliberately NOT migrated** (`--archive-scope open`), so
+> for those this file is the only record. The 41 live items were migrated as issues
+> **#1032–#1072**; each carries an `id:PFX` label keying it back to its entry here.
+> Full record: `.prawduct/artifacts/migration-scrub-decisions.md`.
+
+
 <!-- Structured product backlog. Add new items under ## Open.
 
 Each item:
