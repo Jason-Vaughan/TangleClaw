@@ -21,6 +21,14 @@ All notable changes to TangleClaw are documented in this file.
 
   Verified against the live panes it was built from: three sessions holding suggestions moved from `no-bare-prompt` to `at-prompt`, while a session with genuinely typed text stayed refused. `lib/tmux.js`, `lib/medusa-wake.js`, `test/medusa-wake.test.js`, `test/tmux.test.js`.
 
+- **The placeholder rule was Claude's rule, so antigravity sessions stayed unwakeable (#1105).** #1103 taught the wake gate that a prompt-line placeholder is not operator input, but it recognised only SGR 2 (faint) — how Claude Code dims its inline suggestion. Antigravity greys its mode banner (`Accept-edits mode: …`) with SGR 90 instead, so the gate still read it as typed input and refused. Found by auditing all four gates against live panes on both engines after #1103 shipped; the fix generalised from one engine, which is the same mistake in a new place.
+
+  `placeholderSgr` is now declared per engine — `[2]` for Claude, `[90]` for antigravity — rather than shared. A shared set would pass one engine and silently fail the other, and accepting the wrong attribute is not a cosmetic error: it means treating real operator input as a placeholder and typing over it. Both directions are pinned by tests.
+
+  `_cells` now tracks the full SGR attribute set per column instead of a single faint flag, with the resets that actually end a span: `0` clears everything, `22` clears intensity, `39` restores the default foreground, and a new colour replaces the old rather than stacking. Without that last pair a grey span would never end.
+
+  What makes this safe rather than a guess is the control capture: **genuinely typed antigravity input carries no styling at all**. Treating a colour as "not real input" without evidence that real input is never rendered in it would have been reckless — that capture is the reason the rule is defensible, and it is pinned as a fixture. New fixtures use `` escapes rather than raw control bytes, since the raw form is invisible in every viewer and that invisibility is part of how the Claude-only assumption survived review. `lib/medusa-wake.js`, `test/medusa-wake.test.js`.
+
 ### Internal
 - **The #818 Switchboard train's plan is archived, and its live verification is on the record (#1097, #1098).** `818-switchboard-truth.md` moved to `.tangleclaw/plans/archive/` now that it shipped as `5.13.0` — archived rather than deleted so the rationale survives, and out of the active listing so a future session cannot read closed work as ready.
 
