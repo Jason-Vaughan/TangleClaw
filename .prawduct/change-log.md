@@ -66,6 +66,13 @@ module. The real race is narrower and is now handled properly with a per-connect
 re-sets the count it just saw cleared. The wrong reason had already reached two change records
 before review caught it.
 
+The epoch then needed widening for the same reason it existed. `stopAllPolling` bumped it only for
+ids already carrying failures, so a connection polling *healthily* with a request in flight kept a
+matching epoch and wrote a count back after the clear — the exact residue the guard was added to
+prevent, while its comment asserted the property unconditionally. Keyed off the poller map instead.
+"One call site is not the family" reintroduced by the code closing a related gap, which is the part
+worth remembering: a guard's own family is the thing to enumerate, not the case that prompted it.
+
 **Scoping held under pressure.** This surfaced during a habitat outage where the host kernel had
 stopped reaping `TIME_WAIT` and its ephemeral range filled, and the peer session's first diagnosis
 attributed it to this poller. It was written from the start as a contributor rather than the cause,

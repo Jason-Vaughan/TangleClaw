@@ -317,12 +317,12 @@ describe('sidecar', () => {
     });
   });
 
-  // ── #1024 follow-up: findings the Critic raised on the fix itself ──
+  // ── #1024: liveness of the poll loop itself ──
   describe('poll loop liveness (#1024 R-1/R-2)', () => {
     const http = require('node:http');
 
     it('re-arms the loop after every tick, including a failing one', async () => {
-      // R-2: without `.finally(scheduleNext)` the loop runs exactly once and the
+      // Without `.finally(scheduleNext)` the loop runs exactly once and the
       // whole suite still passes, because _pollers is populated before tick one.
       const connId = createConn('LoopClaw', 59998); // nothing listening -> every tick fails
       sidecar.startPolling(connId, 20);
@@ -335,7 +335,7 @@ describe('sidecar', () => {
     });
 
     it('settles even when the socket dies after headers but before the body', async () => {
-      // R-1: the original only settled on res.'end' or req.'error'. A socket
+      // Settling only on res.'end' or req.'error' is not enough. A socket
       // closing mid-body fires neither, so the promise hung — and because the
       // next poll is scheduled from .finally(), one hang killed polling forever.
       const server = http.createServer((req, res) => {
@@ -357,7 +357,7 @@ describe('sidecar', () => {
     });
 
     it('clears the failure count on a genuinely successful poll', async () => {
-      // R-3: the earlier test named the success path but never exercised it,
+      // The success path needs a real server: naming it without exercising it
       // leaving `_failures.delete` on success unmutated.
       const server = http.createServer((req, res) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -392,7 +392,7 @@ describe('sidecar', () => {
     });
 
     it('a poll in flight when polling stops cannot re-set the cleared count', async () => {
-      // R-5: stopPolling does not abort an in-flight request. Its result lands
+      // stopPolling does not abort an in-flight request. Its result lands
       // afterwards and, without the epoch guard, re-sets the count it just saw
       // cleared — so the next startPolling opens already backed off.
       const connId = createConn('RaceClaw', 59997); // nothing listening
