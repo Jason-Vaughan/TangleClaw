@@ -122,8 +122,12 @@ function installWorld(overrides = {}) {
     // project-only test exactly as it was; the Master tests set a record.
     masterRecord: null,
     masterInjected: [],
+    // #792's ledger. Captured rather than written to a database, so these tests
+    // assert what the monitor DECIDED to record without needing a store.
+    recorded: [],
     ...overrides
   };
+  wake._internal.recordDelivery = (entry) => { world.recorded.push(entry); };
   wake._internal.masterWakeRecord = () => world.masterRecord;
   wake._internal.injectMaster = (command) => {
     world.masterInjected.push(command);
@@ -521,5 +525,99 @@ describe('medusa-wake — the Project Master is scanned like any session (#996)'
     assert.ok(!line.includes('\n'), 'single line — sendKeys sends one Enter');
     // The project form is the same text with the project base substituted.
     assert.equal(wake._nudgeLine('My Proj', 3), wake._nudgeLineFor('/api/sessions/My%20Proj/medusa', 3));
+  });
+});
+
+describe('medusa-wake — the delivery ledger (#792, #791)', () => {
+  // `wake.stop()` clears the monitor's per-session state, including the
+  // already-nudged watermark. Without it the first test's successful nudge
+  // makes every later one take the "this edge is already announced" exit and
+  // record nothing — the tests would be measuring leaked state, not behaviour.
+  let saved;
+  beforeEach(() => { wake.stop(); saved = { ...wake._internal }; });
+  afterEach(() => { Object.assign(wake._internal, saved); wake.stop(); });
+
+  it('records a nudge that landed, naming the channel', () => {
+    const world = installWorld();
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1, 'precondition: the nudge fired');
+    assert.equal(world.recorded.length, 1);
+    assert.deepEqual(
+      { outcome: world.recorded[0].outcome, channel: world.recorded[0].channel, key: world.recorded[0].messageKey },
+      { outcome: 'nudged', channel: 'tmux-inject', key: 'm1' }
+    );
+  });
+
+  it('records an injection that was attempted and failed (#791)', () => {
+    // The whole point: this used to be a log line and nothing else, so a broken
+    // channel and a quiet peer were the same thing from anywhere outside.
+    const world = installWorld({ injectResult: { ok: false, error: 'tmux session gone' } });
+    tickThroughDebounce();
+    assert.equal(world.recorded.length, 1);
+    assert.equal(world.recorded[0].outcome, 'failed');
+    assert.equal(world.recorded[0].channel, 'tmux-inject');
+    assert.match(world.recorded[0].skipReason, /tmux session gone/);
+  });
+
+  it('records unread mail on a session whose wake is switched off', () => {
+    // The most consequential silence: mail nothing will ever announce.
+    const world = installWorld({ config: { medusaWake: false } });
+    wake._internal.tick();
+    assert.equal(world.injected.length, 0);
+    assert.equal(world.recorded.length, 1);
+    assert.equal(world.recorded[0].outcome, 'skipped');
+    assert.equal(world.recorded[0].skipReason, 'wake-not-opted-in');
+    assert.equal(world.recorded[0].unread, 1);
+  });
+
+  it('records a busy pane as a skip naming the pane verdict', () => {
+    const world = installWorld({ pane: BUSY_PANE });
+    wake._internal.tick();
+    assert.equal(world.recorded.length, 1);
+    assert.equal(world.recorded[0].skipReason, 'pane-turn-in-flight');
+  });
+
+  it('records a listener that is not listening, so a reconnect window is visible', () => {
+    const world = installWorld({ status: { state: 'connecting', workspaceId: 'w', unread: 2, lastError: null } });
+    wake._internal.tick();
+    assert.equal(world.recorded.length, 1);
+    assert.equal(world.recorded[0].skipReason, 'listener-connecting');
+  });
+
+  it('records nothing when the inbox is empty — an empty inbox is not a miss', () => {
+    const world = installWorld({ status: { state: 'listening', workspaceId: 'w', unread: 0, lastError: null }, inbox: [] });
+    tickThroughDebounce();
+    assert.deepEqual(world.recorded, []);
+  });
+
+  it('records one row per (edge, outcome) rather than one per tick', () => {
+    // The monitor runs on a timer. A row per tick would bury the one event that
+    // matters and blow through retention within an hour.
+    const world = installWorld({ config: { medusaWake: false } });
+    for (let i = 0; i < 12; i++) wake._internal.tick();
+    assert.equal(world.recorded.length, 1, 'twelve ticks, one fact');
+
+    // A NEW message is a new edge, and must be recorded again.
+    world.inbox = [{ id: 'm1' }, { id: 'm2' }];
+    world.status = { state: 'listening', workspaceId: 'w', unread: 2, lastError: null };
+    wake._internal.tick();
+    assert.equal(world.recorded.length, 2);
+    assert.equal(world.recorded[1].messageKey, 'm2');
+  });
+
+  it('records a changed outcome for the same edge — a channel that breaks is news', () => {
+    const world = installWorld({ pane: BUSY_PANE });
+    wake._internal.tick();
+    assert.equal(world.recorded.length, 1);
+    world.pane = IDLE_PANE;
+    tickThroughDebounce();
+    assert.deepEqual(world.recorded.map((r) => r.outcome), ['skipped', 'nudged']);
+  });
+
+  it('never lets a ledger failure stop the nudge', () => {
+    const world = installWorld();
+    wake._internal.recordDelivery = () => { throw new Error('db is locked'); };
+    assert.doesNotThrow(() => tickThroughDebounce());
+    assert.equal(world.injected.length, 1, 'the nudge still went out');
   });
 });

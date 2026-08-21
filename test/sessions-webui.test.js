@@ -77,7 +77,7 @@ describe('Web UI session lifecycle', () => {
     it('should have the current schema version', () => {
       const db = store.getDb();
       const row = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
-      assert.equal(row.version, 29);
+      assert.equal(row.version, store.CURRENT_SCHEMA_VERSION);
     });
 
     it('should have default_mode column in openclaw_connections', () => {

@@ -4,6 +4,19 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **A Switchboard delivery ledger, so a message nobody was told about stops looking like no message (#792, #791 — v5.13.0 car 2 of 6).** A message could reach the Hub, be accepted into the inbox, and never reach the agent — and nothing anywhere recorded the miss. From outside, an inbox with unread mail and a session that was never woken are the same thing, which is why on 2026-07-30 a human relaying badges by hand was the only reason a four-round cross-session exchange completed at all.
+
+  `medusa_deliveries` (schema v30) records what became of the nudge for each inbox edge: **`nudged`** reached the pane, **`failed`** was attempted and did not (#791 — previously a log line and nothing else, so a broken channel read exactly like a quiet peer), and **`skipped`** was never attempted and says why. Keeping the last two apart is the point: a failed injection is a broken channel, while a skip is usually a gate doing its job, and "not delivered" collapses the distinction the ledger exists to make. Every terminal path in `lib/medusa-wake.js#_scanSession` now records — including the most consequential silence of all, a session sitting on unread mail whose `medusaWake` is simply off.
+
+  This is deliberately the **same ledger #595 built for startup rules**, which #792 names as the precedent: same three-valued outcome, same "delivered through no channel is unstorable" CHECK constraints, same non-throwing writer, because an audit write must never be the reason a nudge does not happen. Its `session_id` is TEXT rather than INTEGER — the Project Master is a participant too and its session key is the literal string `master`, which an integer column would coerce or bucket into a shared null.
+
+  **It records events, not polling.** The monitor runs on a timer, so a row per tick would bury the one moment that matters and blow through retention within the hour. A row is written when the `(inbox edge, outcome, reason)` triple *changes*, and never when the inbox is empty — a session with no mail has not been failed by anything. The debounce tick is likewise not recorded: it is one tick away from nudging, not a miss.
+
+  **`GET /api/medusa/deliveries`** answers the fleet question #792 asks — every participant whose newest inbox edge was not nudged, oldest silence first, which is the query that would have caught every miss that night without anyone noticing a badge. `?sessionId=` narrows to one participant's history, and `GET /api/sessions/:project/medusa/deliveries` (mounted for the Master too, from the same route factory) is the per-participant view. `lib/store.js#medusaDeliveriesApi`, `lib/medusa-wake.js`, `server.js`.
+
+- **`store.CURRENT_SCHEMA_VERSION` is exported.** Thirteen tests across nine files held the schema version as a literal, so every migration silently owed a thirteen-line edit and a red suite until it was paid — and the literal was never what any of them meant to pin. They assert that an old database migrates all the way to HEAD; they now say so.
+
 ### Changed
 - **The Switchboard inbox holds un-handled mail, and only a consumer can empty it (#784, #785 — v5.13.0 car 1 of 6).** `POST /medusa/read` was one verb doing two jobs badly. It moved a counter — never touching a message, so `GET /medusa/messages` re-served the same mail forever and every consumer had to keep a private watermark to avoid answering twice (#784) — while simultaneously ACKing every un-ACKed id to the Hub, which **drops the Hub's durable copy for good**. The dashboard sends that call from `openInbox()` the moment the panel opens. So opening the inbox destroyed the last remaining copy of whatever it displayed, and the in-memory inbox was then discarded by any listener replacement, leaving `state=listening`, `unread=0`, and nothing (#785).
 
