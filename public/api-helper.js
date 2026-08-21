@@ -2487,8 +2487,13 @@
 
     /**
      * Open the inbox read panel (the badge click): fetch received messages,
-     * render them, and mark the inbox read (clearing the badge). Toggles closed
-     * if already open.
+     * render them, and report exactly those messages handled. Toggles closed if
+     * already open.
+     *
+     * Reporting by id rather than sending a bare badge clear is what makes the
+     * panel honest: a handled message leaves the inbox and is ACKed to the Hub,
+     * and anything that arrived after this fetch is untouched, so it cannot be
+     * discarded unseen (#784, #785).
      * @returns {Promise<void>}
      */
     async function openInbox() {
@@ -2503,7 +2508,14 @@
       panel.innerHTML = renderMessages(messages);
       panel.hidden = false;
 
-      const status = await deps.api(`${deps.apiBase}/read`, { method: 'POST' });
+      const handled = messages.map((msg) => msg && msg.id).filter((id) => id != null);
+      const status = handled.length
+        ? await deps.api(`${deps.apiBase}/read`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: handled })
+        })
+        : await deps.api(`${deps.apiBase}/read`, { method: 'POST' });
       if (status) {
         m.unread = status.unread || 0;
         render();

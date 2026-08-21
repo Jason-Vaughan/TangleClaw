@@ -218,7 +218,7 @@ describe('MedusaListener', () => {
     l.stop();
   });
 
-  it('markRead resets unread but keeps the inbox', () => {
+  it('markRead resets unread but keeps the inbox (badge clear only)', () => {
     const { factory, sockets } = makeFactory();
     const l = new MedusaListener({ workspaceId: 'ws-1', wsFactory: factory });
     l.start();
@@ -230,6 +230,97 @@ describe('MedusaListener', () => {
     assert.equal(l.unread, 0);
     assert.equal(l.inbox.length, 1);
     l.stop();
+  });
+
+  it('a badge clear never acks — the Hub keeps its durable copies (#785)', () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-1', wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-1' });
+    sockets[0]._message({ type: 'new_message', messageId: 'a', message: { id: 'a' } });
+    l.markRead();
+    const acks = sockets[0].sent.map((x) => JSON.parse(x)).filter((f) => f.type === 'ack');
+    assert.deepEqual(acks, [], 'clearing the badge must not drop the Hub copy');
+    assert.equal(l.inbox.length, 1, 'clearing the badge must not discard mail');
+    l.stop();
+  });
+
+  it('markHandled removes exactly the named messages from the inbox', () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-1', wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-1' });
+    for (const id of ['a', 'b', 'c']) {
+      sockets[0]._message({ type: 'new_message', messageId: id, message: { id } });
+    }
+    l.markHandled(['a', 'c']);
+    assert.deepEqual(l.inbox.map((m) => m.id), ['b']);
+    assert.equal(l.unread, 1);
+    l.stop();
+  });
+
+  it('markHandled matches a message whose body id differs from its envelope id', () => {
+    // `GET /messages` hands out message BODIES, so a consumer names a message by
+    // the body's `id`. If that ever diverges from the envelope's `messageId`,
+    // envelope-only matching would silently no-op: nothing would leave the inbox,
+    // nothing would be acked, and the Hub would re-flood on every reconnect.
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-1', wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-1' });
+    sockets[0]._message({ type: 'new_message', messageId: 'env-1', message: { id: 'body-1' } });
+    l.markHandled(['body-1']);
+    assert.equal(l.inbox.length, 0, 'a body-id report must remove the message');
+    const acks = sockets[0].sent.map((x) => JSON.parse(x)).filter((f) => f.type === 'ack');
+    assert.deepEqual(acks[0].messageIds, ['env-1'], 'the ack must carry the id the HUB knows');
+    l.stop();
+  });
+
+  it('markHandled ignores unknown ids and is safe to replay', () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-1', wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-1' });
+    sockets[0]._message({ type: 'new_message', messageId: 'a', message: { id: 'a' } });
+    l.markHandled(['nope']);
+    assert.equal(l.inbox.length, 1);
+    assert.equal(l.unread, 1);
+    l.markHandled(['a']);
+    l.markHandled(['a']);
+    assert.equal(l.inbox.length, 0);
+    assert.equal(l.unread, 0);
+    l.stop();
+  });
+
+  it('un-handled mail survives a listener replacement; handled mail does not come back', () => {
+    // The reachable #785 trigger: a Medusa toggle cycle (or a TC restart) keeps
+    // the registry's workspace id and builds a FRESH listener, so the in-memory
+    // inbox is discarded while the session still reports `listening`. Because
+    // only handled mail is acked, the Hub still holds the rest and re-drains it.
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-1', wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-1' });
+    sockets[0]._message({ type: 'new_message', messageId: 'seen', message: { id: 'seen' } });
+    sockets[0]._message({ type: 'new_message', messageId: 'unseen', message: { id: 'unseen' } });
+    l.markHandled(['seen']);
+    sockets[0]._message({ type: 'ack_response', success: true, messageIds: ['seen'] });
+
+    // Replacement: a brand-new listener under the SAME workspace id.
+    l.stop();
+    const fresh = new MedusaListener({ workspaceId: 'ws-1', wsFactory: factory });
+    fresh.start();
+    sockets[1]._open();
+    sockets[1]._message({ type: 'registered', workspaceId: 'ws-1' });
+    // The Hub drains what it still holds — the un-handled message only.
+    sockets[1]._message({ type: 'new_message', messageId: 'unseen', message: { id: 'unseen' } });
+    assert.deepEqual(fresh.inbox.map((m) => m.id), ['unseen']);
+    fresh.stop();
   });
 
   it('tolerates a malformed frame without crashing and stays listening', () => {
@@ -397,7 +488,7 @@ describe('MedusaListener', () => {
   });
 });
 
-describe('MedusaListener — ACK-on-read (TC#547)', () => {
+describe('MedusaListener — ACK-on-handled (TC#547, narrowed by #785)', () => {
   /**
    * Parse a socket's outbound `ack` frames.
    * @param {FakeWebSocket} socket - The fake socket.
@@ -430,21 +521,21 @@ describe('MedusaListener — ACK-on-read (TC#547)', () => {
     l.stop();
   });
 
-  it('markRead acks every read message id in one frame', () => {
+  it('markHandled acks every handled message id in one frame', () => {
     const { l, sockets } = listeningWith(['m1', 'm2']);
-    l.markRead();
+    l.markHandled(['m1', 'm2']);
     const acks = ackFrames(sockets[0]);
     assert.equal(acks.length, 1);
     assert.deepEqual(acks[0].messageIds.sort(), ['m1', 'm2']);
     l.stop();
   });
 
-  it('a confirmed ack is not re-sent on the next markRead or reconnect (multi-hop)', () => {
+  it('a confirmed ack is not re-sent on the next markHandled or reconnect (multi-hop)', () => {
     const { l, sockets } = listeningWith(['m1']);
-    l.markRead();
+    l.markHandled(['m1']);
     sockets[0]._message({ type: 'ack_response', success: true, messageIds: ['m1'] });
-    // Hop 2: another markRead with nothing pending sends nothing new.
-    l.markRead();
+    // Hop 2: re-reporting the same id sends nothing new.
+    l.markHandled(['m1']);
     assert.equal(ackFrames(sockets[0]).length, 1);
     // Hop 3: a reconnect re-register must not re-flush a confirmed ack.
     sockets[0]._closeEvent();
@@ -459,7 +550,7 @@ describe('MedusaListener — ACK-on-read (TC#547)', () => {
 
   it('an UNconfirmed ack re-flushes on the next registered handshake (lost-frame retry)', () => {
     const { l, sockets } = listeningWith(['m1', 'm2']);
-    l.markRead(); // ack sent, but the Hub never answers (lost frame)
+    l.markHandled(['m1', 'm2']); // ack sent, but the Hub never answers (lost frame)
     l.stop();
     l.start();
     sockets[1]._open();
@@ -471,13 +562,14 @@ describe('MedusaListener — ACK-on-read (TC#547)', () => {
     // de-dup keeps them out of the inbox AND unread stays read (no re-badge).
     sockets[1]._message({ type: 'new_message', messageId: 'm1', message: { id: 'm1', message: 'm1' } });
     assert.equal(l.unread, 0);
-    assert.equal(l.inbox.length, 2);
+    // Both were handled, so both left the inbox; the redelivery is de-duped.
+    assert.equal(l.inbox.length, 0);
     l.stop();
   });
 
   it('a failed ack_response leaves ids awaiting (never confirmed-by-assumption)', () => {
     const { l, sockets } = listeningWith(['m1']);
-    l.markRead();
+    l.markHandled(['m1']);
     sockets[0]._message({ type: 'ack_response', success: false, messageIds: ['m1'] });
     l.stop();
     l.start();
@@ -487,13 +579,13 @@ describe('MedusaListener — ACK-on-read (TC#547)', () => {
     l.stop();
   });
 
-  it('messages read AFTER an earlier confirmed batch ack independently', () => {
+  it('messages handled AFTER an earlier confirmed batch ack independently', () => {
     const { l, sockets } = listeningWith(['m1']);
-    l.markRead();
+    l.markHandled(['m1']);
     sockets[0]._message({ type: 'ack_response', success: true, messageIds: ['m1'] });
     sockets[0]._message({ type: 'new_message', messageId: 'm2', message: { id: 'm2', message: 'm2' } });
     assert.equal(l.unread, 1);
-    l.markRead();
+    l.markHandled(['m2']);
     const acks = ackFrames(sockets[0]);
     assert.equal(acks.length, 2);
     assert.deepEqual(acks[1].messageIds, ['m2']);

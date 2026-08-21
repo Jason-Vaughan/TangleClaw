@@ -3708,13 +3708,23 @@ function registerMedusaRoutes(prefix, resolve) {
     jsonResponse(res, 200, { messages });
   });
 
-  // POST <prefix>/read — mark the inbox read, clearing the unread badge
-  // (MED-2K9P Chunk 02). Idempotent; no listener is a safe no-op.
+  // POST <prefix>/read — two verbs on one route, told apart by the body.
+  //
+  // With `{ids: [...]}` the caller is reporting those messages HANDLED: they
+  // leave the inbox and are ACKed to the Hub, which drops its durable copies.
+  // With no body it is only a badge clear — the counter resets and nothing is
+  // discarded anywhere. The bodyless form used to ACK everything, which meant
+  // opening the inbox panel destroyed the last copy of what it displayed (#785).
+  // Idempotent both ways; no listener is a safe no-op.
   route('POST', `${prefix}/read`, (_req, res, params, body) => {
     const r = resolve(params);
     if (r.error) return errorResponse(res, r.error.status, r.error.message, r.error.code);
     const sessionId = r.target ? r.target.sessionId : null;
-    if (sessionId != null) medusa.markRead(sessionId, body && body.ids);
+    if (sessionId != null) {
+      const ids = body && Array.isArray(body.ids) ? body.ids : null;
+      if (ids) medusa.markHandled(sessionId, ids);
+      else medusa.markRead(sessionId);
+    }
     jsonResponse(res, 200, medusa.getStatus(sessionId));
   });
 

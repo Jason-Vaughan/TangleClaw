@@ -80,7 +80,46 @@ Verified against the tree:
 So `read` comes back `None` because the field is never created. The ACK path is correct; TangleClaw
 then keeps its own untouched copy forever and every reader re-derives "is this new?" from scratch.
 
-**Design fork, already scoped in #784 and to be settled before code:**
+### RULING 2026-08-21: clear on delivery — with the delivery event made real first
+
+The operator ruled clear-on-delivery. Investigating the mechanism before coding surfaced a
+tension that changes the shape of the car, so it is recorded here rather than folded silently
+into the build.
+
+**The literal reading destroys mail.** `markRead()` already ACKs to the Hub, and the Hub drops
+an ACKed message from its durable queue permanently (TC#547, `lib/medusa-listener.js:110-119`).
+The dashboard sends bodyless `POST /medusa/read` from `openInbox()` (`public/api-helper.js:2506`)
+the moment the operator *opens the panel*. So "remove from the inbox on markRead" would delete
+the last remaining copy of a message at the instant the operator glances at it — which is
+**#785's data loss, promoted from a bug to a design**.
+
+**The word doing the work in the ruling is "properly delivered."** Today `markRead` does not mean
+delivered; it means a badge was cleared. So the car's real content is:
+
+> **Make "handled" a real event, and key both irreversible actions off it** — the Hub ACK and
+> inbox removal. Clearing the unread badge stops being the trigger for either.
+
+That single change is the common root of both #784 and #785, which is why they belong in one car:
+
+- `POST /medusa/read {ids}` = *I handled these* &rarr; those messages leave the inbox **and** are
+  ACKed to the Hub. This is clear-on-delivery, as ruled.
+- `POST /medusa/read` with no body = badge clear only &rarr; resets `unread`, **no ACK, no
+  removal**. (Behaviour change: today the bodyless form ACKs everything.)
+- Un-handled mail therefore stays queued Hub-side, so a fresh listener re-drains it on register.
+  **This makes #785's silent loss structurally impossible** rather than merely detected.
+
+**#785's stated root cause was a hypothesis; the verified mechanism is narrower.** The issue guessed
+at "a new active session row." The registry keys the workspace id by `sessionId`
+(`lib/medusa-registry.js:135`), so a new session row mints a *new* id and cannot produce the reported
+signature. The reachable trigger is **toggle-off then toggle-on** (`server.js:3692-3694`,
+`lib/projects.js:2172-2174`): `stopSession` drops the listener, `startSession` builds a fresh one, and
+`ensureWorkspaceId` returns the *same* persisted id — same workspace id, `listening`, empty inbox.
+A TC restart does the same. Un-ACKed redelivery fixes both.
+
+Also carried, per #785's minimum ask: log a non-empty &rarr; empty inbox transition, so a loss is
+never silent even if one becomes possible again.
+
+**Superseded by the ruling above — kept for the reasoning:**
 
 1. **Stamp** — add a real per-message `read`/`handledAt`, set it in `markRead`, let `GET` filter or
    expose it. Backwards-compatible; keeps history in the inbox; every consumer must still opt into
@@ -180,7 +219,7 @@ evidence a message arrived. Per `reference_live_verification_traps` and
 
 ## Status
 
-- [ ] Car 1 — Stop the bleeding, and give the inbox a lifecycle (#812, #784, #785)
+- [x] Car 1 — Stop the bleeding, and give the inbox a lifecycle (#812, #784, #785) — 2026-08-21: `markRead` split into an inert badge clear and `markHandled(ids)`; route carries both verbs; panel reports the ids it rendered; loop ids learned on arrival; `sendKeys` clears the prompt and logs the draft first. Suite green (6629 pass, 0 fail); 7 mutations red. Review pending.
 - [ ] Car 2 — Delivery is receipted, not assumed (#792, #791, #934)
 - [ ] Car 3 — Injection reaches the right reader (#783, #1025, #998)
 - [ ] Car 4 — Identity survives a restart (#1023)
