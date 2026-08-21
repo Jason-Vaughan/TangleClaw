@@ -318,7 +318,7 @@ describe('sidecar', () => {
   });
 
   // ── #1024: liveness of the poll loop itself ──
-  describe('poll loop liveness (#1024 R-1/R-2)', () => {
+  describe('poll loop liveness (#1024)', () => {
     const http = require('node:http');
 
     it('re-arms the loop after every tick, including a failing one', async () => {
@@ -357,8 +357,8 @@ describe('sidecar', () => {
     });
 
     it('clears the failure count on a genuinely successful poll', async () => {
-      // The success path needs a real server: naming it without exercising it
-      // leaving `_failures.delete` on success unmutated.
+      // The success path needs a real server. Naming it without exercising it
+      // leaves `_failures.delete` on success unmutated.
       const server = http.createServer((req, res) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ active: [], recent: [] }));
