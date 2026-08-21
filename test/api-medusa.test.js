@@ -18,6 +18,7 @@ const { createServer } = require('../server');
 const store = require('../lib/store');
 const medusa = require('../lib/medusa');
 const sessions = require('../lib/sessions');
+const tmux = require('../lib/tmux');
 
 const OPEN = 1;
 const CONNECTING = 0;
@@ -232,10 +233,12 @@ describe('API — GET /api/sessions/:project/medusa/status', () => {
     assert.equal(status, 200);
     // `loops` joined the status payload in MED-2K9P v2 T4 (banner loop view);
     // `outbound` joined it in #996 (the access-level verdict a control renders
-    // a disabled send from — always allowed for a project session).
+    // a disabled send from — always allowed for a project session); `enabled`
+    // joined it in #820 (the DURABLE per-project opt-in, which gates whether
+    // the control is shown at all — false here, since this project never set it).
     assert.deepEqual(data, {
       state: 'off', workspaceId: null, unread: 0, lastError: null, loops: [],
-      outbound: { allowed: true, reason: null }
+      outbound: { allowed: true, reason: null }, enabled: false
     });
   });
 
@@ -486,13 +489,96 @@ describe('lib/sessions — resyncMedusaListeners (TC#550, MED-2K9P v2 T4)', () =
     store.sessions.start({ projectId: offProj.id, engineId: 'claude', tmuxSession: 'fake-resync-off' });
   });
 
+  // These sessions carry FAKE tmux names, so real liveness is unknowable. The
+  // resync gates on `probeSession` (#836), which without a stub answers "not
+  // live" for every fixture and skips the whole sweep — so the default here is
+  // an explicitly LIVE probe, and the tests that exercise the other two
+  // outcomes override it.
+  const realProbe = tmux.probeSession;
+  // A Set, and never drained: these projects stay in the store for the rest of
+  // the describe, so EVERY later sweep starts listeners for them again, not just
+  // the test that minted them. Draining after the first close left those later
+  // sockets open and the file hung instead of failing.
+  /** @type {Set<string|number>} */
+  const extraSessions = new Set();
+  /** @type {Set<string>} Project dirs minted by `ownSession`, opted out after each test. */
+  const extraPaths = new Set();
+  beforeEach(() => {
+    tmux.probeSession = () => ({ live: true, answered: true, cause: null });
+  });
+
   afterEach(() => {
+    tmux.probeSession = realProbe;
     medusa.stopSession(onActive.id);
+    for (const id of extraSessions) medusa.stopSession(id);
+    for (const dir of extraPaths) store.projectConfig.save(dir, { medusaEnabled: false });
   });
 
   after(() => {
     store.close();
     fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  /**
+   * A dedicated opted-in project + live session row, so a test that REAPS its
+   * session cannot pull the fixture out from under the tests after it.
+   * @param {string} tag - Unique suffix.
+   * @returns {{session: object}}
+   */
+  function ownSession(tag) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), `tc-resync-${tag}-`));
+    const proj = store.projects.create({ name: `resync-${tag}`, path: dir, engine: 'claude' });
+    store.projectConfig.save(dir, { medusaEnabled: true });
+    // Opted back OUT after this test, so the sweep in every LATER test skips it
+    // before the probe. These projects live in the shared store for the rest of
+    // the describe, and leaving them opted in changed what the pre-existing
+    // tests were counting.
+    extraPaths.add(dir);
+    const session = store.sessions.start({ projectId: proj.id, engineId: 'claude', tmuxSession: `fake-${tag}` });
+    // The sweep under test starts a listener for EVERY opted-in live session,
+    // including this one, and a listener with no wsFactory opens a real socket.
+    // Unclosed, those keep the runner's event loop alive and the file hangs
+    // rather than failing — so every session this helper mints is closed below.
+    extraSessions.add(session.id);
+    return { session };
+  }
+
+  it('reaps a session whose tmux is confirmed dead instead of resurrecting its listener (#836)', () => {
+    // The boot-resurrection half of #836: a DB row saying `active` survives a
+    // crash, so re-registering from it put phantom workspaces back on the
+    // roster reporting `connected: true` — peers then addressed sessions that
+    // were gone and their messages queued into nothing.
+    const { session } = ownSession('dead');
+    // Only THIS pane is dead. A blanket stub would reap every opted-in fixture
+    // in the shared store, and the tests after it would then be measuring the
+    // wreckage rather than the sweep.
+    tmux.probeSession = (name) => (name === 'fake-dead'
+      ? { live: false, answered: true, cause: null }
+      : { live: true, answered: true, cause: null });
+
+    sessions.resyncMedusaListeners();
+
+    // Asserted about THIS session, not about the sweep's total: other fixtures
+    // in the shared store are legitimately live and legitimately resync, so a
+    // count would be measuring them rather than the reaping.
+    assert.equal(medusa.getStatus(session.id).state, 'off', 'the dead session must not get a listener');
+    assert.equal(store.sessions.get(session.id).status, 'crashed', 'and the dead row is reaped, not left active');
+  });
+
+  it('refuses to resurrect when tmux does not answer — an unverified session is not put on the bus', () => {
+    // Three-valued, like every other tmux read here. A listener claiming
+    // `connected` for a session nobody could verify is the exact lie #836 is
+    // about; an honest absence costs one toggle, a phantom costs the peer that
+    // trusted it. The session row is deliberately NOT marked crashed.
+    const { session } = ownSession('unknown');
+    tmux.probeSession = (name) => (name === 'fake-unknown'
+      ? { live: false, answered: false, cause: 'read-timed-out' }
+      : { live: true, answered: true, cause: null });
+
+    sessions.resyncMedusaListeners();
+
+    assert.equal(medusa.getStatus(session.id).state, 'off', 'an unverified session must not be put on the bus');
+    assert.equal(store.sessions.get(session.id).status, 'active', 'unknown is not death — the row stands');
   });
 
   it('re-starts listeners ONLY for live sessions whose project opted in (same predicate as launch)', () => {

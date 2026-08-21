@@ -2341,6 +2341,19 @@
     function render() {
       const control = el('control');
       if (!control) return;
+      // The durable opt-in gates the SURFACE, not just the autostart (#820).
+      // Without this the control appeared on every session page regardless of
+      // the project's setting, rendering `is-off` — and one click on it started
+      // the listener. A feature the operator has not turned on must not be one
+      // idle click away from running.
+      //
+      // Strictly `=== false`, never falsy: an absent `enabled` means the gate
+      // was not computed (an older payload, a toggle response), and hiding a
+      // control because a field is missing is its own dishonesty.
+      if (m.enabled === false) {
+        control.hidden = true;
+        return;
+      }
       if (control.hidden) control.hidden = false;
 
       // First render seeds prevUnread from the current count so a listener that
@@ -2442,6 +2455,10 @@
       if ('loops' in data) m.loops = data.loops || [];
       if ('loopsError' in data) m.loopsError = data.loopsError || null;
       if ('outbound' in data) m.outbound = data.outbound || { allowed: true, reason: null };
+      // Taken only when present, like the loop fields: a toggle response carries
+      // no `enabled`, and blanking it there would hide the control the operator
+      // just switched on.
+      if ('enabled' in data) m.enabled = data.enabled === true;
       render();
     }
 

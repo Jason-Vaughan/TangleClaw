@@ -3600,10 +3600,12 @@ function resolveProjectMedusaTarget(params, query) {
     return {
       target: null,
       absent: 'No active session',
+      enabled: _projectMedusaEnabled(project.path),
       fallbackSessionId: query && query.sessionId ? query.sessionId : null
     };
   }
   return {
+    enabled: _projectMedusaEnabled(project.path),
     target: {
       projectPath: project.path,
       sessionId: active.id,
@@ -3616,6 +3618,26 @@ function resolveProjectMedusaTarget(params, query) {
 }
 
 /**
+ * Is the switchboard turned on for this project?
+ *
+ * The durable per-project opt-in, distinct from whether a listener happens to
+ * be running: it is what decides whether the session page shows the control at
+ * all (#820). Unreadable config reads as OFF — a project whose settings cannot
+ * be loaded has not opted in to anything.
+ * @param {string} projectPath - Absolute project directory.
+ * @returns {boolean}
+ */
+function _projectMedusaEnabled(projectPath) {
+  try {
+    const cfg = store.projectConfig.load(projectPath);
+    return Boolean(cfg) && cfg.medusaEnabled === true;
+  } catch (err) {
+    log.warn('Could not read a project config for the Medusa gate — treating as off', { projectPath, error: err.message });
+    return false;
+  }
+}
+
+/**
  * Resolve the Project Master as a switchboard participant (#996). Liveness is
  * tmux truth, three-valued like everywhere else the Master is read: a silent
  * tmux is an UNKNOWN, refused with its own clause rather than flattened into
@@ -3624,14 +3646,17 @@ function resolveProjectMedusaTarget(params, query) {
  */
 function resolveMasterMedusaTarget() {
   const probe = master.masterLiveness();
+  const masterEnabled = master.masterSettings(store.config.load()).medusaEnabled === true;
   if (!probe.answered) {
-    return { target: null, absent: 'tmux did not answer, so whether the Project Master is running is unknown; refusing' };
+    return { target: null, enabled: masterEnabled, absent: 'tmux did not answer, so whether the Project Master is running is unknown; refusing' };
   }
   if (!probe.live) {
-    return { target: null, absent: 'The Project Master is not running, so there is no session' };
+    return { target: null, enabled: masterEnabled, absent: 'The Project Master is not running, so there is no session' };
   }
-  const level = master.masterSettings(store.config.load()).accessLevel;
+  const settings = master.masterSettings(store.config.load());
+  const level = settings.accessLevel;
   return {
+    enabled: settings.medusaEnabled === true,
     target: { ...master.masterMedusaTarget(), outbound: master.masterMedusaOutbound(level) },
     // The Master is killed and restarted routinely (#968), and its bar toggle
     // is the only control it has — so a toggle persists, or the next restart
@@ -3713,7 +3738,14 @@ function registerMedusaRoutes(prefix, resolve) {
     // The outbound verdict travels with the status so a control can render a
     // disabled send WITH its reason rather than discovering the 403 on click.
     const outbound = r.target ? r.target.outbound : { allowed: true, reason: null };
-    jsonResponse(res, 200, loopsError ? { ...status, loops, loopsError, outbound } : { ...status, loops, outbound });
+    // `enabled` is the DURABLE opt-in, not "is a listener running" — the control
+    // is only shown where the operator turned the switchboard on (#820). It
+    // rides the status because that is the one fetch every surface already makes,
+    // and because both mounts must gate on the same predicate rather than each
+    // page deciding for itself.
+    const enabled = r.enabled === true;
+    const base = { ...status, loops, outbound, enabled };
+    jsonResponse(res, 200, loopsError ? { ...base, loopsError } : base);
   });
 
   // POST <prefix>/toggle — start or stop the participant's listener (MED-2K9P
