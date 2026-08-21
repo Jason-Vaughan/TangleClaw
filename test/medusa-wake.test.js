@@ -564,12 +564,46 @@ describe('medusa-wake — the Project Master is scanned like any session (#996)'
   });
 
   it('_nudgeLineFor carries only TC-controlled bytes and the given API base', () => {
-    const line = wake._nudgeLineFor('/api/master/medusa', 3);
+    const line = wake._nudgeLineFor('/api/master/medusa', 3, 'http://localhost:3102');
     assert.match(line, /^\[TangleClaw Switchboard\] You have 3 unread/);
     assert.match(line, /GET \/api\/master\/medusa\/messages/);
     assert.ok(!line.includes('\n'), 'single line — sendKeys sends one Enter');
     // The project form is the same text with the project base substituted.
-    assert.equal(wake._nudgeLine('My Proj', 3), wake._nudgeLineFor('/api/sessions/My%20Proj/medusa', 3));
+    assert.equal(
+      wake._nudgeLine('My Proj', 3),
+      wake._nudgeLineFor('/api/sessions/My%20Proj/medusa', 3, wake._internal.apiOrigin())
+    );
+  });
+
+  it('names the reply endpoint and the initiator-closes contract (#912)', () => {
+    // The receiving session did exactly what it was told and still left the
+    // initiator hanging: the nudge said fetch, act, mark read — never reply, and
+    // never named the send path. The reply obligation lived only in the prime,
+    // read at session start and subject to compaction, while the nudge is what
+    // is actually in front of the model at the moment it acts.
+    const line = wake._nudgeLineFor('/api/sessions/p/medusa', 1, 'http://localhost:3102');
+    assert.match(line, /POST \/api\/sessions\/p\/medusa\/send/);
+    assert.match(line, /initiator closes the exchange/);
+    assert.ok(!line.includes('\n'), 'still one line');
+  });
+
+  it('states the API origin outright instead of pointing at a guide (#1020)', () => {
+    // "base URL + auth are in your project guide" dangled: the guide never
+    // carried one, and for a plugin-governed project TangleClaw does not write
+    // that guide at all — so the session could only guess the port, and the one
+    // concrete base URL in its prime belongs to MEDUSA (:3009), a different
+    // server.
+    const line = wake._nudgeLineFor('/api/sessions/p/medusa', 1, 'http://localhost:3102');
+    assert.match(line, /at http:\/\/localhost:3102/);
+    assert.ok(!/project guide/.test(line), 'the dangling pointer must be gone');
+  });
+
+  it('resolves the origin from what the server actually serves', () => {
+    // Not from config intent: the plist's TANGLECLAW_PORT overrides
+    // config.serverPort, and caddy / no-cert installs bind plain HTTP even with
+    // httpsEnabled set.
+    const origin = wake._internal.apiOrigin();
+    assert.match(origin, /^https?:\/\/localhost:\d+$/, `unexpected origin: ${origin}`);
   });
 });
 
