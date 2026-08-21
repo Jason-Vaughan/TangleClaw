@@ -294,3 +294,7 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 
 - **TBD** — touched in this session: `test/api-shareddocs.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/sidecar.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-08-20)
+
+- **TBD** — touched in this session: `test/clawbridge.test.js`. <!-- describe -->
