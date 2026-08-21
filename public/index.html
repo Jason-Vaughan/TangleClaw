@@ -664,6 +664,8 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
   <script src="/update-beacon.js"></script>
   <script src="/sw-register.js"></script>
   <script src="/landing.js"></script>
+  <!-- Loaded before ui.js: renderCardDetail calls renderNextMarkdown at render time. -->
+  <script src="/next-markdown.js"></script>
   <script src="/ui.js"></script>
   <script src="/history-drawer.js"></script>
   <script src="/setup.js"></script>
