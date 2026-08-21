@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.12.0] - 2026-08-21
+
 ### Added
 - **The Project Master is a Medusa switchboard participant (#996, chunk 1 of 2).** Until now every switchboard route was `/api/sessions/:project/medusa/*`, resolved through a project's active session row — and the Master is not a project, so the one session with a fleet-wide view was the only one that could not talk on the bus it oversees. The same route family is now mounted a second time at **`/api/master/medusa/*`** (status · toggle · messages · read · roster · send · loop · loops/:id/force-done · continue · closeout), built from **one handler set against a participant resolver** rather than a second copy: a project resolves to its session row, the Master resolves to tmux liveness (three-valued — a silent tmux is refused as *unknown*, never painted as "not running"). No synthetic project row: that was the smaller diff and would have leaked a non-project into listings, the dashboard and the fleet map.
 
