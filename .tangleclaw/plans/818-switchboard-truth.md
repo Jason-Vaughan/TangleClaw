@@ -153,12 +153,26 @@ session (`#1025`, no addressing); and the shared-doc watcher nudges **the sessio
 file** (`#998`, a self-inflicted wake loop into a live pane).
 
 ### Car 4 — Identity survives a restart
-**#1023**
+**#1023** — SHIPPED 2026-08-21.
 
-A peer restart rotates its ephemeral workspace id and sends hard-fail `SEND_REJECTED`. **#996 already
-solved this for the Master** by pinning the workspace id to its home directory through the existing
-registry (`<home>/.tangleclaw/medusa/registry.json`) — kill → ensure yields the same id. Check whether
-that technique generalizes to project sessions before designing anything new.
+A peer restart rotates its ephemeral workspace id and sends hard-fail `SEND_REJECTED`.
+
+**This plan's original guess was wrong, and is kept here as the record.** It said to check whether
+#996's home-pinning generalizes to project sessions. It does not apply: home-pinning stabilises the
+*receiver's own* id, while #1023 is the *sender's* problem — a cached handle for someone else. And
+project ids are meant to rotate, because `forgetSession` drops the registry entry at session end.
+
+**The fix recommended on the issue is also wrong, and would have passed its own tests.** #1023 quotes
+Medusa's advice to target the human-readable name. Medusa matches a WS-only client — all TangleClaw
+registers — by `id.split('-')[0]` (`medusa-server.js:230`), so `tilt-v2-8ef50ea0` answers to `"tilt"`
+and never to `"TiLT v2"`: every multi-word project silently 404s, **including the one in the issue's
+own reproduction**, while single-word projects work and make it look correct. `"TiLT v2"` and
+`"TiLT Claw"` also collide on `"tilt"`.
+
+**What shipped:** a not-found is treated as a stale handle first and a missing peer second.
+`sendMessage` and `openLoop` re-resolve against the live roster by TangleClaw's OWN id convention
+(`<name-slug>-<8 hex>`, whole-slug match) and retry once, reporting `retargetedFrom`; ambiguity
+refuses and lists candidates.
 
 ### Car 5 — The surfaces stop lying
 **#836 · #820 · #556**
@@ -244,6 +258,6 @@ Medusa's repo (cross-session write boundary). File it there; do not build it her
 The TangleClaw half that IS ours already exists: the fleet detector built for #783
 is exactly the signal that can distinguish a subagent-originated send, and it can be
 reused the moment the envelope has somewhere to put the answer.
-- [ ] Car 4 — Identity survives a restart (#1023)
+- [x] Car 4 — Identity survives a restart (#1023) — 2026-08-21: re-resolve-and-retry-once on `sendMessage` and `openLoop`, matching TC's own id convention rather than Medusa's `split('-')[0]` name matching (which 404s every multi-word project). Suite green; 4 mutations red.
 - [ ] Car 5 — The surfaces stop lying (#836, #820, #556)
 - [ ] Car 6 — The channel teaches itself, and the rule comes down (#912, #1020, #904)

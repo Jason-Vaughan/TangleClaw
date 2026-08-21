@@ -617,7 +617,7 @@ function makeFakeBridge() {
         if (body.to === 'offline-ws') {
           return json(res, 200, { success: true, status: 'queued', id: 'q-1', message: 'Workspace offline. Message queued in Hub inbox.' });
         }
-        if (body.to === 'live-ws') {
+        if (body.to === 'live-ws' || roster.some((w) => w.id === body.to)) {
           return json(res, 200, { success: true, status: 'received', id: 'r-1', message: 'Delivered over WebSocket.' });
         }
         // Mirror the real Bridge: unknown target → 404 not-found (a real failure).
@@ -627,8 +627,12 @@ function makeFakeBridge() {
         return json(res, 200, { count: roster.length, workspaces: roster, telemetry: {} });
       }
       if (req.method === 'POST' && req.url === '/loops') {
-        if (body.target === 'ghost-ws') {
-          // Mirror the real Bridge's participant check (live probe 2026-07-13).
+        // Mirror the real Bridge's participant check (live probe 2026-07-13).
+        // A TC-minted id that is not on the roster is a ROTATED handle — the
+        // Bridge cannot tell that from an absent peer and 404s either way.
+        const staleHandle = /-[0-9a-f]{8}$/.test(String(body.target || ''))
+          && !roster.some((w) => w.id === body.target);
+        if (body.target === 'ghost-ws' || staleHandle) {
           return json(res, 404, { error: 'Initiator or target workspace not found' });
         }
         loops.push(body);
@@ -749,13 +753,40 @@ describe('lib/medusa — send / roster (MED-2K9P Chunk 03)', () => {
     assert.equal(result.status, 'queued');
   });
 
+  it('recovers from a peer restart: the stale handle is re-resolved and the send lands (#1023)', async () => {
+    // The live 2026-08-20 reproduction: TiLT v2 restarted mid-exchange and its
+    // id rotated ad17fc67 -> 83811af0. The old id 404s; the message must still
+    // arrive rather than being reported as a missing peer.
+    bridge.setRoster([{ id: 'tilt-v2-83811af0', name: 'TiLT v2', listener: { active: true }, connected: true }]);
+
+    const result = await medusa.sendMessage({ sessionId: sid, to: 'tilt-v2-ad17fc67', message: 'still here?' });
+
+    assert.equal(result.status, 'received');
+    assert.equal(result.to, 'tilt-v2-83811af0', 'delivered to the live id');
+    assert.equal(result.retargetedFrom, 'tilt-v2-ad17fc67', 'and says so, rather than silently succeeding elsewhere');
+    // Two attempts: the stale one, then the re-resolved one. Not more — a retry
+    // loop over a genuinely absent workspace is just a slower error.
+    assert.deepEqual(bridge.received.map((r) => r.to), ['tilt-v2-ad17fc67', 'tilt-v2-83811af0']);
+  });
+
+  it('does not retarget when the first attempt succeeds', async () => {
+    const result = await medusa.sendMessage({ sessionId: sid, to: 'live-ws', message: 'hi' });
+    assert.equal(result.retargetedFrom, null);
+    assert.equal(bridge.received.length, 1, 'one attempt, no roster round-trip');
+  });
+
   it('an unknown target is an honest failure, not a silent success', async () => {
     await assert.rejects(
       () => medusa.sendMessage({ sessionId: sid, to: 'ghost-ws', message: 'anyone?' }),
       (err) => {
         assert.equal(err.httpStatus, 502);
         assert.equal(err.code, 'SEND_REJECTED');
-        assert.match(err.message, /not found/);
+        // The message must say WHY the handle could not be recovered, not just
+        // echo the Bridge's "not found" — that wording reads as "the peer is
+        // gone" when the usual cause is a rotated handle, and the two need
+        // different actions from the operator (#1023).
+        assert.match(err.message, /ghost-ws is not a live workspace/);
+        assert.match(err.message, /re-resolving it failed/);
         return true;
       }
     );
@@ -1266,13 +1297,28 @@ describe('lib/medusa — openLoop (MED-2K9P v2 T3)', () => {
     );
   });
 
+  it('opens against a peer that restarted, by re-resolving its rotated handle (#1023)', async () => {
+    // A loop outlives a direct send, so it is MORE likely to be opened against a
+    // handle its peer has already rotated away from.
+    bridge.setRoster([{ id: 'tilt-v2-83811af0', name: 'TiLT v2', listener: { active: true }, connected: true }]);
+
+    const { loop } = await medusa.openLoop({
+      sessionId: sid, target: 'tilt-v2-ad17fc67', task: 'review', doneCriteria: 'done'
+    });
+
+    assert.equal(loop.target, 'tilt-v2-83811af0', 'the loop is opened against the LIVE id');
+    // Exactly one loop exists: the failed first attempt created nothing, which
+    // is what makes retrying safe here.
+    assert.equal(bridge.loops.length, 1);
+  });
+
   it('a Bridge rejection is an honest failure (no loop, nothing sent)', async () => {
     await assert.rejects(
       () => medusa.openLoop({ sessionId: sid, target: 'ghost-ws', task: 't', doneCriteria: 'd' }),
       (err) => {
         assert.equal(err.code, 'LOOP_REJECTED');
         assert.equal(err.httpStatus, 502);
-        assert.match(err.message, /not found/);
+        assert.match(err.message, /ghost-ws is not a live workspace/);
         return true;
       }
     );
@@ -1887,5 +1933,51 @@ describe('medusa delivery ledger (#792)', () => {
     assert.equal(one.status, 200);
     assert.equal(one.data.deliveries.length, 1);
     assert.equal(one.data.deliveries[0].skipReason, 'pane-turn-in-flight');
+  });
+});
+
+describe('a rotated workspace id is re-resolved, not reported as a missing peer (#1023)', () => {
+  const medusa = require('../lib/medusa');
+
+  describe('_reresolveWorkspaceId', () => {
+    it('matches a stale id to the live one by its durable slug', () => {
+      const roster = [{ id: 'tilt-v2-83811af0' }, { id: 'tangleclaw-f37deb95' }];
+      assert.deepEqual(
+        medusa._reresolveWorkspaceId('tilt-v2-ad17fc67', roster),
+        { ok: true, id: 'tilt-v2-83811af0' }
+      );
+    });
+
+    it('does NOT confuse two projects that share a first hyphen segment', () => {
+      // The failure mode of the "just target the name" advice: Medusa matches a
+      // WS-only client by `id.split('-')[0]`, so `tilt-v2-…` and `tilt-claw-…`
+      // both answer to "tilt". Matching on the WHOLE slug keeps them apart.
+      const roster = [{ id: 'tilt-claw-ad082f36' }, { id: 'tilt-v2-83811af0' }];
+      assert.deepEqual(
+        medusa._reresolveWorkspaceId('tilt-v2-ad17fc67', roster),
+        { ok: true, id: 'tilt-v2-83811af0' }
+      );
+    });
+
+    it('refuses to guess between two live sessions of the same project', () => {
+      const roster = [{ id: 'tilt-v2-83811af0' }, { id: 'tilt-v2-11112222' }];
+      const out = medusa._reresolveWorkspaceId('tilt-v2-ad17fc67', roster);
+      assert.equal(out.ok, false);
+      assert.equal(out.candidates.length, 2);
+      assert.match(out.reason, /share the name tilt-v2/);
+    });
+
+    it('reports an absent peer differently from a stale handle', () => {
+      const out = medusa._reresolveWorkspaceId('gone-v1-ad17fc67', [{ id: 'tilt-v2-83811af0' }]);
+      assert.equal(out.ok, false);
+      assert.match(out.reason, /no live workspace is named gone-v1/);
+      assert.deepEqual(out.candidates, []);
+    });
+
+    it('declines an id it did not mint rather than inventing a slug', () => {
+      const out = medusa._reresolveWorkspaceId('some-external-handle', [{ id: 'tilt-v2-83811af0' }]);
+      assert.equal(out.ok, false);
+      assert.match(out.reason, /not a TangleClaw-minted id/);
+    });
   });
 });
