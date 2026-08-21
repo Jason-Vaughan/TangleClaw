@@ -285,20 +285,8 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/wrap-confirm-calls-defined.test.js` — the wrap-confirm path must call only functions that exist. #185 left `startWrapSse()` called from `public/session.js` with no definition anywhere, throwing a ReferenceError positioned between the optimistic UI and the POST — a runtime error `node --check` cannot see.
 - `test/z-index-scale.test.js` — parses the z-index scale out of `public/style.css` and `public/session.css` and enforces the exact ordering: drawer-backdrop < drawer < modal-backdrop < toast < unreachable.
 - `test/http-settle.test.js` — #1026: `requestOnce` settles on every terminal path. The truncation fixtures use `socket.end()` (FIN), not `socket.destroy()` (RST): mutation-checked against the pre-fix settle logic, only FIN hangs, so an RST fixture is a vacuously-green guard — which is what the original #1024 guard was until this change repaired it.
-
-## TODO (auto-stubbed 2026-08-20)
-
-- **TBD** — touched in this session: `test/openclaw-direct-trailing-slash.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-08-20)
-
-- **TBD** — touched in this session: `test/api-shareddocs.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/sidecar.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-08-20)
-
-- **TBD** — touched in this session: `test/clawbridge.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-08-20)
-
-- **TBD** — touched in this session: `test/medusa-control-component.test.js`. <!-- describe -->
+- `test/openclaw-direct-trailing-slash.test.js` — #1012's deterministic half: `/openclaw-direct/<connId>` with no trailing slash must 301 to the canonical form, query string preserved, because the Control UI's relative `src` otherwise resolves to `/openclaw-direct/assets/…` where the proxy reads segment 2 as a connection id and 404s the app's own bundle. Guards the redirect, the query carry, that a sub-path still proxies rather than looping, and that the unslashed asset path is genuinely broken.
+- `test/api-shareddocs.test.js` — the `/api/shared-docs*` routes, plus the #998 guard that a broadcast never reaches the project whose directory holds the doc. That guard drives the real notify route rather than the internal function, and reads the error list as the record of who was ATTEMPTED — no Bridge runs in tests, so a send that was tried names its session and one that was skipped is absent.
+- `test/sidecar.test.js` — the OpenClaw process poller (#1024: shared keep-alive agent, failure backoff, the stop-epoch that stops a late in-flight result re-setting a cleared count). Its truncation fixture was repaired to `socket.end()` (FIN): the original `socket.destroy()` (RST) raised `ECONNRESET` request-side, which the pre-fix code already settled on, so the guard was vacuously green.
+- `test/clawbridge.test.js` — #1026: every ClawBridge verb settles when a socket dies mid-response. `req.setTimeout` cannot cover it, because that timer is socket-inactivity based and dies with the socket it measures — an earlier review cleared clawbridge on exactly that reasoning. Guards were mutation-verified against the pre-fix settle logic rather than assumed to discriminate.
+- `test/medusa-control-component.test.js` — the extracted `tcCreateMedusaControl` (#996 chunk 2) lifted and run against a mini DOM, so the one component both surfaces mount is tested once. Also carries #784's handled-by-id report from the inbox panel, #820's surface gate (the control stays hidden until the project opts in, and strictly on `=== false` so a missing gate never hides it), and #556's CSS cascade guards — read out of `shared-controls.css`, asserting the glow cannot outrank the off/error states and that reduced-motion suppression keeps matching specificity.
