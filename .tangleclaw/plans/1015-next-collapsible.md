@@ -55,7 +55,9 @@ This is not a new problem and not merely a preference: `renderRootPanel`'s own J
 
 ### Chunk 1 — the Markdown renderer
 
-New `public/next-markdown.js`: `renderNextMarkdown(src)` and `firstNextLine(src)`, browser-global + `module.exports` shim (the `public/openclaw-cache.js` pattern), so tests `require` it directly rather than lifting it.
+New `public/next-markdown.js`: `renderNextMarkdown(src)` plus its `escHtml` helper, browser-global + `module.exports` shim (the `public/openclaw-cache.js` pattern), so tests `require` it directly rather than lifting it.
+
+An earlier draft also specified `firstNextLine(src)`, for the one-line-teaser flavour of the collapsed row. The operator chose the hint-text flavour instead, so nothing calls it — dropped rather than shipped unused.
 
 Escape-first, then apply marks — `escHtml` runs before any `<code>`/`<strong>` wrapping, so no raw HTML can survive from session-authored text.
 
@@ -66,27 +68,27 @@ Escape-first, then apply marks — `escHtml` runs before any `<code>`/`<strong>`
 
 ### Chunk 2 — panel state survives re-render
 
-- [ ] Module-level `openCardDetail` (project name or `null`) in `public/ui.js`
-- [ ] Extract `renderCardDetail(project)` as a pure function returning HTML — the testable seam
-- [ ] `renderCard` emits it inline when the card is the open one; sets `aria-expanded` and an `is-open` class on the `<article>`
-- [ ] `toggleCardDetail(name)` flips state + calls `renderProjects()`; restores focus to the toggled card afterwards (the grid's `innerHTML` assignment destroys the focused element — keyboard users land nowhere otherwise)
-- [ ] Regression test: render → open → re-render → panel still open
+- [x] Module-level `openCardDetail` (project name or `null`) in `public/ui.js`
+- [x] Extract `renderCardDetail(project)` as a pure function returning HTML — the testable seam
+- [x] `renderCard` emits it inline when the card is the open one; sets `aria-expanded` and an `is-open` class on the `<article>`
+- [x] `toggleCardDetail(name)` flips state + calls `renderProjects()`; restores focus to the toggled card afterwards (the grid's `innerHTML` assignment destroys the focused element — keyboard users land nowhere otherwise)
+- [x] Regression test: render → open → re-render → panel still open
 
 ### Chunk 3 — the Next disclosure + row chevron
 
-- [ ] `openNextAction` state, same shape; cleared when its panel closes
-- [ ] Next row inside the panel: `<button class="next-toggle">` with `aria-expanded`/`aria-controls`, label + `(click to reveal)`, chevron. `event.stopPropagation()` — without it the card handler also fires and closes the panel underneath.
-- [ ] Row chevron on `.card-row`, after the action buttons; decorative `<span>` (the whole card is already the control), rotates via the `is-open` class
-- [ ] `public/style.css`: remove `.card-preview`; add `.next-toggle`, `.next-block`, `.next-list`, `.card-chev`, and a `.project-card:hover` rule
-- [ ] Both new controls ≥34px tall — matching the card rows, so this adds nothing to the 32px-target debt in #823
-- [ ] Contrast: chevron at 13px `#9E9E9E` on `#1A1A1A`. The first pass at 10px `#777` measured ~3.2:1 and the operator could not find it.
-- [ ] `prefers-reduced-motion` honoured on both chevron transitions
+- [x] `openNextAction` state, same shape; cleared when its panel closes
+- [x] Next row inside the panel: `<button class="next-toggle">` with `aria-expanded`/`aria-controls`, label + `(click to reveal)`, chevron. `event.stopPropagation()` — without it the card handler also fires and closes the panel underneath.
+- [x] Row chevron on `.card-row`, after the action buttons; decorative `<span>` (the whole card is already the control), rotates via the `is-open` class
+- [x] `public/style.css`: remove `.card-preview`; add `.next-toggle`, `.next-block`, `.next-list`, `.card-chev`, and a `.project-card:hover` rule
+- [x] Both new controls ≥34px tall — matching the card rows, so this adds nothing to the 32px-target debt in #823
+- [x] Contrast: chevron at 13px `#9E9E9E` on `#1A1A1A`. The first pass at 10px `#777` measured ~3.2:1 and the operator could not find it.
+- [x] `prefers-reduced-motion` honoured on both chevron transitions
 
 ### Chunk 4 — verify and land
 
-- [ ] Full suite green in the worktree
-- [ ] `CHANGELOG.md`: `### Changed` (Next moves behind a disclosure) + `### Fixed` (panel no longer self-closes; row now signals it opens)
-- [ ] Enqueue in `.prawduct/operator-verification.md` — `Visual change: yes`
+- [x] Full suite green in the worktree
+- [x] `CHANGELOG.md`: `### Changed` (Next moves behind a disclosure) + `### Fixed` (panel no longer self-closes; row now signals it opens)
+- [x] Enqueue in `.prawduct/operator-verification.md` — `Visual change: yes`
 - [ ] `/prawduct:critic cumulative`, disposition findings in one pass
 - [ ] PR with `Fixes #1015`
 
@@ -101,6 +103,6 @@ This is a visual change on a surface the operator reads from a phone. The suite 
 ## Status
 
 - [x] Chunk 1 — Markdown renderer
-- [ ] Chunk 2 — panel state survives re-render
-- [ ] Chunk 3 — Next disclosure + row chevron
+- [x] Chunk 2 — panel state survives re-render
+- [x] Chunk 3 — Next disclosure + row chevron
 - [ ] Chunk 4 — verify and land

@@ -959,11 +959,23 @@ describe('the dashboard actually consults the helpers (#885)', () => {
       assert.equal(git({ git: null }), 'Not a git repo');
     });
 
-    it('toggleCardDetail delegates to both, rather than re-deriving them inline', () => {
-      const body = functionBody(ui, 'function toggleCardDetail(name)');
-      assert.ok(body.includes('renderSessionDetail(project)'));
-      assert.ok(body.includes('renderGitDetail(project)'));
-      assert.ok(body.includes('tcUnreadableNotice(project)'),
+    it('the detail panel delegates to both, rather than re-deriving them inline', () => {
+      // Runs the panel for real. This was a source pin on `toggleCardDetail`'s
+      // body while that function built the panel by hand against the DOM; the
+      // panel is now a pure renderer, so the delegation can be asserted from
+      // its OUTPUT instead — a source pin is satisfiable by a dead branch.
+      const render = liftRenderer(ui, 'function renderCardDetail(project)', 'renderCardDetail', {
+        esc,
+        renderSessionDetail: () => 'SESSION-DELEGATED',
+        renderGitDetail: () => 'GIT-DELEGATED',
+        tcUnreadableNotice: () => ({ why: 'FOLDER-DELEGATED', remedy: '' }),
+        renderNextActionRow: () => ''
+      });
+
+      const html = render({ name: 'p', engine: null, tags: [], groups: [] });
+      assert.match(html, /SESSION-DELEGATED/, 'session read must come from the shared helper');
+      assert.match(html, /GIT-DELEGATED/, 'git read must come from the shared helper');
+      assert.match(html, /FOLDER-DELEGATED/,
         'an unreadable folder must be explained in the detail too');
     });
   });

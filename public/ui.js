@@ -44,6 +44,31 @@ function resolvePickerEngine(engineList, configured) {
 
 // ── Project Card Rendering ──
 
+/**
+ * Name of the project whose detail panel is open, or `null` for none.
+ *
+ * This is the source of truth, deliberately NOT the DOM. `renderProjects`
+ * assigns `grid.innerHTML`, and the dashboard re-renders on a 10s poll, so a
+ * panel appended to a card was destroyed within ten seconds of being opened —
+ * a timer-driven dismissal in a project whose own render code states it does
+ * not use them. Keying on state instead makes re-rendering idempotent: the
+ * poll redraws the open panel rather than closing it.
+ *
+ * One at a time, matching the previous behaviour.
+ *
+ * @type {string|null}
+ */
+let openCardDetail = null;
+
+/**
+ * Name of the project whose "Next action" is expanded inside its open panel,
+ * or `null`. Same reasoning as `openCardDetail`; a separate value because the
+ * two disclosures nest and the inner one must be able to close on its own.
+ *
+ * @type {string|null}
+ */
+let openNextAction = null;
+
 function renderProjects() {
   const grid = document.getElementById('cardsGrid');
   const filtered = filterProjects();
@@ -313,7 +338,16 @@ function renderCard(project) {
   // card would otherwise not give. This is that reason.
   const unreadableBadge = renderUnreadableBadge(project);
 
-  return `<article class="project-card compact${sessionClass}" tabindex="0"
+  // The card is the control that opens the panel, but it never said so: there
+  // is no hover rule on it, and the one visibly "info"-shaped button in the row
+  // (`i`) opens the Settings MODAL instead. On a touch device, where there is
+  // no hover to discover, that left no affordance at all. The chevron is the
+  // marker, and it sits after the buttons so it is not read as another one.
+  const isOpen = openCardDetail === project.name;
+  const openClass = isOpen ? ' is-open' : '';
+
+  return `<article class="project-card compact${sessionClass}${openClass}" tabindex="0"
+    aria-expanded="${isOpen}"
     onclick="toggleCardDetail('${n}')" onkeydown="if(event.key==='Enter')toggleCardDetail('${n}')">
     <div class="card-row">
       ${statusDot}
@@ -335,8 +369,9 @@ function renderCard(project) {
         <button class="btn btn-compact btn-icon-tiny btn-detach-subtle" onclick="event.stopPropagation(); openDetach('${n}')" title="Detach from TangleClaw">&#8856;</button>
         <button class="btn btn-compact btn-icon-tiny btn-danger-subtle" onclick="event.stopPropagation(); openDelete('${n}')" title="Delete project">&times;</button>
       </span>
+      <span class="card-chev" aria-hidden="true">&#9662;</span>
     </div>
-    ${project.continuityIndex && project.continuityIndex.nextAction ? `<div class="card-preview"><strong>Next:</strong> ${esc(project.continuityIndex.nextAction)}</div>` : ''}
+    ${isOpen ? renderCardDetail(project) : ''}
   </article>`;
 }
 
@@ -425,59 +460,163 @@ function renderGitDetail(project) {
   return info;
 }
 
-function toggleCardDetail(name) {
-  const cards = document.querySelectorAll('.project-card');
-  for (const card of cards) {
-    const nameEl = card.querySelector('.card-name');
-    if (!nameEl || nameEl.textContent !== name) continue;
+/**
+ * Render a card's detail panel.
+ *
+ * Pure — builds a string and touches no DOM — so `renderCard` can emit it
+ * inline on every render, and so it can be tested by running it rather than by
+ * pinning its source (a source guard over markup passes happily against a dead
+ * branch).
+ *
+ * @param {object} project - Project data.
+ * @returns {string} HTML for the panel.
+ */
+function renderCardDetail(project) {
+  const n = esc(project.name);
+  const engineInfo = project.engine ? `${esc(project.engine.name)}` : 'No engine';
+  const sessionInfo = renderSessionDetail(project);
+  const tagsInfo = (project.tags || []).length > 0 ? project.tags.map(t => esc(t)).join(', ') : 'None';
+  const gitInfo = renderGitDetail(project);
 
-    const existing = card.querySelector('.card-detail');
-    if (existing) {
-      existing.remove();
-      return;
-    }
+  const unreadable = tcUnreadableNotice(project);
+  const unreadableRow = unreadable
+    ? `<div class="detail-row detail-row-warn"><span class="detail-label">Folder</span>`
+      + `<span class="detail-value"><span class="detail-unknown">${esc(unreadable.why)}</span>`
+      + (unreadable.remedy ? ` <span class="detail-remedy">${esc(unreadable.remedy)}</span>` : '')
+      + `</span></div>`
+    : '';
+  const groupsInfo = (project.groups || []).length > 0
+    ? project.groups.map(g => `${esc(g.name)} (${g.docCount || 0} docs)`).join(', ')
+    : 'None';
 
-    // Close other open details
-    document.querySelectorAll('.card-detail').forEach(el => el.remove());
-
-    const project = state.projects.find(p => p.name === name);
-    if (!project) return;
-
-    const detail = document.createElement('div');
-    detail.className = 'card-detail';
-
-    const engineInfo = project.engine ? `${esc(project.engine.name)}` : 'No engine';
-
-    const sessionInfo = renderSessionDetail(project);
-    const tagsInfo = (project.tags || []).length > 0 ? project.tags.map(t => esc(t)).join(', ') : 'None';
-    const gitInfo = renderGitDetail(project);
-
-    const unreadable = tcUnreadableNotice(project);
-    const unreadableRow = unreadable
-      ? `<div class="detail-row detail-row-warn"><span class="detail-label">Folder</span>`
-        + `<span class="detail-value"><span class="detail-unknown">${esc(unreadable.why)}</span>`
-        + (unreadable.remedy ? ` <span class="detail-remedy">${esc(unreadable.remedy)}</span>` : '')
-        + `</span></div>`
-      : '';
-    const groupsInfo = (project.groups || []).length > 0
-      ? project.groups.map(g => `${esc(g.name)} (${g.docCount || 0} docs)`).join(', ')
-      : 'None';
-
-    detail.innerHTML = `
+  return `<div class="card-detail">
       ${unreadableRow}
       <div class="detail-row"><span class="detail-label">Engine</span><span class="detail-value">${engineInfo}</span></div>
       <div class="detail-row"><span class="detail-label">Session</span><span class="detail-value">${sessionInfo}</span></div>
       <div class="detail-row"><span class="detail-label">Git</span><span class="detail-value">${gitInfo}</span></div>
       <div class="detail-row"><span class="detail-label">Tags</span><span class="detail-value">${tagsInfo}</span></div>
       <div class="detail-row"><span class="detail-label">Groups</span><span class="detail-value">${groupsInfo}</span></div>
+      ${renderNextActionRow(project)}
       <div class="detail-actions">
-        <button class="btn btn-compact" onclick="event.stopPropagation(); openSettings('${esc(name)}')">Settings</button>
-        ${project.session && project.session.active ? `<button class="btn btn-compact btn-kill-card" onclick="event.stopPropagation(); openKill('${esc(name)}')">Kill Session</button>` : ''}
-        <button class="btn btn-compact btn-danger-subtle" onclick="event.stopPropagation(); openDelete('${esc(name)}')">Delete</button>
-      </div>`;
+        <button class="btn btn-compact" onclick="event.stopPropagation(); openSettings('${n}')">Settings</button>
+        ${project.session && project.session.active ? `<button class="btn btn-compact btn-kill-card" onclick="event.stopPropagation(); openKill('${n}')">Kill Session</button>` : ''}
+        <button class="btn btn-compact btn-danger-subtle" onclick="event.stopPropagation(); openDelete('${n}')">Delete</button>
+      </div>
+    </div>`;
+}
 
-    card.appendChild(detail);
-    return;
+/**
+ * Render the "Next action" disclosure inside a card's detail panel.
+ *
+ * The action is a session's own multi-line note about its unfinished work; it
+ * is longer and less uniform than every other row in the panel, so it sits
+ * behind its own toggle rather than inline — collapsed, the panel keeps the
+ * even rhythm of its label/value rows.
+ *
+ * The row states that it opens. A chevron alone was not findable: at the size
+ * and weight the other panel glyphs use it sits near 3:1 against the panel's
+ * ground, and reads as absent rather than as subtle.
+ *
+ * @param {object} project - Project data.
+ * @returns {string} HTML for the row, or `''` when there is no next action.
+ */
+function renderNextActionRow(project) {
+  const next = project.continuityIndex && project.continuityIndex.nextAction;
+  if (!next || !String(next).trim()) return '';
+
+  const n = esc(project.name);
+  const open = openNextAction === project.name;
+  const bodyId = `next-${cssId(project.name)}`;
+
+  return `<button class="next-toggle" type="button"
+      aria-expanded="${open}" aria-controls="${bodyId}"
+      onclick="event.stopPropagation(); toggleNextAction('${n}')">
+      <span class="detail-label">Next</span>
+      ${open ? '<span class="next-spacer"></span>' : '<span class="next-hint">(click to reveal)</span>'}
+      <span class="next-chev" aria-hidden="true">&#9662;</span>
+    </button>
+    <div class="next-block" id="${bodyId}"${open ? '' : ' hidden'}>${renderNextMarkdown(next)}</div>`;
+}
+
+/**
+ * Open or close a card's "Next action".
+ *
+ * @param {string} name - Project name.
+ * @returns {void}
+ */
+function toggleNextAction(name) {
+  openNextAction = openNextAction === name ? null : name;
+  renderProjects();
+  focusNextToggle(name);
+}
+
+/**
+ * Move focus back to a card's Next toggle after a re-render replaced it.
+ *
+ * @param {string} name - Project name.
+ * @returns {void}
+ */
+function focusNextToggle(name) {
+  for (const card of document.querySelectorAll('.project-card')) {
+    const nameEl = card.querySelector('.card-name');
+    if (nameEl && nameEl.textContent === name) {
+      const toggle = card.querySelector('.next-toggle');
+      if (toggle) toggle.focus();
+      return;
+    }
+  }
+}
+
+/**
+ * Reduce a project name to characters safe in an `id` attribute.
+ *
+ * Project names are user-chosen and may contain spaces or punctuation, which
+ * `aria-controls` cannot reference. Non-alphanumerics collapse to `-`; a
+ * collision between two names is harmless here because only one panel is open
+ * at a time, so only one such id is ever in the document.
+ *
+ * @param {string} name - Project name.
+ * @returns {string} An id-safe token.
+ */
+function cssId(name) {
+  return String(name).replace(/[^a-zA-Z0-9_-]/g, '-');
+}
+
+/**
+ * Open or close a card's detail panel.
+ *
+ * Flips state and re-renders rather than appending to or removing from the
+ * card, so the 10s project poll redraws the panel instead of destroying it.
+ * Focus is restored afterwards because `renderProjects` replaces the whole
+ * grid: without this a keyboard user who pressed Enter on a card would be
+ * left with focus on `<body>`.
+ *
+ * @param {string} name - Project name.
+ * @returns {void}
+ */
+function toggleCardDetail(name) {
+  if (!state.projects.some(p => p.name === name)) return;
+
+  openCardDetail = openCardDetail === name ? null : name;
+  // The Next disclosure lives inside the panel, so it cannot outlive it.
+  openNextAction = null;
+  renderProjects();
+  focusCard(name);
+}
+
+/**
+ * Move focus back to a project card after a re-render replaced it.
+ *
+ * @param {string} name - Project name.
+ * @returns {void}
+ */
+function focusCard(name) {
+  for (const card of document.querySelectorAll('.project-card')) {
+    const nameEl = card.querySelector('.card-name');
+    if (nameEl && nameEl.textContent === name) {
+      card.focus();
+      return;
+    }
   }
 }
 
