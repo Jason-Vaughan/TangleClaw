@@ -116,6 +116,9 @@ function installWorld(overrides = {}) {
     status: { state: 'listening', workspaceId: 'proj-a-abc123', unread: 1, lastError: null },
     inbox: [{ id: 'm1', from: 'peer', message: 'hello' }],
     pane: IDLE_PANE,
+    // #1103. `null` means "no cursor captured", so the prompt verdict comes from
+    // `pane` alone and every pre-existing test keeps its original meaning.
+    cursor: null,
     injected: [],
     injectResult: { ok: true, error: null },
     // The Master's seams (#996). `null` = no Master to scan, which keeps every
@@ -139,6 +142,12 @@ function installWorld(overrides = {}) {
   wake._internal.getStatus = () => world.status;
   wake._internal.getMessages = () => world.inbox;
   wake._internal.capturePane = () => ({ lines: world.pane });
+  // Stubbed for isolation, not convenience: fixture session names collide with
+  // real ones on a developer box (`tangleclaw-master` is live here), so an
+  // unstubbed cursor probe reads the operator's actual pane and the verdict
+  // changes with whatever they happen to have typed. `world.cursor` is null by
+  // default, which exercises the text-check fallback.
+  wake._internal.cursorInfo = () => world.cursor;
   wake._internal.injectCommand = (projectName, command, options) => {
     world.injected.push({ projectName, command, options });
     return world.injectResult;
@@ -199,6 +208,116 @@ const AGENTS_FINISHED_PANE = [
   '  TangleClaw (main) | Opus 5 (1M context) | 77% left',
   '  ⏵⏵ bypass permissions on (shift+tab to cycle) · /tasks to see subagents · ← 2 agents'
 ];
+
+/**
+ * Live captures from 2026-08-21 (#1103), escapes retained because stripping
+ * them is the defect. ` ` is the NBSP a Claude Code prompt pads with, and
+ * `[2m` is SGR 2 (faint) — the attribute that marks an inline suggestion.
+ *
+ * The two lines render almost identically in a terminal. Only the faintness and
+ * the cursor column separate "the editor is offering this" from "the operator
+ * typed this", and the cursor column is the one a text check cannot see.
+ */
+const SUGGESTION_LINE =
+  '❯ [2madd case law to the reading list too, then branch and PR[0m';
+const SUGGESTION_CURSOR = { x: 2, line: SUGGESTION_LINE };
+
+const TYPED_LINE = '❯ can you check why tilt-claw isn\'t responding?';
+const TYPED_CURSOR = { x: 47, line: TYPED_LINE };
+
+/** The pane body around either line; the prompt line itself is not bare. */
+const PANE_WITH_PROMPT_TEXT = [
+  '  Churned for 17s',
+  '',
+  '❯ can you check why tilt-claw isn\'t responding?',
+  '  master | Opus 5 (1M context) | 95% left',
+  '  ⏵⏵ bypass permissions on (shift+tab to cycle)'
+];
+
+describe('medusa-wake — _composerEmpty (cursor-based input detection, #1103)', () => {
+  it('reads a pending inline suggestion as an empty composer', () => {
+    assert.equal(wake._composerEmpty(SUGGESTION_CURSOR, CLAUDE), true);
+  });
+
+  it('reads genuinely typed input as a non-empty composer', () => {
+    assert.equal(wake._composerEmpty(TYPED_CURSOR, CLAUDE), false);
+  });
+
+  it('refuses typed text even when the cursor was moved back to the prompt column', () => {
+    // Home-key case: the cursor alone would say "empty". The text to its right
+    // is at normal intensity, so it is real input and must not be typed over.
+    assert.equal(wake._composerEmpty({ x: 2, line: TYPED_LINE }, CLAUDE), false);
+  });
+
+  it('returns null when the cursor line carries no prompt glyph', () => {
+    // A dialog or scrolled pane is undecidable here — never "empty", because
+    // guessing rest is the failure this module exists to prevent.
+    assert.equal(wake._composerEmpty({ x: 2, line: '  no glyph here' }, CLAUDE), null);
+  });
+
+  it('refuses rather than guesses when a transcript line happens to contain the glyph', () => {
+    // Not `null`: the glyph is present, so this reads as a prompt line holding
+    // text, and the verdict is the conservative one. Erring toward refusing a
+    // nudge is the correct direction — the opposite error types into a pane
+    // that is not at rest.
+    assert.equal(wake._composerEmpty({ x: 4, line: '  ❯ some transcript text' }, CLAUDE), false);
+  });
+
+  it('returns null when no cursor was captured', () => {
+    assert.equal(wake._composerEmpty(null, CLAUDE), null);
+  });
+
+  it('carries faintness across an SGR reset and a specific un-faint', () => {
+    // `ESC[22m` clears faint alone; `ESC[0m` and a bare `ESC[m` clear everything.
+    const cells = wake._cells('[2mab[22mc[2md[me');
+    assert.deepEqual(cells.map((c) => c.ch).join(''), 'abcde');
+    assert.deepEqual(cells.map((c) => c.faint), [true, true, false, true, false]);
+  });
+
+  it('indexes cells by visible column, ignoring escape sequences', () => {
+    // cursor_x counts visible columns, so the mapping must survive styling.
+    const cells = wake._cells(SUGGESTION_LINE);
+    assert.equal(cells[0].ch, '❯');
+    assert.equal(cells[2].ch, 'a', 'column 2 is the first input position');
+    assert.equal(cells[2].faint, true);
+  });
+});
+
+describe('medusa-wake — _assessPane with cursor (#1103)', () => {
+  it('judges a pane idle when its prompt line holds only a suggestion', () => {
+    // The regression. Without the cursor this same pane reads `no-bare-prompt`,
+    // because the suggestion is indistinguishable from typed input once the
+    // escape sequences are stripped.
+    const withSuggestion = PANE_WITH_PROMPT_TEXT.slice();
+    withSuggestion[2] = 'add case law to the reading list too, then branch and PR';
+    assert.deepEqual(wake._assessPane(withSuggestion, CLAUDE),
+      { idle: false, reason: 'no-bare-prompt' });
+    assert.deepEqual(wake._assessPane(withSuggestion, CLAUDE, SUGGESTION_CURSOR),
+      { idle: true, reason: 'at-prompt' });
+  });
+
+  it('still refuses a pane whose composer really holds typed input', () => {
+    assert.deepEqual(wake._assessPane(PANE_WITH_PROMPT_TEXT, CLAUDE, TYPED_CURSOR),
+      { idle: false, reason: 'no-bare-prompt' });
+  });
+
+  it('falls back to the text check when the cursor is unavailable', () => {
+    // A failed cursor probe must not cost a nudge that the text check can judge.
+    assert.deepEqual(wake._assessPane(IDLE_PANE, CLAUDE, null),
+      { idle: true, reason: 'at-prompt' });
+    assert.deepEqual(wake._assessPane(PANE_WITH_PROMPT_TEXT, CLAUDE, null),
+      { idle: false, reason: 'no-bare-prompt' });
+  });
+
+  it('lets the busy and fleet gates win over an empty composer', () => {
+    // Gate order matters: a suggestion can be pending while a turn is in
+    // flight, and an empty composer is not permission to interrupt one.
+    const busy = BUSY_PANE.concat(['  ⏵⏵ bypass permissions on (shift+tab to cycle)']);
+    assert.equal(wake._assessPane(busy, CLAUDE, SUGGESTION_CURSOR).reason, 'turn-in-flight');
+    const fleet = ['  ⏺ main', '  ◯ general-purpose  doing a thing   4s', '❯ '];
+    assert.equal(wake._assessPane(fleet, CLAUDE, SUGGESTION_CURSOR).reason, 'agents-running');
+  });
+});
 
 describe('medusa-wake — _assessPane (Claude idle policy, pinned byte-for-byte)', () => {
   it('refuses a pane with a running subagent, even though it reads at-prompt (#783)', () => {

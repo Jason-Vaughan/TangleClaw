@@ -13,6 +13,14 @@ All notable changes to TangleClaw are documented in this file.
 
   The hazard #783 identified is unchanged and still guarded: with a subagent focused the busy marker moves into the agent block, so `esc to interrupt` is absent and a bare prompt is rendered — which is why the gate sits above the prompt checks. Regression fixtures are verbatim live captures of all four states, and reverting the regex turns exactly the two new guards red. `lib/medusa-wake.js`, `test/medusa-wake.test.js`.
 
+- **The wake gate counted an inline suggestion as operator input, so an idle session with an empty composer was never woken (#1103).** The sibling defect to #1101, in the next gate along. Claude Code offers a likely next prompt *because* a session is at rest, and draws it on the prompt line — so once the escape sequences were stripped, a pending suggestion was indistinguishable from typed text and `promptRe` returned `no-bare-prompt`. As soon as #1101 shipped, this became the top blocker: 3 of 5 undelivered participants, the Project Master among them.
+
+  The fix stops inferring input from rendered characters and asks tmux where the cursor is. `tmux.cursorInfo` reports `cursor_x`/`cursor_y` and re-reads that one row with `-e` so styling survives; the composer is empty when nothing non-blank sits between the prompt glyph and the cursor, **and** everything to the cursor's right is blank or faint. Both halves are load-bearing — the first catches ordinary typing, the second catches an operator who typed and then pressed Home, where the cursor alone would report an empty composer and the nudge would paste over real input.
+
+  Cursor position was chosen over matching the faint attribute because it is a terminal property rather than an application one: it survives a suggestion long enough to wrap, needs no per-engine colour knowledge, and does not depend on rendering that Claude Code has already changed once between builds. Faintness is still consulted, but only to classify text the cursor has already placed to its right. A pane that cannot report a cursor falls back to the previous text check rather than losing its nudge, and a cursor that is not on a prompt line at all returns "undecidable" rather than "at rest" — guessing rest is the failure this module exists to prevent.
+
+  Verified against the live panes it was built from: three sessions holding suggestions moved from `no-bare-prompt` to `at-prompt`, while a session with genuinely typed text stayed refused. `lib/tmux.js`, `lib/medusa-wake.js`, `test/medusa-wake.test.js`, `test/tmux.test.js`.
+
 ### Internal
 - **The #818 Switchboard train's plan is archived, and its live verification is on the record (#1097, #1098).** `818-switchboard-truth.md` moved to `.tangleclaw/plans/archive/` now that it shipped as `5.13.0` — archived rather than deleted so the rationale survives, and out of the active listing so a future session cannot read closed work as ready.
 

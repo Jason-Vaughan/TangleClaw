@@ -337,6 +337,15 @@ describe('tmux', () => {
     });
   });
 
+  describe('cursorInfo - error cases (#1103)', () => {
+    it('should throw for non-existent session', () => {
+      assert.throws(
+        () => tmux.cursorInfo('__nonexistent_test_session__'),
+        /does not exist/
+      );
+    });
+  });
+
   describe('setMouse - error cases', () => {
     it('should throw for non-existent session', () => {
       assert.throws(
@@ -995,13 +1004,14 @@ describe('tmux', () => {
 
       // An exact floor, not a lower bound: a site DISAPPEARING is as much a
       // regression as one losing its wrapper, and `>=` would wave that through.
-      // 22 since `_clearPromptLine` gained a `send-keys C-u` site: injection
-      // clears the prompt before pasting, because paste-buffer appends and the
-      // Enter would otherwise submit the operator's unsent draft along with the
-      // payload. Bumping this number is the acknowledgement the tripwire asks
-      // for — it fired correctly, and the `_target` loop below already confirmed
-      // the new site is wrapped.
-      assert.equal(targets.length, 22, `expected 22 -t sites in lib/tmux.js, found ${targets.length}`);
+      // 24 since `cursorInfo` gained two sites (#1103): a `display-message`
+      // reading `cursor_x`/`cursor_y`, and a `capture-pane -e` re-reading just
+      // the cursor's own row with styling intact — the pair that tells a pending
+      // inline suggestion from text the operator actually typed. Bumping this
+      // number is the acknowledgement the tripwire asks for — it fired
+      // correctly, and the `_target` loop below already confirmed both new sites
+      // are wrapped.
+      assert.equal(targets.length, 24, `expected 24 -t sites in lib/tmux.js, found ${targets.length}`);
       for (const expr of targets) {
         assert.match(
           expr,
