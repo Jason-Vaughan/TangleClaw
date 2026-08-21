@@ -435,3 +435,88 @@
   30%      { filter: drop-shadow(0 0 5px var(--primary-bright)) brightness(1.5); }
 }
 @keyframes medusa-loop-glow { 0%, 100% { opacity: 1; } 50% { opacity: .7; } }
+
+/* ── Popover + Medusa inbox chrome (moved from session.css, #996) ──
+   The Medusa control renders on the session banner AND on the Master control
+   bar (dashboard + session drawer). Its heads button, the popover frame and
+   the inbox rows were session-only, so the same control would have rendered
+   unstyled on the dashboard — the exact drift this sheet exists to prevent.
+   Page-specific @media overrides stay in each page sheet. */
+.group-popover {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  background: var(--elevated-bg);
+  border: 1px solid var(--text-muted);
+  border-radius: 8px;
+  padding: 8px 12px;
+  min-width: 160px;
+  z-index: 100;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+.group-popover.open { display: block; }
+.group-popover-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--root-accent);
+}
+.group-popover-member {
+  padding: 2px 0;
+  color: var(--text-muted);
+}
+.group-popover-member.current {
+  color: var(--primary);
+  font-weight: 600;
+}
+.medusa-heads {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;           /* match .banner-btn so the control doesn't stretch the banner row */
+  padding: 0 6px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-btn);
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.medusa-heads:active { background: var(--elevated-bg); }
+.medusa-heads:focus-visible {
+  outline: 2px solid var(--root-accent);
+  outline-offset: 1px;
+}
+
+
+.medusa-msg {
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.medusa-msg:last-child { border-bottom: none; }
+.medusa-msg-from { font-weight: 600; color: var(--root-accent); font-size: 11px; }
+.medusa-msg-body { color: var(--text); font-size: 12px; word-break: break-word; white-space: pre-wrap; }
+.medusa-msg-empty { color: var(--text-muted); font-size: 12px; }
+/* Explicit dismiss control — the badge that opens the inbox self-hides once read
+   (unread → 0), so the panel needs its own close affordance. Touch-first: relying
+   on an outside tap left the panel un-closeable on mobile once the badge vanished. */
+.medusa-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.medusa-panel-close {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1;
+  min-width: 28px;
+  min-height: 28px;
+  border-radius: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.medusa-panel-close:hover { color: var(--text); background: var(--elevated-bg); }
+.medusa-panel-close:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }

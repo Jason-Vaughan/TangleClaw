@@ -3546,6 +3546,9 @@ async function refreshMasterDot() {
   // Two calls answering the same question is how the dashboard and the session
   // came to disagree about everything else the bar had to reunify.
   if (masterBar) masterBar.setAccess(status.settings || null);
+  // The Medusa control paints from the same fetch (#996) — `medusa` is a
+  // top-level field of the status, beside `settings`.
+  if (masterBar) masterBar.setMedusa(status.medusa || null);
   // The model pill is painted from the Master's OWN engine, whatever the
   // status says about liveness — an unreachable master still has a configured
   // engine, and hiding the pill would lose that.
@@ -3612,6 +3615,7 @@ masterBar = window.tcCreateMasterControlBar({
   title: 'Project Master',
   api,
   apiMutate,
+  esc,
   onRetry: ensureMasterAttached,
   onOpenSettings: () => { masterBar.setError(''); masterSettings.open(); }
 });

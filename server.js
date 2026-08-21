@@ -1035,6 +1035,7 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   // Same reason, for the master's access level: the loop below replaces
   // `config.master` wholesale, so the previous level has to be read before it.
   const oldMasterAccessLevel = master.masterSettings(config).accessLevel;
+  const oldMasterMedusaEnabled = master.masterSettings(config).medusaEnabled;
   // Whether setup was still OPEN when this request arrived. Captured here
   // because the loop below writes `body.setupComplete` straight onto `config` —
   // read it afterwards and every request looks like an install that was already
@@ -1312,6 +1313,19 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
       }
     } catch (err) {
       log.warn('Master Medusa listener sync after settings save failed', { error: err.message });
+    }
+    // The identity follows the setting too, or the Master sits on the bus with
+    // instructions that still say it is not a participant until something else
+    // happens to run an ensure — which is exactly what was found the first time
+    // this was flipped live. `skipIfAbsent` so a save on an install that has
+    // never opened the Master creates no master state. Like the access-level
+    // refresh above, the running Master still reads it only at launch (#968).
+    if (master.masterSettings(config).medusaEnabled !== oldMasterMedusaEnabled) {
+      try {
+        master.refreshMasterIdentity({ skipIfAbsent: true });
+      } catch (err) {
+        log.warn('Master identity refresh after medusaEnabled change failed', { error: err.message });
+      }
     }
   }
 

@@ -380,6 +380,7 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
   let home;
   const real = {};
   let liveness = { live: true, answered: true, cause: null };
+  const identityRefreshes = [];
 
   before(async () => {
     home = tempHome();
@@ -393,6 +394,13 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     real.masterLiveness = master.masterLiveness;
     real.masterMedusaTarget = master.masterMedusaTarget;
     real.syncMasterMedusa = master.syncMasterMedusa;
+    // The PATCH route regenerates the identity when medusaEnabled changes, and
+    // the real refresher resolves `masterHome()` — the operator's own home.
+    // Recorded, never run: the first version of this suite ran it, and
+    // `api-config.test.js`'s live-home fingerprint caught it from another
+    // process.
+    real.refreshMasterIdentity = master.refreshMasterIdentity;
+    master.refreshMasterIdentity = (opts) => { identityRefreshes.push(opts); return { home: '/stub', refreshed: true }; };
     master.masterLiveness = () => liveness;
     master.masterMedusaTarget = () => ({ projectPath: home, sessionId: master.MASTER_MEDUSA_KEY, name: master.MASTER_MEDUSA_NAME });
     master.syncMasterMedusa = (opts) => real.syncMasterMedusa({ ...opts, home, wsFactory: (u) => new FakeWS(u) });
@@ -404,6 +412,7 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
   beforeEach(() => {
     liveness = { live: true, answered: true, cause: null };
     setMaster({ medusaEnabled: false, accessLevel: 'write' });
+    identityRefreshes.length = 0;
   });
 
   after(async () => {
@@ -612,7 +621,7 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     assert.equal(master.getMasterMedusaStatus().state, 'off');
   });
 
-  it('GET /api/master/status carries the Medusa status and both settings', async () => {
+  it('GET /api/master/status carries the Medusa status, the outbound verdict, and both settings', async () => {
     setMaster({ medusaEnabled: true, medusaWake: true });
     startListening();
     const { status, data } = await req('/api/master/status');
@@ -620,5 +629,25 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     assert.equal(data.settings.medusaEnabled, true);
     assert.equal(data.settings.medusaWake, true);
     assert.equal(data.medusa.state, 'listening');
+    // The bar paints its control from THIS payload, so the verdict rides here
+    // rather than costing a second request to /api/master/medusa/status.
+    assert.deepEqual(data.medusa.outbound, { allowed: true, reason: null });
+    setMaster({ accessLevel: 'read-only' });
+    const ro = await req('/api/master/status');
+    assert.equal(ro.data.medusa.outbound.allowed, false);
+    assert.match(ro.data.medusa.outbound.reason, /read-only/);
+  });
+
+  it('PATCH regenerates the identity when medusaEnabled CHANGES — and only then', async () => {
+    // The gap found the first time this was flipped live: the listener joined
+    // the bus on save while the identity still told the Master it was not a
+    // participant, until an unrelated ensure happened to run.
+    await req('/api/config', 'PATCH', { master: { medusaEnabled: true } });
+    assert.equal(identityRefreshes.length, 1, 'one refresh for the flip');
+    assert.equal(identityRefreshes[0].skipIfAbsent, true, 'never creates master state on an install that has none');
+    await req('/api/config', 'PATCH', { master: { medusaWake: true } });
+    assert.equal(identityRefreshes.length, 1, 'an unrelated master save does not regenerate');
+    await req('/api/config', 'PATCH', { master: { medusaEnabled: false } });
+    assert.equal(identityRefreshes.length, 2, 'turning it off regenerates too — the section must leave the identity');
   });
 });

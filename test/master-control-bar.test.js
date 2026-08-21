@@ -149,7 +149,9 @@ describe('#768 controls with no backend are absent WITH a reason', () => {
     // it is a live control rather than an absence needing a reason. Removing it
     // here is not weakening the guard: the rule is about controls with NO route,
     // and a reason rendered beside a working control is its own falsehood.
-    for (const key of ['Upload', 'Wrap', 'Medusa']) {
+    // `Medusa` left this list with #996 — the bar mounts the real control now,
+    // so a reason element beside it would be the falsehood this rule forbids.
+    for (const key of ['Upload', 'Wrap']) {
       assert.match(bar, new RegExp(`aria-describedby="masterPanel${key}Why"`),
         `${key} must reference a description`);
       assert.match(bar, new RegExp(`id="masterPanel${key}Why"`),
@@ -176,8 +178,10 @@ describe('#768 controls with no backend are absent WITH a reason', () => {
     // `kill` is GONE (#968) alongside `access` (#755). Each removal is the
     // assertion that a shipped backend took its control's pending treatment WITH
     // it rather than leaving a reason beside a working button.
+    // `medusa` is GONE (#996): `/api/master/medusa/*` shipped and the bar mounts
+    // the shared control, so its pending treatment left with the backend.
     assert.deepEqual(Object.keys(G.tcMasterPendingReasons).sort(),
-      ['medusa', 'upload', 'wrap']);
+      ['upload', 'wrap']);
   });
 });
 

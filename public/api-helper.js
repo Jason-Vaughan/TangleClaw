@@ -2062,7 +2062,9 @@
    * silently do nothing.
    */
   const TC_MASTER_PENDING = {
-    medusa: "Medusa isn't wired to the Master yet — every endpoint is per-project.",
+    // `medusa` LEFT this table with #996: `/api/master/medusa/*` exists and the
+    // bar mounts the shared control (`tcCreateMedusaControl`) — the same
+    // removal-is-the-proof rule `access` and `kill` set below.
     // `access` is GONE from this table on purpose. It named the last reason the
     // toggle was inert ("isn't wired up yet"), and the toggle is wired now — the
     // entry's own removal is what proves the pending treatment came off rather
@@ -2137,6 +2139,485 @@
     { suffix: 'AccessWrite', level: 'write', label: 'WRITE' }
   ];
 
+  // ── Medusa switchboard control (MED-2K9P, shared since #996) ──
+  //
+  // One control, two hosts. The session banner mounted the original (singleton
+  // ids, module-global project name); the Master control bar needs the SAME
+  // control pointed at `/api/master/medusa`. The #768 rule for the bar is
+  // reuse-don't-fork — a hand-rolled Medusa that merely looked like the
+  // session's would be identical on day one and drifted by the third restyle —
+  // so the control is parameterised by target: an API base, an id set, and
+  // the word it uses for its host ("this session" / "the Master").
+  //
+  // What it deliberately does NOT own: the loop modal, the loops chip and the
+  // loops panel. Those stay in `session.js` behind the `hooks` seam (the
+  // session passes its chip renderer and modal closer), because fleet-command
+  // loops from the Master are a design question (#961), not a mount.
+
+  /**
+   * Element ids for one Medusa control.
+   *
+   * The session banner keeps its historical unprefixed ids (`medusaControl`…)
+   * so its static markup, stylesheet hooks and the loop controls that share
+   * the root keep working untouched. Any prefixed host — the Master bar on the
+   * dashboard AND in the session drawer, which share a page with the banner —
+   * gets `${prefix}Medusa*`, so two controls can never claim one id. Loop ids
+   * are null for a prefixed host: the control renders no loop affordances
+   * there, and a null id makes `el()` answer null rather than find the
+   * banner's.
+   * @param {string} [prefix] - Host prefix; empty/omitted = the session banner.
+   * @returns {{control: string, heads: string, badge: string, loop: (string|null),
+   *   loopsChip: (string|null), peers: string, panel: string,
+   *   loopsPanel: (string|null), live: string}}
+   */
+  function tcMedusaIds(prefix) {
+    if (!prefix) {
+      return {
+        control: 'medusaControl', heads: 'medusaHeads', badge: 'medusaBadge',
+        loop: 'medusaLoop', loopsChip: 'medusaLoopsChip', peers: 'medusaPeers',
+        panel: 'medusaPanel', loopsPanel: 'medusaLoopsPanel', live: 'medusaLive'
+      };
+    }
+    return {
+      control: `${prefix}Medusa`, heads: `${prefix}MedusaHeads`, badge: `${prefix}MedusaBadge`,
+      loop: null, loopsChip: null, peers: `${prefix}MedusaPeers`,
+      panel: `${prefix}MedusaPanel`, loopsPanel: null, live: `${prefix}MedusaLive`
+    };
+  }
+
+  /**
+   * Markup for a Medusa control without loop affordances — the two facing
+   * heads flanking the emblem, the "!" error glyph, the unread badge, the
+   * peers popover, the inbox panel and the aria-live region. Same classes the
+   * session banner's static markup uses, so `shared-controls.css` styles both.
+   * Hidden until a status answers, exactly as the banner's is.
+   * @param {ReturnType<typeof tcMedusaIds>} ids - The host's id set.
+   * @returns {string} HTML.
+   */
+  function tcMedusaControlMarkup(ids) {
+    return `<span class="medusa-control is-off" id="${ids.control}" hidden>`
+      + `<button class="medusa-heads" id="${ids.heads}" type="button" aria-pressed="false"`
+      + ` aria-label="Medusa session comms: off. Click to enable.">`
+      + '<span class="medusa-mark" aria-hidden="true">'
+      + '<img class="medusa-head medusa-head--in" src="/medusa-head-left.webp" alt="" width="24" height="29">'
+      + '<img class="medusa-emblem" src="/medusa-wordmark.webp" alt="" width="50" height="23">'
+      + '<img class="medusa-head medusa-head--out" src="/medusa-head-right.webp" alt="" width="24" height="29">'
+      + '</span><span class="medusa-warn" aria-hidden="true">!</span></button>'
+      + `<button class="medusa-badge" id="${ids.badge}" type="button" hidden aria-label="Open Medusa inbox">0</button>`
+      + `<span class="medusa-peers group-popover" id="${ids.peers}" role="tooltip" hidden></span>`
+      + `<div class="medusa-panel group-popover" id="${ids.panel}" role="dialog" aria-label="Medusa inbox" hidden></div>`
+      + `<span class="sr-only" id="${ids.live}" aria-live="polite"></span>`
+      + '</span>';
+  }
+
+  /**
+   * Escape HTML special characters — the fallback when a host passes no `esc`.
+   * Inbound switchboard text is untrusted cross-session data and every byte of
+   * it goes through this before it reaches `innerHTML`.
+   * @param {*} str - Value to escape.
+   * @returns {string}
+   */
+  function tcEscapeHtml(str) {
+    return String(str == null ? '' : str)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  /**
+   * Create a Medusa switchboard control bound to one participant.
+   *
+   * Rides its host's existing poll — `poll()` is called by the session's status
+   * tick and by the Master bar's status load — and starts no timer of its own
+   * (this project's no-UI-timers rule, #98/#268).
+   *
+   * @param {object} deps
+   * @param {string} deps.apiBase - The participant's switchboard API base, e.g.
+   *   `/api/sessions/<project>/medusa` or `/api/master/medusa`.
+   * @param {(url: string, opts?: object) => Promise<object|null>} deps.api - The
+   *   page's `api()` (null on failure).
+   * @param {object} [deps.doc] - Document (tests).
+   * @param {ReturnType<typeof tcMedusaIds>} [deps.ids] - Id set; defaults to the
+   *   session banner's.
+   * @param {(s: *) => string} [deps.esc] - HTML escaper; defaults to `tcEscapeHtml`.
+   * @param {string} [deps.subject] - How the help text names the host:
+   *   `'this session'` (default) or `'the Master'`.
+   * @param {object} [deps.state] - The state object to drive. The session passes
+   *   `sessionState.medusa` so its loop code keeps reading the object it always
+   *   read; omitted → a private one.
+   * @param {object} [deps.hooks]
+   * @param {(m: object) => void} [deps.hooks.onRender] - After each render, with
+   *   the state (the session paints its loop button + loops chip here).
+   * @param {() => void} [deps.hooks.onOpenInbox] - Before the inbox opens (the
+   *   session closes its loop modal).
+   * @returns {{state: object, mount: () => boolean, render: () => void,
+   *   poll: () => Promise<void>, applyStatus: (data: object|null) => void,
+   *   toggle: () => Promise<void>, openInbox: () => Promise<void>,
+   *   closeInbox: () => void, showPeers: () => Promise<void>, hidePeers: () => void,
+   *   flowInbound: (n: number) => void, flowOutbound: (label: string, status: string) => void,
+   *   stateLabel: (m: object) => string, helpText: (m: object) => string,
+   *   renderMessages: (messages: object[]) => string}}
+   */
+  function tcCreateMedusaControl(deps) {
+    const doc = deps.doc || global.document;
+    const ids = deps.ids || tcMedusaIds('');
+    const subject = deps.subject || 'this session';
+    const esc = deps.esc || tcEscapeHtml;
+    const hooks = deps.hooks || {};
+    const m = deps.state || {};
+    // Fill rather than replace: the session's state object already carries
+    // these keys and its loop code holds a reference to it.
+    if (m.state === undefined) m.state = 'off';
+    if (m.unread === undefined) m.unread = 0;
+    if (m.prevUnread === undefined) m.prevUnread = 0;
+    if (m.workspaceId === undefined) m.workspaceId = null;
+    if (m.lastError === undefined) m.lastError = null;
+    if (m.shown === undefined) m.shown = false;
+    if (m.loops === undefined) m.loops = [];
+    if (m.loopsError === undefined) m.loopsError = null;
+    if (m.outbound === undefined) m.outbound = { allowed: true, reason: null };
+    let bound = false;
+
+    const el = (key) => (ids[key] ? doc.getElementById(ids[key]) : null);
+
+    /**
+     * Whether the participant's level lets it SEND (#996). A project session
+     * always may; a `read-only` Master may not, and the status payload says so.
+     * @param {object} st - State.
+     * @returns {boolean}
+     */
+    function sendBlocked(st) {
+      return !!(st.outbound && st.outbound.allowed === false);
+    }
+
+    /**
+     * Human-readable status text for the control's accessible label + tooltip.
+     * This is the never-color-only source of truth for the listener state.
+     * @param {{state: string, unread: number, lastError: (string|null)}} st - State.
+     * @returns {string}
+     */
+    function stateLabel(st) {
+      const unread = st.unread > 0 ? `, ${st.unread} unread` : '';
+      const blocked = sendBlocked(st) ? ', receive-only at this access level' : '';
+      switch (st.state) {
+        case 'listening': return `Medusa session comms: on, listening${unread}${blocked}. Click to disable.`;
+        case 'connecting': return `Medusa session comms: connecting${unread}${blocked}. Click to disable.`;
+        // The listener auto-reconnects with backoff while enabled, so "retry" is
+        // automatic; a click here DISABLES it (toggle → off). Label the real action.
+        case 'error': return `Medusa session comms: error — ${st.lastError || 'cannot reach the bridge'}${unread}. Click to disable.`;
+        default: return `Medusa session comms: off${unread}. Click to enable.`;
+      }
+    }
+
+    /**
+     * Richer hover-tooltip help (the `title`), distinct from the concise
+     * aria-label: explains what Medusa *is* and what this host is *doing* in the
+     * current state — and, when its level blocks sending, says so with the
+     * server's reason rather than letting the operator find out on a 403.
+     * @param {{state: string, unread: number, lastError: (string|null)}} st - State.
+     * @returns {string}
+     */
+    function helpText(st) {
+      const doing = {
+        listening: 'On — listening for messages from your other TangleClaw sessions'
+          + (st.unread > 0 ? ` (${st.unread} unread — click the badge to read)` : ''),
+        connecting: 'Connecting to the message bridge…',
+        error: `Enabled but can't reach the bridge — ${st.lastError || 'auto-retrying'}`
+      }[st.state] || `Off — ${subject} can't send or receive session messages`;
+      const action = st.state === 'off' ? `connect ${subject}` : 'disconnect';
+      const blocked = sendBlocked(st) && st.state !== 'off'
+        ? ` Sending is disabled: ${st.outbound.reason || 'the access level does not allow it'}`
+        : '';
+      return 'Medusa: session-to-session comms (the switchboard) — message your other '
+        + `TangleClaw sessions from the banner. ${doing}. Click the heads to ${action}.${blocked}`;
+    }
+
+    /**
+     * Sync the control to the state: status class, unread badge, error glyph
+     * and accessible label; reveal on first render. When unread rose since the
+     * last render (a fresh inbound), fire the inbound-head flow + an aria-live
+     * announcement — the non-color/-motion cue.
+     * @returns {void}
+     */
+    function render() {
+      const control = el('control');
+      if (!control) return;
+      if (control.hidden) control.hidden = false;
+
+      // First render seeds prevUnread from the current count so a listener that
+      // was already running (or auto-started) with a pre-existing backlog does
+      // NOT flash the inbound head + announce "new message" for messages that
+      // predate this page view. Only unread that rises *after* the first paint
+      // is a fresh arrival.
+      if (!m.shown) {
+        m.shown = true;
+        m.prevUnread = m.unread;
+      }
+
+      const STATE_CLASSES = ['is-off', 'is-connecting', 'is-listening', 'is-error'];
+      STATE_CLASSES.forEach((c) => control.classList.remove(c));
+      control.classList.add(STATE_CLASSES.includes(`is-${m.state}`) ? `is-${m.state}` : 'is-off');
+
+      const heads = el('heads');
+      if (heads) {
+        const label = stateLabel(m);
+        heads.setAttribute('aria-pressed', m.state !== 'off' ? 'true' : 'false');
+        heads.setAttribute('aria-label', label);
+        heads.title = helpText(m);
+      }
+
+      const badge = el('badge');
+      if (badge) {
+        if (m.unread > 0) {
+          badge.textContent = String(m.unread);
+          badge.hidden = false;
+          badge.setAttribute('aria-label', `Open Medusa inbox (${m.unread} unread)`);
+        } else {
+          badge.hidden = true;
+        }
+      }
+
+      if (typeof hooks.onRender === 'function') hooks.onRender(m);
+
+      if (m.unread > m.prevUnread) flowInbound(m.unread - m.prevUnread);
+      m.prevUnread = m.unread;
+    }
+
+    /**
+     * Fire the transient inbound-head flow animation and announce arrival on
+     * the aria-live region (the animation self-suppresses under reduced-motion).
+     * @param {number} n - Count of new messages this poll.
+     * @returns {void}
+     */
+    function flowInbound(n) {
+      const control = el('control');
+      if (control) {
+        control.classList.remove('flow-in');
+        void control.offsetWidth; // reflow so re-adding restarts the animation
+        control.classList.add('flow-in');
+      }
+      const live = el('live');
+      if (live) live.textContent = n === 1 ? 'New Medusa message received' : `${n} new Medusa messages received`;
+    }
+
+    /**
+     * Fire the transient outbound-head flow on a successful send and announce
+     * it, mirroring `flowInbound`.
+     * @param {string} label - Human label for the target (name or id).
+     * @param {string} status - The honest send status ('received' | 'queued'),
+     *   or 'invited' for a loop open (the Bridge delivers the invite itself and
+     *   does not report live-vs-queued, so the announcement claims neither).
+     * @returns {void}
+     */
+    function flowOutbound(label, status) {
+      const control = el('control');
+      if (control) {
+        control.classList.remove('flow-out');
+        void control.offsetWidth; // reflow so re-adding restarts the animation
+        control.classList.add('flow-out');
+      }
+      const live = el('live');
+      if (live) {
+        live.textContent = status === 'queued'
+          ? `Message queued for ${label} (offline)`
+          : status === 'invited'
+            ? `Loop invite sent to ${label}`
+            : `Message delivered to ${label}`;
+      }
+    }
+
+    /**
+     * Fold a status payload (`GET <apiBase>/status`, a toggle response, or the
+     * `medusa` field of `/api/master/status`) into the state and re-render.
+     * Loop fields are taken only when present — a toggle response carries none
+     * and must not blank the loops the last poll painted.
+     * @param {object|null} data - Status payload, or null on a failed fetch.
+     * @returns {void}
+     */
+    function applyStatus(data) {
+      if (!data) return;
+      m.state = data.state;
+      m.unread = data.unread || 0;
+      m.workspaceId = data.workspaceId || null;
+      m.lastError = data.lastError || null;
+      if ('loops' in data) m.loops = data.loops || [];
+      if ('loopsError' in data) m.loopsError = data.loopsError || null;
+      if ('outbound' in data) m.outbound = data.outbound || { allowed: true, reason: null };
+      render();
+    }
+
+    /**
+     * Poll the listener status on the host's cadence (no timer here).
+     * @returns {Promise<void>}
+     */
+    async function poll() {
+      applyStatus(await deps.api(`${deps.apiBase}/status`));
+    }
+
+    /**
+     * Toggle the listener (the heads click). Reflects the returned status at
+     * once; the next poll reconciles.
+     * @returns {Promise<void>}
+     */
+    async function toggle() {
+      applyStatus(await deps.api(`${deps.apiBase}/toggle`, { method: 'POST' }));
+    }
+
+    /**
+     * Build the read-panel markup from the inbox (newest first). All message
+     * content is escaped — inbound text is untrusted cross-session data.
+     * @param {Array<{from?: string, message?: string}>} messages - Inbox, oldest first.
+     * @returns {string} HTML.
+     */
+    function renderMessages(messages) {
+      // Header carries an explicit ✕ close: the badge that opens the panel
+      // self-hides on read (unread → 0), so it can't be the only dismiss control
+      // (mobile trap).
+      const head = '<div class="group-popover-title medusa-panel-head"><span>Medusa inbox</span>'
+        + '<button type="button" class="medusa-panel-close" aria-label="Close inbox">✕</button></div>';
+      if (!messages.length) {
+        return `${head}<div class="medusa-msg-empty">No messages yet.</div>`;
+      }
+      const rows = messages.slice().reverse().map((msg) => {
+        const from = esc(msg.from || 'unknown');
+        const body = esc(msg.message || '');
+        return `<div class="medusa-msg"><div class="medusa-msg-from">${from}</div><div class="medusa-msg-body">${body}</div></div>`;
+      }).join('');
+      return `${head}${rows}`;
+    }
+
+    /**
+     * Open the inbox read panel (the badge click): fetch received messages,
+     * render them, and mark the inbox read (clearing the badge). Toggles closed
+     * if already open.
+     * @returns {Promise<void>}
+     */
+    async function openInbox() {
+      const panel = el('panel');
+      if (!panel) return;
+      if (!panel.hidden) { panel.hidden = true; return; }
+      hidePeers();
+      if (typeof hooks.onOpenInbox === 'function') hooks.onOpenInbox();
+
+      const data = await deps.api(`${deps.apiBase}/messages`);
+      const messages = (data && data.messages) || [];
+      panel.innerHTML = renderMessages(messages);
+      panel.hidden = false;
+
+      const status = await deps.api(`${deps.apiBase}/read`, { method: 'POST' });
+      if (status) {
+        m.unread = status.unread || 0;
+        render();
+      }
+    }
+
+    /**
+     * Close the inbox read panel (the ✕, Escape, outside click). Safe when
+     * already closed — the badge self-hides on read, so it is never the only
+     * path to dismiss the panel it opened.
+     * @returns {void}
+     */
+    function closeInbox() {
+      const panel = el('panel');
+      if (panel) panel.hidden = true;
+    }
+
+    /**
+     * Show the recent-inbound-peers popover on hover (desktop affordance)
+     * listing the distinct senders in the inbox. No-op when empty or the read
+     * panel is open.
+     * @returns {Promise<void>}
+     */
+    async function showPeers() {
+      const peers = el('peers');
+      const panel = el('panel');
+      if (!peers || (panel && !panel.hidden)) return;
+      const data = await deps.api(`${deps.apiBase}/messages`);
+      const froms = [...new Set(((data && data.messages) || []).map((msg) => msg.from || 'unknown'))];
+      if (!froms.length) return;
+      peers.innerHTML = '<div class="group-popover-title">Recent inbound</div>'
+        + froms.map((f) => `<div class="group-popover-member">${esc(f)}</div>`).join('');
+      peers.hidden = false;
+    }
+
+    /**
+     * Hide the peers hover popover.
+     * @returns {void}
+     */
+    function hidePeers() {
+      const peers = el('peers');
+      if (peers) peers.hidden = true;
+    }
+
+    /**
+     * Whether an event happened inside this control's root. Composed path
+     * first (correct through re-rendered inner nodes, #566), then an ancestor
+     * walk for environments without it.
+     * @param {object} e - DOM event.
+     * @returns {boolean}
+     */
+    function insideControl(e) {
+      const control = el('control');
+      if (!control) return false;
+      const path = typeof e.composedPath === 'function' ? e.composedPath() : null;
+      if (path && path.length) return path.includes(control);
+      let node = e.target;
+      while (node) {
+        if (node === control) return true;
+        node = node.parentNode;
+      }
+      return false;
+    }
+
+    /**
+     * Bind the control's handlers once: heads = toggle, hover = peers, badge =
+     * inbox, the panel's delegated ✕ (its innerHTML re-renders on each open),
+     * Escape, and outside-click dismissal. Idempotent on BINDING, like the
+     * Master bar's mount: a page may mount at load and again when a surface
+     * opens, and a second bind would double every handler.
+     * @returns {boolean} True when the control is present in the document.
+     */
+    function mount() {
+      const control = el('control');
+      if (!control) return false;
+      if (bound) return true;
+      bound = true;
+      const heads = el('heads');
+      if (heads) {
+        heads.addEventListener('click', toggle);
+        heads.addEventListener('mouseenter', showPeers);
+        heads.addEventListener('mouseleave', hidePeers);
+      }
+      const badge = el('badge');
+      if (badge) badge.addEventListener('click', openInbox);
+      const panel = el('panel');
+      if (panel) {
+        panel.addEventListener('click', (e) => {
+          const t = e.target;
+          if (t && typeof t.closest === 'function' && t.closest('.medusa-panel-close')) closeInbox();
+        });
+      }
+      if (doc && typeof doc.addEventListener === 'function') {
+        doc.addEventListener('keydown', (e) => {
+          if (e.key !== 'Escape') return;
+          const p = el('panel');
+          if (p && !p.hidden) closeInbox();
+        });
+        doc.addEventListener('click', (e) => {
+          if (insideControl(e)) return;
+          closeInbox();
+          hidePeers();
+        });
+      }
+      return true;
+    }
+
+    return {
+      state: m, mount, render, poll, applyStatus, toggle, openInbox, closeInbox,
+      showPeers, hidePeers, flowInbound, flowOutbound, stateLabel, helpText, renderMessages
+    };
+  }
+
+
   /**
    * Markup for one Master control bar.
    *
@@ -2187,16 +2668,7 @@
       <span class="master-dot" id="${p}Dot" aria-hidden="true"></span>
       <span class="master-status-text" id="${p}StatusText"></span>
       <span class="master-bar-model" id="${p}Model" hidden></span>
-      <span class="medusa-control master-bar-pending" id="${p}Medusa"
-            aria-disabled="true" aria-describedby="${p}MedusaWhy"
-            title="${TC_MASTER_PENDING.medusa}">
-        <span class="medusa-mark" aria-hidden="true">
-          <img class="medusa-head medusa-head--in" src="/medusa-head-left.webp" alt="" width="24" height="29">
-          <img class="medusa-emblem" src="/medusa-wordmark.webp" alt="" width="50" height="23">
-          <img class="medusa-head medusa-head--out" src="/medusa-head-right.webp" alt="" width="24" height="29">
-        </span>
-      </span>
-      <span class="sr-only" id="${p}MedusaWhy">${TC_MASTER_PENDING.medusa}</span>
+      ${tcMedusaControlMarkup(tcMedusaIds(p))}
       <button class="btn btn-small hidden" id="${p}RetryBtn">Retry</button>
       <span class="master-bar-spacer"></span>
       <span class="master-bar-enforcement" id="${p}Enforce" hidden></span>
@@ -2247,6 +2719,21 @@
 
     const el = (suffix) => doc.getElementById(p + suffix);
 
+    // The Master's Medusa control (#996) — the SAME component the session
+    // banner mounts, pointed at the Master's API base and prefixed ids. It
+    // paints from the `medusa` field of `/api/master/status` (see `setMedusa`)
+    // so the bar's one status fetch feeds it; its own poll is never started
+    // here — this bar has no tick of its own, and the drawer's host poll calls
+    // `loadAccess()` while the drawer is open.
+    const medusa = tcCreateMedusaControl({
+      doc,
+      api: deps.api,
+      esc: deps.esc,
+      apiBase: '/api/master/medusa',
+      ids: tcMedusaIds(p),
+      subject: 'the Master'
+    });
+
     /**
      * Render into the root, and bind once.
      *
@@ -2284,6 +2771,7 @@
       if (launch && deps.onRetry) launch.addEventListener('click', deps.onRetry);
       const kill = el('KillBtn');
       if (kill) kill.addEventListener('click', killMaster);
+      medusa.mount();
       // Establish the resting state in CODE rather than leaning on the markup's
       // attributes. The component then owns its own initial appearance, which
       // means one source for "what does this say before anything answers"
@@ -2759,6 +3247,20 @@
       if (!deps.api) return;
       const status = await deps.api('/api/master/status');
       setAccess(status && status.settings ? status.settings : null);
+      setMedusa(status && status.medusa ? status.medusa : null);
+    }
+
+    /**
+     * Paint the Medusa control from the `medusa` field of `/api/master/status`
+     * (#996). Null — the status could not be read — leaves the control as it
+     * was rather than painting an `off` nobody measured, the same rule
+     * `setAccess(null)` follows for the segments.
+     * @param {object|null} status - `medusa` from `/api/master/status`, or null.
+     * @returns {void}
+     */
+    function setMedusa(status) {
+      if (!status) return;
+      medusa.applyStatus(status);
     }
 
     /**
@@ -2782,9 +3284,13 @@
       setModel(st, engineId);
     }
 
-    return { mount, setStatus, setModel, setError, setWarning, setAccess, loadAccess, loadModel, killMaster };
+    return { mount, setStatus, setModel, setError, setWarning, setAccess, setMedusa, loadAccess, loadModel, killMaster, medusa };
   }
 
+  global.tcMedusaIds = tcMedusaIds;
+  global.tcMedusaControlMarkup = tcMedusaControlMarkup;
+  global.tcEscapeHtml = tcEscapeHtml;
+  global.tcCreateMedusaControl = tcCreateMedusaControl;
   global.tcSetRulesStatus = tcSetRulesStatus;
   global.tcCreateMasterSettings = tcCreateMasterSettings;
   global.tcMasterPendingReasons = TC_MASTER_PENDING;

@@ -2,7 +2,7 @@
 
 **Issue:** [#996](https://github.com/Jason-Vaughan/TangleClaw/issues/996) (OPEN, verified 2026-08-21) · **Milestone:** Master Control (#829)
 **Predecessors:** #768 (control bar, Medusa slot shipped as a labelled placeholder) · #755/#968 (access level, server-enforced) · MED-2K9P (session switchboard v1)
-**Status:** chunk 1 SHIPPED 2026-08-21 as #1079 (`6b05c52`), live on the operator's install (Master listening as `project-master-1ad424e1`); chunk 2 (bar control) next. Chunk boxes are in `## Status` at the bottom.
+**Status:** chunk 1 SHIPPED 2026-08-21 as #1079 (`6b05c52`), live on the operator's install (Master listening as `project-master-1ad424e1`); chunk 2 BUILT 2026-08-21 (branch `feat/996-master-medusa-bar`). Chunk boxes are in `## Status` at the bottom.
 
 ## Why this slipped
 
@@ -62,4 +62,4 @@
 
 ## Status
 - [x] Chunk 1 — backend participant (2026-08-21: route factory + master mount, lifecycle on live∧enabled, home-pinned identity, outbound gate w/ per-request read, identity+HOWTO, wake record, boot resync, PATCH sync. Suite green; 7 mutations red. CHANGELOG `### Added`, FEATURES row.)
-- [ ] Chunk 2 — bar control live
+- [x] Chunk 2 — bar control live (2026-08-21: `tcCreateMedusaControl` extracted to api-helper.js, session re-pointed via hooks, bar mounts it on both surfaces, `medusa` pending reason removed, `/api/master/status.medusa.outbound`, PATCH identity refresh carry-in closed, popover/inbox CSS moved to shared-controls.css. Suite green; 9 mutations red.)
