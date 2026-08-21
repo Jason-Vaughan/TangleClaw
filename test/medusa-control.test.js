@@ -1,14 +1,21 @@
 'use strict';
 
 /**
- * MED-2K9P Chunk 02 — structural source probes for the banner Medusa control in
- * `public/session.js`. The visual is operator-verified (VRF), but two behaviors
- * are security-/correctness-relevant and cheap to pin against regression:
+ * MED-2K9P Chunk 02 — structural source probes for the banner Medusa control.
+ * The visual is operator-verified (VRF), but two behaviors are security-/
+ * correctness-relevant and cheap to pin against regression:
  *   1. Inbound cross-session text (`from`/`message`) is untrusted and MUST be
  *      escaped before it reaches innerHTML (XSS guard).
  *   2. The receive flow rides the existing session poll (no new UI timer) and
  *      does not announce a pre-existing backlog as "new" on first paint.
  * Mirrors the source-probe convention in `settings-modal-silentprime.test.js`.
+ *
+ * Since #996 the control itself lives in `public/api-helper.js`
+ * (`tcCreateMedusaControl`) so the Master control bar can mount the same one;
+ * `public/session.js` keeps the loop UI and thin names over the component. The
+ * probes below read whichever file now holds the behaviour — every assertion is
+ * the one that shipped with the behaviour, re-pointed. Its runtime twin is
+ * `test/medusa-control-component.test.js`, which lifts and RUNS the component.
  */
 
 const { describe, it } = require('node:test');
@@ -17,9 +24,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
+const helper = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
 
 /**
- * Slice a named function's body out of the source for scoped assertions.
+ * Slice a named top-level function's body out of session.js.
  * @param {string} name - Function name.
  * @returns {string} The body slice (name → next top-level `\nfunction `).
  */
@@ -30,9 +38,34 @@ function fnBody(name) {
   return src.slice(start, next === -1 ? undefined : next);
 }
 
-describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
+/**
+ * Slice a function nested inside `tcCreateMedusaControl` out of api-helper.js.
+ * Inner functions are indented four spaces, so the slice runs to the next
+ * sibling function or JSDoc at that depth.
+ * @param {string} name - Function name.
+ * @returns {string} The body slice.
+ */
+function componentFn(name) {
+  const comp = helper.indexOf('function tcCreateMedusaControl(');
+  assert.ok(comp >= 0, 'tcCreateMedusaControl not found');
+  const plain = helper.indexOf(`\n    function ${name}(`, comp);
+  const asyncFn = helper.indexOf(`\n    async function ${name}(`, comp);
+  const start = plain >= 0 && (asyncFn < 0 || plain < asyncFn) ? plain : asyncFn;
+  assert.ok(start >= 0, `component function ${name} not found`);
+  const next = helper.indexOf('\n    /**', start + 1);
+  return helper.slice(start, next === -1 ? undefined : next);
+}
+
+/** The session's component construction — where its loop hooks live. */
+const sessionMount = (() => {
+  const start = src.indexOf('const medusaControl = window.tcCreateMedusaControl({');
+  assert.ok(start >= 0, 'session does not construct the shared control');
+  return src.slice(start, src.indexOf('\n});', start));
+})();
+
+describe('Medusa control (MED-2K9P Chunk 02; shared component since #996)', () => {
   it('escapes untrusted inbound message text in the read panel', () => {
-    const body = fnBody('renderMedusaMessages');
+    const body = componentFn('renderMessages');
     // Both the sender and the message body are escaped before interpolation.
     assert.match(body, /esc\(msg\.from/);
     assert.match(body, /esc\(msg\.message/);
@@ -42,13 +75,13 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
   });
 
   it('escapes untrusted sender names in the peers popover', () => {
-    const body = fnBody('showMedusaPeers');
+    const body = componentFn('showPeers');
     assert.match(body, /esc\(f\)/);
     assert.doesNotMatch(body, /\$\{f\}/);
   });
 
   it('seeds prevUnread on first render so a pre-existing backlog is not announced as new', () => {
-    const body = fnBody('renderMedusaControl');
+    const body = componentFn('render');
     // The first-render guard reads the `shown` flag and seeds prevUnread.
     assert.match(body, /if\s*\(\s*!m\.shown\s*\)/);
     assert.match(body, /m\.prevUnread\s*=\s*m\.unread/);
@@ -60,25 +93,28 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
     // pollMedusa is invoked from pollStatus (the shared cadence), and the Medusa
     // code introduces no setInterval/setTimeout of its own.
     assert.match(fnBody('pollStatus'), /pollMedusa\(/);
-    for (const name of ['pollMedusa', 'renderMedusaControl', 'flowMedusaInbound', 'toggleMedusa']) {
-      const body = fnBody(name);
+    assert.match(fnBody('pollMedusa'), /medusaControl\.poll\(\)/);
+    for (const name of ['poll', 'render', 'flowInbound', 'toggle', 'applyStatus', 'mount']) {
+      const body = componentFn(name);
       assert.doesNotMatch(body, /setInterval\(|setTimeout\(/, `${name} must not start a timer`);
     }
   });
 
   it('announces arrivals on an aria-live region (non-color/-motion a11y cue)', () => {
-    const body = fnBody('flowMedusaInbound');
-    assert.match(body, /getElementById\(['"]medusaLive['"]\)/);
+    const body = componentFn('flowInbound');
+    assert.match(body, /el\(['"]live['"]\)/);
     assert.match(body, /new Medusa message/);
+    // ...and the live region the session markup provides is the one the id map names.
+    assert.match(helper, /live: 'medusaLive'/);
   });
 
   // Regression — inbox modal could not be dismissed once opened: opening it marks
   // read → unread 0 → the badge (the toggle) self-hides, leaving no close control
   // and no Escape handler (mobile trap). Fix: explicit ✕ in the panel header, a
-  // delegated close handler, Escape-to-close, and a dedicated closeMedusaInbox().
+  // delegated close handler, Escape-to-close, and a dedicated closeInbox().
   describe('inbox panel is dismissable (regression: self-hiding badge left it stuck)', () => {
     it('renders an explicit close button in both the empty and populated panel', () => {
-      const body = fnBody('renderMedusaMessages');
+      const body = componentFn('renderMessages');
       // The shared header holds the ✕ close control...
       assert.match(body, /medusa-panel-close/);
       assert.match(body, /aria-label="Close inbox"/);
@@ -87,16 +123,17 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
     });
 
     it('exposes a dedicated close path separate from the open toggle', () => {
-      const body = fnBody('closeMedusaInbox');
+      const body = componentFn('closeInbox');
       assert.match(body, /panel\.hidden\s*=\s*true/);
     });
 
     it('wires the close button (delegated) and Escape to close the panel', () => {
+      const body = componentFn('mount');
       // Delegated because the panel innerHTML is re-rendered on each open.
-      assert.match(src, /\.medusa-panel-close'\)\)\s*closeMedusaInbox\(\)/);
+      assert.match(body, /\.medusa-panel-close'\)\)\s*closeInbox\(\)/);
       // Escape closes the open panel.
-      assert.match(src, /e\.key !== 'Escape'/);
-      assert.match(src, /!panel\.hidden.*closeMedusaInbox\(\)/s);
+      assert.match(body, /e\.key !== 'Escape'/);
+      assert.match(body, /!p\.hidden\)\s*closeInbox\(\)/);
     });
   });
 
@@ -119,6 +156,11 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
       // The bridge element and its asset reference are gone.
       assert.doesNotMatch(html, /medusa-bridge/);
     });
+    it('the component\'s generated markup carries the same art, so the Master bar cannot drift from the banner', () => {
+      const gen = helper.slice(helper.indexOf('function tcMedusaControlMarkup('), helper.indexOf('function tcEscapeHtml('));
+      assert.match(gen, /medusa-head--in[\s\S]*medusa-emblem[\s\S]*medusa-head--out/);
+      assert.match(gen, /medusa-head-left\.webp[\s\S]*medusa-wordmark\.webp[\s\S]*medusa-head-right\.webp/);
+    });
     it('ships the referenced WebP assets — and no longer the bridge', () => {
       for (const f of ['medusa-head-left.webp', 'medusa-head-right.webp', 'medusa-wordmark.webp']) {
         assert.ok(fs.existsSync(path.join(__dirname, '..', 'public', f)), `${f} missing`);
@@ -131,15 +173,16 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
   // Hover help — the control's `title` explains what Medusa is + what it's doing,
   // distinct from the concise aria-label (which stays the accessible name).
   describe('control has descriptive hover help', () => {
-    it('medusaHelpText explains the switchboard and the live state', () => {
-      const body = fnBody('medusaHelpText');
+    it('helpText explains the switchboard and the live state', () => {
+      const body = componentFn('helpText');
       assert.match(body, /switchboard|session-to-session/);
       assert.match(body, /listening/);   // the "on" state describes what it's doing
     });
     it('wires the tooltip to the help text, not the terse aria-label', () => {
-      assert.match(src, /heads\.title\s*=\s*medusaHelpText\(m\)/);
+      const body = componentFn('render');
+      assert.match(body, /heads\.title\s*=\s*helpText\(m\)/);
       // aria-label stays the concise state label (accessible name hygiene).
-      assert.match(src, /heads\.setAttribute\('aria-label', label\)/);
+      assert.match(body, /heads\.setAttribute\('aria-label', label\)/);
     });
   });
 
@@ -213,15 +256,18 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
     });
 
     it('gates the loop control on listener state — hidden + closed when off', () => {
-      const body = fnBody('renderMedusaControl');
-      assert.match(body, /m\.state\s*!==\s*'off'/);
-      assert.match(body, /closeMedusaLoopModal\(\)/);
+      // The gate lives in the session's onRender hook now: the component owns
+      // the listener state, the page owns the loop affordance that depends on it.
+      assert.match(sessionMount, /m\.state\s*!==\s*'off'/);
+      assert.match(sessionMount, /closeMedusaLoopModal\(\)/);
+      assert.match(sessionMount, /renderMedusaLoopsChip\(m\)/);
     });
 
     it('lights the outbound head and announces the send on the aria-live region', () => {
-      const body = fnBody('flowMedusaOutbound');
+      assert.match(fnBody('flowMedusaOutbound'), /medusaControl\.flowOutbound\(label, status\)/);
+      const body = componentFn('flowOutbound');
       assert.match(body, /flow-out/);
-      assert.match(body, /getElementById\(['"]medusaLive['"]\)/);
+      assert.match(body, /el\(['"]live['"]\)/);
       assert.match(body, /delivered|queued/i);
     });
 
@@ -230,410 +276,5 @@ describe('public/session.js — Medusa control (MED-2K9P Chunk 02)', () => {
         assert.doesNotMatch(fnBody(name), /setInterval\(|setTimeout\(/, `${name} must not start a timer`);
       }
     });
-
-    it('wires the loop button, Launch/Cancel, and Escape to close', () => {
-      assert.match(src, /medusaLoop'?\)?\.addEventListener\('click', openMedusaLoopModal\)/);
-      assert.match(src, /medusaLoopLaunchBtn'?\)?\.addEventListener\('click', launchMedusaLoop\)/);
-      assert.match(src, /medusaLoopCancelBtn'?\)?\.addEventListener\('click', closeMedusaLoopModal\)/);
-      // Escape closes the open loop modal too.
-      assert.match(src, /loopModal\.classList\.contains\('open'\)\)\s*closeMedusaLoopModal\(\)/);
-    });
-
-    it('a launch failure keeps the modal open (form input never lost)', () => {
-      const body = fnBody('launchMedusaLoop');
-      // The failure branch shows the inline error; only the success branch closes.
-      assert.match(body, /fail\(`Couldn't open loop/);
-      const successBranch = body.slice(body.indexOf('result && result.loop'), body.lastIndexOf('} else {'));
-      assert.match(successBranch, /closeMedusaLoopModal\(\)/);
-      const failureBranch = body.slice(body.lastIndexOf('} else {'));
-      assert.doesNotMatch(failureBranch, /closeMedusaLoopModal\(\)/);
-    });
-
-    // ── Mode-aware wall-clock guard (MED-6V3R) ──
-    // The modal ALWAYS sends an explicit maxWallTimeSeconds, so lib/medusa.js's
-    // per-mode default never fires for this path — the prefill below is what an
-    // operator actually gets. That makes the client preset and the server default
-    // two independent copies of one number, so the drift is pinned explicitly.
-
-    /**
-     * The supervised default the server applies to guard-omitting API callers.
-     * Read from source because `DEFAULT_WALL_SECONDS` is module-private.
-     * @returns {number} Seconds.
-     */
-    function serverSupervisedDefaultSeconds() {
-      const lib = fs.readFileSync(path.join(__dirname, '..', 'lib', 'medusa.js'), 'utf8');
-      const block = lib.match(/const DEFAULT_WALL_SECONDS = \{([\s\S]*?)\}/);
-      assert.ok(block, 'DEFAULT_WALL_SECONDS not found in lib/medusa.js');
-      const supervised = block[1].match(/supervised:\s*(\d+)/);
-      assert.ok(supervised, 'supervised key not found in DEFAULT_WALL_SECONDS');
-      return Number(supervised[1]);
-    }
-
-    it('the modal prefills the SUPERVISED budget, not the autonomous runaway bound (VRF-561 regression)', () => {
-      const input = html.match(/<input[^>]*id="medusaLoopMaxMinutes"[^>]*>/);
-      assert.ok(input, 'medusaLoopMaxMinutes input not found');
-      const value = Number((input[0].match(/value="(\d+)"/) || [])[1]);
-      assert.ok(value > 10, `prefill ${value} is the autonomous bound — a supervised loop would halt while the operator thinks`);
-      assert.equal(value, 480);
-    });
-
-    it('the client preset and the server default agree on the supervised budget (independent copies)', () => {
-      const preset = src.match(/MEDUSA_LOOP_GUARD_PRESETS = \{[\s\S]*?supervised:\s*\{[\s\S]*?minutes:\s*(\d+)/);
-      assert.ok(preset, 'supervised preset minutes not found');
-      assert.equal(Number(preset[1]) * 60, serverSupervisedDefaultSeconds());
-    });
-
-    it('the HTML prefill matches the client preset (the modal opens on supervised)', () => {
-      const input = html.match(/<input[^>]*id="medusaLoopMaxMinutes"[^>]*>/)[0];
-      const prefill = Number(input.match(/value="(\d+)"/)[1]);
-      const preset = Number(src.match(/MEDUSA_LOOP_GUARD_PRESETS = \{[\s\S]*?supervised:\s*\{[\s\S]*?minutes:\s*(\d+)/)[1]);
-      assert.equal(prefill, preset);
-    });
-
-    it('both modes carry a distinct preset and hint — the knob says which thing it bounds', () => {
-      const presets = src.match(/MEDUSA_LOOP_GUARD_PRESETS = \{[\s\S]*?\n\};/);
-      assert.ok(presets, 'MEDUSA_LOOP_GUARD_PRESETS not found');
-      const supervised = Number(presets[0].match(/supervised:\s*\{[\s\S]*?minutes:\s*(\d+)/)[1]);
-      const autonomous = Number(presets[0].match(/autonomous:\s*\{[\s\S]*?minutes:\s*(\d+)/)[1]);
-      assert.ok(supervised > autonomous, 'supervised must not inherit the autonomous runaway bound');
-      // Each mode states what its clock actually measures, rather than a shared
-      // label that is true in only one of them.
-      assert.match(presets[0], /supervised:\s*\{[\s\S]*?hint:\s*'[^']*not runaway protection/);
-      assert.match(presets[0], /autonomous:\s*\{[\s\S]*?hint:\s*'[^']*bounds their work/);
-      // The hint is programmatically tied to the control it explains.
-      assert.match(html, /id="medusaLoopMaxMinutes"[^>]*aria-describedby="medusaLoopGuardHint"/);
-      assert.match(html, /id="medusaLoopGuardHint"/);
-    });
-
-    it('a mode switch re-syncs the guard, and opening the modal syncs it too', () => {
-      assert.match(src, /medusaLoopMode\.addEventListener\('change', syncMedusaLoopGuardMode\)/);
-      assert.match(fnBody('openMedusaLoopModal'), /syncMedusaLoopGuardMode\(\)/);
-    });
-
-    it('a mode switch never overwrites an operator-edited value (no silent discard)', () => {
-      // The dirty flag is module state, not residual DOM state — a value the
-      // operator typed survives a mode switch. Silently discarding deliberate
-      // input is the defect the feedback composer was faulted for (VRF-561).
-      assert.match(src, /medusaLoopMaxMinutes\.addEventListener\('input', \(\) => \{ medusaLoopMinutesDirty = true; \}\)/);
-      const body = fnBody('syncMedusaLoopGuardMode');
-      assert.match(body, /if \(minutes && !medusaLoopMinutesDirty\) minutes\.value/);
-      // The hint always follows the mode — only the VALUE is guarded.
-      const hintLine = body.match(/if \(hint\) hint\.textContent = preset\.hint;/);
-      assert.ok(hintLine, 'the hint must re-sync unconditionally');
-      assert.ok(body.indexOf('hint.textContent') < body.indexOf('medusaLoopMinutesDirty'));
-    });
-
-    it('an unknown mode value falls back to the supervised preset (never undefined)', () => {
-      assert.match(fnBody('syncMedusaLoopGuardMode'), /\|\| MEDUSA_LOOP_GUARD_PRESETS\.supervised/);
-    });
-
-    it('no hint claims the wall clock stops a runaway in BOTH modes (Critic NOTE)', () => {
-      // A supervised loop has no runaway to stop, so "guards stop a runaway
-      // either way" is false of the wall clock and contradicts the per-mode hint
-      // below it. maxRounds is the guard that IS true of both modes.
-      // Asserted against rendered markup only: the source comment deliberately
-      // quotes the retired wording to explain why it went, and a reader never
-      // sees it — matching raw text would pin the comment, not the UI.
-      const rendered = html.replace(/<!--[\s\S]*?-->/g, '');
-      assert.doesNotMatch(rendered, /runaway either way/);
-      assert.match(rendered, /Max rounds bounds it either way/);
-    });
-  });
-
-  // MED-2K9P v2 T4 — banner loop view + force-done. Visuals are operator-VRF'd;
-  // these pin the security/honesty/a11y contracts: XSS guard on Bridge-supplied
-  // loop data, honest state labels (halted is ONLY the server guard; force-done
-  // renders from the structured closeSignal), the never-color-only status cue,
-  // the no-new-timer rule, and the control invariant surfacing.
-  describe('banner loop view + force-done (MED-2K9P v2 T4)', () => {
-    const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.html'), 'utf8');
-    // Medusa's BASE rules moved to shared-controls.css (#768 chunk 2) so the
-    // Master bar and the session banner restyle together; session.css keeps
-    // only its own responsive overrides. Read both — the assertion is about
-    // what the page ends up with, and the page loads both.
-    const css = ['shared-controls.css', 'session.css']
-      .map((f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8')).join('\n');
-
-    it('renders the loops chip + loops panel markup', () => {
-      assert.match(html, /id="medusaLoopsChip"[^>]*aria-haspopup="dialog"/);
-      assert.match(html, /id="medusaLoopsPanel"[^>]*role="dialog"/);
-    });
-
-    it('the status poll carries the loops (rides the existing cadence, no new timer)', () => {
-      const body = fnBody('pollMedusa');
-      assert.match(body, /m\.loops\s*=\s*data\.loops/);
-      assert.match(body, /m\.loopsError\s*=\s*data\.loopsError/);
-      for (const name of ['renderMedusaLoopsChip', 'openMedusaLoopsPanel', 'renderMedusaLoopsPanel', 'forceDoneMedusaLoop', 'closeMedusaLoopsPanel']) {
-        assert.doesNotMatch(fnBody(name), /setInterval\(|setTimeout\(/, `${name} must not start a timer`);
-      }
-    });
-
-    it('the chip text carries the status (round count / live count) — the glow is never the only cue', () => {
-      const body = fnBody('renderMedusaLoopsChip');
-      // Text content set alongside the has-live-loop class toggle.
-      assert.match(body, /has-live-loop/);
-      assert.match(body, /chip\.textContent/);
-      assert.match(body, /R\$\{l\.round\}/);
-      // A loop-fetch failure surfaces on the chip, never a silent hide.
-      assert.match(body, /loopsError/);
-    });
-
-    it('the live-loop glow animation is suppressed under prefers-reduced-motion', () => {
-      assert.match(css, /has-live-loop[\s\S]*?animation:\s*medusa-loop-glow/);
-      assert.match(css, /prefers-reduced-motion[\s\S]{0,200}has-live-loop[\s\S]{0,100}animation:\s*none/);
-    });
-
-    it('escapes every Bridge-supplied field in the loops panel (XSS guard — loop data is cross-session)', () => {
-      const body = fnBody('renderMedusaLoopsPanel');
-      for (const expr of ['esc\\(other\\)', 'esc\\(loop\\.id\\)', 'esc\\(loop\\.task', 'esc\\(loop\\.target\\)', 'esc\\(stateLabel\\)', 'esc\\(msg\\.from', 'esc\\(msg\\.message', 'esc\\(m\\.loopsError\\)']) {
-        assert.match(body, new RegExp(expr), `${expr} must be escaped`);
-      }
-      assert.doesNotMatch(body, /\$\{loop\.task\}|\$\{loop\.id\}|\$\{msg\.message\}|\$\{msg\.from\}|\$\{other\}/);
-    });
-
-    it('state labels are honest: halted is only the server guard; force-done renders from the structured closeSignal', () => {
-      const body = fnBody('medusaLoopStateLabel');
-      assert.match(body, /halted by guard/);
-      assert.match(body, /closeSignal\s*&&\s*loop\.closeSignal\.reason/);
-      assert.match(body, /'force-done'/);
-    });
-
-    it('force-done is initiator-only in the UI and a halted loop surfaces "cannot be closed" (guard semantics)', () => {
-      const body = fnBody('renderMedusaLoopsPanel');
-      assert.match(body, /live\s*&&\s*loop\.role\s*===\s*'initiator'/);
-      assert.match(body, /guard-halted — cannot be closed/);
-    });
-
-    it('force-done confirms, POSTs to the force-done endpoint, and never pretends on failure', () => {
-      const body = fnBody('forceDoneMedusaLoop');
-      assert.match(body, /window\.confirm\(/);
-      assert.match(body, /apiMutate\([\s\S]*?force-done/);
-      assert.match(body, /Couldn't end loop/);
-      assert.match(body, /api\.lastError/);
-      // Success is announced on the aria-live region (non-color cue).
-      assert.match(body, /medusaLive/);
-    });
-
-    it('the transcript is labeled as observed-only (the Bridge keeps no full history)', () => {
-      const body = fnBody('renderMedusaLoopsPanel');
-      assert.match(body, /As observed by this session/);
-    });
-
-    it('wires the chip, panel delegation (close / force-done / transcript), Escape, and outside click', () => {
-      assert.match(src, /medusaLoopsChip'?\)?\.addEventListener\('click', openMedusaLoopsPanel\)/);
-      assert.match(src, /\.medusa-force-done'\)/);
-      assert.match(src, /\.medusa-loop-transcript-toggle'\)/);
-      assert.match(src, /loopsPanel\.hidden\)\s*closeMedusaLoopsPanel\(\)/);
-      assert.match(src, /closeMedusaLoopsPanel\(\); \/\/ v2 T4/);
-    });
-  });
-
-  // TC#561 — the FEEDBACK + satisfied-CLOSEOUT half of the loop control spine.
-  // Visuals are operator-VRF'd; the source pins the gate (only when the
-  // initiator can actually judge), the honest labels, and the wiring.
-  describe('supervised continue/feedback + satisfied closeout (TC#561)', () => {
-    // Medusa's BASE rules moved to shared-controls.css (#768 chunk 2) so the
-    // Master bar and the session banner restyle together; session.css keeps
-    // only its own responsive overrides. Read both — the assertion is about
-    // what the page ends up with, and the page loads both.
-    const css = ['shared-controls.css', 'session.css']
-      .map((f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8')).join('\n');
-
-    it('defines the continue + closeout handlers', () => {
-      for (const name of ['continueMedusaLoop', 'closeoutMedusaLoop']) {
-        assert.ok(src.includes(`function ${name}(`), `${name} must be defined`);
-      }
-    });
-
-    it('offers Send feedback + Mark done ONLY when the initiator can judge (responded state)', () => {
-      const body = fnBody('renderMedusaLoopsPanel');
-      // The gate is role initiator AND state responded — never for a target,
-      // never in initiated/continue/complete (the Bridge would 400 a round).
-      assert.match(body, /loop\.role\s*===\s*'initiator'\s*&&\s*loop\.state\s*===\s*'responded'/);
-      assert.match(body, /medusa-loop-continue/);
-      assert.match(body, /medusa-loop-closeout/);
-      // The composer only renders under the same canJudge gate.
-      assert.match(body, /canJudge\s*&&\s*feedbackOpen/);
-    });
-
-    it('the feedback composer has a labelled textarea and escapes the target name (no raw interpolation)', () => {
-      const body = fnBody('renderMedusaLoopsPanel');
-      assert.match(body, /medusa-loop-feedback-label/);
-      assert.match(body, /<textarea[^>]*medusa-loop-feedback-input/);
-      assert.match(body, /placeholder="What should \$\{esc\(other\)\}/);
-      assert.doesNotMatch(body, /\$\{other\}/); // never raw
-    });
-
-    it('continue validates non-empty feedback, POSTs to the continue endpoint, and never pretends on failure', () => {
-      const body = fnBody('continueMedusaLoop');
-      assert.match(body, /Enter feedback before sending/);       // client-side guard
-      assert.match(body, /apiMutate\([\s\S]*?\/continue/);
-      assert.match(body, /Couldn't send feedback/);
-      assert.match(body, /api\.lastError/);
-      // Optimistic advance uses the Bridge's returned state/round, not a guess.
-      assert.match(body, /loop\.state\s*=\s*result\.loopState/);
-    });
-
-    it('closeout is a SATISFIED close, labeled distinctly from force-done', () => {
-      const body = fnBody('closeoutMedusaLoop');
-      assert.match(body, /window\.confirm\(/);
-      assert.match(body, /apiMutate\([\s\S]*?\/closeout/);
-      assert.match(body, /marked done/);
-      assert.doesNotMatch(body, /force-done/); // the satisfied path must not borrow the kill-switch label
-      assert.match(body, /Couldn't close loop/);
-    });
-
-    it('wires the new delegated controls (continue toggle, feedback send, closeout)', () => {
-      assert.match(src, /\.medusa-loop-closeout'\)/);
-      assert.match(src, /\.medusa-loop-continue'\)/);
-      assert.match(src, /\.medusa-loop-feedback-send'\)/);
-      // The composer open-state is a Set mirroring the transcript one.
-      assert.match(src, /medusaExpandedFeedback/);
-    });
-
-    it('styles the new controls (accent continue/send, quiet closeout, ≥36px touch targets)', () => {
-      assert.match(css, /\.medusa-loop-continue[\s\S]*?min-height:\s*36px/);
-      assert.match(css, /\.medusa-loop-closeout[\s\S]*?min-height:\s*36px/);
-      assert.match(css, /\.medusa-loop-feedback-input/);
-    });
-
-    it('the poll re-render defers to the FOCUSED composer (multi-composer safe) but can never deadlock', () => {
-      // Regression (Critic cumulative BLOCKING): a guard keyed on residual
-      // textarea .value froze the panel forever after a send (sent text stays
-      // in the DOM). The guard keys on document.activeElement — the composer
-      // actually focused, scoped to the panel — so a blurred/sent composer
-      // always re-renders, AND a non-first composer is protected too (a
-      // first-match querySelector would drop focus on the 2nd of two).
-      const body = fnBody('renderMedusaLoopsPanel');
-      assert.match(body, /document\.activeElement/);
-      assert.match(body, /active\.closest\('\.medusa-loop-feedback-input'\)/);
-      assert.match(body, /panel\.contains\(active\)/);
-      assert.doesNotMatch(body, /\.value\.trim\(\)/, 'must NOT gate the re-render on residual DOM value (deadlock source)');
-      assert.doesNotMatch(body, /panel\.querySelector\('\.medusa-loop-feedback-input'\)/, 'first-match query drops focus for a non-first composer');
-      // The guard returns BEFORE the panel innerHTML is rebuilt.
-      const guardIdx = body.indexOf('document.activeElement');
-      const renderIdx = body.indexOf('panel.innerHTML =');
-      assert.ok(guardIdx >= 0 && renderIdx > guardIdx, 'guard precedes the re-render');
-    });
-
-    it('draft text survives re-render via the drafts Map (seeded into the textarea), cleared on send/close', () => {
-      const body = fnBody('renderMedusaLoopsPanel');
-      // The textarea is seeded from the draft Map and carries data-loop-id.
-      assert.match(body, /medusaFeedbackDrafts\.get\(loop\.id\)/);
-      assert.match(body, /data-loop-id="\$\{esc\(loop\.id\)\}"[^>]*medusa-loop-feedback-input|medusa-loop-feedback-input[^>]*data-loop-id/);
-      assert.match(body, /\$\{esc\(draft\)\}<\/textarea>/); // seeded + escaped
-      // Drafts are persisted on input and cleared on send + on close.
-      assert.match(src, /addEventListener\('input'[\s\S]*?medusaFeedbackDrafts\.set/);
-      assert.match(fnBody('continueMedusaLoop'), /medusaFeedbackDrafts\.delete\(loopId\)/);
-    });
-
-    it('the satisfied closeout label survives a refresh (durable row, not just the toast)', () => {
-      const body = fnBody('medusaLoopStateLabel');
-      assert.match(body, /reason\s*===\s*'satisfied'/);
-      assert.match(body, /marked done/);
-      // force-done stays distinct.
-      assert.match(body, /'force-done'/);
-    });
-
-    it('the continue toast is honest when the round hit maxRounds and the Bridge auto-halted', () => {
-      const body = fnBody('continueMedusaLoop');
-      assert.match(body, /result\.loopState\s*===\s*'halted'/);
-      assert.match(body, /halted/);
-    });
-  });
-});
-
-// ── #566: the loops panel dismissed itself on any synchronous control click ──
-//
-// The outside-click dismiss decided "was this outside?" with a live
-// `e.target.closest('.medusa-control')`. But the panel's delegated handlers
-// replace `panel.innerHTML`, orphaning the clicked button BEFORE the
-// document-level listener runs — `closest()` on an orphan returns null, so the
-// panel read its own click as an outside click and hid itself. Controls that
-// `await` an HTTP call first were accidentally safe (the await let the event
-// finish bubbling first); the purely synchronous ones — Send feedback,
-// Transcript-collapse — were not.
-//
-// These are BEHAVIORAL tests, not source probes: `clickHitsSelector` is pure, so
-// we lift it out of the browser file and run it against synthetic event objects.
-// That reproduces the orphaned-target condition a source probe cannot see, and
-// is why this class of bug shipped in the first place (no DOM harness; TST-6L2P).
-
-/**
- * Lift the pure predicate out of `public/session.js` and return it callable.
- * @returns {(event: object, selector: string) => boolean}
- */
-function loadClickHitsSelector() {
-  const body = fnBody('clickHitsSelector');
-  return new Function(`${body}\nreturn clickHitsSelector;`)();
-}
-
-/**
- * A stand-in DOM node that matches only the selectors it is given.
- * @param {string[]} selectors - Selectors this node matches.
- * @returns {object}
- */
-function node(selectors = []) {
-  return { matches: (s) => selectors.includes(s) };
-}
-
-describe('public/session.js — outside-click dismiss survives a re-render (#566)', () => {
-  const hits = loadClickHitsSelector();
-
-  it('reports INSIDE for a target the panel already detached (the #566 regression)', () => {
-    // The exact shipped failure: the clicked button has been orphaned by
-    // `renderMedusaLoopsPanel`, so a live closest() finds nothing — but the
-    // dispatch-time path still carries the control. Verdict must be "inside",
-    // or the panel dismisses itself mid-click.
-    const control = node(['.medusa-control']);
-    const orphanedButton = {
-      matches: () => false,
-      closest: () => null // detached: innerHTML was replaced by the inner handler
-    };
-    const event = {
-      target: orphanedButton,
-      composedPath: () => [orphanedButton, control, { /* document */ }, { /* window */ }]
-    };
-    assert.equal(hits(event, '.medusa-control'), true);
-  });
-
-  it('still reports OUTSIDE for a genuine outside click', () => {
-    // The dismiss must keep working — the fix must not pin the verdict to true.
-    const elsewhere = node(['.terminal']);
-    const event = { target: elsewhere, composedPath: () => [elsewhere, node([])] };
-    assert.equal(hits(event, '.medusa-control'), false);
-  });
-
-  it('reports INSIDE for an attached target inside the control', () => {
-    const control = node(['.medusa-control']);
-    const button = node(['.medusa-force-done']);
-    const event = { target: button, composedPath: () => [button, control] };
-    assert.equal(hits(event, '.medusa-control'), true);
-  });
-
-  it('tolerates non-element entries in the path (document/window expose no matches)', () => {
-    const control = node(['.medusa-control']);
-    const button = node([]);
-    const event = { target: button, composedPath: () => [button, null, {}, control] };
-    assert.doesNotThrow(() => hits(event, '.medusa-control'));
-    assert.equal(hits(event, '.medusa-control'), true);
-  });
-
-  it('falls back to closest() when composedPath is unavailable', () => {
-    const control = node(['.medusa-control']);
-    const event = { target: { matches: () => false, closest: (s) => (s === '.medusa-control' ? control : null) } };
-    assert.equal(hits(event, '.medusa-control'), true);
-    const outside = { target: { matches: () => false, closest: () => null } };
-    assert.equal(hits(outside, '.medusa-control'), false);
-  });
-
-  it('the dismiss handler uses the path predicate, never a live target query', () => {
-    // Pins the call sites: a regression here silently reintroduces #566, and the
-    // behavioral tests above cannot see the wiring.
-    const bind = fnBody('bindEvents');
-    const dismiss = bind.slice(0, bind.indexOf('// Medusa session-comms control'));
-    assert.match(dismiss, /clickHitsSelector\(e,\s*'\.medusa-control'\)/);
-    assert.match(dismiss, /clickHitsSelector\(e,\s*'\.group-pill'\)/);
-    assert.doesNotMatch(dismiss, /e\.target\.closest/);
   });
 });
