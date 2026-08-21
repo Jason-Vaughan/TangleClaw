@@ -361,3 +361,95 @@ describe('API /api/shared-docs/:id/lock', () => {
     store.documentLocks.release(docId);
   });
 });
+
+describe('shared-doc broadcast never notifies the project that owns the file (#998)', () => {
+  const medusa = require('../lib/medusa');
+  const OPEN = 1;
+
+  /** Minimal fake WebSocket, enough for the listener to reach `listening`. */
+  class FakeWS {
+    /** @param {string} url - Requested URL. */
+    constructor(url) { this.url = url; this.readyState = 0; this.sent = []; this._h = Object.create(null); }
+    /** @param {string} t - Event type. @param {Function} h - Handler. @returns {void} */
+    addEventListener(t, h) { (this._h[t] || (this._h[t] = [])).push(h); }
+    /** @param {string} d - Frame. @returns {void} */
+    send(d) { this.sent.push(d); }
+    /** @returns {void} */
+    close() { this.readyState = 3; }
+    /** @param {string} t - Event type. @param {object} e - Payload. @returns {void} */
+    _fire(t, e) { for (const h of this._h[t] || []) h(e); }
+    /** @returns {void} */
+    _open() { this.readyState = OPEN; this._fire('open', {}); }
+    /** @param {object} o - Inbound frame. @returns {void} */
+    _recv(o) { this._fire('message', { data: JSON.stringify(o) }); }
+  }
+
+  let tmpDir;
+  let server;
+  let ownerSessionId;
+  let peerSessionId;
+  let docId;
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-shareddoc-self-'));
+    store._setBasePath(tmpDir);
+    store.init();
+
+    const group = store.projectGroups.create({ name: 'SelfNudgeGroup' });
+
+    // The reproduction from #998: the doc lives INSIDE a member project, so
+    // that project editing its own file broadcasts a message back to itself.
+    const ownerPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-doc-owner-'));
+    const peerPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-doc-peer-'));
+    const docPath = path.join(ownerPath, 'ROADMAP_STATE.md');
+    fs.writeFileSync(docPath, '# state\n');
+
+    const owner = store.projects.create({ name: 'doc-owner', path: ownerPath, engine: 'claude', groupId: group.id });
+    const peer = store.projects.create({ name: 'doc-peer', path: peerPath, engine: 'claude', groupId: group.id });
+
+    const doc = store.sharedDocs.create({
+      groupId: group.id, name: 'ROADMAP_STATE', filePath: docPath,
+      injectIntoConfig: false, injectMode: 'reference'
+    });
+
+    // A live, listening session in each project.
+    for (const [proj, assign] of [[owner, (id) => { ownerSessionId = id; }], [peer, (id) => { peerSessionId = id; }]]) {
+      const sess = store.sessions.start({ projectId: proj.id, engineId: 'claude', tmuxSession: `tc-${proj.name}` });
+      assign(sess.id);
+      let fake;
+      const { workspaceId } = medusa.startSession({
+        projectPath: proj.path, sessionId: sess.id, name: proj.name,
+        wsFactory: (u) => (fake = new FakeWS(u))
+      });
+      fake._open();
+      fake._recv({ type: 'registered', workspaceId, connectionId: 'c1' });
+    }
+
+    docId = doc.id;
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(async () => {
+    for (const { watcher } of _sharedDocWatchers.values()) watcher.close();
+    for (const timer of _sharedDocDebounceTimers.values()) clearTimeout(timer);
+    medusa.stopSession(ownerSessionId);
+    medusa.stopSession(peerSessionId);
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('attempts the peer session and skips the owning project entirely', async () => {
+    const { status, data } = await request(server, 'POST', `/api/shared-docs/${docId}/notify`);
+    assert.equal(status, 200);
+
+    // No Bridge is up in tests, so every ATTEMPTED send fails and names its
+    // session — which makes the error list an honest record of who was tried.
+    // That is the discriminator: the owning session must not appear at all.
+    const tried = (data.errors || []).join(' ');
+    assert.ok(tried.includes(`session ${peerSessionId}`), 'the peer must still be notified');
+    assert.ok(!tried.includes(`session ${ownerSessionId}`),
+      'the project whose directory holds the file must never be told about its own write');
+  });
+});

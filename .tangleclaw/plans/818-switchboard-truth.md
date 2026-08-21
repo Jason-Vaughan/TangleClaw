@@ -221,7 +221,29 @@ evidence a message arrived. Per `reference_live_verification_traps` and
 
 - [x] Car 1 — Stop the bleeding, and give the inbox a lifecycle (#812, #784, #785) — 2026-08-21: `markRead` split into an inert badge clear and `markHandled(ids)`; route carries both verbs; panel reports the ids it rendered; loop ids learned on arrival; `sendKeys` clears the prompt and logs the draft first. Suite green (6629 pass, 0 fail); 7 mutations red. Review pending.
 - [x] Car 2 — Delivery is receipted, not assumed (#792, #791, #934) — 2026-08-21: `medusa_deliveries` ledger (schema v30) mirroring #595; every terminal path in `_scanSession` records `nudged`/`failed`/`skipped`+reason, deduped per (edge, outcome) so it logs events not polls; `GET /api/medusa/deliveries` fleet query + per-participant route. **#934 was already satisfied** — probed live: the listener transmits `{"type":"ack","messageIds":[...]}` on handled, which is its Required Fix option 2; propose closing rather than building. Suite green (6643 pass, 0 fail); 4 mutations red.
-- [ ] Car 3 — Injection reaches the right reader (#783, #1025, #998)
+- [x] Car 3 — Injection reaches the right reader (#783, #998; **#1025 descoped, see below**) — 2026-08-21: `agents-running` gate in `_assessPane` pinned to #783's verbatim live capture; `broadcastSharedDocUpdate` skips the project whose directory holds the doc, via a new `isInsideProject` sibling in the containment module. Suite green (6648 pass, 0 fail); 2 mutations red.
+
+### #1025 is NOT deliverable from TangleClaw alone — verified in Medusa's source
+
+`#1025` asks for provenance in the envelope so a receiver can tell a subagent-sent
+message from a main-session one. **A TangleClaw-side stamp would be silently dropped
+before delivery.** `Medusa/src/medusa/medusa-server.js:889` builds the delivered
+envelope from a fixed field whitelist:
+
+```js
+const msgPayload = { id, type: 'direct', from: data.from, to: targetId,
+                     message: data.message, timestamp };
+```
+
+Both delivery paths use that object — the live WS push (`:905`) and the durable
+offline queue (`:902`) — so any extra field in TangleClaw's `POST /messages/direct`
+body never reaches the receiver. Adding one would have shipped as a green-tested
+no-op. Provenance needs a **Medusa-side** change, and TangleClaw does not write to
+Medusa's repo (cross-session write boundary). File it there; do not build it here.
+
+The TangleClaw half that IS ours already exists: the fleet detector built for #783
+is exactly the signal that can distinguish a subagent-originated send, and it can be
+reused the moment the envelope has somewhere to put the answer.
 - [ ] Car 4 — Identity survives a restart (#1023)
 - [ ] Car 5 — The surfaces stop lying (#836, #820, #556)
 - [ ] Car 6 — The channel teaches itself, and the rule comes down (#912, #1020, #904)
