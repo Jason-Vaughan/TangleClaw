@@ -375,6 +375,22 @@ describe('sidecar', () => {
         'a success must reset backoff, or a recovered gateway stays polled at 5-minute intervals');
     });
 
+    it('stopAllPolling protects a HEALTHY connection in flight, not just a failing one', async () => {
+      // "One call site is not the family" (learnings.md). stopPolling bumps the
+      // epoch for its connection; stopAllPolling keyed off _failures, so a
+      // connection with no failures yet — the healthy case — kept a matching
+      // epoch and wrote a count back after the clear.
+      const connId = createConn('AllStopClaw', 59996); // nothing listening
+      sidecar.startPolling(connId, 50);
+      assert.equal(sidecar._failures.get(connId) || 0, 0, 'must start with no failures, or the guard is not exercised');
+
+      const inflight = sidecar.pollProcesses(connId, { timeoutMs: 400 });
+      sidecar.stopAllPolling();
+      await inflight;
+      assert.equal(sidecar._failures.get(connId), undefined,
+        'a healthy connection stopped mid-poll must not be left carrying a failure count');
+    });
+
     it('a poll in flight when polling stops cannot re-set the cleared count', async () => {
       // R-5: stopPolling does not abort an in-flight request. Its result lands
       // afterwards and, without the epoch guard, re-sets the count it just saw
