@@ -182,6 +182,54 @@ describe('an active session whose pane could not be reached (#907)', () => {
     }
   });
 
+  it('releases the Medusa presence of a stale session cleaned up AT LAUNCH (#836)', () => {
+    // The twin of the #1000 case above, for the OTHER markCrashed site: the
+    // stale-session sweep that runs before a fresh launch. It marked the row
+    // crashed and cleared the idle cache but left the listener open, so the
+    // dead workspace stayed on the roster reporting `connected: true` — one
+    // observed leak outlived its session by 45 hours, and peers addressing it
+    // got `{"status":"received"}` for messages filed into an inbox no agent
+    // would ever read.
+    //
+    // Asserted on the real effect (the listener is off) rather than on the call,
+    // for the same reason the twin gives: a spy passes even when the call is
+    // wired to something that releases nothing.
+    //
+    // THE MUTATION THIS CATCHES: removing `_teardownMedusa(project, existing)`
+    // from the stale-cleanup branch of `launchSession`.
+    const medusa = require('../lib/medusa');
+    const projectPath = path.join(projectsDir, 'unknown-status');
+    const session = store.sessions.start({
+      projectId, engineId: 'claude', tmuxSession: 'tc-stale-at-launch'
+    });
+    const sid = String(session.id);
+    try {
+      medusa.startSession({
+        projectPath, sessionId: sid, name: 'Stale At Launch', wsFactory: (u) => new FakeWS(u)
+      });
+      assert.notEqual(medusa.getStatus(sid).state, 'off',
+        'precondition: the listener must actually be running, or the assertion below is vacuous');
+
+      // The launch itself is expected to fail in this harness (no engine to
+      // spawn); the stale-session sweep runs first and is what is under test.
+      withProbe(GONE, () => {
+        try { sessions.launchSession('unknown-status'); } catch { /* the launch half is not under test */ }
+      });
+
+      assert.equal(medusa.getStatus(sid).state, 'off',
+        'a session reaped before a fresh launch must not keep its workspace open');
+    } finally {
+      medusa.forgetSession({ projectPath, sessionId: sid });
+      // `launchSession` reaps the stale row and then falls THROUGH to a fresh
+      // launch, which can leave a new active row behind before it fails. Left
+      // in place, that row is what the next test's `getActive` finds instead of
+      // its own — so clear every active row for this project, not just ours.
+      for (const row of store.sessions.list(projectId, { status: 'active' })) {
+        store.sessions.kill(row.id, 'test cleanup');
+      }
+    }
+  });
+
   it('still records a crash when tmux answered that the pane is gone', () => {
     // The half that keeps the fix from becoming a blanket "never conclude
     // anything": an observed death is still observed.

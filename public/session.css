@@ -287,9 +287,6 @@ body {
   gap: 0 12px;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .medusa-control.has-live-loop .medusa-mark { animation: none; }
-}
 .medusa-loops-panel { min-width: 260px; max-width: 360px; }
 .medusa-loop-row {
   padding: 8px 0;

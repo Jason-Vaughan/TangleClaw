@@ -259,5 +259,5 @@ The TangleClaw half that IS ours already exists: the fleet detector built for #7
 is exactly the signal that can distinguish a subagent-originated send, and it can be
 reused the moment the envelope has somewhere to put the answer.
 - [x] Car 4 — Identity survives a restart (#1023) — 2026-08-21: re-resolve-and-retry-once on `sendMessage` and `openLoop`, matching TC's own id convention rather than Medusa's `split('-')[0]` name matching (which 404s every multi-word project). Suite green; 4 mutations red.
-- [ ] Car 5 — The surfaces stop lying (#836, #820, #556)
+- [x] Car 5 — The surfaces stop lying (#836, #820, #556) — 2026-08-21: crashed-path Medusa teardown at launch + liveness-gated boot resync (three-valued; unknown does NOT resurrect); `enabled` on the status payload gates the control's SURFACE on both mounts; glow gated `:not(.is-off):not(.is-error)` in gold, with reduced-motion moved to matching specificity in the shared sheet. **#836's agent-vs-pane liveness explicitly NOT built** — every detection is per-engine process knowledge, which the engine-agnostic rule admits only as a degrading hint; that is its own decision. Suite green (6666 pass, exit 0, zero `not ok`); 5 mutations red.
 - [ ] Car 6 — The channel teaches itself, and the rule comes down (#912, #1020, #904)

@@ -49,6 +49,11 @@
    (right) head lights on send (Chunk 03); the MEDUSA emblem sits between them,
    a touch shorter than the heads so they read as the endpoints. All three
    share the state-driven dim/glow below. */
+/* The live-loop halo. Defined here rather than in a page's token block because
+   this sheet is what both surfaces load — a token defined only in session.css
+   would leave the dashboard's Master bar with an invalid colour. */
+:root { --medusa-loop-glow: #ffe08a; }
+
 .medusa-mark img { display: block; height: 100%; width: auto; transition: filter .2s ease, opacity .2s ease; }
 /* Emblem: a touch shorter than the heads (they read as the endpoints). The
    `.medusa-mark img` height:100% above is more specific than a bare `.medusa-emblem`,
@@ -157,9 +162,32 @@
 .medusa-loops-chip:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
 /* Live-loop glow on the mark — ambient pulse while any loop is in a live
    protocol state. Suppressed under reduced motion (the chip text still says
-   R2/10, so nothing is lost). */
-.medusa-control.has-live-loop .medusa-mark img { filter: drop-shadow(0 0 3px var(--root-accent)); }
-.medusa-control.has-live-loop .medusa-mark { animation: medusa-loop-glow 2.4s ease-in-out infinite; }
+   R2/10, so nothing is lost).
+
+   Gated on :not(.is-off):not(.is-error) because CSS `filter` REPLACES rather
+   than composes, and this rule sits later in the file at equal specificity to
+   the state rules above (#556). Ungated it silently erased the mark's state
+   channel: an off listener rendered fully saturated and glowing instead of
+   dimmed, and — worse — an error rendered without its amber, so a live loop
+   hid the very failures the mark exists to report.
+
+   The glow is gold rather than --root-accent (#4a9eff): a blue halo around
+   gold art blends to a muddy green, which reads as a third state that does
+   not exist. Amber stays reserved for error, so the loop glow must not
+   approach it either. */
+.medusa-control.has-live-loop:not(.is-off):not(.is-error) .medusa-mark img {
+  filter: drop-shadow(0 0 3px var(--medusa-loop-glow));
+}
+.medusa-control.has-live-loop:not(.is-off):not(.is-error) .medusa-mark { animation: medusa-loop-glow 2.4s ease-in-out infinite; }
+/* Reduced motion, at MATCHING specificity. The gate above raised this selector
+   from (0,2,1) to (0,4,1), so the plainer `animation: none` that used to
+   suppress the pulse would now lose the cascade and the animation would run for
+   an operator who asked it not to. It also lived in session.css alone, so the
+   dashboard's Master bar never honoured the preference at all — it belongs here,
+   beside the rule it suppresses, for the same reason every other base rule does. */
+@media (prefers-reduced-motion: reduce) {
+  .medusa-control.has-live-loop:not(.is-off):not(.is-error) .medusa-mark { animation: none; }
+}
 .banner-btn {
   display: flex;
   align-items: center;

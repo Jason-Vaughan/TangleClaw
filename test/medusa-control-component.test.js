@@ -245,6 +245,39 @@ describe('tcCreateMedusaControl — talks to ITS api base', () => {
     assert.ok(!readCall.opts.body, 'nothing addressable to report handled');
   });
 
+  it('stays hidden when the project has not opted in (#820)', async () => {
+    // The flag used to gate only the AUTOSTART, so the control appeared on every
+    // session page rendering `is-off` — and one click on it started the listener.
+    // A feature the operator has not turned on must not be one idle click away.
+    const ids = G.tcMedusaIds('');
+    const w = world(ids, {});
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    c.applyStatus({ state: 'off', unread: 0, enabled: false });
+    assert.equal(w.el.medusaControl.hidden, true);
+  });
+
+  it('shows once the project opts in', async () => {
+    const ids = G.tcMedusaIds('');
+    const w = world(ids, {});
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    c.applyStatus({ state: 'off', unread: 0, enabled: false });
+    assert.equal(w.el.medusaControl.hidden, true);
+    c.applyStatus({ state: 'listening', unread: 0, enabled: true });
+    assert.equal(w.el.medusaControl.hidden, false);
+  });
+
+  it('does not hide on a payload that carries no gate at all', async () => {
+    // Strictly `=== false`, never falsy: an absent `enabled` means the gate was
+    // not computed (a toggle response carries none), and hiding a control
+    // because a field is missing is its own dishonesty.
+    const ids = G.tcMedusaIds('');
+    const w = world(ids, {});
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    c.applyStatus({ state: 'listening', unread: 0, enabled: true });
+    c.applyStatus({ state: 'listening', unread: 1 });
+    assert.equal(w.el.medusaControl.hidden, false);
+  });
+
   it('uses the host\'s escaper when given one', async () => {
     const ids = G.tcMedusaIds('');
     const w = world(ids, { messages: { messages: [{ from: 'x', message: 'y' }] }, read: { state: 'listening', unread: 0 } });
@@ -340,5 +373,66 @@ describe('the Master control bar mounts the shared control (#996)', () => {
     await bar.loadAccess();
     assert.deepEqual(urls, ['/api/master/status'], 'no second request for the Medusa half');
     assert.ok(el.masterPanelMedusa.classList.contains('is-listening'));
+  });
+});
+
+describe('the live-loop glow must not erase the mark\'s state channel (#556)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'shared-controls.css'), 'utf8');
+
+  /**
+   * Count the class selectors in one compound selector — CSS specificity's
+   * middle number, which is what decides between two rules setting `filter`.
+   * @param {string} sel - A compound selector.
+   * @returns {number}
+   */
+  function classCount(sel) {
+    return (sel.match(/[.:]/g) || []).length;
+  }
+
+  it('gates the glow so it cannot outrank the off and error states', () => {
+    // `filter` REPLACES, it does not compose. The glow rule sits later in the
+    // file than the state rules, so at equal specificity it won outright: an off
+    // listener rendered fully saturated and glowing, and an error rendered with
+    // no amber at all — a live loop hid the very failures the mark reports.
+    const glow = css.match(/^(\.medusa-control\.has-live-loop[^{]*?)\.medusa-mark img \{[^}]*filter:/m);
+    assert.ok(glow, 'the glow rule must still exist');
+    assert.match(glow[1], /:not\(\.is-off\)/);
+    assert.match(glow[1], /:not\(\.is-error\)/);
+  });
+
+  it('does not glow blue on gold art', () => {
+    // --root-accent is #4a9eff; a blue halo around gold blends to a muddy green,
+    // which reads as a third state that does not exist.
+    //
+    // Read the rule's BODY, not the line the selector happens to sit on: the
+    // declaration spans two lines, so a line-wise search matched the selector —
+    // which contains no colour at all — and passed no matter what the glow was
+    // set to. Caught by mutating the token back to --root-accent and watching
+    // this stay green.
+    const rule = css.match(/\.medusa-control\.has-live-loop[^{]*\.medusa-mark img \{([^}]*)\}/);
+    assert.ok(rule, 'the glow rule must still exist');
+    assert.match(rule[1], /filter:\s*drop-shadow/, 'precondition: this is the rule that draws the halo');
+    assert.ok(!/--root-accent/.test(rule[1]), 'the glow must not use the blue accent');
+    assert.match(rule[1], /--medusa-loop-glow/);
+  });
+
+  it('defines its own glow token, since both surfaces load this sheet', () => {
+    assert.match(css, /--medusa-loop-glow:\s*#[0-9a-f]{3,8}/i);
+  });
+
+  it('suppresses the pulse under reduced motion at MATCHING specificity', () => {
+    // The gate above raised the animated selector's specificity, so a plainer
+    // `animation: none` would now LOSE the cascade and the pulse would run for
+    // an operator who asked it not to.
+    const reduced = css.match(/@media \(prefers-reduced-motion: reduce\) \{\s*([^{]*?)\{\s*animation:\s*none/);
+    assert.ok(reduced, 'reduced-motion suppression must live in the shared sheet');
+    const animated = css.split('\n').find((l) => /has-live-loop.*medusa-mark \{ animation: medusa-loop-glow/.test(l));
+    assert.ok(animated, 'animated rule not found');
+    assert.ok(
+      classCount(reduced[1]) >= classCount(animated.split('{')[0]),
+      `reduced-motion selector (${reduced[1].trim()}) must not be less specific than the rule it suppresses`
+    );
   });
 });
