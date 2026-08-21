@@ -17,7 +17,7 @@ to file paths — this maps the layout itself.
 - `lib/` — All server-side modules — store (SQLite), sessions, engines, projects, wrap-pipeline steps, tmux, caddy, porthub, service-token, master, etc.
 - `public/` — Browser UI served from disk — dashboard (`index.html`/`ui.js`), session page (`session.js`), styles, service worker (`sw.js`).
 - `scripts/` — Operator CLI scripts — `ingress-cutover.js` (reversible caddy/direct switch), `reset-admin.js` (break-glass), capture spike.
-- `test/` — The node test-runner suite (`node --test test/*.test.js`, ~3.6k tests) — the project's test contract.
+- `test/` — The node test-runner suite (`node --test test/*.test.js`) — the project's test contract.
 
 ## Shared directories / doc groups
 
