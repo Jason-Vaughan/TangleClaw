@@ -215,6 +215,36 @@ describe('tcCreateMedusaControl — talks to ITS api base', () => {
     assert.equal(w.el.medusaPanel.hidden, true, 'a second call toggles it closed');
   });
 
+  it('openInbox reports the displayed messages handled, by id', async () => {
+    // A bare badge clear leaves the mail in the inbox forever, so every consumer
+    // has to keep a private watermark to avoid answering twice (#784). Naming
+    // the ids it actually rendered is what lets the panel say "these are dealt
+    // with" — and confines the claim to what the operator was shown.
+    const ids = G.tcMedusaIds('');
+    const w = world(ids, {
+      messages: { messages: [{ id: 'm1', from: 'a', message: 'first' }, { id: 'm2', from: 'b', message: 'second' }] },
+      read: { state: 'listening', unread: 0 }
+    });
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    await c.openInbox();
+    const readCall = w.calls.at(-1);
+    assert.equal(readCall.url, '/api/sessions/p/medusa/read');
+    assert.deepEqual(JSON.parse(readCall.opts.body), { ids: ['m1', 'm2'] });
+  });
+
+  it('openInbox falls back to a bare badge clear when no message carries an id', async () => {
+    const ids = G.tcMedusaIds('');
+    const w = world(ids, {
+      messages: { messages: [{ from: 'a', message: 'first' }] },
+      read: { state: 'listening', unread: 0 }
+    });
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    await c.openInbox();
+    const readCall = w.calls.at(-1);
+    assert.equal(readCall.url, '/api/sessions/p/medusa/read');
+    assert.ok(!readCall.opts.body, 'nothing addressable to report handled');
+  });
+
   it('uses the host\'s escaper when given one', async () => {
     const ids = G.tcMedusaIds('');
     const w = world(ids, { messages: { messages: [{ from: 'x', message: 'y' }] }, read: { state: 'listening', unread: 0 } });

@@ -618,6 +618,51 @@ describe('tmux', () => {
       }
     });
 
+    it('does not submit unsent draft text sitting at the prompt (#812)', () => {
+      // paste-buffer APPENDS. With a draft already typed, the Enter would submit
+      // the operator's line concatenated with ours — executing work nobody asked
+      // for, with both instructions corrupted. Exercised against a real pane
+      // because the defect lives in what tmux does, not in the command string.
+      try {
+        tmux.createSession(testSession, { command: 'exec bash --norc --noprofile' });
+        // The operator's half-typed line: delivered literally, deliberately NOT submitted.
+        execSync(`tmux send-keys -t '=${testSession}:' -l 'echo DRAFTRAN'`);
+        execSync('sleep 0.3');
+
+        tmux.sendKeys(testSession, 'echo INJECTEDOK');
+        const content = captureContent(testSession);
+
+        assert.ok(
+          content.includes('INJECTEDOK'),
+          `the injected command must still run, got: ${content.slice(-300)}`
+        );
+        assert.ok(
+          !content.includes('DRAFTRAN'),
+          `the operator's unsent draft must not be submitted, got: ${content.slice(-300)}`
+        );
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+
+    it('leaves the draft alone when clearPrompt is false (explicit opt-out)', () => {
+      try {
+        tmux.createSession(testSession, { command: 'exec bash --norc --noprofile' });
+        execSync(`tmux send-keys -t '=${testSession}:' -l 'echo DRAFTKEPT'`);
+        execSync('sleep 0.3');
+
+        tmux.sendKeys(testSession, ' && echo APPENDED', { clearPrompt: false });
+        const content = captureContent(testSession);
+
+        assert.ok(
+          content.includes('DRAFTKEPT'),
+          `opting out must preserve the prompt contents, got: ${content.slice(-300)}`
+        );
+      } finally {
+        try { tmux.killSession(testSession); } catch (_) {}
+      }
+    });
+
     it('should NOT execute the line when enter:false', () => {
       try {
         tmux.createSession(testSession, { command: 'exec bash --norc --noprofile' });
@@ -950,12 +995,13 @@ describe('tmux', () => {
 
       // An exact floor, not a lower bound: a site DISAPPEARING is as much a
       // regression as one losing its wrapper, and `>=` would wave that through.
-      // 21 since #968 added `sessionCreatedAt`, which reads a live session's start
-      // time so a caller can tell whether that session predates a file it only
-      // reads at launch. Bumping this number is the acknowledgement the tripwire
-      // asks for — it fired correctly, and the `_target` loop below already
-      // confirmed the new site is wrapped.
-      assert.equal(targets.length, 21, `expected 21 -t sites in lib/tmux.js, found ${targets.length}`);
+      // 22 since `_clearPromptLine` gained a `send-keys C-u` site: injection
+      // clears the prompt before pasting, because paste-buffer appends and the
+      // Enter would otherwise submit the operator's unsent draft along with the
+      // payload. Bumping this number is the acknowledgement the tripwire asks
+      // for — it fired correctly, and the `_target` loop below already confirmed
+      // the new site is wrapped.
+      assert.equal(targets.length, 22, `expected 22 -t sites in lib/tmux.js, found ${targets.length}`);
       for (const expr of targets) {
         assert.match(
           expr,

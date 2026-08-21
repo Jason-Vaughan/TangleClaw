@@ -376,12 +376,26 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
     // GET is a pure read — unread is untouched.
     assert.equal(medusa.getStatus(active.id).unread, 2);
 
+    // No `ids` in the body is a BADGE CLEAR: the counter resets and nothing is
+    // discarded — not from the inbox, and not from the Hub's durable queue.
     const read = await req('/api/sessions/switchboard/medusa/read', 'POST', {});
     assert.equal(read.status, 200);
     assert.equal(read.data.unread, 0);
-    // Messages remain after read (badge cleared, history kept).
     const after = await req('/api/sessions/switchboard/medusa/messages', 'GET');
     assert.equal(after.data.messages.length, 2);
+  });
+
+  it('read with ids reports those messages handled — they leave the inbox', async () => {
+    const fake = seedListener();
+    fake._recv({ type: 'new_message', messageId: 'm1', message: { id: 'm1', from: 'peer-a', message: 'ping' } });
+    fake._recv({ type: 'new_message', messageId: 'm2', message: { id: 'm2', from: 'peer-b', message: 'pong' } });
+
+    const read = await req('/api/sessions/switchboard/medusa/read', 'POST', { ids: ['m1'] });
+    assert.equal(read.status, 200);
+
+    const after = await req('/api/sessions/switchboard/medusa/messages', 'GET');
+    assert.deepEqual(after.data.messages.map((m) => m.id), ['m2'],
+      'only the handled message may leave the inbox');
   });
 
   it('messages returns an empty inbox when no listener is running', async () => {
@@ -1363,6 +1377,27 @@ describe('lib/medusa — getLoops / forceDoneLoop (MED-2K9P v2 T4)', () => {
     assert.equal(loops.length, 1);
     assert.equal(loops[0].id, 'loop-x');
     assert.equal(loops[0].role, 'target');
+  });
+
+  it('keeps a loop that was learned from a message since handled (#784 clear-on-handled)', async () => {
+    // Loop ids are recorded as mail ARRIVES, not by scanning retained mail. A
+    // lazy scan would lose any loop whose only mention was handled before the
+    // banner first looked — the loop would silently vanish from the view.
+    bridge.loopStore.set('loop-y', {
+      id: 'loop-y', initiator: 'other-ws', target: workspaceId, task: 'review',
+      doneCriteria: 'ok', mode: 'supervised', guards: { maxRounds: 5, maxWallTimeSeconds: 60 },
+      round: 0, state: 'initiated', closeSignal: null, createdAt: '2026-07-14T00:00:00.000Z'
+    });
+    fake._recv({
+      type: 'new_message', messageId: 'm-y',
+      message: { id: 'm-y', from: 'other-ws', to: workspaceId, message: 'New loop invitation', loopId: 'loop-y' }
+    });
+    // Handled before anything ever called getLoops.
+    medusa.markHandled(sid, ['m-y']);
+    assert.deepEqual(medusa.getMessages(sid), [], 'precondition: the message is gone');
+
+    const loops = await medusa.getLoops({ sessionId: sid });
+    assert.deepEqual(loops.map((l) => l.id), ['loop-y']);
   });
 
   it('a Bridge 404 untracks the loop (Bridge restarted, loop store lost) — no phantom rows', async () => {
