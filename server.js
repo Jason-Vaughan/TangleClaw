@@ -2536,6 +2536,24 @@ route('GET', '/api/session-rules/deliveries', (req, res) => {
   return jsonResponse(res, 200, { undelivered: store.sessionRuleDeliveries.projectsWithUndeliveredRules() });
 });
 
+// GET /api/medusa/deliveries — the fleet-wide Switchboard answer (#792): every
+// participant whose newest inbox edge was NOT nudged, oldest silence first.
+// `?sessionId=` narrows to one participant's history instead.
+//
+// This is the query that would have caught every miss on 2026-07-30 without a
+// human noticing a badge: an inbox with unread mail and a session that was
+// never woken are the same thing from outside, and this route is what tells
+// them apart.
+route('GET', '/api/medusa/deliveries', (req, res) => {
+  const query = parseQuery(reqUrl(req).search);
+  if (query.sessionId !== undefined) {
+    const options = {};
+    if (query.limit !== undefined) options.limit = Number(query.limit);
+    return jsonResponse(res, 200, { deliveries: store.medusaDeliveries.listForSession(query.sessionId, options) });
+  }
+  return jsonResponse(res, 200, { undelivered: store.medusaDeliveries.sessionsWithUndeliveredMail() });
+});
+
 // POST /api/session-rules — create { content, projectId, createdBy?, kind? }
 route('POST', '/api/session-rules', (_req, res, _params, body) => {
   if (!body || typeof body.content !== 'string' || !body.content.trim()) {
@@ -3726,6 +3744,22 @@ function registerMedusaRoutes(prefix, resolve) {
       else medusa.markRead(sessionId);
     }
     jsonResponse(res, 200, medusa.getStatus(sessionId));
+  });
+
+  // GET <prefix>/deliveries — what became of every nudge for this participant's
+  // inbox (#792). The route exists so "was this session ever told about its
+  // mail" is answerable from outside the session, which is exactly what was
+  // missing when the operator had to relay badges by hand.
+  route('GET', `${prefix}/deliveries`, (req, res, params) => {
+    const query = parseQuery(reqUrl(req).search);
+    const r = resolve(params, query);
+    if (r.error) return errorResponse(res, r.error.status, r.error.message, r.error.code);
+    const sessionId = r.target ? r.target.sessionId : (r.fallbackSessionId || null);
+    if (sessionId == null) return jsonResponse(res, 200, { deliveries: [] });
+    const limit = query && query.limit ? Number(query.limit) : undefined;
+    return jsonResponse(res, 200, {
+      deliveries: store.medusaDeliveries.listForSession(sessionId, { limit })
+    });
   });
 
   // GET <prefix>/roster — the live roster of other registered workspaces this

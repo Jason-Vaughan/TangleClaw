@@ -1779,3 +1779,113 @@ describe('lib/projects — medusaEnabled flip syncs the LIVE session listener (T
     fs.rmSync(otherDir, { recursive: true, force: true });
   });
 });
+
+describe('medusa delivery ledger (#792)', () => {
+  let server;
+  let port;
+  let tempDir;
+
+  before(async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-ledger-'));
+    store._setBasePath(tempDir);
+    store.init();
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, () => { port = server.address().port; resolve(); }));
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  /**
+   * GET a JSON route off the local test server.
+   * @param {string} urlPath - Path with query string.
+   * @returns {Promise<{status: number, data: object}>}
+   */
+  function get(urlPath) {
+    return new Promise((resolve, reject) => {
+      const r = http.request({ hostname: '127.0.0.1', port, path: urlPath, method: 'GET' }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          const raw = Buffer.concat(chunks).toString('utf8');
+          let data;
+          try { data = JSON.parse(raw); } catch { data = raw; }
+          resolve({ status: res.statusCode, data });
+        });
+      });
+      r.on('error', reject);
+      r.end();
+    });
+  }
+
+  it('refuses the states that cannot be true', () => {
+    // The ledger's only value is that its rows can be trusted as evidence, so a
+    // self-contradictory row must be unstorable rather than merely unwritten.
+    assert.throws(
+      () => store.medusaDeliveries.record({ sessionId: 1, messageKey: 'k', channel: 'none', outcome: 'nudged' }),
+      /channel 'none' cannot be nudged/
+    );
+    assert.throws(
+      () => store.medusaDeliveries.record({ sessionId: 1, messageKey: 'k', channel: 'none', outcome: 'skipped' }),
+      /skipReason is required/
+    );
+    assert.throws(
+      () => store.medusaDeliveries.record({ sessionId: 1, channel: 'none', outcome: 'skipped', skipReason: 'x' }),
+      /messageKey is required/
+    );
+    assert.throws(
+      () => store.medusaDeliveries.record({ sessionId: 1, messageKey: 'k', channel: 'carrier-pigeon', outcome: 'nudged' }),
+      /channel must be one of/
+    );
+  });
+
+  it('keeps a miss and a delivery apart for the same session', () => {
+    store.medusaDeliveries.record({ sessionId: 7001, projectId: 1, messageKey: 'k1', unread: 2, channel: 'none', outcome: 'skipped', skipReason: 'wake-not-opted-in' });
+    store.medusaDeliveries.record({ sessionId: 7001, projectId: 1, messageKey: 'k2', unread: 1, channel: 'tmux-inject', outcome: 'nudged' });
+
+    const rows = store.medusaDeliveries.listForSession(7001);
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].messageKey, 'k2', 'newest first');
+    assert.equal(rows[0].nudged, true);
+    assert.equal(rows[1].nudged, false);
+    assert.equal(rows[1].skipReason, 'wake-not-opted-in');
+  });
+
+  it('addresses the Project Master by its string session key', () => {
+    // The Master is a participant too and its session key is the literal
+    // 'master' — an integer column would have collapsed every Master row into
+    // one null bucket.
+    store.medusaDeliveries.record({ sessionId: 'master', messageKey: 'k9', channel: 'master-inject', outcome: 'nudged' });
+    const rows = store.medusaDeliveries.listForSession('master');
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].sessionId, 'master');
+  });
+
+  it('answers the fleet question: whose newest mail was never announced', () => {
+    // A session whose LAST word was a miss is silent; one that was nudged since
+    // is not. Reporting the first as still-missed would make the query useless.
+    store.medusaDeliveries.record({ sessionId: 7101, messageKey: 'a1', channel: 'none', outcome: 'skipped', skipReason: 'wake-not-opted-in' });
+    store.medusaDeliveries.record({ sessionId: 7102, messageKey: 'b1', channel: 'none', outcome: 'skipped', skipReason: 'listener-connecting' });
+    store.medusaDeliveries.record({ sessionId: 7102, messageKey: 'b2', channel: 'tmux-inject', outcome: 'nudged' });
+
+    const silent = store.medusaDeliveries.sessionsWithUndeliveredMail().map((r) => String(r.sessionId));
+    assert.ok(silent.includes('7101'), 'a session still sitting on an unannounced edge');
+    assert.ok(!silent.includes('7102'), 'a session nudged since its miss is not silent');
+  });
+
+  it('GET /api/medusa/deliveries returns the fleet answer, and ?sessionId= narrows it', async () => {
+    store.medusaDeliveries.record({ sessionId: 7201, messageKey: 'c1', unread: 3, channel: 'none', outcome: 'skipped', skipReason: 'pane-turn-in-flight' });
+
+    const fleet = await get('/api/medusa/deliveries');
+    assert.equal(fleet.status, 200);
+    assert.ok(fleet.data.undelivered.some((r) => String(r.sessionId) === '7201'));
+
+    const one = await get('/api/medusa/deliveries?sessionId=7201');
+    assert.equal(one.status, 200);
+    assert.equal(one.data.deliveries.length, 1);
+    assert.equal(one.data.deliveries[0].skipReason, 'pane-turn-in-flight');
+  });
+});
