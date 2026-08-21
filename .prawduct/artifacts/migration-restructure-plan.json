@@ -1,0 +1,175 @@
+{
+  "v": 1,
+  "items": {
+    "PRJ-8M2X": {
+      "title": "validate all updateProject PATCH fields before writing any",
+      "kind": "task",
+      "note": "89 -> conforming. Names the property (validate-all before apply-all), not the refactor shape."
+    },
+    "TST-6L2P": {
+      "title": "stop regex-matching exact public/* source text in frontend tests",
+      "kind": "task"
+    },
+    "TL-3D5K": {
+      "title": "hold formatting consistency without adding a linter dependency",
+      "kind": "task",
+      "non_atomic": true,
+      "note": "SPLIT PROPOSAL (owner decision, not auto-split): (1) decide + document the formatting convention TC holds by hand; (2) build the norm-scan that detects drift from it. Part 2 overlaps NRM-5K8T -- if the owner folds it there instead, this item keeps only part 1 and stays atomic."
+    },
+    "MED-8H5W": {
+      "title": "Session Switchboard v2 auto-inject and round-trip loop",
+      "kind": "feature",
+      "non_atomic": true,
+      "note": "SPLIT PROPOSAL (owner decision, not auto-split): this is the v2 EPIC, not an atomic item -- (1) auto-inject an inbound message into the session; (2) the agent-to-agent round-trip loop. MED-4T7K/MED-6P2N/MED-9X3B are already its component items, so the cheaper alternative to splitting is to keep this as the parent and link the three as children (link --edge child) rather than mint new ids."
+    },
+    "PRW-9K4C": {
+      "title": "regen-views validation blocks planless releases",
+      "kind": "bug",
+      "note": "PARKED at stage:research per the operator's 2026-07-17 decision. Body is migrated VERBATIM (no sections in this plan), so the 'do not pick for implementation' text and its two re-open conditions survive the migration intact."
+    },
+    "SR-6D3W": {
+      "title": "extract the rules widget duplicated in two surfaces",
+      "kind": "task"
+    },
+    "SR-4N6C": {
+      "title": "restore returns CONFIRM_REQUIRED for an unknown versionNo",
+      "kind": "bug"
+    },
+    "PRJ-4T7G": {
+      "title": "stranded-config guard misses .gemini artifacts",
+      "kind": "feature",
+      "note": "Body declares 'Type: enhancement'; mapped to kind:feature (KINDS has no 'enhancement')."
+    },
+    "WRP-3P9K": {
+      "title": "migrate 12 projects off legacy .claude/plans",
+      "kind": "task",
+      "note": "The second clause (retire the priming-roll legacy fallback) is the follow-on step and stays in the body rather than in the title."
+    },
+    "WRP-5H2T": {
+      "title": "changelog promotion emits headings with no link-reference defs",
+      "kind": "bug"
+    },
+    "PTH-6R2K": {
+      "title": "unify the two project-containment predicates behind one helper",
+      "kind": "task"
+    },
+    "SR-8V4T": {
+      "title": "status PUT can ratify content the operator never saw",
+      "kind": "bug",
+      "non_atomic": true,
+      "note": "SPLIT PROPOSAL (owner decision, not auto-split): (1) the integrity bug -- approval activates whatever the DB row holds, not what the operator saw; (2) the enabling gap -- content edits via PUT /:id are ungated. Fixing (1) with a compare-and-set token arguably closes (2) as well, in which case keep it whole."
+    },
+    "SR-2W7F": {
+      "title": "fetchProjectRules renders a failed fetch as an empty list",
+      "kind": "bug"
+    },
+    "AUTH-4B7K": {
+      "title": "a stored bindAllInterfaces true is invisible in caddy mode",
+      "kind": "bug",
+      "non_atomic": true,
+      "note": "SPLIT PROPOSAL (owner decision, not auto-split): (1) caddy mode does not surface a stored bindAllInterfaces:true; (2) switching back to direct mode then reopens a wide bind nothing named. Same root (stored config is invisible in the mode that ignores it), so these are more likely one fix than two."
+    },
+    "AUTH-6D9P": {
+      "title": "a LAN-IP-bound ttyd job is exposed but reports not-wide",
+      "kind": "bug"
+    },
+    "ENG-7Q3M": {
+      "title": "detect drift in engine-declared startupInjection.maxChars",
+      "kind": "task"
+    },
+    "PRM-4H8N": {
+      "title": "decide remove or keep for unused summarizeFeatureIndexForPrime",
+      "kind": "chore"
+    },
+    "UPD-3F7Q": {
+      "title": "back off and test-seam the synchronous origin lookup",
+      "kind": "task",
+      "note": "MERGE SURVIVOR (owner-accepted altitude merge, UPD-7B4X folds in at the post-gate disposition step). Title is upleveled to the shared root cause -- the unseamed, un-backed-off synchronous origin lookup -- rather than left at one symptom, per the dedup altitude rule."
+    },
+    "UPD-7B4X": {
+      "title": "route the sync git ls-remote through the _internal seam",
+      "kind": "task",
+      "note": "MERGE LOSER (folds into UPD-3F7Q post-gate). Still needs a conforming title because it is created first, then folded -- merge writes superseded_by and closes it."
+    },
+    "UPD-5K9V": {
+      "title": "manual update-check is dishonest if the server is older",
+      "kind": "bug"
+    },
+    "ENG-6J8P": {
+      "title": "own shell-safety for generated hook commands in one place",
+      "kind": "task"
+    },
+    "PRM-7T3Q": {
+      "title": "delivery is recorded as success when shards are written",
+      "kind": "bug",
+      "non_atomic": true,
+      "note": "SPLIT PROPOSAL (owner decision, not auto-split): (1) the ledger records write-time success as delivery (the integrity bug); (2) build Chunk 04 receipt + re-delivery (the designed fix). Item is stage:design and its build plan asks for a ledger-consumer enumeration first, so splitting now would mint an id for work whose shape is not yet fixed -- recommend keeping it whole until that pass runs."
+    },
+    "PRW-6T2M": {
+      "title": "verify-chunk-refs checks refs in the wrong worktree",
+      "kind": "bug"
+    },
+    "PRW-4J8D": {
+      "title": "Critic reviewer prompts anchor to the primary tree",
+      "kind": "bug",
+      "non_atomic": true,
+      "note": "SPLIT PROPOSAL (owner decision, not auto-split): the title joins the fix (pin the worktree path in reviewer prompts) to the defect (dispatched subagents anchor to the primary checkout). One claim, stated twice -- recommend NO split; the flag is the linter reading the em-dash join, and the rewritten title states the defect alone."
+    },
+    "NRM-5K8T": {
+      "title": "build the norm-enforcement source scans still marked to build",
+      "kind": "feature"
+    },
+    "MED-2K9P": {
+      "title": "Medusa session-comms control in the session banner",
+      "kind": "feature"
+    },
+    "TST-3M6R": {
+      "title": "convert the remaining non-strict node:assert suites to strict",
+      "kind": "task",
+      "note": "MERGE SURVIVOR (owner-accepted altitude merge, TST-5N8W folds in at the post-gate disposition step). Original title named one suite; upleveled to the defect class both suites share, per the dedup altitude rule. Not itself an over-72 offender -- this entry exists for the retitle."
+    },
+    "TST-5N8W": {
+      "kind": "task",
+      "note": "MERGE LOSER (folds into TST-3M6R post-gate). Title already conforms; kind-only entry."
+    },
+    "SEC-9Z2D": {
+      "kind": "feature"
+    },
+    "SES-5W9D": {
+      "kind": "task"
+    },
+    "STO-7J4B": {
+      "kind": "chore"
+    },
+    "TST-4X8N": {
+      "kind": "task"
+    },
+    "DEP-8H7W": {
+      "kind": "chore"
+    },
+    "MED-4T7K": {
+      "kind": "feature"
+    },
+    "MED-6P2N": {
+      "kind": "feature"
+    },
+    "MED-9X3B": {
+      "kind": "feature"
+    },
+    "TST-8V2Q": {
+      "kind": "task"
+    },
+    "PRJ-2F8W": {
+      "kind": "feature"
+    },
+    "DOC-2Q7X": {
+      "kind": "chore"
+    },
+    "TST-9B4L": {
+      "kind": "task"
+    },
+    "ENG-8V3N": {
+      "kind": "feature"
+    }
+  }
+}
