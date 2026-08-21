@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.13.0] - 2026-08-21
+
 ### Added
 - **The generated engine config teaches the switchboard, on every engine (#904 — v5.13.0 car 6 of 6).** Sessions are expected to message each other through the switchboard and nothing at startup told them it exists — measured at **zero** mentions across `CLAUDE.md` and `.antigravity.md` in two projects, while **PortHub gets ~30 lines with runnable examples in the same generated file**. A capability that is real and documented elsewhere was unreachable in practice, and teaching it session-to-session neither persists nor reaches the next session.
 
