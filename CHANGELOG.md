@@ -4,6 +4,9 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Internal
+- **#996 plan bookkeeping (#1080, #1082).** `.tangleclaw/plans/996-master-medusa.md` ticked through both chunks — chunk 1 shipped as #1079, chunk 2 as #1081 and verified live in Chrome on the dashboard Master panel and the session drawer — and marked complete (archive candidate). Records the one deviation from the drafted design (the outbound gate reads config per request rather than the guard's `.access-level` file, and why) and the chunk-1 gap found live (PATCH did not regenerate the identity) that chunk 2 closed. Doc-only; no behaviour change.
+
 ## [5.12.0] - 2026-08-21
 
 ### Added
