@@ -49,6 +49,24 @@ function setFrameSrc(frame, url) {
 }
 
 /**
+ * Render the terminal "this tunnel is not usable" state: a persistent warning
+ * carrying the reason, and a dead status dot.
+ *
+ * Persistent (duration 0) is deliberate — this project bans timer-driven UI
+ * lifecycle (#98, #268), and a failure the operator has not read yet must not
+ * dismiss itself.
+ *
+ * @param {string} message - Operator-facing reason, from `describeTunnelFailure`.
+ * @returns {void}
+ */
+function failTunnel(message) {
+  showToast(message, 'warn', 0);
+  const dot = document.getElementById('statusDot');
+  dot.title = 'Disconnected';
+  dot.classList.add('dead');
+}
+
+/**
  * Initialize the OpenClaw viewer: start tunnel, load iframe, auto-approve pairing.
  */
 async function init() {
@@ -68,18 +86,40 @@ async function init() {
   document.getElementById('bannerHost').textContent = `${conn.host}:${conn.port}`;
   document.title = `TangleClaw — ${conn.name}`;
 
-  // Start tunnel
+  // Start tunnel. #1012: bounded, and verified before the frame is pointed at
+  // it — see public/openclaw-tunnel-state.js for why each half is load-bearing.
   showToast('Starting tunnel\u2026', 'ok', 0);
-  const tunnel = await api(`/api/openclaw/connections/${connId}/tunnel`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: '{}'
-  });
 
-  if (!tunnel || !tunnel.ok) {
-    showToast('Tunnel failed — check SSH connectivity', 'warn', 0);
-    document.getElementById('statusDot').title = 'Disconnected';
-    document.getElementById('statusDot').classList.add('dead');
+  // Still routed through api() — it owns the service-worker (#709) and ingress
+  // (#924) checks — with only an abort signal added, so a start that never
+  // answers ends instead of hanging under a persistent spinner.
+  const started = await tcTunnelState.callWithTimeout(
+    (signal) => api(`/api/openclaw/connections/${encodeURIComponent(connId)}/tunnel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+      signal
+    }),
+    tcTunnelState.TUNNEL_START_TIMEOUT_MS
+  );
+
+  const tunnel = started.value;
+  if (started.timedOut || !tunnel || !tunnel.ok) {
+    // api() returns null for every refusal and parks the reason on lastError.
+    const kind = started.timedOut ? 'timeout' : 'refused';
+    const detail = started.timedOut ? null : ((tunnel && tunnel.error) || api.lastError || null);
+    failTunnel(tcTunnelState.describeTunnelFailure(kind, conn.name, detail));
+    return;
+  }
+
+  // The 200 says the tunnel was established, not that it is still up: the
+  // reported failure dropped it between this answer and the bundle request,
+  // and the frame then rendered OpenClaw's "a browser extension may be
+  // blocking module execution" card over our own healthy-looking banner.
+  // One real request to the path the frame is about to load settles it.
+  const probe = await tcTunnelState.probeProxy(connId);
+  if (!probe.reachable) {
+    failTunnel(tcTunnelState.describeTunnelFailure('probe', conn.name, probe.reason));
     return;
   }
 
