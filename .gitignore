@@ -7,8 +7,27 @@
 # Prawduct dogfooding state (TC builds itself with Prawduct).
 # Contents are ignored fail-closed; only the change-log is tracked — it feeds
 # the check-change-log-entry PR gate and the release flow (#485).
+#
+# `backlog.md` is tracked for the same reason `.tangleclaw/plans/` is (see below):
+# an untracked backlog is one machine's working tree, so it does not survive a
+# fresh clone and is not in any export. That matters most at the GitHub-Issues
+# cutover — once `backlog_service_repo` is set the skill treats this file as
+# frozen history, and archived items that were never migrated exist ONLY here.
+# Ignoring it would make every clone of this repo backlog-less.
 .prawduct/*
 !.prawduct/change-log.md
+!.prawduct/backlog.md
+
+# The migration audit trail — the decisions, the restructure plan, and the
+# before/after preview the owner approved. Scoped to these three files rather
+# than `!.prawduct/artifacts/`, which would publish ~54 internal design docs
+# (~1.3 MB, incl. the security model) to a PUBLIC repo — a separate decision,
+# deliberately not taken here.
+!.prawduct/artifacts/
+.prawduct/artifacts/*
+!.prawduct/artifacts/migration-scrub-decisions.md
+!.prawduct/artifacts/migration-restructure-plan.json
+!.prawduct/artifacts/migration-restructure-preview.md
 
 # TangleClaw project config (dogfooding artifact).
 # Contents are ignored fail-closed, with ONE exception: `plans/` is tracked.
