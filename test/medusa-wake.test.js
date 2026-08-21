@@ -271,7 +271,7 @@ describe('medusa-wake — _composerEmpty (cursor-based input detection, #1103)',
     // `ESC[22m` clears faint alone; `ESC[0m` and a bare `ESC[m` clear everything.
     const cells = wake._cells('[2mab[22mc[2md[me');
     assert.deepEqual(cells.map((c) => c.ch).join(''), 'abcde');
-    assert.deepEqual(cells.map((c) => c.faint), [true, true, false, true, false]);
+    assert.deepEqual(cells.map((c) => c.sgr.has(2)), [true, true, false, true, false]);
   });
 
   it('indexes cells by visible column, ignoring escape sequences', () => {
@@ -279,7 +279,61 @@ describe('medusa-wake — _composerEmpty (cursor-based input detection, #1103)',
     const cells = wake._cells(SUGGESTION_LINE);
     assert.equal(cells[0].ch, '❯');
     assert.equal(cells[2].ch, 'a', 'column 2 is the first input position');
-    assert.equal(cells[2].faint, true);
+    assert.equal(cells[2].sgr.has(2), true);
+  });
+
+  it('ends a colour span on the default-foreground reset, not only on a full reset', () => {
+    // SGR 39 restores the default foreground, which is how antigravity closes
+    // its grey placeholder, and a new colour replaces the old rather than
+    // stacking — without both, the first span would never end.
+    const cells = wake._cells('[90mab[39mc[90md[31me');
+    assert.equal(cells.map((c) => c.ch).join(''), 'abcde');
+    assert.deepEqual(cells.map((c) => c.sgr.has(90)), [true, true, false, true, false]);
+  });
+});
+
+/**
+ * Live antigravity captures from 2026-08-21 (#1105). Written with ``
+ * escapes rather than raw control bytes: the raw form is invisible in every
+ * viewer, which is how the Claude-only assumption survived review in the first
+ * place.
+ *
+ * `AG_TYPED_LINE` is the control that makes this approach safe — genuinely
+ * typed antigravity input carries NO styling at all. Without that capture,
+ * treating a colour as "not real input" would be a guess.
+ */
+const AG_PLACEHOLDER_LINE =
+  '[94m>[39m [90mAccept-edits mode: file edits auto-approved (shift+tab to cycle)[39m';
+const AG_TYPED_LINE = '[94m>[39m Hello there';
+
+describe('medusa-wake — placeholder styling is declared per engine (#1105)', () => {
+  const AG = wake.ENGINE_WAKE_PROFILES.antigravity;
+
+  it('reads the antigravity grey placeholder as an empty composer', () => {
+    // The regression: antigravity greys with SGR 90 while Claude dims with
+    // SGR 2, so the faint-only rule refused this pane and the session, which
+    // was idle, was never woken.
+    assert.equal(wake._composerEmpty({ x: 2, line: AG_PLACEHOLDER_LINE }, AG), true);
+  });
+
+  it('reads genuinely typed antigravity input as a non-empty composer', () => {
+    assert.equal(wake._composerEmpty({ x: 13, line: AG_TYPED_LINE }, AG), false);
+  });
+
+  it('refuses typed antigravity input with the cursor moved back to the prompt column', () => {
+    assert.equal(wake._composerEmpty({ x: 2, line: AG_TYPED_LINE }, AG), false);
+  });
+
+  it('does not let either engine inherit the other\'s placeholder attribute', () => {
+    // Both directions: a shared rule would pass one engine and silently fail
+    // the other. Accepting the wrong attribute means treating real operator
+    // input as a placeholder and typing over it.
+    assert.equal(wake._composerEmpty({ x: 2, line: AG_PLACEHOLDER_LINE.replace('>', '❯') }, CLAUDE), false,
+      'SGR 90 is not Claude\'s placeholder marker');
+    assert.equal(wake._composerEmpty({ x: 2, line: SUGGESTION_LINE.replace('❯', '>') }, AG), false,
+      'SGR 2 is not antigravity\'s placeholder marker');
+    assert.deepEqual(CLAUDE.placeholderSgr, [2]);
+    assert.deepEqual(AG.placeholderSgr, [90]);
   });
 });
 
