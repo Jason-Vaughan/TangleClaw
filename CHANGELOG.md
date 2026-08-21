@@ -13,6 +13,11 @@ All notable changes to TangleClaw are documented in this file.
 
   The hazard #783 identified is unchanged and still guarded: with a subagent focused the busy marker moves into the agent block, so `esc to interrupt` is absent and a bare prompt is rendered — which is why the gate sits above the prompt checks. Regression fixtures are verbatim live captures of all four states, and reverting the regex turns exactly the two new guards red. `lib/medusa-wake.js`, `test/medusa-wake.test.js`.
 
+### Internal
+- **The #818 Switchboard train's plan is archived, and its live verification is on the record (#1097, #1098).** `818-switchboard-truth.md` moved to `.tangleclaw/plans/archive/` now that it shipped as `5.13.0` — archived rather than deleted so the rationale survives, and out of the active listing so a future session cannot read closed work as ready.
+
+  Alongside it, `818-roundtrip-verification.md` records the one bar the six cars had not met: every car was verified by unit tests and mutation testing, and the plan said plainly that a green suite is not evidence a message arrived. A live two-session exchange with the Medusa session supplied that evidence — the peer confirmed by probing rather than recalling that a handled message leaves the inbox, and that the wake nudge now states a usable base URL instead of pointing at a guide that never carried one. The delivery ledger recorded the nudge keyed to the message id, and the fleet query surfaced four participants sitting on mail nobody was told about, one of them skipped by the subagent gate firing in production. Both docs note what the run did **not** cover: no workspace id rotated, so #1023's re-resolution path stays test-verified only. Doc-only; no behaviour change.
+
 ## [5.13.0] - 2026-08-21
 
 ### Added
