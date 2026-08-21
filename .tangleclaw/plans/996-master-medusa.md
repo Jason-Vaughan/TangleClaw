@@ -2,7 +2,7 @@
 
 **Issue:** [#996](https://github.com/Jason-Vaughan/TangleClaw/issues/996) (OPEN, verified 2026-08-21) · **Milestone:** Master Control (#829)
 **Predecessors:** #768 (control bar, Medusa slot shipped as a labelled placeholder) · #755/#968 (access level, server-enforced) · MED-2K9P (session switchboard v1)
-**Status:** chunk 1 BUILT 2026-08-21 (branch `feat/996-master-medusa`); chunk 2 (bar control) next. Chunk boxes are in `## Status` at the bottom.
+**Status:** chunk 1 SHIPPED 2026-08-21 as #1079 (`6b05c52`), live on the operator's install (Master listening as `project-master-1ad424e1`); chunk 2 (bar control) next. Chunk boxes are in `## Status` at the bottom.
 
 ## Why this slipped
 
@@ -45,6 +45,7 @@
 - Extract the session Medusa control — mark, state/help text, toggle, inbox panel, peers hover, inbound/outbound flow animation — into `tcCreateMedusaControl({ apiBase, root, ids })` in `public/api-helper.js` (already loaded by both pages → **no `sw.js` change, no `CACHE_NAME` bump**). `session.js` mounts it with `apiBase: /api/sessions/${projectName}/medusa` and identical ids, so the three source-pinned frontend suites re-point rather than rewrite (the #768 chunk-1 precedent).
 - Master bar + landing Master panel mount the same component with `apiBase: /api/master/medusa`; delete `TC_MASTER_PENDING.medusa` (its removal is the proof the pending treatment came off with the backend — the `access`/`kill` precedent).
 - At `read-only`, the send affordance renders disabled **with the 403 reason**, never inert.
+- **Carry-in from chunk 1 (found live):** `PATCH /api/config {master.medusaEnabled}` syncs the listener but does not regenerate the identity, so until the next ensure the Master is on the bus with instructions that still deny it. Call `refreshMasterIdentity({skipIfAbsent:true})` on that change, as the access-level path does; pin with a test.
 - **Loop modal / loops panel stay session-only in this chunk** — they are a further ~500 lines and a fleet-command design question (#961). Filed as a follow-up, rendered absent-with-reason on the Master.
 - CHANGELOG `### Added`; `public/` tests.
 
