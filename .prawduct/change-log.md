@@ -26,6 +26,65 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-08-20 — #1024: the sidecar poller stops burning a socket per tick
+
+<!-- prawduct: type=bugfix | scope=sidecar-poll-churn-1024 -->
+
+`lib/sidecar.js` polled each OpenClaw gateway with global `fetch` + an `AbortController`. An
+aborted request destroys its socket, so every poll against a slow or unreachable gateway opened a
+fresh TCP connection and abandoned it in `TIME_WAIT` — at a fixed 10s cadence, forever, with no
+reuse and no slowdown.
+
+Two changes. Polls now go through a shared keep-alive `node:http` agent (`maxSockets: 1`, since
+polls for one connection are serial). And consecutive failures double the interval, capped at five
+minutes, reset on the first success — which required turning `setInterval` into a self-rescheduling
+`setTimeout`, so the delay is recomputed per tick and slow polls can no longer overlap.
+
+`node:http` rather than a pooled `fetch` is forced by this product's own no-npm-dependency norm:
+Node exposes no dispatcher API for global `fetch` without undici, so the only zero-dependency way
+to attach a connection pool is the builtin client.
+
+**The fix needed its own review, and got two blocking findings.** Worth recording, because both
+were defects introduced BY the fix rather than surviving it.
+
+First: `_getWithAgent` settled only on `res.'end'` or `req.'error'`. When a socket dies after
+response headers but before the body completes, Node destroys the response instead of pushing EOF,
+so neither fires and the promise hangs. Under the old `setInterval` that was survivable; under the
+new chain the next poll is scheduled from `.finally()`, so a single hang ends that connection's
+polling for the life of the process — and nothing restarts it, since every restart path gates on
+`_pollers.has()`, which stays true. A fix strictly worse than the bug. Every terminal event now
+feeds one settle, with a wall-clock backstop.
+
+Second: the self-rescheduling loop — the core behavior change — had no test at all. Deleting
+`.finally(scheduleNext)` left the suite green, because `_pollers` is populated before the first
+tick, so a loop that ran exactly once satisfied every existing assertion.
+
+Also corrected: my justification for clearing the failure count unconditionally claimed
+`pollProcesses` is "called directly by the route layer." It is not — it has no caller outside this
+module. The real race is narrower and is now handled properly with a per-connection epoch:
+`stopPolling` does not abort an in-flight request, so that request's result lands afterwards and
+re-sets the count it just saw cleared. The wrong reason had already reached two change records
+before review caught it.
+
+The epoch then needed widening for the same reason it existed. `stopAllPolling` bumped it only for
+ids already carrying failures, so a connection polling *healthily* with a request in flight kept a
+matching epoch and wrote a count back after the clear — the exact residue the guard was added to
+prevent, while its comment asserted the property unconditionally. Keyed off the poller map instead.
+"One call site is not the family" reintroduced by the code closing a related gap, which is the part
+worth remembering: a guard's own family is the thing to enumerate, not the case that prompted it.
+
+**Scoping held under pressure.** This surfaced during a habitat outage where the host kernel had
+stopped reaping `TIME_WAIT` and its ephemeral range filled, and the peer session's first diagnosis
+attributed it to this poller. It was written from the start as a contributor rather than the cause,
+because the arithmetic never supported it — one poller at a 10s cadence cannot produce 31,274
+sockets over 19 hours. A reboot fixed the outage; the reaper was the cause. The peer session later
+confirmed the producer was host-local and explicitly asked that this issue not be softened. Fixed
+on its own merits.
+
+Eight mutations across the two rounds, each turning the suite red: disabling keep-alive, removing
+the backoff, dropping the failure count, removing the cap, deleting `.finally(scheduleNext)`,
+stripping the response-abort handlers, removing the epoch guard, and never clearing on success.
+
 ## 2026-08-20 — #990: forensic review of the ungoverned Antigravity window fixes 8 confirmed bugs
 
 <!-- prawduct: type=bugfix | scope=antigravity-window-990 | chunks=01,02,03,04,05,06,07 -->

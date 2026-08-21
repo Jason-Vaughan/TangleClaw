@@ -253,4 +253,154 @@ describe('sidecar', () => {
       assert.ok(!sidecar._pollers.has(connId));
     });
   });
+
+  // ── #1024: connection churn against a failing gateway ──
+  //
+  // The poller used to `fetch` with an AbortController and re-dial on a fixed
+  // 10s cadence. An aborted request destroys its socket, so against a slow or
+  // unreachable gateway EVERY poll left a socket in TIME_WAIT — one per tick,
+  // forever, with no reuse and no slowdown.
+  describe('poll connection churn (#1024)', () => {
+    it('reuses one pooled connection instead of dialling per poll', () => {
+      const agent = sidecar._agent;
+      assert.ok(agent, 'a shared agent must exist — global fetch cannot be pooled without undici');
+      assert.equal(agent.keepAlive, true, 'keepAlive is what makes a poll reuse the previous socket');
+      assert.equal(agent.maxSockets, 1,
+        'polls for one connection are serial, so a second socket would only duplicate the pooled one');
+      assert.ok(agent.options.keepAliveMsecs > 0, 'a pooled socket must be kept warm between ticks');
+    });
+
+    it('backs off exponentially while a gateway keeps failing', () => {
+      const id = 'conn-backoff';
+      const base = 10000;
+      sidecar._failures.delete(id);
+
+      assert.equal(sidecar._backoffMs(id, base), base, 'a healthy connection polls at its base interval');
+
+      sidecar._failures.set(id, 1);
+      assert.equal(sidecar._backoffMs(id, base), base * 2);
+      sidecar._failures.set(id, 3);
+      assert.equal(sidecar._backoffMs(id, base), base * 8);
+
+      sidecar._failures.delete(id);
+    });
+
+    it('caps the backoff so a dead gateway is still probed occasionally', () => {
+      const id = 'conn-cap';
+      sidecar._failures.set(id, 99);
+      const delay = sidecar._backoffMs(id, 10000);
+      assert.equal(delay, sidecar.MAX_POLL_INTERVAL_MS,
+        'an unbounded doubling would eventually stop probing a recoverable gateway altogether');
+      assert.ok(delay > 10000, 'the cap must still be slower than the base interval, or backoff does nothing');
+      sidecar._failures.delete(id);
+    });
+
+    it('counts a failed poll and clears the count on success', async () => {
+      const connId = createConn('ChurnClaw', 59999); // nothing listening
+      assert.equal(sidecar._failures.get(connId) || 0, 0);
+
+      const r1 = await sidecar.pollProcesses(connId, { timeoutMs: 300 });
+      assert.equal(r1.ok, false, 'poll against a closed port must fail');
+      assert.equal(sidecar._failures.get(connId), 1, 'a failure must be counted, or backoff never engages');
+
+      const r2 = await sidecar.pollProcesses(connId, { timeoutMs: 300 });
+      assert.equal(r2.ok, false);
+      assert.equal(sidecar._failures.get(connId), 2, 'consecutive failures must accumulate');
+    });
+
+    it('stopPolling clears the failure count so a restart is not born backed off', () => {
+      const connId = createConn('ResetClaw');
+      sidecar._failures.set(connId, 5);
+      sidecar.stopPolling(connId);
+      assert.equal(sidecar._failures.get(connId), undefined,
+        'a stopped poller keeping its failure count would resume at a 5-minute delay');
+    });
+  });
+
+  // ── #1024: liveness of the poll loop itself ──
+  describe('poll loop liveness (#1024)', () => {
+    const http = require('node:http');
+
+    it('re-arms the loop after every tick, including a failing one', async () => {
+      // Without `.finally(scheduleNext)` the loop runs exactly once and the
+      // whole suite still passes, because _pollers is populated before tick one.
+      const connId = createConn('LoopClaw', 59998); // nothing listening -> every tick fails
+      sidecar.startPolling(connId, 20);
+      await new Promise(r => setTimeout(r, 220));
+      const failures = sidecar._failures.get(connId) || 0;
+      sidecar.stopPolling(connId);
+      assert.ok(failures >= 2,
+        `expected the loop to re-arm and poll repeatedly, saw ${failures} failure(s) — ` +
+        'one means it ran once and never rescheduled');
+    });
+
+    it('settles even when the socket dies after headers but before the body', async () => {
+      // Settling only on res.'end' or req.'error' is not enough. A socket
+      // closing mid-body fires neither, so the promise hung — and because the
+      // next poll is scheduled from .finally(), one hang killed polling forever.
+      const server = http.createServer((req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': '999' });
+        res.write('{"active":');
+        res.socket.destroy(); // truncate: headers sent, body never completes
+      });
+      await new Promise(r => server.listen(0, '127.0.0.1', r));
+      const port = server.address().port;
+      const connId = createConn('TruncClaw', port);
+
+      const result = await Promise.race([
+        sidecar.pollProcesses(connId, { timeoutMs: 400 }),
+        new Promise(r => setTimeout(() => r('HUNG'), 3000))
+      ]);
+      server.close();
+      assert.notEqual(result, 'HUNG', 'the poll promise must settle on a truncated response, not hang');
+      assert.equal(result.ok, false);
+    });
+
+    it('clears the failure count on a genuinely successful poll', async () => {
+      // The success path needs a real server. Naming it without exercising it
+      // leaves `_failures.delete` on success unmutated.
+      const server = http.createServer((req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ active: [], recent: [] }));
+      });
+      await new Promise(r => server.listen(0, '127.0.0.1', r));
+      const port = server.address().port;
+      const connId = createConn('OkClaw', port);
+
+      sidecar._failures.set(connId, 4);
+      const res = await sidecar.pollProcesses(connId, { timeoutMs: 1000 });
+      server.close();
+      assert.equal(res.ok, true, 'poll against a live server must succeed');
+      assert.equal(sidecar._failures.get(connId), undefined,
+        'a success must reset backoff, or a recovered gateway stays polled at 5-minute intervals');
+    });
+
+    it('stopAllPolling protects a HEALTHY connection in flight, not just a failing one', async () => {
+      // "One call site is not the family" (learnings.md). stopPolling bumps the
+      // epoch for its connection; stopAllPolling keyed off _failures, so a
+      // connection with no failures yet — the healthy case — kept a matching
+      // epoch and wrote a count back after the clear.
+      const connId = createConn('AllStopClaw', 59996); // nothing listening
+      sidecar.startPolling(connId, 50);
+      assert.equal(sidecar._failures.get(connId) || 0, 0, 'must start with no failures, or the guard is not exercised');
+
+      const inflight = sidecar.pollProcesses(connId, { timeoutMs: 400 });
+      sidecar.stopAllPolling();
+      await inflight;
+      assert.equal(sidecar._failures.get(connId), undefined,
+        'a healthy connection stopped mid-poll must not be left carrying a failure count');
+    });
+
+    it('a poll in flight when polling stops cannot re-set the cleared count', async () => {
+      // stopPolling does not abort an in-flight request. Its result lands
+      // afterwards and, without the epoch guard, re-sets the count it just saw
+      // cleared — so the next startPolling opens already backed off.
+      const connId = createConn('RaceClaw', 59997); // nothing listening
+      const inflight = sidecar.pollProcesses(connId, { timeoutMs: 400 });
+      sidecar.stopPolling(connId);
+      await inflight;
+      assert.equal(sidecar._failures.get(connId), undefined,
+        'a request that outlived stopPolling must not write its failure back');
+    });
+  });
 });
