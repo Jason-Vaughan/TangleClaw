@@ -4,6 +4,15 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **A whitespace-only composer read as an empty one, so a nudge could paste over an operator's half-typed line (#1109).** `_composerEmpty` scanned the cells between the prompt glyph and the cursor and skipped any that matched `_BLANK_RE`, which matches an ordinary space. An operator who typed a space — or typed and deleted back to one — left a composer the gate judged empty. `promptRe` had the same hole from the other side: `/^\s*❯\s*$/` accepts trailing whitespace, so the no-cursor fallback path agreed. Both paths returned `at-prompt`, not just the fallback the issue described.
+
+  The fix comes from measuring a live pane rather than reasoning about whitespace. Claude Code draws an empty composer as the glyph plus a single NBSP, with the cursor at column 2 — the first input position, as the suite's own `_cells` guard already stated. The NBSP is a separator the prompt itself draws, so everything past it belongs to the operator whatever character it is, and the check no longer needs to classify whitespace at all: it starts scanning after the separator and treats every cell before the cursor as input. `promptRe` narrowed to `/^\s*❯[\u00a0 ]?$/` for the same reason. Exactly one separator cell is accepted, and either character counts as one — a run would reopen the hole, while refusing an ordinary space would mean a build that renders the separator differently is judged never-at-rest and silently stops being woken. Fail-closed is right for typed input; it is not right for every pane.
+
+  The separator is declared per engine as `promptPad`, the shape `placeholderSgr` established in #1105. Claude declares NBSP because it was measured; antigravity declares `null` and keeps the older, laxer reading, because its prompt has never been captured from a live pane and borrowing Claude's fact would be a guess.
+
+  The hand-written fixtures padded the prompt with an ordinary space, which no real pane does — that mismatch is why the gap survived. They now carry the measured shape, and two assertions that kept private copies of `/^\s*❯\s*$/` were pointed at `ENGINE_WAKE_PROFILES.claude.promptRe` so they cannot silently drift from the engine profile again. `lib/medusa-wake.js`, `test/medusa-wake.test.js`.
+
 ## [5.14.0] - 2026-08-21
 
 ### Changed
