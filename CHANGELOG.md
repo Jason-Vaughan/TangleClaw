@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.14.1] - 2026-08-24
+
 ### Fixed
 - **The wake gate judged a working Claude session idle, so a nudge could land mid-turn (#1114).** `ENGINE_WAKE_PROFILES.claude.busyMarker` is `esc to interrupt`; on Claude Code 2.1.241 that string survives only inside a `low_priority_waiting` retry branch and is absent from an ordinary turn. With `idleMarker: null` there was no second gate, so `_assessPane` returned `{idle: true, reason: 'at-prompt'}` for a session that was actively working. Safety property 1 — a busy turn is never interrupted — was failing open, not degrading.
 
