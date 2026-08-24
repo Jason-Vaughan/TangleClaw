@@ -660,6 +660,44 @@ describe('medusa-wake — gates (each one blocks alone)', () => {
     assert.equal(world.injected.length, 0);
   });
 
+  // #1114. Claude's `busyMarker` stopped rendering on an ordinary turn, and no
+  // string separates a streaming session from a resting one — mid-stream the
+  // spinner is absent, the bare prompt is present, and the status rows match a
+  // resting pane exactly. So liveness is read from the transcript MOVING.
+  it('never nudges a pane whose transcript is still moving, even when every marker gate says idle (#1114)', () => {
+    const world = installWorld();
+    // Both panes pass every lexical gate: no busy marker, no fleet, bare prompt.
+    const streamA = ['one hundred twenty-eight', '\u2500\u2500\u2500', '\u276f\u00a0'];
+    const streamB = ['one hundred fifty-seven', '\u2500\u2500\u2500', '\u276f\u00a0'];
+    assert.deepEqual(wake._assessPane(streamA, CLAUDE, undefined), { idle: true, reason: 'at-prompt' },
+      'precondition: the marker gates alone judge this pane idle');
+    for (let i = 0; i < 8; i++) {
+      world.pane = i % 2 === 0 ? streamA : streamB;
+      wake._internal.tick();
+    }
+    assert.equal(world.injected.length, 0, 'a writing pane is never nudged');
+  });
+
+  it('nudges once the transcript stops moving (#1114)', () => {
+    const world = installWorld();
+    world.pane = ['one hundred twenty-eight', '\u2500\u2500\u2500', '\u276f\u00a0'];
+    wake._internal.tick();
+    world.pane = ['one hundred fifty-seven', '\u2500\u2500\u2500', '\u276f\u00a0'];
+    wake._internal.tick();          // still moving
+    assert.equal(world.injected.length, 0);
+    tickThroughDebounce();          // same content twice → at rest
+    assert.equal(world.injected.length, 1, 'a settled pane is woken');
+  });
+
+  it('does not mistake a rotating suggestion or a falling context counter for liveness (#1114)', () => {
+    // Both live BELOW the composer and change while the session is idle; the
+    // digest excludes them deliberately, or every idle pane would look busy.
+    const p = CLAUDE;
+    const a = ['done', '\u2500\u2500\u2500', '\u276f\u00a0\u001b[2mtry this next\u001b[0m', '\u2500\u2500\u2500', '  proj | 95% left'];
+    const b = ['done', '\u2500\u2500\u2500', '\u276f\u00a0\u001b[2msomething else\u001b[0m', '\u2500\u2500\u2500', '  proj | 90% left'];
+    assert.equal(wake._paneDigest(a, p), wake._paneDigest(b, p));
+  });
+
   it('never injects into a permission dialog', () => {
     const world = installWorld({ pane: DIALOG_PANE });
     for (let i = 0; i < 5; i++) wake._internal.tick();
