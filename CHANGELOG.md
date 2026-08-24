@@ -23,6 +23,9 @@ All notable changes to TangleClaw are documented in this file.
 
   The hand-written fixtures padded the prompt with an ordinary space, which no real pane does — that mismatch is why the gap survived. They now carry the measured shape, and two assertions that kept private copies of `/^\s*❯\s*$/` were pointed at `ENGINE_WAKE_PROFILES.claude.promptRe` so they cannot silently drift from the engine profile again. `lib/medusa-wake.js`, `test/medusa-wake.test.js`.
 
+### Internal
+- **Landed a wrap commit that was stranded on a detached HEAD, and archived the spent #818 plan (#1116).** The previous session's `Session wrap` commit (`75cec88`, FEATURES.md) sat on no branch, one ahead of `origin/main`, reachable only via HEAD — any `git checkout` in the primary clone would have dropped it to the reflog. The #818 rule-5 replacement plan was moved to `.tangleclaw/plans/archive/` with a status stamp: its text is live as session rule 12 and #818 is closed, so the plan read as pending work it had already finished.
+
 ## [5.14.0] - 2026-08-21
 
 ### Changed
