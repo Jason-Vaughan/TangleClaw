@@ -30,25 +30,25 @@ const ANTIGRAVITY = wake.ENGINE_WAKE_PROFILES.antigravity;
 
 /** An idle Claude Code pane: bare prompt, no busy marker. */
 const IDLE_PANE = [
-  '❯ ',
+  '❯ ',
   '──────────────',
   '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents'
 ];
 /** A busy Claude Code pane: bare prompt rendered, but a turn is in flight. */
 const BUSY_PANE = [
-  '❯ ',
+  '❯ ',
   '──────────────',
   '  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ← for agents'
 ];
 /** A permission dialog: the selector row is `❯ 1. Yes` — no BARE prompt line. */
 const DIALOG_PANE = [
   '  Do you want to proceed?',
-  '❯ 1. Yes',
+  '❯ 1. Yes',
   '  2. No, and tell Claude what to do differently'
 ];
 /** Operator mid-typing: prompt line is non-bare. */
 const TYPING_PANE = [
-  '❯ git status',
+  '❯ git status',
   '──────────────',
   '  ⏵⏵ bypass permissions on (shift+tab to cycle)'
 ];
@@ -189,13 +189,13 @@ const SUBAGENT_FOCUSED_PANE = [
 const AT_REST_WITH_AGENTS_HINT = [
   '  ...which is why the wake was refused.',
   '',
-  '❯ ',
+  '❯ ',
   '  TiLT Claw (main) | Opus 5 (1M context) | 62% left',
   '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 2 agents'
 ];
 
 const AGENT_RUNNING_PANE = [
-  '❯ ',
+  '❯ ',
   '  TangleClaw (main) | Opus 5 (1M context) | 77% left',
   '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 2 agents',
   '',
@@ -204,7 +204,7 @@ const AGENT_RUNNING_PANE = [
 ];
 
 const AGENTS_FINISHED_PANE = [
-  '❯ ',
+  '❯ ',
   '  TangleClaw (main) | Opus 5 (1M context) | 77% left',
   '  ⏵⏵ bypass permissions on (shift+tab to cycle) · /tasks to see subagents · ← 2 agents'
 ];
@@ -260,11 +260,46 @@ describe('medusa-wake — _composerEmpty (cursor-based input detection, #1103)',
     // text, and the verdict is the conservative one. Erring toward refusing a
     // nudge is the correct direction — the opposite error types into a pane
     // that is not at rest.
-    assert.equal(wake._composerEmpty({ x: 4, line: '  ❯ some transcript text' }, CLAUDE), false);
+    assert.equal(wake._composerEmpty({ x: 4, line: '  ❯ some transcript text' }, CLAUDE), false);
   });
 
   it('returns null when no cursor was captured', () => {
     assert.equal(wake._composerEmpty(null, CLAUDE), null);
+  });
+
+  // #1109. A live Claude pane draws the empty composer as the glyph plus a
+  // single NBSP separator (), with the cursor at column 2 — the first
+  // input position. So anything sitting between that separator and the cursor
+  // was typed, whatever character it is. Whitespace is not exempt: an operator
+  // who typed a space, or typed and deleted back to one, has input in the
+  // composer that a nudge would paste over.
+  it('counts a typed space as input, not as an empty composer (#1109)', () => {
+    //  + NBSP separator + one typed space; cursor sits to its right.
+    assert.equal(wake._composerEmpty({ x: 3, line: '❯  ' }, CLAUDE), false);
+  });
+
+  it('tolerates a space-padded prompt as at-rest, so a build that renders the separator differently is still woken (#1109)', () => {
+    // Fail-closed is right for typed input, but refusing EVERY pane would mean
+    // silently never waking a session. One separator cell is accepted either way.
+    assert.equal(wake._composerEmpty({ x: 2, line: '\u276f ' }, CLAUDE), true);
+    assert.deepEqual(wake._assessPane(['\u276f '], CLAUDE, undefined), { idle: true, reason: 'at-prompt' });
+  });
+
+  it('still reads the real at-rest shape as empty (#1109 control)', () => {
+    // Verbatim shape of a live empty composer: glyph + NBSP, cursor at col 2.
+    assert.equal(wake._composerEmpty({ x: 2, line: '❯ ' }, CLAUDE), true);
+  });
+
+  it('refuses a whitespace-only composer through the full gate, cursor present (#1109)', () => {
+    const verdict = wake._assessPane(['❯  '], CLAUDE, { x: 3, line: '❯  ' });
+    assert.deepEqual(verdict, { idle: false, reason: 'no-bare-prompt' });
+  });
+
+  it('refuses a whitespace-only composer on the no-cursor fallback path (#1109)', () => {
+    // The degraded path: no cursor, so the rendered line alone decides. A
+    // trailing typed space must not read as a bare prompt.
+    const verdict = wake._assessPane(['❯  '], CLAUDE, undefined);
+    assert.deepEqual(verdict, { idle: false, reason: 'no-bare-prompt' });
   });
 
   it('carries faintness across an SGR reset and a specific un-faint', () => {
@@ -368,7 +403,7 @@ describe('medusa-wake — _assessPane with cursor (#1103)', () => {
     // flight, and an empty composer is not permission to interrupt one.
     const busy = BUSY_PANE.concat(['  ⏵⏵ bypass permissions on (shift+tab to cycle)']);
     assert.equal(wake._assessPane(busy, CLAUDE, SUGGESTION_CURSOR).reason, 'turn-in-flight');
-    const fleet = ['  ⏺ main', '  ◯ general-purpose  doing a thing   4s', '❯ '];
+    const fleet = ['  ⏺ main', '  ◯ general-purpose  doing a thing   4s', '❯ '];
     assert.equal(wake._assessPane(fleet, CLAUDE, SUGGESTION_CURSOR).reason, 'agents-running');
   });
 });
@@ -379,7 +414,7 @@ describe('medusa-wake — _assessPane (Claude idle policy, pinned byte-for-byte)
     // "safe": no busy marker, bare prompt present. The session was mid-turn.
     assert.ok(!SUBAGENT_FOCUSED_PANE.join('\n').includes('esc to interrupt'),
       'fixture precondition: the busy marker really is absent');
-    assert.ok(SUBAGENT_FOCUSED_PANE.some((l) => /^\s*❯\s*$/.test(l)),
+    assert.ok(SUBAGENT_FOCUSED_PANE.some((l) => CLAUDE.promptRe.test(l)),
       'fixture precondition: the bare prompt really is rendered');
     assert.deepEqual(wake._assessPane(SUBAGENT_FOCUSED_PANE, CLAUDE), { idle: false, reason: 'agents-running' });
   });
@@ -429,7 +464,7 @@ describe('medusa-wake — _assessPane (Claude idle policy, pinned byte-for-byte)
     // The gate must fire from either side, so it keys on the unfocused row.
     assert.ok(!AGENT_RUNNING_PANE.join('\n').includes('esc to interrupt'),
       'fixture precondition: the busy marker is absent while the agent runs');
-    assert.ok(AGENT_RUNNING_PANE.some((l) => /^\s*❯\s*$/.test(l)),
+    assert.ok(AGENT_RUNNING_PANE.some((l) => CLAUDE.promptRe.test(l)),
       'fixture precondition: a bare prompt is rendered while the agent runs');
     assert.deepEqual(wake._assessPane(AGENT_RUNNING_PANE, CLAUDE), { idle: false, reason: 'agents-running' });
   });
@@ -454,7 +489,7 @@ describe('medusa-wake — _assessPane (Claude idle policy, pinned byte-for-byte)
     assert.deepEqual(wake._assessPane(TYPING_PANE, CLAUDE), { idle: false, reason: 'no-bare-prompt' });
   });
   it('strips ANSI before judging (a colored busy marker still blocks)', () => {
-    const colored = ['❯ ', '[2mesc to interrupt[0m'];
+    const colored = ['❯ ', '[2mesc to interrupt[0m'];
     assert.deepEqual(wake._assessPane(colored, CLAUDE), { idle: false, reason: 'turn-in-flight' });
   });
   it('judges an empty/unknown pane not-idle (fail closed)', () => {
