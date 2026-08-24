@@ -1,6 +1,10 @@
 # The completion test: project rule "Medusa delivery gaps", after the train
 
-**Status:** ready to apply. **Not applied** — this is operator-authored content
+**Status:** APPLIED and archived 2026-08-23. The replacement text below is live as session
+rule id 12 — it arrives in the Project Rules block of every TangleClaw session, so this
+plan's completion test is met and #818 is closed.
+
+Original status line, kept for the record: ready to apply, not applied — this is operator-authored content
 (session rule id 12, `kind=startup`), and it goes live to every session in the
 fleet the moment it changes.
 
