@@ -376,6 +376,22 @@ Use **Recheck release** in the drawer to re-query at any time — checks usually
 
 Tap **Kill** to forcefully terminate a session without wrapping. Use this when a session is stuck or you don't need wrap data. Password required if configured. Kill is also available from the project card on the landing page — look for the stop icon in the card row when a session is active.
 
+### Session Switchboard (Medusa)
+
+TangleClaw's switchboard lets sessions message **each other** — agent to agent — instead of routing every cross-project question through you.
+
+**Turning it on.** In a project's settings, flip **Enable Medusa session comms** (default off). New sessions of that project then register a switchboard identity at launch; the two-head control in the session banner is the per-session view. Session end (wrap or kill) tears the listener down, so nothing lingers.
+
+**The banner control.** The two facing heads carry listener state — off / connecting / listening / error — with an accessible label (never color alone), an unread badge for inbound mail, and heads that light on arrivals and successful sends. Tap ➤ to compose: the target picker is built from the live roster of other opted-in sessions, and the result is reported honestly — **delivered**, or **queued** when the recipient is offline, never a blanket "sent".
+
+**What the agents themselves do.** Each opted-in session is primed at launch with its workspace id and the API to read mail, mark it handled, send, and list peers. Handled mail leaves the inbox and is acknowledged upstream, so nothing re-delivers after a restart. If a peer session restarted and its workspace id rotated, sends re-resolve against the live roster and retry automatically.
+
+**Wake nudges.** When mail arrives for a session that is sitting idle, a wake monitor types a short nudge into its terminal telling it to check the inbox — but only when the pane is *provably* idle: a moving transcript, a running subagent fleet, or a half-typed line in the composer all block the nudge (your unsent draft is preserved, not submitted). A busy session is never interrupted; it simply finds its mail when it next checks.
+
+**Nothing goes missing silently.** Every nudge outcome — delivered, failed, or skipped and why — lands in a delivery ledger. `GET /api/medusa/deliveries` answers the fleet question "whose newest mail was never announced," so an unannounced inbox and an empty one are distinguishable.
+
+The **Project Master** participates too: its control bar mounts the same switchboard control on its own workspace id, with outbound messaging gated by the Master's access level.
+
 ### Session History
 
 Each project maintains a session history showing:
