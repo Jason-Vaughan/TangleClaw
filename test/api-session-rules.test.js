@@ -108,6 +108,54 @@ describe('api/session-rules (#347/D1a)', () => {
     assert.match(res.data.error, /projectId is required/);
   });
 
+  describe('#1121 — unknown projectId is a 400, not a bare 500 or a silent empty list', () => {
+    it('POST with the project NAME returns 400 INVALID_PROJECT_ID naming the fix', async () => {
+      const res = await request('POST', '/api/session-rules',
+        { content: 'rule', projectId: 'rules-proj' });
+      assert.equal(res.status, 400, 'used to surface the FK failure as a 500');
+      assert.equal(res.data.code, 'INVALID_PROJECT_ID');
+      assert.match(res.data.error, /numeric id/, 'the error must say which identifier this API wants');
+    });
+
+    it('POST with a nonexistent numeric id returns 400 INVALID_PROJECT_ID', async () => {
+      const res = await request('POST', '/api/session-rules', { content: 'rule', projectId: 999999 });
+      assert.equal(res.status, 400);
+      assert.equal(res.data.code, 'INVALID_PROJECT_ID');
+    });
+
+    it('GET with an unknown projectId returns 400 instead of a silent empty list', async () => {
+      const res = await request('GET', '/api/session-rules?projectId=rules-proj');
+      assert.equal(res.status, 400, 'an empty list here is indistinguishable from a project with no rules');
+      assert.equal(res.data.code, 'INVALID_PROJECT_ID');
+    });
+
+    it('GET with a valid projectId and no rules still returns 200 [] — valid-but-empty stays distinguishable', async () => {
+      const res = await request('GET', `/api/session-rules?projectId=${projectId}&kind=wrap`);
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.data.rules, []);
+    });
+
+    it('conflicts: a present-but-unknown projectId is 400; an absent one stays a legitimate unscoped query', async () => {
+      const bad = await request('POST', '/api/session-rules/conflicts',
+        { content: 'anything', projectId: 'rules-proj' });
+      assert.equal(bad.status, 400);
+      assert.equal(bad.data.code, 'INVALID_PROJECT_ID');
+
+      const unscoped = await request('POST', '/api/session-rules/conflicts', { content: 'anything' });
+      assert.equal(unscoped.status, 200);
+    });
+
+    it('GET /api/learnings with an unknown projectId is 400, valid is 200', async () => {
+      const bad = await request('GET', '/api/learnings?projectId=rules-proj');
+      assert.equal(bad.status, 400);
+      assert.equal(bad.data.code, 'INVALID_PROJECT_ID');
+
+      const ok = await request('GET', `/api/learnings?projectId=${projectId}`);
+      assert.equal(ok.status, 200);
+      assert.ok(Array.isArray(ok.data.learnings));
+    });
+  });
+
   it('rejects empty content with 400', async () => {
     const res = await request('POST', '/api/session-rules', { content: '   ', projectId });
     assert.equal(res.status, 400);
