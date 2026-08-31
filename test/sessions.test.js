@@ -92,6 +92,17 @@ describe('sessions', () => {
       assert.ok(prompt.includes('Owned project: `prime-test`'), 'prime should name the owned project');
     });
 
+    it('injects the ecosystem birth-awareness primer with the resolved numeric id (#1122)', () => {
+      const project = store.projects.getByName('prime-test');
+      const engine = store.engines.get('claude');
+      const prompt = sessions.generatePrimePrompt(project, engine);
+
+      assert.ok(prompt.includes('## TangleClaw Ecosystem'),
+        'every prime must carry the ecosystem primer — birth knowledge, not a cross-session tutorial');
+      assert.ok(prompt.includes(`numeric project id is ${projectId}`),
+        'the primer must hand the session ITS id, resolved — the #1121 name-vs-id trap');
+    });
+
     describe('Medusa switchboard section (MED-2K9P v2 T1)', () => {
       let projDir;
       let savedEnv;
@@ -1012,9 +1023,13 @@ describe('sessions', () => {
         const base = store.engines.get('claude');
         // A budget deliberately too small for the learnings block but large
         // enough for the directives, so the yield is the only way to fit.
+        // (2400, was 1800: the #1122 ecosystem primer joined every prime, and
+        // its yield pointer is part of the non-yielding floor this scenario
+        // must accommodate.)
+        const TIGHT_BUDGET = 2400;
         const tight = {
           ...base,
-          capabilities: { ...base.capabilities, startupInjection: { maxChars: 1800 } }
+          capabilities: { ...base.capabilities, startupInjection: { maxChars: TIGHT_BUDGET } }
         };
         const prompt = sessions.generatePrimePrompt(fiProject, tight);
 
@@ -1030,7 +1045,7 @@ describe('sessions', () => {
           'yielding replaces slicing entirely');
         // The point of yielding is to MEET the budget. Without this the test
         // would pass on a prime that yielded and still overflowed.
-        assert.ok(prompt.length <= 1800,
+        assert.ok(prompt.length <= TIGHT_BUDGET,
           `yielding must bring the prime within budget (got ${prompt.length})`);
       });
 
@@ -1047,6 +1062,19 @@ describe('sessions', () => {
         const advProject = store.projects.getByName('advisory-test');
 
         const bare = sessions.generatePrimePrompt(advProject, base);
+        // The advisory measures the CORE — the render with every yieldable
+        // section replaced by its pointer. Since #1122 the bare prime carries
+        // the ecosystem primer as yieldable bulk, so `bare` no longer
+        // approximates the core; probe it instead: a budget one char under
+        // bare forces exactly the yield the advisory's own measurement uses.
+        const probe = {
+          ...base,
+          capabilities: {
+            ...base.capabilities,
+            startupInjection: { maxChars: bare.length - 1 }
+          }
+        };
+        const coreLen = sessions.generatePrimePrompt(advProject, probe).length;
         // A budget the directives fit inside, but only just. The whole value of
         // this signal is that it arrives while there is still room to act — a
         // warning that fires once content is already gone arrives too late.
@@ -1054,7 +1082,7 @@ describe('sessions', () => {
           ...base,
           capabilities: {
             ...base.capabilities,
-            startupInjection: { maxChars: Math.ceil(bare.length / 0.84) }
+            startupInjection: { maxChars: Math.ceil(coreLen / 0.84) }
           }
         };
 
@@ -1075,7 +1103,9 @@ describe('sessions', () => {
         assert.ok(prompt.length <= snug.capabilities.startupInjection.maxChars,
           'and it fires while the prime still fits — a leading signal, not a post-mortem');
         assert.equal(prompt.includes('omitted here to fit'), false,
-          'nothing has yielded yet at the moment the warning arrives');
+          'no project content has yielded at the moment the warning arrives '
+          + '(the #1122 primer may have compressed to its pointer — that is standing '
+          + 'reference, not this project\'s accumulated state)');
       });
 
       it('the Medusa contract yields before this project\'s own bulk does', () => {
