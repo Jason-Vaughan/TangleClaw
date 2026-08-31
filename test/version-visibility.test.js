@@ -311,6 +311,7 @@ describe('#744 the dashboard stops advertising a version it is not running', () 
     const dom = makeDom(['version', 'staleServerBanner', 'staleServerBannerText',
       'restartBtn', 'staleServerRestartBtn']);
     let updateChecks = 0;
+    let unknownBanners = 0;
     const state = { restartMechanism: null, serverStartedAt: null, ...seed };
     const ctx = vm.createContext({
       document: dom.document,
@@ -326,12 +327,13 @@ describe('#744 the dashboard stops advertising a version it is not running', () 
       renderAuthStatus: () => {},
       renderBindNotice: () => {},
       renderStaleServerBanner: () => { dom.els.staleServerBanner.classList.remove('hidden'); },
+      renderStaleUnknownBanner: () => { unknownBanners++; dom.els.staleServerBanner.classList.remove('hidden'); },
       esc: (s) => String(s)
     });
     const src = [extract('loadServerInfo'), extract('renderRunningVersion'),
       extract('hideStaleServerBanner'), 'loadServerInfo();'].join('\n');
     await vm.runInContext(src, ctx);
-    return { els: dom.els, state, updateChecks };
+    return { els: dom.els, state, updateChecks, unknownBanners: () => unknownBanners };
   }
 
   it('tracks the running version on every poll, not just at page load', async () => {
@@ -377,6 +379,16 @@ describe('#744 the dashboard stops advertising a version it is not running', () 
   it('still raises the banner while the server really is stale', async () => {
     const { els } = await runServerInfo({ runningVersion: '4.34.0', startedAt: 'T1', isStale: true });
     assert.equal(els.staleServerBanner._hidden, false);
+  });
+
+  it('isStale=null routes to the cannot-determine banner, never the hide path (#1118)', async () => {
+    // `null` is falsy — the old bare `!data.isStale` check is exactly how an
+    // undetectable server rendered as healthy.
+    const { els, unknownBanners } = await runServerInfo(
+      { runningVersion: '4.35.0', startedAt: 'T1', isStale: null, staleUnknownReason: 'probe failed' }
+    );
+    assert.equal(unknownBanners(), 1, 'the unknown variant must render');
+    assert.equal(els.staleServerBanner._hidden, false, 'unknown must not hide the banner as all-clear');
   });
 
   // Since #931 the dashboard does not decide what an available update looks

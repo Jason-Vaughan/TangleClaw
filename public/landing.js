@@ -192,9 +192,10 @@ async function loadVersion() {
 /**
  * Fetch server-info, cache the restart mechanism (#235), and render the
  * stale-server banner (#199) when the running process's startup SHA
- * differs from the current on-disk HEAD. No-op on the no-git fallback
- * (`startupSha === null`) or when the endpoint isn't available (older
- * server without the route).
+ * differs from the current on-disk HEAD — or the cannot-determine variant
+ * (#1118) when the server reports `isStale: null`. No-op on the no-git
+ * fallback (`isStale: false` with null SHAs) or when the endpoint isn't
+ * available (older server without the route).
  *
  * `restartMechanism` is cached on `state` even when the banner doesn't
  * fire — the global settings modal Diagnostics section reads it
@@ -235,6 +236,15 @@ async function loadServerInfo() {
   // Hiding is as load-bearing as showing. The banner had no hide path at all,
   // so a page open across the restart that resolved the staleness kept telling
   // the operator to restart a server that had already come back.
+  //
+  // `isStale` is three-state (#1118): `null` means the server cannot tell —
+  // a git probe failed where it should have worked. That is NOT all-clear
+  // (the bare-falsy check here is how an undetectable server read as
+  // healthy), so it gets its own banner instead of the hide path.
+  if (data.isStale === null) {
+    renderStaleUnknownBanner(data);
+    return;
+  }
   if (!data.isStale) {
     hideStaleServerBanner();
     return;
@@ -594,22 +604,61 @@ function renderStaleServerBanner(info) {
   }
   banner.classList.remove('hidden');
 
-  // #235 — toggle the restart button visibility based on the
-  // restart-mechanism token captured in loadServerInfo. The button is
-  // hidden when no mechanism is available (e.g. Linux today,
-  // bare-node), so operators on those hosts see text-only guidance
-  // rather than an action that would 501.
+  toggleStaleRestartBtn(info);
+}
+
+/**
+ * #235 — toggle the stale-banner restart button visibility based on the
+ * restart-mechanism token. The button is hidden when no mechanism is
+ * available (e.g. Linux today, bare-node), so operators on those hosts see
+ * text-only guidance rather than an action that would 501. Shared by the
+ * stale and cannot-determine (#1118) banner renderers.
+ *
+ * @param {{restartMechanism?: string|null}} info
+ * @returns {void}
+ */
+function toggleStaleRestartBtn(info) {
   const restartBtn = document.getElementById('staleServerRestartBtn');
-  if (restartBtn) {
-    const mech = (typeof info.restartMechanism === 'string' && info.restartMechanism.length > 0)
-      ? info.restartMechanism
-      : null;
-    if (mech) {
-      restartBtn.classList.remove('hidden');
-    } else {
-      restartBtn.classList.add('hidden');
-    }
+  if (!restartBtn) return;
+  const mech = (typeof info.restartMechanism === 'string' && info.restartMechanism.length > 0)
+    ? info.restartMechanism
+    : null;
+  if (mech) {
+    restartBtn.classList.remove('hidden');
+  } else {
+    restartBtn.classList.add('hidden');
   }
+}
+
+/**
+ * Render the "cannot determine" variant of the stale-server banner (#1118).
+ * Shown when the server reports `isStale: null` — a git probe failed where
+ * it was expected to work, so staleness is unknown rather than absent.
+ * Saying nothing here is how an undetectable server reads as healthy; the
+ * update beacon applies the same rule (a failed check is never "up to
+ * date"). Reuses the stale banner element so the two states cannot both
+ * show at once.
+ *
+ * @param {{staleUnknownReason?: string|null, uptimeSeconds?: number|null, restartMechanism?: string|null}} info
+ * @returns {void}
+ */
+function renderStaleUnknownBanner(info) {
+  const banner = document.getElementById('staleServerBanner');
+  const textEl = document.getElementById('staleServerBannerText');
+  if (!banner || !textEl) return;
+
+  const reason = (typeof info.staleUnknownReason === 'string' && info.staleUnknownReason)
+    ? ` (${esc(info.staleUnknownReason)})`
+    : '';
+  const uptimeStr = (typeof info.uptimeSeconds === 'number' && info.uptimeSeconds >= 0)
+    ? ` Running for ${esc(formatUptime(info.uptimeSeconds))}.`
+    : '';
+  textEl.innerHTML =
+    '⚠ <strong>Cannot tell whether this server is up to date.</strong> ' +
+    `Git state is unreadable${reason}, so newer code on disk would go unnoticed.${uptimeStr} ` +
+    'Restart TC if in doubt.';
+  banner.classList.remove('hidden');
+  toggleStaleRestartBtn(info);
 }
 
 /**
