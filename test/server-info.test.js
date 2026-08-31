@@ -217,7 +217,7 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       }
     });
 
-    it('isStale=false when startup was captured but current disk read fails', () => {
+    it('isStale=null (unknown) when startup was captured but current disk read fails (#1118)', () => {
       let phase = 'startup';
       serverInfo._internal.execSync = (cmd) => {
         if (phase === 'startup') {
@@ -231,8 +231,9 @@ describe('lib/server-info (#199 stale-server detection)', () => {
         const info = serverInfo.getServerInfo();
         assert.equal(info.startupSha, 'startup-sha');
         assert.equal(info.currentDiskSha, null);
-        assert.equal(info.isStale, false,
-          'unknown current state cannot be reported as stale — only known-different is stale');
+        assert.equal(info.isStale, null,
+          'a failed probe is unknown, not a fact — neither stale nor confidently fresh');
+        assert.match(String(info.staleUnknownReason), /current git SHA read failed/);
       } finally {
         restoreInternal();
       }
@@ -282,8 +283,8 @@ describe('lib/server-info (#199 stale-server detection)', () => {
         const info = serverInfo.getServerInfo();
         assert.equal(info.startupSha, 'old-sha');
         assert.equal(info.currentDiskSha, null);
-        assert.equal(info.isStale, false,
-          'unknown current state cannot be reported as stale');
+        assert.equal(info.isStale, null,
+          'a timed-out probe is unknown, not a fact (#1118) — never reported as stale, never as fresh');
         assert.equal(info.commitsAhead, 0);
       } finally {
         restoreInternal();
@@ -418,6 +419,107 @@ describe('lib/server-info (#199 stale-server detection)', () => {
   });
 });
 
+describe('#1118 — boot-time SHA capture failure must not silently disable detection', () => {
+  let origInternal;
+
+  beforeEach(() => {
+    origInternal = { ...serverInfo._internal };
+    serverInfo.__unsafeResetForTest();
+  });
+
+  function restore() {
+    Object.assign(serverInfo._internal, origInternal);
+  }
+
+  it('a boot probe failure with a working later probe recovers a late baseline — never a permanently latched null', () => {
+    let boot = true;
+    serverInfo._internal.execSync = (cmd) => {
+      if (boot) { boot = false; const e = new Error('timeout'); e.code = 'ETIMEDOUT'; throw e; }
+      if (String(cmd).includes('rev-list')) return '1\n';
+      return 'recovered-sha\n';
+    };
+    try {
+      serverInfo.captureStartup();
+      const info = serverInfo.getServerInfo();
+      assert.equal(info.startupSha, 'recovered-sha', 'the first successful probe becomes the baseline');
+      assert.equal(info.shaBaselineSource, 'late', 'a recovered baseline must say it is late, not pretend it is from boot');
+      assert.equal(info.isStale, false);
+    } finally {
+      restore();
+    }
+  });
+
+  it('after late recovery, a subsequent disk move IS detected — detection stops being dead', () => {
+    let phase = 'boot';
+    serverInfo._internal.execSync = (cmd) => {
+      if (phase === 'boot') { phase = 'recover'; throw new Error('transient exec failure'); }
+      if (String(cmd).includes('rev-list')) return '2\n';
+      if (phase === 'recover') { phase = 'moved'; return 'baseline-sha\n'; }
+      return 'moved-sha\n';
+    };
+    try {
+      serverInfo.captureStartup();
+      const first = serverInfo.getServerInfo();
+      assert.equal(first.isStale, false);
+      const second = serverInfo.getServerInfo();
+      assert.equal(second.isStale, true, 'the recovered baseline must catch later merges');
+      assert.equal(second.commitsAhead, 2);
+    } finally {
+      restore();
+    }
+  });
+
+  it('boot failure with probes still failing reports isStale=null with a reason — never a confident false', () => {
+    serverInfo._internal.execSync = () => { const e = new Error('timeout'); e.code = 'ETIMEDOUT'; throw e; };
+    try {
+      serverInfo.captureStartup();
+      const info = serverInfo.getServerInfo();
+      assert.equal(info.isStale, null, 'the live-install #1118 state: unknown rendered as unknown, not as all-clear');
+      assert.match(String(info.staleUnknownReason), /failed at boot/);
+      assert.equal(info.shaBaselineSource, null);
+    } finally {
+      restore();
+    }
+  });
+
+  it('version signal still outranks SHA-unknown: a release on disk reports stale even while git fails', () => {
+    serverInfo._internal.execSync = () => { throw new Error('exec failure'); };
+    let v = '5.14.0';
+    serverInfo._internal.readFileSync = () => JSON.stringify({ version: v });
+    try {
+      serverInfo.captureStartup();
+      v = '5.14.1';
+      const info = serverInfo.getServerInfo();
+      assert.equal(info.isStale, true, 'a positive signal wins over an unknown one');
+    } finally {
+      restore();
+    }
+  });
+
+  it('the designed no-git fallback stays a quiet false — not unknown', () => {
+    serverInfo._internal.execSync = () => { throw new Error('fatal: not a git repository (or any of the parent directories): .git'); };
+    try {
+      serverInfo.captureStartup();
+      const info = serverInfo.getServerInfo();
+      assert.equal(info.isStale, false, 'tarball installs opted out by design must not warn forever');
+      assert.equal(info.staleUnknownReason, null);
+    } finally {
+      restore();
+    }
+  });
+
+  it('_classifyGitError separates the designed fallback from real failures', () => {
+    const enoent = new Error('spawn git ENOENT'); enoent.code = 'ENOENT';
+    assert.equal(serverInfo._classifyGitError(enoent), 'no-git');
+    assert.equal(serverInfo._classifyGitError(new Error('fatal: not a git repository')), 'no-git');
+    const timeout = new Error('timed out'); timeout.code = 'ETIMEDOUT';
+    assert.equal(serverInfo._classifyGitError(timeout), 'failed');
+    assert.equal(serverInfo._classifyGitError(new Error('anything else')), 'failed');
+    const stderrCase = new Error('command failed'); stderrCase.stderr = 'fatal: not a git repository';
+    assert.equal(serverInfo._classifyGitError(stderrCase), 'no-git');
+  });
+});
+
 describe('version-based staleness (independent of git)', () => {
   let origInternal;
 
@@ -485,13 +587,16 @@ describe('version-based staleness (independent of git)', () => {
     }
   });
 
-  it('does not claim staleness when the version cannot be read at all', () => {
+  it('reports unknown (not fresh) when git probes fail and the version cannot be read at all (#1118)', () => {
+    // 'no git' does not say "not a git repository" — it is a *failure*, not
+    // the designed no-git fallback, so with the version signal also blind
+    // the honest answer is "cannot tell".
     serverInfo._internal.execSync = () => { throw new Error('no git'); };
     serverInfo._internal.readFileSync = () => { throw new Error('no version.json'); };
     try {
       serverInfo.captureStartup();
       const info = serverInfo.getServerInfo();
-      assert.equal(info.isStale, false, 'unknown state must not render as stale');
+      assert.equal(info.isStale, null, 'unknown state must not render as a fact in either direction');
       assert.equal(info.runningVersion, null);
       assert.equal(info.diskVersion, null);
     } finally {
@@ -506,7 +611,8 @@ describe('version-based staleness (independent of git)', () => {
       serverInfo.captureStartup();
       const info = serverInfo.getServerInfo();
       assert.equal(info.diskVersion, null);
-      assert.equal(info.isStale, false);
+      assert.equal(info.isStale, null,
+        'a failed git probe plus an unreadable version is unknown, not fresh (#1118)');
     } finally {
       restore();
     }

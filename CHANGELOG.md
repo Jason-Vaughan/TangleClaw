@@ -4,6 +4,9 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **The stale-server banner could not fire — a boot-time git failure latched SHA detection off for the process lifetime, and unknown rendered as all-clear (#1118).** `_detectSha` swallowed every failure into the same `null` the designed no-git fallback uses, so a transient boot failure was indistinguishable from a tarball install and permanent (`captureStartup` is idempotent); with `version.json` blind to merges, `isStale` reported a confident `false` while the disk was three commits ahead. Three changes: `_probeSha` now classifies a miss as `'no-git'` (ENOENT / not-a-repository — the designed opt-out) vs `'failed'` (timeout, transient exec error) and the boot failure is logged; a failed boot capture recovers by adopting the first later successful probe as a late baseline (`shaBaselineSource: 'late'`) so detection resumes instead of staying dead; and `isStale` is now three-state (`true`/`false`/`null`) with `staleUnknownReason` — `null` means "cannot determine", which the dashboard renders as its own "Cannot tell whether this server is up to date" banner instead of hiding the banner as healthy (the old bare-falsy check was exactly how an undetectable server read as fine). Existing tests that pinned the two-state contract ("unknown renders as `false`") were updated to the new contract — a deliberate contract change, not a test weakening. `lib/server-info.js`, `public/landing.js`, `test/server-info.test.js`, `test/version-visibility.test.js`.
+
 ## [5.14.1] - 2026-08-24
 
 ### Fixed
