@@ -70,6 +70,19 @@ describe('sessionRules store API (#347/D1a)', () => {
       assert.throws(() => store.sessionRules.create({ content: 'global?', projectId: null }), /projectId is required/);
     });
 
+    it('rejects an unknown projectId with a typed error, not a raw FK failure (#1121)', () => {
+      // The natural mistake is passing the project's NAME — every
+      // /api/sessions/:project route addresses by name.
+      assert.throws(
+        () => store.sessionRules.create({ content: 'rule', projectId: 'Some-Project-Name' }),
+        (err) => err.code === 'INVALID_PROJECT_ID' && /numeric id/.test(err.message)
+      );
+      assert.throws(
+        () => store.sessionRules.create({ content: 'rule', projectId: 999999 }),
+        (err) => err.code === 'INVALID_PROJECT_ID'
+      );
+    });
+
     it('logs a session_rule.created activity event', () => {
       const pid = mkProject('proj-log');
       store.sessionRules.create({ content: 'logged rule', projectId: pid });

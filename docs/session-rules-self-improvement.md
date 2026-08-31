@@ -56,6 +56,11 @@ wrote to the table, so both the prime injection and the promote loop were perman
 
 ## API
 
+`projectId` is the project's **numeric id** (`GET /api/projects`), not its name — the
+`/api/sessions/:project` routes address by name, this API does not. An unknown id is a
+400 `INVALID_PROJECT_ID` on `POST`, `/promote`, `/conflicts`, `GET /api/session-rules`
+and `GET /api/learnings` (#1121); a valid project with no rules returns `200 []`.
+
 | Method & path | Purpose |
 |---|---|
 | `GET /api/session-rules?projectId=&kind=` | List rules |

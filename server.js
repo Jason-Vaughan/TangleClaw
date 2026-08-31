@@ -2519,12 +2519,37 @@ route('POST', '/api/rules/global/reset', (_req, res) => {
 // cross-project directives belong in the Global rules document
 // (`/api/rules/global` → data/global-rules.md).
 
+/**
+ * Validate a request-supplied projectId and resolve it to the numeric id the
+ * store keys on (#1121). An unknown id — typically the project's NAME, which
+ * every /api/sessions/:project route accepts, so it is the natural mistake —
+ * used to either match nothing (a silent empty list, indistinguishable from a
+ * project with no rules) or die on the FK constraint as a bare 500. On failure
+ * this writes the 400 INVALID_PROJECT_ID response and returns null; callers
+ * just return.
+ * @param {import('node:http').ServerResponse} res - Response to write the 400 to on failure
+ * @param {*} raw - The caller-supplied projectId (query string or body value)
+ * @returns {number|null} The validated numeric id, or null when the response was already written
+ */
+function requireNumericProjectId(res, raw) {
+  const pid = Number(raw);
+  if (Number.isInteger(pid) && store.projects.get(pid)) return pid;
+  errorResponse(res, 400,
+    `unknown projectId ${JSON.stringify(raw)} — pass the project's numeric id (see GET /api/projects), not its name`,
+    'INVALID_PROJECT_ID');
+  return null;
+}
+
 // GET /api/session-rules — list (optional ?projectId= / ?kind=)
 route('GET', '/api/session-rules', (req, res) => {
   const urlObj = reqUrl(req);
   const query = parseQuery(urlObj.search);
   const options = {};
-  if (query.projectId !== undefined) options.projectId = Number(query.projectId);
+  if (query.projectId !== undefined) {
+    const pid = requireNumericProjectId(res, query.projectId);
+    if (pid === null) return;
+    options.projectId = pid;
+  }
   // CC-6 (#381): filter the per-project modal's rule boxes by kind.
   if (query.kind !== undefined) options.kind = query.kind;
   // #569: review state. Unfiltered by default; the Project Rules modal fetches
@@ -2595,6 +2620,11 @@ route('POST', '/api/session-rules', (_req, res, _params, body) => {
   } catch (err) {
     if (err.code === 'BAD_REQUEST') {
       return errorResponse(res, 400, err.message, 'BAD_REQUEST');
+    }
+    // #1121: an unknown projectId used to die on the FK constraint as a bare
+    // 500 — the caller most likely passed the project's name, not its id.
+    if (err.code === 'INVALID_PROJECT_ID') {
+      return errorResponse(res, 400, err.message, 'INVALID_PROJECT_ID');
     }
     throw err;
   }
@@ -2700,6 +2730,7 @@ route('POST', '/api/session-rules/promote', (_req, res, _params, body) => {
   } catch (err) {
     if (err.code === 'NOT_FOUND') return errorResponse(res, 404, err.message, 'NOT_FOUND');
     if (err.code === 'BAD_REQUEST') return errorResponse(res, 400, err.message, 'BAD_REQUEST');
+    if (err.code === 'INVALID_PROJECT_ID') return errorResponse(res, 400, err.message, 'INVALID_PROJECT_ID');
     throw err;
   }
 }, { maxBodySize: 256 * 1024 });
@@ -2751,8 +2782,10 @@ route('GET', '/api/learnings', (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const projectId = url.searchParams.get('projectId');
   if (!projectId) return errorResponse(res, 400, 'projectId is required', 'BAD_REQUEST');
+  const pid = requireNumericProjectId(res, projectId);
+  if (pid === null) return;
   const tier = url.searchParams.get('tier') || undefined;
-  jsonResponse(res, 200, { learnings: store.learnings.list(Number(projectId), { tier }) });
+  jsonResponse(res, 200, { learnings: store.learnings.list(pid, { tier }) });
 });
 
 // PUT /api/learnings/:id/tier — correct a learning's tier by hand.
@@ -2777,6 +2810,10 @@ route('POST', '/api/session-rules/conflicts', (_req, res, _params, body) => {
   if (!body || typeof body.content !== 'string' || !body.content.trim()) {
     return errorResponse(res, 400, 'content (non-empty string) is required', 'BAD_REQUEST');
   }
+  // A null projectId is a legitimate unscoped query; a PRESENT one must name a
+  // real project (#1121) or the comparison silently runs against nothing.
+  if (body.projectId !== undefined && body.projectId !== null
+      && requireNumericProjectId(res, body.projectId) === null) return;
   const candidates = store.sessionRules.findConflictCandidates(body.content, body.projectId ?? null, { kind: body.kind });
   jsonResponse(res, 200, { candidates });
 }, { maxBodySize: 256 * 1024 });
