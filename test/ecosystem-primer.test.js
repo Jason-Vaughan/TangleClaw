@@ -49,6 +49,21 @@ describe('lib/ecosystem-primer (#1122)', () => {
       'the session-rules examples must carry the resolved id, ready to use');
   });
 
+  it('gives every session Medusa awareness, keyed to its own prime rather than duplicating the full section', () => {
+    // Opted-in sessions get the complete '## Medusa Switchboard' section with
+    // their workspace id; this roster item exists for the OTHER sessions —
+    // they must at least know the switchboard exists, how to tell they are
+    // not in it, and that the fix is an operator opt-in, not self-registration.
+    const text = primer.buildEcosystemPrimerSection(CTX).join('\n');
+    assert.match(text, /Medusa/, 'the switchboard must be birth knowledge on every project');
+    assert.match(text, /## Medusa Switchboard/,
+      'opt-in status is answered by pointing at the dedicated section, not restating it');
+    assert.match(text, /never register your own listener/i,
+      'the one hard rule worth carrying even at awareness level');
+    assert.match(text, /not opted in/,
+      'absence of the section must be explained, or a session invents its own theory');
+  });
+
   it('states the rules approval gate honestly', () => {
     const text = primer.buildEcosystemPrimerSection(CTX).join('\n');
     assert.match(text, /proposed/, 'AI-authored rules land as proposals');
