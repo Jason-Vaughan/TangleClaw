@@ -142,19 +142,27 @@ describe('sessions', () => {
         assert.ok(prompt.includes(contractFile), 'prime should name the contract source');
       });
 
-      it('injects NOTHING when medusaEnabled is off, even if an id is passed', () => {
+      // These two anchor on the section HEADING LINE and the workspace id, not
+      // the phrase "Medusa Switchboard": since #1122 the ecosystem primer
+      // deliberately NAMES the section (in backticks) in every prime, so a
+      // session can tell opted-in from not by the section's presence. The
+      // property pinned here is unchanged — the dedicated section itself, and
+      // any identity, must not inject.
+      it('injects no switchboard SECTION when medusaEnabled is off, even if an id is passed', () => {
         const project = store.projects.getByName('prime-test');
         const engine = store.engines.get('claude');
         const prompt = sessions.generatePrimePrompt(project, engine, { medusaWorkspaceId: 'prime-test-cafe0123' });
-        assert.equal(prompt.includes('Medusa Switchboard'), false);
+        assert.equal(prompt.split('\n').some((l) => l.trim() === '## Medusa Switchboard'), false);
+        assert.equal(prompt.includes('prime-test-cafe0123'), false,
+          'no identity may leak into a non-opted-in prime');
       });
 
-      it('injects NOTHING without a workspace id (non-launch callers never fabricate identity)', () => {
+      it('injects no switchboard SECTION without a workspace id (non-launch callers never fabricate identity)', () => {
         store.projectConfig.save(projDir, { medusaEnabled: true });
         const project = store.projects.getByName('prime-test');
         const engine = store.engines.get('claude');
         const prompt = sessions.generatePrimePrompt(project, engine);
-        assert.equal(prompt.includes('Medusa Switchboard'), false);
+        assert.equal(prompt.split('\n').some((l) => l.trim() === '## Medusa Switchboard'), false);
       });
 
       it('still injects identity + role with an HONEST note when the contract is unresolvable', () => {
