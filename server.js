@@ -2705,7 +2705,19 @@ function awarenessVerbLabel(rawHeader, fallback) {
 function resolveClaimedProject(claimedProjectId) {
   let project = null;
   if (Number.isInteger(claimedProjectId)) {
-    try { project = store.projects.get(claimedProjectId) || null; } catch { project = null; }
+    // A store failure is NOT a genuinely unresolvable id, and the receipt it
+    // files in the null bucket would be indistinguishable from one. The write
+    // still proceeds (the invocation happened and must be recorded), but the
+    // failure is named so an unresolved-heavy ledger can be told apart from a
+    // broken lookup.
+    try {
+      project = store.projects.get(claimedProjectId) || null;
+    } catch (err) {
+      log.warn('claimed-project lookup failed — the receipt will file as unresolved', {
+        claimedProjectId, error: err.message
+      });
+      project = null;
+    }
   }
   const activeSession = project ? store.sessions.getActive(project.id) : null;
   return { project, activeSession };
@@ -2785,6 +2797,30 @@ route('GET', '/api/tc/sessions', (_req, res) => {
     };
   });
   jsonResponse(res, 200, { sessions });
+});
+
+// GET /api/awareness — "sessions that never became aware" as a queryable
+// surfaced state (ambient-awareness Chunk 05). Per project, the most recent
+// sessions each carry a composed awareness state (confirmed / sent /
+// unverified / unaware) with a `basis` saying in words what the state rests
+// on. The dashboard polls it; the Project Master queries it — the surface the
+// 2026-08-18 carrier regression lacked.
+route('GET', '/api/awareness', (req, res) => {
+  const url = new URL(req.url, 'http://localhost');
+  const perRaw = Number(url.searchParams.get('sessionsPerProject'));
+  const projects = store.awarenessReceipts.fleetAwareness(
+    Number.isInteger(perRaw) && perRaw > 0 ? { sessionsPerProject: perRaw } : {}
+  );
+  jsonResponse(res, 200, {
+    generatedAt: new Date().toISOString(),
+    states: {
+      confirmed: 'the session invoked tc itself — awareness demonstrated',
+      sent: 'a channel was observed to deliver; nothing was demonstrated',
+      unverified: 'something was pushed blind and nothing observed it land',
+      unaware: 'no evidence awareness ever arrived — the red state'
+    },
+    projects
+  });
 });
 
 // GET /api/medusa/deliveries — the fleet-wide Switchboard answer (#792): every

@@ -274,6 +274,23 @@ describe('tc verb roster (lib/tc-verbs)', () => {
       assert.match(res.stderr, /NOTHING was marked handled/);
     });
 
+    it('ack through an error/connecting listener refuses too — only a LIVE listener proves the Hub heard', async () => {
+      // A listener mid-reconnect accepts the local mark while its ack to the
+      // Hub goes nowhere, so a success claim here would leave the Hub's
+      // durable copy alive behind a session that believes it handled the mail.
+      const message2 = VERB_ROSTER.find((v) => v.id === 'message');
+      for (const state of ['error', 'connecting']) {
+        const res = await message2.run({
+          env: {}, argv: ['ack', 'a'],
+          getJson: async () => ({ project: { id: 1, name: 'p' } }),
+          postJson: async () => ({ state })
+        });
+        assert.equal(res.code, 2, `state '${state}' must refuse`);
+        assert.match(res.stderr, new RegExp(`state: ${state}`), 'the actual state is named');
+        assert.match(res.stderr, /still unhandled/);
+      }
+    });
+
     it('read of an empty inbox verifies the listener before claiming emptiness', async () => {
       const message2 = VERB_ROSTER.find((v) => v.id === 'message');
       const mkCtx = (state) => ({
@@ -293,6 +310,15 @@ describe('tc verb roster (lib/tc-verbs)', () => {
       assert.equal(off.code, 2);
       assert.match(off.stderr, /listener is not running/);
       assert.match(off.stderr, /an empty view proves nothing/);
+      // An error/connecting window renders emptiness exactly as 'off' does:
+      // Hub-side mail is invisible through a listener that is not LISTENING,
+      // whatever else it is. Only the live state proves an empty inbox empty.
+      for (const state of ['error', 'connecting']) {
+        const res = await message2.run(mkCtx(state));
+        assert.equal(res.code, 2, `state '${state}' must refuse to claim emptiness`);
+        assert.match(res.stderr, new RegExp(`state: ${state}`), 'the actual state is named');
+        assert.match(res.stderr, /an empty view proves nothing/);
+      }
       const on = await message2.run(mkCtx('listening'));
       assert.equal(on.code, 0);
       assert.match(on.stdout, /inbox is empty/);

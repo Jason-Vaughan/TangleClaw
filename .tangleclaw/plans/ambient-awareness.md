@@ -565,6 +565,44 @@ stated consequence**, not a footnote. A line the agent skims is a vacuum too.
   awareness view keys on `project_id`; make the store-failure path observable (log,
   or a distinct receipt marker) when building that view.
 
+**Decisions pinned at build start (2026-09-01):**
+
+- **Per-session awareness state, composed from the two ledgers that already
+  exist** — no new table. Vocabulary (§ Direction 4's sent/confirmed/unverified,
+  plus the red state the chunk exists for): `confirmed` (≥1 awareness receipt for
+  the session — the session *demonstrated* awareness by invoking `tc`), `sent`
+  (no receipt; ≥1 delivery-ledger row `delivered` — a channel was observed to
+  land, nothing demonstrated), `unverified` (no receipt; best delivery row is
+  `unverified` — something was pushed blind), `unaware` (no receipt, no
+  delivered/unverified row — nothing was delivered and nothing was demonstrated).
+  The state is computed at read time from `awareness_receipts` +
+  `session_rule_deliveries`; a persisted state column would be a second source
+  of truth that drifts.
+- **Surface: `GET /api/awareness`** — fleet-wide, per project, recent sessions
+  each carrying `{state, basis}` where `basis` says in words what the state
+  rests on. Dashboard consumes it on the existing 10s project poll: a red badge
+  on the card when the latest session is `unaware`, and an Awareness row in the
+  card detail. The Project Master's surface is the same endpoint, added to its
+  identity's Read API quick reference. **FLEET.md is NOT enriched** — its
+  records are built by the dir-scanner child, which has no store access; wiring
+  store reads into that path is out of proportion for this chunk (bounded
+  decision, revisit if the Master's drift check wants awareness inline).
+- **Family guard extension:** every engine profile must demonstrate a path to
+  awareness — a carrier (`configFormat.filename` + generator, which Chunk 04's
+  guard proves rides the bootstrap line) OR a prime path (`supportsPrimePrompt`
+  / `supportsSilentPrime`) — or carry an explicit
+  `capabilities.awareness: { path: 'none', reason }` record. openclaw declares
+  the record (remote SSH/ClawBridge sessions; the remote host owns its own
+  context — TangleClaw cannot place a carrier there).
+- **Riders:** `tc message read`/`ack` probe `state !== 'listening'` (an
+  `error`/`connecting` listener renders emptiness as honestly as `off` renders
+  it — i.e. not at all), naming the actual state in the refusal. R-10 takes the
+  rider's log option — the `resolveClaimedProject` catch names the store
+  failure in a warn log, distinct from a genuinely unresolvable id. R-2 stays
+  an accepted blind spot, documented in the view's JSDoc: an identity-failed
+  message-verb invocation leaves no receipt, and could not be attributed to a
+  session even if it left one.
+
 **Done when:** disabling the carrier for one engine turns a surface red within
 one launch. That is the acceptance criterion the whole plan exists for — the
 2026-08-18 regression must not be able to hide for 12 days again.

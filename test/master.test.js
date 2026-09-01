@@ -139,6 +139,15 @@ describe('buildMasterClaudeMd', () => {
     assert.match(md, /unless your access level allows it/);
   });
 
+  it('the Read API quick reference carries the awareness view — the Master is one of its two consumers', () => {
+    // Ambient-awareness Chunk 05: "sessions that never became aware" surfaces
+    // on the dashboard AND to the Project Master; the Master's half is this
+    // quick-reference row, so dropping it silently halves the surface.
+    const md = master.buildMasterClaudeMd({ serverPort: 3101 });
+    assert.match(md, /GET \/api\/awareness/);
+    assert.match(md, /confirmed\/sent\/unverified\/unaware/);
+  });
+
   it('renders the API base URL from config port and the SERVED protocol (ENG-5R2W)', () => {
     // https only with the full willServeHttps conjunction (flag + both cert paths).
     const md = master.buildMasterClaudeMd({

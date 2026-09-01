@@ -967,6 +967,7 @@ describe('the dashboard actually consults the helpers (#885)', () => {
       const render = liftRenderer(ui, 'function renderCardDetail(project)', 'renderCardDetail', {
         esc,
         renderSessionDetail: () => 'SESSION-DELEGATED',
+        renderAwarenessDetail: () => '',
         renderGitDetail: () => 'GIT-DELEGATED',
         tcUnreadableNotice: () => ({ why: 'FOLDER-DELEGATED', remedy: '' }),
         renderNextActionRow: () => ''
