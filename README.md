@@ -117,7 +117,7 @@ What started as session persistence grew into a full orchestration platform — 
 - **Session memory** — file-based, per-project memory at `.tangleclaw/memories/` with a `MEMORY.md` index, injected into every engine config so all engines follow the same convention
 
 ### Engines
-- **Engine-native config generation** — CLAUDE.md, `.codex.yaml`, `.antigravity.md`, `.aider.conf.yml` generated automatically from your rules, regenerated on every server boot so changes land without a relaunch
+- **Engine-native config generation** — `CLAUDE.md`, `.codex.yaml`, `AGENTS.md`, `.aider.conf.yml` generated automatically from your rules, regenerated on every server boot so changes land without a relaunch. Where the file is a shared convention another tool also writes (Antigravity's `AGENTS.md`), TangleClaw splices a marked block and leaves the rest of the file untouched
 - **Custom engines** — adding a new engine is a single JSON profile, no code changes
 - **Orchestration launch-binder** — per-project binding to an orchestration profile (`~/.tangleclaw/orchestration-profiles.json`): the engine launches with the profile's base URL, model, and key injected via environment (never argv). Unbound projects launch exactly as before
 - **Model status monitoring** — live upstream API status for Claude (Anthropic), Codex (OpenAI), and Antigravity (Google) in the session banner

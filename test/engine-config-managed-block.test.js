@@ -111,6 +111,41 @@ describe('managed-block merge — refuses rather than guessing', () => {
     assert.match(error, /2 begin/);
   });
 
+  test('a marker literal in the generated body is refused at the door', () => {
+    // The body is not ours alone: the generator embeds global-rules.md and whole
+    // shared-document bodies verbatim, so an operator's document can contain a
+    // marker. Splicing it writes a 2-begin file, which the malformed check then
+    // refuses FOREVER — one bad shared doc permanently bricking the config.
+    const { merged, error } = engines._mergeManagedBlock(FOREIGN_FILE, `## Rules\nnever write ${END} in a shared doc`, 'markdown');
+    assert.equal(merged, null, 'nothing is spliced');
+    assert.match(error, /marker literal/);
+  });
+
+  test('a poisoned body cannot brick a file that is still writable afterwards', () => {
+    assert.equal(engines._mergeManagedBlock(FOREIGN_FILE, `body with ${BEGIN} inside`, 'markdown').merged, null);
+    const recovered = engines._mergeManagedBlock(FOREIGN_FILE, 'clean body', 'markdown');
+    assert.equal(recovered.error, null, 'a later clean write still succeeds');
+    assert.ok(recovered.merged.includes('clean body'));
+  });
+
+  test('a top-level heading in the body is demoted so it cannot become a second H1', () => {
+    // global-rules.md opens with `# Global Rules` and is pushed verbatim, so
+    // demoting only the generator's own header still left an H1 inside the
+    // operator's document. Mutation: dropping the body-wide demotion.
+    const { merged, error } = engines._mergeManagedBlock('', '# Global Rules\ntext\n# Another', 'markdown');
+    assert.equal(error, null);
+    assert.ok(!/^# (?!#)/m.test(merged.split(BEGIN)[1] || ''), 'no bare H1 survives inside the block');
+    assert.ok(merged.includes('## Global Rules'));
+    assert.ok(merged.includes('## Another'), 'every H1 is demoted, not just the first');
+  });
+
+  test('yaml bodies are not heading-demoted — # is a comment there, not a heading', () => {
+    const { merged, error } = engines._mergeManagedBlock('', '# a yaml comment\nkey: 1', 'yaml');
+    assert.equal(error, null);
+    assert.ok(merged.includes('# a yaml comment'), 'yaml comments are left alone');
+    assert.ok(!merged.includes('## a yaml comment'));
+  });
+
   test('an unknown syntax is refused, never given a guessed comment form', () => {
     const { merged, error } = engines._mergeManagedBlock('x', 'body', 'ini');
     assert.equal(merged, null);
@@ -141,10 +176,10 @@ describe('writeEngineConfig honors mergeStrategy', () => {
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
     const result = engines.writeEngineConfig('antigravity', dir, {}, profile);
-    if (result.skipped) {
-      t.skip(`config generation skipped: ${result.skipReason}`);
-      return;
-    }
+    // Never skip on `result.skipped`. A skip here would mean the fixture never
+    // reached the subject, and a test that goes green by not running is the
+    // failure mode this file exists to prevent — assert the precondition.
+    assert.equal(result.skipped, false, `fixture did not reach the write path: ${result.skipReason}`);
     assert.equal(result.error, null, 'write succeeded');
     assert.equal(result.written, true);
 
@@ -162,13 +197,31 @@ describe('writeEngineConfig honors mergeStrategy', () => {
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
     const result = engines.writeEngineConfig('antigravity', dir, {}, profile);
-    if (result.skipped) {
-      t.skip(`config generation skipped: ${result.skipReason}`);
-      return;
-    }
+    assert.equal(result.skipped, false, `fixture did not reach the write path: ${result.skipReason}`);
     assert.equal(result.written, false, 'nothing was written');
     assert.match(result.error, /managed-block merge refused/);
     assert.equal(fs.readFileSync(file, 'utf8'), seed, 'the operator file is byte-identical after a refusal');
+  });
+});
+
+describe('writeEngineConfig refuses an unknown mergeStrategy', () => {
+  test('a typo does not silently fall through to the destructive default', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-badstrategy-'));
+    const file = path.join(dir, 'AGENTS.md');
+    fs.writeFileSync(file, FOREIGN_FILE);
+    try {
+      const result = engines.writeEngineConfig('antigravity', dir, {}, {
+        configFormat: { filename: 'AGENTS.md', syntax: 'markdown', generator: 'antigravity-md', mergeStrategy: 'managed_block' },
+        capabilities: { supportsConfigFile: true }
+      });
+      // Mutation: removing the validation makes 'managed_block' resolve to
+      // whole-file and overwrite the operator's file.
+      assert.equal(result.written, false);
+      assert.match(result.error, /unknown configFormat\.mergeStrategy/);
+      assert.equal(fs.readFileSync(file, 'utf8'), FOREIGN_FILE, 'the file is untouched');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -227,8 +280,19 @@ describe('engine profiles declare a usable carrier', () => {
       assert.ok(cf.discovery && cf.discovery.source, 'the carrier claim names the upstream doc it was verified against');
     });
 
+    // Required, not optional, wherever getting the filename wrong is
+    // DESTRUCTIVE. Shipping this as `if (!cf.discovery) return` let 3 of 4
+    // carriers pass unevidenced — an opt-in guard that guards nothing. Engines
+    // whose carrier is private to them are tracked separately rather than given
+    // invented evidence: a fabricated source is worse than a recorded gap.
+    test(`${file}: a destructive-if-wrong carrier carries evidence`, () => {
+      const destructiveIfWrong = SHARED_CARRIERS.includes(cf.filename) || cf.mergeStrategy === 'managed-block';
+      if (!destructiveIfWrong) return;
+      assert.ok(cf.discovery, `${cf.filename} is written into a file others own — the claim that the engine reads it must name where that was verified`);
+    });
+
     test(`${file}: declared carrier evidence is well-formed`, () => {
-      if (!cf.discovery) return; // evidence is not yet required of every engine — see the note below
+      if (!cf.discovery) return;
       assert.match(cf.discovery.verifiedOn, /^\d{4}-\d{2}-\d{2}$/, 'verifiedOn is an ISO date');
       assert.ok(!Number.isNaN(Date.parse(cf.discovery.verifiedOn)), 'verifiedOn parses as a real date');
       assert.ok(typeof cf.discovery.source === 'string' && cf.discovery.source.length > 0, 'a source is named');

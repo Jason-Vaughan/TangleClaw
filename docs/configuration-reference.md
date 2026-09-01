@@ -286,8 +286,14 @@ Engine profiles define how TangleClaw interacts with an AI engine. See the [Engi
   "interactionModel": "string — 'session' or 'persistent'",
   "configFormat": {
     "filename": "string|null — config file name",
-    "syntax": "string|null — 'markdown', 'yaml', or null",
-    "generator": "string|null — config generator id"
+    "syntax": "string|null — 'markdown', 'yaml', 'toml', or null",
+    "generator": "string|null — config generator id",
+    "mergeStrategy": "string|null — 'whole-file' (default) or 'managed-block'",
+    "discovery": {
+      "verifiedOn": "string — ISO date the filename claim was checked upstream",
+      "source": "string — the upstream doc consulted",
+      "note": "string|null — what it said"
+    }
   },
   "coAuthorFormat": "string|null — git co-author pattern",
   "commands": [

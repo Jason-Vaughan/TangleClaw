@@ -1258,17 +1258,33 @@ describe('engines', () => {
       assert.ok(comment.some((l) => l.includes(`Authorization: Bearer ${TOKEN}`)));
     });
 
-    it('injects the bearer header into all four engine configs when enabled', () => {
+    it('injects the bearer header into the engine-private configs when enabled', () => {
       enableGate();
+      // Contract narrowed deliberately 2026-08-31, not weakened: these three
+      // carriers are engine-private files that TangleClaw gitignores, so the
+      // live token may be inlined. The gemini/antigravity carrier is not —
+      // see the test below.
       const generated = {
         claude: engines._generateClaudeMd(proj),
-        gemini: engines._generateGeminiMd(proj),
         codex: engines._generateCodexYaml(proj),
         aider: engines._generateAiderConf(proj)
       };
       for (const [name, content] of Object.entries(generated)) {
         assert.ok(content.includes(`Authorization: Bearer ${TOKEN}`), `${name} config must carry the bearer header`);
       }
+    });
+
+    it('never writes the live token into the committed AGENTS.md carrier', () => {
+      enableGate();
+      const content = engines._generateGeminiMd(proj);
+      // `AGENTS.md` is tracked in git in every antigravity project here, unlike
+      // the gitignored `.antigravity.md` it replaced. Inlining the bearer would
+      // publish it to the repo and anywhere that repo is pushed. Mutation this
+      // catches: dropping the `committedCarrier` flag at the call site.
+      assert.ok(!content.includes(TOKEN), 'the live token must not appear in a committed carrier');
+      assert.ok(!content.includes(`Authorization: Bearer ${TOKEN}`));
+      assert.ok(content.includes('/api/service-token'), 'it names where to fetch the token instead');
+      assert.ok(content.includes('tracked in git'), 'and says why it is absent');
     });
 
     it('injects nothing when the gate is off (no raw token, no injected auth block)', () => {

@@ -216,7 +216,7 @@ All engines with `supportsConfigFile: true` receive the same rule content, trans
 | Claude Code | `CLAUDE.md` | Markdown sections with bullet-point rules, full PortHub guide |
 | Codex | `.codex.yaml` | `instructions:` multiline YAML field containing markdown-formatted rules and PortHub guide |
 | Aider | `.aider.conf.yml` | YAML comments with rules and PortHub reference, plus functional config settings |
-| Antigravity | `.antigravity.md` | Markdown sections (same format as CLAUDE.md), written to the project root |
+| Antigravity | `AGENTS.md` | Markdown sections (same format as CLAUDE.md), spliced into the project root file as a **managed block** — TangleClaw owns only the region between its `BEGIN:tangleclaw` / `END:tangleclaw` markers |
 
 This translation is automatic — rules are written once, and TangleClaw handles the format conversion. A parity test suite verifies that all engines receive core rules and PortHub references.
 

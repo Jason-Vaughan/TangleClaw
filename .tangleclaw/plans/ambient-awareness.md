@@ -6,12 +6,12 @@ created: 2026-08-31
 branch: feat/ambient-awareness
 shared_link: https://claude.ai/code/artifact/830caee7-fd12-4cff-a0e8-9d6bbb8fc522  # keep THIS link updated in place; never mint a new one
 issues: [999, 1122, 1021, 1057, 1063, 1085, 1106, 1049]
-closes_or_advances: [999, 1057, 1063, 1085, 1049, 1021, 1106]
+closes_or_advances: [999, 1021]  # 1057/1063/1085/1049/1106 are targeted by later chunks, not shipped yet
 depends_on:
   - .prawduct/artifacts/prime-delivery-direction.md
   - lib/ecosystem-primer.js
 governed_by:
-  - .prawduct/artifacts/prime-delivery-direction.md   # § Direction 1-5 (candidate, unratified)
+  - .prawduct/artifacts/prime-delivery-direction.md   # § Direction 1-5 (RATIFIED 2026-08-31)
   - .prawduct/artifacts/api-contract.md               # new CLI is a programmatic interface
 ---
 
@@ -172,8 +172,8 @@ was missing when this regressed on 2026-08-18 and went unnoticed for 12 days.
 
 ## Norm reconciliation (governed_by)
 
-`prime-delivery-direction.md` — candidate, **unratified**, reconciled anyway
-because it is the right design and the plan proposes ratifying it:
+`prime-delivery-direction.md` — **RATIFIED 2026-08-31** (Chunk 00), registered in
+`project-preferences.md` § Enforcement. Binding, not aspirational:
 
 | Norm | Disposition |
 |---|---|
@@ -301,9 +301,25 @@ change reaches 7 real projects the moment the server restarts with this branch's
 code on disk — which the live-install rule says can happen without an explicit
 deploy. Merge deliberately.
 
-**Done when:** guard red before / green after; a live Antigravity launch shows
-the prime in the agent's own transcript (`type: USER_INPUT`), not merely in the
-ledger.
+**Shipped vs descoped — Chunk 01 delivered item 1 only.** Recorded here because a
+plan that lists five deliverables and ships one, with no note, reads next session
+as five done:
+
+| # | Deliverable | Status |
+|---|---|---|
+| 1 | Evidenced carrier + managed-block write contract | **shipped** (`de85f3e`) |
+| 2 | Readiness-gated paste | **deferred** → blocked on #1106; moves to Chunk 01c |
+| 3 | Fold in #1057 drift detection | **deferred** → Chunk 01c; evidence shipped, detection did not |
+| 4 | Honest `delivered` ledger | **deferred** → Chunk 01c |
+| 5 | `lib/engines.js` "reply" row label | **deferred** → Chunk 01c |
+
+Items 2–5 are a coherent unit (the prime channel and its ledger) and are now
+**Chunk 01c**, not silently dropped. #1057 and #1063 stay open until it lands.
+
+**Done when (item 1, met):** guard red before / green after — five mutations
+confirmed; a real boot-sync write preserves both foreign owners byte-identical.
+**Still owed by Chunk 01c:** a live Antigravity launch showing the prime in the
+agent's own transcript (`type: USER_INPUT`), not merely in the ledger.
 
 ---
 
@@ -435,7 +451,8 @@ need reopening or a successor.
 ## Status
 
 - [x] Chunk 00 — Ratify the Direction — **done 2026-08-31** (operator-authorized; §3 amended, registry row live)
-- [ ] Chunk 01 — Carrier repair (merge mechanism + antigravity)
+- [x] Chunk 01 — Carrier repair: evidenced carrier + managed-block contract — **done 2026-08-31** (`de85f3e`; Critic `rev-20260901T000224Z`)
+- [ ] Chunk 01c — Prime channel: readiness gate (#1106), drift detection (#1057), honest ledger (#1063), send-row label
 - [ ] Chunk 01b — Narrow the plugin-governance deferral (#1021)
 - [ ] Chunk 02 — `tc` vertical slice
 - [ ] Chunk 03 — Verb surface + roster
