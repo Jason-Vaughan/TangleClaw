@@ -1,7 +1,7 @@
 ---
 plan: ambient-awareness
 title: Ambient Awareness — every TangleClaw session knows what TangleClaw is, on any engine
-status: active (Chunks 00–03 complete — 00–02 merged in #1133 + live-probed, 03 reviewed clean on feat/ambient-awareness; Chunk 04 next, evidence-backed necessary by the probe)
+status: active (Chunks 00–04 complete — 00–02 merged in #1133 + live-probed, 03–04 reviewed clean on feat/ambient-awareness; Chunk 05 next — awareness observability, cumulative-final)
 created: 2026-08-31
 branch: feat/ambient-awareness
 shared_link: https://claude.ai/code/artifact/830caee7-fd12-4cff-a0e8-9d6bbb8fc522  # keep THIS link updated in place; never mint a new one
@@ -620,5 +620,5 @@ need reopening or a successor.
 - [x] Chunk 01b — Narrow the plugin-governance deferral (#1021 — close at merge) — **done 2026-09-01** (`fe629a7` + findings batch; Critic `rev-20260901T023046Z` cumulative — code clean, 1 blocking record-plumbing gap fixed by pointing `active_build_plan` + an artifacts symlink at this plan)
 - [x] Chunk 02 — `tc` vertical slice — code complete 2026-09-01 (`f29b6c3` + findings batches, merged in #1133); **live probe RUN 2026-09-01 03:29–03:40Z on Medusa (sessions 899/900/901), assumption RESOLVED — see "Live probe results" below**
 - [x] Chunk 03 — Verb surface + roster — **done 2026-09-01** (`5a28642` + `0423687` + findings batch `fdd4a76`; Critic cumulative `rev-20260901T040526Z-9190a8bb` — 0 blocking, 2 warnings fixed + mutation-confirmed, verified clean by `rev-20260901T041612Z-5870456a`; api-contract §21 discharged, governance checkpoint 2 satisfied)
-- [ ] Chunk 04 — Bootstrap line
+- [x] Chunk 04 — Bootstrap line — **done 2026-09-01** (`6f94fe9` + findings batch `4b5acab`; Critic cumulative `rev-20260901T043502Z-caadd8a8` — 0 blocking, 2 warnings fixed + mutation-confirmed, verified clean by `rev-20260901T044414Z-8cb608d3`; verb list derived from VERB_ROSTER, ten mutations red)
 - [ ] Chunk 05 — Awareness observability

@@ -5105,3 +5105,43 @@ Hub-side mail is invisible. Transient, and the durable consequence is closed; pr
 `state !== 'listening'` (or word the render by state) when chunk 05 touches this surface.
 
 **Classification:** feature
+
+## 2026-09-01: the tc bootstrap line rides every carrier (ambient-awareness chunk 04)
+<!-- prawduct: type=feature | scope=ambient-awareness | chunks=04 -->
+
+**What shipped.** The instruction the probe proved necessary: one shared bootstrap line —
+an instruction with a stated consequence (run `tc capabilities` BEFORE concluding a capability
+is missing; a capability assumed instead of checked is how sessions fabricate outcomes; a
+missing `tc` means the pane was not TangleClaw-launched, say so) — from a single source,
+`lib/ecosystem-primer.js#tcBootstrapLines` (md + comment forms), with the verb list **derived
+from `lib/tc-verbs.js#VERB_ROSTER`** so a ninth verb reaches every carrier by existing.
+Carriers: the prime roster (`tc-cli` entry), the budget-yield pointer (§ Direction 5 — the
+omitted section is replaced by the verb that recovers it), and all five engine-config
+generators unconditionally (whole-file CLAUDE.md, the governed operational block inside the
+managed markers, GEMINI.md/AGENTS.md, .codex.yaml, .aider.conf.yml comment form). Primer
+budget cap 2000→2600, a recorded decision. Family guards over every `supportsConfigFile`
+profile + the governed block through the real `writeEngineConfig` caller + the default-header
+gemini path; parity checklist in `docs/engine-guide.md` binds new engines. Ten mutations
+confirmed red across the two commits (`6f94fe9`, `4b5acab`).
+
+**Critic rounds.** Cumulative `rev-20260901T043502Z-caadd8a8` (three reviewers, spanning
+chunks 03–04 on the branch): 0 blocking, 2 warnings, 9 notes. Both warnings were single-source
+discipline this branch keeps re-teaching: the bootstrap line hand-copied the verb roster it
+exists to advertise (one verb away from silent fleet-wide drift), and `message send` flattened
+the #1023 retarget out of its response — honest status, stale handle. Fixed in one batch
+(`4b5acab`) with `tc --help`-to-stdout and the FEATURES label riding along; verified clean by
+`rev-20260901T044414Z-8cb608d3` (0 findings; class check confirmed no surviving hand-copy).
+Disposition table:
+
+**rev-20260901T043502Z-caadd8a8** — chunk 04
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | fixed | tc message send flattened retargetedFrom — reported delivery to the stale handle |
+| R-3 | warning | fixed | tcBootstrapLines hand-copied the verb roster; now derived from VERB_ROSTER |
+| R-4, R-5 | note | accepted | fixed in the same batch (FEATURES label; --help to stdout) |
+| R-10 | note | accepted | store-failure null-bucket observability — recorded as a Chunk 05 rider in the plan |
+| R-2, R-6, R-7 | note | accepted | priors acknowledgments / consolidation-flagged duplicates |
+| R-8, R-9, R-11 | note | accepted | clean checks (learnings, backlog, budget-raise rationale) |
+
+**Classification:** feature
