@@ -53,6 +53,7 @@ describe('startup session-rule delivery (#595)', () => {
    * @param {object} [opts]
    * @param {boolean} [opts.pluginGoverned] - Seed the committed plugin install
    *   reference that makes `engines.isPluginGoverned` true for this path
+   * @param {string} [opts.engine] - Engine id for the project (default 'claude')
    * @returns {object} The created project record
    */
   function makeProject(name, opts = {}) {
@@ -67,7 +68,7 @@ describe('startup session-rule delivery (#595)', () => {
       );
       fs.writeFileSync(path.join(projDir, 'CLAUDE.md'), '<!-- PRAWDUCT:ANCHOR -->\n');
     }
-    return store.projects.create({ name, path: projDir, engine: 'claude' });
+    return store.projects.create({ name, path: projDir, engine: opts.engine || 'claude' });
   }
 
   // Deterministic, collision-free fixture ids. Math.random() names (the prior
@@ -503,13 +504,68 @@ describe('startup session-rule delivery (#595)', () => {
         const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
         assert.equal(rows.length, 1);
         assert.equal(rows[0].channel, 'prime-paste');
-        assert.equal(rows[0].delivered, true);
+        // Claude has no positive at-rest marker, so this paste is BLIND — a
+        // fixed delay, nothing observing the pane. `send-keys` not throwing is
+        // a fact about the local tmux server, not about what the engine
+        // received, so the honest row is `unverified`, never `delivered`
+        // (#1063 — the outcome that let a broken channel keep a clean ledger).
+        assert.equal(rows[0].outcome, 'unverified');
+        assert.equal(rows[0].delivered, false);
+        assert.match(rows[0].skipReason, /no at-rest marker.*pasted blind/,
+          'the row says WHY nothing observed the paste');
         assert.equal(rows[0].ruleCount, 1);
 
         store.sessions.kill(result.session.id, 'test cleanup');
       } finally {
         // `t.mock.timers` is auto-restored by node at test end; globals via
         // afterEach. Only DB rows are cleaned here.
+        for (const rule of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(rule.id);
+        store.projects.delete(launched.id);
+      }
+    });
+
+    it('gates the antigravity paste on the at-rest marker and records DELIVERED for an observed-ready pane', async (t) => {
+      // The gated half of #999: antigravity has a positive at-rest marker, so
+      // its paste waits for the marker over a settled transcript and may then
+      // claim real delivery — the counterpart to the blind Claude paste above,
+      // which records `unverified`. This pins the WIRING (that _deferEngineInit
+      // actually consults the gate); the gate's own state machine is covered in
+      // prime-readiness-gate.test.js.
+      const tmux = require('../lib/tmux');
+      const enginesModule = require('../lib/engines');
+      let created = false;
+      let pasted = 0;
+      stub(tmux, 'hasSession', () => created);
+      stub(tmux, 'probeSession', () => ({ live: created, answered: true, cause: null }));
+      stub(tmux, 'createSession', () => { created = true; return true; });
+      stub(tmux, 'sendKeys', () => { pasted += 1; return true; });
+      // A pane already at rest: bare `>` composer + the #560 marker.
+      stub(tmux, 'capturePane', () => ({ lines: ['transcript', '> ', '? for shortcuts'] }));
+      stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/agy' }));
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+
+      const launched = makeProject(`agy-${uid()}`, { engine: 'antigravity' });
+      store.sessionRules.create({ content: 'gated directive', projectId: launched.id });
+
+      try {
+        const result = sessions.launchSession(launched.name);
+        assert.equal(result.error, null);
+        // Drive mocked time and drain microtasks until the async gate resolves
+        // and the paste fires (two settled captures ≈ two poll sleeps).
+        for (let i = 0; i < 20 && pasted === 0; i++) {
+          t.mock.timers.tick(1000);
+          await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        }
+        assert.equal(pasted, 1, 'the prime is pasted once the pane reads ready');
+
+        const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0].channel, 'prime-paste');
+        assert.equal(rows[0].outcome, 'delivered',
+          'a marker-confirmed paste is the one row allowed to claim delivery');
+
+        store.sessions.kill(result.session.id, 'test cleanup');
+      } finally {
         for (const rule of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(rule.id);
         store.projects.delete(launched.id);
       }

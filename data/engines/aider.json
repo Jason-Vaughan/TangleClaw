@@ -25,7 +25,8 @@
   "launch": {
     "shellCommand": "aider",
     "args": [],
-    "env": {}
+    "env": {},
+    "startupDelay": 5000
   },
   "launchModes": {
     "default": { "label": "Interactive", "args": [], "description": "Confirms before each change" },

@@ -395,3 +395,62 @@ describe('engine profiles declare a usable carrier', () => {
     });
   }
 });
+
+describe('engine profiles: upstream facts carry evidence; the paste path is never blind-by-default (#1057, #999)', () => {
+  const dir = path.join(__dirname, '..', 'data', 'engines');
+  const profiles = fs.readdirSync(dir)
+    .filter((f) => f.endsWith('.json'))
+    .map((f) => ({ file: f, profile: JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')) }));
+  const wakeProfiles = require('../lib/medusa-wake').ENGINE_WAKE_PROFILES;
+
+  test('the roster is non-empty, so the assertions below are not vacuous', () => {
+    assert.ok(profiles.length > 0, 'engine profiles were found to check');
+  });
+
+  // Runs over EVERY profile, same rationale as the carrier guard above: the
+  // defect class is "an engine nobody watches drifts silently", so a guard
+  // naming one engine repeats the defect it fixes.
+  for (const { file, profile } of profiles) {
+    const caps = profile.capabilities || {};
+    const injection = caps.startupInjection;
+
+    test(`${file}: a declared startupInjection.maxChars carries evidence`, () => {
+      if (!injection || injection.maxChars === undefined) return;
+      // #1057: maxChars is an UPSTREAM fact — an engine's own channel cap. An
+      // assertion with both sides in this repo stays green forever after the
+      // upstream changes (the codex --full-auto learning), so the claim must
+      // name where and when it was measured; same evidence shape as the
+      // carrier's `discovery` block.
+      assert.ok(
+        injection.evidence,
+        `${file} declares maxChars=${injection.maxChars} with no evidence of where that number was measured`
+      );
+      assert.match(injection.evidence.verifiedOn, /^\d{4}-\d{2}-\d{2}$/, 'verifiedOn is an ISO date');
+      assert.ok(!Number.isNaN(Date.parse(injection.evidence.verifiedOn)), 'verifiedOn parses as a real date');
+      assert.ok(
+        typeof injection.evidence.source === 'string' && injection.evidence.source.length > 0,
+        'a source is named'
+      );
+    });
+
+    test(`${file}: a paste-path engine declares a readiness marker or an explicit startupDelay`, () => {
+      // The paste path is taken when the engine supports a prime prompt and has
+      // no silent (hook-file) channel. A fixed 1500ms default racing an engine
+      // boot is the #999 defect: 41-second antigravity boots pasted the prime
+      // into a pane whose agent did not exist yet, and nothing declared that
+      // blindness anywhere. Either the engine has a positive at-rest marker
+      // (readiness-gated paste) or its profile records an explicit delay — an
+      // inherited default is not a decision.
+      const pastes = caps.supportsPrimePrompt === true && caps.supportsSilentPrime !== true;
+      if (!pastes) return;
+      const wake = wakeProfiles[profile.id];
+      const hasMarker = !!(wake && wake.idleMarker);
+      const hasDelay = !!(profile.launch && Number.isFinite(profile.launch.startupDelay));
+      assert.ok(
+        hasMarker || hasDelay,
+        `${file} takes the blind tmux-paste path with no at-rest marker in ENGINE_WAKE_PROFILES `
+          + 'and no launch.startupDelay — declare one or the other so the blindness is a recorded decision'
+      );
+    });
+  }
+});

@@ -1176,7 +1176,7 @@ describe('engines', () => {
       };
       for (const [name, content] of Object.entries(generated)) {
         assert.ok(/medusa/i.test(content), `${name} config must mention the switchboard`);
-        assert.ok(content.includes(`/medusa/send`), `${name} config must name the reply endpoint`);
+        assert.ok(content.includes(`/medusa/send`), `${name} config must name the send endpoint`);
       }
     });
 

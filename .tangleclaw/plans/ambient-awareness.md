@@ -323,6 +323,70 @@ agent's own transcript (`type: USER_INPUT`), not merely in the ledger.
 
 ---
 
+### Chunk 01c — Prime channel: readiness gate, drift evidence, honest ledger
+**Type:** code · **Critic mode:** chunk · *(items 2–5 of Chunk 01; spec pinned 2026-09-01 at build start)*
+
+**#1106 resolution (the stated precondition).** Option 2 of the issue is taken and
+was in substance already shipped by #1114 (v5.14.1): the untrue comment is
+corrected in `lib/medusa-wake.js`, the measurement found **no** string present at
+rest and absent mid-turn, the transcript-movement digest is the second signal for
+nudging, and a verbatim mid-turn Claude capture now backs the tests. What this
+chunk adds: the paste gate treats a null `idleMarker` honestly — a markerless
+engine cannot be readiness-gated and must instead declare an explicit
+`launch.startupDelay`, with the blind paste recorded as `unverified`, never
+`delivered`. #1106 closes with this recorded disposition.
+
+**Design, as built:**
+
+1. **`_awaitPaneReady` (lib/sessions.js).** For engines with a positive
+   `idleMarker` in `medusa-wake.ENGINE_WAKE_PROFILES` (antigravity today): poll
+   the pane (~750 ms) until the marker is present AND `_paneDigest` is unchanged
+   across two consecutive polls — positive readiness plus not-still-printing.
+   Timeout 90 s (the 08-18 regression showed >41 s boots; a fixed 1500 ms is the
+   defect). On timeout the paste still happens — refusing would turn a cosmetic
+   upstream marker rename into "primes never deliver again, silently" — but the
+   row records `unverified` with the reason. Injected capture/clock seams so the
+   tests own time (no host-plumbing scoring).
+2. **Ledger outcomes.** Schema v30→v31 rebuild widens the outcome CHECK to add
+   `unverified` (reason required, like `skipped`; `unverified` through channel
+   `none` refused like `delivered`). Paste semantics: marker-confirmed paste →
+   `delivered`; blind delay-based paste (markerless engine) and timed-out gated
+   paste → `unverified`. `projectsWithUndeliveredRules` continues to count only
+   `delivered` as delivered — an unverified-only project surfaces, which is the
+   point. `public/ui.js` renders `unverified` distinctly (not ok, not err).
+   The rules-hook channel's shards-written `delivered` row is **not** touched
+   here — that is #1063's receipt design (prime-delivery plan Chunk 04), which
+   needs the consumer-enumeration pass its own issue demands. #1063 is advanced
+   (the paste half stops lying), not closed.
+3. **#1057 drift evidence, same mechanism as the carrier.**
+   `claude.json` `capabilities.startupInjection` gains
+   `evidence: { verifiedOn, source }` (the 2026-07-28 hooks-reference probe,
+   reconfirmed by the startup-channel probe memo). The profile family guard
+   generalizes: ANY engine declaring an upstream-derived field
+   (`configFormat.filename` via `discovery`, `startupInjection.maxChars` via
+   `evidence`) must name source + ISO date — over every profile, not a sample.
+   Folded decision PRM-4H8N: `summarizeFeatureIndexForPrime` has zero runtime
+   callers (proven repo-wide) — **removed** with its describe block;
+   `countTodoEntries`/`countCuratedEntries` stay (live callers in sessions.js
+   and wrap-steps).
+4. **Paste-path guard.** Every profile with `supportsPrimePrompt` true and
+   silent prime unavailable must have either a wake-profile `idleMarker` or an
+   explicit `launch.startupDelay` — aider declares neither today and gets an
+   explicit delay, making its blindness a recorded decision instead of an
+   inherited default.
+5. **Send-row label.** Both generated-doc sites in `lib/engines.js` (~1300,
+   ~1321) rename `reply` → `send` — the family, not the instance.
+
+**Done when:** unit tests own the gate's three outcomes (ready → delivered;
+timeout → unverified; markerless → unverified) with injected seams; the widened
+guard runs red on an unevidenced `maxChars` and an undeclared-delay paste engine;
+mutation pass on each fix confirms a guard exists; suite green. **Live proof
+still owed** (from Chunk 01): an Antigravity launch showing the prime as
+`type: USER_INPUT` in the agent's own transcript — run at verify, against the
+live install, per the live-verification traps memo.
+
+---
+
 ### Chunk 01b — Narrow the plugin-governance deferral *(closes #1021)*
 **Type:** code · **Critic mode:** chunk · *depends on 01's merge mechanism*
 

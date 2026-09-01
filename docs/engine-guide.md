@@ -199,9 +199,27 @@ fallback**, so declaring it for one engine never changes another's behavior.
 The limit applies to the startup-hook channel only. When a project runs with `silentPrime` off the
 prime is pasted into the terminal instead, and the fallback is used.
 
-**Verify the number against the engine's own documentation before declaring it, and re-verify if
-directives start going missing.** A value copied from another engine, or left stale after the
-harness changes, fails silently and in the one place nothing else is watching.
+**Verify the number against the engine's own documentation before declaring it, and record where
+and when in a sibling `evidence` block** — `"startupInjection": { "maxChars": 10000, "evidence":
+{ "verifiedOn": "YYYY-MM-DD", "source": "…" } }`. The profile guard suite fails any declared
+`maxChars` with no evidence: the number is an *upstream* fact, and an assertion with both sides in
+this repo stays green forever after the upstream changes. Re-verify if directives start going
+missing — a value copied from another engine, or left stale after the harness changes, fails
+silently and in the one place nothing else is watching.
+
+#### Prime paste readiness
+
+When a project runs with `silentPrime` off (or the engine has no silent channel), the prime is
+pasted into the TUI. That paste is **readiness-gated** for engines with a positive at-rest marker
+in `medusa-wake`'s `ENGINE_WAKE_PROFILES` (antigravity: `? for shortcuts`): the paste waits until
+the marker renders over a transcript that has stopped moving, instead of firing on a fixed timer —
+a fixed delay racing an engine boot is how a 41-second antigravity boot swallowed the prime for 12
+days with a clean ledger.
+
+Engines without a positive marker cannot be gated and **must declare an explicit
+`launch.startupDelay`** (the guard suite fails a paste-path profile with neither), and their blind
+paste is recorded in the delivery ledger as `unverified`, never `delivered` — `delivered` is
+reserved for a paste whose pane was observed ready.
 
 ## Config File Generation
 
