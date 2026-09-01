@@ -931,7 +931,38 @@ describe('startup session-rule delivery (#595)', () => {
       }
     });
 
-    it('answers the fleet question: projects with rules that never had one delivered', () => {
+    it('judges the fleet question on the LATEST attempt — a stale delivered row cannot hide a broken channel', () => {
+      // The poisoned-history case (#1063): the paste path recorded fabricated
+      // `delivered` rows for 12 days and the migration preserves them verbatim.
+      // History-wide NOT EXISTS would let those rows hide the 8 projects this
+      // view exists to surface, forever. And the mirror: one bad old row must
+      // not condemn a channel that works today.
+      const nowBroken = makeProject(`nowbroken-${uid()}`);
+      const nowWorking = makeProject(`nowworking-${uid()}`);
+      store.sessionRules.create({ content: 'a rule', projectId: nowBroken.id });
+      store.sessionRules.create({ content: 'a rule', projectId: nowWorking.id });
+      // Old fabricated success, then today's honest miss.
+      store.sessionRuleDeliveries.record({ projectId: nowBroken.id, engineId: 'antigravity', channel: 'prime-paste', outcome: 'delivered', ruleIds: [1] });
+      store.sessionRuleDeliveries.record({ projectId: nowBroken.id, engineId: 'antigravity', channel: 'prime-paste', outcome: 'unverified', skipReason: 'marker never rendered', ruleIds: [1] });
+      // Old miss, then today's real delivery.
+      store.sessionRuleDeliveries.record({ projectId: nowWorking.id, engineId: 'claude', channel: 'prime-paste', outcome: 'skipped', skipReason: 'tmux gone', ruleIds: [2] });
+      store.sessionRuleDeliveries.record({ projectId: nowWorking.id, engineId: 'claude', channel: 'rules-hook', outcome: 'delivered', ruleIds: [2] });
+
+      try {
+        const names = store.sessionRuleDeliveries.projectsWithUndeliveredRules().map((r) => r.projectName);
+        assert.ok(names.includes(nowBroken.name),
+          'a stale delivered row must not hide a channel whose latest attempt failed');
+        assert.ok(!names.includes(nowWorking.name),
+          'an old miss must not condemn a channel whose latest attempt delivered');
+      } finally {
+        for (const p of [nowBroken, nowWorking]) {
+          for (const rule of store.sessionRules.list({ projectId: p.id })) store.sessionRules.delete(rule.id);
+          store.projects.delete(p.id);
+        }
+      }
+    });
+
+    it('answers the fleet question: projects with rules whose latest attempt did not deliver', () => {
       const broken = makeProject(`broken-${uid()}`);
       const working = makeProject(`working-${uid()}`);
       const ruleless = makeProject(`ruleless-${uid()}`);

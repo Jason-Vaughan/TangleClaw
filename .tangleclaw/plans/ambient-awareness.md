@@ -436,9 +436,9 @@ and a guard pins both halves.
   splicing ~4KB of operator rule prose into every governed project's committed
   `CLAUDE.md` is a separate decision nobody has made.
 - **`committedCarrier: true`, always.** A governed `CLAUDE.md` is a committed
-  anchor file by construction, so the block emits the `/api/service-token` fetch
-  pointer, never the inline bearer token — the exact Chunk 01 hazard, decided the
-  same way.
+  anchor file by construction, so the block emits a fetch pointer at the
+  service-token endpoint (`GET /api/service-token`), never the inline bearer
+  token — the exact Chunk 01 hazard, decided the same way.
 - **Scope: the `claude-md` carrier only.** A governed project running a non-Claude
   engine keeps the existing skip. Narrowing further (writing `.codex.yaml` etc. on
   governed projects) would whole-file-write files TC has never owned there — a
@@ -542,7 +542,7 @@ need reopening or a successor.
 - [x] Chunk 00 — Ratify the Direction — **done 2026-08-31** (operator-authorized; §3 amended, registry row live)
 - [x] Chunk 01 — Carrier repair: evidenced carrier + managed-block contract — **done 2026-09-01** (`de85f3e` + `608828d` + `09b5fd8`; Critic `rev-20260901T000224Z` cumulative, then `…T002413Z` and `…T003330Z` verify-resolutions — closed 0 blocking / 0 findings)
 - [x] Chunk 01c — Prime channel: readiness gate (#1106 resolved as option 2), drift evidence + guards (#1057), honest `unverified` ledger (#1063 advanced, not closed), send-row label — **done 2026-09-01** (`58eef25` + findings batch; Critic `rev-20260901T012621Z` cumulative — 0 blocking, warnings fixed). **Live proof still owed at merge:** an Antigravity launch showing the prime as `type: USER_INPUT` in the agent's transcript; needs the live server restarted onto this code — merge deliberately.
-- [ ] Chunk 01b — Narrow the plugin-governance deferral (#1021)
+- [x] Chunk 01b — Narrow the plugin-governance deferral (#1021 — close at merge) — **done 2026-09-01** (`fe629a7` + findings batch; Critic `rev-20260901T023046Z` cumulative — code clean, 1 blocking record-plumbing gap fixed by pointing `active_build_plan` + an artifacts symlink at this plan)
 - [ ] Chunk 02 — `tc` vertical slice
 - [ ] Chunk 03 — Verb surface + roster
 - [ ] Chunk 04 — Bootstrap line
