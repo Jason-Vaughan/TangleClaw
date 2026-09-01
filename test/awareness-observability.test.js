@@ -273,6 +273,29 @@ describe('fleet awareness view (store + GET /api/awareness)', () => {
     }
   });
 
+  it('a store failure resolving a roster project name is NAMED too — the last member of the bare-catch family', async () => {
+    // GET /api/tc/sessions was the one remaining sibling of the pattern above:
+    // a store failure rendered every session anonymous with nothing saying why.
+    const logger = require('../lib/logger');
+    const lines = [];
+    const realGet = store.projects.get;
+    logger.setLevel('warn');
+    logger.setConsoleStream({ write: (s) => lines.push(s) });
+    store.projects.get = () => { throw new Error('synthetic roster failure'); };
+    try {
+      const res = await getJson(server, '/api/tc/sessions');
+      assert.equal(res.status, 200, 'the roster must not go down with the name lookup');
+      assert.ok(res.body.sessions.length > 0, 'live sessions still listed');
+      assert.ok(res.body.sessions.every((s) => s.projectName === null));
+      assert.match(lines.join(''), /project-name lookup failed for tc sessions roster/);
+      assert.match(lines.join(''), /synthetic roster failure/);
+    } finally {
+      store.projects.get = realGet;
+      logger.setConsoleStream(null);
+      logger.setLevel('error');
+    }
+  });
+
   it('an archived project leaves the view', () => {
     store.projects.archive(severed.id);
     try {

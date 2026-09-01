@@ -2784,7 +2784,18 @@ route('GET', '/api/tc/sessions', (_req, res) => {
   const sessions = store.sessions.listLiveAll().map((s) => {
     if (!projectNames.has(s.projectId)) {
       let p = null;
-      try { p = store.projects.get(s.projectId); } catch { p = null; }
+      // Same contract as the receipt path's claimed-project lookup: a store
+      // failure must not take the roster down, but it is not the same fact as
+      // "no such project" — name it, or a broken lookup renders as a fleet of
+      // anonymous sessions with nothing anywhere saying why.
+      try {
+        p = store.projects.get(s.projectId);
+      } catch (err) {
+        log.warn('project-name lookup failed for tc sessions roster', {
+          projectId: s.projectId, error: err.message
+        });
+        p = null;
+      }
       projectNames.set(s.projectId, p ? p.name : null);
     }
     return {
@@ -2806,8 +2817,7 @@ route('GET', '/api/tc/sessions', (_req, res) => {
 // on. The dashboard polls it; the Project Master queries it — the surface the
 // 2026-08-18 carrier regression lacked.
 route('GET', '/api/awareness', (req, res) => {
-  const url = new URL(req.url, 'http://localhost');
-  const perRaw = Number(url.searchParams.get('sessionsPerProject'));
+  const perRaw = Number(reqUrl(req).searchParams.get('sessionsPerProject'));
   const projects = store.awarenessReceipts.fleetAwareness(
     Number.isInteger(perRaw) && perRaw > 0 ? { sessionsPerProject: perRaw } : {}
   );

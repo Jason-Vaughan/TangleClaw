@@ -464,17 +464,6 @@ function renderGitDetail(project) {
 }
 
 /**
- * Render a card's detail panel.
- *
- * Pure — builds a string and touches no DOM — so `renderCard` can emit it
- * inline on every render, and so it can be tested by running it rather than by
- * pinning its source (a source guard over markup passes happily against a dead
- * branch).
- *
- * @param {object} project - Project data.
- * @returns {string} HTML for the panel.
- */
-/**
  * The card-row awareness badge (ambient-awareness Chunk 05). Only the red
  * state renders, matching the badge-noise rule the other badges follow: a
  * project whose LATEST session shows no evidence of awareness — no delivery
@@ -508,6 +497,17 @@ function renderAwarenessDetail(project) {
   return `<span class="${cls}">${esc(latest.state)}</span> — ${esc(latest.basis)}`;
 }
 
+/**
+ * Render a card's detail panel.
+ *
+ * Pure — builds a string and touches no DOM — so `renderCard` can emit it
+ * inline on every render, and so it can be tested by running it rather than by
+ * pinning its source (a source guard over markup passes happily against a dead
+ * branch).
+ *
+ * @param {object} project - Project data.
+ * @returns {string} HTML for the panel.
+ */
 function renderCardDetail(project) {
   const n = esc(project.name);
   const engineInfo = project.engine ? `${esc(project.engine.name)}` : 'No engine';
