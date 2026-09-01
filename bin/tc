@@ -32,7 +32,9 @@ async function main() {
   const verb = process.argv[2];
   const argv = process.argv.slice(3);
   if (!verb || verb === '--help' || verb === '-h') {
-    process.stderr.write(renderUsage());
+    // Requested help is an answer (stdout, 0); a missing verb is a usage
+    // error (stderr, 1).
+    (verb ? process.stdout : process.stderr).write(renderUsage());
     process.exit(verb ? 0 : 1);
   }
   const entry = VERB_ROSTER.find((v) => v.id === verb);

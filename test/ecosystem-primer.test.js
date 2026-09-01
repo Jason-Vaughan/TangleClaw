@@ -98,6 +98,16 @@ describe('lib/ecosystem-primer (#1122)', () => {
       'the one honest absence case: tc missing means the pane is not TangleClaw-launched');
   });
 
+  it('the bootstrap line derives its verb list from VERB_ROSTER — a new verb reaches every carrier by existing', () => {
+    const { VERB_ROSTER } = require('../lib/tc-verbs');
+    const md = primer.tcBootstrapLines('md').join('\n');
+    const comment = primer.tcBootstrapLines('comment').join('\n');
+    for (const v of VERB_ROSTER) {
+      assert.ok(md.includes(`\`${v.id}\``), `md form names ${v.id}`);
+      assert.ok(comment.includes(v.id), `comment form names ${v.id}`);
+    }
+  });
+
   it('tcBootstrapLines comment form is #-prefixed plain text with the same instruction', () => {
     const lines = primer.tcBootstrapLines('comment');
     assert.ok(lines.length > 0);

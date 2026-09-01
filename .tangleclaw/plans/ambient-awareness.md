@@ -559,6 +559,11 @@ stated consequence**, not a footnote. A line the agent skims is a vacuum too.
   the render by state); and a message-verb invocation that fails identity resolution
   leaves zero receipts (accepted blind spot R-2) — revisit if the awareness view
   needs it.
+- Rider from Chunk 04's review (R-10): `resolveClaimedProject` in `server.js` has a
+  bare `catch { project = null; }`, so a store failure silently files receipts in the
+  null bucket — indistinguishable from a genuinely unresolvable project. The
+  awareness view keys on `project_id`; make the store-failure path observable (log,
+  or a distinct receipt marker) when building that view.
 
 **Done when:** disabling the carrier for one engine turns a surface red within
 one launch. That is the acceptance criterion the whole plan exists for — the

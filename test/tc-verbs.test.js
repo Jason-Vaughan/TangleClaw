@@ -225,6 +225,19 @@ describe('tc verb roster (lib/tc-verbs)', () => {
       assert.deepEqual(calls[0].body, { to: 'ws-2', message: 'hello there' });
     });
 
+    it('a retargeted send relays the refreshed handle — the agent must not keep the dead one (#1023)', async () => {
+      const ctx = {
+        env: {}, argv: ['send', 'ws-stale', 'hello'],
+        getJson: async () => ({ project: { id: 1, name: 'p' } }),
+        postJson: async () => ({ status: 'received', id: 'm1', to: 'ws-fresh', retargetedFrom: 'ws-stale' })
+      };
+      const res = await message.run(ctx);
+      assert.equal(res.code, 0);
+      assert.match(res.stdout, /Message to ws-fresh/, 'the delivered-to handle leads, not the one typed');
+      assert.match(res.stdout, /ws-stale was stale/, 'the retarget is said in words');
+      assert.match(res.stdout, /use that id from now on/i);
+    });
+
     it('a send the server refuses propagates the refusal — no invented success', async () => {
       const ctx = {
         env: {}, argv: ['send', 'nobody', 'hi'],
@@ -489,10 +502,11 @@ describe('tc verb surface against a live server (ambient-awareness Chunk 03)', (
       assert.equal(newest.verb, 'message.send');
     });
 
-    it('the usage text lists the whole roster', async () => {
+    it('the usage text lists the whole roster — requested help is an answer, on stdout with exit 0', async () => {
       const res = await runTc(['--help'], paneEnv);
       assert.equal(res.code, 0);
-      for (const v of VERB_ROSTER) assert.ok(res.stderr.includes(`tc ${v.id}`) || res.stderr.includes(v.usage), `help lists ${v.id}`);
+      for (const v of VERB_ROSTER) assert.ok(res.stdout.includes(`tc ${v.id}`) || res.stdout.includes(v.usage), `help lists ${v.id}`);
+      assert.equal(res.stderr, '', 'help the caller asked for is not an error stream');
     });
   });
 });
