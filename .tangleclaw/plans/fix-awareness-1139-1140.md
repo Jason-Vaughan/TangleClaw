@@ -3,6 +3,11 @@
 **Branch:** `fix/1139-1140-awareness` (worktree `.claude/worktrees/fix-awareness`)
 **Issues:** [#1139](https://github.com/Jason-Vaughan/TangleClaw/issues/1139), [#1140](https://github.com/Jason-Vaughan/TangleClaw/issues/1140)
 **Size:** medium (two small bugfix chunks; Critic before merge)
+**Requirements Confidence:** High — both defects reproduced live before design
+(DateDealer 903 red on a fresh v5.16.0 launch; pane process PATH inspected);
+the one Medium assumption (which shell layer strips the prepend) was resolved
+by probe before implementation. Skipped-stays-red ratified by the standing
+acceptance test.
 
 ## Problem
 

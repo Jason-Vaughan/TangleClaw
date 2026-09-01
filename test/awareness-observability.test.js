@@ -161,6 +161,28 @@ describe('awareness state composition (store.awarenessReceipts.sessionAwareness)
     assert.equal(aw.receiptCount, 0);
   });
 
+  it('a skipped row outranks a no-rules row — a failed carrier stays red even when nothing was owed (Critic R-2)', () => {
+    // Reachable in production: a rule-less project on a paste-channel engine
+    // records no-rules at launch, then the deferred prime paste fails and
+    // records skipped. The skip is severed-carrier evidence; "nothing was
+    // owed" must not soothe it.
+    const s = store.sessions.start({ projectId: project.id, engineId: 'antigravity' });
+    store.sessionRuleDeliveries.record({
+      sessionId: s.id, projectId: project.id, engineId: 'antigravity',
+      channel: 'none', outcome: 'no-rules', digest: ''
+    });
+    store.sessionRuleDeliveries.record({
+      sessionId: s.id, projectId: project.id, engineId: 'antigravity',
+      channel: 'prime-paste', outcome: 'skipped',
+      skipReason: 'tmux session ended before the prime was pasted', digest: ''
+    });
+    const aw = store.awarenessReceipts.sessionAwareness(s.id);
+    assert.equal(aw.state, 'unaware');
+    assert.match(aw.basis, /explicitly skipped/);
+    assert.match(aw.basis, /prime-paste/);
+    assert.match(aw.basis, /no evidence awareness ever arrived/);
+  });
+
   it('a delivery outranks a no-rules row, and a receipt outranks both', () => {
     // A session can carry both (e.g. no startup rules, then a wrap-tier
     // delivery): the stronger evidence wins.
