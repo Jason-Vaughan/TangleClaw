@@ -49,7 +49,7 @@ Engine profiles live in `~/.tangleclaw/engines/`. TangleClaw ships with five bui
 
 - **Command**: `agy`
 - **Interaction model**: Session-based (spawns in tmux)
-- **Config file**: `.antigravity.md` (Markdown, project root — Antigravity's recommended context file; it also reads `GEMINI.md`/`AGENTS.md` for compatibility, but `.antigravity.md` takes precedence)
+- **Config file**: `AGENTS.md` (Markdown, project root), written as a **managed block** rather than owned outright. Antigravity discovers `GEMINI.md` / `AGENTS.md` only, walking up from the working directory to the repo root — verified 2026-08-31 against `~/.gemini/antigravity-cli/builtin/skills/agy-customizations/docs/rules.md`. TangleClaw previously wrote `.antigravity.md`, which nothing reads; the claim that it "takes precedence" was wrong and is corrected here. `AGENTS.md` is a multi-vendor convention that operators and other tools (`next dev`) also write, so TangleClaw splices only the region between its `BEGIN:tangleclaw` / `END:tangleclaw` markers and leaves the rest untouched.
 - **Slash commands**: None
 - **Launch modes**: Interactive (default), Sandbox (`--sandbox`), Bypass (`--dangerously-skip-permissions`, containers/VMs only). Antigravity has no Auto-Edit/Plan-Only approval modes (verified against agy v1.0.10)
 - **Capabilities**: Prime prompt, config file

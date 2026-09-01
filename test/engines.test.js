@@ -1630,7 +1630,7 @@ describe('engines', () => {
       });
       assert.ok(content !== null, 'generateConfig("antigravity") must not return null');
       assert.ok(typeof content === 'string');
-      assert.ok(content.includes('.antigravity.md'));
+      assert.ok(content.includes('TangleClaw'), 'the generated block identifies itself');
     });
 
     it('should include global rules', () => {
@@ -2289,7 +2289,7 @@ describe('engines', () => {
       };
       const content = engines.generateConfig('antigravity', projectConfig);
       assert.ok(content !== null, 'Antigravity config should not be null');
-      assert.ok(content.includes('.antigravity.md'), 'Should have .antigravity.md header');
+      assert.ok(content.startsWith('## TangleClaw'), 'Should open with the managed-block heading');
       assert.ok(content.includes('Core Rules'), 'Should have core rules section');
       assert.ok(content.includes('Extension Rules'), 'Should have extension rules section');
       assert.ok(content.includes('docs'), 'Should include docsParity extension');

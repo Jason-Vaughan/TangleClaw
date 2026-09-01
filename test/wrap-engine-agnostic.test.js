@@ -54,7 +54,7 @@ describe('wrap path is engine-agnostic (#612 widened)', () => {
       const render = (engineId) => aiContent._interpolatePrompt('read {engineConfigFile}', [], { engineId });
       assert.equal(render('codex'), 'read .codex.yaml');
       assert.equal(render('aider'), 'read .aider.conf.yml');
-      assert.equal(render('antigravity'), 'read .antigravity.md');
+      assert.equal(render('antigravity'), 'read AGENTS.md');
       assert.notEqual(render('codex'), render('claude'));
     });
 
