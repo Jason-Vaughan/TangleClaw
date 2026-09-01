@@ -299,3 +299,8 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/next-markdown.test.js` — #1015: runs the real `renderNextMarkdown` directly (the module carries its own `module.exports` shim) and asserts on OUTPUT, since a source guard over a renderer can stay green while the operator sees nothing. The escaping cases hold the actual contract: `nextAction` is session-authored and goes into `innerHTML`, so no markup may survive.
 - `test/card-detail-disclosure.test.js` — #1015: the project card's detail panel and the Next-action disclosure inside it. Pins that open-ness lives in module state rather than the DOM — `renderProjects` assigns `grid.innerHTML` on a 10s poll, so a panel appended to a card was destroyed within ten seconds of being opened; a re-render must REDRAW an open panel, the source-of-truth rule TC#561 set for the loops panel. Lifts the renderers out of `public/ui.js` and runs them.
 - `test/degraded-reads-frontend.test.js` — #885: the dashboard must render an unestablished read as unknown, never as its negative (a wedged tmux drew running sessions as "no session"; `dirty: null` drew a dirty repo as clean). Covers the pure decision helpers in `public/api-helper.js` that every render site branches on. Scan codes are driven through the real `dirScanner.failureCode` rather than hand-written, so a server-side rename fails these guards instead of leaving the dashboard branching on a dead value.
+
+## TODO (auto-stubbed 2026-08-31)
+
+- **TBD** — touched in this session: `test/feature-index-prime.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/prime-readiness-gate.test.js`. <!-- describe -->
