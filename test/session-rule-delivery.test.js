@@ -571,6 +571,97 @@ describe('startup session-rule delivery (#595)', () => {
       }
     });
 
+    it('still pastes when the readiness gate TIMES OUT, recording unverified — through the real wiring', async (t) => {
+      // The composed guarantee: on timeout the paste must still happen (a
+      // cosmetic upstream marker rename must degrade to a blind-but-honest
+      // paste, never to "primes never deliver again, silently"). A refactor
+      // that returns early on `ready:false` ships exactly that regression, and
+      // only this launch-path test can see it — the gate's own timeout is
+      // unit-covered elsewhere. Date is mocked alongside setTimeout so the 90s
+      // horizon is tickable.
+      const tmux = require('../lib/tmux');
+      const enginesModule = require('../lib/engines');
+      let created = false;
+      let pasted = 0;
+      stub(tmux, 'hasSession', () => created);
+      stub(tmux, 'probeSession', () => ({ live: created, answered: true, cause: null }));
+      stub(tmux, 'createSession', () => { created = true; return true; });
+      stub(tmux, 'sendKeys', () => { pasted += 1; return true; });
+      // The 2026-08-18 regression pane: static, no marker ever renders.
+      stub(tmux, 'capturePane', () => ({ lines: ['Verifying your account...', '', ''] }));
+      stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/agy' }));
+      t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+
+      const launched = makeProject(`agytimeout-${uid()}`, { engine: 'antigravity' });
+      store.sessionRules.create({ content: 'timed-out directive', projectId: launched.id });
+
+      try {
+        const result = sessions.launchSession(launched.name);
+        assert.equal(result.error, null);
+        // ~120 polls of 750ms fill the 90s horizon; drain microtasks per tick.
+        for (let i = 0; i < 200 && pasted === 0; i++) {
+          t.mock.timers.tick(1000);
+          await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        }
+        assert.equal(pasted, 1, 'the paste still fires after the gate gives up');
+
+        const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0].outcome, 'unverified',
+          'a timed-out gate may not claim delivery');
+        assert.match(rows[0].skipReason, /never rendered/,
+          'the row carries the gate timeout reason');
+
+        store.sessions.kill(result.session.id, 'test cleanup');
+      } finally {
+        for (const rule of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(rule.id);
+        store.projects.delete(launched.id);
+      }
+    });
+
+    it('still pastes when the readiness gate THROWS unexpectedly, recording unverified with the failure', async (t) => {
+      // The `.catch` degrade branch: the gate must never lose the paste. A
+      // capture result whose `lines` accessor throws escapes the gate's own
+      // per-poll try (which wraps only the capture call), rejecting the
+      // promise — the wiring has to catch that and fall through to a blind
+      // paste with the failure in the row.
+      const tmux = require('../lib/tmux');
+      const enginesModule = require('../lib/engines');
+      let created = false;
+      let pasted = 0;
+      stub(tmux, 'hasSession', () => created);
+      stub(tmux, 'probeSession', () => ({ live: created, answered: true, cause: null }));
+      stub(tmux, 'createSession', () => { created = true; return true; });
+      stub(tmux, 'sendKeys', () => { pasted += 1; return true; });
+      stub(tmux, 'capturePane', () => ({ get lines() { throw new Error('pane exploded'); } }));
+      stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/agy' }));
+      t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+
+      const launched = makeProject(`agythrow-${uid()}`, { engine: 'antigravity' });
+      store.sessionRules.create({ content: 'survives the throw', projectId: launched.id });
+
+      try {
+        const result = sessions.launchSession(launched.name);
+        assert.equal(result.error, null);
+        for (let i = 0; i < 20 && pasted === 0; i++) {
+          t.mock.timers.tick(1000);
+          await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        }
+        assert.equal(pasted, 1, 'an unexpected gate failure must not lose the paste');
+
+        const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0].outcome, 'unverified');
+        assert.match(rows[0].skipReason, /readiness gate failed.*pane exploded/,
+          'the row names the failure instead of a fabricated success');
+
+        store.sessions.kill(result.session.id, 'test cleanup');
+      } finally {
+        for (const rule of store.sessionRules.list({ projectId: launched.id })) store.sessionRules.delete(rule.id);
+        store.projects.delete(launched.id);
+      }
+    });
+
     it('does not record "the session ended" when tmux never answered (#908)', (t) => {
       // The third site on #908's census, and the one whose write OUTLIVES the
       // condition. `!tmux.hasSession(...)` answered false both for a pane that

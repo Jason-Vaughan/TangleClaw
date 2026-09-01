@@ -1,12 +1,12 @@
 ---
 plan: ambient-awareness
 title: Ambient Awareness — every TangleClaw session knows what TangleClaw is, on any engine
-status: active (Chunks 00 and 01 complete and review-closed; Chunk 01b or 01c next)
+status: active (Chunks 00, 01 and 01c complete and review-closed; Chunk 01b or 02 next)
 created: 2026-08-31
 branch: feat/ambient-awareness
 shared_link: https://claude.ai/code/artifact/830caee7-fd12-4cff-a0e8-9d6bbb8fc522  # keep THIS link updated in place; never mint a new one
 issues: [999, 1122, 1021, 1057, 1063, 1085, 1106, 1049]
-closes_or_advances: [999, 1021]  # 1057/1063/1085/1049/1106 are targeted by later chunks, not shipped yet
+closes_or_advances: [999, 1021, 1057, 1106, 1058]  # 01c ships 1057 + 1106 (+1058 via PRM-4H8N removal) — close all three at merge; 1063 advanced (paste half honest; rules-hook receipt still owed), keep open; 1085/1049 targeted by later chunks
 depends_on:
   - .prawduct/artifacts/prime-delivery-direction.md
   - lib/ecosystem-primer.js
@@ -516,7 +516,7 @@ need reopening or a successor.
 
 - [x] Chunk 00 — Ratify the Direction — **done 2026-08-31** (operator-authorized; §3 amended, registry row live)
 - [x] Chunk 01 — Carrier repair: evidenced carrier + managed-block contract — **done 2026-09-01** (`de85f3e` + `608828d` + `09b5fd8`; Critic `rev-20260901T000224Z` cumulative, then `…T002413Z` and `…T003330Z` verify-resolutions — closed 0 blocking / 0 findings)
-- [ ] Chunk 01c — Prime channel: readiness gate (#1106), drift detection (#1057), honest ledger (#1063), send-row label
+- [x] Chunk 01c — Prime channel: readiness gate (#1106 resolved as option 2), drift evidence + guards (#1057), honest `unverified` ledger (#1063 advanced, not closed), send-row label — **done 2026-09-01** (`58eef25` + findings batch; Critic `rev-20260901T012621Z` cumulative — 0 blocking, warnings fixed). **Live proof still owed at merge:** an Antigravity launch showing the prime as `type: USER_INPUT` in the agent's transcript; needs the live server restarted onto this code — merge deliberately.
 - [ ] Chunk 01b — Narrow the plugin-governance deferral (#1021)
 - [ ] Chunk 02 — `tc` vertical slice
 - [ ] Chunk 03 — Verb surface + roster
