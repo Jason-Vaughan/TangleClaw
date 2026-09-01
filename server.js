@@ -2617,9 +2617,18 @@ route('GET', '/api/tc/whoami', (req, res) => {
   // fabricate the "this session became aware" fact the awareness view keys on.
   const source = req.headers['x-tangleclaw-cli'] ? 'tc-cli' : 'http';
 
+  // The Project Master (#1141): role rides query or header (same dual pattern
+  // as the project id), and only counts when no project was claimed — a pane
+  // carrying BOTH is answering as a project session and the role is noise.
+  const claimedRole = typeof query.role === 'string' ? query.role
+    : (typeof req.headers['x-tangleclaw-role'] === 'string' ? req.headers['x-tangleclaw-role'] : null);
+  const isMaster = claimedRole === 'master' && !project;
+
   // The receipt is the point of the endpoint, but failing to write one must
   // not cost the caller its answer — the shared writer warns and returns null.
-  const receipt = isAux ? null : writeAwarenessReceipt({ project, activeSession, workspaceId, verb, source });
+  const receipt = isAux ? null : writeAwarenessReceipt({
+    project, activeSession, workspaceId, verb, source, role: isMaster ? 'master' : null
+  });
 
   const config = store.config.load();
   const protocol = httpsSetup.effectiveServerProtocol(config);
@@ -2657,6 +2666,41 @@ route('GET', '/api/tc/whoami', (req, res) => {
           : 'not enabled for this project — you CANNOT message other sessions; say so rather than improvising a channel')
     }
   ];
+
+  if (isMaster) {
+    // The Master's answer: fleet-read identity, no project to claim. Its
+    // capability roster is master-shaped — the Read API it governs the fleet
+    // through, and the switchboard per ITS settings with the same honest
+    // absence the project roster ships.
+    let masterMedusaEnabled = false;
+    try { masterMedusaEnabled = !!master.masterSettings(store.config.load()).medusaEnabled; } catch { masterMedusaEnabled = false; }
+    return jsonResponse(res, 200, {
+      role: 'master',
+      project: null,
+      sessionId: null,
+      workspaceId,
+      api: { origin: api, note: 'localhost is correct for YOUR OWN calls from this host' },
+      operator: {
+        host: operatorHost,
+        note: `operator-facing links must use http(s)://${operatorHost}:<port>, never localhost — the operator is almost never on this machine`
+      },
+      capabilities: [
+        {
+          id: 'read-api', enabled: true,
+          detail: `the fleet-wide Read API is yours: ${api}/api/awareness (you appear in its master entry), ${api}/api/tc/sessions, ${api}/api/ports, ${api}/api/shared-docs`
+        },
+        {
+          id: 'switchboard', enabled: masterMedusaEnabled && !!workspaceId,
+          detail: masterMedusaEnabled && workspaceId
+            ? `message other sessions: POST ${api}/api/master/medusa/send — your workspace id is ${workspaceId}`
+            : (masterMedusaEnabled
+              ? 'enabled for the Master, but this pane carries no workspace id — you cannot send or receive; say so rather than improvising a channel'
+              : 'not enabled for the Master — you CANNOT message other sessions; say so rather than improvising a channel')
+        }
+      ],
+      receiptRecorded: !!receipt
+    });
+  }
 
   return jsonResponse(res, 200, {
     project: project
@@ -2734,16 +2778,19 @@ function resolveClaimedProject(claimedProjectId) {
  * @param {string|null} entry.workspaceId - Workspace id the caller carried
  * @param {string} entry.verb - Verb label (see awarenessVerbLabel)
  * @param {string} entry.source - 'tc-cli' | 'http'
+ * @param {string|null} [entry.role] - 'master' for the Project Master (#1141);
+ *   anything else records as null — junk must not grow the role vocabulary
  * @returns {object|null} The recorded receipt, or null on failure
  */
-function writeAwarenessReceipt({ project, activeSession, workspaceId, verb, source }) {
+function writeAwarenessReceipt({ project, activeSession, workspaceId, verb, source, role }) {
   try {
     return store.awarenessReceipts.record({
       projectId: project ? project.id : null,
       sessionId: activeSession ? activeSession.id : null,
       workspaceId,
       verb,
-      source
+      source,
+      role: role === 'master' ? 'master' : null
     });
   } catch (err) {
     log.warn('awareness receipt write failed', { error: err.message });
@@ -2769,7 +2816,8 @@ function recordTcAwareness(headers) {
     ...resolved,
     workspaceId,
     verb: awarenessVerbLabel(headers['x-tangleclaw-verb'], 'unknown'),
-    source: 'tc-cli'
+    source: 'tc-cli',
+    role: typeof headers['x-tangleclaw-role'] === 'string' ? headers['x-tangleclaw-role'] : null
   });
 }
 
@@ -2828,8 +2876,11 @@ route('GET', '/api/awareness', (req, res) => {
       sent: 'a channel was observed to deliver; nothing was demonstrated',
       unverified: 'something was pushed blind and nothing observed it land',
       'no-rules': 'the launch path ran; the project had no rules to deliver — nothing was owed',
-      unaware: 'no evidence awareness ever arrived — the red state'
+      unaware: 'no evidence awareness ever arrived — the red state',
+      'not-running': 'no Master session is running — nothing launched, nothing to be aware (master only)',
+      unknown: 'tmux could not answer for the Master — said so rather than guessed (master only)'
     },
+    master: master.getMasterAwareness(),
     projects
   });
 });

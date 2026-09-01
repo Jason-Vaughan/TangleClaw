@@ -222,6 +222,20 @@ describe('ensureMasterSession', () => {
     assert.ok(t.calls[0].opts.command, 'must send the engine launch command');
   });
 
+  it('the launch carries the ambient-awareness floor: role env, API origin, PATH-wrapped command, and NO project id (#1141)', () => {
+    const t = fakeTmux({ alive: false });
+    const r = master.ensureMasterSession({ refreshFleet: NO_FLEET, home, tmuxLib: t, enginesLib: availableEngines });
+    assert.equal(r.created, true);
+    const opts = t.calls[0].opts;
+    assert.equal(opts.env.TANGLECLAW_ROLE, 'master', 'the actor rides the role var');
+    assert.equal(opts.env.TANGLECLAW_PROJECT_ID, undefined,
+      'the Master has no project and must not claim one');
+    assert.match(opts.env.TANGLECLAW_API || '', /^https?:\/\/localhost:\d+$/,
+      'the API origin ships like a project pane\'s');
+    assert.match(opts.command, /^export PATH="[^"]+\/bin:\$PATH"; /,
+      'the launch command is PATH-floor wrapped like a project pane\'s (#1140)');
+  });
+
   it('is idempotent — an alive session means no second launch, but CLAUDE.md still regenerates', () => {
     const t = fakeTmux({ alive: true });
     fs.mkdirSync(home, { recursive: true });
@@ -2622,5 +2636,68 @@ describe('refreshMasterIdentity (#726)', () => {
     const result = master.refreshMasterIdentity({ home, skipIfAbsent: true });
     assert.equal(result.refreshed, true);
     assert.ok(fsx.existsSync(pathx.join(home, 'CLAUDE.md')));
+  });
+});
+
+
+describe('getMasterAwareness (#1141) — the Master joins the awareness system', () => {
+  let home;
+  beforeEach(() => {
+    home = path.join(tmpDir, `master-aw-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    fs.mkdirSync(home, { recursive: true });
+    // Receipts are global (the Master is a singleton), so each test starts
+    // from a clean master ledger or the previous test's receipt confirms it.
+    store.getDb().prepare("DELETE FROM awareness_receipts WHERE role = 'master'").run();
+  });
+
+  it('no live pane reads not-running — nothing launched, nothing to be aware', () => {
+    const aw = master.getMasterAwareness({ home, tmuxLib: fakeTmux({ alive: false }) });
+    assert.equal(aw.state, 'not-running');
+    assert.equal(aw.receiptCount, 0);
+  });
+
+  it('an unanswering tmux reads unknown — said, not guessed', () => {
+    const aw = master.getMasterAwareness({ home, tmuxLib: fakeTmux({ answered: false }) });
+    assert.equal(aw.state, 'unknown');
+    assert.match(aw.basis, /could not be established/);
+  });
+
+  it('a live pane with the identity file and no receipt is SENT — carrier written, nothing demonstrated', () => {
+    fs.writeFileSync(path.join(home, 'CLAUDE.md'), 'identity');
+    const aw = master.getMasterAwareness({ home, tmuxLib: fakeTmux({ alive: true }) });
+    assert.equal(aw.state, 'sent');
+    assert.match(aw.basis, /never demonstrated/);
+  });
+
+  it('a live pane with NO identity file and no receipt is UNAWARE — the severed carrier', () => {
+    const aw = master.getMasterAwareness({ home, tmuxLib: fakeTmux({ alive: true }) });
+    assert.equal(aw.state, 'unaware');
+    assert.match(aw.basis, /no evidence awareness ever arrived/);
+  });
+
+  it('a role=master receipt since the pane started confirms; an older receipt from a previous run does NOT', () => {
+    const t = fakeTmux({ alive: true });
+    // Pane started 60s ago; the store receipt below is written NOW, inside the window.
+    const startedSec = Math.floor(Date.now() / 1000) - 60;
+    t.sessionCreatedAt = () => ({ createdAt: startedSec, answered: true, cause: null });
+    fs.writeFileSync(path.join(home, 'CLAUDE.md'), 'identity');
+    store.awarenessReceipts.record({ verb: 'whoami', source: 'tc-cli', role: 'master' });
+    const aw = master.getMasterAwareness({ home, tmuxLib: t });
+    assert.equal(aw.state, 'confirmed');
+    assert.equal(aw.lastVerb, 'whoami');
+    // Now move the pane start into the future: the same receipt predates it,
+    // so it must not confirm — the scoping is what this state rests on.
+    t.sessionCreatedAt = () => ({ createdAt: Math.floor(Date.now() / 1000) + 3600, answered: true, cause: null });
+    const aw2 = master.getMasterAwareness({ home, tmuxLib: t });
+    assert.equal(aw2.state, 'sent', 'a receipt from a previous run cannot confirm the current one');
+  });
+
+  it('a project receipt (role NULL) never confirms the Master', () => {
+    const t = fakeTmux({ alive: true });
+    t.sessionCreatedAt = () => ({ createdAt: Math.floor(Date.now() / 1000) - 60, answered: true, cause: null });
+    fs.writeFileSync(path.join(home, 'CLAUDE.md'), 'identity');
+    store.awarenessReceipts.record({ verb: 'whoami', source: 'tc-cli' });
+    const aw = master.getMasterAwareness({ home, tmuxLib: t });
+    assert.equal(aw.state, 'sent', 'role NULL receipts belong to project panes, not the Master');
   });
 });

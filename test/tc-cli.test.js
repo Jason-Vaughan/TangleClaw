@@ -151,6 +151,40 @@ describe('tc CLI vertical slice (ambient-awareness Chunk 02)', () => {
       }
     });
 
+    it('role=master answers the Master identity and records a role-attributed receipt (#1141)', async () => {
+      const res = await request(server, 'GET', '/api/tc/whoami?role=master');
+      assert.equal(res.status, 200);
+      assert.equal(res.body.role, 'master');
+      assert.equal(res.body.project, null);
+      assert.equal(res.body.receiptRecorded, true);
+      const readApi = res.body.capabilities.find((c) => c.id === 'read-api');
+      assert.ok(readApi && readApi.enabled, 'the Read API roster row ships');
+      assert.match(readApi.detail, /\/api\/awareness/);
+      const sb = res.body.capabilities.find((c) => c.id === 'switchboard');
+      assert.equal(sb.enabled, false, 'switchboard absence stays honest for a default master');
+      const row = store.getDb().prepare(
+        "SELECT COUNT(*) AS n FROM awareness_receipts WHERE role = 'master'"
+      ).get();
+      assert.ok(row.n >= 1, 'the receipt carries the master role');
+    });
+
+    it('a claimed project outranks a role claim — the role is noise on a project pane', async () => {
+      const res = await request(server, 'GET', `/api/tc/whoami?projectId=${project.id}&role=master`);
+      assert.equal(res.status, 200);
+      assert.equal(res.body.role, undefined, 'no master identity for a resolved project');
+      assert.deepEqual(res.body.project, { id: project.id, name: 'tc-cli-proj' });
+      const receipts = store.awarenessReceipts.listForProject(project.id);
+      assert.equal(receipts[0].role, null, 'the receipt stays project-attributed, role NULL');
+    });
+
+    it('a junk role records as NULL — junk must not grow the role vocabulary', async () => {
+      await request(server, 'GET', '/api/tc/whoami?role=admin');
+      const row = store.getDb().prepare(
+        "SELECT COUNT(*) AS n FROM awareness_receipts WHERE role = 'admin'"
+      ).get();
+      assert.equal(row.n, 0);
+    });
+
     it('never leaks the M2M service token, even when the gate is enabled', async () => {
       const config = store.config.load();
       const prevEnabled = config.serviceTokenEnabled;
