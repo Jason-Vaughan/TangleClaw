@@ -63,7 +63,7 @@ function renderWhoami(d) {
   }
   if (d.sessionId) lines.push(`Session id: ${d.sessionId}`);
   lines.push(`TangleClaw API (for your own calls from this host): ${d.api.origin}`);
-  lines.push(`Operator-facing links: use ${d.operator.host}, never localhost — ${d.operator.note.split(' — ')[1] || d.operator.note}`);
+  lines.push(`Operator host: ${d.operator.host} — ${d.operator.note}`);
   lines.push('');
   lines.push('Capabilities:');
   for (const cap of d.capabilities || []) {

@@ -135,6 +135,22 @@ describe('tc CLI vertical slice (ambient-awareness Chunk 02)', () => {
         'and it is not misattributed to a real project');
     });
 
+    it('still answers when the receipt write fails — loud in the log, honest in the body', async () => {
+      // The receipt is the point of the endpoint, but the caller still
+      // deserves its identity: a broken ledger must not turn whoami into a
+      // 500, and the body must not claim a receipt that was not written.
+      const original = store.awarenessReceipts.record;
+      store.awarenessReceipts.record = () => { throw new Error('ledger on fire'); };
+      try {
+        const res = await request(server, 'GET', `/api/tc/whoami?projectId=${project.id}`);
+        assert.equal(res.status, 200);
+        assert.deepEqual(res.body.project, { id: project.id, name: 'tc-cli-proj' });
+        assert.equal(res.body.receiptRecorded, false, 'the body does not fabricate a receipt');
+      } finally {
+        store.awarenessReceipts.record = original;
+      }
+    });
+
     it('never leaks the M2M service token, even when the gate is enabled', async () => {
       const config = store.config.load();
       const prevEnabled = config.serviceTokenEnabled;

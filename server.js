@@ -2621,7 +2621,7 @@ route('GET', '/api/tc/whoami', (req, res) => {
   } catch (err) {
     // The receipt is the point of the endpoint; failing to write one must be
     // loud in the logs, but the caller still deserves its answer.
-    log('warn', `awareness receipt write failed: ${err.message}`);
+    log.warn('awareness receipt write failed', { error: err.message });
   }
 
   const config = store.config.load();
