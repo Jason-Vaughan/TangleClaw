@@ -10,6 +10,7 @@ const engines = require('../lib/engines');
 
 const BEGIN = '<!-- BEGIN:tangleclaw -->';
 const END = '<!-- END:tangleclaw -->';
+const SHARED_CARRIERS = ['AGENTS.md', 'GEMINI.md', 'CONVENTIONS.md'];
 
 /**
  * The shape this mechanism exists for, taken from a real project rather than
@@ -207,11 +208,14 @@ describe('writeEngineConfig honors mergeStrategy', () => {
 describe('writeEngineConfig refuses an unknown mergeStrategy', () => {
   test('a typo does not silently fall through to the destructive default', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-badstrategy-'));
-    const file = path.join(dir, 'AGENTS.md');
+    const file = path.join(dir, 'ENGINE.md');
     fs.writeFileSync(file, FOREIGN_FILE);
     try {
+      // A PRIVATE carrier, deliberately: on a shared-convention filename the
+      // stricter guard fires first, which would make this test pass for the
+      // wrong reason and stop measuring the unknown-value branch at all.
       const result = engines.writeEngineConfig('antigravity', dir, {}, {
-        configFormat: { filename: 'AGENTS.md', syntax: 'markdown', generator: 'antigravity-md', mergeStrategy: 'managed_block' },
+        configFormat: { filename: 'ENGINE.md', syntax: 'markdown', generator: 'antigravity-md', mergeStrategy: 'managed_block' },
         capabilities: { supportsConfigFile: true }
       });
       // Mutation: removing the validation makes 'managed_block' resolve to
@@ -222,6 +226,100 @@ describe('writeEngineConfig refuses an unknown mergeStrategy', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('drift is scoped to the region TangleClaw owns', () => {
+  const profile = {
+    configFormat: { filename: 'AGENTS.md', syntax: 'markdown', generator: 'antigravity-md', mergeStrategy: 'managed-block' },
+    capabilities: { supportsConfigFile: true }
+  };
+
+  /** @returns {{dir: string, file: string}} */
+  function seed(content) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-drift-'));
+    const file = path.join(dir, 'AGENTS.md');
+    if (content !== undefined) fs.writeFileSync(file, content);
+    return { dir, file };
+  }
+
+  test('a first write into a foreign file is not drift', (t) => {
+    const { dir } = seed(FOREIGN_FILE);
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const r = engines.writeEngineConfig('antigravity', dir, {}, profile);
+    assert.equal(r.skipped, false);
+    assert.equal(r.drifted, false, 'there was no prior block to have drifted from');
+  });
+
+  test('an identical rewrite is not drift', (t) => {
+    const { dir } = seed(FOREIGN_FILE);
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    engines.writeEngineConfig('antigravity', dir, {}, profile);
+    const second = engines.writeEngineConfig('antigravity', dir, {}, profile);
+    assert.equal(second.drifted, false, 'regenerating identical content is not a hand-edit');
+  });
+
+  test('a hand-edit BETWEEN the markers is drift', (t) => {
+    const { dir, file } = seed(FOREIGN_FILE);
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    engines.writeEngineConfig('antigravity', dir, {}, profile);
+    const edited = fs.readFileSync(file, 'utf8').replace(BEGIN, `${BEGIN}\nHAND EDIT INSIDE`);
+    fs.writeFileSync(file, edited);
+    const r = engines.writeEngineConfig('antigravity', dir, {}, profile);
+    assert.equal(r.drifted, true, 'edits inside the markers are overwritten and must be reported');
+  });
+
+  test('an edit OUTSIDE the markers is NOT drift', (t) => {
+    const { dir, file } = seed(FOREIGN_FILE);
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    engines.writeEngineConfig('antigravity', dir, {}, profile);
+    fs.writeFileSync(file, `${fs.readFileSync(file, 'utf8')}\n\n## Operator added this later\nkeep\n`);
+    const r = engines.writeEngineConfig('antigravity', dir, {}, profile);
+    // This is the property the region-scoping exists to express. A revert to a
+    // whole-file comparison (`existing.trim() !== merged.trim()`) stays green on
+    // every other case here and fails only on this one.
+    assert.equal(r.drifted, false, 'the operator using their own file is not drift');
+    assert.ok(fs.readFileSync(file, 'utf8').includes('## Operator added this later'), 'and their content survives');
+  });
+});
+
+describe('a shared-convention carrier is refused without managed-block', () => {
+  test('an ABSENT mergeStrategy is refused, not defaulted to whole-file', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-absent-'));
+    const file = path.join(dir, 'AGENTS.md');
+    fs.writeFileSync(file, FOREIGN_FILE);
+    try {
+      // The destructive case a test over `data/engines/*.json` cannot catch:
+      // an operator profile in ~/.tangleclaw/engines/ that simply omits the
+      // field. Absent is not unknown, so the unknown-value guard misses it.
+      const r = engines.writeEngineConfig('antigravity', dir, {}, {
+        configFormat: { filename: 'AGENTS.md', syntax: 'markdown', generator: 'antigravity-md' },
+        capabilities: { supportsConfigFile: true }
+      });
+      assert.equal(r.written, false);
+      assert.match(r.error, /shared-convention agent file/);
+      assert.equal(fs.readFileSync(file, 'utf8'), FOREIGN_FILE, 'the operator file is untouched');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('the runtime list and the profile guard agree on what counts as shared', () => {
+    // One source of truth: the test used to carry its own copy of this list.
+    assert.deepEqual(SHARED_CARRIERS, engines.SHARED_CONVENTION_CARRIERS);
+  });
+});
+
+describe('heading demotion leaves fenced code alone', () => {
+  test('a shell comment inside a fence is not turned into a heading', () => {
+    // porthub-guide.md and shared-docs-guide.md are spliced verbatim and carry
+    // `# …` shell comments inside fences; a blanket regex rewrote them to `## …`
+    // in every generated file.
+    const body = ['# Real Heading', '', '```bash', '# Check what is taken', 'curl x', '```', '', '# Another Heading'].join('\n');
+    const out = engines._demoteTopLevelHeadings(body);
+    assert.ok(out.includes('## Real Heading'), 'prose headings are demoted');
+    assert.ok(out.includes('## Another Heading'), 'after a fence closes, demotion resumes');
+    assert.ok(out.includes('\n# Check what is taken'), 'the shell comment inside the fence is untouched');
   });
 });
 
@@ -258,7 +356,6 @@ describe('engine profiles declare a usable carrier', () => {
     // above pass their own profile literal, so they stay green even if the real
     // antigravity profile is reverted to a whole-file write — which is exactly
     // what a mutation run showed. Without this test the fix is unpinned.
-    const SHARED_CARRIERS = ['AGENTS.md', 'GEMINI.md', 'CONVENTIONS.md'];
     test(`${file}: a shared-convention carrier is never written whole-file`, () => {
       if (!SHARED_CARRIERS.includes(cf.filename)) return;
       assert.equal(

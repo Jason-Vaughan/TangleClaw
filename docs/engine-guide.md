@@ -126,7 +126,7 @@ Create a JSON file at `~/.tangleclaw/engines/<engine-id>.json`:
 }
 ```
 
-The `configFormat` above is set to `null` because config file generation requires a built-in generator. The available generators are `claude-md`, `codex-yaml`, `aider-conf`, `gemini-md` (generic markdown; kept for custom profiles after the Gemini engine's retirement), and `antigravity-md`. If your engine doesn't use a TangleClaw-generated config file, set all three fields to `null`. To add a new generator, you'd need to add a handler in `lib/engines.js`.
+The `configFormat` above is set to `null` because config file generation requires a built-in generator. The available generators are `claude-md`, `codex-yaml`, `aider-conf`, `gemini-md` (generic markdown; kept for custom profiles after the Gemini engine's retirement), and `antigravity-md`. If your engine doesn't use a TangleClaw-generated config file, set `filename`, `syntax` and `generator` to `null`. To add a new generator, you'd need to add a handler in `lib/engines.js`.
 
 ### Engine Profile Fields
 
@@ -149,8 +149,10 @@ The `configFormat` above is set to `null` because config file generation require
 | Field | Description |
 |-------|-------------|
 | `filename` | Config file name written to project root (e.g., `CLAUDE.md`) |
-| `syntax` | File syntax: `"markdown"`, `"yaml"`, or `null` |
+| `syntax` | File syntax: `"markdown"`, `"yaml"`, `"toml"`, or `null` |
 | `generator` | Config generator to use: `"claude-md"`, `"codex-yaml"`, `"aider-conf"`, `"gemini-md"`, `"antigravity-md"`, or `null` |
+| `mergeStrategy` | `"whole-file"` (default) — TangleClaw owns the entire file — or `"managed-block"`, where it splices only the region between `BEGIN:tangleclaw` / `END:tangleclaw` and leaves the rest byte-identical. **Required** for a shared-convention carrier (`AGENTS.md`, `GEMINI.md`, `CONVENTIONS.md`): those are files operators commit and other tools also write, so a whole-file write destroys their content and is **refused at the write**, not merely warned about |
+| `discovery` | Evidence for the `filename` claim: `verifiedOn` (ISO date) and `source` (the upstream doc consulted), plus an optional `note`. Required wherever a wrong filename is destructive — a shared-convention carrier or a spliced block. A filename is an **upstream** fact about the engine, and an assertion whose both sides live in this repo cannot detect it drifting |
 
 ### Detection Strategies
 
