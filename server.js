@@ -2608,38 +2608,18 @@ route('GET', '/api/tc/whoami', (req, res) => {
   // dispatcher, and counting it twice would inflate the very ledger this
   // endpoint exists to keep honest.
   const isAux = !!req.headers['x-tangleclaw-aux'];
-  const rawVerb = typeof req.headers['x-tangleclaw-verb'] === 'string' ? req.headers['x-tangleclaw-verb'].trim() : '';
-  const verb = (rawVerb || 'whoami').slice(0, 64);
+  const verb = awarenessVerbLabel(req.headers['x-tangleclaw-verb'], 'whoami');
 
-  let project = null;
-  if (Number.isInteger(claimedProjectId)) {
-    try {
-      project = store.projects.get(claimedProjectId) || null;
-    } catch { project = null; }
-  }
-  const activeSession = project ? store.sessions.getActive(project.id) : null;
+  const { project, activeSession } = resolveClaimedProject(claimedProjectId);
 
   // Provenance (not authentication): the tc client identifies itself with a
   // header, so a browser preview or health check records as 'http' and cannot
   // fabricate the "this session became aware" fact the awareness view keys on.
   const source = req.headers['x-tangleclaw-cli'] ? 'tc-cli' : 'http';
 
-  let receipt = null;
-  if (!isAux) {
-    try {
-      receipt = store.awarenessReceipts.record({
-        projectId: project ? project.id : null,
-        sessionId: activeSession ? activeSession.id : null,
-        workspaceId,
-        verb,
-        source
-      });
-    } catch (err) {
-      // The receipt is the point of the endpoint; failing to write one must be
-      // loud in the logs, but the caller still deserves its answer.
-      log.warn('awareness receipt write failed', { error: err.message });
-    }
-  }
+  // The receipt is the point of the endpoint, but failing to write one must
+  // not cost the caller its answer — the shared writer warns and returns null.
+  const receipt = isAux ? null : writeAwarenessReceipt({ project, activeSession, workspaceId, verb, source });
 
   const config = store.config.load();
   const protocol = httpsSetup.effectiveServerProtocol(config);
@@ -2699,39 +2679,86 @@ route('GET', '/api/tc/whoami', (req, res) => {
 });
 
 /**
- * Record one awareness receipt for a tc-CLI-identified request, resolving the
- * ids the client declared in headers the same best-effort way whoami resolves
- * its query params: a wrong or missing project id still records (nullable ids
- * by design — the ledger measures "the CLI was invoked at all"). Never throws:
- * the caller is the request dispatcher, and a ledger write must not take the
- * actual answer down with it.
- * @param {object} headers - `req.headers` (keys lower-cased by Node)
- * @returns {void}
+ * The one verb label an awareness receipt may carry: the client's declared
+ * header, capped at 64 chars and falling back rather than rejecting — a skewed
+ * or hand-rolled client with a junk verb header is still an invocation worth
+ * counting. Shared by every receipt recorder so the label semantics cannot
+ * fork by request path.
+ * @param {unknown} rawHeader - The `x-tangleclaw-verb` header value, if any
+ * @param {string} fallback - Verb to record when the header is absent/empty
+ * @returns {string}
  */
-function recordTcAwareness(headers) {
+function awarenessVerbLabel(rawHeader, fallback) {
+  const raw = typeof rawHeader === 'string' ? rawHeader.trim() : '';
+  return (raw || fallback).slice(0, 64);
+}
+
+/**
+ * Resolve a claimed numeric project id to its project row and active session,
+ * best-effort and nullable by design: a wrong or missing id still yields a
+ * recordable invocation (the ledger measures "the CLI was invoked at all",
+ * which must not depend on the ids being right). Shared by every awareness
+ * recorder so resolution semantics cannot fork by request path.
+ * @param {number|null} claimedProjectId - The id the caller claimed
+ * @returns {{project: object|null, activeSession: object|null}}
+ */
+function resolveClaimedProject(claimedProjectId) {
+  let project = null;
+  if (Number.isInteger(claimedProjectId)) {
+    try { project = store.projects.get(claimedProjectId) || null; } catch { project = null; }
+  }
+  const activeSession = project ? store.sessions.getActive(project.id) : null;
+  return { project, activeSession };
+}
+
+/**
+ * Write one awareness receipt. Never throws: a ledger write must not take the
+ * actual answer down with it — failure is loud in the logs and null to the
+ * caller. The single write path for both recorders (whoami route and the
+ * dispatcher interception).
+ * @param {object} entry
+ * @param {object|null} entry.project - Resolved project (or null)
+ * @param {object|null} entry.activeSession - Resolved active session (or null)
+ * @param {string|null} entry.workspaceId - Workspace id the caller carried
+ * @param {string} entry.verb - Verb label (see awarenessVerbLabel)
+ * @param {string} entry.source - 'tc-cli' | 'http'
+ * @returns {object|null} The recorded receipt, or null on failure
+ */
+function writeAwarenessReceipt({ project, activeSession, workspaceId, verb, source }) {
   try {
-    const rawVerb = typeof headers['x-tangleclaw-verb'] === 'string' ? headers['x-tangleclaw-verb'].trim() : '';
-    // Cap and fall back rather than reject: a skewed or hand-rolled client
-    // with a junk verb header is still an invocation worth counting.
-    const verb = (rawVerb || 'unknown').slice(0, 64);
-    const claimedProjectId = Number(headers['x-tangleclaw-project-id']);
-    let project = null;
-    if (Number.isInteger(claimedProjectId)) {
-      try { project = store.projects.get(claimedProjectId) || null; } catch { project = null; }
-    }
-    const activeSession = project ? store.sessions.getActive(project.id) : null;
-    const workspaceId = typeof headers['x-tangleclaw-workspace-id'] === 'string' && headers['x-tangleclaw-workspace-id']
-      ? headers['x-tangleclaw-workspace-id'] : null;
-    store.awarenessReceipts.record({
+    return store.awarenessReceipts.record({
       projectId: project ? project.id : null,
       sessionId: activeSession ? activeSession.id : null,
       workspaceId,
       verb,
-      source: 'tc-cli'
+      source
     });
   } catch (err) {
     log.warn('awareness receipt write failed', { error: err.message });
+    return null;
   }
+}
+
+/**
+ * Record one awareness receipt for a tc-CLI-identified request from its
+ * provenance headers — a thin composition of the shared resolve/label/write
+ * core, so the dispatcher and the whoami route cannot drift apart in what a
+ * receipt means.
+ * @param {object} headers - `req.headers` (keys lower-cased by Node)
+ * @returns {void}
+ */
+function recordTcAwareness(headers) {
+  const resolved = resolveClaimedProject(
+    headers['x-tangleclaw-project-id'] !== undefined ? Number(headers['x-tangleclaw-project-id']) : null
+  );
+  const workspaceId = typeof headers['x-tangleclaw-workspace-id'] === 'string' && headers['x-tangleclaw-workspace-id']
+    ? headers['x-tangleclaw-workspace-id'] : null;
+  writeAwarenessReceipt({
+    ...resolved,
+    workspaceId,
+    verb: awarenessVerbLabel(headers['x-tangleclaw-verb'], 'unknown'),
+    source: 'tc-cli'
+  });
 }
 
 // GET /api/tc/sessions — the fleet-wide live-session roster for `tc sessions`

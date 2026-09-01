@@ -235,7 +235,7 @@ describe('tc verb roster (lib/tc-verbs)', () => {
       await assert.rejects(() => VERB_ROSTER.find((v) => v.id === 'message').run(ctx), /Unknown workspace/);
     });
 
-    it('ack requires ids; with them it posts and reports the count', async () => {
+    it('ack requires ids; with them it posts, and claims only what the response proves', async () => {
       const message2 = VERB_ROSTER.find((v) => v.id === 'message');
       const bare = await message2.run({ ...noopCtx, argv: ['ack'] });
       assert.equal(bare.code, 1);
@@ -243,11 +243,46 @@ describe('tc verb roster (lib/tc-verbs)', () => {
       const ok = await message2.run({
         env: {}, argv: ['ack', 'a', 'b'],
         getJson: async () => ({ project: { id: 1, name: 'p' } }),
-        postJson: async (p, body) => { calls.push({ p, body }); return {}; }
+        postJson: async (p, body) => { calls.push({ p, body }); return { state: 'listening' }; }
       });
       assert.equal(ok.code, 0);
-      assert.match(ok.stdout, /Marked 2 message\(s\) handled/);
+      assert.match(ok.stdout, /Reported 2 message id\(s\) handled/);
       assert.deepEqual(calls[0].body, { ids: ['a', 'b'] });
+    });
+
+    it('ack against a stopped listener says NOTHING was handled — the route no-ops silently', async () => {
+      const message2 = VERB_ROSTER.find((v) => v.id === 'message');
+      const res = await message2.run({
+        env: {}, argv: ['ack', 'a'],
+        getJson: async () => ({ project: { id: 1, name: 'p' } }),
+        postJson: async () => ({ state: 'off' })
+      });
+      assert.equal(res.code, 2);
+      assert.match(res.stderr, /NOTHING was marked handled/);
+    });
+
+    it('read of an empty inbox verifies the listener before claiming emptiness', async () => {
+      const message2 = VERB_ROSTER.find((v) => v.id === 'message');
+      const mkCtx = (state) => ({
+        env: {}, argv: ['read'],
+        getJson: async (p, opts) => {
+          if (p.startsWith('/api/tc/whoami')) return { project: { id: 1, name: 'p' } };
+          if (p.endsWith('/messages')) return { messages: [] };
+          if (p.endsWith('/status')) {
+            assert.ok(opts && opts.aux, 'the status probe is auxiliary — no second receipt');
+            return { state };
+          }
+          throw new Error(`unexpected fetch ${p}`);
+        },
+        postJson: async () => { throw new Error('unexpected'); }
+      });
+      const off = await message2.run(mkCtx('off'));
+      assert.equal(off.code, 2);
+      assert.match(off.stderr, /listener is not running/);
+      assert.match(off.stderr, /an empty view proves nothing/);
+      const on = await message2.run(mkCtx('listening'));
+      assert.equal(on.code, 0);
+      assert.match(on.stdout, /inbox is empty/);
     });
   });
 
