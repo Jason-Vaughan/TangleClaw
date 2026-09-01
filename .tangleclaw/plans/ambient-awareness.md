@@ -1,7 +1,7 @@
 ---
 plan: ambient-awareness
 title: Ambient Awareness — every TangleClaw session knows what TangleClaw is, on any engine
-status: active (Chunks 00, 01, 01c, 01b complete and review-closed; Chunk 02 code-complete, its live Antigravity probe owed at merge; Chunk 03 next after the probe resolves the assumption)
+status: active (Chunks 00–02 complete, merged in #1133, live probe run 2026-09-01 — assumption resolved; Chunk 03 next, informed by the probe results)
 created: 2026-08-31
 branch: feat/ambient-awareness
 shared_link: https://claude.ai/code/artifact/830caee7-fd12-4cff-a0e8-9d6bbb8fc522  # keep THIS link updated in place; never mint a new one
@@ -558,6 +558,35 @@ stated consequence**, not a footnote. A line the agent skims is a vacuum too.
 one launch. That is the acceptance criterion the whole plan exists for — the
 2026-08-18 regression must not be able to hide for 12 days again.
 
+## Live probe results (2026-09-01, post-#1133 merge + server restart, Medusa/antigravity 1.1.22)
+
+**The HIGH-impact assumption is RESOLVED: negative on `tc`, positive on the carrier.** Given a
+neutral task ("are there other agent sessions; ping one") that would benefit from `tc`, the
+unprompted agent produced **zero** `tc-cli` awareness receipts — PATH presence alone does not
+create discovery intent when a documented alternative exists. **Chunk 04's bootstrap line is
+confirmed necessary, not optional**; Chunk 03's verb surface should assume discovery arrives via
+the carriers, never ambiently.
+
+**The plan's opening failure mode is FIXED in live behavior.** The same scenario that produced
+the 2026-08-31 CasaJirafa fabrication — "message another session" — now runs clean: the agent
+read the switchboard section from its `AGENTS.md` managed block (Chunks 01+01b carrier), queried
+the real roster (5 sessions, all accurate), sent a real ping (message id
+`7c329f24-a5c1-4f42-9d6a-9e092d836dbc`, received by this TC session and answered), and reported
+exactly what happened. No fabrication, no invented tooling.
+
+**The readiness gate is live-validated as necessary but NOT sufficient (#1134).** agy 1.1.22
+boots into a "Verifying your account…" phase that renders the complete at-rest UI — positive
+marker AND settled digest both pass ~3s post-launch — while discarding submitted input; the
+banner persists in the transcript after verification succeeds, so no lexical tell separates the
+states (the #1114 conclusion, now on antigravity). Three consecutive launches: paste fired,
+ledger said `delivered`, no agent brain was born. **The `USER_INPUT` transcript proof was
+therefore NOT achieved** — filed as #1134 with the remedy (post-paste confirmation + bounded
+retry, i.e. #1063's receipt design applied to the paste channel), which is the strongest
+evidence yet that Direction §4's "confirmed, not assumed" needs the post-send half.
+
+**Provenance worked as designed:** the only receipt row is the operator's own post-restart curl,
+tagged `source='http'` — a browser/health-check cannot fabricate awareness.
+
 ## Governance checkpoints
 
 1. After Chunk 02 — architecture validated, HIGH assumption resolved.
@@ -578,7 +607,7 @@ need reopening or a successor.
 - [x] Chunk 01 — Carrier repair: evidenced carrier + managed-block contract — **done 2026-09-01** (`de85f3e` + `608828d` + `09b5fd8`; Critic `rev-20260901T000224Z` cumulative, then `…T002413Z` and `…T003330Z` verify-resolutions — closed 0 blocking / 0 findings)
 - [x] Chunk 01c — Prime channel: readiness gate (#1106 resolved as option 2), drift evidence + guards (#1057), honest `unverified` ledger (#1063 advanced, not closed), send-row label — **done 2026-09-01** (`58eef25` + findings batch; Critic `rev-20260901T012621Z` cumulative — 0 blocking, warnings fixed). **Live proof still owed at merge:** an Antigravity launch showing the prime as `type: USER_INPUT` in the agent's transcript; needs the live server restarted onto this code — merge deliberately.
 - [x] Chunk 01b — Narrow the plugin-governance deferral (#1021 — close at merge) — **done 2026-09-01** (`fe629a7` + findings batch; Critic `rev-20260901T023046Z` cumulative — code clean, 1 blocking record-plumbing gap fixed by pointing `active_build_plan` + an artifacts symlink at this plan)
-- [ ] Chunk 02 — `tc` vertical slice — code complete 2026-09-01 (`f29b6c3` + findings batches); **NOT ticked on purpose: the Done-when is the live unprompted-Antigravity probe (owed at merge, after the server restarts onto this code), and its result — receipt or no receipt — resolves the plan's HIGH-impact assumption and gets written here either way**
+- [x] Chunk 02 — `tc` vertical slice — code complete 2026-09-01 (`f29b6c3` + findings batches, merged in #1133); **live probe RUN 2026-09-01 03:29–03:40Z on Medusa (sessions 899/900/901), assumption RESOLVED — see "Live probe results" below**
 - [ ] Chunk 03 — Verb surface + roster
 - [ ] Chunk 04 — Bootstrap line
 - [ ] Chunk 05 — Awareness observability
