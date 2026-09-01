@@ -5145,3 +5145,48 @@ Disposition table:
 | R-8, R-9, R-11 | note | accepted | clean checks (learnings, backlog, budget-raise rationale) |
 
 **Classification:** feature
+
+## 2026-09-01: awareness observability — "never became aware" is a queryable, surfaced state (ambient-awareness chunk 05)
+<!-- prawduct: type=feature | scope=ambient-awareness | chunks=05 -->
+
+**What shipped.** The plan's acceptance criterion: the 2026-08-18 regression (eight projects,
+severed carrier, 12 days, every surface green) must not be able to hide again. Each session's
+awareness state is **composed at read time** from the two existing ledgers — no new table, no
+persisted state to drift: `confirmed` (≥1 receipt — the session invoked `tc` itself), `sent`
+(a `delivered` delivery row, nothing demonstrated), `unverified` (blind send only), `unaware`
+(no evidence at all — the red state). `GET /api/awareness` serves the fleet view (vocabulary
+defined inline; `?sessionsPerProject=1..20`, default 3); the dashboard polls it (red
+`⚠ unaware` card badge — red state only, glyph+text — plus an Awareness detail row) and the
+Project Master's identity quick-reference names it. FLEET.md deliberately not enriched (the
+dir-scanner child has no store access; bounded decision in the plan). The engine-profile
+family guard extends to awareness: no carrier + no prime channel → the profile must record
+`capabilities.awareness {path:'none', reason}` (openclaw does) or the suite fails. Riders
+discharged: `tc message read`/`ack` probe `state !== 'listening'` naming the actual state
+(an error/connecting listener rendered emptiness — and claimed acks — like a live one);
+`resolveClaimedProject`'s bare catch warn-logs store failures (R-10's log option); R-2 stays
+accepted, documented in the view's JSDoc. Acceptance pinned by test: a severed-carrier launch
+reads `unaware` from the first query, and an explicit `skipped` row does not soften it. Nine
+mutations confirmed red across the two commits (`009a11e`, `614d674`).
+
+**Critic rounds.** Cumulative-final `rev-20260901T051011Z-9d40cdd6` (three reviewers,
+governance checkpoint 3 — the full-trajectory review over chunks 03–05 on the branch):
+0 blocking, 3 warnings, 9 notes. The warnings were one FEATURES.md lag (third consecutive —
+class closure: the FEATURES entry now lands in the feat commit) and one JSDoc-orphaning
+insertion (the recorded learnings rule, re-lived). Fixed in one batch (`614d674`) with the
+R-1 bare-catch sibling and R-5 `reqUrl` notes riding along; verified clean by
+`rev-20260901T051952Z-6e16183d` (0 findings; both fixes settled from the tree, and the
+bare-catch family grep returns empty). Disposition table:
+
+**rev-20260901T051011Z-9d40cdd6** — chunk 05
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-3 | warning | fixed | FEATURES.md carried nothing for the Chunk 05 surface — entry added; class closed (FEATURES rides the feat commit) |
+| R-4, R-8 | warning | fixed | renderCardDetail's JSDoc orphaned by the helper insertion — helpers moved above the doc block |
+| R-1 | note | accepted | fixed in the same batch: roster name-lookup store failure warn-logged, test-pinned, mutation red — family now empty |
+| R-5 | note | accepted | fixed in the same batch: awareness route uses reqUrl |
+| R-6 | note | accepted | sessionsPerProject clamp is deliberate: range + default recorded in api-contract, fallback test-pinned; a 400 on the 10s poll would blank the surface |
+| R-2, R-7, R-11 | note | accepted | priors acknowledgments |
+| R-9, R-10, R-12 | note | accepted | clean checks (learnings cross-check, backlog reconciliation, Goal 5/6 verdict) |
+
+**Classification:** feature

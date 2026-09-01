@@ -1,7 +1,7 @@
 ---
 plan: ambient-awareness
 title: Ambient Awareness — every TangleClaw session knows what TangleClaw is, on any engine
-status: active (Chunks 00–04 complete — 00–02 merged in #1133 + live-probed, 03–04 reviewed clean on feat/ambient-awareness; Chunk 05 next — awareness observability, cumulative-final)
+status: complete (Chunks 00–05 all done — 00–02 merged in #1133 + live-probed; 03–05 reviewed clean on feat/ambient-awareness, cumulative-final rev-20260901T051011Z closed governance checkpoint 3; branch unmerged — merge when the operator says)
 created: 2026-08-31
 branch: feat/ambient-awareness
 shared_link: https://claude.ai/code/artifact/830caee7-fd12-4cff-a0e8-9d6bbb8fc522  # keep THIS link updated in place; never mint a new one
@@ -659,4 +659,4 @@ need reopening or a successor.
 - [x] Chunk 02 — `tc` vertical slice — code complete 2026-09-01 (`f29b6c3` + findings batches, merged in #1133); **live probe RUN 2026-09-01 03:29–03:40Z on Medusa (sessions 899/900/901), assumption RESOLVED — see "Live probe results" below**
 - [x] Chunk 03 — Verb surface + roster — **done 2026-09-01** (`5a28642` + `0423687` + findings batch `fdd4a76`; Critic cumulative `rev-20260901T040526Z-9190a8bb` — 0 blocking, 2 warnings fixed + mutation-confirmed, verified clean by `rev-20260901T041612Z-5870456a`; api-contract §21 discharged, governance checkpoint 2 satisfied)
 - [x] Chunk 04 — Bootstrap line — **done 2026-09-01** (`6f94fe9` + findings batch `4b5acab`; Critic cumulative `rev-20260901T043502Z-caadd8a8` — 0 blocking, 2 warnings fixed + mutation-confirmed, verified clean by `rev-20260901T044414Z-8cb608d3`; verb list derived from VERB_ROSTER, ten mutations red)
-- [ ] Chunk 05 — Awareness observability
+- [x] Chunk 05 — Awareness observability — **done 2026-09-01** (`009a11e` + findings batch `614d674`; Critic cumulative-final `rev-20260901T051011Z-9d40cdd6` — 0 blocking, 3 warnings fixed, verified clean by `rev-20260901T051952Z-6e16183d`; acceptance pinned — a severed-carrier launch reads unaware from the first query; all 12 findings dispositioned; governance checkpoint 3 satisfied)
