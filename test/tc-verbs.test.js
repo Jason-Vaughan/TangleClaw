@@ -400,12 +400,15 @@ describe('tc verb surface against a live server (ambient-awareness Chunk 03)', (
   });
 
   describe('bin/tc (spawned for real)', () => {
-    it('tc capabilities renders the roster alone, absence included', async () => {
+    it('tc capabilities renders the roster alone, absence included — and records as capabilities, not whoami', async () => {
+      const beforeCaps = receiptCount('capabilities');
       const res = await runTc(['capabilities'], paneEnv);
       assert.equal(res.code, 0, res.stderr);
       assert.match(res.stdout, /Capabilities:/);
       assert.match(res.stdout, /\[--\] switchboard/, 'the disabled switchboard is visible');
       assert.ok(!/You are a TangleClaw-managed session/.test(res.stdout), 'identity prose stays with whoami');
+      assert.equal(receiptCount('capabilities'), beforeCaps + 1,
+        'the real binary declares its verb — the receipt is labeled by what was invoked, not which route answered');
     });
 
     it('tc sessions answers the idle fleet in words', async () => {
@@ -437,11 +440,18 @@ describe('tc verb surface against a live server (ambient-awareness Chunk 03)', (
       assert.match(res.stderr, /TANGLECLAW_PROJECT_ID is not set/);
     });
 
-    it('tc message send to an unregistered peer relays the server\'s words, exit 2', async () => {
+    it('tc message send to an unregistered peer relays the server\'s words, exit 2 — and one invocation is ONE receipt despite two HTTP calls', async () => {
+      const beforeAll = store.getDb().prepare('SELECT COUNT(*) AS n FROM awareness_receipts').get().n;
       const res = await runTc(['message', 'send', 'nobody', 'hello'], paneEnv);
       assert.equal(res.code, 2);
       assert.match(res.stderr, /message failed/);
       assert.match(res.stderr, /say so instead of improvising/);
+      // The real binary made an aux whoami fetch AND the medusa POST; the
+      // ledger must show exactly one new row, labeled by the subverb, even
+      // though the action itself was refused.
+      assert.equal(store.getDb().prepare('SELECT COUNT(*) AS n FROM awareness_receipts').get().n, beforeAll + 1);
+      const newest = store.getDb().prepare('SELECT verb FROM awareness_receipts ORDER BY id DESC LIMIT 1').get();
+      assert.equal(newest.verb, 'message.send');
     });
 
     it('the usage text lists the whole roster', async () => {
