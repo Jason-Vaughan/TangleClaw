@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.16.0] - 2026-09-01
+
 ### Added
 - **Awareness observability: "sessions that never became aware" is a queryable, surfaced state (`ambient-awareness` Chunk 05).** The acceptance criterion the whole plan exists for: the 2026-08-18 regression — eight projects launching sessions against a severed carrier for 12 days with every surface green — must not be able to hide again. Each session now has an **awareness state composed at read time** from the two ledgers that already exist (no new table, no second source of truth): `confirmed` (≥1 awareness receipt — the session invoked `tc` itself, awareness *demonstrated*), `sent` (a delivery-ledger row recorded `delivered` but nothing was demonstrated), `unverified` (only a blind send, nothing observed it land), and `unaware` — the red state: no receipt, no delivered row, **no evidence awareness ever arrived**. A severed carrier writes no delivery row, so its sessions read `unaware` from the first query after launch — pinned by the acceptance test, and an explicit `skipped` row does not soften it.
 
