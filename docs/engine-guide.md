@@ -211,11 +211,13 @@ silently and in the one place nothing else is watching.
 
 Independent of any config file or prime, every tmux session TangleClaw launches gets the `tc` CLI
 on its `PATH` plus `TANGLECLAW_API` / `TANGLECLAW_PROJECT_ID` (and `TANGLECLAW_WORKSPACE_ID` when
-the switchboard minted one) in the pane environment. `tc whoami` answers identity, API origin,
-operator host, and an honest capability roster — and the server records each invocation as an
-**awareness receipt**, so a session that never discovered the floor is a detectable state. This is
-engine-neutral by construction: a new engine needs no adapter to reach it. Engine-profile
-`launch.env` overrides any of these keys on collision.
+the switchboard minted one) in the pane environment. The verbs come from a declared roster
+(`lib/tc-verbs.js`): `whoami`, `capabilities`, `sessions`, `message send|read|ack`, `ports`,
+`docs`, `rules`, `learnings` — each answers honestly (an empty inbox or idle fleet says so in
+words; a disabled capability states its reason), and the server records each invocation as a
+verb-labeled **awareness receipt**, so a session that never discovered the floor is a detectable
+state. This is engine-neutral by construction: a new engine needs no adapter to reach it.
+Engine-profile `launch.env` overrides any of these keys on collision.
 
 #### Prime paste readiness
 
@@ -267,6 +269,7 @@ Every engine with `supportsConfigFile: true` **must** pass parity validation. Us
 
 When adding a new engine, verify that its generated config includes all of the following:
 
+- [ ] **`tc` bootstrap line** — the unconditional instruction naming the `tc` CLI (single source: `lib/ecosystem-primer.js#tcBootstrapLines`, `md` or `comment` form). The family test in `test/engines.test.js` ("tc bootstrap line rides every carrier") fails any config-supporting engine that omits it — PATH presence alone creates no discovery intent, so every channel the engine reads must carry the line
 - [ ] **Core rules** — all five default rules: CHANGELOG updates, JSDoc comments, unit tests, session wrap protocol, PortHub registration
 - [ ] **Extension rules** — active extension rules (identitySentry, docsParity, decisionFramework, etc.) translated into the engine's format
 - [ ] **PortHub guide or reference** — full Port Management guide (for markdown-based engines) or API reference comment (for YAML-based engines)

@@ -1,12 +1,12 @@
 ---
 plan: ambient-awareness
 title: Ambient Awareness — every TangleClaw session knows what TangleClaw is, on any engine
-status: active (Chunks 00–02 complete, merged in #1133, live probe run 2026-09-01 — assumption resolved; Chunk 03 next, informed by the probe results)
+status: complete (Chunks 00–05 all done — 00–02 merged in #1133 + live-probed; 03–05 reviewed clean on feat/ambient-awareness, cumulative-final rev-20260901T051011Z closed governance checkpoint 3; branch unmerged — merge when the operator says)
 created: 2026-08-31
 branch: feat/ambient-awareness
 shared_link: https://claude.ai/code/artifact/830caee7-fd12-4cff-a0e8-9d6bbb8fc522  # keep THIS link updated in place; never mint a new one
 issues: [999, 1122, 1021, 1057, 1063, 1085, 1106, 1049]
-closes_or_advances: [999, 1021, 1057, 1106, 1058]  # 01c ships 1057 + 1106 (+1058 via PRM-4H8N removal) — close all three at merge; 1063 advanced (paste half honest; rules-hook receipt still owed), keep open; 1085/1049 targeted by later chunks
+closes_or_advances: [999, 1021, 1057, 1106, 1058]  # 01c ships 1057 + 1106 (+1058 via PRM-4H8N removal) — close all three at merge; 1063 advanced (paste half honest; rules-hook receipt still owed), keep open; 1085/1049 deferred — remain open, NOT delivered by any chunk of this plan
 depends_on:
   - .prawduct/artifacts/prime-delivery-direction.md
   - lib/ecosystem-primer.js
@@ -553,6 +553,55 @@ stated consequence**, not a footnote. A line the agent skims is a vacuum too.
 - The family guard from Chunk 01 extends to awareness: a new engine profile that
   cannot demonstrate a path to awareness fails the suite rather than shipping
   silent.
+- Riders from Chunk 03's review: `tc message read`'s empty-inbox probe treats only
+  listener state `off` as unproven — an `error`/`connecting` window still renders
+  emptiness while Hub-side mail is invisible (probe `state !== 'listening'`, or word
+  the render by state); and a message-verb invocation that fails identity resolution
+  leaves zero receipts (accepted blind spot R-2) — revisit if the awareness view
+  needs it.
+- Rider from Chunk 04's review (R-10): `resolveClaimedProject` in `server.js` has a
+  bare `catch { project = null; }`, so a store failure silently files receipts in the
+  null bucket — indistinguishable from a genuinely unresolvable project. The
+  awareness view keys on `project_id`; make the store-failure path observable (log,
+  or a distinct receipt marker) when building that view.
+
+**Decisions pinned at build start (2026-09-01):**
+
+- **Per-session awareness state, composed from the two ledgers that already
+  exist** — no new table. Vocabulary (§ Direction 4's sent/confirmed/unverified,
+  plus the red state the chunk exists for): `confirmed` (≥1 awareness receipt for
+  the session — the session *demonstrated* awareness by invoking `tc`), `sent`
+  (no receipt; ≥1 delivery-ledger row `delivered` — a channel was observed to
+  land, nothing demonstrated), `unverified` (no receipt; best delivery row is
+  `unverified` — something was pushed blind), `unaware` (no receipt, no
+  delivered/unverified row — nothing was delivered and nothing was demonstrated).
+  The state is computed at read time from `awareness_receipts` +
+  `session_rule_deliveries`; a persisted state column would be a second source
+  of truth that drifts.
+- **Surface: `GET /api/awareness`** — fleet-wide, per project, recent sessions
+  each carrying `{state, basis}` where `basis` says in words what the state
+  rests on. Dashboard consumes it on the existing 10s project poll: a red badge
+  on the card when the latest session is `unaware`, and an Awareness row in the
+  card detail. The Project Master's surface is the same endpoint, added to its
+  identity's Read API quick reference. **FLEET.md is NOT enriched** — its
+  records are built by the dir-scanner child, which has no store access; wiring
+  store reads into that path is out of proportion for this chunk (bounded
+  decision, revisit if the Master's drift check wants awareness inline).
+- **Family guard extension:** every engine profile must demonstrate a path to
+  awareness — a carrier (`configFormat.filename` + generator, which Chunk 04's
+  guard proves rides the bootstrap line) OR a prime path (`supportsPrimePrompt`
+  / `supportsSilentPrime`) — or carry an explicit
+  `capabilities.awareness: { path: 'none', reason }` record. openclaw declares
+  the record (remote SSH/ClawBridge sessions; the remote host owns its own
+  context — TangleClaw cannot place a carrier there).
+- **Riders:** `tc message read`/`ack` probe `state !== 'listening'` (an
+  `error`/`connecting` listener renders emptiness as honestly as `off` renders
+  it — i.e. not at all), naming the actual state in the refusal. R-10 takes the
+  rider's log option — the `resolveClaimedProject` catch names the store
+  failure in a warn log, distinct from a genuinely unresolvable id. R-2 stays
+  an accepted blind spot, documented in the view's JSDoc: an identity-failed
+  message-verb invocation leaves no receipt, and could not be attributed to a
+  session even if it left one.
 
 **Done when:** disabling the carrier for one engine turns a surface red within
 one launch. That is the acceptance criterion the whole plan exists for — the
@@ -608,6 +657,6 @@ need reopening or a successor.
 - [x] Chunk 01c — Prime channel: readiness gate (#1106 resolved as option 2), drift evidence + guards (#1057), honest `unverified` ledger (#1063 advanced, not closed), send-row label — **done 2026-09-01** (`58eef25` + findings batch; Critic `rev-20260901T012621Z` cumulative — 0 blocking, warnings fixed). **Live proof still owed at merge:** an Antigravity launch showing the prime as `type: USER_INPUT` in the agent's transcript; needs the live server restarted onto this code — merge deliberately.
 - [x] Chunk 01b — Narrow the plugin-governance deferral (#1021 — close at merge) — **done 2026-09-01** (`fe629a7` + findings batch; Critic `rev-20260901T023046Z` cumulative — code clean, 1 blocking record-plumbing gap fixed by pointing `active_build_plan` + an artifacts symlink at this plan)
 - [x] Chunk 02 — `tc` vertical slice — code complete 2026-09-01 (`f29b6c3` + findings batches, merged in #1133); **live probe RUN 2026-09-01 03:29–03:40Z on Medusa (sessions 899/900/901), assumption RESOLVED — see "Live probe results" below**
-- [ ] Chunk 03 — Verb surface + roster
-- [ ] Chunk 04 — Bootstrap line
-- [ ] Chunk 05 — Awareness observability
+- [x] Chunk 03 — Verb surface + roster — **done 2026-09-01** (`5a28642` + `0423687` + findings batch `fdd4a76`; Critic cumulative `rev-20260901T040526Z-9190a8bb` — 0 blocking, 2 warnings fixed + mutation-confirmed, verified clean by `rev-20260901T041612Z-5870456a`; api-contract §21 discharged, governance checkpoint 2 satisfied)
+- [x] Chunk 04 — Bootstrap line — **done 2026-09-01** (`6f94fe9` + findings batch `4b5acab`; Critic cumulative `rev-20260901T043502Z-caadd8a8` — 0 blocking, 2 warnings fixed + mutation-confirmed, verified clean by `rev-20260901T044414Z-8cb608d3`; verb list derived from VERB_ROSTER, ten mutations red)
+- [x] Chunk 05 — Awareness observability — **done 2026-09-01** (`009a11e` + findings batch `614d674`; Critic cumulative-final `rev-20260901T051011Z-9d40cdd6` — 0 blocking, 3 warnings fixed, verified clean by `rev-20260901T051952Z-6e16183d`; acceptance pinned — a severed-carrier launch reads unaware from the first query; all 12 findings dispositioned; governance checkpoint 3 satisfied)

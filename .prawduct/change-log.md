@@ -5060,3 +5060,133 @@ the unprompted `tc` probe that resolves the plan's HIGH-impact assumption — Ch
 stays unticked until the probe writes its result either way.
 
 **Classification:** feature
+
+## 2026-09-01: the tc verb surface — eight verbs, one honest receipt per invocation (ambient-awareness chunk 03)
+<!-- prawduct: type=feature | scope=ambient-awareness | chunks=03 -->
+
+**What shipped.** `tc` grew from one verb to the plan's surface — `whoami`, `capabilities`,
+`sessions`, `message send|read|ack`, `ports`, `docs`, `rules`, `learnings` — as a declared
+roster (`lib/tc-verbs.js`, the ecosystem-primer pattern extended). Verbs call the existing API
+plus one addition (`GET /api/tc/sessions`); the request dispatcher records one verb-labeled
+awareness receipt per invocation from provenance headers, BEFORE the M2M gate (a refused call
+still proves discovery); auxiliary identity side-fetches mark themselves and record nothing.
+Riding: null-project receipt bucket now prunes to the cap; the stacked stale `_apiOrigin`
+JSDoc merged; api-contract §21 records the surface, header protocol, exit-code error model,
+and deprecation policy (the entry chunk 02 deferred here). The probe result that discharged
+chunk 02's Done-when was folded into its CHANGELOG entry.
+
+**The design's own probe design held.** The plan said discovery arrives via carriers, never
+ambiently — so the verb surface assumes nothing lands unprompted; the receipt protocol exists
+to measure exactly that once chunk 04's bootstrap line points at it.
+
+**Critic rounds.** Cumulative `rev-20260901T040526Z-9190a8bb` (three reviewers): 0 blocking,
+2 warnings, 10 notes. Both warnings were the recorded pattern — honest at the surface being
+stared at, leaking at one nobody was: `message read`/`ack` claimed certainty the producer's
+response does not carry (an empty inbox and a stopped listener answer identically; `/read`
+no-ops silently with no listener), and the two receipt recorders duplicated the
+resolve/label/write core, one semantics change away from forking what a receipt means by
+request path. Fixed in one batch (`fdd4a76`), mutation-confirmed, verified by
+`rev-20260901T041612Z-5870456a` (0 findings). Disposition table:
+
+**rev-20260901T040526Z-9190a8bb** — chunk 03
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | fixed | message read/ack claimed a certainty the producer's response does not carry |
+| R-5 | warning | fixed | two independent awareness-receipt recorders duplicated the resolve-and-record core |
+| R-6 | note | accepted | FEATURES.md chunk label — fixed in the same batch |
+| R-2, R-3, R-9, R-10 | note | accepted | recorded blind spots / deliberate scope (reasons in the evidence store) |
+| R-4, R-7, R-8, R-11, R-12 | note | accepted | priors acknowledgments and clean checks |
+
+**Kept for chunk 05** (verify-resolutions observation): the listener state machine is
+`off | connecting | listening | error`, and the read probe treats only `off` as unproven — an
+`error`/`connecting` window still renders an empty in-memory inbox as genuinely empty while
+Hub-side mail is invisible. Transient, and the durable consequence is closed; probe
+`state !== 'listening'` (or word the render by state) when chunk 05 touches this surface.
+
+**Classification:** feature
+
+## 2026-09-01: the tc bootstrap line rides every carrier (ambient-awareness chunk 04)
+<!-- prawduct: type=feature | scope=ambient-awareness | chunks=04 -->
+
+**What shipped.** The instruction the probe proved necessary: one shared bootstrap line —
+an instruction with a stated consequence (run `tc capabilities` BEFORE concluding a capability
+is missing; a capability assumed instead of checked is how sessions fabricate outcomes; a
+missing `tc` means the pane was not TangleClaw-launched, say so) — from a single source,
+`lib/ecosystem-primer.js#tcBootstrapLines` (md + comment forms), with the verb list **derived
+from `lib/tc-verbs.js#VERB_ROSTER`** so a ninth verb reaches every carrier by existing.
+Carriers: the prime roster (`tc-cli` entry), the budget-yield pointer (§ Direction 5 — the
+omitted section is replaced by the verb that recovers it), and all five engine-config
+generators unconditionally (whole-file CLAUDE.md, the governed operational block inside the
+managed markers, GEMINI.md/AGENTS.md, .codex.yaml, .aider.conf.yml comment form). Primer
+budget cap 2000→2600, a recorded decision. Family guards over every `supportsConfigFile`
+profile + the governed block through the real `writeEngineConfig` caller + the default-header
+gemini path; parity checklist in `docs/engine-guide.md` binds new engines. Ten mutations
+confirmed red across the two commits (`6f94fe9`, `4b5acab`).
+
+**Critic rounds.** Cumulative `rev-20260901T043502Z-caadd8a8` (three reviewers, spanning
+chunks 03–04 on the branch): 0 blocking, 2 warnings, 9 notes. Both warnings were single-source
+discipline this branch keeps re-teaching: the bootstrap line hand-copied the verb roster it
+exists to advertise (one verb away from silent fleet-wide drift), and `message send` flattened
+the #1023 retarget out of its response — honest status, stale handle. Fixed in one batch
+(`4b5acab`) with `tc --help`-to-stdout and the FEATURES label riding along; verified clean by
+`rev-20260901T044414Z-8cb608d3` (0 findings; class check confirmed no surviving hand-copy).
+Disposition table:
+
+**rev-20260901T043502Z-caadd8a8** — chunk 04
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | fixed | tc message send flattened retargetedFrom — reported delivery to the stale handle |
+| R-3 | warning | fixed | tcBootstrapLines hand-copied the verb roster; now derived from VERB_ROSTER |
+| R-4, R-5 | note | accepted | fixed in the same batch (FEATURES label; --help to stdout) |
+| R-10 | note | accepted | store-failure null-bucket observability — recorded as a Chunk 05 rider in the plan |
+| R-2, R-6, R-7 | note | accepted | priors acknowledgments / consolidation-flagged duplicates |
+| R-8, R-9, R-11 | note | accepted | clean checks (learnings, backlog, budget-raise rationale) |
+
+**Classification:** feature
+
+## 2026-09-01: awareness observability — "never became aware" is a queryable, surfaced state (ambient-awareness chunk 05)
+<!-- prawduct: type=feature | scope=ambient-awareness | chunks=05 -->
+
+**What shipped.** The plan's acceptance criterion: the 2026-08-18 regression (eight projects,
+severed carrier, 12 days, every surface green) must not be able to hide again. Each session's
+awareness state is **composed at read time** from the two existing ledgers — no new table, no
+persisted state to drift: `confirmed` (≥1 receipt — the session invoked `tc` itself), `sent`
+(a `delivered` delivery row, nothing demonstrated), `unverified` (blind send only), `unaware`
+(no evidence at all — the red state). `GET /api/awareness` serves the fleet view (vocabulary
+defined inline; `?sessionsPerProject=1..20`, default 3); the dashboard polls it (red
+`⚠ unaware` card badge — red state only, glyph+text — plus an Awareness detail row) and the
+Project Master's identity quick-reference names it. FLEET.md deliberately not enriched (the
+dir-scanner child has no store access; bounded decision in the plan). The engine-profile
+family guard extends to awareness: no carrier + no prime channel → the profile must record
+`capabilities.awareness {path:'none', reason}` (openclaw does) or the suite fails. Riders
+discharged: `tc message read`/`ack` probe `state !== 'listening'` naming the actual state
+(an error/connecting listener rendered emptiness — and claimed acks — like a live one);
+`resolveClaimedProject`'s bare catch warn-logs store failures (R-10's log option); R-2 stays
+accepted, documented in the view's JSDoc. Acceptance pinned by test: a severed-carrier launch
+reads `unaware` from the first query, and an explicit `skipped` row does not soften it. Nine
+mutations confirmed red across the two commits (`009a11e`, `614d674`).
+
+**Critic rounds.** Cumulative-final `rev-20260901T051011Z-9d40cdd6` (three reviewers,
+governance checkpoint 3 — the full-trajectory review over chunks 03–05 on the branch):
+0 blocking, 3 warnings, 9 notes. The warnings were one FEATURES.md lag (third consecutive —
+class closure: the FEATURES entry now lands in the feat commit) and one JSDoc-orphaning
+insertion (the recorded learnings rule, re-lived). Fixed in one batch (`614d674`) with the
+R-1 bare-catch sibling and R-5 `reqUrl` notes riding along; verified clean by
+`rev-20260901T051952Z-6e16183d` (0 findings; both fixes settled from the tree, and the
+bare-catch family grep returns empty). Disposition table:
+
+**rev-20260901T051011Z-9d40cdd6** — chunk 05
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-3 | warning | fixed | FEATURES.md carried nothing for the Chunk 05 surface — entry added; class closed (FEATURES rides the feat commit) |
+| R-4, R-8 | warning | fixed | renderCardDetail's JSDoc orphaned by the helper insertion — helpers moved above the doc block |
+| R-1 | note | accepted | fixed in the same batch: roster name-lookup store failure warn-logged, test-pinned, mutation red — family now empty |
+| R-5 | note | accepted | fixed in the same batch: awareness route uses reqUrl |
+| R-6 | note | accepted | sessionsPerProject clamp is deliberate: range + default recorded in api-contract, fallback test-pinned; a 400 on the 10s poll would blank the surface |
+| R-2, R-7, R-11 | note | accepted | priors acknowledgments |
+| R-9, R-10, R-12 | note | accepted | clean checks (learnings cross-check, backlog reconciliation, Goal 5/6 verdict) |
+
+**Classification:** feature

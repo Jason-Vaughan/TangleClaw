@@ -470,5 +470,31 @@ describe('engine profiles: upstream facts carry evidence; the paste path is neve
           + 'and no launch.startupDelay — declare one or the other so the blindness is a recorded decision'
       );
     });
+
+    test(`${file}: the profile demonstrates a path to awareness, or records that it has none`, () => {
+      // Ambient-awareness Chunk 05: an engine whose sessions can never learn
+      // what TangleClaw is must not ship silent — that is the 2026-08-31
+      // fabrication incident's root condition. A path to awareness is a
+      // carrier (a config file the generator writes, which the bootstrap-line
+      // guard proves carries the tc line) or a prime channel (paste or
+      // silent). A profile with neither declares
+      // `capabilities.awareness: { path: 'none', reason }` so the gap is a
+      // recorded decision the suite can hold up, never an inherited default.
+      const cf = profile.configFormat || {};
+      const hasCarrier = !!(cf.filename && cf.generator);
+      const hasPrime = caps.supportsPrimePrompt === true || caps.supportsSilentPrime === true;
+      if (hasCarrier || hasPrime) return;
+      const rec = caps.awareness;
+      assert.ok(
+        rec && rec.path === 'none',
+        `${file} has no carrier and no prime channel — no session on this engine can become `
+          + 'aware of TangleClaw. Give it a channel, or record the gap as '
+          + "capabilities.awareness: { path: 'none', reason }"
+      );
+      assert.ok(
+        typeof rec.reason === 'string' && rec.reason.length > 0,
+        `${file} records awareness path 'none' with no reason — a recorded gap must say why`
+      );
+    });
   }
 });

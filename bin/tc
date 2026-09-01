@@ -2,11 +2,13 @@
 'use strict';
 
 /**
- * tc — TangleClaw's in-pane CLI (ambient-awareness Chunk 02).
+ * tc — TangleClaw's in-pane CLI.
  *
  * A thin HTTP client over the TangleClaw API, and nothing else: no local
  * state, no config file, no store access — version skew between this script
  * and the server stays harmless because the server owns every answer. The
+ * verbs live in `lib/tc-verbs.js` as a declared roster; this executable only
+ * validates the environment, builds the HTTP context, and dispatches. The
  * pane environment TangleClaw injects at launch is the whole contract:
  *
  *   TANGLECLAW_API          - the API origin for this instance (required)
@@ -15,77 +17,29 @@
  *
  * Every failure is LOUD and names what happened — a missing environment says
  * this pane was not launched under TangleClaw, an unreachable server names
- * the exact URL it tried. A surface that only ever describes success teaches
- * an agent to invent one, which is the failure this CLI exists to end.
+ * the exact URL it tried, an API error relays the server's own words. A
+ * surface that only ever describes success teaches an agent to invent one,
+ * which is the failure this CLI exists to end.
  *
- * Exit codes: 0 ok · 1 usage or environment · 2 server unreachable or error.
+ * Exit codes: 0 answered (honest emptiness included) · 1 usage or
+ * environment · 2 server unreachable, API error, or the action failed.
  */
 
-const VERBS = ['whoami'];
-
-/**
- * Print usage to stderr.
- * @returns {void}
- */
-function usage() {
-  process.stderr.write(
-    'usage: tc <verb>\n'
-    + `verbs: ${VERBS.join(', ')}\n`
-    + '  whoami — who am I, where is TangleClaw, and what can I do through it\n'
-  );
-}
-
-/**
- * Fetch a JSON endpoint with a short timeout.
- * @param {string} urlStr - Absolute URL to GET
- * @returns {Promise<object>} Parsed JSON body
- */
-async function getJson(urlStr) {
-  // The header is provenance, not authentication: it lets the server record
-  // this receipt as the CLI speaking rather than a browser or health check.
-  const res = await fetch(urlStr, {
-    signal: AbortSignal.timeout(5000),
-    headers: { 'x-tangleclaw-cli': 'tc' }
-  });
-  if (!res.ok) {
-    throw new Error(`the TangleClaw API answered ${res.status} for ${urlStr}`);
-  }
-  return res.json();
-}
-
-/**
- * Render the whoami response as plain text for the pane.
- * @param {object} d - The /api/tc/whoami response body
- * @returns {string}
- */
-function renderWhoami(d) {
-  const lines = [];
-  if (d.project) {
-    lines.push(`You are a TangleClaw-managed session of project "${d.project.name}" (numeric project id ${d.project.id}).`);
-  } else {
-    lines.push('You are running under TangleClaw, but your identity did not resolve:');
-    lines.push(`  ${d.unresolved}`);
-  }
-  if (d.sessionId) lines.push(`Session id: ${d.sessionId}`);
-  lines.push(`TangleClaw API (for your own calls from this host): ${d.api.origin}`);
-  lines.push(`Operator host: ${d.operator.host} — ${d.operator.note}`);
-  lines.push('');
-  lines.push('Capabilities:');
-  for (const cap of d.capabilities || []) {
-    lines.push(`  [${cap.enabled ? 'ok' : '--'}] ${cap.id}: ${cap.detail}`);
-  }
-  return lines.join('\n') + '\n';
-}
+const path = require('node:path');
+const { VERB_ROSTER, renderUsage, receiptVerbLabel } = require(path.join(__dirname, '..', 'lib', 'tc-verbs.js'));
 
 async function main() {
   const verb = process.argv[2];
+  const argv = process.argv.slice(3);
   if (!verb || verb === '--help' || verb === '-h') {
-    usage();
+    // Requested help is an answer (stdout, 0); a missing verb is a usage
+    // error (stderr, 1).
+    (verb ? process.stdout : process.stderr).write(renderUsage());
     process.exit(verb ? 0 : 1);
   }
-  if (!VERBS.includes(verb)) {
-    process.stderr.write(`tc: unknown verb '${verb}'\n`);
-    usage();
+  const entry = VERB_ROSTER.find((v) => v.id === verb);
+  if (!entry) {
+    process.stderr.write(`tc: unknown verb '${verb}'\n${renderUsage()}`);
     process.exit(1);
   }
 
@@ -98,24 +52,85 @@ async function main() {
     );
     process.exit(1);
   }
+  const origin = api.replace(/\/+$/, '');
 
-  const params = new URLSearchParams();
-  if (process.env.TANGLECLAW_PROJECT_ID) params.set('projectId', process.env.TANGLECLAW_PROJECT_ID);
-  if (process.env.TANGLECLAW_WORKSPACE_ID) params.set('workspaceId', process.env.TANGLECLAW_WORKSPACE_ID);
-  const target = `${api.replace(/\/+$/, '')}/api/tc/whoami${params.size ? `?${params}` : ''}`;
+  // Provenance headers, sent on EVERY call (not authentication): the server's
+  // dispatcher records one awareness receipt per invocation from these, so the
+  // ledger sees every verb — including calls the M2M gate then refuses — and a
+  // browser or health check can never record as the CLI.
+  const headers = {
+    'x-tangleclaw-cli': 'tc',
+    'x-tangleclaw-verb': receiptVerbLabel(verb, argv)
+  };
+  if (process.env.TANGLECLAW_PROJECT_ID) headers['x-tangleclaw-project-id'] = process.env.TANGLECLAW_PROJECT_ID;
+  if (process.env.TANGLECLAW_WORKSPACE_ID) headers['x-tangleclaw-workspace-id'] = process.env.TANGLECLAW_WORKSPACE_ID;
 
-  let data;
+  /**
+   * Perform one JSON API request; failures throw with the server's own words.
+   * @param {string} method - HTTP method
+   * @param {string} apiPath - Path under the API origin (leading /)
+   * @param {object} [body] - JSON body for POST
+   * @param {object} [opts]
+   * @param {boolean} [opts.aux] - Auxiliary side-fetch (e.g. resolving the
+   *   project name mid-verb): drops the verb header and marks itself so the
+   *   server records ONE receipt per invocation, on the primary request only
+   * @returns {Promise<object>} Parsed JSON body
+   */
+  async function requestJson(method, apiPath, body, opts = {}) {
+    const url = `${origin}${apiPath}`;
+    let reqHeaders = headers;
+    if (opts.aux) {
+      const { 'x-tangleclaw-verb': _dropped, ...rest } = headers;
+      reqHeaders = { ...rest, 'x-tangleclaw-aux': '1' };
+    }
+    let res;
+    try {
+      res = await fetch(url, {
+        method,
+        signal: AbortSignal.timeout(10000),
+        headers: body ? { ...reqHeaders, 'content-type': 'application/json' } : reqHeaders,
+        body: body ? JSON.stringify(body) : undefined
+      });
+    } catch (err) {
+      // Name the exact URL tried — "fetch failed" alone sends the reader
+      // guessing at which of server, port, and path was wrong.
+      throw new Error(`could not reach the TangleClaw API at ${url} — ${err.cause?.message || err.message}. The server may be down`);
+    }
+    if (!res.ok) {
+      // Surface the server's error message — "unregistered peer", "gate
+      // denied" — verbatim; a bare status code teaches guessing.
+      let detail = '';
+      try {
+        const parsed = await res.json();
+        if (parsed && parsed.error) detail = ` — ${parsed.error}`;
+      } catch { /* non-JSON error body; the status alone will have to do */ }
+      throw new Error(`the TangleClaw API answered ${res.status} for ${url}${detail}`);
+    }
+    return res.json();
+  }
+
+  const ctx = {
+    api: origin,
+    env: process.env,
+    argv,
+    getJson: (apiPath, opts) => requestJson('GET', apiPath, undefined, opts),
+    postJson: (apiPath, body, opts) => requestJson('POST', apiPath, body, opts)
+  };
+
+  let result;
   try {
-    data = await getJson(target);
+    result = await entry.run(ctx);
   } catch (err) {
     process.stderr.write(
-      `tc: could not reach the TangleClaw API at ${target} — ${err.message}. `
-      + 'The server may be down; do not assume any TangleClaw capability is available, '
-      + 'and say so instead of improvising.\n'
+      `tc: ${verb} failed — ${err.message}. `
+      + 'Do not assume the TangleClaw capability is available or that the action happened; '
+      + 'say so instead of improvising.\n'
     );
     process.exit(2);
   }
-  process.stdout.write(renderWhoami(data));
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  process.exit(result.code);
 }
 
 main().catch((err) => {

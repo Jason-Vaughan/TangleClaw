@@ -319,6 +319,8 @@ function renderCard(project) {
     ? `<span class="badge badge-drift" title="Legacy governance: this project runs a vendored Prawduct hook rather than the V2 plugin. Open Info to migrate it.">&#9888; legacy governance</span>`
     : '';
 
+  const awarenessBadge = renderAwarenessBadge(project);
+
   // Three outcomes where there used to be two. The unknown carries a `?` glyph
   // rather than only a colour, because an operator who cannot distinguish the
   // dot's hue must still be able to tell a dead session from an unreadable one.
@@ -359,6 +361,7 @@ function renderCard(project) {
       ${groupBadges}
       ${auditBadge}
       ${driftBadge}
+      ${awarenessBadge}
       <span class="card-row-actions">
         <button class="btn btn-compact btn-launch" onclick="event.stopPropagation(); launchProject('${n}')">${hasSession ? 'Open' : 'Launch'}</button>
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openPeekFromCard('${n}')" title="Peek">&#128065;</button>` : ''}
@@ -461,6 +464,40 @@ function renderGitDetail(project) {
 }
 
 /**
+ * The card-row awareness badge (ambient-awareness Chunk 05). Only the red
+ * state renders, matching the badge-noise rule the other badges follow: a
+ * project whose LATEST session shows no evidence of awareness — no delivery
+ * observed, no tc invocation — is the state that hid for 12 days in August
+ * 2026, and it must be visible without opening anything. The glyph pairs with
+ * text, never colour alone.
+ * @param {object} project - Project data.
+ * @returns {string} HTML for the badge, or ''.
+ */
+function renderAwarenessBadge(project) {
+  const aw = state.awareness && state.awareness[project.id];
+  const latest = aw && aw.sessions && aw.sessions[0];
+  if (!latest || latest.state !== 'unaware') return '';
+  return `<span class="badge badge-unaware" title="${esc(latest.basis)}">&#9888; unaware</span>`;
+}
+
+/**
+ * The Awareness row of a card's detail panel: the latest session's composed
+ * state (confirmed / sent / unverified / unaware) with the basis said in
+ * words. Empty when the project has never launched a session — nothing
+ * launched means nothing to be aware.
+ * @param {object} project - Project data.
+ * @returns {string} HTML for the detail value, or ''.
+ */
+function renderAwarenessDetail(project) {
+  const aw = state.awareness && state.awareness[project.id];
+  const latest = aw && aw.sessions && aw.sessions[0];
+  if (!latest) return '';
+  const cls = latest.state === 'confirmed' ? 'rules-status-ok'
+    : (latest.state === 'unaware' ? 'rules-status-err' : 'rules-status-warn');
+  return `<span class="${cls}">${esc(latest.state)}</span> — ${esc(latest.basis)}`;
+}
+
+/**
  * Render a card's detail panel.
  *
  * Pure — builds a string and touches no DOM — so `renderCard` can emit it
@@ -475,6 +512,7 @@ function renderCardDetail(project) {
   const n = esc(project.name);
   const engineInfo = project.engine ? `${esc(project.engine.name)}` : 'No engine';
   const sessionInfo = renderSessionDetail(project);
+  const awarenessInfo = renderAwarenessDetail(project);
   const tagsInfo = (project.tags || []).length > 0 ? project.tags.map(t => esc(t)).join(', ') : 'None';
   const gitInfo = renderGitDetail(project);
 
@@ -493,6 +531,7 @@ function renderCardDetail(project) {
       ${unreadableRow}
       <div class="detail-row"><span class="detail-label">Engine</span><span class="detail-value">${engineInfo}</span></div>
       <div class="detail-row"><span class="detail-label">Session</span><span class="detail-value">${sessionInfo}</span></div>
+      ${awarenessInfo ? `<div class="detail-row"><span class="detail-label">Awareness</span><span class="detail-value">${awarenessInfo}</span></div>` : ''}
       <div class="detail-row"><span class="detail-label">Git</span><span class="detail-value">${gitInfo}</span></div>
       <div class="detail-row"><span class="detail-label">Tags</span><span class="detail-value">${tagsInfo}</span></div>
       <div class="detail-row"><span class="detail-label">Groups</span><span class="detail-value">${groupsInfo}</span></div>

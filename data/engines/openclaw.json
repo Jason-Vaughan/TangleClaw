@@ -21,7 +21,11 @@
     "supportsConfigFile": false,
     "supportsCoAuthor": false,
     "supportsRemote": true,
-    "supportsModes": ["ssh", "webui"]
+    "supportsModes": ["ssh", "webui"],
+    "awareness": {
+      "path": "none",
+      "reason": "OpenClaw drives a remote engine over SSH/ClawBridge; the remote host owns its own context files, so TangleClaw can neither place a carrier there nor paste a prime. Recorded gap, not an oversight — revisit if a TangleClaw-owned channel to the remote side ever exists."
+    }
   },
   "launchModes": {
     "default":           { "label": "Interactive",  "args": [], "bridgePermissionMode": "default",           "disabled": false, "description": "Prompts for permission on every action — surfaces ClawBridge's structured permission-review channel" },

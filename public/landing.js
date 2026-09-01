@@ -27,6 +27,7 @@ const state = {
   rulesOpen: false,
   globalRulesContent: '',
   modelStatus: {},
+  awareness: {},
   groups: [],
   groupsOpen: false,
   groupItemsOpen: {},
@@ -948,6 +949,15 @@ async function loadProjects() {
   const data = await api('/api/projects?archived=true');
   if (!data) return;
   state.projects = (data.projects || []).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+
+  // Awareness view (ambient-awareness Chunk 05) — fetched on the same poll so
+  // the cards render with it in one pass. A failed fetch keeps the previous
+  // answer rather than blanking every badge: an unreachable endpoint is not
+  // evidence the fleet became aware.
+  const aw = await api('/api/awareness');
+  if (aw && aw.projects) {
+    state.awareness = Object.fromEntries(aw.projects.map((p) => [p.projectId, p]));
+  }
   // Kept as sent, including on the healthy path — a field that only appears on
   // failure makes every reader probe for its existence instead of reading its
   // value. `renderRootPanel` decides what to draw; this only stops the answer

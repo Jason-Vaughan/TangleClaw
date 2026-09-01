@@ -1454,6 +1454,68 @@ describe('engines', () => {
     });
   });
 
+  describe('tc bootstrap line rides every carrier (ambient-awareness Chunk 04)', () => {
+    // The 2026-09-01 live probe proved PATH presence alone creates zero
+    // discovery intent, so the instruction must be in every channel each
+    // engine actually reads. The guard runs the FAMILY the dispatcher emits,
+    // not a sampled member — a guard for a class must exercise every member
+    // the producer emits.
+    const projectConfig = {
+      rules: { core: { porthubRegistration: true } }
+    };
+
+    it('every generator with supportsConfigFile ships the line with its stated consequence', () => {
+      const profiles = store.engines.list().filter(p =>
+        p.capabilities && p.capabilities.supportsConfigFile
+      );
+      assert.ok(profiles.length >= 4, `Expected at least 4 config-supporting engines, got ${profiles.length}`);
+
+      for (const profile of profiles) {
+        const content = engines.generateConfig(profile.id, projectConfig);
+        assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
+        assert.match(content, /tc capabilities/,
+          `${profile.id}: carrier is missing the tc bootstrap line`);
+        assert.match(content, /fabricate/,
+          `${profile.id}: the line must carry its stated consequence, not just name the verb`);
+        // Wrap-tolerant: the comment form may break the phrase across
+        // #-prefixed lines.
+        assert.match(content, /not launched by\s+(# )?TangleClaw/,
+          `${profile.id}: the honest-absence case must ride every carrier`);
+      }
+    });
+
+    it('the line is unconditional — a config with every optional section off still ships it', () => {
+      const bare = {
+        rules: {
+          core: {
+            changelogPerChange: false,
+            jsdocAllFunctions: false,
+            unitTestRequirements: false,
+            sessionWrapProtocol: false,
+            porthubRegistration: false
+          }
+        }
+      };
+      const profiles = store.engines.list().filter(p =>
+        p.capabilities && p.capabilities.supportsConfigFile
+      );
+      for (const profile of profiles) {
+        const content = engines.generateConfig(profile.id, bare);
+        assert.ok(content !== null, `${profile.id}: generateConfig returned null`);
+        assert.match(content, /tc capabilities/,
+          `${profile.id}: the bootstrap line must not hide behind an optional section's gate`);
+      }
+    });
+
+    it('the gemini-md generator ships it under its default header too', () => {
+      // The shipped profiles exercise the antigravity-md header path of
+      // _generateGeminiMd; this pins the default-header (GEMINI.md) case the
+      // dispatcher can also emit.
+      const content = engines._generateGeminiMd(projectConfig, undefined, '/tmp/x');
+      assert.match(content, /tc capabilities/);
+    });
+  });
+
   describe('project version recording NOT injected (#101)', () => {
     const projectConfig = {
       rules: {
@@ -2013,6 +2075,23 @@ describe('engines', () => {
         assert.equal(after.split('<!-- BEGIN:tangleclaw -->').length - 1, 1, 'exactly one begin marker');
         assert.equal(after.split('<!-- END:tangleclaw -->').length - 1, 1, 'exactly one end marker');
         assert.equal(after.split('<!-- BEGIN:tangleclaw -->')[0], anchor.replace(/\s+$/, '') + '\n\n');
+      });
+
+      it('the governed operational block carries the tc bootstrap line inside the markers (ambient-awareness Chunk 04)', () => {
+        // A governed session reads only what is between the markers — a line
+        // outside them, or absent, leaves the plugin-governed fleet (this repo
+        // included) as unaware as the probe found Antigravity.
+        const p = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } });
+        const anchor = '# CLAUDE.md\n\n<!-- PRAWDUCT:ANCHOR -->\nGoverned.\n';
+        const claudeMd = path.join(p, claudeProfile.configFormat.filename);
+        fs.writeFileSync(claudeMd, anchor);
+
+        engines.writeEngineConfig('claude', p, minimalProjConfig, claudeProfile);
+        const after = fs.readFileSync(claudeMd, 'utf8');
+        const block = (after.split('<!-- BEGIN:tangleclaw -->')[1] || '').split('<!-- END:tangleclaw -->')[0];
+        assert.match(block, /tc capabilities/,
+          'the bootstrap line must land inside the managed region the governed session reads');
+        assert.match(block, /fabricate/, 'with its stated consequence');
       });
 
       it('a governed project on a NON-claude-md carrier keeps the skip (bounded decision)', () => {
