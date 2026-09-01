@@ -2627,7 +2627,7 @@ route('GET', '/api/tc/whoami', (req, res) => {
   // The receipt is the point of the endpoint, but failing to write one must
   // not cost the caller its answer — the shared writer warns and returns null.
   const receipt = isAux ? null : writeAwarenessReceipt({
-    project, activeSession, workspaceId, verb, source, role: isMaster ? 'master' : null
+    project, activeSession, workspaceId, verb, source, role: claimedRole
   });
 
   const config = store.config.load();
@@ -2673,7 +2673,14 @@ route('GET', '/api/tc/whoami', (req, res) => {
     // through, and the switchboard per ITS settings with the same honest
     // absence the project roster ships.
     let masterMedusaEnabled = false;
-    try { masterMedusaEnabled = !!master.masterSettings(store.config.load()).medusaEnabled; } catch { masterMedusaEnabled = false; }
+    try {
+      masterMedusaEnabled = !!master.masterSettings(config).medusaEnabled;
+    } catch (err) {
+      // Logged, never silent: on a failed settings read the roster below says
+      // "not enabled", which is the restrictive direction — but the log must
+      // carry the truth that it was a read failure, not a setting.
+      log.warn('master settings read failed during whoami — switchboard reported as unavailable', { error: err.message });
+    }
     return jsonResponse(res, 200, {
       role: 'master',
       project: null,
@@ -2790,7 +2797,13 @@ function writeAwarenessReceipt({ project, activeSession, workspaceId, verb, sour
       workspaceId,
       verb,
       source,
-      role: role === 'master' ? 'master' : null
+      // A claimed project outranks a role claim, HERE — the one writer both
+      // request paths share — not per-route. Enforced only at the whoami route,
+      // a pane carrying both a project id and role=master minted 'master'
+      // receipts on every OTHER verb through the dispatcher, and listForMaster
+      // counted them: a false Master 'confirmed', the exact signal this
+      // feature ships to make trustworthy (Critic R-2/R-7/R-11).
+      role: role === 'master' && !project ? 'master' : null
     });
   } catch (err) {
     log.warn('awareness receipt write failed', { error: err.message });
