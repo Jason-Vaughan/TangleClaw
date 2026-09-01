@@ -46,11 +46,11 @@ const { createServer } = require('../server');
 const TC_BIN = path.join(__dirname, '..', 'bin', 'tc');
 
 /** Same request helper shape as the other api-*.test.js files. */
-function request(server, method, urlPath) {
+function request(server, method, urlPath, headers = {}) {
   return new Promise((resolve, reject) => {
     const addr = server.address();
     const req = http.request(
-      { hostname: '127.0.0.1', port: addr.port, path: urlPath, method },
+      { hostname: '127.0.0.1', port: addr.port, path: urlPath, method, headers },
       (res) => {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
@@ -149,6 +149,75 @@ describe('tc CLI vertical slice (ambient-awareness Chunk 02)', () => {
       } finally {
         store.awarenessReceipts.record = original;
       }
+    });
+
+    it('role=master answers the Master identity and records a role-attributed receipt (#1141)', async () => {
+      const res = await request(server, 'GET', '/api/tc/whoami?role=master');
+      assert.equal(res.status, 200);
+      assert.equal(res.body.role, 'master');
+      assert.equal(res.body.project, null);
+      assert.equal(res.body.receiptRecorded, true);
+      const readApi = res.body.capabilities.find((c) => c.id === 'read-api');
+      assert.ok(readApi && readApi.enabled, 'the Read API roster row ships');
+      assert.match(readApi.detail, /\/api\/awareness/);
+      const sb = res.body.capabilities.find((c) => c.id === 'switchboard');
+      assert.equal(sb.enabled, false, 'switchboard absence stays honest for a default master');
+      const row = store.getDb().prepare(
+        "SELECT COUNT(*) AS n FROM awareness_receipts WHERE role = 'master'"
+      ).get();
+      assert.ok(row.n >= 1, 'the receipt carries the master role');
+    });
+
+    it('a claimed project outranks a role claim — the role is noise on a project pane', async () => {
+      const res = await request(server, 'GET', `/api/tc/whoami?projectId=${project.id}&role=master`);
+      assert.equal(res.status, 200);
+      assert.equal(res.body.role, undefined, 'no master identity for a resolved project');
+      assert.deepEqual(res.body.project, { id: project.id, name: 'tc-cli-proj' });
+      const receipts = store.awarenessReceipts.listForProject(project.id);
+      assert.equal(receipts[0].role, null, 'the receipt stays project-attributed, role NULL');
+    });
+
+    it('a junk role records as NULL — junk must not grow the role vocabulary', async () => {
+      await request(server, 'GET', '/api/tc/whoami?role=admin');
+      const row = store.getDb().prepare(
+        "SELECT COUNT(*) AS n FROM awareness_receipts WHERE role = 'admin'"
+      ).get();
+      assert.equal(row.n, 0);
+    });
+
+    it('the SPAWNED tc under TANGLECLAW_ROLE=master renders the Master identity and mints a role receipt (Critic R-1)', async () => {
+      // The CLI slice for real: bin/tc must send the x-tangleclaw-role header
+      // (no project id in this env) and renderWhoami must take the master
+      // branch. Deleting either leaves this red.
+      store.getDb().prepare("DELETE FROM awareness_receipts WHERE role = 'master'").run();
+      const res = await runTc(['whoami'], {
+        PATH: process.env.PATH, TANGLECLAW_API: apiOrigin, TANGLECLAW_ROLE: 'master'
+      });
+      assert.equal(res.code, 0, res.stderr);
+      assert.match(res.stdout, /You are the TangleClaw Project Master/);
+      const row = store.getDb().prepare(
+        "SELECT COUNT(*) AS n FROM awareness_receipts WHERE role = 'master' AND source = 'tc-cli'"
+      ).get();
+      assert.ok(row.n >= 1, 'the spawned binary\'s header minted the master receipt');
+    });
+
+    it('the DISPATCHER carries the role on non-whoami verbs — and a claimed project outranks it there too (Critic R-2)', async () => {
+      store.getDb().prepare("DELETE FROM awareness_receipts WHERE role = 'master'").run();
+      // Role alone through the dispatcher path: a master receipt.
+      await request(server, 'GET', '/api/tc/sessions', {
+        'x-tangleclaw-cli': 'tc', 'x-tangleclaw-verb': 'sessions', 'x-tangleclaw-role': 'master'
+      });
+      let row = store.getDb().prepare("SELECT COUNT(*) AS n FROM awareness_receipts WHERE role = 'master'").get();
+      assert.equal(row.n, 1, 'a role-only dispatcher invocation attributes to the Master');
+      // Role BESIDE a resolved project: the shared writer must gate it to
+      // NULL, or env leakage mints a false Master `confirmed` on every verb —
+      // the converged three-reviewer finding.
+      await request(server, 'GET', '/api/tc/sessions', {
+        'x-tangleclaw-cli': 'tc', 'x-tangleclaw-verb': 'sessions',
+        'x-tangleclaw-role': 'master', 'x-tangleclaw-project-id': String(project.id)
+      });
+      row = store.getDb().prepare("SELECT COUNT(*) AS n FROM awareness_receipts WHERE role = 'master'").get();
+      assert.equal(row.n, 1, 'a claimed project outranks the role claim at the shared writer');
     });
 
     it('never leaks the M2M service token, even when the gate is enabled', async () => {

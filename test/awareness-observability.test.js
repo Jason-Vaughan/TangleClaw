@@ -277,9 +277,14 @@ describe('fleet awareness view (store + GET /api/awareness)', () => {
     const res = await getJson(server, '/api/awareness');
     assert.equal(res.status, 200);
     assert.ok(res.body.generatedAt);
-    for (const state of ['confirmed', 'sent', 'unverified', 'no-rules', 'unaware']) {
+    for (const state of ['confirmed', 'sent', 'unverified', 'no-rules', 'unaware', 'not-running', 'unknown']) {
       assert.ok(res.body.states[state], `the response defines '${state}' in words`);
     }
+    // The Master entry (#1141): composed live, so its state depends on this
+    // machine's tmux — the contract here is presence and shape, not a value.
+    assert.ok(res.body.master, 'the Master appears in the fleet view');
+    assert.ok(typeof res.body.master.state === 'string' && res.body.master.state.length > 0);
+    assert.ok(typeof res.body.master.basis === 'string' && res.body.master.basis.length > 0);
     const sev = res.body.projects.find((p) => p.name === 'fleet-severed');
     assert.ok(sev, 'the severed project is in the surfaced view');
     assert.equal(sev.sessions[0].state, 'unaware');

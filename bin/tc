@@ -64,6 +64,7 @@ async function main() {
   };
   if (process.env.TANGLECLAW_PROJECT_ID) headers['x-tangleclaw-project-id'] = process.env.TANGLECLAW_PROJECT_ID;
   if (process.env.TANGLECLAW_WORKSPACE_ID) headers['x-tangleclaw-workspace-id'] = process.env.TANGLECLAW_WORKSPACE_ID;
+  if (process.env.TANGLECLAW_ROLE) headers['x-tangleclaw-role'] = process.env.TANGLECLAW_ROLE;
 
   /**
    * Perform one JSON API request; failures throw with the server's own words.
