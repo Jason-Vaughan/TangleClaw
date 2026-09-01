@@ -1,12 +1,30 @@
 'use strict';
 
-const { test, describe } = require('node:test');
+const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
 const engines = require('../lib/engines');
+const store = require('../lib/store');
+
+// A real store on a THROWAWAY base path, file-scoped. Without this, the
+// writeEngineConfig fixtures below silently leaned on whatever ~/.tangleclaw
+// the host happened to have: green on a dev machine with a live install,
+// red on CI where generateConfig came back empty and every "reached the
+// write path" precondition fired — a test whose verdict depends on host
+// state, the exact class this repo has already recorded three times.
+let _storeTmp;
+before(() => {
+  _storeTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-managed-block-store-'));
+  store._setBasePath(_storeTmp);
+  store.init();
+});
+after(() => {
+  store.close();
+  fs.rmSync(_storeTmp, { recursive: true, force: true });
+});
 
 const BEGIN = '<!-- BEGIN:tangleclaw -->';
 const END = '<!-- END:tangleclaw -->';
