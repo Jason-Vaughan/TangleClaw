@@ -76,11 +76,12 @@ master identity and `/api/awareness` shows master `confirmed`).
 
 - [x] Chunk 01 — env floor + role receipts + whoami identity + masterAwareness + surface
 - [x] Critic (cumulative) + resolutions
-- [ ] PR (Fixes #1141), merge, restart, live VRF
-- [ ] Release v5.17.0 (version bump, CHANGELOG promote, README pins per #1137 pattern)
+- [x] PR (Fixes #1141), merge, restart, live VRF
+- [x] Release v5.17.0 (version bump, CHANGELOG promote, README pins per #1137 pattern)
 
 ## Context
 
-Chunk 01 + Critic round complete (1 blocking + 4 warnings fixed in 6c82763,
-verify-resolutions clean 0/0/0). Next: PR → merge → restart → live VRF →
-release v5.17.0.
+SHIPPED. PR #1144 merged (fe60177); live VRF passed (master pane carries the
+floor, tc whoami answers the Master identity, receipt 5 role-attributed,
+/api/awareness master=confirmed). Released in v5.17.0 (#1145, tag published
+2026-09-01).
