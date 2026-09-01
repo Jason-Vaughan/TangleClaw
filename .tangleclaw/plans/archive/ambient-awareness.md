@@ -6,7 +6,7 @@ created: 2026-08-31
 branch: feat/ambient-awareness
 shared_link: https://claude.ai/code/artifact/830caee7-fd12-4cff-a0e8-9d6bbb8fc522  # keep THIS link updated in place; never mint a new one
 issues: [999, 1122, 1021, 1057, 1063, 1085, 1106, 1049]
-closes_or_advances: [999, 1021, 1057, 1106, 1058]  # 01c ships 1057 + 1106 (+1058 via PRM-4H8N removal) — close all three at merge; 1063 advanced (paste half honest; rules-hook receipt still owed), keep open; 1085/1049 targeted by later chunks
+closes_or_advances: [999, 1021, 1057, 1106, 1058]  # 01c ships 1057 + 1106 (+1058 via PRM-4H8N removal) — close all three at merge; 1063 advanced (paste half honest; rules-hook receipt still owed), keep open; 1085/1049 deferred — remain open, NOT delivered by any chunk of this plan
 depends_on:
   - .prawduct/artifacts/prime-delivery-direction.md
   - lib/ecosystem-primer.js
