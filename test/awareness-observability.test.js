@@ -143,6 +143,43 @@ describe('awareness state composition (store.awarenessReceipts.sessionAwareness)
     assert.equal(store.awarenessReceipts.sessionAwareness(s.id).state, 'sent');
   });
 
+  it('a no-rules row is NOT the red state — the launch path ran and nothing was owed (#1139)', () => {
+    // The row lib/sessions.js writes for a rule-less project exists, per its
+    // own comment, to prove "the launch path ran and had nothing to send".
+    // Scoring it as unaware discarded that evidence and left 23 projects
+    // permanently red for a non-fault no relaunch could clear.
+    const s = store.sessions.start({ projectId: project.id, engineId: 'claude' });
+    store.sessionRuleDeliveries.record({
+      sessionId: s.id, projectId: project.id, engineId: 'claude',
+      channel: 'none', outcome: 'no-rules', digest: ''
+    });
+    const aw = store.awarenessReceipts.sessionAwareness(s.id);
+    assert.equal(aw.state, 'no-rules');
+    assert.notEqual(aw.state, 'unaware');
+    assert.match(aw.basis, /launch path ran/);
+    assert.match(aw.basis, /no active rules/);
+    assert.equal(aw.receiptCount, 0);
+  });
+
+  it('a delivery outranks a no-rules row, and a receipt outranks both', () => {
+    // A session can carry both (e.g. no startup rules, then a wrap-tier
+    // delivery): the stronger evidence wins.
+    const s = store.sessions.start({ projectId: project.id, engineId: 'antigravity' });
+    store.sessionRuleDeliveries.record({
+      sessionId: s.id, projectId: project.id, engineId: 'antigravity',
+      channel: 'none', outcome: 'no-rules', digest: ''
+    });
+    store.sessionRuleDeliveries.record({
+      sessionId: s.id, projectId: project.id, engineId: 'antigravity',
+      channel: 'prime-paste', outcome: 'delivered', digest: 'd'
+    });
+    assert.equal(store.awarenessReceipts.sessionAwareness(s.id).state, 'sent');
+    store.awarenessReceipts.record({
+      projectId: project.id, sessionId: s.id, verb: 'whoami', source: 'tc-cli'
+    });
+    assert.equal(store.awarenessReceipts.sessionAwareness(s.id).state, 'confirmed');
+  });
+
   it('ACCEPTANCE: a launch with the carrier severed reads UNAWARE from the first query — within one launch, not after 12 days', () => {
     // The simulated regression: the session starts, no channel records a
     // delivery (a severed carrier writes nothing — that is its signature),
@@ -218,7 +255,7 @@ describe('fleet awareness view (store + GET /api/awareness)', () => {
     const res = await getJson(server, '/api/awareness');
     assert.equal(res.status, 200);
     assert.ok(res.body.generatedAt);
-    for (const state of ['confirmed', 'sent', 'unverified', 'unaware']) {
+    for (const state of ['confirmed', 'sent', 'unverified', 'no-rules', 'unaware']) {
       assert.ok(res.body.states[state], `the response defines '${state}' in words`);
     }
     const sev = res.body.projects.find((p) => p.name === 'fleet-severed');

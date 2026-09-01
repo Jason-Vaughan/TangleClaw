@@ -4,6 +4,9 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **A project with no session rules no longer sits permanently red on the dashboard (#1139).** `sessionAwareness` recognized only `delivered`/`unverified` delivery outcomes, so a launch on a rule-less project — which records `no-rules`/`none` precisely to prove the launch path ran — was scored as `unaware`, the red "no evidence" state. 23 of 33 active projects wore the ⚠ unaware badge for a non-fault no relaunch could clear, drowning the signal the badge exists to carry (the 2026-08-18 severed-carrier regression). A `no-rules` row now composes to its own non-red state with an honest basis ("the launch path ran and the project had no active rules to deliver — nothing was owed"); a `skipped` row deliberately still reads red, per the standing acceptance test — a skip means rules existed and nothing reached the session. Vocabulary updated at every consumer: the `/api/awareness` `states` legend, the Master identity's quick-reference row, the dashboard detail row JSDoc, `FEATURES.md`, and api-contract §. The badge itself still renders only for `unaware`. `lib/store.js`, `server.js`, `lib/master.js`, `public/ui.js`, `FEATURES.md`, `test/awareness-observability.test.js`, `test/master.test.js`.
+
 ## [5.16.0] - 2026-09-01
 
 ### Added

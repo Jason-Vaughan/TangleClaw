@@ -2813,7 +2813,7 @@ route('GET', '/api/tc/sessions', (_req, res) => {
 // GET /api/awareness — "sessions that never became aware" as a queryable
 // surfaced state (ambient-awareness Chunk 05). Per project, the most recent
 // sessions each carry a composed awareness state (confirmed / sent /
-// unverified / unaware) with a `basis` saying in words what the state rests
+// unverified / no-rules / unaware) with a `basis` saying in words what the state rests
 // on. The dashboard polls it; the Project Master queries it — the surface the
 // 2026-08-18 carrier regression lacked.
 route('GET', '/api/awareness', (req, res) => {
@@ -2827,6 +2827,7 @@ route('GET', '/api/awareness', (req, res) => {
       confirmed: 'the session invoked tc itself — awareness demonstrated',
       sent: 'a channel was observed to deliver; nothing was demonstrated',
       unverified: 'something was pushed blind and nothing observed it land',
+      'no-rules': 'the launch path ran; the project had no rules to deliver — nothing was owed',
       unaware: 'no evidence awareness ever arrived — the red state'
     },
     projects
