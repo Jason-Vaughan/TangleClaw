@@ -41,7 +41,12 @@ function usage() {
  * @returns {Promise<object>} Parsed JSON body
  */
 async function getJson(urlStr) {
-  const res = await fetch(urlStr, { signal: AbortSignal.timeout(5000) });
+  // The header is provenance, not authentication: it lets the server record
+  // this receipt as the CLI speaking rather than a browser or health check.
+  const res = await fetch(urlStr, {
+    signal: AbortSignal.timeout(5000),
+    headers: { 'x-tangleclaw-cli': 'tc' }
+  });
   if (!res.ok) {
     throw new Error(`the TangleClaw API answered ${res.status} for ${urlStr}`);
   }

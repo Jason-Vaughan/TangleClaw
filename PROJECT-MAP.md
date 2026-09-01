@@ -10,6 +10,7 @@ to file paths — this maps the layout itself.
 
 ## Structure
 
+- `bin/` — In-pane CLI shipped to launched sessions — `tc` (whoami + awareness receipts), put on each pane's PATH at launch.
 - `data/` — Bundled seed assets — engine profiles, hooks, AI guide docs (PortHub / shared-docs / session-memory), global rules, orchestration profiles, certs.
 - `deploy/` — Install + service plumbing — `install.sh`, launchd plists (server / ttyd / caddy), `tmux.conf`, `ttyd-attach.sh`, ingress + VRF runbooks.
 - `docs/` — Operator/developer documentation — user, engine, and configuration guides plus `adr/` (architecture decision records).

@@ -1,7 +1,7 @@
 ---
 plan: ambient-awareness
 title: Ambient Awareness — every TangleClaw session knows what TangleClaw is, on any engine
-status: active (Chunks 00, 01 and 01c complete and review-closed; Chunk 01b or 02 next)
+status: active (Chunks 00, 01, 01c, 01b complete and review-closed; Chunk 02 code-complete, its live Antigravity probe owed at merge; Chunk 03 next after the probe resolves the assumption)
 created: 2026-08-31
 branch: feat/ambient-awareness
 shared_link: https://claude.ai/code/artifact/830caee7-fd12-4cff-a0e8-9d6bbb8fc522  # keep THIS link updated in place; never mint a new one
@@ -578,7 +578,7 @@ need reopening or a successor.
 - [x] Chunk 01 — Carrier repair: evidenced carrier + managed-block contract — **done 2026-09-01** (`de85f3e` + `608828d` + `09b5fd8`; Critic `rev-20260901T000224Z` cumulative, then `…T002413Z` and `…T003330Z` verify-resolutions — closed 0 blocking / 0 findings)
 - [x] Chunk 01c — Prime channel: readiness gate (#1106 resolved as option 2), drift evidence + guards (#1057), honest `unverified` ledger (#1063 advanced, not closed), send-row label — **done 2026-09-01** (`58eef25` + findings batch; Critic `rev-20260901T012621Z` cumulative — 0 blocking, warnings fixed). **Live proof still owed at merge:** an Antigravity launch showing the prime as `type: USER_INPUT` in the agent's transcript; needs the live server restarted onto this code — merge deliberately.
 - [x] Chunk 01b — Narrow the plugin-governance deferral (#1021 — close at merge) — **done 2026-09-01** (`fe629a7` + findings batch; Critic `rev-20260901T023046Z` cumulative — code clean, 1 blocking record-plumbing gap fixed by pointing `active_build_plan` + an artifacts symlink at this plan)
-- [ ] Chunk 02 — `tc` vertical slice
+- [ ] Chunk 02 — `tc` vertical slice — code complete 2026-09-01 (`f29b6c3` + findings batches); **NOT ticked on purpose: the Done-when is the live unprompted-Antigravity probe (owed at merge, after the server restarts onto this code), and its result — receipt or no receipt — resolves the plan's HIGH-impact assumption and gets written here either way**
 - [ ] Chunk 03 — Verb surface + roster
 - [ ] Chunk 04 — Bootstrap line
 - [ ] Chunk 05 — Awareness observability

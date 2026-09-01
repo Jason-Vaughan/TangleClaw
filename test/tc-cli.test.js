@@ -215,6 +215,27 @@ describe('tc CLI vertical slice (ambient-awareness Chunk 02)', () => {
     });
   });
 
+  describe('receipt provenance — a browser cannot fabricate awareness', () => {
+    it('a plain GET records source=http; the tc client records source=tc-cli', async () => {
+      await request(server, 'GET', `/api/tc/whoami?projectId=${project.id}`);
+      const plain = store.awarenessReceipts.listForProject(project.id)[0];
+      assert.equal(plain.source, 'http',
+        'an operator opening the endpoint in a browser is not the session becoming aware');
+
+      const res = await runTc(['whoami'], {
+        ...process.env, TANGLECLAW_API: apiOrigin, TANGLECLAW_PROJECT_ID: String(project.id)
+      });
+      assert.equal(res.code, 0, res.stderr);
+      const viaCli = store.awarenessReceipts.listForProject(project.id)[0];
+      assert.equal(viaCli.source, 'tc-cli', 'the CLI identifies itself, and the row says so');
+    });
+
+    it('the store refuses an unknown source', () => {
+      assert.throws(() => store.awarenessReceipts.record({ verb: 'whoami', source: 'trust-me' }),
+        /source must be one of/);
+    });
+  });
+
   describe('awareness receipts store', () => {
     it('requires a verb and round-trips nullable ids', () => {
       assert.throws(() => store.awarenessReceipts.record({}), /verb is required/);
@@ -230,6 +251,20 @@ describe('tc CLI vertical slice (ambient-awareness Chunk 02)', () => {
       const rows = store.awarenessReceipts.listForSession(4242);
       assert.equal(rows.length, 2);
       assert.ok(rows[0].id < rows[1].id);
+    });
+
+    it('prunes per project to the retention cap — a recorded lifecycle, not an accidental keep-forever', () => {
+      store._setAwarenessReceiptRetention(3);
+      try {
+        for (let i = 0; i < 7; i++) {
+          store.awarenessReceipts.record({ verb: 'whoami', projectId: 77770, workspaceId: `w${i}` });
+        }
+        const rows = store.awarenessReceipts.listForProject(77770, { limit: 100 });
+        assert.equal(rows.length, 3, 'oldest rows beyond the cap are pruned');
+        assert.equal(rows[0].workspaceId, 'w6', 'the newest survives');
+      } finally {
+        store._setAwarenessReceiptRetention(200);
+      }
     });
   });
 });
@@ -298,6 +333,39 @@ describe('launch env injection — the pane gets tc on PATH (ambient-awareness C
       assert.equal(capturedEnv.TANGLECLAW_WORKSPACE_ID, undefined,
         'no workspace id is claimed when none was minted — absence stays honest');
 
+      store.sessions.kill(result.session.id, 'test cleanup');
+    } finally {
+      store.projects.delete(project.id);
+    }
+  });
+
+  it('an unresolvable API origin OMITS TANGLECLAW_API — never a sentence-shaped URL', () => {
+    // The origin resolver used to return English prose on failure, written for
+    // prime text; fed into the pane env it would send tc fetching a
+    // sentence-shaped URL and misdirect the diagnosis. Absence is the honest
+    // failure: tc reports a missing TANGLECLAW_API loudly.
+    const tmux = require('../lib/tmux');
+    const enginesModule = require('../lib/engines');
+    const httpsSetup = require('../lib/https-setup');
+    let created = false;
+    let capturedEnv = null;
+    stub(tmux, 'hasSession', () => created);
+    stub(tmux, 'probeSession', () => ({ live: created, answered: true, cause: null }));
+    stub(tmux, 'createSession', (name, options) => { capturedEnv = options.env; created = true; return true; });
+    stub(tmux, 'sendKeys', () => true);
+    stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
+    stub(httpsSetup, 'effectiveServerProtocol', () => { throw new Error('config unreadable'); });
+
+    const projDir = path.join(projectsDir, 'no-origin-proj');
+    fs.mkdirSync(projDir, { recursive: true });
+    const project = store.projects.create({ name: 'no-origin-proj', path: projDir, engine: 'claude' });
+    try {
+      const result = sessions.launchSession('no-origin-proj');
+      assert.equal(result.error, null);
+      assert.equal(capturedEnv.TANGLECLAW_API, undefined,
+        'no origin → no var; tc will say the pane was not launched under TangleClaw');
+      assert.equal(capturedEnv.TANGLECLAW_PROJECT_ID, String(project.id),
+        'the identity that IS known still ships');
       store.sessions.kill(result.session.id, 'test cleanup');
     } finally {
       store.projects.delete(project.id);

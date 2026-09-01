@@ -331,7 +331,7 @@ Engine profiles define how TangleClaw interacts with an AI engine. See the [Engi
 
 The SQLite database at `~/.tangleclaw/tangleclaw.db` stores runtime state. You should not need to edit it directly — use the API instead.
 
-**Tables**: `projects`, `sessions`, `learnings`, `activity_log`, `port_leases`, `schema_version`, `project_groups`, `group_members`, `shared_docs`, `openclaw_connections`, `eval_scores`, `eval_baselines`, `eval_incidents`
+**Tables**: enumerated by the schema in `lib/store.js` (inspect a live DB with `sqlite3 ~/.tangleclaw/tangleclaw.db .tables`). A list copied here went stale twice — the schema is the source of truth.
 
 Current schema version: `CURRENT_SCHEMA_VERSION` in `lib/store.js` (a literal copied here went stale within months; the constant is the source of truth).
 

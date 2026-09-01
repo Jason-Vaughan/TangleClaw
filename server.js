@@ -2610,13 +2610,19 @@ route('GET', '/api/tc/whoami', (req, res) => {
   }
   const activeSession = project ? store.sessions.getActive(project.id) : null;
 
+  // Provenance (not authentication): the tc client identifies itself with a
+  // header, so a browser preview or health check records as 'http' and cannot
+  // fabricate the "this session became aware" fact the awareness view keys on.
+  const source = req.headers['x-tangleclaw-cli'] ? 'tc-cli' : 'http';
+
   let receipt = null;
   try {
     receipt = store.awarenessReceipts.record({
       projectId: project ? project.id : null,
       sessionId: activeSession ? activeSession.id : null,
       workspaceId,
-      verb
+      verb,
+      source
     });
   } catch (err) {
     // The receipt is the point of the endpoint; failing to write one must be
