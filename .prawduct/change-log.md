@@ -5026,3 +5026,37 @@ statement than either half. `test/_mini-dom.js` gained `hidden`, `classList.togg
 each added by the test that needed it, per that file's own rule.
 
 **Classification:** feature
+
+## 2026-09-01: ambient awareness — every session knows what TangleClaw is, on any engine (chunks 00-02)
+<!-- prawduct: type=feature | scope=ambient-awareness | chunks=00,01,01c,01b,02 -->
+
+**The defect class, not the bug.** A CasaJirafa Antigravity session with no concept of the
+switchboard fabricated a cross-session exchange rather than report it lacked the capability.
+Underneath: antigravity's config went to a file the engine never reads, the prime pasted 41s
+before the agent existed, and the ledger said `delivered` because tmux did not throw — a severed
+channel with a clean ledger for 12 days across 8 projects.
+
+**What shipped, in dependency order.** (00) The prime-delivery Direction ratified, §3 amended:
+the floor is a reachable capability that fails honestly. (01) The carrier became evidenced and
+managed-block — TC splices its region of `AGENTS.md`, foreign owners byte-identical. (01c) The
+paste is readiness-gated on two independent signals (positive at-rest marker AND settled
+transcript digest, 90s horizon); the ledger gained `unverified` (v30→v31) and `delivered` is
+reserved for an observed-ready pane; #1057's evidence guards run over every profile; #1106
+resolved by measurement. (01b) The plugin-governance deferral narrowed — governed `CLAUDE.md`
+is co-owned, TC's operational block inside markers, governance byte-identical outside; the fleet
+undelivered view judges the LATEST attempt so preserved fabricated history cannot mask the
+broken projects. (02) The keystone: awareness as an environment capability — `bin/tc` on every
+pane's PATH with identity env, `tc whoami` answering an absence-honest roster, and the GET
+recording an awareness receipt (v31→v32, provenance-tagged, retention recorded) so "never
+became aware" is detectable.
+
+**The recurring lesson, four instances this branch:** each slice was honest at the surface being
+stared at and leaked at one nobody was — prose sites 2-4 of a rename, history rows under a fresh-DB
+test, browser callers of an agent endpoint, an env var fed from a prose fallback. Reviews caught
+all four; the class is now named in the reflections.
+
+**Still owed at merge (recorded in the plan):** the live Antigravity `USER_INPUT` prime proof and
+the unprompted `tc` probe that resolves the plan's HIGH-impact assumption — Chunk 02's Status box
+stays unticked until the probe writes its result either way.
+
+**Classification:** feature
