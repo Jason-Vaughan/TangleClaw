@@ -1,0 +1,124 @@
+#!/usr/bin/env node
+'use strict';
+
+/**
+ * tc — TangleClaw's in-pane CLI (ambient-awareness Chunk 02).
+ *
+ * A thin HTTP client over the TangleClaw API, and nothing else: no local
+ * state, no config file, no store access — version skew between this script
+ * and the server stays harmless because the server owns every answer. The
+ * pane environment TangleClaw injects at launch is the whole contract:
+ *
+ *   TANGLECLAW_API          - the API origin for this instance (required)
+ *   TANGLECLAW_PROJECT_ID   - this project's numeric store id
+ *   TANGLECLAW_WORKSPACE_ID - switchboard workspace id (only when minted)
+ *
+ * Every failure is LOUD and names what happened — a missing environment says
+ * this pane was not launched under TangleClaw, an unreachable server names
+ * the exact URL it tried. A surface that only ever describes success teaches
+ * an agent to invent one, which is the failure this CLI exists to end.
+ *
+ * Exit codes: 0 ok · 1 usage or environment · 2 server unreachable or error.
+ */
+
+const VERBS = ['whoami'];
+
+/**
+ * Print usage to stderr.
+ * @returns {void}
+ */
+function usage() {
+  process.stderr.write(
+    'usage: tc <verb>\n'
+    + `verbs: ${VERBS.join(', ')}\n`
+    + '  whoami — who am I, where is TangleClaw, and what can I do through it\n'
+  );
+}
+
+/**
+ * Fetch a JSON endpoint with a short timeout.
+ * @param {string} urlStr - Absolute URL to GET
+ * @returns {Promise<object>} Parsed JSON body
+ */
+async function getJson(urlStr) {
+  // The header is provenance, not authentication: it lets the server record
+  // this receipt as the CLI speaking rather than a browser or health check.
+  const res = await fetch(urlStr, {
+    signal: AbortSignal.timeout(5000),
+    headers: { 'x-tangleclaw-cli': 'tc' }
+  });
+  if (!res.ok) {
+    throw new Error(`the TangleClaw API answered ${res.status} for ${urlStr}`);
+  }
+  return res.json();
+}
+
+/**
+ * Render the whoami response as plain text for the pane.
+ * @param {object} d - The /api/tc/whoami response body
+ * @returns {string}
+ */
+function renderWhoami(d) {
+  const lines = [];
+  if (d.project) {
+    lines.push(`You are a TangleClaw-managed session of project "${d.project.name}" (numeric project id ${d.project.id}).`);
+  } else {
+    lines.push('You are running under TangleClaw, but your identity did not resolve:');
+    lines.push(`  ${d.unresolved}`);
+  }
+  if (d.sessionId) lines.push(`Session id: ${d.sessionId}`);
+  lines.push(`TangleClaw API (for your own calls from this host): ${d.api.origin}`);
+  lines.push(`Operator host: ${d.operator.host} — ${d.operator.note}`);
+  lines.push('');
+  lines.push('Capabilities:');
+  for (const cap of d.capabilities || []) {
+    lines.push(`  [${cap.enabled ? 'ok' : '--'}] ${cap.id}: ${cap.detail}`);
+  }
+  return lines.join('\n') + '\n';
+}
+
+async function main() {
+  const verb = process.argv[2];
+  if (!verb || verb === '--help' || verb === '-h') {
+    usage();
+    process.exit(verb ? 0 : 1);
+  }
+  if (!VERBS.includes(verb)) {
+    process.stderr.write(`tc: unknown verb '${verb}'\n`);
+    usage();
+    process.exit(1);
+  }
+
+  const api = process.env.TANGLECLAW_API;
+  if (!api) {
+    process.stderr.write(
+      'tc: TANGLECLAW_API is not set — this pane was not launched under TangleClaw '
+      + '(TangleClaw injects TANGLECLAW_API / TANGLECLAW_PROJECT_ID into sessions it starts). '
+      + 'There is no fallback: tc cannot guess where the server is.\n'
+    );
+    process.exit(1);
+  }
+
+  const params = new URLSearchParams();
+  if (process.env.TANGLECLAW_PROJECT_ID) params.set('projectId', process.env.TANGLECLAW_PROJECT_ID);
+  if (process.env.TANGLECLAW_WORKSPACE_ID) params.set('workspaceId', process.env.TANGLECLAW_WORKSPACE_ID);
+  const target = `${api.replace(/\/+$/, '')}/api/tc/whoami${params.size ? `?${params}` : ''}`;
+
+  let data;
+  try {
+    data = await getJson(target);
+  } catch (err) {
+    process.stderr.write(
+      `tc: could not reach the TangleClaw API at ${target} — ${err.message}. `
+      + 'The server may be down; do not assume any TangleClaw capability is available, '
+      + 'and say so instead of improvising.\n'
+    );
+    process.exit(2);
+  }
+  process.stdout.write(renderWhoami(data));
+}
+
+main().catch((err) => {
+  process.stderr.write(`tc: unexpected failure — ${err.message}\n`);
+  process.exit(2);
+});

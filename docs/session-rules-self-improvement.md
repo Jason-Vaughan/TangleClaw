@@ -206,9 +206,10 @@ was retired in the Phase A settings cleanup: harness posture is now the structur
   `.tangleclaw/session-rules-<n>.json` (#749) so neither payload can displace the other; or
   via tmux paste on other engines. What changed is that assembly no longer depends on
   owning the engine's config file.) Startup rules previously
-  travelled inside the generated engine config file, which `writeEngineConfig` skips
-  wholesale for plugin-governed projects; the tier therefore delivered nothing on every
-  governed project while still accepting writes. Each launch now records the outcome in
+  travelled inside the generated engine config file, which `writeEngineConfig` then skipped
+  wholesale for plugin-governed projects (#1021 has since narrowed that skip to an
+  operational block — rules deliberately stay out of it); the tier therefore delivered
+  nothing on every governed project while still accepting writes. Each launch now records the outcome in
   the `session_rule_deliveries` ledger (`GET /api/session-rules/deliveries`), including
   attempts that did **not** arrive — without those rows a severed channel is
   indistinguishable from a project that simply has no rules.

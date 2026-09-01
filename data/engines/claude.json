@@ -89,7 +89,11 @@
     "supportsCoAuthor": true,
     "supportsSilentPrime": true,
     "startupInjection": {
-      "maxChars": 10000
+      "maxChars": 10000,
+      "evidence": {
+        "verifiedOn": "2026-07-28",
+        "source": "https://docs.claude.com/en/docs/claude-code/hooks — 10,000-char cap is per hook output; overflow REPLACES the payload with a truncation preview (probe-verified on a live install, 2026-07-28)"
+      }
     }
   },
   "statusPage": {

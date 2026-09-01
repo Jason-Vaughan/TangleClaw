@@ -1176,7 +1176,7 @@ describe('engines', () => {
       };
       for (const [name, content] of Object.entries(generated)) {
         assert.ok(/medusa/i.test(content), `${name} config must mention the switchboard`);
-        assert.ok(content.includes(`/medusa/send`), `${name} config must name the reply endpoint`);
+        assert.ok(content.includes(`/medusa/send`), `${name} config must name the send endpoint`);
       }
     });
 
@@ -1258,17 +1258,33 @@ describe('engines', () => {
       assert.ok(comment.some((l) => l.includes(`Authorization: Bearer ${TOKEN}`)));
     });
 
-    it('injects the bearer header into all four engine configs when enabled', () => {
+    it('injects the bearer header into the engine-private configs when enabled', () => {
       enableGate();
+      // Contract narrowed deliberately 2026-08-31, not weakened: these three
+      // carriers are engine-private files that TangleClaw gitignores, so the
+      // live token may be inlined. The gemini/antigravity carrier is not —
+      // see the test below.
       const generated = {
         claude: engines._generateClaudeMd(proj),
-        gemini: engines._generateGeminiMd(proj),
         codex: engines._generateCodexYaml(proj),
         aider: engines._generateAiderConf(proj)
       };
       for (const [name, content] of Object.entries(generated)) {
         assert.ok(content.includes(`Authorization: Bearer ${TOKEN}`), `${name} config must carry the bearer header`);
       }
+    });
+
+    it('never writes the live token into the committed AGENTS.md carrier', () => {
+      enableGate();
+      const content = engines._generateGeminiMd(proj);
+      // `AGENTS.md` is tracked in git in every antigravity project here, unlike
+      // the gitignored `.antigravity.md` it replaced. Inlining the bearer would
+      // publish it to the repo and anywhere that repo is pushed. Mutation this
+      // catches: dropping the `committedCarrier` flag at the call site.
+      assert.ok(!content.includes(TOKEN), 'the live token must not appear in a committed carrier');
+      assert.ok(!content.includes(`Authorization: Bearer ${TOKEN}`));
+      assert.ok(content.includes('/api/service-token'), 'it names where to fetch the token instead');
+      assert.ok(content.includes('tracked in git'), 'and says why it is absent');
     });
 
     it('injects nothing when the gate is off (no raw token, no injected auth block)', () => {
@@ -1630,7 +1646,7 @@ describe('engines', () => {
       });
       assert.ok(content !== null, 'generateConfig("antigravity") must not return null');
       assert.ok(typeof content === 'string');
-      assert.ok(content.includes('.antigravity.md'));
+      assert.ok(content.includes('TangleClaw'), 'the generated block identifies itself');
     });
 
     it('should include global rules', () => {
@@ -1959,8 +1975,8 @@ describe('engines', () => {
       });
     });
 
-    describe('writeEngineConfig defers', () => {
-      it('skips (no error) and does NOT overwrite an existing CLAUDE.md when plugin-governed', () => {
+    describe('writeEngineConfig defers governance, splices the operational block (#1021)', () => {
+      it('writes ONLY the operational block into a governed CLAUDE.md; the anchor content is byte-identical', () => {
         const p = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } });
         const anchor = '# CLAUDE.md\n\n<!-- PRAWDUCT:ANCHOR -->\nGoverned by the Prawduct V2 plugin.\n';
         const claudeMd = path.join(p, claudeProfile.configFormat.filename);
@@ -1968,11 +1984,97 @@ describe('engines', () => {
 
         const result = engines.writeEngineConfig('claude', p, minimalProjConfig, claudeProfile);
 
+        assert.equal(result.written, true, 'the governed write lands the operational block');
+        assert.equal(result.error, null);
+        const after = fs.readFileSync(claudeMd, 'utf8');
+        // The plan's Done-when: governance content byte-identical before/after.
+        // The merge trims the base's trailing whitespace before appending, so
+        // the plugin's content is everything before the block separator.
+        assert.equal(after.split('<!-- BEGIN:tangleclaw -->')[0], anchor.replace(/\s+$/, '') + '\n\n',
+          'the plugin-owned anchor content outside the markers is byte-identical');
+        assert.match(after, /<!-- END:tangleclaw -->/);
+        assert.match(after, /TangleClaw API base URL/, 'the #1020 dangling pointer is fixed: the base URL is present');
+        // Governance stays the plugin's: none of the rules tiers may ride this block.
+        assert.doesNotMatch(after, /## Core Rules/, 'core rules are governance — not spliced');
+        assert.doesNotMatch(after, /## Extension Rules/, 'extension rules are governance — not spliced');
+      });
+
+      it('a second governed write is idempotent — exactly one block, anchor still byte-identical', () => {
+        const p = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } });
+        const anchor = '# CLAUDE.md\n\n<!-- PRAWDUCT:ANCHOR -->\nGoverned.\n';
+        const claudeMd = path.join(p, claudeProfile.configFormat.filename);
+        fs.writeFileSync(claudeMd, anchor);
+
+        engines.writeEngineConfig('claude', p, minimalProjConfig, claudeProfile);
+        const result2 = engines.writeEngineConfig('claude', p, minimalProjConfig, claudeProfile);
+
+        assert.equal(result2.written, true);
+        const after = fs.readFileSync(claudeMd, 'utf8');
+        assert.equal(after.split('<!-- BEGIN:tangleclaw -->').length - 1, 1, 'exactly one begin marker');
+        assert.equal(after.split('<!-- END:tangleclaw -->').length - 1, 1, 'exactly one end marker');
+        assert.equal(after.split('<!-- BEGIN:tangleclaw -->')[0], anchor.replace(/\s+$/, '') + '\n\n');
+      });
+
+      it('a governed project on a NON-claude-md carrier keeps the skip (bounded decision)', () => {
+        // Writing e.g. .codex.yaml on a governed project would whole-file
+        // overwrite a file TC has never owned there; the skip stays until that
+        // is decided (plan: ambient-awareness Chunk 01b).
+        const p = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } });
+        const codexProfile = store.engines.get('codex');
+        const result = engines.writeEngineConfig('codex', p, minimalProjConfig, codexProfile);
         assert.equal(result.written, false);
         assert.equal(result.skipped, true);
-        assert.equal(result.error, null, 'deferral must not surface as an error');
-        assert.match(result.skipReason, /plugin/i);
-        assert.equal(fs.readFileSync(claudeMd, 'utf8'), anchor, 'the plugin-owned CLAUDE.md anchor must be untouched');
+        assert.match(result.skipReason, /governed by the Prawduct V2 plugin/);
+        assert.equal(fs.existsSync(path.join(p, '.codex.yaml')), false, 'no file appears');
+      });
+
+      it('the governed block carries the Medusa switchboard section when the project opted in (#904 reach)', () => {
+        // #904's fix added the switchboard to the generated template; the
+        // wholesale skip meant that fix never reached a governed project —
+        // including TangleClaw itself (#1020's dangling pointer). The
+        // operational block is what closes that reach gap.
+        const p = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } });
+        fs.writeFileSync(path.join(p, claudeProfile.configFormat.filename), '# CLAUDE.md\n<!-- PRAWDUCT:ANCHOR -->\n');
+        const project = store.projects.create({ name: `governed-medusa-${Date.now()}`, path: p, engine: 'claude' });
+        try {
+          const result = engines.writeEngineConfig(
+            'claude', p, { ...minimalProjConfig, medusaEnabled: true }, claudeProfile
+          );
+          assert.equal(result.written, true);
+          const after = fs.readFileSync(result.configFilePath, 'utf8');
+          assert.match(after, /## Medusa Switchboard/,
+            'an opted-in governed project learns the switchboard exists');
+          assert.match(after, /\/medusa\/send/, 'and where to send');
+        } finally {
+          store.projects.delete(project.id);
+        }
+      });
+
+      it('the governed block NEVER inlines the live service token — pointer only (committed carrier)', () => {
+        // A governed CLAUDE.md is a committed anchor file by construction; an
+        // inline bearer token here would be committed to the repo — the exact
+        // AGENTS.md hazard from the carrier chunk, decided the same way.
+        const p = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } });
+        fs.writeFileSync(path.join(p, claudeProfile.configFormat.filename), '# CLAUDE.md\n<!-- PRAWDUCT:ANCHOR -->\n');
+        const config = store.config.load();
+        const prevEnabled = config.serviceTokenEnabled;
+        const prevToken = config.serviceToken;
+        config.serviceTokenEnabled = true;
+        config.serviceToken = 'tc_live_secret_055577';
+        store.config.save(config);
+        try {
+          const result = engines.writeEngineConfig('claude', p, minimalProjConfig, claudeProfile);
+          assert.equal(result.written, true);
+          const after = fs.readFileSync(result.configFilePath, 'utf8');
+          assert.ok(!after.includes('tc_live_secret_055577'),
+            'the live token must not appear in a committed governed carrier');
+          assert.match(after, /service-token/, 'the block points at the fetch endpoint instead');
+        } finally {
+          const restore = store.config.load();
+          restore.serviceTokenEnabled = prevEnabled;
+          restore.serviceToken = prevToken;
+          store.config.save(restore);
+        }
       });
 
       it('still writes CLAUDE.md normally when NOT plugin-governed (regression)', () => {
@@ -2289,7 +2391,7 @@ describe('engines', () => {
       };
       const content = engines.generateConfig('antigravity', projectConfig);
       assert.ok(content !== null, 'Antigravity config should not be null');
-      assert.ok(content.includes('.antigravity.md'), 'Should have .antigravity.md header');
+      assert.ok(content.startsWith('## TangleClaw'), 'Should open with the managed-block heading');
       assert.ok(content.includes('Core Rules'), 'Should have core rules section');
       assert.ok(content.includes('Extension Rules'), 'Should have extension rules section');
       assert.ok(content.includes('docs'), 'Should include docsParity extension');

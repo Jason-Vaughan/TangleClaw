@@ -992,6 +992,8 @@ body {
 }
 .rules-status-ok { color: var(--primary); }
 .rules-status-err { color: var(--danger); }
+/* 'unverified' (#1063): sent, nothing confirmed it landed — neither ok nor err. */
+.rules-status-warn { color: var(--warning, #ffb300); }
 
 /* ── Session rule lists (#347/D1a) — reused by the Project Rules section of
    the Settings modal; the standalone global-tier panel was retired. ── */

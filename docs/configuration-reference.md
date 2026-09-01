@@ -286,8 +286,14 @@ Engine profiles define how TangleClaw interacts with an AI engine. See the [Engi
   "interactionModel": "string — 'session' or 'persistent'",
   "configFormat": {
     "filename": "string|null — config file name",
-    "syntax": "string|null — 'markdown', 'yaml', or null",
-    "generator": "string|null — config generator id"
+    "syntax": "string|null — 'markdown', 'yaml', 'toml', or null",
+    "generator": "string|null — config generator id",
+    "mergeStrategy": "string|null — 'whole-file' (default) or 'managed-block'",
+    "discovery": {
+      "verifiedOn": "string — ISO date the filename claim was checked upstream",
+      "source": "string — the upstream doc consulted",
+      "note": "string|null — what it said"
+    }
   },
   "coAuthorFormat": "string|null — git co-author pattern",
   "commands": [
@@ -300,7 +306,8 @@ Engine profiles define how TangleClaw interacts with an AI engine. See the [Engi
   "launch": {
     "shellCommand": "string",
     "args": ["array of string"],
-    "env": { "ENV_VAR": "value" }
+    "env": { "ENV_VAR": "value" },
+    "startupDelay": "number|null — ms to wait before the blind prime paste. Required for a paste-path engine (supportsPrimePrompt, no supportsSilentPrime) with no positive at-rest marker in medusa-wake's ENGINE_WAKE_PROFILES; engines WITH a marker are readiness-gated instead and ignore this. See docs/engine-guide.md → Prime paste readiness."
   },
   "persistent": "object|null — persistent engine config",
   "capabilities": {
@@ -310,7 +317,11 @@ Engine profiles define how TangleClaw interacts with an AI engine. See the [Engi
     "supportsCoAuthor": "boolean",
     "supportsSilentPrime": "boolean",
     "startupInjection": {
-      "maxChars": "number — characters this engine's startup channel carries before the engine itself truncates. Omit to keep the 16,000 fallback. See docs/engine-guide.md → Capabilities."
+      "maxChars": "number — characters this engine's startup channel carries before the engine itself truncates. Omit to keep the 16,000 fallback. See docs/engine-guide.md → Capabilities.",
+      "evidence": {
+        "verifiedOn": "string — ISO date maxChars was measured upstream (required when maxChars is declared; the profile guard suite fails an unevidenced value)",
+        "source": "string — where it was measured (upstream doc / probe)"
+      }
     }
   }
 }
@@ -320,9 +331,9 @@ Engine profiles define how TangleClaw interacts with an AI engine. See the [Engi
 
 The SQLite database at `~/.tangleclaw/tangleclaw.db` stores runtime state. You should not need to edit it directly — use the API instead.
 
-**Tables**: `projects`, `sessions`, `learnings`, `activity_log`, `port_leases`, `schema_version`, `project_groups`, `group_members`, `shared_docs`, `openclaw_connections`, `eval_scores`, `eval_baselines`, `eval_incidents`
+**Tables**: enumerated by the schema in `lib/store.js` (inspect a live DB with `sqlite3 ~/.tangleclaw/tangleclaw.db .tables`). A list copied here went stale twice — the schema is the source of truth.
 
-Current schema version: **28**
+Current schema version: `CURRENT_SCHEMA_VERSION` in `lib/store.js` (a literal copied here went stale within months; the constant is the source of truth).
 
 ### Port Leases Table
 

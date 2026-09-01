@@ -49,7 +49,7 @@ Engine profiles live in `~/.tangleclaw/engines/`. TangleClaw ships with five bui
 
 - **Command**: `agy`
 - **Interaction model**: Session-based (spawns in tmux)
-- **Config file**: `.antigravity.md` (Markdown, project root — Antigravity's recommended context file; it also reads `GEMINI.md`/`AGENTS.md` for compatibility, but `.antigravity.md` takes precedence)
+- **Config file**: `AGENTS.md` (Markdown, project root), written as a **managed block** rather than owned outright. Antigravity discovers `GEMINI.md` / `AGENTS.md` only, walking up from the working directory to the repo root — verified 2026-08-31 against `~/.gemini/antigravity-cli/builtin/skills/agy-customizations/docs/rules.md`. `AGENTS.md` is a multi-vendor convention that operators and other tools (`next dev`) also write, so TangleClaw splices only the region between its `BEGIN:tangleclaw` / `END:tangleclaw` markers and leaves the rest untouched.
 - **Slash commands**: None
 - **Launch modes**: Interactive (default), Sandbox (`--sandbox`), Bypass (`--dangerously-skip-permissions`, containers/VMs only). Antigravity has no Auto-Edit/Plan-Only approval modes (verified against agy v1.0.10)
 - **Capabilities**: Prime prompt, config file
@@ -126,7 +126,7 @@ Create a JSON file at `~/.tangleclaw/engines/<engine-id>.json`:
 }
 ```
 
-The `configFormat` above is set to `null` because config file generation requires a built-in generator. The available generators are `claude-md`, `codex-yaml`, `aider-conf`, `gemini-md` (generic markdown; kept for custom profiles after the Gemini engine's retirement), and `antigravity-md`. If your engine doesn't use a TangleClaw-generated config file, set all three fields to `null`. To add a new generator, you'd need to add a handler in `lib/engines.js`.
+The `configFormat` above is set to `null` because config file generation requires a built-in generator. The available generators are `claude-md`, `codex-yaml`, `aider-conf`, `gemini-md` (generic markdown; kept for custom profiles after the Gemini engine's retirement), and `antigravity-md`. If your engine doesn't use a TangleClaw-generated config file, set `filename`, `syntax` and `generator` to `null`. To add a new generator, you'd need to add a handler in `lib/engines.js`.
 
 ### Engine Profile Fields
 
@@ -149,8 +149,10 @@ The `configFormat` above is set to `null` because config file generation require
 | Field | Description |
 |-------|-------------|
 | `filename` | Config file name written to project root (e.g., `CLAUDE.md`) |
-| `syntax` | File syntax: `"markdown"`, `"yaml"`, or `null` |
+| `syntax` | File syntax: `"markdown"`, `"yaml"`, `"toml"`, or `null` |
 | `generator` | Config generator to use: `"claude-md"`, `"codex-yaml"`, `"aider-conf"`, `"gemini-md"`, `"antigravity-md"`, or `null` |
+| `mergeStrategy` | `"whole-file"` (default) — TangleClaw owns the entire file — or `"managed-block"`, where it splices only the region between `BEGIN:tangleclaw` / `END:tangleclaw` and leaves the rest byte-identical. **Required** for a shared-convention carrier (`AGENTS.md`, `GEMINI.md`, `CONVENTIONS.md`): those are files operators commit and other tools also write, so a whole-file write destroys their content and is **refused at the write**, not merely warned about |
+| `discovery` | Evidence for the `filename` claim: `verifiedOn` (ISO date) and `source` (the upstream doc consulted), plus an optional `note`. Required wherever a wrong filename is destructive — a shared-convention carrier or a spliced block. A filename is an **upstream** fact about the engine, and an assertion whose both sides live in this repo cannot detect it drifting |
 
 ### Detection Strategies
 
@@ -197,9 +199,37 @@ fallback**, so declaring it for one engine never changes another's behavior.
 The limit applies to the startup-hook channel only. When a project runs with `silentPrime` off the
 prime is pasted into the terminal instead, and the fallback is used.
 
-**Verify the number against the engine's own documentation before declaring it, and re-verify if
-directives start going missing.** A value copied from another engine, or left stale after the
-harness changes, fails silently and in the one place nothing else is watching.
+**Verify the number against the engine's own documentation before declaring it, and record where
+and when in a sibling `evidence` block** — `"startupInjection": { "maxChars": 10000, "evidence":
+{ "verifiedOn": "YYYY-MM-DD", "source": "…" } }`. The profile guard suite fails any declared
+`maxChars` with no evidence: the number is an *upstream* fact, and an assertion with both sides in
+this repo stays green forever after the upstream changes. Re-verify if directives start going
+missing — a value copied from another engine, or left stale after the harness changes, fails
+silently and in the one place nothing else is watching.
+
+#### The ambient-awareness floor (`tc` on PATH)
+
+Independent of any config file or prime, every tmux session TangleClaw launches gets the `tc` CLI
+on its `PATH` plus `TANGLECLAW_API` / `TANGLECLAW_PROJECT_ID` (and `TANGLECLAW_WORKSPACE_ID` when
+the switchboard minted one) in the pane environment. `tc whoami` answers identity, API origin,
+operator host, and an honest capability roster — and the server records each invocation as an
+**awareness receipt**, so a session that never discovered the floor is a detectable state. This is
+engine-neutral by construction: a new engine needs no adapter to reach it. Engine-profile
+`launch.env` overrides any of these keys on collision.
+
+#### Prime paste readiness
+
+When a project runs with `silentPrime` off (or the engine has no silent channel), the prime is
+pasted into the TUI. That paste is **readiness-gated** for engines with a positive at-rest marker
+in `medusa-wake`'s `ENGINE_WAKE_PROFILES` (antigravity: `? for shortcuts`): the paste waits until
+the marker renders over a transcript that has stopped moving, instead of firing on a fixed timer —
+a fixed delay racing an engine boot is how a 41-second antigravity boot swallowed the prime for 12
+days with a clean ledger.
+
+Engines without a positive marker cannot be gated and **must declare an explicit
+`launch.startupDelay`** (the guard suite fails a paste-path profile with neither), and their blind
+paste is recorded in the delivery ledger as `unverified`, never `delivered` — `delivered` is
+reserved for a paste whose pane was observed ready.
 
 ## Config File Generation
 
@@ -216,9 +246,20 @@ All engines with `supportsConfigFile: true` receive the same rule content, trans
 | Claude Code | `CLAUDE.md` | Markdown sections with bullet-point rules, full PortHub guide |
 | Codex | `.codex.yaml` | `instructions:` multiline YAML field containing markdown-formatted rules and PortHub guide |
 | Aider | `.aider.conf.yml` | YAML comments with rules and PortHub reference, plus functional config settings |
-| Antigravity | `.antigravity.md` | Markdown sections (same format as CLAUDE.md), written to the project root |
+| Antigravity | `AGENTS.md` | Markdown sections (same format as CLAUDE.md), spliced into the project root file as a **managed block** — TangleClaw owns only the region between its `BEGIN:tangleclaw` / `END:tangleclaw` markers |
 
 This translation is automatic — rules are written once, and TangleClaw handles the format conversion. A parity test suite verifies that all engines receive core rules and PortHub references.
+
+**Plugin-governed projects get an operational block, not the full file.** When a project's dev-time
+governance is owned by the Prawduct V2 plugin (`isPluginGoverned`), the plugin owns `CLAUDE.md`'s
+governance content, so TangleClaw does not regenerate the file — it splices a **managed block**
+(same `BEGIN:tangleclaw` / `END:tangleclaw` mechanism as `AGENTS.md`) carrying only operational
+content: the API base URL, the service-token *pointer* (never the inline token — a governed
+`CLAUDE.md` is a committed file), the Medusa switchboard section, and the PortHub / shared-docs /
+session-memory guides. Rules tiers (core, extension, global) stay out of the block: governance is
+the plugin's side of the line, and per-project session rules ride the prime (#595). Governed
+projects on a non-`claude-md` carrier keep the full skip — writing a file TC has never owned on
+those projects is a separate decision.
 
 ## Parity Checklist for New Engines
 

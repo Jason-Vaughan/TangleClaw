@@ -2581,6 +2581,112 @@ route('GET', '/api/session-rules/deliveries', (req, res) => {
   return jsonResponse(res, 200, { undelivered: store.sessionRuleDeliveries.projectsWithUndeliveredRules() });
 });
 
+// GET /api/tc/whoami — the `tc` CLI's one verb (ambient-awareness Chunk 02).
+// Answers "who am I, where is TangleClaw, and what can I do through it" for the
+// pane that asks, and the GET itself IS the awareness receipt: recording
+// happens server-side on every invocation, so the CLI cannot forget to report
+// and a receipt row means this handler actually ran. Ids are taken as claimed
+// and resolved best-effort — an invocation with a wrong or missing project id
+// still records a receipt (project null), because the fact this ledger
+// measures is "an agent discovered and ran the CLI at all" (the plan's
+// HIGH-impact assumption), not whether its ids were right.
+//
+// Capabilities are reported honestly, ABSENCE INCLUDED (Direction §3 amendment):
+// a disabled capability appears with enabled:false and a reason rather than
+// vanishing — an agent that cannot discover it lacks a tool will improvise one,
+// which is the fabrication that opened this plan. No secrets in the response:
+// the service token stays behind its own endpoint.
+route('GET', '/api/tc/whoami', (req, res) => {
+  const query = parseQuery(reqUrl(req).search);
+  const claimedProjectId = query.projectId !== undefined ? Number(query.projectId) : null;
+  const workspaceId = typeof query.workspaceId === 'string' && query.workspaceId ? query.workspaceId : null;
+  const verb = 'whoami';
+
+  let project = null;
+  if (Number.isInteger(claimedProjectId)) {
+    try {
+      project = store.projects.get(claimedProjectId) || null;
+    } catch { project = null; }
+  }
+  const activeSession = project ? store.sessions.getActive(project.id) : null;
+
+  // Provenance (not authentication): the tc client identifies itself with a
+  // header, so a browser preview or health check records as 'http' and cannot
+  // fabricate the "this session became aware" fact the awareness view keys on.
+  const source = req.headers['x-tangleclaw-cli'] ? 'tc-cli' : 'http';
+
+  let receipt = null;
+  try {
+    receipt = store.awarenessReceipts.record({
+      projectId: project ? project.id : null,
+      sessionId: activeSession ? activeSession.id : null,
+      workspaceId,
+      verb,
+      source
+    });
+  } catch (err) {
+    // The receipt is the point of the endpoint; failing to write one must be
+    // loud in the logs, but the caller still deserves its answer.
+    log.warn('awareness receipt write failed', { error: err.message });
+  }
+
+  const config = store.config.load();
+  const protocol = httpsSetup.effectiveServerProtocol(config);
+  const port = httpsSetup.effectiveServerPort(config);
+  const operatorHost = require('./lib/session-ownership')._localHost();
+
+  let projConfig = null;
+  if (project) {
+    try { projConfig = store.projectConfig.load(project.path); } catch { projConfig = null; }
+  }
+  const medusaEnabled = !!(projConfig && projConfig.medusaEnabled === true);
+
+  const api = `${protocol}://localhost:${port}`;
+  const capabilities = [
+    {
+      id: 'session-rules', enabled: !!project,
+      detail: project
+        ? `durable project rules: GET/POST ${api}/api/session-rules?projectId=${project.id} (AI proposals land as status='proposed' until the operator approves)`
+        : 'unavailable: this call did not resolve to a registered project'
+    },
+    {
+      id: 'porthub', enabled: true,
+      detail: `port assignments go through PortHub: ${api}/api/ports`
+    },
+    {
+      id: 'shared-docs', enabled: true,
+      detail: `cross-project shared documents: ${api}/api/shared-docs`
+    },
+    {
+      id: 'switchboard', enabled: medusaEnabled && !!workspaceId,
+      detail: medusaEnabled && workspaceId
+        ? `message other sessions: POST ${api}/api/sessions/${encodeURIComponent(project.name)}/medusa/send — your workspace id is ${workspaceId}`
+        : (medusaEnabled
+          ? 'enabled for this project, but this pane carries no workspace id — it was not launched with one, so you cannot send or receive; say so rather than improvising a channel'
+          : 'not enabled for this project — you CANNOT message other sessions; say so rather than improvising a channel')
+    }
+  ];
+
+  return jsonResponse(res, 200, {
+    project: project
+      ? { id: project.id, name: project.name }
+      : null,
+    unresolved: project ? undefined : `projectId ${query.projectId === undefined ? '(absent)' : query.projectId} did not resolve to a registered project — identity claims below are limited to instance facts`,
+    sessionId: activeSession ? activeSession.id : null,
+    workspaceId,
+    api: {
+      origin: api,
+      note: 'localhost is correct for YOUR OWN calls from this host'
+    },
+    operator: {
+      host: operatorHost,
+      note: `operator-facing links must use http(s)://${operatorHost}:<port>, never localhost — the operator is almost never on this machine`
+    },
+    capabilities,
+    receiptRecorded: !!receipt
+  });
+});
+
 // GET /api/medusa/deliveries — the fleet-wide Switchboard answer (#792): every
 // participant whose newest inbox edge was NOT nudged, oldest silence first.
 // `?sessionId=` narrows to one participant's history instead.

@@ -4,9 +4,15 @@
   "command": "agy",
   "interactionModel": "session",
   "configFormat": {
-    "filename": ".antigravity.md",
+    "filename": "AGENTS.md",
     "syntax": "markdown",
-    "generator": "antigravity-md"
+    "generator": "antigravity-md",
+    "mergeStrategy": "managed-block",
+    "discovery": {
+      "verifiedOn": "2026-08-31",
+      "source": "~/.gemini/antigravity-cli/builtin/skills/agy-customizations/docs/rules.md",
+      "note": "Antigravity discovers GEMINI.md / AGENTS.md only, walking up from cwd to the repo root. It never reads .antigravity.md, which is where TangleClaw wrote this file until 2026-08-31. AGENTS.md is a multi-vendor convention and is frequently owned by another writer, so this profile merges a managed block rather than owning the file."
+    }
   },
   "coAuthorFormat": null,
   "commands": [],

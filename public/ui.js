@@ -1427,7 +1427,11 @@ async function loadProjectRules(projectId) {
         list.innerHTML = '<p class="session-rules-empty">No delivery records found.</p>';
       } else {
         list.innerHTML = deliveriesData.deliveries.slice(0, 5).map((d) => {
-          const outcomeClass = d.outcome === 'delivered' ? 'rules-status-ok' : (d.outcome === 'skipped' ? 'rules-status-err' : '');
+          // 'unverified' (#1063) is deliberately neither ok nor err: the block
+          // was sent and nothing observed it land.
+          const outcomeClass = d.outcome === 'delivered' ? 'rules-status-ok'
+            : (d.outcome === 'skipped' ? 'rules-status-err'
+              : (d.outcome === 'unverified' ? 'rules-status-warn' : ''));
           return `<div class="session-rule-item">
             <div class="session-rule-content">
               <strong>${esc(d.sessionId)}</strong>: <span class="${outcomeClass}">${esc(d.outcome)}</span>
