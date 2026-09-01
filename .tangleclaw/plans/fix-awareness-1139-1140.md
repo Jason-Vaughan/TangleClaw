@@ -90,12 +90,13 @@ write an attributed receipt. Record in PR as the operator-visible test plan.
 
 ## Status
 
-- [ ] Chunk 01 — #1139 scoring fix + tests
-- [ ] Chunk 02 — #1140 PATH wrapper + tests
+- [x] Chunk 01 — #1139 scoring fix + tests
+- [x] Chunk 02 — #1140 PATH wrapper + tests
 - [ ] Critic (cumulative) + resolutions
 - [ ] PR (Fixes #1139, Fixes #1140), merge, live VRF, server restart
 
 ## Context
 
-Plan written 2026-08-31; nothing built yet. Probe evidence above is from the
-live host this session. Start at Chunk 01.
+Chunks 01 (326ad4e) + 02 committed, suite green (6938 pass / 0 fail).
+Mutations red: no-rules test red pre-fix; wrapper-unwired red. Next: Critic
+cumulative, then PR. Live VRF of #1140 is post-merge + server restart.
