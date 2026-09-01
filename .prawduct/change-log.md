@@ -5060,3 +5060,48 @@ the unprompted `tc` probe that resolves the plan's HIGH-impact assumption — Ch
 stays unticked until the probe writes its result either way.
 
 **Classification:** feature
+
+## 2026-09-01: the tc verb surface — eight verbs, one honest receipt per invocation (ambient-awareness chunk 03)
+<!-- prawduct: type=feature | scope=ambient-awareness | chunks=03 -->
+
+**What shipped.** `tc` grew from one verb to the plan's surface — `whoami`, `capabilities`,
+`sessions`, `message send|read|ack`, `ports`, `docs`, `rules`, `learnings` — as a declared
+roster (`lib/tc-verbs.js`, the ecosystem-primer pattern extended). Verbs call the existing API
+plus one addition (`GET /api/tc/sessions`); the request dispatcher records one verb-labeled
+awareness receipt per invocation from provenance headers, BEFORE the M2M gate (a refused call
+still proves discovery); auxiliary identity side-fetches mark themselves and record nothing.
+Riding: null-project receipt bucket now prunes to the cap; the stacked stale `_apiOrigin`
+JSDoc merged; api-contract §21 records the surface, header protocol, exit-code error model,
+and deprecation policy (the entry chunk 02 deferred here). The probe result that discharged
+chunk 02's Done-when was folded into its CHANGELOG entry.
+
+**The design's own probe design held.** The plan said discovery arrives via carriers, never
+ambiently — so the verb surface assumes nothing lands unprompted; the receipt protocol exists
+to measure exactly that once chunk 04's bootstrap line points at it.
+
+**Critic rounds.** Cumulative `rev-20260901T040526Z-9190a8bb` (three reviewers): 0 blocking,
+2 warnings, 10 notes. Both warnings were the recorded pattern — honest at the surface being
+stared at, leaking at one nobody was: `message read`/`ack` claimed certainty the producer's
+response does not carry (an empty inbox and a stopped listener answer identically; `/read`
+no-ops silently with no listener), and the two receipt recorders duplicated the
+resolve/label/write core, one semantics change away from forking what a receipt means by
+request path. Fixed in one batch (`fdd4a76`), mutation-confirmed, verified by
+`rev-20260901T041612Z-5870456a` (0 findings). Disposition table:
+
+**rev-20260901T040526Z-9190a8bb** — chunk 03
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | fixed | message read/ack claimed a certainty the producer's response does not carry |
+| R-5 | warning | fixed | two independent awareness-receipt recorders duplicated the resolve-and-record core |
+| R-6 | note | accepted | FEATURES.md chunk label — fixed in the same batch |
+| R-2, R-3, R-9, R-10 | note | accepted | recorded blind spots / deliberate scope (reasons in the evidence store) |
+| R-4, R-7, R-8, R-11, R-12 | note | accepted | priors acknowledgments and clean checks |
+
+**Kept for chunk 05** (verify-resolutions observation): the listener state machine is
+`off | connecting | listening | error`, and the read probe treats only `off` as unproven — an
+`error`/`connecting` window still renders an empty in-memory inbox as genuinely empty while
+Hub-side mail is invisible. Transient, and the durable consequence is closed; probe
+`state !== 'listening'` (or word the render by state) when chunk 05 touches this surface.
+
+**Classification:** feature

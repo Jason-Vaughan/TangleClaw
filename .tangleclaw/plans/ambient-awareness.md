@@ -1,7 +1,7 @@
 ---
 plan: ambient-awareness
 title: Ambient Awareness — every TangleClaw session knows what TangleClaw is, on any engine
-status: active (Chunks 00–02 complete, merged in #1133, live probe run 2026-09-01 — assumption resolved; Chunk 03 next, informed by the probe results)
+status: active (Chunks 00–03 complete — 00–02 merged in #1133 + live-probed, 03 reviewed clean on feat/ambient-awareness; Chunk 04 next, evidence-backed necessary by the probe)
 created: 2026-08-31
 branch: feat/ambient-awareness
 shared_link: https://claude.ai/code/artifact/830caee7-fd12-4cff-a0e8-9d6bbb8fc522  # keep THIS link updated in place; never mint a new one
@@ -553,6 +553,12 @@ stated consequence**, not a footnote. A line the agent skims is a vacuum too.
 - The family guard from Chunk 01 extends to awareness: a new engine profile that
   cannot demonstrate a path to awareness fails the suite rather than shipping
   silent.
+- Riders from Chunk 03's review: `tc message read`'s empty-inbox probe treats only
+  listener state `off` as unproven — an `error`/`connecting` window still renders
+  emptiness while Hub-side mail is invisible (probe `state !== 'listening'`, or word
+  the render by state); and a message-verb invocation that fails identity resolution
+  leaves zero receipts (accepted blind spot R-2) — revisit if the awareness view
+  needs it.
 
 **Done when:** disabling the carrier for one engine turns a surface red within
 one launch. That is the acceptance criterion the whole plan exists for — the
@@ -608,6 +614,6 @@ need reopening or a successor.
 - [x] Chunk 01c — Prime channel: readiness gate (#1106 resolved as option 2), drift evidence + guards (#1057), honest `unverified` ledger (#1063 advanced, not closed), send-row label — **done 2026-09-01** (`58eef25` + findings batch; Critic `rev-20260901T012621Z` cumulative — 0 blocking, warnings fixed). **Live proof still owed at merge:** an Antigravity launch showing the prime as `type: USER_INPUT` in the agent's transcript; needs the live server restarted onto this code — merge deliberately.
 - [x] Chunk 01b — Narrow the plugin-governance deferral (#1021 — close at merge) — **done 2026-09-01** (`fe629a7` + findings batch; Critic `rev-20260901T023046Z` cumulative — code clean, 1 blocking record-plumbing gap fixed by pointing `active_build_plan` + an artifacts symlink at this plan)
 - [x] Chunk 02 — `tc` vertical slice — code complete 2026-09-01 (`f29b6c3` + findings batches, merged in #1133); **live probe RUN 2026-09-01 03:29–03:40Z on Medusa (sessions 899/900/901), assumption RESOLVED — see "Live probe results" below**
-- [ ] Chunk 03 — Verb surface + roster
+- [x] Chunk 03 — Verb surface + roster — **done 2026-09-01** (`5a28642` + `0423687` + findings batch `fdd4a76`; Critic cumulative `rev-20260901T040526Z-9190a8bb` — 0 blocking, 2 warnings fixed + mutation-confirmed, verified clean by `rev-20260901T041612Z-5870456a`; api-contract §21 discharged, governance checkpoint 2 satisfied)
 - [ ] Chunk 04 — Bootstrap line
 - [ ] Chunk 05 — Awareness observability
