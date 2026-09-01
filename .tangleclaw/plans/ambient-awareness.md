@@ -425,6 +425,31 @@ for something else.
 block, its `PRAWDUCT:ANCHOR` governance content is byte-identical before and after,
 and a guard pins both halves.
 
+**Decisions pinned at build start (2026-09-01):**
+
+- **Operational = how to reach TangleClaw services; governance = how work is ruled.**
+  The governed block carries: PortHub guide + API base URL, the service-token auth
+  block, the Medusa switchboard section (closing #904's reach gap for governed
+  projects, the #1020 dangling pointer), shared-docs content + guide, and the
+  session-memory guide. It deliberately EXCLUDES core rules, extension rules, and
+  the operator's global rules — those are rules, the plugin's side of the line, and
+  splicing ~4KB of operator rule prose into every governed project's committed
+  `CLAUDE.md` is a separate decision nobody has made.
+- **`committedCarrier: true`, always.** A governed `CLAUDE.md` is a committed
+  anchor file by construction, so the block emits the `/api/service-token` fetch
+  pointer, never the inline bearer token — the exact Chunk 01 hazard, decided the
+  same way.
+- **Scope: the `claude-md` carrier only.** A governed project running a non-Claude
+  engine keeps the existing skip. Narrowing further (writing `.codex.yaml` etc. on
+  governed projects) would whole-file-write files TC has never owned there — a
+  hand-authored `.codex.yaml` in a governed project would be clobbered, the Chunk 01
+  defect by another route. Bounded residual, recorded here; managed-block carriers
+  (antigravity) can be revisited when a governed non-Claude project actually exists.
+- **Mechanism: Chunk 01's managed block verbatim** (`_mergeManagedBlock`, markdown
+  comment markers, heading demotion, refuse-don't-repair) — governed `CLAUDE.md`
+  becomes a co-owned file exactly like `AGENTS.md`: plugin outside the markers, TC
+  inside them.
+
 ---
 
 ### Chunk 02 — `tc` thin vertical slice *(architectural keystone)*

@@ -1306,13 +1306,15 @@ describe('projects', () => {
         'no CLAUDE.md may be written for a codex project missing projConfig.engine');
     });
 
-    it('defers to the Prawduct V2 plugin at boot: preserves the anchor AND strips the governance hook (#330)', async () => {
+    it('defers governance to the Prawduct V2 plugin at boot: anchor byte-identical outside the operational block, governance hook stripped (#330, #1021)', async () => {
       // A project later onboarded to the V2 plugin: it carries the install
       // reference plus a leftover TC governance `.hooks` block and a plugin-owned
-      // thin CLAUDE.md anchor. Boot-sync must NOT regenerate CLAUDE.md and MUST
-      // strip the stale governance hooks (the gap the Critic flagged — boot-sync
-      // previously called writeEngineConfig but not syncEngineHooks). silentPrime
-      // is pinned off so this stays focused on governance-hook removal; the
+      // thin CLAUDE.md anchor. Boot-sync must not touch the plugin's governance
+      // content — since #1021 it splices TC's OPERATIONAL managed block below
+      // the anchor instead of skipping the file — and MUST strip the stale
+      // governance hooks (the gap the Critic flagged — boot-sync previously
+      // called writeEngineConfig but not syncEngineHooks). silentPrime is
+      // pinned off so this stays focused on governance-hook removal; the
       // L1-prime-preserved-on-a-governed-project case is covered in engines.test.js.
       projects.createProject({ name: 'plugin-governed-boot' });
       const projPath = path.join(projectsDir, 'plugin-governed-boot');
@@ -1332,7 +1334,12 @@ describe('projects', () => {
       const result = projects.syncAllProjects();
       assert.ok(result.synced > 0);
 
-      assert.equal(fs.readFileSync(claudeMd, 'utf8'), anchor, 'plugin-owned CLAUDE.md must not be regenerated at boot');
+      const after = fs.readFileSync(claudeMd, 'utf8');
+      assert.equal(after.split('<!-- BEGIN:tangleclaw -->')[0], anchor.replace(/\s+$/, '') + '\n\n',
+        'plugin-owned governance content stays byte-identical outside the markers');
+      assert.match(after, /TangleClaw API base URL/,
+        'boot-sync delivers the operational block to a governed project (#1021)');
+      assert.doesNotMatch(after, /## Core Rules/, 'governance content is not regenerated at boot');
       const settings = JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf8'));
       assert.equal(settings.hooks, undefined, 'stale governance hooks block must be stripped at boot (silentPrime off → no L1 to keep)');
       assert.equal(settings.enabledPlugins['prawduct@prawduct'], true, 'plugin install reference must be preserved');

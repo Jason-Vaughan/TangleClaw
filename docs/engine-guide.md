@@ -240,6 +240,17 @@ All engines with `supportsConfigFile: true` receive the same rule content, trans
 
 This translation is automatic — rules are written once, and TangleClaw handles the format conversion. A parity test suite verifies that all engines receive core rules and PortHub references.
 
+**Plugin-governed projects get an operational block, not the full file.** When a project's dev-time
+governance is owned by the Prawduct V2 plugin (`isPluginGoverned`), the plugin owns `CLAUDE.md`'s
+governance content, so TangleClaw does not regenerate the file — it splices a **managed block**
+(same `BEGIN:tangleclaw` / `END:tangleclaw` mechanism as `AGENTS.md`) carrying only operational
+content: the API base URL, the service-token *pointer* (never the inline token — a governed
+`CLAUDE.md` is a committed file), the Medusa switchboard section, and the PortHub / shared-docs /
+session-memory guides. Rules tiers (core, extension, global) stay out of the block: governance is
+the plugin's side of the line, and per-project session rules ride the prime (#595). Governed
+projects on a non-`claude-md` carrier keep the full skip — writing a file TC has never owned on
+those projects is a separate decision.
+
 ## Parity Checklist for New Engines
 
 Every engine with `supportsConfigFile: true` **must** pass parity validation. Use `engines.validateParity()` programmatically or run the parity test suite (`node --test test/engines.test.js`).

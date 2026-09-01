@@ -1975,8 +1975,8 @@ describe('engines', () => {
       });
     });
 
-    describe('writeEngineConfig defers', () => {
-      it('skips (no error) and does NOT overwrite an existing CLAUDE.md when plugin-governed', () => {
+    describe('writeEngineConfig defers governance, splices the operational block (#1021)', () => {
+      it('writes ONLY the operational block into a governed CLAUDE.md; the anchor content is byte-identical', () => {
         const p = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } });
         const anchor = '# CLAUDE.md\n\n<!-- PRAWDUCT:ANCHOR -->\nGoverned by the Prawduct V2 plugin.\n';
         const claudeMd = path.join(p, claudeProfile.configFormat.filename);
@@ -1984,11 +1984,97 @@ describe('engines', () => {
 
         const result = engines.writeEngineConfig('claude', p, minimalProjConfig, claudeProfile);
 
+        assert.equal(result.written, true, 'the governed write lands the operational block');
+        assert.equal(result.error, null);
+        const after = fs.readFileSync(claudeMd, 'utf8');
+        // The plan's Done-when: governance content byte-identical before/after.
+        // The merge trims the base's trailing whitespace before appending, so
+        // the plugin's content is everything before the block separator.
+        assert.equal(after.split('<!-- BEGIN:tangleclaw -->')[0], anchor.replace(/\s+$/, '') + '\n\n',
+          'the plugin-owned anchor content outside the markers is byte-identical');
+        assert.match(after, /<!-- END:tangleclaw -->/);
+        assert.match(after, /TangleClaw API base URL/, 'the #1020 dangling pointer is fixed: the base URL is present');
+        // Governance stays the plugin's: none of the rules tiers may ride this block.
+        assert.doesNotMatch(after, /## Core Rules/, 'core rules are governance — not spliced');
+        assert.doesNotMatch(after, /## Extension Rules/, 'extension rules are governance — not spliced');
+      });
+
+      it('a second governed write is idempotent — exactly one block, anchor still byte-identical', () => {
+        const p = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } });
+        const anchor = '# CLAUDE.md\n\n<!-- PRAWDUCT:ANCHOR -->\nGoverned.\n';
+        const claudeMd = path.join(p, claudeProfile.configFormat.filename);
+        fs.writeFileSync(claudeMd, anchor);
+
+        engines.writeEngineConfig('claude', p, minimalProjConfig, claudeProfile);
+        const result2 = engines.writeEngineConfig('claude', p, minimalProjConfig, claudeProfile);
+
+        assert.equal(result2.written, true);
+        const after = fs.readFileSync(claudeMd, 'utf8');
+        assert.equal(after.split('<!-- BEGIN:tangleclaw -->').length - 1, 1, 'exactly one begin marker');
+        assert.equal(after.split('<!-- END:tangleclaw -->').length - 1, 1, 'exactly one end marker');
+        assert.equal(after.split('<!-- BEGIN:tangleclaw -->')[0], anchor.replace(/\s+$/, '') + '\n\n');
+      });
+
+      it('a governed project on a NON-claude-md carrier keeps the skip (bounded decision)', () => {
+        // Writing e.g. .codex.yaml on a governed project would whole-file
+        // overwrite a file TC has never owned there; the skip stays until that
+        // is decided (plan: ambient-awareness Chunk 01b).
+        const p = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } });
+        const codexProfile = store.engines.get('codex');
+        const result = engines.writeEngineConfig('codex', p, minimalProjConfig, codexProfile);
         assert.equal(result.written, false);
         assert.equal(result.skipped, true);
-        assert.equal(result.error, null, 'deferral must not surface as an error');
-        assert.match(result.skipReason, /plugin/i);
-        assert.equal(fs.readFileSync(claudeMd, 'utf8'), anchor, 'the plugin-owned CLAUDE.md anchor must be untouched');
+        assert.match(result.skipReason, /governed by the Prawduct V2 plugin/);
+        assert.equal(fs.existsSync(path.join(p, '.codex.yaml')), false, 'no file appears');
+      });
+
+      it('the governed block carries the Medusa switchboard section when the project opted in (#904 reach)', () => {
+        // #904's fix added the switchboard to the generated template; the
+        // wholesale skip meant that fix never reached a governed project —
+        // including TangleClaw itself (#1020's dangling pointer). The
+        // operational block is what closes that reach gap.
+        const p = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } });
+        fs.writeFileSync(path.join(p, claudeProfile.configFormat.filename), '# CLAUDE.md\n<!-- PRAWDUCT:ANCHOR -->\n');
+        const project = store.projects.create({ name: `governed-medusa-${Date.now()}`, path: p, engine: 'claude' });
+        try {
+          const result = engines.writeEngineConfig(
+            'claude', p, { ...minimalProjConfig, medusaEnabled: true }, claudeProfile
+          );
+          assert.equal(result.written, true);
+          const after = fs.readFileSync(result.configFilePath, 'utf8');
+          assert.match(after, /## Medusa Switchboard/,
+            'an opted-in governed project learns the switchboard exists');
+          assert.match(after, /\/medusa\/send/, 'and where to send');
+        } finally {
+          store.projects.delete(project.id);
+        }
+      });
+
+      it('the governed block NEVER inlines the live service token — pointer only (committed carrier)', () => {
+        // A governed CLAUDE.md is a committed anchor file by construction; an
+        // inline bearer token here would be committed to the repo — the exact
+        // AGENTS.md hazard from the carrier chunk, decided the same way.
+        const p = mkProject({ enabledPlugins: { 'prawduct@prawduct': true } });
+        fs.writeFileSync(path.join(p, claudeProfile.configFormat.filename), '# CLAUDE.md\n<!-- PRAWDUCT:ANCHOR -->\n');
+        const config = store.config.load();
+        const prevEnabled = config.serviceTokenEnabled;
+        const prevToken = config.serviceToken;
+        config.serviceTokenEnabled = true;
+        config.serviceToken = 'tc_live_secret_055577';
+        store.config.save(config);
+        try {
+          const result = engines.writeEngineConfig('claude', p, minimalProjConfig, claudeProfile);
+          assert.equal(result.written, true);
+          const after = fs.readFileSync(result.configFilePath, 'utf8');
+          assert.ok(!after.includes('tc_live_secret_055577'),
+            'the live token must not appear in a committed governed carrier');
+          assert.match(after, /service-token/, 'the block points at the fetch endpoint instead');
+        } finally {
+          const restore = store.config.load();
+          restore.serviceTokenEnabled = prevEnabled;
+          restore.serviceToken = prevToken;
+          store.config.save(restore);
+        }
       });
 
       it('still writes CLAUDE.md normally when NOT plugin-governed (regression)', () => {
