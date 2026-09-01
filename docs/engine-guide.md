@@ -207,6 +207,16 @@ this repo stays green forever after the upstream changes. Re-verify if directive
 missing — a value copied from another engine, or left stale after the harness changes, fails
 silently and in the one place nothing else is watching.
 
+#### The ambient-awareness floor (`tc` on PATH)
+
+Independent of any config file or prime, every tmux session TangleClaw launches gets the `tc` CLI
+on its `PATH` plus `TANGLECLAW_API` / `TANGLECLAW_PROJECT_ID` (and `TANGLECLAW_WORKSPACE_ID` when
+the switchboard minted one) in the pane environment. `tc whoami` answers identity, API origin,
+operator host, and an honest capability roster — and the server records each invocation as an
+**awareness receipt**, so a session that never discovered the floor is a detectable state. This is
+engine-neutral by construction: a new engine needs no adapter to reach it. Engine-profile
+`launch.env` overrides any of these keys on collision.
+
 #### Prime paste readiness
 
 When a project runs with `silentPrime` off (or the engine has no silent channel), the prime is

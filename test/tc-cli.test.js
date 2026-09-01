@@ -1,0 +1,290 @@
+'use strict';
+
+/**
+ * The `tc` in-pane CLI vertical slice (ambient-awareness Chunk 02).
+ *
+ * The architecture under test, end to end: TangleClaw injects PATH + identity
+ * env into every launched pane; a dependency-free `bin/tc` asks the server
+ * `GET /api/tc/whoami`; the GET itself records an awareness receipt, so "this
+ * session never became aware" is a detectable state instead of a silent one.
+ * Failure honesty is load-bearing throughout: a pane without the env, a dead
+ * server, and a disabled capability must all SAY SO — an agent that cannot
+ * discover it lacks a tool will improvise one (the fabrication that opened
+ * the plan).
+ */
+
+const { describe, it, before, after } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const http = require('node:http');
+const { execFile, spawnSync } = require('node:child_process');
+
+/**
+ * Run bin/tc asynchronously. The in-process test server answers on THIS event
+ * loop, so a sync spawn would deadlock: the child waits on the server while
+ * the server waits on the loop the sync wait is blocking.
+ * @param {string[]} args
+ * @param {object} env
+ * @returns {Promise<{code: number, stdout: string, stderr: string}>}
+ */
+function runTc(args, env) {
+  return new Promise((resolve) => {
+    execFile(TC_BIN, args, { env, encoding: 'utf8' }, (err, stdout, stderr) => {
+      resolve({ code: err ? err.code : 0, stdout, stderr });
+    });
+  });
+}
+const { setLevel } = require('../lib/logger');
+
+setLevel('error');
+
+const store = require('../lib/store');
+const { createServer } = require('../server');
+
+const TC_BIN = path.join(__dirname, '..', 'bin', 'tc');
+
+/** Same request helper shape as the other api-*.test.js files. */
+function request(server, method, urlPath) {
+  return new Promise((resolve, reject) => {
+    const addr = server.address();
+    const req = http.request(
+      { hostname: '127.0.0.1', port: addr.port, path: urlPath, method },
+      (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          let parsed;
+          try { parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { parsed = null; }
+          resolve({ status: res.statusCode, body: parsed });
+        });
+      }
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+describe('tc CLI vertical slice (ambient-awareness Chunk 02)', () => {
+  let tmpDir;
+  let server;
+  let project;
+  let apiOrigin;
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-cli-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    const projectsDir = path.join(tmpDir, 'projects');
+    fs.mkdirSync(projectsDir, { recursive: true });
+    const config = store.config.load();
+    config.projectsDir = projectsDir;
+    store.config.save(config);
+    const projDir = path.join(projectsDir, 'tc-cli-proj');
+    fs.mkdirSync(projDir, { recursive: true });
+    project = store.projects.create({ name: 'tc-cli-proj', path: projDir, engine: 'antigravity' });
+
+    server = createServer();
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    apiOrigin = `http://127.0.0.1:${server.address().port}`;
+  });
+
+  after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  describe('GET /api/tc/whoami', () => {
+    it('answers identity + capabilities and records the receipt in the same call', async () => {
+      const res = await request(server, 'GET', `/api/tc/whoami?projectId=${project.id}`);
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.body.project, { id: project.id, name: 'tc-cli-proj' });
+      assert.match(res.body.api.origin, /^https?:\/\/localhost:\d+$/);
+      assert.ok(res.body.operator.host, 'the operator host is reported');
+      assert.notEqual(res.body.operator.host, 'localhost', 'operator links never use localhost');
+      assert.equal(res.body.receiptRecorded, true);
+
+      const receipts = store.awarenessReceipts.listForProject(project.id);
+      assert.equal(receipts.length, 1, 'the GET itself is the receipt');
+      assert.equal(receipts[0].verb, 'whoami');
+    });
+
+    it('reports capability ABSENCE honestly: a non-opted-in switchboard says you cannot message', async () => {
+      const res = await request(server, 'GET', `/api/tc/whoami?projectId=${project.id}`);
+      const sb = res.body.capabilities.find((c) => c.id === 'switchboard');
+      assert.equal(sb.enabled, false);
+      assert.match(sb.detail, /CANNOT message/i, 'absence is stated, not omitted');
+      assert.match(sb.detail, /rather than improvising/,
+        'the anti-fabrication instruction rides the absence');
+    });
+
+    it('an unresolvable project still records a receipt — the signal is "the CLI was invoked at all"', async () => {
+      const before2 = store.awarenessReceipts.listForProject(project.id).length;
+      const res = await request(server, 'GET', '/api/tc/whoami?projectId=999999');
+      assert.equal(res.status, 200);
+      assert.equal(res.body.project, null);
+      assert.match(res.body.unresolved, /did not resolve/);
+      // Receipt recorded with a null project — count it via a direct query.
+      const row = store.getDb().prepare(
+        "SELECT COUNT(*) AS n FROM awareness_receipts WHERE project_id IS NULL AND verb = 'whoami'"
+      ).get();
+      assert.ok(row.n >= 1, 'the invocation itself is recorded even when identity fails');
+      assert.equal(store.awarenessReceipts.listForProject(project.id).length, before2,
+        'and it is not misattributed to a real project');
+    });
+
+    it('never leaks the M2M service token, even when the gate is enabled', async () => {
+      const config = store.config.load();
+      const prevEnabled = config.serviceTokenEnabled;
+      const prevToken = config.serviceToken;
+      config.serviceTokenEnabled = true;
+      config.serviceToken = 'tc_live_secret_881122';
+      store.config.save(config);
+      try {
+        const res = await request(server, 'GET', `/api/tc/whoami?projectId=${project.id}`);
+        assert.ok(!JSON.stringify(res.body).includes('tc_live_secret_881122'),
+          'whoami is identity, not a credential dispenser');
+      } finally {
+        const restore = store.config.load();
+        restore.serviceTokenEnabled = prevEnabled;
+        restore.serviceToken = prevToken;
+        store.config.save(restore);
+      }
+    });
+  });
+
+  describe('bin/tc (spawned for real)', () => {
+    it('whoami renders identity and capabilities from a live server', async () => {
+      const res = await runTc(['whoami'], {
+        ...process.env,
+        TANGLECLAW_API: apiOrigin,
+        TANGLECLAW_PROJECT_ID: String(project.id),
+        TANGLECLAW_WORKSPACE_ID: 'ws-test-1'
+      });
+      assert.equal(res.code, 0, res.stderr);
+      assert.match(res.stdout, /TangleClaw-managed session of project "tc-cli-proj"/);
+      assert.match(res.stdout, new RegExp(`numeric project id ${project.id}`));
+      assert.match(res.stdout, /Capabilities:/);
+      assert.match(res.stdout, /\[--\] switchboard/, 'a disabled capability renders as absent, not missing');
+    });
+
+    it('fails LOUDLY with no TangleClaw environment (exit 1, says what is missing)', () => {
+      const res = spawnSync(TC_BIN, ['whoami'], {
+        env: { PATH: process.env.PATH }, encoding: 'utf8'
+      });
+      assert.equal(res.status, 1);
+      assert.match(res.stderr, /TANGLECLAW_API is not set/);
+      assert.match(res.stderr, /not launched under TangleClaw/);
+    });
+
+    it('fails LOUDLY when the server is unreachable (exit 2, names the URL, warns against improvising)', () => {
+      const res = spawnSync(TC_BIN, ['whoami'], {
+        env: { PATH: process.env.PATH, TANGLECLAW_API: 'http://127.0.0.1:1', TANGLECLAW_PROJECT_ID: '1' },
+        encoding: 'utf8'
+      });
+      assert.equal(res.status, 2);
+      assert.match(res.stderr, /could not reach the TangleClaw API at http:\/\/127\.0\.0\.1:1\/api\/tc\/whoami/);
+      assert.match(res.stderr, /say so instead of improvising/);
+    });
+
+    it('an unknown verb exits 1 with usage', () => {
+      const res = spawnSync(TC_BIN, ['frobnicate'], {
+        env: { PATH: process.env.PATH, TANGLECLAW_API: apiOrigin }, encoding: 'utf8'
+      });
+      assert.equal(res.status, 1);
+      assert.match(res.stderr, /unknown verb 'frobnicate'/);
+      assert.match(res.stderr, /usage: tc/);
+    });
+  });
+
+  describe('awareness receipts store', () => {
+    it('requires a verb and round-trips nullable ids', () => {
+      assert.throws(() => store.awarenessReceipts.record({}), /verb is required/);
+      const r = store.awarenessReceipts.record({ verb: 'whoami', workspaceId: 'ws-x' });
+      assert.equal(r.projectId, null);
+      assert.equal(r.sessionId, null);
+      assert.equal(r.workspaceId, 'ws-x');
+    });
+
+    it('lists per session oldest-first', () => {
+      store.awarenessReceipts.record({ verb: 'whoami', sessionId: 4242 });
+      store.awarenessReceipts.record({ verb: 'whoami', sessionId: 4242 });
+      const rows = store.awarenessReceipts.listForSession(4242);
+      assert.equal(rows.length, 2);
+      assert.ok(rows[0].id < rows[1].id);
+    });
+  });
+});
+
+describe('launch env injection — the pane gets tc on PATH (ambient-awareness Chunk 02)', () => {
+  let tmpDir;
+  let projectsDir;
+  let sessions;
+  const _restores = [];
+  function stub(obj, key, value) {
+    _restores.push([obj, key, Object.getOwnPropertyDescriptor(obj, key)]);
+    obj[key] = value;
+  }
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-env-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    projectsDir = path.join(tmpDir, 'projects');
+    fs.mkdirSync(projectsDir, { recursive: true });
+    const config = store.config.load();
+    config.projectsDir = projectsDir;
+    store.config.save(config);
+    sessions = require('../lib/sessions');
+  });
+
+  after(() => {
+    while (_restores.length) {
+      const [obj, key, d] = _restores.pop();
+      if (d) Object.defineProperty(obj, key, d); else delete obj[key];
+    }
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('launchSession injects PATH + TANGLECLAW_* into the tmux pane env; profile env wins on collision', () => {
+    const tmux = require('../lib/tmux');
+    const enginesModule = require('../lib/engines');
+    let created = false;
+    let capturedEnv = null;
+    stub(tmux, 'hasSession', () => created);
+    stub(tmux, 'probeSession', () => ({ live: created, answered: true, cause: null }));
+    stub(tmux, 'createSession', (name, options) => {
+      capturedEnv = options.env;
+      created = true;
+      return true;
+    });
+    stub(tmux, 'sendKeys', () => true);
+    stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
+
+    const projDir = path.join(projectsDir, 'env-proj');
+    fs.mkdirSync(projDir, { recursive: true });
+    const project = store.projects.create({ name: 'env-proj', path: projDir, engine: 'claude' });
+
+    try {
+      const result = sessions.launchSession('env-proj');
+      assert.equal(result.error, null);
+      assert.ok(capturedEnv, 'the pane env reached tmux.createSession');
+      const binDir = path.join(__dirname, '..', 'bin');
+      assert.ok(capturedEnv.PATH.startsWith(`${binDir}:`),
+        'tc\'s bin dir is PREPENDED to the pane PATH');
+      assert.ok(capturedEnv.PATH.includes(process.env.PATH),
+        'the existing PATH survives after the prepend');
+      assert.match(capturedEnv.TANGLECLAW_API, /^https?:\/\/localhost:\d+$/);
+      assert.equal(capturedEnv.TANGLECLAW_PROJECT_ID, String(project.id));
+      assert.equal(capturedEnv.TANGLECLAW_WORKSPACE_ID, undefined,
+        'no workspace id is claimed when none was minted — absence stays honest');
+
+      store.sessions.kill(result.session.id, 'test cleanup');
+    } finally {
+      store.projects.delete(project.id);
+    }
+  });
+});

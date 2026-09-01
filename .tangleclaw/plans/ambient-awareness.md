@@ -473,6 +473,41 @@ valuable outcome — it redirects the plan rather than failing it.
 and a receipt is recorded; the assumption is resolved either way and written into
 this plan.
 
+**Decisions pinned at build start (2026-09-01):**
+
+- **`bin/tc` is a dependency-free node script** and stays a thin HTTP client
+  (ratified assumption): one server round-trip, no local state, no store access.
+  It reads `TANGLECLAW_API` / `TANGLECLAW_PROJECT_ID` / `TANGLECLAW_WORKSPACE_ID`
+  from the pane environment and **fails loudly** on every path: missing env says
+  "not launched under TangleClaw" with what was expected; an unreachable server
+  names the exact URL it tried; an unknown verb prints usage. Exit codes: 0 ok,
+  1 usage/env, 2 server unreachable or error.
+- **The GET is the receipt.** `GET /api/tc/whoami` both answers and records the
+  awareness receipt server-side — the CLI cannot forget to report, and a receipt
+  row means the endpoint actually ran. Receipts land in a new additive
+  `awareness_receipts` table (schema v31→v32, `IF NOT EXISTS` like v29→v30):
+  `{project_id, session_id, workspace_id, verb, created_at}`, session resolved
+  server-side from the project's active session (best-effort, nullable — Chunk
+  05's "never became aware" view keys on it). A whoami with an unresolvable
+  project still records the invocation (project null): the HIGH-impact
+  assumption being measured is "does the agent invoke a PATH-present CLI at
+  all", and that signal must not depend on the ids being right.
+- **The response reports capabilities honestly, absence included** (§3 amendment):
+  every roster row carries `enabled: true|false` with a reason when off — the
+  switchboard row on a non-opted-in project says so instead of vanishing. No
+  secrets in the response (the service token stays behind its own endpoint).
+- **Env injection**: `launchSession` merges computed env under
+  `launchProfile.launch.env` (profile wins on collision): `PATH` = repo
+  `bin/` + existing server `PATH`, `TANGLECLAW_API` = `_apiOrigin()`,
+  `TANGLECLAW_PROJECT_ID`, and `TANGLECLAW_WORKSPACE_ID` only when minted.
+  Known risk, deliberately accepted for the slice: a pane shell that re-exports
+  `PATH` from rc files can drop the prepend — the live Antigravity probe is
+  exactly the test of this, and a fallback (absolute path in the bootstrap
+  line) belongs to Chunk 04 if it bites.
+- **API-contract entry deferred to Chunk 03** per the plan — the one-verb slice
+  records its shape here; the contract document gains the surface when the verb
+  roster exists.
+
 ---
 
 ### Chunk 03 — The verb surface + capability roster
