@@ -75,11 +75,12 @@ master identity and `/api/awareness` shows master `confirmed`).
 ## Status
 
 - [x] Chunk 01 — env floor + role receipts + whoami identity + masterAwareness + surface
-- [ ] Critic (cumulative) + resolutions
+- [x] Critic (cumulative) + resolutions
 - [ ] PR (Fixes #1141), merge, restart, live VRF
 - [ ] Release v5.17.0 (version bump, CHANGELOG promote, README pins per #1137 pattern)
 
 ## Context
 
-Chunk 01 built; suite green; since-scoping mutation red. Next: Critic
-cumulative → PR → merge → restart → live VRF → release v5.17.0.
+Chunk 01 + Critic round complete (1 blocking + 4 warnings fixed in 6c82763,
+verify-resolutions clean 0/0/0). Next: PR → merge → restart → live VRF →
+release v5.17.0.
