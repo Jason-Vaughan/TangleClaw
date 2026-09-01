@@ -2600,7 +2600,16 @@ route('GET', '/api/tc/whoami', (req, res) => {
   const query = parseQuery(reqUrl(req).search);
   const claimedProjectId = query.projectId !== undefined ? Number(query.projectId) : null;
   const workspaceId = typeof query.workspaceId === 'string' && query.workspaceId ? query.workspaceId : null;
-  const verb = 'whoami';
+  // The verb this invocation counts as: `tc capabilities` answers from this
+  // same route, so the client declares its verb by header; absent (a browser,
+  // or a pre-verb-roster tc binary) it counts as whoami. An auxiliary identity
+  // side-fetch (x-tangleclaw-aux — e.g. `tc message` resolving its project
+  // name) records NOTHING here: its primary request already records at the
+  // dispatcher, and counting it twice would inflate the very ledger this
+  // endpoint exists to keep honest.
+  const isAux = !!req.headers['x-tangleclaw-aux'];
+  const rawVerb = typeof req.headers['x-tangleclaw-verb'] === 'string' ? req.headers['x-tangleclaw-verb'].trim() : '';
+  const verb = (rawVerb || 'whoami').slice(0, 64);
 
   let project = null;
   if (Number.isInteger(claimedProjectId)) {
@@ -2616,18 +2625,20 @@ route('GET', '/api/tc/whoami', (req, res) => {
   const source = req.headers['x-tangleclaw-cli'] ? 'tc-cli' : 'http';
 
   let receipt = null;
-  try {
-    receipt = store.awarenessReceipts.record({
-      projectId: project ? project.id : null,
-      sessionId: activeSession ? activeSession.id : null,
-      workspaceId,
-      verb,
-      source
-    });
-  } catch (err) {
-    // The receipt is the point of the endpoint; failing to write one must be
-    // loud in the logs, but the caller still deserves its answer.
-    log.warn('awareness receipt write failed', { error: err.message });
+  if (!isAux) {
+    try {
+      receipt = store.awarenessReceipts.record({
+        projectId: project ? project.id : null,
+        sessionId: activeSession ? activeSession.id : null,
+        workspaceId,
+        verb,
+        source
+      });
+    } catch (err) {
+      // The receipt is the point of the endpoint; failing to write one must be
+      // loud in the logs, but the caller still deserves its answer.
+      log.warn('awareness receipt write failed', { error: err.message });
+    }
   }
 
   const config = store.config.load();
@@ -2685,6 +2696,68 @@ route('GET', '/api/tc/whoami', (req, res) => {
     capabilities,
     receiptRecorded: !!receipt
   });
+});
+
+/**
+ * Record one awareness receipt for a tc-CLI-identified request, resolving the
+ * ids the client declared in headers the same best-effort way whoami resolves
+ * its query params: a wrong or missing project id still records (nullable ids
+ * by design — the ledger measures "the CLI was invoked at all"). Never throws:
+ * the caller is the request dispatcher, and a ledger write must not take the
+ * actual answer down with it.
+ * @param {object} headers - `req.headers` (keys lower-cased by Node)
+ * @returns {void}
+ */
+function recordTcAwareness(headers) {
+  try {
+    const rawVerb = typeof headers['x-tangleclaw-verb'] === 'string' ? headers['x-tangleclaw-verb'].trim() : '';
+    // Cap and fall back rather than reject: a skewed or hand-rolled client
+    // with a junk verb header is still an invocation worth counting.
+    const verb = (rawVerb || 'unknown').slice(0, 64);
+    const claimedProjectId = Number(headers['x-tangleclaw-project-id']);
+    let project = null;
+    if (Number.isInteger(claimedProjectId)) {
+      try { project = store.projects.get(claimedProjectId) || null; } catch { project = null; }
+    }
+    const activeSession = project ? store.sessions.getActive(project.id) : null;
+    const workspaceId = typeof headers['x-tangleclaw-workspace-id'] === 'string' && headers['x-tangleclaw-workspace-id']
+      ? headers['x-tangleclaw-workspace-id'] : null;
+    store.awarenessReceipts.record({
+      projectId: project ? project.id : null,
+      sessionId: activeSession ? activeSession.id : null,
+      workspaceId,
+      verb,
+      source: 'tc-cli'
+    });
+  } catch (err) {
+    log.warn('awareness receipt write failed', { error: err.message });
+  }
+}
+
+// GET /api/tc/sessions — the fleet-wide live-session roster for `tc sessions`
+// (ambient-awareness Chunk 03). Every session with status active/wrapping,
+// across all projects, enriched with the project name so the caller need not
+// resolve numeric ids. An empty list is an honest answer (the fleet is idle),
+// and the receipt for a tc invocation of this route is recorded by the
+// dispatcher's provenance interception, not here.
+route('GET', '/api/tc/sessions', (_req, res) => {
+  const projectNames = new Map();
+  const sessions = store.sessions.listLiveAll().map((s) => {
+    if (!projectNames.has(s.projectId)) {
+      let p = null;
+      try { p = store.projects.get(s.projectId); } catch { p = null; }
+      projectNames.set(s.projectId, p ? p.name : null);
+    }
+    return {
+      id: s.id,
+      projectId: s.projectId,
+      projectName: projectNames.get(s.projectId),
+      engineId: s.engineId,
+      status: s.status,
+      startedAt: s.startedAt
+    };
+  });
+  jsonResponse(res, 200, { sessions });
 });
 
 // GET /api/medusa/deliveries — the fleet-wide Switchboard answer (#792): every
@@ -5827,6 +5900,20 @@ async function handleRequest(req, res) {
     if (!matched) {
       log.debug('Route not found', { method, path: pathname });
       return errorResponse(res, 404, `${method} ${pathname} not found`, 'NOT_FOUND');
+    }
+
+    // Ambient-awareness receipts for the whole verb surface: any request the
+    // tc CLI identifies itself on records one awareness receipt, keyed by the
+    // verb it declares — so the ledger sees `tc ports` and `tc message.send`,
+    // not just whoami. Recorded BEFORE the M2M gate on purpose: an invocation
+    // the gate then refuses still proves the agent discovered and ran the CLI,
+    // which is the fact this ledger measures. /api/tc/whoami is skipped — that
+    // route records its own receipt (it must also count browser/'http' calls,
+    // which this interception never sees). The verb header is required: a
+    // cli-identified request without one is an auxiliary side-fetch whose
+    // primary request records instead.
+    if (req.headers['x-tangleclaw-cli'] && req.headers['x-tangleclaw-verb'] && pathname !== '/api/tc/whoami') {
+      recordTcAwareness(req.headers);
     }
 
     // AUTH-4 — M2M service-token gate on the PortHub + shared-docs surfaces. A
