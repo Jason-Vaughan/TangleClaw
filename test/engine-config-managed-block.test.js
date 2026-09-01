@@ -275,9 +275,8 @@ describe('drift is scoped to the region TangleClaw owns', () => {
     engines.writeEngineConfig('antigravity', dir, {}, profile);
     fs.writeFileSync(file, `${fs.readFileSync(file, 'utf8')}\n\n## Operator added this later\nkeep\n`);
     const r = engines.writeEngineConfig('antigravity', dir, {}, profile);
-    // This is the property the region-scoping exists to express. A revert to a
-    // whole-file comparison (`existing.trim() !== merged.trim()`) stays green on
-    // every other case here and fails only on this one.
+    // The property the region-scoping exists to express: content the operator
+    // keeps outside the markers is theirs, not drift.
     assert.equal(r.drifted, false, 'the operator using their own file is not drift');
     assert.ok(fs.readFileSync(file, 'utf8').includes('## Operator added this later'), 'and their content survives');
   });

@@ -1,7 +1,7 @@
 ---
 plan: ambient-awareness
 title: Ambient Awareness — every TangleClaw session knows what TangleClaw is, on any engine
-status: active (shape approved 2026-08-31; Chunk 00 complete, Chunk 01 next)
+status: active (Chunks 00 and 01 complete and review-closed; Chunk 01b or 01c next)
 created: 2026-08-31
 branch: feat/ambient-awareness
 shared_link: https://claude.ai/code/artifact/830caee7-fd12-4cff-a0e8-9d6bbb8fc522  # keep THIS link updated in place; never mint a new one
@@ -451,7 +451,7 @@ need reopening or a successor.
 ## Status
 
 - [x] Chunk 00 — Ratify the Direction — **done 2026-08-31** (operator-authorized; §3 amended, registry row live)
-- [x] Chunk 01 — Carrier repair: evidenced carrier + managed-block contract — **done 2026-08-31** (`de85f3e`; Critic `rev-20260901T000224Z`)
+- [x] Chunk 01 — Carrier repair: evidenced carrier + managed-block contract — **done 2026-09-01** (`de85f3e` + `608828d` + `09b5fd8`; Critic `rev-20260901T000224Z` cumulative, then `…T002413Z` and `…T003330Z` verify-resolutions — closed 0 blocking / 0 findings)
 - [ ] Chunk 01c — Prime channel: readiness gate (#1106), drift detection (#1057), honest ledger (#1063), send-row label
 - [ ] Chunk 01b — Narrow the plugin-governance deferral (#1021)
 - [ ] Chunk 02 — `tc` vertical slice
