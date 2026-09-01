@@ -145,7 +145,7 @@ describe('buildMasterClaudeMd', () => {
     // quick-reference row, so dropping it silently halves the surface.
     const md = master.buildMasterClaudeMd({ serverPort: 3101 });
     assert.match(md, /GET \/api\/awareness/);
-    assert.match(md, /confirmed\/sent\/unverified\/unaware/);
+    assert.match(md, /confirmed\/sent\/unverified\/no-rules\/unaware/);
   });
 
   it('renders the API base URL from config port and the SERVED protocol (ENG-5R2W)', () => {

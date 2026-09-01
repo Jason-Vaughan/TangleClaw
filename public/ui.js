@@ -482,7 +482,7 @@ function renderAwarenessBadge(project) {
 
 /**
  * The Awareness row of a card's detail panel: the latest session's composed
- * state (confirmed / sent / unverified / unaware) with the basis said in
+ * state (confirmed / sent / unverified / no-rules / unaware) with the basis said in
  * words. Empty when the project has never launched a session — nothing
  * launched means nothing to be aware.
  * @param {object} project - Project data.

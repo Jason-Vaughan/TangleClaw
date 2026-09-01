@@ -300,6 +300,59 @@ describe('launch env injection — the pane gets tc on PATH (ambient-awareness C
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it('the launch command re-asserts the PATH floor AFTER rc processing — the env prepend alone gets rebuilt away (#1140)', () => {
+    // Probe-verified on the live host: tmux runs the launch command through
+    // the user's shell, whose rc processing (macOS path_helper + user rc)
+    // rebuilds PATH before the command body runs. The -e env prepend was
+    // stripped from every pane and `which tc` failed fleet-wide, so no
+    // session could ever earn a confirmed receipt. The export embedded in
+    // the command body executes after the rc files and survives.
+    const tmux = require('../lib/tmux');
+    const enginesModule = require('../lib/engines');
+    let created = false;
+    let capturedCommand = null;
+    stub(tmux, 'hasSession', () => created);
+    stub(tmux, 'probeSession', () => ({ live: created, answered: true, cause: null }));
+    stub(tmux, 'createSession', (name, options) => {
+      capturedCommand = options.command;
+      created = true;
+      return true;
+    });
+    stub(tmux, 'sendKeys', () => true);
+    stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/claude' }));
+
+    const projDir = path.join(projectsDir, 'floor-proj');
+    fs.mkdirSync(projDir, { recursive: true });
+    const project = store.projects.create({ name: 'floor-proj', path: projDir, engine: 'claude' });
+    try {
+      const result = sessions.launchSession('floor-proj');
+      assert.equal(result.error, null);
+      const binDir = path.join(__dirname, '..', 'bin');
+      assert.ok(capturedCommand.startsWith(`export PATH="${binDir}:$PATH"; `),
+        'the command body opens by re-prepending tc\'s bin dir');
+      assert.ok(capturedCommand.length > `export PATH="${binDir}:$PATH"; `.length,
+        'the engine launch command follows the export — the wrapper never swallows it');
+      store.sessions.kill(result.session.id, 'test cleanup');
+    } finally {
+      store.projects.delete(project.id);
+    }
+  });
+
+  it('_withPathFloor degrades honestly: no command passes through, an unsafe bin dir refuses the wrapper', () => {
+    // No command (bare interactive pane): nothing to ride — the env prepend
+    // is the only floor, unchanged.
+    assert.equal(sessions._withPathFloor(undefined), undefined);
+    assert.equal(sessions._withPathFloor(''), '');
+    // The real bin dir is safe, so the wrapper applies.
+    assert.match(sessions._withPathFloor('claude --json'), /^export PATH="[^"]+\/bin:\$PATH"; claude --json$/);
+    // A bin dir that could break out of the double quotes refuses the wrapper
+    // rather than composing a broken (or injectable) command — the raw launch
+    // command survives untouched.
+    for (const evil of ['/tmp/a"b/bin', '/tmp/a`b/bin', '/tmp/a$b/bin', '/tmp/a\\b/bin']) {
+      assert.equal(sessions._withPathFloor('claude --json', evil), 'claude --json');
+    }
+  });
+
   it('launchSession injects PATH + TANGLECLAW_* into the tmux pane env; profile env wins on collision', () => {
     const tmux = require('../lib/tmux');
     const enginesModule = require('../lib/engines');
