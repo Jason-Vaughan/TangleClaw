@@ -76,16 +76,46 @@ describe('lib/ecosystem-primer (#1122)', () => {
       'per the engine-agnostic rule, prompt text must not bake in one engine\'s filename');
   });
 
-  it('stays within the prime budget it claims (~1KB order, hard cap 2000 chars)', () => {
+  it('stays within the prime budget it claims (~1KB order, hard cap 2600 chars)', () => {
+    // Cap raised 2000 → 2600 for the tc bootstrap line (ambient-awareness
+    // Chunk 04) — a deliberate budget decision, not drift: the live probe
+    // proved PATH presence alone creates zero discovery intent, so the one
+    // roster entry that names the discovery surface is the load-bearing one.
     const text = primer.buildEcosystemPrimerSection(CTX).join('\n');
-    assert.ok(text.length < 2000,
-      `section is ${text.length} chars — growing past 2000 needs a deliberate budget decision, not drift`);
+    assert.ok(text.length < 2600,
+      `section is ${text.length} chars — growing past 2600 needs a deliberate budget decision, not drift`);
   });
 
-  it('the yield pointer preserves the two non-rediscoverable identifiers', () => {
+  it('carries the tc bootstrap line as an instruction with a stated consequence', () => {
+    const text = primer.buildEcosystemPrimerSection(CTX).join('\n');
+    assert.match(text, /tc capabilities/,
+      'the roster must name the discovery verb — the probe proved PATH presence alone creates no intent');
+    assert.match(text, /BEFORE concluding/,
+      'an instruction, not a footnote — a line the agent skims is a vacuum too');
+    assert.match(text, /fabricate/,
+      'the consequence of skipping the check is stated, not implied');
+    assert.match(text, /not launched by TangleClaw/,
+      'the one honest absence case: tc missing means the pane is not TangleClaw-launched');
+  });
+
+  it('tcBootstrapLines comment form is #-prefixed plain text with the same instruction', () => {
+    const lines = primer.tcBootstrapLines('comment');
+    assert.ok(lines.length > 0);
+    for (const line of lines) {
+      assert.ok(line.startsWith('#'), `comment-form line must be #-prefixed: ${line}`);
+      assert.doesNotMatch(line, /\*\*/, 'comment carriers cannot render markdown emphasis');
+    }
+    const text = lines.join('\n');
+    assert.match(text, /tc capabilities/);
+    assert.match(text, /fabricate/);
+  });
+
+  it('the yield pointer preserves the two non-rediscoverable identifiers and the tc verb (§5)', () => {
     const pointer = primer.ecosystemPrimerPointer(CTX);
     assert.match(pointer, /numeric project id is 77/);
     assert.ok(pointer.includes('http://localhost:3102'));
+    assert.match(pointer, /tc capabilities/,
+      'omission visible in the payload: the dropped section is replaced by the verb that recovers it');
     assert.ok(pointer.length < 400, 'a pointer that needs no yield is not a pointer');
   });
 });
