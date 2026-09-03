@@ -860,6 +860,184 @@
     return !(state && state.wrapDrawerOpen === true);
   }
 
+  /**
+   * #185 — the empty live view of a wrap whose stream has delivered nothing
+   * yet. `results` is `pipelineResult.results`-shaped on purpose: every row
+   * goes through the same `buildStepRow` the final render uses, so the live
+   * drawer and the final drawer cannot disagree about what a status looks
+   * like.
+   * @returns {{results: object[], blockedAt: string|null, currentStepId: string|null, started: boolean, done: boolean, result: object|null}}
+   */
+  function emptyWrapLive() {
+    return { results: [], blockedAt: null, currentStepId: null, started: false, done: false, result: null };
+  }
+
+  /**
+   * Find the live row for a step, creating a pending one when the stream
+   * never announced it (a `run-start` lost to a reconnect, or a pipeline
+   * variant that starts a step it did not list). Mutates `results`.
+   * @param {object[]} results - Live rows
+   * @param {{stepId: string, kind?: string}} event - The event naming the step
+   * @returns {object} The row
+   */
+  function upsertLiveRow(results, event) {
+    let row = results.find((r) => r.stepId === event.stepId);
+    if (!row) {
+      row = { stepId: event.stepId, kind: typeof event.kind === 'string' ? event.kind : '', status: 'pending', output: null, blockers: [] };
+      results.push(row);
+    }
+    return row;
+  }
+
+  /**
+   * #185 — fold one wrap-stream event into the live view of a running wrap.
+   * Pure: returns a new state, never mutates `live`. The event is the decoded
+   * `data` of one SSE frame with the frame's `event` name as `type`:
+   *
+   *   - `run-start` `{steps}` — every listed step becomes a pending row (the
+   *     drawer paints the whole pipeline before the first step moves);
+   *   - `step-start` `{stepId, kind}` — that row turns `running` — the tone
+   *     the drawer reserved and nothing produced until now;
+   *   - `step-done` / `step-blocked` `{stepId, status, output, blockers,
+   *     halted}` — the row settles to the runner's own status with the same
+   *     output and blockers the final result will carry; `halted:true` marks
+   *     the pipeline as stopped there, so the row renders as THE blocker;
+   *   - `run-done` `{result}` — the run is over; `result` is the wrap POST's
+   *     payload, which the caller renders exactly as a POST return.
+   *
+   * Unknown types and malformed events leave the state unchanged: the final
+   * result is the truth, and a spectator's confusion must not corrupt it.
+   *
+   * @param {object|null} live - Prior live state, or null before the first event
+   * @param {{type: string}} event - One stream event
+   * @returns {{results: object[], blockedAt: string|null, currentStepId: string|null, started: boolean, done: boolean, result: object|null}}
+   */
+  function applyWrapStreamEvent(live, event) {
+    const prev = live && typeof live === 'object' && Array.isArray(live.results) ? live : emptyWrapLive();
+    const next = { ...prev, results: prev.results.map((r) => ({ ...r })) };
+    if (!event || typeof event.type !== 'string') return next;
+    switch (event.type) {
+      case 'run-start': {
+        const steps = Array.isArray(event.steps) ? event.steps : [];
+        next.results = steps
+          .filter((s) => s && typeof s.stepId === 'string')
+          .map((s) => ({ stepId: s.stepId, kind: typeof s.kind === 'string' ? s.kind : '', status: 'pending', output: null, blockers: [] }));
+        next.started = true;
+        next.blockedAt = null;
+        next.currentStepId = null;
+        return next;
+      }
+      case 'step-start': {
+        if (typeof event.stepId !== 'string') return next;
+        const row = upsertLiveRow(next.results, event);
+        row.status = 'running';
+        next.currentStepId = event.stepId;
+        next.started = true;
+        return next;
+      }
+      case 'step-done':
+      case 'step-blocked': {
+        if (typeof event.stepId !== 'string') return next;
+        const row = upsertLiveRow(next.results, event);
+        row.status = typeof event.status === 'string' && event.status
+          ? event.status
+          : (event.type === 'step-blocked' ? 'blocked' : 'done');
+        row.output = event.output === undefined ? null : event.output;
+        row.blockers = Array.isArray(event.blockers) ? event.blockers : [];
+        if (event.halted === true) next.blockedAt = event.stepId;
+        if (next.currentStepId === event.stepId) next.currentStepId = null;
+        next.started = true;
+        return next;
+      }
+      case 'run-done':
+        next.done = true;
+        next.result = event.result && typeof event.result === 'object' ? event.result : null;
+        next.currentStepId = null;
+        return next;
+      default:
+        return next;
+    }
+  }
+
+  /**
+   * #185 — the live view as a `pipelineResult`, so the rows render through
+   * `buildStepRow` and "Copy report" serialises the run so far through
+   * `buildReportText`, both unchanged. `ok` mirrors "has it halted", the way
+   * the runner's own `ok` is `blockedAt === null`; `commitSha` stays null
+   * because nothing has committed until the final result says so.
+   *
+   * @param {object|null} live - Live state from `applyWrapStreamEvent`
+   * @returns {{ok: boolean, blockedAt: string|null, results: object[], commitSha: null, summary: null, error: null}}
+   */
+  function liveWrapAsPipelineResult(live) {
+    const state = live && typeof live === 'object' && Array.isArray(live.results) ? live : emptyWrapLive();
+    return {
+      ok: state.blockedAt === null,
+      blockedAt: state.blockedAt,
+      results: state.results.map((r) => ({ ...r })),
+      commitSha: null,
+      summary: null,
+      error: null
+    };
+  }
+
+  /**
+   * #185 — the drawer banner while a wrap is running: which step it is on,
+   * out of how many. Always the `running` tone — a live wrap has no verdict
+   * yet, and painting a provisional success or failure on a run that is
+   * still moving is the false-report class this drawer exists to end. A halt
+   * seen mid-stream is named, but still as "wrapping": the final report is
+   * the runner's to deliver.
+   *
+   * @param {object|null} live - Live state from `applyWrapStreamEvent`
+   * @returns {{label: string, tone: 'running', detail: string|null}}
+   */
+  function summarizeLiveStatus(live) {
+    const state = live && typeof live === 'object' && Array.isArray(live.results) ? live : emptyWrapLive();
+    if (!state.started) return { label: 'Wrapping — starting…', tone: 'running', detail: null };
+    const total = state.results.length;
+    const current = state.currentStepId ? state.results.find((r) => r.stepId === state.currentStepId) : null;
+    if (current) {
+      const ordinal = state.results.indexOf(current) + 1;
+      return {
+        label: `Wrapping — step ${ordinal} of ${total}`,
+        tone: 'running',
+        detail: `${KIND_LABELS[current.kind] || current.kind || 'step'} (${current.stepId})`
+      };
+    }
+    if (state.blockedAt) {
+      return { label: `Wrapping — stopped at "${state.blockedAt}"`, tone: 'running', detail: 'waiting for the final report' };
+    }
+    const settled = state.results.filter((r) => r.status !== 'pending' && r.status !== 'running').length;
+    return { label: `Wrapping — ${settled} of ${total} steps settled`, tone: 'running', detail: null };
+  }
+
+  /**
+   * #185 — the banner when the stream failed for good mid-wrap. The wrap is
+   * unaffected (the pipeline never waits on a spectator) and the blocking
+   * POST still delivers the report; the drawer says so rather than leaving
+   * a frozen "step 4 of 14" that reads as a hung wrap.
+   * @returns {{label: string, tone: 'running', detail: string}}
+   */
+  function streamUnavailableStatus() {
+    return {
+      label: 'Wrapping — live progress unavailable',
+      tone: 'running',
+      detail: 'the wrap is still running; the report opens when it finishes'
+    };
+  }
+
+  /**
+   * #185 — the stream URL for a run, encoded the way the other wrap routes
+   * are addressed.
+   * @param {string} projectName
+   * @param {string} runId - From the wrap POST / `GET /wrap/status`
+   * @returns {string}
+   */
+  function wrapStreamUrl(projectName, runId) {
+    return `/api/sessions/${encodeURIComponent(projectName)}/wrap/stream/${encodeURIComponent(runId)}`;
+  }
+
   const helpers = {
     KIND_LABELS,
     KIND_DESCRIPTIONS,
@@ -881,7 +1059,12 @@
     buildReportText,
     wrapWatchDecision,
     shouldStartEndedCountdown,
-    isStrandedWrap
+    isStrandedWrap,
+    applyWrapStreamEvent,
+    liveWrapAsPipelineResult,
+    summarizeLiveStatus,
+    streamUnavailableStatus,
+    wrapStreamUrl
   };
 
   // Browser: attach to window so session.js can call helpers.

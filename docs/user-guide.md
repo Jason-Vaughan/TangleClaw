@@ -386,6 +386,8 @@ Tap **Wrap** to trigger the session wrap. This:
 
 If a `deletePassword` is configured, you'll need to enter it to wrap.
 
+**Watching it run.** As soon as the pipeline starts, the results drawer opens with every step listed and paints each one as it happens — *Running* while a step is in flight, then *Done*, *Skipped*, or *Blocked* with the step's own output — and the banner says which step of how many the wrap is on. Nothing is decidable until the run ends, so Retry and Done appear only with the final report; Close just stops watching (the wrap keeps running). If the live feed drops for good, the banner says *live progress unavailable* and the drawer still arrives with the finished report, exactly as it would without the feed.
+
 **Choosing the version bump.** The wrap dialog has a **Version bump** selector: *Auto*, *Patch*, *Minor*, or *Major*. Auto (the default) derives the bump from your `CHANGELOG.md` `[Unreleased]` content — `### Added`/`### Changed` mean minor, `### Fixed`-only means patch, a `BREAKING` marker means major. Pick an explicit level when the CHANGELOG can't imply what you want — for example a release train where the bump belongs at promote time rather than at session end. Your choice is reapplied if the wrap blocks and you retry, and resets to Auto the next time you open the dialog.
 
 **Did it actually ship?** A wrap that commits has not necessarily *released*. When the wrap opens a PR (see protected branches below), the version bump and CHANGELOG promotion only reach `main` once that PR merges — which happens after its checks pass, and never if a required check fails. The drawer says which of these is true:

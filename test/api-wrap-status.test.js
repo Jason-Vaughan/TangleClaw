@@ -119,6 +119,7 @@ describe('api wrap-run status + single-flight (#583)', () => {
       assert.equal(res.status, 200);
       assert.deepEqual(res.body, {
         project: 'wrap-run-test',
+        runId: null,
         running: false,
         sessionId: null,
         startedAt: null,
@@ -133,7 +134,9 @@ describe('api wrap-run status + single-flight (#583)', () => {
       let releaseGate;
       const gate = new Promise((resolve) => { releaseGate = resolve; });
       wrapPipelineMod.runWrapPipeline = async (projectName, options) => {
-        options.onStepStart('memory-update', 'ai-content');
+        // #185 — progress now travels as events; a `step-start` is what
+        // moves the status pointer.
+        options.onStepEvent({ type: 'step-start', stepId: 'memory-update', kind: 'ai-content' });
         await gate;
         return { ...EMPTY_PIPELINE_RESULT };
       };
@@ -149,6 +152,7 @@ describe('api wrap-run status + single-flight (#583)', () => {
       assert.equal(status.body.running, true, 'status reports the in-flight run');
       assert.equal(status.body.currentStepId, 'memory-update', 'status carries pipeline progress');
       assert.equal(typeof status.body.startedAt, 'number');
+      assert.match(status.body.runId, /^[0-9a-f]{32}$/, '#185 — status hands out the stream handle while running');
       assert.equal(status.body.result, null, 'no result while running');
 
       releaseGate();

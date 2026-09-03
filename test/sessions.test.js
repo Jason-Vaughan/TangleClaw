@@ -3011,8 +3011,8 @@ describe('sessions', () => {
         pipelineCalls += 1;
         // Report progress like the real runner would, then hold the
         // pipeline open so the second trigger races a genuinely-running run.
-        if (options && typeof options.onStepStart === 'function') {
-          options.onStepStart('changelog-update', 'ai-content');
+        if (options && typeof options.onStepEvent === 'function') {
+          options.onStepEvent({ type: 'step-start', stepId: 'changelog-update', kind: 'ai-content' });
         }
         await gate;
         return { ok: true, blockedAt: null, results: [], commitSha: null, summary: null, error: null };
@@ -3127,22 +3127,22 @@ describe('sessions', () => {
         // #583 amended the threading contract: user options pass through
         // unchanged, PLUS the wrap-run registry's progress hook rides
         // along (and nothing else).
-        const { onStepStart, ...userOptions } = receivedOptions;
+        const { onStepEvent, ...userOptions } = receivedOptions;
         assert.deepEqual(userOptions, opts,
           'user options must reach runWrapPipeline unchanged');
-        assert.equal(typeof onStepStart, 'function', 'has onStepStart');
+        assert.equal(typeof onStepEvent, 'function', 'has onStepEvent');
 
         // Omitted options still reach the runner carrying ONLY the hook —
         // no user keys invented.
         receivedOptions = 'sentinel-not-set';
         await sessions.triggerWrap('prime-test');
-        assert.deepEqual(Object.keys(receivedOptions).sort(), ['onStepStart'],
-          'omitted options add only the #583 progress hook');
+        assert.deepEqual(Object.keys(receivedOptions).sort(), ['onStepEvent'],
+          'omitted options add only the #583/#185 progress hook');
 
         // A caller-supplied hook (an HTTP body can only carry JSON,
         // but defend the seam) can never displace the registry hook.
-        await sessions.triggerWrap('prime-test', { onStepStart: 'not-a-function' });
-        assert.equal(typeof receivedOptions.onStepStart, 'function',
+        await sessions.triggerWrap('prime-test', { onStepEvent: 'not-a-function' });
+        assert.equal(typeof receivedOptions.onStepEvent, 'function',
           'caller options must not override the registry progress hook');
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
