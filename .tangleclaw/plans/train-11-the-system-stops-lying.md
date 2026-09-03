@@ -249,7 +249,7 @@ silently does nothing.
 
 **Re-scoped 2026-09-03 against measurement.** The chunk's original spec (an SSH probe running
 `openclaw devices list`, plus a `Cache-Control: no-store` index header) was written on evidence
-that has since been overtaken, and two of its three legs are dead:
+that has since been overtaken, and only one of its three legs survives contact with the evidence:
 
 - **The two defects the issue names already shipped.** The no-trailing-slash asset 404 landed in
   PR #1013 (guarded by `test/openclaw-direct-trailing-slash.test.js`); the 200-then-hang landed in
@@ -258,9 +258,15 @@ that has since been overtaken, and two of its three legs are dead:
 - **The SSH `devices list` probe cannot work.** It runs through `docker exec`
   (`lib/openclaw-approve.js`), and Kobold and Volta run OpenClaw natively with no container. That
   is exactly the fault #1076 was filed and fixed for.
+- **The `[::1]` recreate-probe leg is closed as not-a-defect, with the evidence.** The spec asked
+  whether the recreate probe requires both stacks. It already does: `lib/tunnel.js` probes
+  `LOCAL_LOOPBACKS = ['127.0.0.1', '[::1]']` and retries forward targets over
+  `FORWARD_TARGETS = ['127.0.0.1', '[::1]']`, IPv4 first so a dual-stack host pays no added
+  latency, with the IPv6-only fallback documented against Docker-Desktop-for-Mac's post-restart
+  publish. Nothing to fix; recorded here so the leg is disposed of rather than dropped.
 - **There is no gateway HTTP API to probe instead.** Measured against both live gateways: the
-  gateway serves the SPA shell (200 `text/html`) for every unmatched path — so a 200 from an
-  invented path proves nothing — and 404s everything under `/api/`. Its one JSON endpoint is
+  gateway serves the SPA shell (an HTML 200) for every unmatched path — so a 200 from an
+  invented path proves nothing — and 404s everything under its API namespace. Its one JSON endpoint is
   `/health` → `{"ok":true,"status":"live"}`. Pairing and gateway errors are WebSocket-level
   facts, not HTTP-observable.
 
@@ -303,7 +309,7 @@ its SQLite database malformed. The `live` level is therefore "nothing we can che
 **Out of scope, deliberately:** detecting whether *this browser* is paired (the
 `openclaw.device.auth.v1:wss://…` localStorage entry is same-origin readable, but its exact key
 shape needs one live capture from the operator's browser — filed as a follow-up); the fleet-wide
-per-connection state column on `/api/openclaw/connections` (it would probe every connection on
+per-connection state column on the OpenClaw connections list endpoint (it would probe every connection on
 every list call); OpenClaw-Genesis's error-card wording; the `Cache-Control: no-store` index
 header (the bundle-hash pairing it guards against is not the reported fault, and the original
 spec bundled it on the dead SSH design).

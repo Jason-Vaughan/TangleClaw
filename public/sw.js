@@ -10,7 +10,7 @@
 // even after they hit Cmd+Shift+R. The network-first carve-out below
 // is the structural fix; this bump is the one-time unblock for
 // existing installs.
-const CACHE_NAME = 'tangleclaw-v3-59';
+const CACHE_NAME = 'tangleclaw-v3-60';
 const STATIC_ASSETS = [
   '/',
   '/style.css',
@@ -81,6 +81,15 @@ const NETWORK_FIRST_PATHS = new Set([
   // throws on a missing helper (e.g. shouldStartEndedCountdown, #268). Keep
   // the two in lockstep by making both network-first.
   '/wrap-drawer.js',
+  // openclaw-tunnel-state.js is the pure-helper sibling of openclaw-view.js,
+  // the same lockstep pair as session.js/wrap-drawer.js above. The view calls
+  // its helpers at module top level, so a cached old helper against a fresh
+  // view throws at script eval and the page renders nothing at all. The
+  // indicator's honesty also depends on the two agreeing about which states
+  // exist: a stale view against fresh CSS paints green on an unverified
+  // connection, which is the exact lie the pair was changed to remove.
+  '/openclaw-view.js',
+  '/openclaw-tunnel-state.js',
   '/session.css',
   // The dashboard shell's core UI assets (category 2). ui.js builds every
   // dashboard view + the settings modal, and style.css skins them — exactly the

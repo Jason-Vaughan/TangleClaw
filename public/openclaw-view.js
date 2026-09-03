@@ -72,13 +72,10 @@ const connectionIndicator = tcTunnelState.createConnectionIndicator(
  */
 function failTunnel(message) {
   showToast(message, 'warn', 0);
-  // Routed through the shared applier: it CLEARS the other level classes
-  // first. Adding `dead` on top of the element's initial class left the
-  // indicator showing its previous colour, which is the reported bug.
-  tcTunnelState.applyConnectionState(
-    document.getElementById('statusDot'),
-    { level: 'dead', label: message }
-  );
+  // Routed through the indicator, which CLEARS the other level classes first.
+  // Adding `dead` on top of the element's existing class left the previous
+  // colour showing, which is the reported bug.
+  connectionIndicator.fail(message);
 }
 
 
@@ -142,18 +139,21 @@ async function init() {
     return;
   }
 
-  // Reaching here means the proxy served bytes — NOT that the gateway behind
-  // it can do anything. Asking the gateway's own health endpoint is the one
-  // step past HTTP reachability it exposes, and until it answers the indicator
-  // must not claim a working connection.
-  connectionIndicator.record('health', await tcTunnelState.probeGateway(connId));
-
   showToast(tunnel.alreadyUp ? 'Tunnel already up' : 'Tunnel established', 'ok');
 
   // Load the proxy URL in the iframe
   const frame = document.getElementById('terminalFrame');
   const tokenParam = conn.gatewayToken ? `#token=${encodeURIComponent(conn.gatewayToken)}` : '';
   setFrameSrc(frame, `/openclaw-direct/${encodeURIComponent(connId)}/chat?session=main${tokenParam}`);
+
+  // Reaching here means the proxy served bytes — NOT that the gateway behind
+  // it can do anything. Asking the gateway's own health endpoint is the one
+  // step past HTTP reachability it exposes, and until it answers the indicator
+  // must not claim a working connection. Deliberately NOT awaited before the
+  // frame is pointed: the answer gates the INDICATOR, not the page, and
+  // holding the frame back for it bought up to a full probe budget of blank
+  // iframe on every healthy load.
+  tcTunnelState.probeGateway(connId).then((health) => connectionIndicator.record('health', health));
 
   // Start sidecar polling + wire event listeners
   initSidecar();

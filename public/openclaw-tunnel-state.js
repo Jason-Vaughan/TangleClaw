@@ -290,8 +290,15 @@
     const who = e.connName ? `“${e.connName}”` : 'this connection';
 
     const probe = e.probe;
-    if (!probe || probe.reachable !== true) {
-      const why = (probe && probe.reason) || 'the tunnel was not probed';
+    // Not yet probed is not the same as probed and failed. Collapsing the two
+    // painted a normally-starting connection red for the whole tunnel budget —
+    // a measured failure reported before any measurement, which is the exact
+    // defect class this indicator exists to remove, pointing the other way.
+    if (probe === null || probe === undefined) {
+      return { level: 'checking', label: `Checking ${who}\u2026`, detail: null };
+    }
+    if (probe.reachable !== true) {
+      const why = probe.reason || 'the tunnel could not be probed';
       return { level: 'dead', label: `Not connected — ${why}`, detail: why };
     }
 
@@ -392,6 +399,17 @@
        * @param {*} value - The measurement.
        * @returns {object} The state now showing.
        */
+      /**
+       * Render a terminal failure whose reason the caller already phrased.
+       * Routed through the same applier so it cannot stack classes.
+       * @param {string} label - Operator-facing sentence.
+       * @returns {object}
+       */
+      fail(label) {
+        const state = { level: 'dead', label, detail: null };
+        applyConnectionState(resolve(), state);
+        return state;
+      },
       record(key, value) {
         evidence[key] = value;
         const state = deriveConnectionState(evidence);
@@ -403,7 +421,13 @@
        * @returns {object}
        */
       state() { return deriveConnectionState(evidence); },
-      evidence
+      /**
+       * A COPY of the evidence, for inspection. Deliberately not the record
+       * itself: handing back the live object lets a caller write to it without
+       * re-rendering, which is the invariant this factory exists to hold.
+       * @returns {object}
+       */
+      snapshot() { return Object.assign({}, evidence); }
     };
   }
 

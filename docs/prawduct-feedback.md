@@ -137,3 +137,55 @@ Recorded because feedback that is only complaints mis-prices the tool.
   in a 10-line synthetic pane, so nothing I owned could have caught it. A later round caught a
   **disposition I had written** asserting a fixture existed that did not. An independent reviewer
   that reads the tree rather than the claim is the only thing that finds that class.
+
+---
+
+## 2026-09-03 — Train 11, car 14 (Claude Opus 5, autonomous sprint)
+
+### 5. The `test_command` declared in `project-state.yaml` is invisible at the point of use
+
+**What happened.** The session briefing, `building.md`, and the stop-gate all talk
+about running "the full suite" without naming it. This repo has **no
+`package.json`**, so the reflexive `npm test` fails with `ENOENT`. The real command
+lives in `.prawduct/project-state.yaml:449` (`test_command:`) — discoverable, but
+only if you already suspect it exists.
+
+**Expected.** The session briefing prints the project's declared `test_command`
+alongside the branch and resume line. It is one line, it is already parsed, and it
+is the single command every work cycle must run.
+
+**Repro.** Onboard a non-npm repo; start a session; observe the briefing never
+names the suite command.
+
+**Cost.** One wasted background run and a confusing `ENOENT` that reads like a
+broken checkout rather than a wrong command. Small in isolation; it recurs at every
+`/clear` for the life of the project, and an agent that guesses `npm test` and sees
+ENOENT may wrongly conclude the worktree is damaged.
+
+### 6. `test-evidence record` and the "run the suite" instruction disagree about which number matters
+
+Already noted in `learnings-detail.md` for this repo (JUnit top-level cases vs TAP
+subtests). Restating as upstream signal: two documented, legitimate totals for one
+green suite is a standing invitation to mis-cite. Prawduct could resolve it by
+having `test-status` print the number it considers canonical and by the methodology
+never asking for a count in prose at all.
+
+### What worked, on this car specifically
+
+- **`chunk` mode inferred correctly** once the work was committed on a feature
+  branch — no override needed, unlike the cars 11–13 case logged above.
+- **The "guards that score nothing" discipline paid for itself twice in one hour.**
+  Mutating my own new tests found two that passed vacuously: one looped over the
+  very constant it meant to pin (empty list → zero iterations → green), and one
+  matched a symbol that also appeared at an unrelated call site, so deleting the
+  behaviour it guarded changed nothing. Neither is visible from a green suite, and
+  both would have shipped. This is the single highest-value habit the methodology
+  enforces, and it is worth stating even more strongly than it currently is:
+  *a guard you have not watched go red is a guard you have not written.*
+- **"There is no pre-existing exception"** surfaced a real defect I would otherwise
+  have stepped around: an existing test spent the production 8-second probe budget
+  in real time and leaked its hang-guard timer, making one test file the slowest
+  thing in the suite. The rule turned an annoyance into a fix.
+- **Writing the plan re-scope BEFORE the code** caught that two of the chunk's three
+  planned legs were already shipped and a third was built on a disproven hypothesis.
+  Had I coded first, I would have re-implemented shipped work.

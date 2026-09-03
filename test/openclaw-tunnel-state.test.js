@@ -303,6 +303,22 @@ describe('#1012 deriveConnectionState — green means verified', () => {
   const up = { reachable: true, reason: null };
   const healthy = { answered: true, ok: true, reason: null };
 
+  it('is CHECKING before any probe has been attempted — not dead', () => {
+    // A connection whose tunnel is still starting has not failed. Reporting
+    // `dead` here paints a healthy load red for the whole tunnel budget, and
+    // is the same "state a fact you did not measure" defect as the green dot,
+    // pointing the other way.
+    assert.equal(deriveConnectionState({}).level, 'checking');
+    assert.equal(deriveConnectionState({ connName: 'Kobold' }).level, 'checking');
+    assert.equal(deriveConnectionState({ probe: null, health: healthy }).level, 'checking');
+  });
+
+  it('recording anything BEFORE the probe leaves the dot on checking', () => {
+    // init() records connName before the tunnel POST is even sent.
+    const ind = createConnectionIndicator(null);
+    assert.equal(ind.record('connName', 'Kobold').level, 'checking');
+  });
+
   it('is dead when the proxy could not serve', () => {
     const s = deriveConnectionState({ probe: { reachable: false, reason: 'proxy returned 502' }, health: healthy });
     assert.equal(s.level, 'dead');
@@ -385,7 +401,7 @@ describe('#1012 deriveConnectionState — green means verified', () => {
       for (const health of healths) {
         for (const approve of approves) {
           const s = deriveConnectionState({ probe, health, approve });
-          assert.ok(['dead', 'unverified', 'live'].includes(s.level));
+          assert.ok(['checking', 'dead', 'unverified', 'live'].includes(s.level));
           if (s.level === 'live') {
             assert.ok(probe && probe.reachable === true, 'live requires a reachable probe');
             assert.ok(health && health.ok === true, 'live requires an answering gateway');
@@ -430,6 +446,25 @@ describe('#1012 applyConnectionState — states replace, they do not stack', () 
     applyConnectionState(el, { level: 'unverified', label: 'Tunnel up, gateway unverified' });
     assert.equal(el.title, 'Tunnel up, gateway unverified');
     assert.match(el.attrs['aria-label'], /Tunnel up, gateway unverified/);
+  });
+
+  it('the indicator never hands back its live evidence record', () => {
+    const ind = createConnectionIndicator(null);
+    ind.record('probe', { reachable: true });
+    const snap = ind.snapshot();
+    snap.probe = { reachable: false };
+    assert.equal(ind.state().level, 'unverified', 'mutating a snapshot must not reach the indicator');
+    assert.equal(ind.evidence, undefined, 'the mutable record must not be exported');
+  });
+
+  it('a hand-phrased failure still goes through the applier', () => {
+    const el = { classList: { add(c) { this.s.add(c); }, remove(c) { this.s.delete(c); }, s: new Set(['checking']) },
+      title: '', setAttribute() {} };
+    el.classList.s = new Set(['checking']);
+    const ind = createConnectionIndicator(el);
+    ind.fail('Tunnel for “Kobold” failed to start');
+    assert.ok(el.classList.s.has('dead'));
+    assert.ok(!el.classList.s.has('checking'), 'fail() must clear, not stack');
   });
 
   it('does not throw on a missing element', () => {
@@ -550,5 +585,42 @@ describe('#1012 createConnectionIndicator — recording re-renders, for every si
     el = fakeEl();
     ind.record('health', healthy);
     assert.match(el.title, /pairing not checked yet/);
+  });
+});
+
+describe('#1012 the view and its helper must not skew across the service worker', () => {
+  const sw = fs.readFileSync(path.join(__dirname, '..', 'public', 'sw.js'), 'utf8');
+
+  it('both halves of the pair are network-first', () => {
+    // The view calls tcTunnelState at module top level, so a cached OLD helper
+    // against a fresh view throws at eval and the page renders nothing. Same
+    // lockstep the file already documents for session.js/wrap-drawer.js.
+    const block = sw.slice(sw.indexOf('NETWORK_FIRST_PATHS'), sw.indexOf('])', sw.indexOf('NETWORK_FIRST_PATHS')));
+    for (const p of ['/openclaw-view.js', '/openclaw-tunnel-state.js']) {
+      assert.ok(block.includes(`'${p}'`), `${p} must be network-first or it can be served stale`);
+    }
+  });
+});
+
+describe('#1012 the production probe budget is real', () => {
+  it('uses PROBE_TIMEOUT_MS when no test budget is injected', async () => {
+    // The tests inject a 25ms budget; without this the shipped default is
+    // never exercised and could be anything.
+    const { PROBE_TIMEOUT_MS } = require('../public/openclaw-tunnel-state.js');
+    let seenBudget = null;
+    await probeGateway('c1', {
+      fetchImpl: async () => ({ status: 200, json: async () => ({ ok: true }) }),
+      AbortControllerImpl: class { constructor() { this.signal = {}; } abort() {} }
+    });
+    // Budget is observed through the timer the helper schedules.
+    const realSetTimeout = global.setTimeout;
+    global.setTimeout = (fn, ms) => { seenBudget = ms; return realSetTimeout(fn, ms); };
+    try {
+      await probeGateway('c1', { fetchImpl: async () => ({ status: 200, json: async () => ({ ok: true }) }) });
+    } finally {
+      global.setTimeout = realSetTimeout;
+    }
+    assert.equal(seenBudget, PROBE_TIMEOUT_MS);
+    assert.ok(PROBE_TIMEOUT_MS >= 1000, 'a sub-second production budget would fail healthy tunnels');
   });
 });
