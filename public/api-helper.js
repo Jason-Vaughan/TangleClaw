@@ -1727,10 +1727,33 @@
     </div>`;
     }
 
-    /** Fetch and render the master Hard rules list. */
+    /**
+     * Fetch and render the master Hard rules list.
+     *
+     * Three states, not two (#948). `api()` answers `null` when the read did
+     * not happen; that is NOT an empty ruleset, and rendering it as one told
+     * the operator "the shipped baseline applies" about the fleet's most
+     * privileged agent on evidence that did not exist. The unknown gets its
+     * own sentence in the degraded-read voice the dashboard already speaks.
+     */
     async function loadMasterRules() {
       const data = await api('/api/session-rules?kind=master&status=active');
-      renderMasterRulesList(data ? data.rules || [] : []);
+      if (!data) {
+        renderMasterRulesUnknown(api.lastError);
+        return;
+      }
+      renderMasterRulesList(data.rules || []);
+    }
+
+    /**
+     * Render the Hard-rules list as UNKNOWN: the read failed, so neither "these
+     * rules apply" nor "the baseline applies" can be claimed.
+     * @param {string|null} why - `api.lastError`, when the transport left one.
+     */
+    function renderMasterRulesUnknown(why) {
+      const list = document.getElementById('masterRulesList');
+      if (!list) return;
+      list.innerHTML = `<p class="session-rules-empty session-rules-unknown" role="alert"><strong>Rules unknown:</strong> the Hard-rules read failed${why ? ` — ${esc(why)}` : ''}. Whether the shipped baseline or operator rules are in force cannot be shown. Close and reopen to retry.</p>`;
     }
 
     /**
@@ -1849,7 +1872,15 @@
         return;
       }
       const data = await api(`/api/session-rules/${id}/versions`);
-      const versions = data ? data.versions || [] : [];
+      if (!data) {
+        // Same flatten as the rules list, same lie (#948): a failed read is
+        // not "No history." — it is a history nobody fetched.
+        const why = api.lastError;
+        panel.innerHTML = `<p class="session-rules-empty session-rules-unknown" role="alert"><strong>History unknown:</strong> the version-history read failed${why ? ` — ${esc(why)}` : ''}. Toggle again to retry.</p>`;
+        panel.classList.remove('hidden');
+        return;
+      }
+      const versions = data.versions || [];
       panel.innerHTML = versions.length === 0
         ? '<p class="session-rules-empty">No history.</p>'
         : versions.map((v) => `
@@ -1995,7 +2026,12 @@
       open: openMasterSettings,
       close: closeMasterSettings,
       save: saveMasterSettings,
-      renderBody: renderMasterSettingsBody
+      renderBody: renderMasterSettingsBody,
+      // The two reads that render a three-state answer (#948). Exposed so the
+      // states can be driven through the component rather than by matching
+      // source strings; the delegated click handler calls the same functions.
+      loadRules: loadMasterRules,
+      toggleRuleHistory: toggleMasterRuleHistory
     };
   }
 
