@@ -185,6 +185,7 @@ const ttydBind = require('./lib/ttyd-bind');
 const wrapSentinel = require('./lib/wrap-sentinel');
 const medusaWake = require('./lib/medusa-wake');
 const authIdentity = require('./lib/auth-identity');
+const sessionOwnership = require('./lib/session-ownership');
 const serviceToken = require('./lib/service-token');
 const medusa = require('./lib/medusa');
 
@@ -2685,7 +2686,7 @@ route('GET', '/api/tc/whoami', (req, res) => {
   const config = store.config.load();
   const protocol = httpsSetup.effectiveServerProtocol(config);
   const port = httpsSetup.effectiveServerPort(config);
-  const operatorHost = require('./lib/session-ownership')._localHost();
+  const operatorHost = sessionOwnership.resolveOperatorHost(req.headers, config).host;
 
   let projConfig = null;
   if (project) {
@@ -3836,8 +3837,14 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
   // is an honest unknown in the prime, not a failed launch.
   await ciStatus.refresh(project.path);
 
+  // The operator's own request carries the host they actually reached this
+  // server on — better evidence than probing this machine, which names the box
+  // rather than whatever proxy hostname they typed. Same trust gate as `owner`.
+  const operatorHost = sessionOwnership.resolveOperatorHost(_req.headers, store.config.load()).host;
+
   const result = sessions.launchSession(params.project, {
     primePrompt: body ? body.primePrompt : true,
+    operatorHost,
     engineOverride: body ? body.engineOverride : null,
     mode: body ? body.mode : undefined,
     launchMode: body ? body.launchMode : undefined,
