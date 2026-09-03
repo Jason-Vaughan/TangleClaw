@@ -166,6 +166,23 @@ describe('#1134 — _paneIsBusy: three states, so a retry never injects blind', 
     finally { require('../lib/tmux').capturePane = saved; }
   });
 
+  it('finds the busy marker through the SGR runs a TUI writes', () => {
+    // The other half of the family. `_strip` was added to BOTH match sites and
+    // only the rejection one had a styled fixture, so deleting it here left the
+    // suite green — and the injury is the worse direction: a styled
+    // `esc to cancel` reads as idle, the guard answers false, and the retry
+    // pastes a whole prime over a live turn.
+    const marker = medusaWake.ENGINE_WAKE_PROFILES.antigravity.busyMarker;
+    const mid = Math.floor(marker.length / 2);
+    const styled = { lines: ['>', `  \u001b[2m${marker.slice(0, mid)}\u001b[1m${marker.slice(mid)}\u001b[0m`] };
+    assert.ok(!styled.lines.join('\n').includes(marker),
+      'fixture precondition: a RAW match must fail here, or the strip is not what is being tested');
+    const saved = require('../lib/tmux').capturePane;
+    require('../lib/tmux').capturePane = () => styled;
+    try { assert.equal(sessions._paneIsBusy('s', 'antigravity'), true, 'a styled busy marker must still read busy'); }
+    finally { require('../lib/tmux').capturePane = saved; }
+  });
+
   it('null — never false — when it cannot be told', () => {
     // The caller re-pastes only on a definite `false`, so an unknown holds the
     // retry rather than injecting over a turn nobody confirmed had finished.
@@ -188,7 +205,8 @@ describe('#1134 — the retry loop actually runs', () => {
   const tmux = require('../lib/tmux');
 
   /**
-   * Drive the real `_deferEngineInit` paste path with a scripted pane.
+   * Drive the real `_pastePrime` — the send/watch/retry path `_deferEngineInit`
+   * delegates to — against a scripted pane.
    * @param {object[]} script - Panes returned in order by capturePane.
    * @param {object} [opts] - `probeLive` (default true).
    * @returns {Promise<{sends: number, rows: object[]}>}
@@ -208,7 +226,11 @@ describe('#1134 — the retry loop actually runs', () => {
         primeText: '# Session Start — p\nbody',
         readiness: { gated: true, ready: true },
         onRecord: (r) => recorded.push(r),
-        sleep: async () => {}
+        sleep: async () => {},
+        // Without this the no-rejection cases poll the full 6s window, twice.
+        // The clock must ADVANCE — a constant `now` makes the watch's
+        // `now() - started < windowMs` true forever and hangs the run.
+        watch: (() => { let c = 0; return { now: () => c, sleep: async (ms) => { c += ms; } }; })()
       });
     } finally { Object.assign(tmux, saved); }
     return { sends, rows: recorded };

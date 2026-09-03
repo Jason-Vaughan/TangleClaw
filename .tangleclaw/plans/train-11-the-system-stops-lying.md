@@ -243,7 +243,6 @@ silently does nothing.
   verdict and NO re-paste (the regression guard for the abandoned mechanism); a busy or dead pane →
   the retry is held; a styled banner still matches; an unreadable pane → `unmeasured`, never
   "no rejection".
-  `delivered` with attempt count; profile without signals → honest skip reason.
 - **Done when:** the swallowed-paste replay records `unverified`, not `delivered`.
 
 ### Chunk 14 — #1012 OpenClaw connections show a green dot while unusable
