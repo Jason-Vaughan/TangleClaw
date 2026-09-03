@@ -147,11 +147,19 @@ silently does nothing.
 
 ### Chunk 8 — #991 a red `main` is invisible to every session
 - Option 1: a server-side probe of the project's default-branch CI status (via `gh`, cached with
-  a TTL, engine-neutral) renders a session-start line — "main CI: failing (run <url>, since
-  <sha>)" — in the generated prime/context. Green renders nothing extra; **unknown renders as
-  unknown** ("main CI: unknown — gh unavailable / no workflow / rate-limited"), never as green.
-- Tests: red / green / unknown from a stubbed probe; TTL honoured; the unknown text never reads
-  as passing.
+  a TTL, engine-neutral) renders a session-start line — "main is FAILING (run <url> on <sha>)"
+  — in the generated prime. Green renders nothing; **unknown renders as unknown**, never as
+  green, and is logged at warn so the operator learns the probe is off.
+- The verdict is per workflow over a 20-run window of push/dispatch runs (Critic R-1 on this
+  car: the single newest run on the branch let a green scheduled run mask a red test run).
+  `none` is reserved for facts — no origin remote, no push-triggered runs; an origin whose
+  `origin/HEAD` was never set (a `git remote add` clone) is resolved through `gh repo view` and
+  otherwise reported unknown with the `git remote set-head` remedy (Critic R-2).
+- The spawn is async: `refresh()` is awaited by the launch route before the synchronous
+  `launchSession`/`generatePrimePrompt`, which reads `readCached()`; a cold cache is an honest
+  unknown (Critic R-9: a synchronous `gh` on the launch path holds the whole server).
+- Tests: every state through an injected exec, including the masked-red-run shape and the
+  timeout; TTL honoured; the prime for red / unknown / green; the route awaits the refresh.
 - **Done when:** a failing `main` produces the line on every engine's generated context.
 
 ### Chunk 9 — #796 two binding rule sources contradict and nothing detects it
@@ -233,7 +241,7 @@ silently does nothing.
 - [x] Chunk 4 — #994 (PR #1166)
 - [x] Chunk 5 — #1056 (PR #1167)
 - [x] Chunk 6 — #741 (PR #1168)
-- [ ] Chunk 7 — #1150
+- [x] Chunk 7 — #1150 (PR #1169)
 - [ ] Chunk 8 — #991
 - [ ] Chunk 9 — #796
 - [ ] Chunk 10 — #858
