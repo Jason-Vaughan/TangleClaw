@@ -37,8 +37,23 @@ async function broadcastSharedDocUpdate(docId) {
     const doc = store.sharedDocs.get(docId);
     if (!doc || !doc.groupId) return { notified: 0, errors: [] };
 
-    const projectsInGroup = store.projects.list({ groupId: doc.groupId });
-    const projectIds = new Set(projectsInGroup.map(p => p.id));
+    // Membership from the join table that actually holds it. `projects.list()`
+    // takes `archived`, `engine` and `tag` and SILENTLY IGNORES every other
+    // key, so `list({ groupId })` returned every non-archived project on the
+    // machine and this broadcast reached every live session in every project,
+    // in every group (#1222). It read as scoped — the variable said
+    // `projectsInGroup`, and the owner exclusion below is real and works — so
+    // the only session it visibly withheld from was the doc's own owner.
+    // `groups.listMembers` is what `GET /api/groups/:id` uses, which is why
+    // that endpoint reported the right members all along.
+    const memberIds = new Set(store.projectGroups.listMembers(doc.groupId));
+    // Resolved by id rather than by filtering `projects.list()`: that call
+    // defaults to excluding archived projects, and an archived member whose
+    // directory holds the doc would then miss the owner exclusion below and be
+    // notified about its own file — the #998 defect, through a new door.
+    const projectsInGroup = [...memberIds]
+      .map(id => store.projects.get(id))
+      .filter(Boolean);
 
     // Never tell a project about a change to a file it owns (#998). A shared doc
     // can live INSIDE a member project — `ROADMAP_STATE.md` sits in
@@ -59,7 +74,7 @@ async function broadcastSharedDocUpdate(docId) {
 
     const liveSessions = store.sessions.listLiveAll();
     const targetSessions = liveSessions.filter(
-      s => projectIds.has(s.projectId) && !owningProjectIds.has(s.projectId)
+      s => memberIds.has(s.projectId) && !owningProjectIds.has(s.projectId)
     );
 
     let notified = 0;
