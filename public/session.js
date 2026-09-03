@@ -903,7 +903,7 @@ async function injectUpdatePrompt(data) {
     toast.textContent = 'Update instructions sent to AI agent';
     toast.className = 'toast toast-ok visible';
   } else {
-    toast.textContent = 'Could not inject prompt — no active session?';
+    toast.textContent = api.lastError || 'Could not inject the prompt.';
     toast.className = 'toast toast-warn visible';
   }
   setTimeout(() => { toast.classList.remove('visible'); }, 5000);
@@ -2912,7 +2912,7 @@ async function submitUpload() {
       data: file.data
     });
     if (!result) {
-      document.getElementById('uploadError').textContent = 'Upload failed for ' + file.name;
+      document.getElementById('uploadError').textContent = 'Upload failed for ' + file.name + ': ' + (api.lastError || 'unknown error');
       document.getElementById('uploadError').classList.remove('hidden');
       btn.textContent = 'Upload';
       btn.disabled = false;
@@ -3148,12 +3148,15 @@ async function confirmWrap() {
       // dropped fetch) — probe /wrap/status and reattach before claiming
       // failure. Re-POSTing here is exactly what re-fired the content
       // steps in the 2026-07-16 incident.
+      // Capture the POST's reason first: the status probe below is its own
+      // api() call, and a successful probe clears api.lastError (#83).
+      const reason = api.lastError;
       const handled = await watchWrapRun(postStartedAt, pw);
       if (!handled) {
-        // Genuine failure (bad password, no session) — surface inline and
-        // let `finally` re-enable so the operator can fix and retry.
+        // Genuine failure — surface the server's reason inline and let
+        // `finally` re-enable so the operator can fix and retry.
         clearWrappingState();
-        document.getElementById('wrapError').textContent = api.lastError || 'Wrap failed. Check password.';
+        document.getElementById('wrapError').textContent = reason || 'Wrap failed.';
         document.getElementById('wrapError').classList.remove('hidden');
       }
       return;
@@ -3741,7 +3744,7 @@ function buildHandbackButton(row) {
       btn.disabled = false;
       btn.textContent = 'Ask the session to fix this';
       if (toast) {
-        toast.textContent = 'Could not reach the session — is it still active?';
+        toast.textContent = api.lastError || 'Could not send the fix to the session.';
         toast.className = 'toast toast-warn visible';
         setTimeout(() => { toast.classList.remove('visible'); }, 5000);
       }
