@@ -334,6 +334,13 @@ body {
   gap: 3px;
   flex-shrink: 0;
 }
+/* EXCEPTION to the #823 44px floor, on a fine pointer only. Seven of these
+   sit in the header bar; at 44px each they would push the desktop header into
+   two rows for a mouse that does not need the size. The `(pointer: coarse)`
+   block lifts them to 44px wherever a finger is involved — which is how this
+   dashboard is actually used (#1215) — and the ≤600px block already gives the
+   pill row its own line, so the taller pills wrap rather than clip. Keep the
+   exception here, on the class, so the contract test can see it. */
 .dash-action {
   display: inline-flex;
   align-items: center;
@@ -1869,6 +1876,10 @@ body {
 /* Touch targets: ensure 44px tap area on mobile even if visual is smaller */
 @media (pointer: coarse) {
   .btn-compact { min-height: 44px; }
+  /* #1215 — the header pills were the last controls #823's floor did not
+     reach: they are not `.btn`, so neither the base rule nor this block saw
+     them. `padding` grows with the height so the 11px label stays centred. */
+  .dash-action { min-height: 44px; padding: 2px 12px; }
   .btn-icon-tiny { min-width: 44px; max-width: 44px; min-height: 44px; }
   .card-row { min-height: 48px; }
   /* The version doubles as the check-for-updates control (#716). At its natural

@@ -39,13 +39,19 @@ const EXCEPTIONS = {
   // Session/Master control bar: a fixed bar above the terminal; height there
   // is terminal rows on a phone. Stays 30px on purpose; session.css keeps its
   // desktop (min-width: 900px) single-row sizing of the same class.
-  '.banner-btn': ['shared-controls.css', 'session.css']
+  '.banner-btn': ['shared-controls.css', 'session.css'],
+  // Dashboard header pills: 24px on a fine pointer because seven of them share
+  // the header bar, lifted to 44px by the `(pointer: coarse)` block —
+  // asserted below, not assumed (#1215).
+  '.dash-action': ['style.css']
 };
 
 /**
  * Every `{ selector, minHeight }` pair in a stylesheet whose selector names a
- * button primitive (`.btn`, `.btn-*`, `.banner-btn`) and declares a
- * `min-height`. Media blocks are scanned too — a rule's block is reported so
+ * tappable control (`.btn`, `.btn-*`, `.banner-btn`, `.dash-action`) and
+ * declares a `min-height`. The list is not "buttons": `.dash-action` is not a
+ * `.btn` at all, which is precisely how the header pills kept a 24px target
+ * through #823 (#1215). Media blocks are scanned too — a rule's block is reported so
  * the coarse-pointer override can be told apart from a base rule.
  *
  * @param {string} css - Comment-stripped stylesheet.
@@ -61,7 +67,7 @@ function buttonMinHeights(css) {
     const decls = m[2];
     if (prelude.startsWith('@')) continue; // the media prelude itself, handled via offset below
     const selector = prelude.split('\n').pop().trim();
-    if (!/(^|[\s,>])\.(btn|banner-btn)(\b|-)/.test(selector)) continue;
+    if (!/(^|[\s,>])\.(btn|banner-btn|dash-action)(\b|-)/.test(selector)) continue;
     const mh = /min-height:\s*(\d+)px/.exec(decls);
     if (!mh) continue;
     const before = css.slice(0, m.index);
@@ -135,7 +141,7 @@ describe('button touch targets (#823)', () => {
       const commentStart = RAW[sheet].lastIndexOf('/*', m.index);
       const comment = RAW[sheet].slice(commentStart, m.index);
       assert.match(comment, /EXCEPTION/, `${sheet}: the comment above ${cls} must call itself an exception`);
-      assert.match(comment, /#823/, `${sheet}: the comment above ${cls} must cite #823`);
+      assert.match(comment, /#(823|1215)/, `${sheet}: the comment above ${cls} must cite the issue that granted it`);
     }
   });
 
@@ -144,6 +150,25 @@ describe('button touch targets (#823)', () => {
     assert.ok(coarse, 'style.css must have a (pointer: coarse) block');
     assert.match(coarse[1], new RegExp(`\\.btn-compact\\s*\\{[^}]*min-height:\\s*${FLOOR}px`));
     assert.match(coarse[1], new RegExp(`\\.btn-icon-tiny\\s*\\{[^}]*min-height:\\s*${FLOOR}px`));
+  });
+
+  it('.dash-action is lifted to the floor wherever the pointer is coarse (#1215)', () => {
+    // The header pills are the controls #823's floor never reached: they are
+    // not `.btn`, so neither the base rule nor the coarse block saw them, and
+    // the operator taps them on a phone more than anything else on the page.
+    const coarse = /@media \(pointer: coarse\)\s*\{([\s\S]*?)\n\}/.exec(CSS['style.css']);
+    assert.ok(coarse, 'style.css must have a (pointer: coarse) block');
+    assert.match(coarse[1], new RegExp(`\\.dash-action\\s*\\{[^}]*min-height:\\s*${FLOOR}px`),
+      'the seven header pills must be a 44px target on a finger');
+  });
+
+  it('the header pill row wraps at phone width, so 44px pills reflow instead of clipping (#1215)', () => {
+    // The lift only helps if the taller row has somewhere to go. #1192 gave
+    // `.dash-actions` its own full-width line below 600px; without that rule
+    // seven 44px pills would run off the edge of a 390px screen.
+    const portrait = /@media \(max-width: 600px\)\s*\{([\s\S]*?)\n\}/.exec(CSS['style.css']);
+    assert.ok(portrait, 'style.css must have a max-width: 600px block');
+    assert.match(portrait[1], /\.dash-actions\s*\{[^}]*flex-wrap:\s*wrap/);
   });
 
   it('.btn-icon is square at the floor, not 32px wide on a 44px button', () => {
