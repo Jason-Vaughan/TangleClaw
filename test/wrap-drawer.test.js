@@ -275,11 +275,12 @@ describe('wrap-drawer helpers — buildStepRow', () => {
 describe('wrap-drawer helpers — KIND_DESCRIPTIONS (per-step help)', () => {
   const H = loadHelpers();
   // The canonical wrap-step kinds (mirrors test/wrap-pipeline.test.js realKinds).
-  const CANONICAL_KINDS = [
-    'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll',
-    'pr-check', 'pr-merge', 'commit', 'version-bump', 'features-toc',
-    'project-map', 'index-describe', 'continuity-write'
-  ];
+  // Derived, not hand-copied. This list used to be a second transcription of
+  // the pipeline's kinds, and when `preflight` was added (#854) the producer
+  // was updated and the copy was not — so the guard that exists to catch a
+  // kind shipping without a description skipped exactly the new kind. A drift
+  // guard carrying its own copy of the thing it guards cannot see drift.
+  const CANONICAL_KINDS = Object.keys(H.KIND_LABELS);
 
   it('surfaces the proposal count, so a wrap that proposed rules does not look like one that did not', () => {
     const row = H.buildStepRow({
@@ -1312,6 +1313,89 @@ describe('#867 — stranded-wrap classification agrees with the server', () => {
     assert.match(line, /left on origin/);
     assert.doesNotMatch(line, /^.*· wrap PR skipped:/,
       'the neutral skip wording is what hid this for five days');
+  });
+
+  // #854 — `deriveDetail`'s three-outcome `preflight` case shipped with no
+  // drawer test at all: deleting the whole case left the suite green, while the
+  // feature's entire operator-facing claim ("advisory — the wrap continued")
+  // rests on it.
+  describe('the preflight row says which of three things happened (#854)', () => {
+    it('a clear probe names itself', () => {
+      const { deriveDetail } = loadHelpers();
+      const line = deriveDetail({
+        kind: 'preflight', status: 'done',
+        output: { exitCode: 0, measured: true, detail: 'prawduct gates clear' }
+      });
+      assert.equal(line, 'prawduct gates clear');
+    });
+
+    it('an ADVISORY block says the wrap went on, so a blocked badge is not read as a stopped wrap', () => {
+      const { deriveDetail } = loadHelpers();
+      const line = deriveDetail({
+        kind: 'preflight', status: 'blocked',
+        output: { exitCode: 2, advisory: true, warning: true, blockText: 'REFLECTION: ...' }
+      });
+      assert.match(line, /advisory/i);
+      assert.match(line, /continued/i,
+        'the whole point of the advisory default is that the wrap did not stop');
+    });
+
+    it('a HALTING block adds no line — the row IS the blocker and the banner says so', () => {
+      const { deriveDetail } = loadHelpers();
+      const line = deriveDetail({
+        kind: 'preflight', status: 'blocked',
+        output: { exitCode: 2, advisory: false, blockText: 'CRITIC: no review captured' }
+      });
+      assert.equal(line, null,
+        'a halting block must not also claim the wrap continued');
+    });
+  });
+
+  // #854 + #638/#867 — an advisory warning must not displace a release-state
+  // banner. `preflight` is advisory by default and warns on any unmet gate, so
+  // before this ordering every governed project's wrap hid whether its release
+  // actually shipped behind "completed with warnings".
+  describe('release state outranks a non-blocking warning in the banner', () => {
+    /**
+     * A committed pipeline result carrying an advisory preflight warning.
+     * @param {object} autoPr - The commit step's close-loop outcome.
+     * @returns {object} The pipeline result.
+     */
+    const withWarning = (autoPr) => ({
+      ok: true,
+      blockedAt: null,
+      commitSha: 'abcdef0123456789',
+      results: [
+        { stepId: 'preflight', kind: 'preflight', status: 'blocked', output: { warning: true, advisory: true } },
+        { stepId: 'commit', kind: 'commit', status: 'done', output: { commitSha: 'abcdef0123456789', autoPr } }
+      ]
+    });
+
+    it('a stranded branch still says so, rather than "completed with warnings"', () => {
+      const { summarizePipelineStatus } = loadHelpers();
+      const out = summarizePipelineStatus(withWarning({
+        pushed: true, prUrl: null, autoMergeArmed: false,
+        skippedReason: 'gh CLI not available', error: null
+      }));
+      assert.match(out.label, /branch left on origin/,
+        'the work did not ship — that outranks "there is something to read"');
+    });
+
+    it('an armed PR still reports the release as pending', () => {
+      const { summarizePipelineStatus } = loadHelpers();
+      const out = summarizePipelineStatus(withWarning({
+        pushed: true, prUrl: 'https://github.com/x/y/pull/1', autoMergeArmed: true, error: null
+      }));
+      assert.match(out.label, /release pending/i);
+    });
+
+    it('but a clean commit with a warning DOES report the warning', () => {
+      const { summarizePipelineStatus } = loadHelpers();
+      const out = summarizePipelineStatus(withWarning(null));
+      assert.match(out.label, /completed with warnings/i,
+        'the warning still reaches the banner when nothing about the release needs saying');
+      assert.match(out.detail, /preflight/, 'and names the step');
+    });
   });
 
   it('a stranded wrap yields a PR handle so a banner fires', () => {

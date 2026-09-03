@@ -240,6 +240,26 @@ describe('wrap step: preflight (#854)', () => {
       });
     });
 
+    it('an exit code outside the hook\'s 0/2 contract is unmeasured, not a verdict', async () => {
+      // The hook's contract is exactly two outcomes. It ALSO exits 1 on an
+      // unrecognised subcommand, a build-plan refusal, and a traceback — and
+      // rendering a Python stack trace to the operator as prawduct's block text
+      // is precisely the false report this step exists to prevent.
+      const exec = execDouble({ exitCode: 1, stderr: 'Traceback (most recent call last): ...' });
+      await withGovernedProject(async (project) => {
+        const result = await withInternal({
+          locateHook: () => ({ path: '/hook', via: 'PATH' }),
+          execFileArgs: exec
+        }, () => preflight.run({ project, step: { blocker: false } }));
+
+        assert.equal(result.status, 'skipped', 'a broken hook measured nothing');
+        assert.notEqual(result.status, 'blocked', 'and must not be dressed up as a governance block');
+        assert.equal(result.output.measured, false);
+        assert.match(result.output.reason, /neither clear \(0\) nor blocked \(2\)/);
+        assert.deepStrictEqual(result.blockers, []);
+      });
+    });
+
     it('falls back to stdout when the hook printed no stderr, and never reports an empty blocker', async () => {
       const exec = execDouble({ exitCode: 2, stderr: '', stdout: 'gate text on stdout' });
       await withGovernedProject(async (project) => {
@@ -436,6 +456,15 @@ describe('_exec-shell options the preflight probe needs (#854)', () => {
     );
 
     assert.equal(result.stdout, '/pinned/project');
+    // Pins that `env` REPLACED the child's environment rather than being
+    // ignored: without the option the child would read this process's value,
+    // which is unset — so an assertion that only checked "not empty" would
+    // pass against a no-op.
+    const unset = await execShellLib.execFileArgs(
+      'node', ['-e', 'process.stdout.write(String(process.env.TC_PREFLIGHT_PIN))'],
+      { cwd: os.tmpdir(), timeoutMs: TIMEOUT_MS, maxBufferBytes: 1024 * 1024 }
+    );
+    assert.equal(unset.stdout, 'undefined', 'the variable exists only because env supplied it');
   });
 
   it('execShell honours the same two options', async () => {
@@ -446,6 +475,28 @@ describe('_exec-shell options the preflight probe needs (#854)', () => {
 
     assert.equal(result.timedOut, false);
     assert.match(result.stdout, /TC:pinned/);
+  });
+
+  it('a failed spawn with closeStdin reports through the contract rather than throwing', async () => {
+    // What this DOES pin: the failure arrives as a resolved `{error}`, and
+    // closing stdin does not change that.
+    //
+    // What it does NOT pin, stated rather than implied: the `'error'` listener
+    // on `child.stdin`. Removing that listener leaves this green, because on
+    // darwin a spawn failure never emits on the stdin stream — the case it
+    // guards is an async spawn error on some other platform (the hook is a
+    // `#!/usr/bin/env python3` script, so an X_OK check on the file cannot see
+    // a missing interpreter). Driving it deterministically would mean a guard
+    // that passes here and reds on CI, which this repo has been burned by three
+    // times (#974 reddened `main` and blocked a release). The listener stays as
+    // a cheap unconditional safety, and this comment is the honest account of
+    // its coverage.
+    const result = await execShellLib.execFileArgs('/nonexistent/definitely-not-a-binary', ['stop'], {
+      cwd: os.tmpdir(), timeoutMs: TIMEOUT_MS, maxBufferBytes: 1024 * 1024, closeStdin: true
+    });
+
+    assert.ok(result.error, 'the failure is reported through the contract, not thrown');
+    assert.equal(result.timedOut, false);
   });
 
   it('leaves stdin open when the flag is absent, so no existing caller changed behaviour', async () => {

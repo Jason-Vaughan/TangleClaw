@@ -101,7 +101,7 @@ position that was in fact built.
    governance, the Critic, learnings. TangleClaw does not carry its own copy of these concepts. The
    methodology layer that used to (#538, #570) is gone and does not come back.
 
-3. **The seam is exactly four things,** and anything crossing it is a decision, not an
+3. **The seam is exactly five things,** and anything crossing it is a decision, not an
    implementation detail:
    - the `prawduct@*` key in a project's `.claude/settings.json` (governance detection),
    - `CLAUDE.md` as a plugin-owned anchor TangleClaw must not regenerate when plugin-governed,
@@ -111,6 +111,27 @@ position that was in fact built.
      run time. It is a *value* copied across the seam, not a call across it, which is why it is a
      manual-sync obligation: a test reads the installed plugin's source to detect upstream drift,
      but production never does, because migrations run on machines where the plugin is absent.
+   - **The `prawduct-hook stop` probe** (added by the 2026-09-03 amendment, #854) — the `preflight`
+     wrap step executes the hook and reads its verdict. This is the seam's first *call across* it
+     rather than a value copied over, and it is the amendment this item exists to force: it depends
+     on the hook's `stop` verb, its 0-clear / 2-blocked exit contract, its use of stderr for the
+     block text, and its `CLAUDE_PROJECT_DIR` project selector. All four are prawduct's to change,
+     so this is a manual-sync obligation of the same kind as `PRAWDUCT_INSTALL_REFERENCE`, and the
+     step is written to survive every way the dependency can fail: absent hook, killed probe, spawn
+     refusal and an exit code outside the contract are each reported as **gates not measured**,
+     never as a verdict.
+
+     **This one narrows the third item above, and the narrowing is the decision.** "`.prawduct/` as
+     plugin-owned state TangleClaw reads at agreed paths and never authors" remains true of every
+     line TangleClaw writes — but `cmd_stop` itself calls
+     `gates.session_review_verdict(record_grants=True)`, which appends a base-advance transfer grant
+     to the project's evidence store. So invoking the hook can cause a write inside `.prawduct/`
+     that TangleClaw did not author and does not control. It is accepted rather than worked around:
+     prawduct exposes no read-only form of the verdict, the append is prawduct's own bookkeeping in
+     prawduct's own format, and the alternative — TangleClaw re-deriving the gate state itself —
+     is decision 2 in reverse. What TangleClaw still guarantees is narrower and is the guarantee
+     that was wanted: **the probe touches nothing in the working tree**, so the wrap remains
+     all-or-nothing over the files it edits.
 
 4. **Governance state is derived live, never persisted.** `governanceState` inspects the filesystem on
    every read, so it self-clears the moment a project migrates. A persisted mirror of an external

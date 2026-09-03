@@ -355,12 +355,16 @@
       }
       return { label: `Blocked at "${pipelineResult.blockedAt}"`, tone: 'blocked', detail: reason };
     }
-    // ok:true path — check for non-blocking warnings (`output.warning`)
+    // ok:true path. Non-blocking warnings (`output.warning`) are reported only
+    // where they do not displace a RELEASE-STATE banner. This check used to run
+    // first, so one advisory step — `preflight` is advisory by default and warns
+    // on any unmet governance gate (#854) — hid "release NOT armed" (#638),
+    // "branch left on origin, no PR" (#867) and "release pending PR merge"
+    // behind "completed with warnings". Those say the work did not ship; a
+    // warning says it shipped with something to read. The more consequential
+    // fact wins the banner, and the warning still shows on its own step row.
     const warningSteps = (pipelineResult.results || []).filter((r) => r.output && r.output.warning === true);
-    if (warningSteps.length > 0) {
-      const ids = warningSteps.map((s) => s.stepId).join(', ');
-      return { label: 'Wrap completed with warnings', tone: 'warning', detail: `Warnings on: ${ids}`, pr: wrapPrInfo(pipelineResult) };
-    }
+    const warningDetail = () => `Warnings on: ${warningSteps.map((s) => s.stepId).join(', ')}`;
     if (pipelineResult.commitSha) {
       // #638 — a committed wrap is NOT a shipped release. When the commit step
       // auto-branched and opened a PR, the version bump / CHANGELOG promotion
@@ -397,7 +401,15 @@
           pr
         };
       }
+      // Nothing about the release needs saying — so a warning, if there is one,
+      // is the most important thing left.
+      if (warningSteps.length > 0) {
+        return { label: 'Wrap completed with warnings', tone: 'warning', detail: warningDetail(), pr: null };
+      }
       return { label: 'Wrap committed', tone: 'success', detail: pipelineResult.commitSha.slice(0, 12), pr: null };
+    }
+    if (warningSteps.length > 0) {
+      return { label: 'Wrap completed with warnings', tone: 'warning', detail: warningDetail(), pr: wrapPrInfo(pipelineResult) };
     }
     return { label: 'Wrap completed (no changes to commit)', tone: 'success', detail: null, pr: null };
   }
