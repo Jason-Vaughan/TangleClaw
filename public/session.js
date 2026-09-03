@@ -293,7 +293,7 @@ function setConnected(connected) {
     toast.textContent = 'Connection lost. Retrying\u2026';
     toast.className = 'toast toast-warn visible';
     dot.classList.add('disconnected');
-    dot.title = 'Disconnected';
+    setPillDetail(document.getElementById('statusPill'), 'Disconnected');
     document.getElementById('commandSend').disabled = true;
     reconnectPolicy.begin();
   } else {
@@ -302,7 +302,7 @@ function setConnected(connected) {
     toast.textContent = 'Reconnected';
     toast.className = 'toast toast-ok visible';
     dot.classList.remove('disconnected');
-    dot.title = 'Connected';
+    setPillDetail(document.getElementById('statusPill'), 'Connected');
     document.getElementById('commandSend').disabled = false;
     setTimeout(() => { toast.classList.remove('visible'); }, 3000);
   }
@@ -668,7 +668,7 @@ function renderBannerGroups(groups) {
   }
 
   container.innerHTML = groups.map(g =>
-    `<span class="group-pill" data-group-id="${g.id}" onclick="toggleGroupPopover(this, '${g.id}')">${esc(g.name)}` +
+    `<span class="group-pill" data-group-id="${g.id}" data-tooltip="Project group" onclick="toggleGroupPopover(this, '${g.id}')">${esc(g.name)}` +
     `<span class="group-popover" id="groupPop-${g.id}"></span></span>`
   ).join('');
 }
@@ -682,10 +682,7 @@ async function toggleGroupPopover(pill, groupId) {
   const pop = document.getElementById(`groupPop-${groupId}`);
   if (!pop) return;
 
-  // Close all other popovers
-  document.querySelectorAll('.group-popover.open').forEach(el => {
-    if (el !== pop) el.classList.remove('open');
-  });
+  closeBannerPopovers(pop);
 
   if (pop.classList.contains('open')) {
     pop.classList.remove('open');
@@ -707,6 +704,102 @@ async function toggleGroupPopover(pill, groupId) {
     (docsCount > 0 ? `<div style="margin-top:6px;font-size:10px;color:var(--text-muted)">${docsCount} shared doc${docsCount !== 1 ? 's' : ''}</div>` : '');
 
   pop.classList.add('open');
+}
+
+/**
+ * Close every open banner popover — group members and pill details alike.
+ * @param {HTMLElement} [keep] - A popover to leave as it is.
+ */
+function closeBannerPopovers(keep) {
+  document.querySelectorAll('.group-popover.open').forEach(el => {
+    if (el !== keep) el.classList.remove('open');
+  });
+}
+
+/**
+ * Record what a banner pill currently says — its status detail — for the
+ * click popover (#104). Hover is reserved for the pill's category label
+ * (`data-tooltip`), so the detail is stored in `data-pill-detail` rather than
+ * `title`, which would put it back on the hover. A pill that ships with an
+ * `aria-label` (the status dot, which has no text of its own) keeps that name
+ * current too, since the popover is not there until it is clicked.
+ * @param {HTMLElement} pill - The pill carrying `data-tooltip`.
+ * @param {string} detail - The current status text.
+ */
+function setPillDetail(pill, detail) {
+  pill.setAttribute('data-pill-detail', detail);
+  if (pill.getAttribute('aria-label') !== null) {
+    pill.setAttribute('aria-label', `${pill.getAttribute('data-tooltip') || 'Status'}: ${detail}`);
+  }
+  const pop = pill.querySelector('.pill-detail');
+  if (pop && pop.classList.contains('open')) renderPillDetail(pill, pop);
+}
+
+/**
+ * Fill a pill's detail popover: the category label as its title — a touch
+ * user never sees the hover tooltip, so the click must carry the label too —
+ * and the current status text beneath it.
+ * @param {HTMLElement} pill - The pill carrying `data-tooltip` / `data-pill-detail`.
+ * @param {HTMLElement} pop - The pill's `.pill-detail` popover.
+ */
+function renderPillDetail(pill, pop) {
+  const label = pill.getAttribute('data-tooltip') || '';
+  const detail = pill.getAttribute('data-pill-detail') || 'No status yet';
+  pop.innerHTML = `<div class="group-popover-title">${esc(label)}</div>` +
+    `<div class="pill-detail-text">${esc(detail)}</div>`;
+}
+
+/**
+ * Toggle a pill's click-detail popover (#104). Mirrors the group pill: one
+ * popover open at a time, click again to close, outside click closes.
+ * @param {HTMLElement} pill - The pill carrying `data-tooltip`.
+ */
+function togglePillDetail(pill) {
+  let pop = pill.querySelector('.pill-detail');
+  if (pop && pop.classList.contains('open')) {
+    pop.classList.remove('open');
+    return;
+  }
+  closeBannerPopovers();
+  if (!pop) {
+    pop = document.createElement('span');
+    pop.className = 'group-popover pill-detail';
+    pill.appendChild(pop);
+  }
+  renderPillDetail(pill, pop);
+  pop.classList.add('open');
+}
+
+/**
+ * Close the banner popovers on a click outside any pill that owns one. Both
+ * predicates read the dispatch-time path (#566) — a re-rendering inner handler
+ * must never be able to make its own click look like an outside one. The
+ * pills with a click detail count as inside: the click that opens a detail
+ * must not also be the click that closes it.
+ * @param {Event} e - The document click.
+ */
+function onBannerOutsideClick(e) {
+  if (!clickHitsSelector(e, '.group-pill, .status-pill, .banner-engine')) {
+    closeBannerPopovers();
+  }
+}
+
+/**
+ * Wire the click (and keyboard) detail on the banner pills that have one:
+ * the status dot and the engine pill. The version pill has no detail yet and
+ * stays a no-op; group pills bind their own popover inline.
+ */
+function bindPillDetails() {
+  ['statusPill', 'bannerEngine'].forEach((id) => {
+    const pill = document.getElementById(id);
+    if (!pill) return;
+    pill.addEventListener('click', () => togglePillDetail(pill));
+    pill.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      togglePillDetail(pill);
+    });
+  });
 }
 
 /**
@@ -1095,13 +1188,16 @@ async function loadModelStatus(engineId) {
     engineEl.classList.add(`engine-pill-${status.status}`);
   }
 
-  // Set tooltip on the whole badge
+  // The status text is the pill's CLICK detail, not its hover (#104): hover
+  // answers "what is this pill" (`data-tooltip="AI engine"`), the click
+  // answers "what does it say right now". The colour state above is a third,
+  // independent channel and is untouched by either.
   if (status.error) {
-    engineEl.title = `Status unknown: ${status.error}`;
+    setPillDetail(engineEl, `Status unknown: ${status.error}`);
   } else if (status.message) {
-    engineEl.title = status.message.replace(/_/g, ' ');
+    setPillDetail(engineEl, status.message.replace(/_/g, ' '));
   } else {
-    engineEl.title = (status.status || 'unknown').replace(/_/g, ' ');
+    setPillDetail(engineEl, (status.status || 'unknown').replace(/_/g, ' '));
   }
 }
 
@@ -1899,7 +1995,7 @@ function handleSessionEnded(statusData) {
   const dot = document.getElementById('statusDot');
   dot.classList.add('ended');
   dot.classList.remove('disconnected');
-  dot.title = 'Session ended';
+  setPillDetail(document.getElementById('statusPill'), 'Session ended');
 
   // Disable action buttons
   document.getElementById('wrapBtn').disabled = true;
@@ -4475,7 +4571,7 @@ function showWrappingState() {
 
   const dot = document.getElementById('statusDot');
   dot.classList.add('wrapping');
-  dot.title = 'Wrapping...';
+  setPillDetail(document.getElementById('statusPill'), 'Wrapping\u2026');
 
   // Disable wrap/cmd buttons but keep kill enabled as escape hatch
   document.getElementById('wrapBtn').disabled = true;
@@ -4501,7 +4597,7 @@ function clearWrappingState() {
 
   const dot = document.getElementById('statusDot');
   dot.classList.remove('wrapping');
-  dot.title = 'Active';
+  setPillDetail(document.getElementById('statusPill'), 'Active');
 
   document.getElementById('wrapBtn').disabled = false;
   document.getElementById('killBtn').disabled = false;
@@ -4724,7 +4820,7 @@ function handleWrapCompleted(data) {
   const dot = document.getElementById('statusDot');
   dot.classList.remove('wrapping');
   dot.classList.add('ended');
-  dot.title = 'Session wrapped';
+  setPillDetail(document.getElementById('statusPill'), 'Session wrapped');
 
   // Disable action buttons
   document.getElementById('wrapBtn').disabled = true;
@@ -4814,13 +4910,10 @@ function bindEvents() {
   });
   masterBar.mount();
 
-  // Close group popovers on outside click. Both predicates read the
-  // dispatch-time path (#566) — a re-rendering inner handler must never be able
-  // to make its own click look like an outside one.
+  // Close banner popovers on outside click; see `onBannerOutsideClick`.
+  bindPillDetails();
+  document.addEventListener('click', onBannerOutsideClick);
   document.addEventListener('click', (e) => {
-    if (!clickHitsSelector(e, '.group-pill')) {
-      document.querySelectorAll('.group-popover.open').forEach(el => el.classList.remove('open'));
-    }
     // v2 T4 — the loops panel dismisses on outside click like the inbox/peers
     // popovers, which the shared control now handles for itself in `mount()`.
     if (!clickHitsSelector(e, '.medusa-control')) closeMedusaLoopsPanel();
@@ -4899,6 +4992,9 @@ function bindEvents() {
     if (loopsPanel && !loopsPanel.hidden) closeMedusaLoopsPanel();
     const catcher = $('pasteCatcher');
     if (catcher && catcher.classList.contains('open')) closePasteCatcher();
+    // Pill details open from the keyboard (Enter/Space), so they must close
+    // from it too (#104).
+    closeBannerPopovers();
   });
 
   // Banner buttons
