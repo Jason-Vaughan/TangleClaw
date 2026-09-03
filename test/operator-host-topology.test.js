@@ -107,9 +107,9 @@ describe('#1178 resolveOperatorHost — measured, gated, and never invented', ()
   it('refuses an UNBRACKETED IPv6 literal rather than truncating it', () => {
     // `2001:db8::1` split at the first colon gives `2001`, which is
     // hostname-shaped and so passes every downstream check on its way into
-    // generated instruction text. Asserting null alone cannot tell the branch
-    // apart — the reverted code also yields null, via an empty string — so the
-    // load-bearing half of this test is that it is not `2001`.
+    // generated instruction text. The load-bearing assertion is that the result
+    // is not `2001`: the probe fallback supplies a host either way, so a bare
+    // null check could not tell the truncating spelling from the refusing one.
     const r = sessionOwnership.resolveOperatorHost({ host: '2001:db8::1' }, GATE_OFF);
     assert.notEqual(r.host, '2001', 'an unbracketed IPv6 host must not be truncated to its first group');
     assert.notEqual(r.source, 'host');
