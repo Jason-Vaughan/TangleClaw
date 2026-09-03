@@ -1021,6 +1021,13 @@ body {
   color: var(--text-muted);
   font-style: italic;
 }
+/* A read that FAILED is not an empty list (#948): the unknown state keeps the
+   muted voice but drops the italic and names itself, so it cannot be skimmed
+   as "no rules". */
+.session-rules-unknown {
+  font-style: normal;
+  color: var(--warning, #ffb300);
+}
 .session-rule-item {
   display: flex;
   align-items: flex-start;

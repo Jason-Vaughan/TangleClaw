@@ -1474,6 +1474,26 @@
     setTimeout(() => { status.classList.add('hidden'); }, 3000);
   }
 
+  /**
+   * Markup for a rules surface whose read FAILED (#948). A `null` from `api()`
+   * is not an empty list; rendering it as one told the operator "the shipped
+   * baseline applies" on evidence that did not exist. Every rules surface —
+   * the Master's Hard rules, its version history, the Project Rules lists —
+   * renders its unknown through THIS one function, so the alert role, the
+   * class pair and the sentence shape cannot drift between copies. Takes the
+   * shared degraded-read record so the cause and remedy speak in the same
+   * vocabulary as the dashboard's other unknowns.
+   * @param {string} label - What could not be read, e.g. 'Rules', 'History'.
+   * @param {{known: boolean, why: string|null, remedy: string|null}} read -
+   *   A `tcDegradedRead(false, why, remedy)` record.
+   * @returns {string} HTML for the list/panel body.
+   */
+  function tcRulesUnknownHtml(label, read) {
+    const why = read.why ? ` — ${tcEscapeHtml(read.why)}` : '';
+    const remedy = read.remedy ? ` ${tcEscapeHtml(read.remedy)}` : '';
+    return `<p class="session-rules-empty session-rules-unknown" role="alert"><strong>${tcEscapeHtml(label)} unknown:</strong> the read failed${why}.${remedy}</p>`;
+  }
+
   // ── Master settings component ──
   // Access level (read-only enforced; higher tiers disabled until each ships
   // with real structural enforcement), engine, scope, availability, and the
@@ -1727,10 +1747,34 @@
     </div>`;
     }
 
-    /** Fetch and render the master Hard rules list. */
+    /**
+     * Fetch and render the master Hard rules list.
+     *
+     * Three states, not two (#948). `api()` answers `null` when the read did
+     * not happen; that is NOT an empty ruleset, and rendering it as one told
+     * the operator "the shipped baseline applies" about the fleet's most
+     * privileged agent on evidence that did not exist. The unknown gets its
+     * own sentence in the degraded-read voice the dashboard already speaks.
+     */
     async function loadMasterRules() {
       const data = await api('/api/session-rules?kind=master&status=active');
-      renderMasterRulesList(data ? data.rules || [] : []);
+      if (!data) {
+        renderMasterRulesUnknown(api.lastError);
+        return;
+      }
+      renderMasterRulesList(data.rules || []);
+    }
+
+    /**
+     * Render the Hard-rules list as UNKNOWN: the read failed, so neither "these
+     * rules apply" nor "the baseline applies" can be claimed.
+     * @param {string|null} why - `api.lastError`, when the transport left one.
+     */
+    function renderMasterRulesUnknown(why) {
+      const list = document.getElementById('masterRulesList');
+      if (!list) return;
+      list.innerHTML = tcRulesUnknownHtml('Rules', tcDegradedRead(false, why,
+        'Whether the shipped baseline or operator rules are in force cannot be shown. Close and reopen to retry.'));
     }
 
     /**
@@ -1849,7 +1893,15 @@
         return;
       }
       const data = await api(`/api/session-rules/${id}/versions`);
-      const versions = data ? data.versions || [] : [];
+      if (!data) {
+        // Same flatten as the rules list, same lie (#948): a failed read is
+        // not "No history." — it is a history nobody fetched.
+        panel.innerHTML = tcRulesUnknownHtml('History',
+          tcDegradedRead(false, api.lastError, 'Toggle again to retry.'));
+        panel.classList.remove('hidden');
+        return;
+      }
+      const versions = data.versions || [];
       panel.innerHTML = versions.length === 0
         ? '<p class="session-rules-empty">No history.</p>'
         : versions.map((v) => `
@@ -1995,7 +2047,12 @@
       open: openMasterSettings,
       close: closeMasterSettings,
       save: saveMasterSettings,
-      renderBody: renderMasterSettingsBody
+      renderBody: renderMasterSettingsBody,
+      // The two reads that render a three-state answer (#948). Exposed so the
+      // states can be driven through the component rather than by matching
+      // source strings; the delegated click handler calls the same functions.
+      loadRules: loadMasterRules,
+      toggleRuleHistory: toggleMasterRuleHistory
     };
   }
 
@@ -2006,6 +2063,7 @@
   global.tcSessionLiveness = tcSessionLiveness;
   global.tcSessionRead = tcSessionRead;
   global.tcMasterRead = tcMasterRead;
+  global.tcRulesUnknownHtml = tcRulesUnknownHtml;
   global.tcGitDirtyState = tcGitDirtyState;
   global.tcGitRead = tcGitRead;
   global.tcScanNotice = tcScanNotice;

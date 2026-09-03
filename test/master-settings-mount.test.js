@@ -193,3 +193,117 @@ describe('#768 — opening the mounted modal renders through it', () => {
       'a modal that could not be filled must not open');
   });
 });
+
+describe('#948 — a failed Hard-rules read is an unknown, not the shipped baseline', () => {
+  /**
+   * An `api` that answers the status/groups reads but FAILS the named path,
+   * the way `api()` fails: `null`, with `lastError` set.
+   * @param {string} failingPrefix - URL prefix that returns null.
+   * @param {object} [answers] - Successful answers by exact URL.
+   * @returns {Function} The stub.
+   */
+  function apiFailingOn(failingPrefix, answers = {}) {
+    const stub = async (url) => {
+      if (url.startsWith(failingPrefix)) { stub.lastError = 'Connection lost.'; return null; }
+      if (url.startsWith('/api/master/status')) {
+        return { settings: {
+          accessLevel: 'read-only', accessLevels: ['read-only'], enabledAccessLevels: ['read-only'],
+          engine: 'claude', launchMode: 'default', resolvedLaunchMode: 'default',
+          launchModes: [{ id: 'default', label: 'Interactive' }], scope: 'all', autoStart: false,
+          enforcement: 'structural'
+        } };
+      }
+      if (url === '/api/groups') return { groups: [] };
+      if (Object.prototype.hasOwnProperty.call(answers, url)) return answers[url];
+      return { rules: [] };
+    };
+    stub.lastError = null;
+    return stub;
+  }
+
+  it('renders the unknown state, never the baseline sentence, when the rules read fails', async () => {
+    const { component, doc } = build({ api: apiFailingOn('/api/session-rules?kind=master') });
+    component.mount();
+    await component.open();
+    // The mini-DOM registers ids only through an upgraded innerHTML setter, and
+    // the body is one level below that; register the list target by hand.
+    const list = doc.createElement('div');
+    list.id = 'masterRulesList';
+    doc._register(list);
+    await component.loadRules();
+
+    assert.doesNotMatch(list.innerHTML, /shipped baseline applies/,
+      'a read that did not happen must not be told as "the baseline applies"');
+    assert.match(list.innerHTML, /Rules unknown/, 'the unknown names itself');
+    assert.match(list.innerHTML, /Connection lost\./, 'and carries the transport\'s reason');
+    assert.match(list.innerHTML, /session-rules-unknown/, 'in the unknown state\'s own class');
+  });
+
+  it('still renders the affirmative empty state for a successful empty read', async () => {
+    const { component, doc } = build();
+    component.mount();
+    await component.open();
+    // The mini-DOM registers ids only through an upgraded innerHTML setter, and
+    // the body is one level below that; register the list target by hand.
+    const list = doc.createElement('div');
+    list.id = 'masterRulesList';
+    doc._register(list);
+    await component.loadRules();
+
+    assert.match(list.innerHTML, /No rules — the shipped baseline applies/,
+      'an empty ruleset that WAS read is the one case the baseline sentence is true');
+    assert.doesNotMatch(list.innerHTML, /Rules unknown/);
+  });
+
+  it('renders the unknown state, never "No history.", when the version read fails', async () => {
+    const { component, doc } = build({
+      api: apiFailingOn('/api/session-rules/7/versions')
+    });
+    component.mount();
+    const panel = doc.createElement('div');
+    panel.id = 'masterRuleHistory-7';
+    panel.classList.add('hidden');
+    doc._register(panel);
+
+    await component.toggleRuleHistory(7);
+
+    assert.doesNotMatch(panel.innerHTML, /No history\./,
+      'a history nobody fetched must not read as an empty history');
+    assert.match(panel.innerHTML, /History unknown/);
+    assert.match(panel.innerHTML, /Connection lost\./);
+    assert.equal(panel.classList.contains('hidden'), false, 'the panel opens to show the unknown');
+  });
+
+  it('still renders "No history." for a successful empty version read', async () => {
+    const { component, doc } = build({
+      api: apiFailingOn('/never', { '/api/session-rules/7/versions': { versions: [] } })
+    });
+    component.mount();
+    const panel = doc.createElement('div');
+    panel.id = 'masterRuleHistory-7';
+    panel.classList.add('hidden');
+    doc._register(panel);
+
+    await component.toggleRuleHistory(7);
+
+    assert.match(panel.innerHTML, /No history\./);
+    assert.doesNotMatch(panel.innerHTML, /History unknown/);
+  });
+});
+
+describe('#948 — every rules surface renders its unknown through one helper', () => {
+  it('api-helper.js carries the unknown-state class in exactly one place and exports the helper', () => {
+    // Critic R-7 on car 1: two hand-written sentences that varied only in
+    // label/remedy. A second copy is the drift the shared helper exists to
+    // prevent, so the class name is allowed to appear once — in the helper.
+    const sites = HELPER_SRC.split('session-rules-unknown').length - 1;
+    assert.equal(sites, 1, 'the class must be authored only inside tcRulesUnknownHtml');
+    const sandbox = loadHelper();
+    assert.equal(typeof sandbox.tcRulesUnknownHtml, 'function', 'exported for the Project Rules copy in ui.js');
+    const html = sandbox.tcRulesUnknownHtml('Rules', { known: false, why: 'a <b>reason</b>', remedy: 'Retry.' });
+    assert.match(html, /role="alert"/);
+    assert.match(html, /Rules unknown:/);
+    assert.match(html, /a &lt;b&gt;reason&lt;\/b&gt;/, 'the transport reason is escaped');
+    assert.match(html, /Retry\.<\/p>$/);
+  });
+});
