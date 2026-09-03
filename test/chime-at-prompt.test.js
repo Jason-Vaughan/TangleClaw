@@ -219,3 +219,116 @@ describe('#1180 the capture window is wide enough for the digest to see movement
     }
   });
 });
+
+describe('#1180 the chime fires for the states it exists for', () => {
+  const CLAUDE_P = medusaWake.ENGINE_WAKE_PROFILES.claude;
+
+  /** Settle a pane through the gate until it stops changing verdict. */
+  function twice(lines, opts) {
+    const t1 = medusaWake.assessSessionIdle({ lines, profile: CLAUDE_P, ...opts });
+    return medusaWake.assessSessionIdle({
+      lines, profile: CLAUDE_P, ...opts, prevDigest: t1.digest, idleTicks: t1.idleTicks
+    });
+  }
+
+  it('a permission dialog is AT REST for a notifier — the case the chime is for', () => {
+    // _assessPane refuses this (a selector row is not a bare prompt) because an
+    // INJECTOR must not type over it. A notifier must fire: a session blocked
+    // on a permission prompt is exactly what the operator is waiting to hear.
+    const dialog = ['Do you want to proceed?', '❯ 1. Yes', '  2. No'];
+    assert.equal(medusaWake._assessPane(dialog, CLAUDE_P, null).idle, false,
+      'precondition: the injector gate still refuses a dialog');
+    assert.equal(twice(dialog, { mustBeTypeable: false }).idle, true,
+      'the notifier must fire on a blocked session');
+  });
+
+  it('a composer holding typed text is AT REST for a notifier', () => {
+    const typed = ['transcript', '', '❯ half a sentence the operator typed'];
+    assert.equal(twice(typed, { mustBeTypeable: false }).idle, true);
+  });
+
+  it('but a turn in flight is never at rest, in either mode', () => {
+    const busy = ['streaming output', 'esc to interrupt', '❯ '];
+    assert.equal(twice(busy, { mustBeTypeable: false }).idle, false);
+    assert.equal(twice(busy, { mustBeTypeable: true }).idle, false);
+  });
+
+  it('and a running fleet is never at rest, in either mode', () => {
+    const fleet = ['◯ researching', '◯ patching', '❯ '];
+    assert.equal(twice(fleet, { mustBeTypeable: false }).idle, false);
+    assert.equal(twice(fleet, { mustBeTypeable: true }).idle, false);
+  });
+
+  it('the injector keeps its paste-safety — the split did not weaken it', () => {
+    const dialog = ['Do you want to proceed?', '❯ 1. Yes', '  2. No'];
+    assert.equal(twice(dialog, { mustBeTypeable: true }).idle, false);
+    // And the default is the safe one: an omitted flag must not silently
+    // hand an injector the notifier's laxer gate.
+    assert.equal(twice(dialog, {}).idle, false);
+  });
+});
+
+describe('#1180 stillness is measured in TIME, not in polls', () => {
+  const tmux = require('../lib/tmux');
+  const sessions = require('../lib/sessions.js');
+
+  it('a fast poll cannot ring the chime early', () => {
+    // The streak counts calls; the poll interval is an operator setting (2s to
+    // 30s, and 2s during a wrap), so two ticks meant ~4s on one install and
+    // ~60s on another. The old heuristic was time-based; that is preserved.
+    const realCapture = tmux.capturePane;
+    const realCursor = tmux.cursorInfo;
+    tmux.capturePane = () => ({ lines: ['steady transcript', '', '❯ '] });
+    tmux.cursorInfo = () => null;
+    sessions.clearIdleCache('fast-poll-1180');
+    try {
+      let last;
+      for (let i = 0; i < 6; i++) last = sessions.detectAtPrompt('fast-poll-1180', 'claude');
+      assert.equal(last.idle, false,
+        'six immediate polls must not satisfy a ten-second stillness requirement');
+      assert.equal(last.reason, 'settling');
+    } finally {
+      tmux.capturePane = realCapture;
+      tmux.cursorInfo = realCursor;
+      sessions.clearIdleCache('fast-poll-1180');
+    }
+  });
+
+  it('an empty capture degrades rather than reading as at rest', () => {
+    // capturePane swallows most real failures into `{lines: []}` instead of
+    // throwing, and an empty pane contains no busy marker — so judged, it
+    // would look perfectly at rest.
+    const realCapture = tmux.capturePane;
+    const realCursor = tmux.cursorInfo;
+    tmux.capturePane = () => ({ lines: [] });
+    tmux.cursorInfo = () => null;
+    try {
+      const r = sessions.detectAtPrompt('empty-capture-1180', 'claude');
+      assert.match(r.reason, /^staleness:empty-capture$/);
+    } finally {
+      tmux.capturePane = realCapture;
+      tmux.cursorInfo = realCursor;
+    }
+  });
+
+  it('clearIdleCache resets the at-prompt state too', () => {
+    // tmux names key on the PROJECT, so without this the next session of a
+    // project inherits the dead one's streak and its stillness clock.
+    const realCapture = tmux.capturePane;
+    const realCursor = tmux.cursorInfo;
+    tmux.capturePane = () => ({ lines: ['a', '', '❯ '] });
+    tmux.cursorInfo = () => null;
+    try {
+      sessions.detectAtPrompt('reset-1180', 'claude');
+      const before = sessions.detectAtPrompt('reset-1180', 'claude');
+      assert.ok(before.lastOutputAge >= 0);
+      sessions.clearIdleCache('reset-1180');
+      const after = sessions.detectAtPrompt('reset-1180', 'claude');
+      assert.equal(after.lastOutputAge, 0, 'a cleared pane must restart its stillness clock');
+    } finally {
+      tmux.capturePane = realCapture;
+      tmux.cursorInfo = realCursor;
+      sessions.clearIdleCache('reset-1180');
+    }
+  });
+});
