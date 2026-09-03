@@ -302,7 +302,14 @@ Tap **Upload** to send a file into the project directory. A file picker opens wh
 
 #### Chime System
 
-When enabled, TangleClaw plays an audio chime when the terminal goes idle (no new output for a configured period). This tells you the AI has finished working.
+When enabled, TangleClaw plays an audio chime when the session stops working and is waiting for you.
+
+It does not simply time silence. TangleClaw reads the pane for the engine's own signals — a turn in flight, a running agent fleet — and additionally requires the transcript to have stopped changing, across consecutive polls and for at least ten seconds. A session blocked on a permission prompt counts as waiting for you, and chimes — on Claude. On antigravity/Gemini CLI a dialog also hides that engine's own at-rest marker, so those sessions still read as working until the dialog clears; that is a limit of what the terminal shows, not a setting.
+
+Two limits worth knowing:
+
+- **A tool call that prints nothing looks exactly like a session waiting**, to this or any reader of the terminal. The chime can still ring early during a long silent step.
+- **Engines with no captured idle signature** (anything outside Claude and antigravity/Gemini CLI) fall back to the older behaviour: silence for ten seconds. The session status reports `idleReason` beginning `staleness:` when that is what answered, so the fallback is visible rather than assumed.
 
 - Uses Web Audio API for reliable mobile playback
 - Toggle via the Settings modal
