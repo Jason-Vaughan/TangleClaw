@@ -245,6 +245,18 @@ describe('#429 read-only pre-check — _readOnlyPrecheck states', () => {
         assert.equal(aic._readOnlyModeMarker({ engineId: 'claude' }), null, name);
         assert.equal(aic._readOnlyPrecheck({ engineId: 'claude' }, 'sess').state, 'no-marker', name);
       }
+      // A marker equal to its own locator matches the mode line in EVERY mode,
+      // so it would refuse every wrap on this engine — the failure the
+      // two-field design exists to prevent, presenting as "wraps stopped
+      // working" rather than as a bad profile. Documented in the engine guide,
+      // and a constraint only prose enforces is not enforced.
+      store.engines.save({ ...original, capabilities: { ...original.capabilities,
+        readOnlyModeMarker: { ...good, marker: good.modeLine } } });
+      assert.equal(aic._readOnlyModeMarker({ engineId: 'claude' }), null, 'marker === modeLine');
+      aic._internal.capturePane = () => pane([], BYPASS_FOOTER);
+      assert.equal(aic._readOnlyPrecheck({ engineId: 'claude' }, 'sess').state, 'no-marker',
+        'a self-matching marker must not refuse a writable pane');
+
       // Control: the shipped field is not rejected by the same validation.
       store.engines.save(original);
       assert.ok(aic._readOnlyModeMarker({ engineId: 'claude' }), 'the real profile must survive the validation');

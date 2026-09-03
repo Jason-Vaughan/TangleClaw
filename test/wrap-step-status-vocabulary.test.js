@@ -66,6 +66,25 @@ describe('wrap step-status vocabulary (#429 R-6)', () => {
           `no CSS rule for tone "${tone}" (status "${status}")`);
       });
 
+      it('is understood by the agent-fix predicate', () => {
+        // The fifth hand-edit site. Left out of this loop, `agentResolvable`
+        // was the one consumer the guard named in its own header and did not
+        // check — a guard that lists the family and covers four fifths of it.
+        const H = loadHelpers();
+        const built = H.buildStepRow(
+          { stepId: 's', kind: 'ai-content', status, blockers: [] },
+          { blockedAt: 's' }
+        );
+        assert.equal(typeof built.agentResolvable, 'boolean',
+          `agentResolvable is not a decision for status "${status}"`);
+        // Only a status that actually halted can be the active blocker, and
+        // only a session that CAN act should be offered the fix button.
+        if (status === 'needs-operator') {
+          assert.equal(built.agentResolvable, false,
+            'the session cannot act on a needs-operator halt — offering it promises a recovery that cannot happen');
+        }
+      });
+
       it('lands in exactly one bucket of the skip rollup', () => {
         const H = loadHelpers();
         const roll = H.summarizeSkips({ results: [{ stepId: 's', kind: 'ai-content', status }] });

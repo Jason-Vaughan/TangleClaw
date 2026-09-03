@@ -538,8 +538,10 @@
    * counted in `total` and in no bucket makes the digest under-report the very
    * thing it exists to surface. `test/wrap-step-status-vocabulary.test.js`
    * fails when a declared status has no bucket here (#429 R-6); it caught
-   * `running`, which had been unbucketed since this rollup shipped and which a
-   * mid-wrap poll can render.
+   * `running`, unbucketed since this rollup shipped. No handler emits `running`
+   * today — it is declared so the vocabulary and `STATUS_META` stay in
+   * bijection, and bucketed so the first producer does not have to remember
+   * this file.
    *
    * @returns {{total: number, done: number, skipped: number, blocked: number, pending: number, running: number, skips: Array<{id: string, kind: string, reason: string}>}}
    */
