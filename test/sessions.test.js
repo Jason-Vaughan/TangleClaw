@@ -83,9 +83,9 @@ describe('sessions', () => {
       const ciStatus = require('../lib/ci-status');
       const project = store.projects.getByName('prime-test');
       const engine = store.engines.get('claude');
-      const real = ciStatus.probeMainCi;
+      const real = ciStatus.readCached;
       try {
-        ciStatus.probeMainCi = () => ({
+        ciStatus.readCached = () => ({
           state: 'failing', branch: 'main', runUrl: 'https://github.com/o/r/actions/runs/9',
           sha: '0123456789abcdef', workflow: 'Tests', updatedAt: '2026-08-18T07:00:00Z', reason: 'failure'
         });
@@ -96,15 +96,15 @@ describe('sessions', () => {
         // governs every PR the session opens.
         assert.ok(red.indexOf('is FAILING') < red.indexOf('## Wrapping this session'));
 
-        ciStatus.probeMainCi = () => ({ state: 'unknown', branch: 'main', reason: 'gh is not installed' });
+        ciStatus.readCached = () => ({ state: 'unknown', branch: 'main', reason: 'gh is not installed' });
         const unknown = sessions.generatePrimePrompt(project, engine);
         assert.match(unknown, /Base branch CI: \*\*unknown\*\* — gh is not installed/);
 
-        ciStatus.probeMainCi = () => ({ state: 'passing', branch: 'main' });
+        ciStatus.readCached = () => ({ state: 'passing', branch: 'main' });
         const green = sessions.generatePrimePrompt(project, engine);
         assert.doesNotMatch(green, /Base branch CI/, 'green renders nothing — noise trains the reader to skip the red one');
       } finally {
-        ciStatus.probeMainCi = real;
+        ciStatus.readCached = real;
       }
     });
 

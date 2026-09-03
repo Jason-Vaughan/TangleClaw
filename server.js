@@ -152,6 +152,7 @@ const gitTemplate = require('./lib/git-template');
 const tmux = require('./lib/tmux');
 const projects = require('./lib/projects');
 const sessions = require('./lib/sessions');
+const ciStatus = require('./lib/ci-status');
 const master = require('./lib/master');
 const actions = require('./lib/actions');
 const porthub = require('./lib/porthub');
@@ -3778,6 +3779,11 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
   // AUTH-3: stamp the session with the proxy-authenticated user (null in direct
   // mode / when the gate is off — resolveRequestUser enforces the trust gate).
   const owner = authIdentity.resolveRequestUser(_req.headers, store.config.load());
+
+  // #991: warm the base-branch CI verdict OFF the event loop before the
+  // synchronous launch reads it for the prime. Never rejects; a failed probe
+  // is an honest unknown in the prime, not a failed launch.
+  await ciStatus.refresh(project.path);
 
   const result = sessions.launchSession(params.project, {
     primePrompt: body ? body.primePrompt : true,
