@@ -2600,13 +2600,17 @@ route('GET', '/api/session-rules/deliveries', (req, res) => {
 //
 // The id is not a credential, and the token carrying it is not one either: it
 // is a small integer in a file in the project directory, on a route outside the
-// service-token gate. What bounds the damage is the transition, not the secret
-// — the only reachable abuse is confirming a `written` row that some session
-// genuinely was owed, and the hook consumes its token on success so the
-// standing-token replay (any later `claude` in that directory re-posting an
-// unconsumed token, crediting one session's delivery to another) has no token
-// to replay. A row already `delivered`, `skipped` or `unverified` is inert
-// here.
+// service-token gate. What bounds the damage is the transition plus a freshness
+// window in `markDelivered`, not a secret. A row already `delivered`, `skipped`
+// or `unverified` is inert here, and a `written` row older than the window is
+// refused.
+//
+// What a receipt proves is that A hook ran in that project directory — not
+// which session's. It cannot prove that: the hook is registered on `startup` in
+// the project's own settings, so every `claude` opened there runs it. The
+// residual, stated rather than claimed closed: a `claude` opened by hand inside
+// the window, for a launch whose own hook failed, confirms that launch's row.
+// The window bounds it; nothing here makes it impossible.
 //
 // Always 200, never an error, when the id simply did not match: the caller is a
 // shell script inside an engine's startup path, and a 4xx there is noise in a

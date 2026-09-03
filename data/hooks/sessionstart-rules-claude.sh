@@ -55,14 +55,13 @@ if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$RULES_FILE" ] && [ -r "$RULES_FILE
           -H 'x-tangleclaw-aux: 1' \
           --data-binary "@${RECEIPT_FILE}" \
           "${RECEIPT_API}/api/tc/rule-receipt" >/dev/null 2>&1; then
-        # SINGLE USE. The token names one delivery row and is otherwise a
-        # standing credential in the project directory: this hook is registered
-        # on `startup` in the project's own settings, so ANY later `claude`
-        # opened in this directory would replay it. In the case that matters —
-        # the row still `written` because this session's hook never ran — that
-        # replay credits one session's delivery to another. Consuming it on
-        # success closes that; a failed post deliberately leaves it, so a real
-        # retry still works.
+        # Single use, on success only. This hook is registered on `startup` in
+        # the project's own settings, so any later `claude` opened here runs it
+        # too; consuming the token stops the ordinary re-post. It does NOT
+        # close the case where this session's hook never ran — nothing was
+        # posted, so nothing was consumed. The server's freshness window is
+        # what bounds that. A failed post deliberately leaves the token, so a
+        # real retry still works.
         rm -f "$RECEIPT_FILE" || true
       fi
     fi

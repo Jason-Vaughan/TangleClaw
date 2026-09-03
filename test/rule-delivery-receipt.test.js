@@ -67,7 +67,7 @@ describe('#1063 — the ledger distinguishes written from delivered', () => {
   });
 
   it('every declared outcome is accepted by the DB, and none is rejected only there', () => {
-    // Critic R-5: the vocabulary has five owners — the fresh-install CHECK, the
+    // The vocabulary has five owners — the fresh-install CHECK, the
     // two constraint CHECKs, `SESSION_RULE_DELIVERY_OUTCOMES`, and the JS guards
     // in `record`. They ALREADY diverged during this change: `written` went into
     // the enum and the CHECK but not the channel-'none' guard, so callers got a
@@ -144,6 +144,42 @@ describe('#1063 — markDelivered is the only transition, and it is narrow', () 
       assert.equal(store.sessionRuleDeliveries.listForSession(9202).find((r) => r.id === row.id).outcome,
         outcome, `${outcome} row was mutated`);
     }
+  });
+
+  it('refuses a receipt that arrives long after the row was written', () => {
+    // The replay the token itself cannot close. An unconsumed token stands
+    // EXACTLY while the row is `written` — which is the only state this acts on
+    // — and the hook is registered on `startup` in the project's own settings,
+    // so every later `claude` opened in that directory posts it. Consumption on
+    // success does not help: when this session's hook never ran, nothing was
+    // posted and nothing was consumed. The bound is temporal and server-side,
+    // where a file on a session's disk cannot reach it.
+    const row = writtenRow(9203);
+    const hourLater = Date.now() + 60 * 60 * 1000;
+    assert.equal(store.sessionRuleDeliveries.markDelivered(row.id, hourLater), null,
+      'a receipt an hour after the launch is some other session\'s hook');
+    assert.equal(store.sessionRuleDeliveries.listForSession(9203)[0].outcome, 'written',
+      'and the row is left honest rather than falsely confirmed');
+  });
+
+  it('accepts one that arrives when a real hook would — at boot', () => {
+    // The control: without it the test above passes on a function that refuses
+    // everything, and the mechanism would ship inert.
+    const row = writtenRow(9204);
+    assert.ok(store.sessionRuleDeliveries.markDelivered(row.id, Date.now() + 5000),
+      'a receipt seconds after the launch is this session\'s hook');
+  });
+
+  it('the window is generous enough for a slow boot and short of a later session', () => {
+    // Pinned as a property with both sides named, so a future edit that makes
+    // the window uselessly tight or uselessly wide fails here rather than in a
+    // silent regression of either direction.
+    const row = writtenRow(9205);
+    assert.ok(store.sessionRuleDeliveries.markDelivered(row.id, Date.now() + 2 * 60 * 1000),
+      'two minutes must still be inside the window — engines boot slowly');
+    const later = writtenRow(9206);
+    assert.equal(store.sessionRuleDeliveries.markDelivered(later.id, Date.now() + 30 * 60 * 1000), null,
+      'half an hour must be outside it — that is a later session, not a slow boot');
   });
 
   it('answers null for an id that is missing or not a positive integer', () => {
@@ -396,7 +432,7 @@ describe('#1063 — a launch whose hook never runs cannot produce a delivered ro
 });
 
 describe('#1063 — POST /api/tc/rule-receipt, driven through the real server', () => {
-  // Critic R-1 (blocking): both ends were covered and the JOINT was not. The
+  // Both ends of the receipt were covered and the JOINT was not. The
   // hook test posted to a stand-in server and the ledger tests called
   // `markDelivered` directly, so deleting the route registration — or renaming
   // the field it reads — left the suite green while the mechanism shipped

@@ -1,7 +1,7 @@
 'use strict';
 
 /*
- * #429 (Critic R-6) — the wrap step-status vocabulary has one declared owner,
+ * #429 — the wrap step-status vocabulary has one declared owner,
  * `wrapPipeline.STEP_STATUSES`, and every consumer must know every member.
  *
  * Adding `needs-operator` took five coordinated hand-edits across two files and
@@ -36,7 +36,7 @@ function loadHelpers() {
   return sandbox.window.tcWrapDrawerHelpers;
 }
 
-describe('wrap step-status vocabulary (#429 R-6)', () => {
+describe('wrap step-status vocabulary (#429)', () => {
   it('is non-empty and holds the statuses the runner itself assigns', () => {
     assert.ok(STEP_STATUSES.length > 0);
     // The runner writes these two without consulting a handler, so a
