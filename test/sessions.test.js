@@ -79,6 +79,35 @@ describe('sessions', () => {
       assert.ok(prompt.includes('Session Start'));
     });
 
+    it('tells the session its base branch is red, and says unknown when it could not look (#991)', () => {
+      const ciStatus = require('../lib/ci-status');
+      const project = store.projects.getByName('prime-test');
+      const engine = store.engines.get('claude');
+      const real = ciStatus.probeMainCi;
+      try {
+        ciStatus.probeMainCi = () => ({
+          state: 'failing', branch: 'main', runUrl: 'https://github.com/o/r/actions/runs/9',
+          sha: '0123456789abcdef', workflow: 'Tests', updatedAt: '2026-08-18T07:00:00Z', reason: 'failure'
+        });
+        const red = sessions.generatePrimePrompt(project, engine);
+        assert.match(red, /main is FAILING/, 'a red base branch is the first thing a session should know');
+        assert.match(red, /actions\/runs\/9 on 0123456/);
+        // Ahead of the rules and resume blocks: a base branch that is broken
+        // governs every PR the session opens.
+        assert.ok(red.indexOf('is FAILING') < red.indexOf('## Wrapping this session'));
+
+        ciStatus.probeMainCi = () => ({ state: 'unknown', branch: 'main', reason: 'gh is not installed' });
+        const unknown = sessions.generatePrimePrompt(project, engine);
+        assert.match(unknown, /Base branch CI: \*\*unknown\*\* — gh is not installed/);
+
+        ciStatus.probeMainCi = () => ({ state: 'passing', branch: 'main' });
+        const green = sessions.generatePrimePrompt(project, engine);
+        assert.doesNotMatch(green, /Base branch CI/, 'green renders nothing — noise trains the reader to skip the red one');
+      } finally {
+        ciStatus.probeMainCi = real;
+      }
+    });
+
     it('injects the typed-wrap sentinel instruction WITHOUT tripping its own monitor (CC-7 Slice C)', () => {
       const wrapSentinel = require('../lib/wrap-sentinel');
       const project = store.projects.getByName('prime-test');
