@@ -115,10 +115,13 @@ silently does nothing.
 - `lib/sessions.js`: parity with the `defaultLaunchMode` warning — when `silentPrime: true` and
   the engine lacks `supportsSilentPrime`, `log.warn` names the engine and the setting and the
   launch result carries the same warning the way the launch-mode drop does.
-- The delivery ledger row for that launch carries `droppedPreference: 'silentPrime'` so the panel
-  can show it (additive field; existing consumers ignore unknown keys — verified in the chunk).
-- Test: codex profile + `silentPrime: true` → warning present, prime pasted, ledger field set;
-  claude profile → no warning.
+- Descoped in the chunk: a `droppedPreference` field on the delivery ledger row. The ledger is a
+  fixed-column SQLite table with CHECK constraints (`session_rule_deliveries`), so the field is a
+  schema migration for one flag; the issue's own minimum is parity with the launch-mode warning,
+  and the row's `prime-paste` channel already records what happened instead. Revisit with the
+  receipt work in Chunk 12, which changes that table's semantics anyway.
+- Test: codex profile + `silentPrime: true` → warning present, launch proceeds; claude profile →
+  no warning; codex with `silentPrime: false` → no warning (nothing was dropped).
 - **Done when:** the warning appears exactly on the drop path and nowhere else.
 
 ### Chunk 7 — #1150 `tc` reports sandbox-blocked loopback as "the server may be down" (third-party)
@@ -219,7 +222,7 @@ silently does nothing.
 - [x] Chunk 2 — #1054 (PR #1163)
 - [x] Chunk 3 — #1061 (PR #1165)
 - [x] Chunk 4 — #994 (PR #1166)
-- [ ] Chunk 5 — #1056
+- [x] Chunk 5 — #1056 (PR #1167)
 - [ ] Chunk 6 — #741
 - [ ] Chunk 7 — #1150
 - [ ] Chunk 8 — #991
