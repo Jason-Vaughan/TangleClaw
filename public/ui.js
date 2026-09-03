@@ -1547,15 +1547,19 @@ function renderProjectRuleDeliveriesUnknown(why) {
 }
 
 /**
- * Render the ledger's most recent rows, or the true empty state when the read
- * succeeded and found nothing.
+ * Render the ledger's most recent rows, or the empty state when the read
+ * succeeded and found nothing — stated as a fact about the ledger, not a
+ * claim about the project's launch history, which zero rows cannot prove.
  * @param {object[]} deliveries - Ledger rows, newest first, as the API returns them
  */
 function renderProjectRuleDeliveries(deliveries) {
   const list = document.getElementById('projRuleDeliveriesList');
   if (!list) return;
   if (deliveries.length === 0) {
-    list.innerHTML = '<p class="session-rules-empty">No delivery records — this project has not launched a session since the ledger began.</p>';
+    // Neutral on purpose: zero rows is not proof the project never launched —
+    // `_recordRuleDelivery` swallows write failures and non-real launches pass
+    // `deliveryBase=null` — so the sentence states what was found, not why.
+    list.innerHTML = '<p class="session-rules-empty">No delivery records — no delivery attempt has been recorded for this project.</p>';
     return;
   }
   list.innerHTML = deliveries.slice(0, 5).map((d) => {

@@ -174,7 +174,9 @@ describe('#1164 — the Settings modal renders the rule-delivery ledger', () => 
     const ok = await refresh(7);
 
     assert.equal(ok, true);
-    assert.match(list.innerHTML, /No delivery records/);
+    assert.match(list.innerHTML, /No delivery records — no delivery attempt has been recorded/);
+    assert.doesNotMatch(list.innerHTML, /has not launched|never launched/,
+      'zero rows cannot prove the project never launched — write failures are swallowed and non-real launches record nothing');
     assert.doesNotMatch(list.innerHTML, /Deliveries unknown/, 'an empty ledger is not an outage');
     assert.doesNotMatch(list.innerHTML, /role="alert"/);
   });
