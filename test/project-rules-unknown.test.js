@@ -61,10 +61,12 @@ function build(api) {
   const decls = [
     'async function fetchProjectRules(projectId, kind)',
     'async function refreshProjectRulesList(projectId, kind)',
+    'async function refreshAfterProjectRuleMutation(verb, kind)',
     'function renderProjectRulesUnknown(kind, why)',
     'function renderProjectRulesList(kind, rules)'
   ];
   const source = decls.map((d) => d + functionBody(UI_SRC, d)).join('\n');
+  const statuses = [];
   const ctx = vm.createContext({
     api,
     document,
@@ -72,10 +74,13 @@ function build(api) {
     esc: (s) => String(s == null ? '' : s),
     encodeURIComponent,
     projectRulesTargetId: 7,
+    _setProjectRulesStatus: (text, ok) => statuses.push({ text, ok }),
     console
   });
-  vm.runInContext(`${source}\nthis.refresh = refreshProjectRulesList;`, ctx);
-  return { refresh: ctx.refresh, lists };
+  vm.runInContext(`${source}\nthis.refresh = refreshProjectRulesList;\n`
+    + 'this.afterMutation = refreshAfterProjectRuleMutation;\n'
+    + 'this.retarget = (id) => { projectRulesTargetId = id; };', ctx);
+  return { refresh: ctx.refresh, afterMutation: ctx.afterMutation, retarget: ctx.retarget, lists, statuses };
 }
 
 describe('#1054 — a failed Project Rules read renders as unknown', () => {
@@ -121,14 +126,52 @@ describe('#1054 — a failed Project Rules read renders as unknown', () => {
     assert.doesNotMatch(lists.startup.innerHTML, /drop me/, 'rejections stay filtered');
   });
 
+  it('says on the status line when a mutation succeeded but the re-read did not', async () => {
+    // The handler's own "Added" is true; the list under it is now unknown. A
+    // green status over "Rules unknown" reads as a contradiction, so the
+    // failed re-read gets its own sentence — and only on a failed re-read.
+    const api = async () => { api.lastError = 'Connection lost.'; return null; };
+    api.lastError = null;
+    const { afterMutation, lists, statuses } = build(api);
+
+    await afterMutation('Added', 'startup');
+
+    assert.match(lists.startup.innerHTML, /Rules unknown/);
+    assert.deepEqual(statuses, [{ text: 'Added, but the rules list could not be re-read — close and reopen Settings', ok: false }]);
+  });
+
+  it('stays quiet on the status line when the re-read succeeds', async () => {
+    const api = async () => ({ rules: [] });
+    api.lastError = null;
+    const { afterMutation, statuses } = build(api);
+
+    await afterMutation('Deleted', 'wrap');
+
+    assert.deepEqual(statuses, [], 'a successful re-read adds nothing to the handler\'s own confirmation');
+  });
+
+  it('renders nothing and answers null when the modal moved to another project mid-read', async () => {
+    let retarget;
+    const api = async () => { retarget(99); api.lastError = 'Connection lost.'; return null; };
+    api.lastError = null;
+    const built = build(api);
+    retarget = built.retarget;
+
+    const answer = await built.refresh(7, 'startup');
+
+    assert.equal(answer, null, 'a retargeted modal is not an outage');
+    assert.equal(built.lists.startup.innerHTML, '', 'and nothing is rendered into the old target');
+  });
+
   it('every re-read after a mutation goes through the three-state refresh', () => {
-    // One call site is not the family: the four mutation handlers used to each
-    // re-flatten `await fetchProjectRules(...)` into the list renderer. The
-    // fetch may be called from exactly one place — the refresh.
+    // One call site is not the family: a mutation handler that re-reads on its
+    // own is the shape that re-flattens a failed read into the list renderer.
+    // The fetch may be called from exactly one place — the refresh.
     const calls = UI_SRC.match(/fetchProjectRules\(/g) || [];
     assert.equal(calls.length, 2,
       'fetchProjectRules is declared once and called once (inside refreshProjectRulesList)');
-    assert.equal((UI_SRC.match(/refreshProjectRulesList\(/g) || []).length >= 6, true,
-      'the load loop and the four mutation handlers all refresh through it');
+    const handlers = UI_SRC.match(/refreshAfterProjectRuleMutation\(/g) || [];
+    assert.equal(handlers.length, 5,
+      'declared once and called by the four mutation handlers');
   });
 });
