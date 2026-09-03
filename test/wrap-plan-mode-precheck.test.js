@@ -494,7 +494,7 @@ describe('#429 read-only pre-check — the drawer speaks the status', () => {
     assert.equal(widget.optionsKey, 'skipAiContent');
   });
 
-  it('the banner says the operator is being waited on, not "Blocked at" ', () => {
+  it('the banner says the operator is being waited on, not "Blocked at"', () => {
     // The banner is the first thing read, and line 1 of the copied report.
     // Keyed on `blockedAt` alone it announced a needs-operator halt in the
     // exact framing the status exists to replace.

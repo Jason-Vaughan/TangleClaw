@@ -162,6 +162,16 @@ describe('#1063 — markDelivered is the only transition, and it is narrow', () 
       'and the row is left honest rather than falsely confirmed');
   });
 
+  it('a clock behind the row\'s write time does not open the window', () => {
+    // Without Math.abs a negative age is not `> RECEIPT_MAX_AGE_MS`, so a host
+    // clock behind the one that stamped the row accepts unconditionally: the
+    // window silently stops being a window. No realistic abuse, but a guard
+    // that can quietly become a no-op is this chunk's own subject.
+    const row = writtenRow(9207);
+    assert.equal(store.sessionRuleDeliveries.markDelivered(row.id, Date.now() - 60 * 60 * 1000), null);
+    assert.equal(store.sessionRuleDeliveries.listForSession(9207)[0].outcome, 'written');
+  });
+
   it('accepts one that arrives when a real hook would — at boot', () => {
     // The control: without it the test above passes on a function that refuses
     // everything, and the mechanism would ship inert.
