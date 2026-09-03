@@ -161,6 +161,31 @@ describe('#858 an engine switch retires the previous engine\'s config file', () 
       `the switch warns:\n${lines.join('')}`);
   });
 
+  it('when the new engine\'s config cannot be written, the previous one stays live and the switch says so at warn', async () => {
+    // A notice would name a live file that does not exist. The gate in
+    // updateProject skips retirement on a failed write; `if (false)` in its
+    // place writes the notice anyway and this goes red.
+    const dir = seed('retire-write-fails', 'antigravity');
+    const agents = path.join(dir, 'AGENTS.md');
+    fs.chmodSync(dir, 0o555);
+    const lines = [];
+    setConsoleStream({ write: (s) => lines.push(String(s)) });
+    setLevel('warn');
+    try {
+      await projects.updateProject('retire-write-fails', { engine: 'claude' });
+    } finally {
+      setConsoleStream(null);
+      setLevel('error');
+      fs.chmodSync(dir, 0o755);
+    }
+    const after = fs.readFileSync(agents, 'utf8');
+    assert.doesNotMatch(after, /INACTIVE engine config/, 'the previous config is still the only one that exists — it stays live');
+    assert.match(after, /BEGIN:tangleclaw/);
+    assert.equal(fs.existsSync(path.join(dir, 'CLAUDE.md')), false, 'precondition: the new config was not written');
+    assert.ok(lines.some((l) => /WARN/.test(l) && /Previous engine config left in place — the new engine config was not written/.test(l)),
+      `the switch says so:\n${lines.join('')}`);
+  });
+
   it('a plugin-governed CLAUDE.md is never touched — the file is the plugin\'s', async () => {
     const dir = seed('retire-governed', 'claude');
     fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
