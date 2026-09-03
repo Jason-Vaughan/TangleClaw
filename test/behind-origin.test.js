@@ -68,13 +68,19 @@ function makeDom(ids) {
 /**
  * Install stubbed git calls. `fetch` / `revList` are either an Error (the
  * call fails), a string (rev-list stdout), `null` (success with no output),
- * or the token 'throw' (the seam itself throws synchronously).
- * @param {{fetch?: Error|null|'throw', revList?: Error|string|'throw'}} plan
+ * or the token 'throw' (the seam itself throws synchronously). `head` is
+ * 'branch' (default) or 'detached'.
+ * @param {{fetch?: Error|null|'throw', revList?: Error|string|'throw', head?: 'branch'|'detached'}} plan
  * @returns {{fetches: () => number, revLists: () => number}}
  */
 function stubGit(plan) {
   let fetches = 0;
   let revLists = 0;
+  // Synchronous on purpose: the snapshot tests assert "exactly one fetch was
+  // started" right after the call, before yielding to the event loop.
+  behindOrigin._internal.gitSymbolicRef = (cb) => {
+    cb(plan.head === 'detached' ? new Error('exit 1') : null, 'refs/heads/main\n');
+  };
   behindOrigin._internal.gitFetch = (cb) => {
     fetches++;
     if (plan.fetch === 'throw') throw new Error('spawn refused');
@@ -147,6 +153,80 @@ describe('lib/behind-origin (#227)', () => {
       stubGit({ fetch: null, revList: 'throw' });
       assert.equal(await behindOrigin.getRemoteCommitsAhead(), 0);
     });
+
+    it('skips a detached HEAD without fetching — a tagged install is behind main by construction', async () => {
+      // The self-updater leaves a healthy install detached at a release tag;
+      // counting there would show the banner for the whole release interval.
+      const calls = stubGit({ head: 'detached', fetch: null, revList: '40\n' });
+      const r = await behindOrigin.measure();
+      assert.deepEqual(r, { commitsAhead: 0, skipped: 'detached-head' });
+      assert.equal(calls.fetches(), 0, 'no network call for an install that should use Update now');
+      assert.equal(await behindOrigin.getRemoteCommitsAhead(), 0);
+    });
+  });
+
+  describe('spawn hygiene', () => {
+    /**
+     * Run `fn` with `_internal.execFile` replaced by a recorder and the
+     * test-runner guard lifted, so the REAL seams build their real options.
+     * @param {() => Promise<void>} fn
+     * @returns {Promise<Array<{args: string[], options: object}>>}
+     */
+    async function recordSpawns(fn) {
+      const spawns = [];
+      const saved = process.env.NODE_TEST_CONTEXT;
+      delete process.env.NODE_TEST_CONTEXT;
+      behindOrigin._internal.execFile = (cmd, args, options, cb) => {
+        assert.equal(cmd, 'git');
+        spawns.push({ args, options });
+        setImmediate(() => cb(null, args[0] === 'rev-list' ? '2\n' : 'refs/heads/main\n'));
+      };
+      try {
+        await fn();
+      } finally {
+        if (saved === undefined) delete process.env.NODE_TEST_CONTEXT;
+        else process.env.NODE_TEST_CONTEXT = saved;
+      }
+      return spawns;
+    }
+
+    it('the fetch cannot prompt for credentials or steal a tty, and is bounded by FETCH_TIMEOUT_MS', async () => {
+      const spawns = await recordSpawns(async () => {
+        assert.equal(await behindOrigin.getRemoteCommitsAhead(), 2);
+      });
+      const fetch = spawns.find((s) => s.args[0] === 'fetch');
+      assert.ok(fetch, 'a fetch must have been spawned');
+      assert.deepEqual(fetch.args, ['fetch', '--quiet', 'origin']);
+      assert.equal(fetch.options.timeout, behindOrigin.FETCH_TIMEOUT_MS);
+      assert.ok(fetch.options.timeout > 0 && Number.isFinite(fetch.options.timeout),
+        'an unbounded fetch would pin the single-flight slot forever on a hung remote');
+      assert.equal(fetch.options.env.GIT_TERMINAL_PROMPT, '0');
+      assert.match(fetch.options.env.GIT_SSH_COMMAND, /BatchMode=yes/);
+      assert.equal(fetch.options.env.PATH, process.env.PATH, 'the process env is inherited, not replaced');
+    });
+
+    it('the local calls are argv-form, bounded, and ordered symbolic-ref → fetch → rev-list', async () => {
+      const spawns = await recordSpawns(async () => { await behindOrigin.measure(); });
+      assert.deepEqual(spawns.map((s) => s.args[0]), ['symbolic-ref', 'fetch', 'rev-list'],
+        'HEAD is checked before any network call is made');
+      assert.deepEqual(spawns[0].args, ['symbolic-ref', '-q', 'HEAD']);
+      assert.deepEqual(spawns[2].args, ['rev-list', `HEAD..${behindOrigin.UPSTREAM_REF}`, '--count']);
+      for (const s of [spawns[0], spawns[2]]) {
+        assert.equal(s.options.timeout, behindOrigin.LOCAL_GIT_TIMEOUT_MS);
+        assert.ok(s.options.timeout > 0);
+      }
+    });
+
+    it('under the node test runner the real seams spawn nothing — eight unstubbed route tests were fetching into the developer checkout', async () => {
+      assert.ok(process.env.NODE_TEST_CONTEXT, 'this file runs under node --test, which sets NODE_TEST_CONTEXT');
+      assert.equal(behindOrigin._spawnBlockedReason(), 'node test runner');
+      let spawned = 0;
+      behindOrigin._internal.execFile = () => { spawned++; };
+      // Real seams (afterEach restored them before this test began).
+      const r = await behindOrigin.measure();
+      assert.equal(spawned, 0, 'no git process may be started from a test process');
+      assert.equal(r.commitsAhead, 0);
+    });
   });
 
   describe('cache', () => {
@@ -154,7 +234,7 @@ describe('lib/behind-origin (#227)', () => {
       behindOrigin._internal.now = () => Date.parse('2026-01-01T00:00:00Z');
       stubGit({ fetch: null, revList: '2\n' });
       const result = await behindOrigin.refresh();
-      assert.deepEqual(result, { commitsAhead: 2, checkedAt: '2026-01-01T00:00:00.000Z' });
+      assert.deepEqual(result, { commitsAhead: 2, skipped: null, checkedAt: '2026-01-01T00:00:00.000Z' });
     });
 
     it('refreshIfStale serves the cache inside the TTL and re-measures past it', async () => {
@@ -191,7 +271,7 @@ describe('lib/behind-origin (#227)', () => {
 
       // First poll: nothing measured yet, honest about it, fetch started.
       const first = behindOrigin.snapshot({});
-      assert.deepEqual(first, { enabled: true, commitsAhead: 0, checkedAt: null });
+      assert.deepEqual(first, { enabled: true, commitsAhead: 0, skipped: null, checkedAt: null });
       assert.equal(calls.fetches(), 1);
       // A second poll before it completes must not start a second fetch.
       behindOrigin.snapshot({});
@@ -199,7 +279,7 @@ describe('lib/behind-origin (#227)', () => {
 
       await behindOrigin.refresh(); // joins the in-flight measurement
       const second = behindOrigin.snapshot({});
-      assert.deepEqual(second, { enabled: true, commitsAhead: 5, checkedAt: '2026-01-01T00:00:00.000Z' });
+      assert.deepEqual(second, { enabled: true, commitsAhead: 5, skipped: null, checkedAt: '2026-01-01T00:00:00.000Z' });
       assert.equal(calls.fetches(), 1, 'a fresh cache is served without touching the network');
 
       now += behindOrigin.CACHE_TTL_MS + 1;
@@ -222,8 +302,36 @@ describe('lib/behind-origin (#227)', () => {
     it('a disabled check reports enabled:false and never starts a fetch, even with an expired cache', async () => {
       const calls = stubGit({ fetch: null, revList: '7\n' });
       const snap = behindOrigin.snapshot({ behindOriginCheckEnabled: false });
-      assert.deepEqual(snap, { enabled: false, commitsAhead: 0, checkedAt: null });
+      assert.deepEqual(snap, { enabled: false, commitsAhead: 0, skipped: null, checkedAt: null });
       assert.equal(calls.fetches(), 0);
+    });
+
+    it('the TC_BEHIND_ORIGIN_DISABLED environment kill switch overrides config (CI, sandboxes)', async () => {
+      const saved = process.env[behindOrigin.ENV_KILL_SWITCH];
+      const calls = stubGit({ fetch: null, revList: '7\n' });
+      try {
+        process.env[behindOrigin.ENV_KILL_SWITCH] = '1';
+        assert.equal(behindOrigin.isCheckEnabled({ behindOriginCheckEnabled: true }), false);
+        const snap = behindOrigin.snapshot({});
+        assert.equal(snap.enabled, false);
+        assert.equal(calls.fetches(), 0);
+        process.env[behindOrigin.ENV_KILL_SWITCH] = '0';
+        assert.equal(behindOrigin.isCheckEnabled({}), true, '"0" reads as not set');
+        process.env[behindOrigin.ENV_KILL_SWITCH] = '';
+        assert.equal(behindOrigin.isCheckEnabled({}), true, 'empty reads as not set');
+      } finally {
+        if (saved === undefined) delete process.env[behindOrigin.ENV_KILL_SWITCH];
+        else process.env[behindOrigin.ENV_KILL_SWITCH] = saved;
+      }
+    });
+
+    it('a detached-head measurement is reported as skipped, with nothing to show', async () => {
+      stubGit({ head: 'detached' });
+      await behindOrigin.refresh();
+      const snap = behindOrigin.snapshot({});
+      assert.equal(snap.enabled, true);
+      assert.equal(snap.commitsAhead, 0);
+      assert.equal(snap.skipped, 'detached-head');
     });
 
     it('a stale cached count is not reported once the operator disables the check', async () => {
@@ -284,6 +392,8 @@ describe('behind-origin banner (#227) — executed against a DOM stub', () => {
     assert.equal(render({ enabled: false, commitsAhead: 4, checkedAt: null }).banner._hidden, true,
       'a disabled check must not render a count it was told not to gather');
     assert.equal(render({ enabled: true, commitsAhead: 0, checkedAt: null }).banner._hidden, true);
+    assert.equal(render({ enabled: true, commitsAhead: 0, skipped: 'detached-head', checkedAt: 'T' }).banner._hidden, true,
+      'a tagged install is not nagged to pull');
     assert.equal(render(undefined).banner._hidden, true);
     assert.equal(render(null).banner._hidden, true);
     assert.equal(render({ enabled: true, commitsAhead: '<img src=x onerror=1>', checkedAt: 'T' }).banner._hidden, true,
