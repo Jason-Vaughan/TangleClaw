@@ -10,7 +10,7 @@ cost. Date each one.
 
 ---
 
-## 2026-09-03 — Train 11, cars 11–12 (Claude Opus 5, autonomous sprint)
+## 2026-09-03 — Train 11, cars 11–13 (Claude Opus 5, autonomous sprint)
 
 ### 1. `disposition` rejects note-tier finding ids, but NEXT-ACTION tells you to disposition notes
 
@@ -96,6 +96,23 @@ workflow, which is worth knowing before choosing it.
 
 ---
 
+### 5. Artifact publish protocol: three refusals, each demanding a different step
+
+**Not Prawduct** — the `Artifact` tool — but logged here since this is the accumulator.
+
+Updating an existing artifact took three refused publishes: (1) "you had not viewed the live
+version", (2) "this is identical content already refused, merge onto that version", (3) a
+required re-fetch to confirm. The expensive part is that "viewed" means Reading **every** line
+of the saved file, and line 1 is a ~20KB minified frame-runtime the publisher injects — so
+updating a 40KB document costs reading ~52KB twice. The protocol is sound (it prevents
+clobbering someone else's saved edits); the cost is that the injected runtime counts toward the
+read requirement even though the publisher strips and re-adds it.
+
+**Suggestion:** exclude the injected `<!-- frame-runtime -->` line from the view requirement, or
+save the file pre-injection.
+
+---
+
 ### What worked notably well (worth preserving upstream)
 
 Recorded because feedback that is only complaints mis-prices the tool.
@@ -111,6 +128,12 @@ Recorded because feedback that is only complaints mis-prices the tool.
   recorded amendment to a ratified design decision instead of a silent
   divergence, and the amendment is now the artifact's best explanation of why
   the shipped shape differs.
-- **Mutation discipline surfaced four guards that were green against a broken
-  implementation** across the two cars. Every one was a guard I had just written
+- **Mutation discipline surfaced seven guards that were green against a broken
+  implementation** across the three cars. Every one was a guard I had just written
   and believed.
+- **Car 13 is the strongest case for the whole apparatus.** Four rounds, three blocking. The
+  first review killed the design outright — the mechanism I had built and unit-tested would have
+  re-pasted a full prime on every healthy launch, and every fixture I wrote used a 2-line prime
+  in a 10-line synthetic pane, so nothing I owned could have caught it. A later round caught a
+  **disposition I had written** asserting a fixture existed that did not. An independent reviewer
+  that reads the tree rather than the claim is the only thing that finds that class.
