@@ -2686,7 +2686,13 @@ route('GET', '/api/tc/whoami', (req, res) => {
   const config = store.config.load();
   const protocol = httpsSetup.effectiveServerProtocol(config);
   const port = httpsSetup.effectiveServerPort(config);
-  const operatorHost = sessionOwnership.resolveOperatorHost(req.headers, config).host;
+  const operatorTopologyWhoami = sessionOwnership.resolveOperatorHost(req.headers, config);
+  const operatorHost = operatorTopologyWhoami.host;
+  // Same reason as the launch path: without `source`, a null here cannot be
+  // told apart from a header that was refused as malformed or loopback.
+  log.debug('Resolved operator host for whoami', {
+    host: operatorHost, source: operatorTopologyWhoami.source
+  });
 
   let projConfig = null;
   if (project) {
