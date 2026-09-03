@@ -423,26 +423,33 @@ describe('C1 — per-project plugin migration (#262)', () => {
     // or a typo in the argv index — so unmatched, they would report green over
     // a reader that parsed nothing at all. Tests whose whole subject is
     // "unreadable must not be tolerated" are the last place to accept an
-    // unexamined error. execFileSync folds the child's stderr into
-    // err.message, so matching costs nothing.
+    // unexamined error. The matchers read `err.stderr` — piped and decoded
+    // on every Node build — never `err.message`: whether the child's stderr
+    // is folded into the message depends on the Node build (#969: it is on
+    // the build this was written against, it was not on the one the issue
+    // was filed from), so a matcher over the message passes or fails on host
+    // plumbing, and a mutation back to it cannot be shown red on a folding
+    // build. Reading stderr is the same assertion on every build.
     it('THROWS when the symbol is gone — never returns a default', () => {
       const f = write('gone.py', 'SOMETHING_ELSE = {"a": 1}\n');
-      // Anchored on the interpolated PATH, not the bare sentence. execFileSync
-      // builds err.message from the argv it ran, and that argv contains the
-      // embedded program — including its own `sys.exit("INSTALL_REFERENCE not
-      // found in " + …)` source line. So the unanchored form matches its own
-      // source text on ANY nonzero exit, which is the identical hole this
-      // matcher was added to close, one layer deeper. Only the interpolated
-      // filename proves the program reached that exit for this file.
+      // Anchored on the interpolated PATH, not the bare sentence: the embedded
+      // program's own `sys.exit("INSTALL_REFERENCE not found in " + …)` source
+      // line is in the argv, and on builds that fold argv into the message an
+      // unanchored match would match its own source text on ANY nonzero
+      // exit. Only the interpolated filename proves the program reached that
+      // exit for this file.
       assert.throws(
         () => extractUpstreamInstallReference(f),
-        /INSTALL_REFERENCE not found in \S*gone\.py/
+        (err) => /INSTALL_REFERENCE not found in \S*gone\.py/.test(String(err.stderr || ''))
       );
     });
 
     it('THROWS on a syntax error rather than reporting no drift', () => {
       const f = write('broken.py', 'INSTALL_REFERENCE = {"a": \n');
-      assert.throws(() => extractUpstreamInstallReference(f), /SyntaxError/);
+      assert.throws(
+        () => extractUpstreamInstallReference(f),
+        (err) => /SyntaxError/.test(String(err.stderr || ''))
+      );
     });
 
     it('distinguishes "not installed" from "installed but the module moved"', () => {
