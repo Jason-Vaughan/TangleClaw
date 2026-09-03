@@ -25,6 +25,33 @@ if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$RULES_FILE" ] && [ -r "$RULES_FILE
   # `|| true` survives the race where the file vanishes between the readability
   # check and the read.
   cat "$RULES_FILE" || true
+
+  # Receipt (#1063). Reaching this line is the only proof that exists that an
+  # engine actually ran this hook: TangleClaw records the delivery as `written`
+  # when it puts the shards on disk, and ONLY this post upgrades it to
+  # `delivered`. Without it a channel that is 100% broken produces a clean
+  # ledger — which is what happened during #759, across multiple sessions and
+  # two projects, unnoticed.
+  #
+  # Shard 1 only: the shards of one launch share a delivery row, so every shard
+  # posting would be N identical upgrades of the same id.
+  #
+  # Best-effort, and silent about it. Every failure mode here — no token, no
+  # curl, server down, slow server — must leave the session's rules delivered
+  # and the hook exiting 0, because a hook that fails is fed back to the engine
+  # as a synthetic turn. An unsent receipt costs a row that stays `written`,
+  # which is the honest state anyway.
+  RECEIPT_FILE="${CLAUDE_PROJECT_DIR}/.tangleclaw/session-rules-receipt.json"
+  if [ "$SHARD" = "1" ] && [ -r "$RECEIPT_FILE" ] && command -v curl >/dev/null 2>&1; then
+    (
+      curl -fsS -m 3 -X POST \
+        -H 'Content-Type: application/json' \
+        -H 'x-tangleclaw-aux: 1' \
+        --data-binary "@${RECEIPT_FILE}" \
+        "$(sed -n 's/.*"api"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$RECEIPT_FILE")/api/tc/rule-receipt" \
+        >/dev/null 2>&1
+    ) || true
+  fi
 fi
 
 exit 0
