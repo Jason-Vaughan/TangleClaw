@@ -752,7 +752,7 @@ describe('lib/dir-scanner — the threadpool leak (#883)', () => {
    *
    * @param {string} mode - `leak` or `scanner`.
    * @param {string} fifoDir - Scratch directory for the FIFOs.
-   * @returns {Promise<{mode: string, rejections: number, readdirMs: number|null, readdirStuck: boolean}>}
+   * @returns {Promise<{mode: string, rejections: number, baselineMs: number, readdirMs: number|null, readdirStuck: boolean}>}
    */
   function runDemo(mode, fifoDir) {
     return new Promise((resolve, reject) => {
@@ -802,14 +802,30 @@ describe('lib/dir-scanner — the threadpool leak (#883)', () => {
       'an unrelated readdir should be permanently stuck once the pool is gone');
   });
 
+  // Headroom for the after-probe over the before-probe. The scanner is
+  // answerable for the DELTA between the two, not for the machine's speed:
+  // the previous absolute bound (`readdirMs < 1000`) failed under concurrent
+  // load and passed on an idle box, on exactly the same code (#957). The
+  // floor keeps a sub-millisecond baseline from turning ordinary jitter into a
+  // failure; the multiplier is generous because the leak this guards is not a
+  // slowdown but a readdir that never returns, which `readdirStuck` catches.
+  const AFTER_PROBE_FLOOR_MS = 1000;
+  const AFTER_PROBE_HEADROOM = 10;
+
   test('the same workload through the scanner leaves this process untouched', async () => {
     const verdict = await runDemo('scanner', path.join(tmpRoot, 'demo-scanner'));
 
     assert.equal(verdict.rejections, 3, 'all three hung scans should have been reported');
     assert.equal(verdict.readdirStuck, false,
       'the parent threadpool should survive more hung scans than it has threads');
-    assert.ok(verdict.readdirMs < 1000,
-      `an ordinary readdir should still be prompt, took ${verdict.readdirMs}ms`);
+    // The demo measured its own baseline before the workload, on this machine,
+    // under this load. That is the number the after-probe is judged against.
+    assert.equal(typeof verdict.baselineMs, 'number', 'the demo must report the baseline it measured');
+    assert.ok(verdict.baselineMs >= 0);
+    const bound = Math.max(AFTER_PROBE_FLOOR_MS, verdict.baselineMs * AFTER_PROBE_HEADROOM);
+    assert.ok(verdict.readdirMs <= bound,
+      `an ordinary readdir should still be about as prompt as before the workload: took `
+      + `${verdict.readdirMs}ms against a ${verdict.baselineMs}ms baseline (bound ${bound}ms)`);
   });
 });
 
