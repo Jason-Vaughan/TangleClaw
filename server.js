@@ -164,6 +164,7 @@ const modelStatus = require('./lib/model-status');
 const updateChecker = require('./lib/update-checker');
 const updateApplier = require('./lib/update-applier');
 const serverInfo = require('./lib/server-info');
+const behindOrigin = require('./lib/behind-origin');
 const bindPolicy = require('./lib/bind-policy');
 const wrapRunRegistry = require('./lib/wrap-run-registry');
 const wrapDefaultPipeline = require('./lib/wrap-default-pipeline');
@@ -837,6 +838,10 @@ route('GET', '/api/server-info', (_req, res) => {
   // direct mode, 'configured-no-identity' when caddy is up but no identity
   // arrives). Surfacing only — never enforces. See docs/auth-status-surfacing.md.
   info.authStatus = authIdentity.resolveAuthStatus(_req.headers, cfg);
+  // #227: is the local clone behind origin/main? Cached answer, never waits on
+  // the network — a stale cache starts one background fetch for the next poll.
+  // `enabled: false` when the operator turned the check off in config.
+  info.behindOrigin = behindOrigin.snapshot(cfg);
   jsonResponse(res, 200, info);
 });
 
@@ -1203,7 +1208,7 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     'serverPort', 'ttydPort', 'defaultEngine',
     'projectsDir', 'deletePassword', 'quickCommands', 'theme',
     'chimeEnabled', 'chimeMuted', 'peekMode', 'setupComplete',
-    'portScannerEnabled', 'portScannerIntervalMs',
+    'portScannerEnabled', 'portScannerIntervalMs', 'behindOriginCheckEnabled',
     'httpsEnabled', 'httpsCertPath', 'httpsKeyPath',
     'stripAiCoauthors', 'ingressMode', 'publicDomain', 'bindAllInterfaces',
     'caddyHttpsPort', 'caddyHttpPort',
@@ -1267,6 +1272,9 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     }
     if (key === 'portScannerEnabled' && typeof value !== 'boolean') {
       return errorResponse(res, 400, 'portScannerEnabled must be a boolean', 'BAD_REQUEST');
+    }
+    if (key === 'behindOriginCheckEnabled' && typeof value !== 'boolean') {
+      return errorResponse(res, 400, 'behindOriginCheckEnabled must be a boolean', 'BAD_REQUEST');
     }
     if (key === 'portScannerIntervalMs') {
       if (typeof value !== 'number' || value < 10000 || value > 600000) {

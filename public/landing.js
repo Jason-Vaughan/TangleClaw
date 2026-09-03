@@ -225,6 +225,11 @@ async function loadServerInfo() {
   // with no signal that would ever correct it.
   renderRunningVersion(data.runningVersion);
 
+  // #227: the clone is behind origin/main. Rendered before the stale-server
+  // branches below because those `return` — and a checkout that is both
+  // behind upstream and ahead of the running process must show both.
+  renderBehindOriginBanner(data.behindOrigin);
+
   // A new `startedAt` means a different process is answering. The update beacon
   // is derived from the old one and can now be advertising an update that has
   // already been applied, so re-ask instead of leaving it up.
@@ -465,6 +470,45 @@ let _versionCheckInFlight = false;
 function hideStaleServerBanner() {
   const banner = document.getElementById('staleServerBanner');
   if (banner) banner.classList.add('hidden');
+}
+
+/**
+ * Show or hide the behind-origin banner (#227) from the `behindOrigin` field
+ * of `/api/server-info`: "N new commit(s) upstream on origin/main. This
+ * checkout is behind — pull them when convenient."
+ *
+ * The remedy is deliberately NOT a verbatim git command (#730 guard): an
+ * install the self-updater left detached at a release tag is moved to a
+ * non-tag commit by a raw pull, which the applier then refuses — so the
+ * banner names the action and points tagged installs at *Update now*.
+ *
+ * State-driven, like the stale-server banner: it mirrors the latest poll and
+ * self-clears once a pull brings the count to 0. Hidden — never shown
+ * with a stale number — when the server reports the check disabled, has not
+ * measured yet (`checkedAt: null`), predates the field (older server), or
+ * leaks a non-numeric count; the count is clamped to an integer before it
+ * reaches `innerHTML`, matching `renderStaleServerBanner`'s boundary cast.
+ *
+ * @param {{enabled?: boolean, commitsAhead?: number, checkedAt?: string|null}|null|undefined} info
+ * @returns {void}
+ */
+function renderBehindOriginBanner(info) {
+  const banner = document.getElementById('behindOriginBanner');
+  const textEl = document.getElementById('behindOriginBannerText');
+  if (!banner || !textEl) return;
+
+  const commitsAhead = info && info.enabled !== false
+    ? Math.max(0, Number(info.commitsAhead) | 0)
+    : 0;
+  if (commitsAhead === 0) {
+    banner.classList.add('hidden');
+    return;
+  }
+  textEl.innerHTML =
+    `ℹ <strong>${commitsAhead} new commit${commitsAhead === 1 ? '' : 's'} upstream on origin/main.</strong> ` +
+    'This checkout is behind — pull them when convenient. ' +
+    '(An install pinned to a release tag updates through <em>Update now</em> instead.)';
+  banner.classList.remove('hidden');
 }
 
 /**
