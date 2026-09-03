@@ -6970,11 +6970,15 @@ if (require.main === module) {
       }
     });
     if (ttydPlan.action === 'refuse') {
-      log.warn('Left the installed ttyd job alone', { reason: ttydPlan.reason });
+      // The interface it judged rides along, so a misclassified bind is
+      // diagnosable from the log and not only from the notice's presence.
+      log.warn('Left the installed ttyd job alone', {
+        reason: ttydPlan.reason, iface: ttydPlan.from, stillWide: ttydPlan.stillWide
+      });
       // Refusing is correct — guessing at an unrecognized job could take every
-      // terminal down. But if the job it declined to touch is still listening on
-      // every interface, that is an unauthenticated shell on the network, and a
-      // log line reaches nobody who is looking at a browser.
+      // terminal down. But if the job it declined to touch is still reachable
+      // from off the machine, that is an unauthenticated shell on the network,
+      // and a log line reaches nobody who is looking at a browser.
       if (ttydPlan.stillWide) {
         serverInfo.setTtydNotice({
           setting: 'ttyd interface',

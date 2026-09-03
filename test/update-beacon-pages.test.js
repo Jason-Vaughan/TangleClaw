@@ -71,7 +71,11 @@ function beaconConstruction(src) {
 function loadPage(page, opts = {}) {
   const { doc, ids } = makeDocument(['updateBeacon']);
   const calls = { confirms: [], alerts: [], fetches: [], timers: [], injected: [] };
-  const src = page === 'dashboard' ? LANDING_SRC : SESSION_SRC;
+  // A lookup with no default: a misspelled page name must refuse, not quietly
+  // run the session page and let a guard pass on the wrong wiring.
+  const SOURCES = { dashboard: LANDING_SRC, session: SESSION_SRC };
+  const src = SOURCES[page];
+  assert.ok(src, `loadPage: unknown page "${page}" — expected 'dashboard' or 'session'`);
 
   const sandbox = {
     console, Response, Headers,
@@ -210,7 +214,7 @@ describe('#931 each page keeps what is genuinely its own', () => {
     // The session page overrides `confirmText`; the beacon's default test
     // cannot see it, so the last word before the checkout moves is pinned here
     // on the page's OWN wiring.
-    for (const page of ['landing', 'session']) {
+    for (const page of ['dashboard', 'session']) {
       const ctx = loadPage(page, { confirm: false });
       ctx.beacon.render(AVAILABLE);
       await ctx.beacon.apply(AVAILABLE);
