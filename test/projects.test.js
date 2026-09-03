@@ -1590,6 +1590,75 @@ describe('projects', () => {
           'exact-case collision keeps the legacy error format — no spurious case-insensitive suffix');
       });
     });
+
+    // A user LaunchAgent is the supported way to run a macOS automation that
+    // needs a TCC grant, and its plist freezes the project's absolute path.
+    // launchd does not follow a rename, so the job fails on its next run
+    // with nothing pointing back at the rename. The rename result has to say
+    // which plists still name the old path — and only those.
+    describe('rename — LaunchAgents still naming the old path (#1148)', () => {
+      const launchAgentScan = require('../lib/launchagent-scan');
+      let laDir;
+      let realDir;
+
+      beforeEach(() => {
+        laDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-la-rename-'));
+        realDir = launchAgentScan.defaultLaunchAgentsDir;
+        // projects.js resolves the directory through the module object at
+        // call time, so this stub is what the rename branch reads.
+        launchAgentScan.defaultLaunchAgentsDir = () => laDir;
+      });
+      afterEach(() => {
+        launchAgentScan.defaultLaunchAgentsDir = realDir;
+        fs.rmSync(laDir, { recursive: true, force: true });
+      });
+
+      /**
+       * Write a minimal plist whose ProgramArguments name `target`.
+       * @param {string} label
+       * @param {string} target
+       */
+      function writeAgent(label, target) {
+        fs.writeFileSync(path.join(laDir, `${label}.plist`),
+          `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>\n<key>Label</key><string>${label}</string>\n`
+          + `<key>ProgramArguments</key><array><string>/bin/sh</string><string>${target}/run.sh</string></array>\n</dict></plist>\n`);
+      }
+
+      it('carries one warning naming every plist that references the OLD path, and not the others', async () => {
+        projects.createProject({ name: 'la-rename-src', gitInit: false });
+        const oldPath = store.projects.getByName('la-rename-src').path;
+        writeAgent('com.example.calendar-sync', oldPath);
+        writeAgent('com.example.unrelated', path.join(path.dirname(oldPath), 'some-other-project'));
+
+        const result = await projects.updateProject('la-rename-src', { name: 'la-rename-dst' });
+        assert.ok(result.project, 'the rename itself succeeds — a stale LaunchAgent is a warning, not a failure');
+        assert.equal(result.project.name, 'la-rename-dst');
+        assert.deepEqual(result.errors, [], 'the warning is not an error: nothing about the update failed');
+        assert.equal(result.warnings.length, 1);
+        assert.match(result.warnings[0], /^1 LaunchAgent still references the old path /);
+        assert.ok(result.warnings[0].includes(oldPath), 'the warning names the OLD path, the one the plist still holds');
+        assert.match(result.warnings[0], /com\.example\.calendar-sync \(.*com\.example\.calendar-sync\.plist\)/);
+        assert.doesNotMatch(result.warnings[0], /com\.example\.unrelated/);
+      });
+
+      it('carries an empty warnings array — a value, not an absent field — when no LaunchAgent names the path', async () => {
+        projects.createProject({ name: 'la-clean-src', gitInit: false });
+        writeAgent('com.example.elsewhere', '/nowhere/in/particular');
+
+        const result = await projects.updateProject('la-clean-src', { name: 'la-clean-dst' });
+        assert.ok(result.project);
+        assert.deepEqual(result.warnings, []);
+      });
+
+      it('still renames, with no warning, when the LaunchAgents directory does not exist', async () => {
+        launchAgentScan.defaultLaunchAgentsDir = () => path.join(laDir, 'absent');
+        projects.createProject({ name: 'la-nodir-src', gitInit: false });
+
+        const result = await projects.updateProject('la-nodir-src', { name: 'la-nodir-dst' });
+        assert.ok(result.project);
+        assert.deepEqual(result.warnings, []);
+      });
+    });
   });
 
   describe('deleteProject', () => {

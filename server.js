@@ -3942,8 +3942,12 @@ route('PATCH', '/api/projects/:name', async (_req, res, params, body) => {
     updatedAt: result.project.updatedAt
   };
 
-  if (result.errors.length > 0) {
-    response.warnings = result.errors;
+  // Partial failures of the update and after-the-fact warnings (#1148: the
+  // LaunchAgents still naming a renamed project's old path) travel on the
+  // same field — the dashboard renders one list, and both need the operator.
+  const warnings = result.errors.concat(Array.isArray(result.warnings) ? result.warnings : []);
+  if (warnings.length > 0) {
+    response.warnings = warnings;
   }
 
   jsonResponse(res, 200, response);
