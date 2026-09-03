@@ -256,8 +256,8 @@ silently does nothing.
 - [x] Chunk 7 — #1150 (PR #1169)
 - [x] Chunk 8 — #991 (PR #1170)
 - [x] Chunk 9 — #796 (PR #1171)
-- [ ] Chunk 10 — #858
-- [ ] Chunk 11 — #429
+- [x] Chunk 10 — #858 (PR #1173)
+- [ ] Chunk 11 — #429 (PR #1174, in review)
 - [ ] Chunk 12 — #1063
 - [ ] Chunk 13 — #1134
 - [ ] Chunk 14 — #1012

@@ -80,6 +80,16 @@
       label: 'Skipped',
       tone: 'skipped',
       tooltip: 'Step ran but had nothing to do (e.g. ai-content with an empty prompt, version-bump with no [Unreleased] entries). Not a failure.'
+    },
+    // #429 — distinct from `blocked` because the recovery is distinct: a
+    // blocked step may be retryable, skippable, or fixable by the session,
+    // while this one is waiting on something only a person at the keyboard can
+    // do (exit plan mode). Rendering it as `blocked` would offer the operator
+    // the wrong affordances for the wrong reason.
+    'needs-operator': {
+      label: 'Needs you',
+      tone: 'needs-operator',
+      tooltip: 'Step stopped because the session is in a state only you can change (e.g. plan mode is read-only and content steps must edit files). The row says what to do; then Retry.'
     }
   };
 
@@ -146,7 +156,13 @@
       // session can fix, so the "Ask the session to fix this" affordance stays
       // scoped to ai-content blocks. Requires `isBlocker` so it never shows on a
       // historical/non-active row.
-      agentResolvable: blockedAt !== null && stepResult.stepId === blockedAt && stepResult.kind === 'ai-content',
+      // #429 — and NOT when the block is `needs-operator`: that status exists
+      // precisely because the session cannot act (a read-only pane discards
+      // the fix prompt exactly as it discarded the wrap prompt), so offering
+      // "Ask the session to fix this" would promise a recovery that cannot
+      // happen and send the operator round the same five-minute loop.
+      agentResolvable: blockedAt !== null && stepResult.stepId === blockedAt
+        && stepResult.kind === 'ai-content' && status !== 'needs-operator',
       warning
     };
   }
@@ -306,7 +322,7 @@
    * "did this wrap succeed, block, or partially succeed with warnings."
    *
    * @param {object} pipelineResult - Runner return.
-   * @returns {{label: string, tone: 'success'|'blocked'|'warning'|'error', detail: string|null}}
+   * @returns {{label: string, tone: 'success'|'blocked'|'needs-operator'|'warning'|'error', detail: string|null}}
    */
   function summarizePipelineStatus(pipelineResult) {
     if (!pipelineResult || typeof pipelineResult !== 'object') {
@@ -318,6 +334,15 @@
     if (pipelineResult.blockedAt) {
       const blocked = (pipelineResult.results || []).find((r) => r.stepId === pipelineResult.blockedAt);
       const reason = blocked && blocked.blockers && blocked.blockers[0] ? blocked.blockers[0] : 'See blocked step below';
+      // #429 — the banner is the first thing read, and the copied report's
+      // first line. Keying it on `blockedAt` alone made a `needs-operator`
+      // halt announce itself as "Blocked at …" in red: the exact framing the
+      // status was added to replace, on the one surface that sets the
+      // operator's expectation before they read a row. The halting step's own
+      // status decides the words.
+      if (blocked && blocked.status === 'needs-operator') {
+        return { label: `Waiting on you at "${pipelineResult.blockedAt}"`, tone: 'needs-operator', detail: reason };
+      }
       return { label: `Blocked at "${pipelineResult.blockedAt}"`, tone: 'blocked', detail: reason };
     }
     // ok:true path — check for non-blocking warnings (`output.warning`)
@@ -509,15 +534,29 @@
    * diverge.
    *
    * @param {object} pipelineResult - Runner return.
-   * @returns {{total: number, done: number, skipped: number, blocked: number, pending: number, skips: Array<{id: string, kind: string, reason: string}>}}
+   * The buckets are EXHAUSTIVE over `wrapPipeline.STEP_STATUSES` — a status
+   * counted in `total` and in no bucket makes the digest under-report the very
+   * thing it exists to surface. `test/wrap-step-status-vocabulary.test.js`
+   * fails when a declared status has no bucket here (#429 R-6); it caught
+   * `running`, unbucketed since this rollup shipped. No handler emits `running`
+   * today — it is declared so the vocabulary and `STATUS_META` stay in
+   * bijection, and bucketed so the first producer does not have to remember
+   * this file.
+   *
+   * @returns {{total: number, done: number, skipped: number, blocked: number, pending: number, running: number, skips: Array<{id: string, kind: string, reason: string}>}}
    */
   function summarizeSkips(pipelineResult) {
     const results = pipelineResult && Array.isArray(pipelineResult.results) ? pipelineResult.results : [];
-    const out = { total: results.length, done: 0, skipped: 0, blocked: 0, pending: 0, skips: [] };
+    const out = { total: results.length, done: 0, skipped: 0, blocked: 0, pending: 0, running: 0, skips: [] };
     for (const r of results) {
       const status = r.status || 'pending';
       if (status === 'done') out.done += 1;
-      else if (status === 'blocked') out.blocked += 1;
+      // #429 — `needs-operator` counts as blocked: it is a step that reported a
+      // problem and halted the wrap. It keeps its own badge and banner wording,
+      // where the distinction changes what the operator does; here the question
+      // is only "how many steps failed to complete".
+      else if (status === 'blocked' || status === 'needs-operator') out.blocked += 1;
+      else if (status === 'running') out.running += 1;
       else if (status === 'pending') out.pending += 1;
       else if (status === 'skipped') {
         out.skipped += 1;

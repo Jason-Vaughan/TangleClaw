@@ -94,6 +94,16 @@
         "verifiedOn": "2026-07-28",
         "source": "https://docs.claude.com/en/docs/claude-code/hooks — 10,000-char cap is per hook output; overflow REPLACES the payload with a truncation preview (probe-verified on a live install, 2026-07-28)"
       }
+    },
+    "readOnlyModeMarker": {
+      "modeLine": "(shift+tab to cycle)",
+      "marker": "plan mode on (shift+tab to cycle)",
+      "label": "plan mode",
+      "exit": "shift+tab",
+      "evidence": {
+        "verifiedOn": "2026-09-03",
+        "source": "Claude Code 2.1.259, probed on a live pane: `claude --permission-mode plan` renders `⏸ plan mode on (shift+tab to cycle)` beneath the input box. `modeLine` is the signature EVERY permission mode draws — the same line reads `bypass permissions on (shift+tab to cycle)` under --dangerously-skip-permissions — so it locates the mode line; `marker` is what makes that line read-only. Locating and deciding are separate fields because a pane with subagents running draws `⏺ main` and one row per agent BELOW the mode line (live captures in test/medusa-wake.test.js, #783/#1101), so the mode line is not the last line and cannot be found by position."
+      }
     }
   },
   "statusPage": {
