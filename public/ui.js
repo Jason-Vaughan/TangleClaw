@@ -223,6 +223,28 @@ function renderUnreadableBadge(project) {
 }
 
 /**
+ * Render the engine API error badge for a project card (#261).
+ *
+ * The engine's provider answered a 4xx/5xx and the engine printed it into its
+ * pane and carried on; the card otherwise looks healthy. The server records
+ * the error while a matching line is in the pane's captured tail, so this
+ * renders only from a LIVE session's `lastEngineError` — a session the server
+ * could not confirm has no reading to draw.
+ *
+ * @param {object} project - Project data carrying an optional `session`.
+ * @returns {string} HTML for the badge, or '' when there is no recorded error.
+ */
+function renderEngineErrorBadge(project) {
+  const session = project && project.session;
+  const err = session && session.active === true ? session.lastEngineError : null;
+  if (!err) return '';
+  const status = Number.isFinite(Number(err.status)) ? `HTTP ${Number(err.status)}` : 'error';
+  const detail = [err.type, err.message].filter(Boolean).join(': ');
+  const tooltip = `Engine API error — ${status}${detail ? `. ${detail}` : ''}`;
+  return `<span class="badge badge-engine-error" title="${esc(tooltip)}">&#9888; ${esc(status)}</span>`;
+}
+
+/**
  * Render the git branch badge for a project card.
  *
  * Shared by the registered and unregistered cards. They each had their own copy
@@ -294,6 +316,8 @@ function renderCard(project) {
       })()
     : '';
 
+  const engineErrorBadge = renderEngineErrorBadge(project);
+
   // Group badges
   const groupBadges = (project.groups || []).map(g =>
     `<span class="badge badge-group" title="${esc(g.name)}: ${g.docCount || 0} shared doc${(g.docCount || 0) !== 1 ? 's' : ''}">${esc(g.name)}</span>`
@@ -358,6 +382,7 @@ function renderCard(project) {
       ${versionBadge}
       ${gitBadge}
       ${engineBadge}
+      ${engineErrorBadge}
       ${groupBadges}
       ${auditBadge}
       ${driftBadge}

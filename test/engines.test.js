@@ -776,6 +776,59 @@ describe('engines', () => {
       const result = engines.validateProfile(profile);
       assert.equal(result.valid, true);
     });
+
+    // #261 — errorPatterns is optional, but once declared the regex must
+    // compile and the parser must be a strategy TangleClaw ships by name.
+    describe('errorPatterns (#261)', () => {
+      /** A complete session profile with the given errorPatterns value. */
+      function withPatterns(errorPatterns) {
+        return {
+          id: 'test',
+          name: 'Test',
+          command: 'test',
+          interactionModel: 'session',
+          configFormat: { filename: 'f', syntax: 's', generator: 'g' },
+          detection: { strategy: 'which', target: 't' },
+          launch: { shellCommand: 'test', args: [], env: {} },
+          errorPatterns
+        };
+      }
+
+      it('accepts a compiling regex with a known parser', () => {
+        const result = engines.validateProfile(withPatterns([
+          { regex: '^\\{"type":"error"', parser: 'codex-json' }
+        ]));
+        assert.deepEqual(result.errors, []);
+        assert.equal(result.valid, true);
+      });
+
+      it('rejects a regex that does not compile', () => {
+        const result = engines.validateProfile(withPatterns([{ regex: '(unclosed', parser: 'codex-json' }]));
+        assert.equal(result.valid, false);
+        assert.ok(result.errors.some((e) => /errorPatterns\[0\]\.regex does not compile/.test(e)), result.errors.join('; '));
+      });
+
+      it('rejects a parser name the engine-errors module does not know — a profile selects a parser, never supplies one', () => {
+        const result = engines.validateProfile(withPatterns([{ regex: 'x', parser: 'eval-this' }]));
+        assert.equal(result.valid, false);
+        assert.ok(result.errors.some((e) => /errorPatterns\[0\]\.parser must be one of/.test(e)), result.errors.join('; '));
+      });
+
+      it('rejects a non-array declaration and a non-object entry', () => {
+        assert.equal(engines.validateProfile(withPatterns({ regex: 'x', parser: 'codex-json' })).valid, false);
+        assert.equal(engines.validateProfile(withPatterns(['^x'])).valid, false);
+      });
+
+      it('the bundled Codex profile declares a codex-json pattern and validates', () => {
+        const codex = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8'));
+        assert.ok(Array.isArray(codex.errorPatterns) && codex.errorPatterns.length > 0, 'codex.json must declare errorPatterns');
+        assert.equal(codex.errorPatterns[0].parser, 'codex-json');
+        assert.ok(new RegExp(codex.errorPatterns[0].regex).test('{"type":"error","status":400,"error":{}}'),
+          'the bundled regex must select the structured error line');
+        const result = engines.validateProfile(codex);
+        assert.deepEqual(result.errors, []);
+      });
+    });
   });
 
   describe('resolveDefaultEngine (#707)', () => {

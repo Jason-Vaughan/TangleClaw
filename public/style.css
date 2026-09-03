@@ -1751,6 +1751,15 @@ body {
   0%, 100% { box-shadow: 0 0 4px rgba(239, 83, 80, 0.3); }
   50% { box-shadow: 0 0 12px rgba(239, 83, 80, 0.8); }
 }
+/* Engine API error badge (#261) — the engine's OWN last 4xx/5xx, as seen in
+   its pane, distinct from the provider status dot above (which is the status
+   page's word, not this session's). Solid danger so it reads from across the
+   room on a card that otherwise looks healthy. */
+.badge-engine-error {
+  background: var(--danger);
+  color: #fff;
+  font-weight: 600;
+}
 .badge-meth {
   background: rgba(171, 71, 188, 0.15);
   color: #ce93d8;

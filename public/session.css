@@ -629,6 +629,33 @@ body {
    mounted while a retry is in flight. */
 .session-unreachable .btn:disabled { opacity: 0.6; cursor: default; }
 
+/* ── Engine API error banner (#261) ──
+   Same placement logic as the unreachable banner — a flow sibling that
+   shortens the terminal rather than covering it — but a different fact: the
+   ENGINE's provider answered with an error, TangleClaw's own server is fine.
+   Amber-on-red would read as two shades of the same alarm, so this keeps the
+   danger hue with a solid left rule to stand apart from the API banner. */
+.engine-error-banner {
+  flex-shrink: 0;
+  padding: 10px 16px;
+  background: rgba(239, 83, 80, 0.12);
+  border-left: 4px solid var(--danger);
+  border-bottom: 1px solid rgba(239, 83, 80, 0.35);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.engine-error-banner.hidden { display: none; }
+.engine-error-banner strong { color: var(--danger); }
+.engine-error-banner code {
+  background: var(--elevated-bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+  word-break: break-word;
+}
+.engine-error-banner .engine-error-note { color: var(--text-muted); }
+
 /* ── Session Wrapping Bar ── */
 .session-wrapping {
   flex-shrink: 0;

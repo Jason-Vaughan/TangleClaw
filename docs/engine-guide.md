@@ -143,6 +143,7 @@ The `configFormat` above is set to `null` because config file generation require
 | `launch` | object\|null | yes | Launch parameters (null for persistent engines) |
 | `persistent` | object\|null | yes | Persistent engine config (null for session engines) |
 | `capabilities` | object | yes | Feature flags |
+| `errorPatterns` | array | no | How to recognise the engine's own API errors in its terminal output — see [Engine API error detection](#engine-api-error-detection-errorpatterns) |
 
 ### Config Format
 
@@ -405,3 +406,22 @@ Each engine profile includes a `statusPage` field (object or `null`):
 - **`productName`** — For Google: product name to filter incidents by
 
 Set to `null` for engines without a known upstream status page.
+
+## Engine API error detection (`errorPatterns`)
+
+A status page says whether the provider is up. It does not say that *this session's* calls are failing — Codex under the wrong auth mode answers every prompt with `{"type":"error","status":400,"error":{"type":"invalid_request_error",…}}` as gray terminal text while the status page stays green and the project card looks healthy. `errorPatterns` closes that gap: an engine profile declares how its API errors look in its own output, and TangleClaw watches for them.
+
+```json
+"errorPatterns": [
+  { "regex": "^\\s*\\{\"type\":\"error\"", "parser": "codex-json" }
+]
+```
+
+- **`regex`** — a JavaScript regular expression, as a string, that selects a pane line worth parsing. It must compile; `validateProfile` rejects a profile whose regex does not.
+- **`parser`** — the **name** of a parsing strategy TangleClaw ships (`lib/engine-errors.js#PARSERS`), never code. A name the module does not know is rejected. Parsers today: `codex-json` — the structured `{"type":"error","status":<4xx|5xx>,"error":{"type","code","message"}}` object Codex echoes for a failed API call; a long line tmux wrapped across several rows is reassembled before parsing.
+
+The field is optional. Bundled: Codex declares the pattern above; the other engines declare none until a shape is known for them.
+
+**What the operator sees.** The wrap sentinel's existing per-tick read of every live pane (every few seconds) is the capture; there is no second loop. A match records `lastEngineError = { type, status, message, timestamp }` on the session, which reaches `GET /api/sessions/:project/status` and the project's `session` object in `GET /api/projects`. The session page shows a banner above the terminal naming the status, the error type and the provider's message; the project card on the dashboard carries a red `⚠ HTTP <status>` badge with the same detail in its tooltip.
+
+**When it clears — stated honestly.** TangleClaw cannot see an API call succeed; it sees the pane's captured tail. The error is reported for as long as a matching line is inside that tail, and clears the first time a capture no longer contains one — which is what the next successful prompt looks like from outside: the engine produced enough new output to push the error line off the captured rows. An error still on screen stays reported even after the operator has fixed the cause, until the terminal moves past it; a repeated error re-arms with a fresh timestamp once the previous one has scrolled away. Detection applies to tmux sessions; a Web UI (gateway) session has no pane to read.
