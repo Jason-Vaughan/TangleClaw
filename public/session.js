@@ -217,6 +217,43 @@ function hideSessionUnreachable() {
 }
 
 /**
+ * Show or clear the engine API error banner (#261) from the status poll's
+ * `lastEngineError`. The engine printed a 4xx/5xx from its provider into the
+ * pane and kept running — gray text the operator can miss — so this names the
+ * status, the error type and the provider's message above the terminal.
+ *
+ * Follows the server's clear rule rather than inventing one: the payload
+ * carries the error while a matching line is still in the pane's captured
+ * tail and drops it once the pane has moved past — which is what the next
+ * successful prompt looks like from outside. The banner says so, because an
+ * operator who fixed the cause and sees the banner still up needs to know it
+ * is waiting on the pane, not on them.
+ *
+ * @param {{type?: string, status?: number, message?: string, timestamp?: string}|null|undefined} err
+ *   The status payload's `lastEngineError`, or nothing.
+ * @returns {void}
+ */
+function renderEngineErrorBanner(err) {
+  const el = document.getElementById('engineErrorBanner');
+  if (!el) return;
+  if (!err) {
+    el.classList.add('hidden');
+    el.innerHTML = '';
+    return;
+  }
+  const engine = sessionState.project && sessionState.project.engine && sessionState.project.engine.name;
+  const who = engine ? `${esc(engine)}'s API` : 'The engine’s API';
+  const status = Number.isFinite(Number(err.status)) ? `HTTP ${Number(err.status)}` : 'an error';
+  const type = err.type ? ` <code>${esc(err.type)}</code>` : '';
+  const message = err.message ? ` — ${esc(err.message)}` : '';
+  const seen = err.timestamp ? new Date(err.timestamp) : null;
+  const when = seen && !Number.isNaN(seen.getTime()) ? ` Seen ${esc(seen.toLocaleTimeString())}.` : '';
+  el.innerHTML = `<strong>${who} returned ${esc(status)}</strong>${type}${message}`
+    + `<span class="engine-error-note">${when} Clears once the terminal moves past the error line.</span>`;
+  el.classList.remove('hidden');
+}
+
+/**
  * The explicit retry the banner offers. The background loop keeps running
  * regardless; this exists so the operator has an action that answers NOW
  * rather than at the end of the current interval.
@@ -1688,6 +1725,10 @@ async function pollStatus() {
   if (!data) return;
 
   sessionState.session = data;
+
+  // The engine's own last API error (#261) rides the same poll — null on the
+  // healthy path, which is what hides the banner again.
+  renderEngineErrorBanner(data.lastEngineError);
 
   // CC-7 Slice C — typed-wrap trigger parity. The server's wrap-sentinel monitor
   // saw the AI emit `TANGLECLAW_WRAP` (the user typed "wrap"), so open the same

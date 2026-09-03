@@ -69,5 +69,11 @@
     "url": "https://status.openai.com/api/v2/summary.json",
     "componentId": "01JVCV8YSWZFRSM1G5CVP253SK",
     "componentName": "Codex"
-  }
+  },
+  "errorPatterns": [
+    {
+      "regex": "\\{\"type\":\"error\"",
+      "parser": "codex-json"
+    }
+  ]
 }

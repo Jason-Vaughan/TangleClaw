@@ -118,6 +118,13 @@
        nothing here. -->
   <div class="session-unreachable" id="sessionUnreachable" role="alert" aria-live="assertive"></div>
 
+  <!-- Engine API error banner (#261). Also a flow sibling of the terminal:
+       the engine printed a 4xx/5xx from its provider into the pane and kept
+       running, so the terminal stays usable and this names what it said.
+       Filled by session.js from the status poll; hidden while there is
+       nothing to say. -->
+  <div class="engine-error-banner hidden" id="engineErrorBanner" role="alert" aria-live="polite"></div>
+
   <!-- Session Wrapping Bar -->
   <div class="session-wrapping hidden" id="sessionWrapping">
     <span class="wrapping-indicator"></span>

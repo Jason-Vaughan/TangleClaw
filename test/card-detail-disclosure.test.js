@@ -254,6 +254,7 @@ describe('open-ness survives a re-render (#1015)', () => {
       renderEngineBadge: () => '',
       renderUnreadableBadge: () => '',
       renderAwarenessBadge: () => '',
+      renderEngineErrorBadge: () => '',
       degradedTooltip: () => '',
       tcSessionLiveness: () => 'none',
       tcSessionRead: () => ({ why: '', remedy: '' }),
