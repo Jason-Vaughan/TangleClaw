@@ -93,7 +93,13 @@ silently does nothing.
 - Options 1 + 3 from the issue: the pill and the confirmation say "v5.9.0 or newer" (never a bare
   promise); the post-update confirmation names the version actually checked out (`toRef` from the
   applier).
-- Tests: pill copy with a stale poll; post-update copy reads `toRef`, not the polled version.
+- The family is every `latestVersion` interpolation in `public/*.js` — the beacon's toast, dot
+  and confirm, the session page's confirm override and its agent prompt, and the landing page's
+  header tooltip (Critic R-1 on this car: the sweep had stopped at the beacon). Option 2
+  (re-resolve at click time) is dropped: it costs a network round-trip per click to promise a
+  number the applier would still re-resolve a moment later.
+- Tests: each surface's copy; post-update copy reads `toRef`, not the polled version; a guard
+  scans every page script for an unqualified interpolation.
 - **Done when:** no surface renders the polled version as the install target.
 
 ### Chunk 5 — #1056 a LAN-IP-bound ttyd reports not-wide

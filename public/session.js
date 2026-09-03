@@ -849,7 +849,9 @@ async function pollTick() {
 function buildUpdatePrompt(data) {
   const repoRoot = data.repoRoot || 'the TangleClaw install directory (ask the operator for the path)';
   return [
-    `TangleClaw update available: v${data.currentVersion} → v${data.latestVersion}.`,
+    `TangleClaw update available: running v${data.currentVersion}; v${data.latestVersion} or newer is published.`,
+    'The updater resolves the newest release itself and names what it checked out (#994) —',
+    'report THAT version, not the one above.',
     'Please update TangleClaw by running these steps:',
     `1. cd ${repoRoot}`,
     '2. Apply the update through the guarded updater: node scripts/apply-update.js',

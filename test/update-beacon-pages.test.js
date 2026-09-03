@@ -206,6 +206,19 @@ describe('#931 each page keeps what is genuinely its own', () => {
     assert.equal(link.textContent, 'Ask the agent');
   });
 
+  it('both pages\' confirms offer "or newer", never a bare version (#994)', async () => {
+    // The session page overrides `confirmText`; the beacon's default test
+    // cannot see it, so the last word before the checkout moves is pinned here
+    // on the page's OWN wiring.
+    for (const page of ['landing', 'session']) {
+      const ctx = loadPage(page, { confirm: false });
+      ctx.beacon.render(AVAILABLE);
+      await ctx.beacon.apply(AVAILABLE);
+      assert.equal(ctx.calls.confirms.length, 1, `${page}: apply asks first`);
+      assert.match(ctx.calls.confirms[0], /v5\.1\.2 or newer and restart\?/, `${page}: a floor, not a promise`);
+    }
+  });
+
   it('the session\'s agent link injects the prompt and does NOT start the update', () => {
     const sess = loadPage('session');
     sess.beacon.render(AVAILABLE);

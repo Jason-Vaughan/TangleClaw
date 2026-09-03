@@ -772,18 +772,23 @@ describe('#994 the beacon never promises a version the applier did not commit to
     assert.doesNotMatch(alerts, /v5\.1\.2/);
   });
 
-  it('no beacon copy renders the polled version as a bare install target', () => {
-    // Every site that interpolates `latestVersion` into operator-facing copy
-    // qualifies it — the family, not one call site. A new site that forgets
-    // "or newer" reintroduces the promise.
-    const lines = BEACON_SRC.split('\n');
-    const sites = lines.map((l, i) => (l.includes('${data.latestVersion}') ? i : -1)).filter((i) => i >= 0);
-    assert.ok(sites.length >= 4, `expected the toast, dot title, dot label and confirm; found ${sites.length}`);
-    for (const i of sites) {
+  it('no page script renders the polled version as a bare install target', () => {
+    // Every site in public/ that interpolates `latestVersion` into copy
+    // qualifies it — the family, not one file: the beacon's toast, dot and
+    // confirm, the session page's confirm override and agent prompt, and the
+    // landing page's header tooltip. A new site that forgets "or newer"
+    // reintroduces the promise.
+    const sites = [];
+    for (const f of fs.readdirSync(PUB).filter((n) => n.endsWith('.js'))) {
+      const lines = fs.readFileSync(path.join(PUB, f), 'utf8').split('\n');
+      lines.forEach((l, i) => { if (/\$\{(data\.)?latestVersion\}/.test(l)) sites.push({ f, i, lines }); });
+    }
+    assert.ok(sites.length >= 7, `expected the beacon's four, the session's two and the landing tooltip; found ${sites.length}`);
+    for (const { f, i, lines } of sites) {
       // The toast declares its qualifier on the line after the version, so
       // a short window is enough; a qualifier that drifts away goes red.
       const window = lines.slice(i, i + 4).join('\n');
-      assert.match(window, /or newer/, `unqualified version in beacon copy: ${lines[i].trim()}`);
+      assert.match(window, /or newer/, `unqualified version in ${f}: ${lines[i].trim()}`);
     }
   });
 });
