@@ -3785,13 +3785,16 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
   // is an honest unknown in the prime, not a failed launch.
   await ciStatus.refresh(project.path);
 
+  const operatorHost = _req.headers['x-forwarded-host'] || _req.headers['host'] || 'localhost:3102';
+
   const result = sessions.launchSession(params.project, {
     primePrompt: body ? body.primePrompt : true,
     engineOverride: body ? body.engineOverride : null,
     mode: body ? body.mode : undefined,
     launchMode: body ? body.launchMode : undefined,
     continuityMode: body ? body.continuityMode : undefined,
-    owner
+    owner,
+    operatorHost
   });
 
   // Web UI mode — delegate to async launch path
