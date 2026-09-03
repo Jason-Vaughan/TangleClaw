@@ -88,7 +88,7 @@ load run in Chunk 5's Done-when is what confirms them.
 ## Status
 - [x] Chunk 1 — #844 (PR #1155, merged 3976a91)
 - [x] Chunk 2 — #831 (PR #1156, merged 236bd78)
-- [ ] Chunk 3 — #835
+- [x] Chunk 3 — #835 (PR #1157, merged 5d889e1)
 - [ ] Chunk 4 — #969
 - [ ] Chunk 5 — #957
 
