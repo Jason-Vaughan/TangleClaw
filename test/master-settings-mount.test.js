@@ -292,11 +292,14 @@ describe('#948 — a failed Hard-rules read is an unknown, not the shipped basel
 });
 
 describe('#948 — every rules surface renders its unknown through one helper', () => {
-  it('api-helper.js carries the unknown-state class in exactly one place and exports the helper', () => {
-    // Critic R-7 on car 1: two hand-written sentences that varied only in
-    // label/remedy. A second copy is the drift the shared helper exists to
-    // prevent, so the class name is allowed to appear once — in the helper.
-    const sites = HELPER_SRC.split('session-rules-unknown').length - 1;
+  it('the unknown-state class is authored in exactly one place across public/*.js, and the helper is exported', () => {
+    // Two hand-written sentences that vary only in label/remedy are the drift
+    // the shared helper exists to prevent — in this file AND in the Project
+    // Rules copy of the widget (ui.js), so the count spans every page script.
+    const publicDir = path.join(__dirname, '..', 'public');
+    const sites = fs.readdirSync(publicDir).filter((f) => f.endsWith('.js'))
+      .map((f) => fs.readFileSync(path.join(publicDir, f), 'utf8').split('session-rules-unknown').length - 1)
+      .reduce((a, b) => a + b, 0);
     assert.equal(sites, 1, 'the class must be authored only inside tcRulesUnknownHtml');
     const sandbox = loadHelper();
     assert.equal(typeof sandbox.tcRulesUnknownHtml, 'function', 'exported for the Project Rules copy in ui.js');

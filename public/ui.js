@@ -1434,13 +1434,53 @@ function renderProjectRulesSection(project) {
  * badge so the queue isn't silent), minus rejections (a rejected row is the
  * record of a decision, not a rule — rendering it forever would read as
  * clutter, and its whole point is that the wrap won't re-raise it).
+ *
+ * `null` when the read did not happen (#1054). It used to flatten that into
+ * `[]`, so an API outage rendered as "No rules yet." — an empty ruleset told
+ * as a fact about a project whose rules nobody fetched.
  * @param {number} projectId - DB project id
  * @param {string} kind - Rule kind
- * @returns {Promise<object[]>}
+ * @returns {Promise<object[]|null>} The rules, or null when the read failed.
  */
 async function fetchProjectRules(projectId, kind) {
   const data = await api(`/api/session-rules?projectId=${encodeURIComponent(projectId)}&kind=${kind}`);
-  return (data ? data.rules || [] : []).filter((r) => r.status !== 'rejected');
+  if (!data) return null;
+  return (data.rules || []).filter((r) => r.status !== 'rejected');
+}
+
+/**
+ * Fetch one kind's rules and render the answer — the list, the true empty
+ * state, or the unknown. Every caller that re-reads after a mutation goes
+ * through here, so the three-state rendering cannot be bypassed by one of
+ * them re-flattening a failed read (#1054).
+ * @param {number} projectId - DB project id
+ * @param {string} kind - Rule kind
+ * @returns {Promise<boolean>} True when the read happened (list rendered).
+ */
+async function refreshProjectRulesList(projectId, kind) {
+  const rules = await fetchProjectRules(projectId, kind);
+  // The modal may have been closed/reopened on another project while awaiting.
+  if (projectRulesTargetId !== projectId) return false;
+  if (rules === null) {
+    renderProjectRulesUnknown(kind, api.lastError);
+    return false;
+  }
+  renderProjectRulesList(kind, rules);
+  return true;
+}
+
+/**
+ * Render one kind's list as UNKNOWN through the shared helper the Master
+ * settings component uses (#948) — one authoring site for the sentence, the
+ * alert role and the class pair, so the two copies of this widget cannot drift.
+ * @param {string} kind - 'startup' | 'wrap'
+ * @param {string|null} why - `api.lastError`, when the transport left one
+ */
+function renderProjectRulesUnknown(kind, why) {
+  const list = document.getElementById(`projRulesList-${kind}`);
+  if (!list) return;
+  list.innerHTML = window.tcRulesUnknownHtml('Rules',
+    window.tcDegradedRead(false, why, 'Close and reopen Settings to retry.'));
 }
 
 /**
@@ -1450,10 +1490,8 @@ async function fetchProjectRules(projectId, kind) {
 async function loadProjectRules(projectId) {
   projectRulesTargetId = projectId;
   for (const { kind } of PROJECT_RULE_KINDS) {
-    const rules = await fetchProjectRules(projectId, kind);
-    // The modal may have been closed/reopened on another project while awaiting.
+    await refreshProjectRulesList(projectId, kind);
     if (projectRulesTargetId !== projectId) return;
-    renderProjectRulesList(kind, rules);
   }
 
   // Load verified delivery ledger
@@ -1543,7 +1581,7 @@ async function addProjectRule(kind) {
   if (data) {
     if (input) input.value = '';
     _setProjectRulesStatus('Added', true);
-    renderProjectRulesList(kind, await fetchProjectRules(projectRulesTargetId, kind));
+    await refreshProjectRulesList(projectRulesTargetId, kind);
   } else {
     _setProjectRulesStatus('Add failed', false);
   }
@@ -1558,7 +1596,7 @@ async function addProjectRule(kind) {
 async function toggleProjectRule(id, enabled, kind) {
   const data = await apiMutate(`/api/session-rules/${id}`, 'PUT', { enabled });
   if (!data) { _setProjectRulesStatus('Update failed', false); return; }
-  renderProjectRulesList(kind, await fetchProjectRules(projectRulesTargetId, kind));
+  await refreshProjectRulesList(projectRulesTargetId, kind);
 }
 
 /**
@@ -1570,7 +1608,7 @@ async function deleteProjectRule(id, kind) {
   const data = await apiMutate(`/api/session-rules/${id}`, 'DELETE', {});
   if (!data) { _setProjectRulesStatus('Delete failed', false); return; }
   _setProjectRulesStatus('Deleted', true);
-  renderProjectRulesList(kind, await fetchProjectRules(projectRulesTargetId, kind));
+  await refreshProjectRulesList(projectRulesTargetId, kind);
 }
 
 /**
@@ -1605,7 +1643,7 @@ async function resolveProjectRuleProposal(id, status, kind) {
   _setProjectRulesStatus(status === 'active'
     ? 'Approved — this rule now governs future sessions'
     : 'Rejected — recorded, so it won’t be proposed again', true);
-  renderProjectRulesList(kind, await fetchProjectRules(projectRulesTargetId, kind));
+  await refreshProjectRulesList(projectRulesTargetId, kind);
 }
 
 /**

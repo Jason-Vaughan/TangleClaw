@@ -2064,6 +2064,7 @@
   global.tcSessionRead = tcSessionRead;
   global.tcMasterRead = tcMasterRead;
   global.tcRulesUnknownHtml = tcRulesUnknownHtml;
+  global.tcDegradedRead = tcDegradedRead;
   global.tcGitDirtyState = tcGitDirtyState;
   global.tcGitRead = tcGitRead;
   global.tcScanNotice = tcScanNotice;
