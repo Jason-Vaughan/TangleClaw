@@ -25,6 +25,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { initRepo } = require('./_temp-repo');
 
 const git = require('../lib/git');
 const { setConsoleStream, setLevel, getLevel } = require('../lib/logger');
@@ -379,9 +380,7 @@ describe('git info budget — an empty budget never becomes an unbounded spawn (
 
   before(() => {
     repo = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-git-budget-'));
-    // Empty --template deliberately: a bare `git init` inherits the live global
-    // template dir, which TangleClaw rewrites, and that flakes (#831).
-    execFileSync('git', ['init', '--template=', '-q'], { cwd: repo });
+    initRepo(repo);
     execFileSync('git', ['config', 'user.email', 't@example.com'], { cwd: repo });
     execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo });
     execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: repo });
@@ -400,7 +399,7 @@ describe('git info budget — an empty budget never becomes an unbounded spawn (
     // whole change exists to prevent.
     const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-git-nocommit-'));
     try {
-      execFileSync('git', ['init', '--template=', '-q'], { cwd: empty });
+      initRepo(empty);
       const info = git._fetchInfo(empty);
 
       assert.ok(info !== null, 'an initialised repository is a repository');

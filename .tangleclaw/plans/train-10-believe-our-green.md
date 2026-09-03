@@ -4,6 +4,7 @@
 blocks Trains 11–15. Sequencing is the Roadmap session's; this plan holds the executable cars.
 **Working artifact:** https://claude.ai/code/artifact/1f96ad65-92fe-49be-9417-b8716f750cbd
 **Critic mode:** chunk per car (each car is its own branch + PR); `final` on the last car.
+Cars are numbered as chunks (`Chunk N`) so the record lint can grade each one.
 
 ## Why this train exists
 
@@ -32,11 +33,11 @@ run is a hypothesis, not evidence.
 session or this one verified against source, and named options; the two that needed a
 choice (#844, #835) were made from the issue's own option lists and ratified by the Roadmap
 session. Medium on one point: #957's headroom multipliers are chosen, not measured — the
-load run in Car 5's Done-when is what confirms them.
+load run in Chunk 5's Done-when is what confirms them.
 
-## Cars
+## Chunks
 
-### Car 1 — #844 CI names what it did not run
+### Chunk 1 — #844 CI names what it did not run
 - `scripts/test-skip-audit.js` reads the junit report node:test writes and compares every
   skipped/todo test against a committed ledger, `test/skip-ledger.json`. A skip not on the
   ledger fails the step; the summary line states "certified N of M" on stdout and in the
@@ -47,18 +48,18 @@ load run in Car 5's Done-when is what confirms them.
   well-formedness, and that the ledger covers the known CI skip set without being a wildcard.
 - **Done when:** CI on the PR runs the audit and passes; a synthetic unknown skip is red.
 
-### Car 2 — #831 bare `git init` inherits the live template dir
+### Chunk 2 — #831 bare `git init` inherits the live template dir
 - `test/_temp-repo.js` — one helper (`initRepo(dir, opts)`) that runs `git init` with
   `--template=` so the machine's global `init.templateDir` is never read.
-- Every bare `git init` in `test/` moves to the helper. Exception preserved:
+- Every `git init` and `git clone` in `test/` moves to the helper (`initRepo`/`cloneRepo`), in every shape — command string, argv, local wrapper, `-c init.templateDir=`. Exception preserved:
   `test/git-template.test.js` "git init picks up the installed hook" tests the template
   mechanism itself.
-- A source-scanning guard fails when a test file gains a `git init` without `--template=`
+- A source-scanning guard keyed on the SUBCOMMAND (init/clone), not a syntax, fails when a test file makes a repository any other way
   (the "one call site is not the family" rule, enforced).
-- **Done when:** grep for bare `git init` in `test/` finds only the sanctioned exception, and
-  the guard goes red when a bare invocation is reintroduced.
+- **Done when:** the guard finds only the helper and the sanctioned exception, and goes red
+  when a bare invocation — in any shape — is reintroduced.
 
-### Car 3 — #835 upstream drift check never runs in CI
+### Chunk 3 — #835 upstream drift check never runs in CI
 - `.github/workflows/upstream-drift.yml`: daily schedule + `workflow_dispatch`; shallow-clones
   `brookstalley/prawduct` to `~/.claude/plugins/marketplaces/prawduct`, runs
   `test/c1-plugin-migration.test.js` with `TANGLECLAW_REQUIRE_UPSTREAM=1`.
@@ -67,7 +68,7 @@ load run in Car 5's Done-when is what confirms them.
 - **Done when:** a manual dispatch of the workflow is green; the env flag makes the absent
   case red in the unit test.
 
-### Car 4 — #969 refusal guard asserts on host plumbing
+### Chunk 4 — #969 refusal guard asserts on host plumbing
 - The embedded Python program catches `ValueError` from `ast.literal_eval` and exits with a
   distinct code and a fixed message; the Node reader turns that exit into a typed error
   (`err.code === 'NON_LITERAL_INSTALL_REFERENCE'`).
@@ -76,7 +77,7 @@ load run in Car 5's Done-when is what confirms them.
   refusal).
 - **Done when:** both mutations red, suite green on this host and CI.
 
-### Car 5 — #957 threadpool assertion fails under load
+### Chunk 5 — #957 threadpool assertion fails under load
 - `_dir-scanner-pool-demo.js` samples an ordinary readdir BEFORE the workload as well as
   after; the test asserts the after-probe is not stuck and is within a bounded multiple of
   the before-probe rather than under an absolute 1000ms.
@@ -85,11 +86,11 @@ load run in Car 5's Done-when is what confirms them.
   box; the leak-mode mutation (route scanner mode through the in-process helper) is red.
 
 ## Status
-- [ ] Car 1 — #844
-- [ ] Car 2 — #831
-- [ ] Car 3 — #835
-- [ ] Car 4 — #969
-- [ ] Car 5 — #957
+- [x] Chunk 1 — #844 (PR #1155, merged 3976a91)
+- [ ] Chunk 2 — #831
+- [ ] Chunk 3 — #835
+- [ ] Chunk 4 — #969
+- [ ] Chunk 5 — #957
 
 ## Context
 Session 2026-09-02/03, autonomous sprint. Work in `.claude/worktrees/train10`; the primary

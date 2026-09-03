@@ -13,6 +13,7 @@
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
+const { initRepo } = require('./_temp-repo');
 
 const cov = require('../lib/wrap-steps/changelog-coverage');
 
@@ -585,7 +586,7 @@ describe('changelog-coverage — against this repository\'s real history', () =>
       fs.writeFileSync(nodePath.join(sub, 'CHANGELOG.md'), '# Changelog\n');
       fs.writeFileSync(nodePath.join(root, 'root.txt'), 'x\n');
       const git = (cmd) => execSync(`git ${cmd}`, { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] });
-      git('init -q .');
+      initRepo(root);
       git('add -A');
       git('-c user.email=t@t -c user.name=t commit -qm "seed"');
 
@@ -627,7 +628,7 @@ describe('changelog-coverage — against this repository\'s real history', () =>
     const root = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'tc-wrapsubj-'));
     try {
       const git = (cmd) => execSync(`git ${cmd}`, { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] });
-      git('init -q .');
+      initRepo(root);
       SUBJECTS.forEach((subject, i) => {
         fs.writeFileSync(nodePath.join(root, `f${i}.txt`), `${i}\n`);
         git('add -A');

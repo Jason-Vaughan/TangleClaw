@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { execSync } = require('node:child_process');
+const { initRepo } = require('./_temp-repo');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -44,7 +45,7 @@ describe('lib/actions dispatcher (#139 Chunk 11b)', () => {
   function makeProject(name, governed = true) {
     const projPath = path.join(projectsDir, name);
     fs.mkdirSync(projPath, { recursive: true });
-    execSync('git init -q', { cwd: projPath });
+    initRepo(projPath);
     execSync('git config user.email test@example.com', { cwd: projPath });
     execSync('git config user.name test', { cwd: projPath });
     execSync('git commit --allow-empty -m init -q', { cwd: projPath });
