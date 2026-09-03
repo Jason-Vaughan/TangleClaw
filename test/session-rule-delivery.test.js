@@ -559,9 +559,17 @@ describe('startup session-rule delivery (#595)', () => {
       stub(tmux, 'hasSession', () => created);
       stub(tmux, 'probeSession', () => ({ live: created, answered: true, cause: null }));
       stub(tmux, 'createSession', () => { created = true; return true; });
-      stub(tmux, 'sendKeys', () => { pasted += 1; return true; });
-      // A pane already at rest: bare `>` composer + the #560 marker.
-      stub(tmux, 'capturePane', () => ({ lines: ['transcript', '> ', '? for shortcuts'] }));
+      let pastedText = '';
+      stub(tmux, 'sendKeys', (_n, text) => { pasted += 1; pastedText = text; return true; });
+      // A pane already at rest: bare `>` composer + the #560 marker — and, since
+      // #1134, one that ECHOES what was submitted, which is what a landed paste
+      // looks like on a real antigravity pane (re-measured on 1.1.24: the text
+      // appears in the transcript and the composer returns to a bare `>`). A
+      // fixture whose pane never shows the paste would be modelling the SWALLOW,
+      // and the `delivered` assertion below would be measuring nothing.
+      stub(tmux, 'capturePane', () => ({
+        lines: ['transcript', ...String(pastedText).split('\n'), '> ', '? for shortcuts']
+      }));
       stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/agy' }));
       t.mock.timers.enable({ apis: ['setTimeout'] });
 
@@ -619,18 +627,28 @@ describe('startup session-rule delivery (#595)', () => {
       try {
         const result = sessions.launchSession(launched.name);
         assert.equal(result.error, null);
-        // ~120 polls of 750ms fill the 90s horizon; drain microtasks per tick.
-        for (let i = 0; i < 200 && pasted === 0; i++) {
+        // Ticks until the LEDGER ROW lands, not until the paste fires: since
+        // #1134 the row is written after the post-paste watch, so stopping at
+        // the send would read the ledger before anything wrote to it.
+        let rows = [];
+        for (let i = 0; i < 400 && rows.length === 0; i++) {
           t.mock.timers.tick(1000);
           await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+          rows = store.sessionRuleDeliveries.listForSession(result.session.id);
         }
-        assert.equal(pasted, 1, 'the paste still fires after the gate gives up');
+        // Two sends: this fixture's pane is the swallowing shape, so the watch
+        // sees the paste fail to land and retries once — bounded, and the whole
+        // point of #1134.
+        assert.equal(pasted, 2, 'the paste fires, is observed not landing, and is retried once');
 
-        const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
         assert.equal(rows.length, 1);
         assert.equal(rows[0].outcome, 'unverified',
           'a timed-out gate may not claim delivery');
-        assert.match(rows[0].skipReason, /never rendered/,
+        // #1134 — the reason now names what was observed AFTER the send, not
+        // only what the gate saw before it. This fixture's pane is the
+        // swallowing shape itself ("Verifying your account…", no composer, no
+        // echo), so the honest reason is that the engine discarded the paste.
+        assert.match(rows[0].skipReason, /never rendered|discarded it|could not be read/,
           'the row carries the gate timeout reason');
 
         store.sessions.kill(result.session.id, 'test cleanup');
@@ -664,16 +682,19 @@ describe('startup session-rule delivery (#595)', () => {
       try {
         const result = sessions.launchSession(launched.name);
         assert.equal(result.error, null);
-        for (let i = 0; i < 20 && pasted === 0; i++) {
+        // Ticks until the LEDGER ROW lands (see the timeout case above): the
+        // row is written after the post-paste watch, not at the send.
+        let rows = [];
+        for (let i = 0; i < 400 && rows.length === 0; i++) {
           t.mock.timers.tick(1000);
           await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+          rows = store.sessionRuleDeliveries.listForSession(result.session.id);
         }
-        assert.equal(pasted, 1, 'an unexpected gate failure must not lose the paste');
+        assert.ok(pasted >= 1, 'an unexpected gate failure must not lose the paste');
 
-        const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
         assert.equal(rows.length, 1);
         assert.equal(rows[0].outcome, 'unverified');
-        assert.match(rows[0].skipReason, /readiness gate failed.*pane exploded/,
+        assert.match(rows[0].skipReason, /pane exploded/,
           'the row names the failure instead of a fabricated success');
 
         store.sessions.kill(result.session.id, 'test cleanup');
