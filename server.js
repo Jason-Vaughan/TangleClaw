@@ -4801,7 +4801,24 @@ route('GET', '/api/sessions/:project/wrap/stream/:runId', (req, res, params) => 
       res.end();
     }
   };
-  const write = (event) => safeWrite(_wrapStreamFrame(params.project, event));
+  // Frame construction is INSIDE the guard, not an argument to it:
+  // `_wrapStreamFrame` JSON-stringifies the event, and on the replay loop below
+  // a throw escaping this would run after `writeHead(200)` and attempt a second
+  // response. The live path is absorbed by the registry's subscriber try/catch;
+  // replay has no such net.
+  const write = (event) => {
+    if (!open) return;
+    let frame;
+    try {
+      frame = _wrapStreamFrame(params.project, event);
+    } catch (err) { // prawduct:allow prawduct/broad-except -- an unserializable event must drop its frame, never the response
+      log.warn('Wrap stream frame could not be built — skipping it', {
+        project: params.project, runId: params.runId, type: event && event.type, error: err.message
+      });
+      return;
+    }
+    safeWrite(frame);
+  };
   const end = () => {
     if (open) {
       open = false;
@@ -4817,6 +4834,11 @@ route('GET', '/api/sessions/:project/wrap/stream/:runId', (req, res, params) => 
   // the run. The synchronous `try/catch` in `write` below covers a different
   // and rarer case (a throw on an already-destroyed stream); this covers the
   // one that actually happens.
+  // Declared before every closure that reads it: the handlers below were
+  // registered above this line, so a synchronous `'error'` emit would have
+  // TDZ-thrown inside the listener whose whole job is to keep a failure legible.
+  // eslint-disable-next-line prefer-const -- assigned once, after subscribe
+  let sub = null;
   res.on('error', (err) => {
     if (!open) return;
     open = false;
@@ -4825,8 +4847,6 @@ route('GET', '/api/sessions/:project/wrap/stream/:runId', (req, res, params) => 
     });
     if (sub) sub.unsubscribe();
   });
-  // eslint-disable-next-line prefer-const -- `write`'s error path reads it
-  let sub = null;
   sub = sessions.subscribeWrapRun(params.project, params.runId, {
     afterSeq: Number.isFinite(lastEventId) ? lastEventId : 0,
     onEvent: write,

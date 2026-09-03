@@ -94,6 +94,32 @@ function parseFrame(block) {
  * @param {object} [headers]
  * @returns {Promise<{status: number, headers: object, frames: object[], ended: boolean, body: string, until: (pred: Function) => Promise<void>}>}
  */
+/**
+ * How long any `stream.until(...)` waits before failing. Generous for a local
+ * socket, short enough that a hang surfaces as a red test inside one run.
+ */
+const STREAM_WAIT_MS = 10_000;
+
+/**
+ * Every stream request this suite opens, so a FAILING test cannot leave one
+ * behind. A live SSE socket keeps node's event loop alive after the tests
+ * report, so a leak turns "one red test" into "the runner never exits" — no
+ * output, and a cause nowhere near the symptom. Measured: a mutation that left
+ * the response open ran 14 minutes with every test already reported.
+ */
+const openRequests = new Set();
+
+/**
+ * Destroy every stream request still open. Safe to call repeatedly.
+ * @returns {void}
+ */
+function closeOpenStreams() {
+  for (const req of openRequests) {
+    try { req.destroy(); } catch { /* already gone */ }
+  }
+  openRequests.clear();
+}
+
 function openStream(server, urlPath, headers) {
   return new Promise((resolve, reject) => {
     const addr = server.address();
@@ -102,8 +128,23 @@ function openStream(server, urlPath, headers) {
       (res) => {
         const stream = { status: res.statusCode, headers: res.headers, frames: [], ended: false, body: '', waiters: [] };
         const notify = () => { stream.waiters = stream.waiters.filter((w) => !w()); };
-        stream.until = (pred) => new Promise((done) => {
-          const check = () => { if (pred(stream)) { done(); return true; } return false; };
+        // BOUNDED, and the bound is the point. Unbounded, a regression in the
+        // route does not fail this suite — it HANGS it: a stream that never
+        // ends leaves the waiter pending forever, `node --test` produces no
+        // output at all, and the cause is nowhere near the symptom. Measured:
+        // a mutation that let a throw escape the replay loop (so the response
+        // was never ended) ran 14 minutes before it was killed, reporting
+        // nothing. A red test that names what it waited for costs seconds.
+        stream.until = (pred, what = 'a condition') => new Promise((done, fail) => {
+          const check = () => { if (pred(stream)) { clearTimeout(timer); done(); return true; } return false; };
+          const timer = setTimeout(() => {
+            fail(new Error(
+              `stream never reached ${what} within ${STREAM_WAIT_MS}ms — `
+              + `${stream.frames.length} frame(s): [${stream.frames.map((f) => f.event).join(', ')}], `
+              + `ended=${stream.ended}`
+            ));
+          }, STREAM_WAIT_MS);
+          if (timer.unref) timer.unref();
           if (!check()) stream.waiters.push(check);
         });
         let buffer = '';
@@ -125,6 +166,8 @@ function openStream(server, urlPath, headers) {
       }
     );
     req.on('error', reject);
+    openRequests.add(req);
+    req.on('close', () => openRequests.delete(req));
     req.end();
   });
 }
@@ -159,12 +202,19 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
   after(async () => {
     wrapPipelineMod.runWrapPipeline = realRunPipeline;
     wrapRunRegistry._resetForTests();
+    // Before `server.close`, which waits on live connections: an SSE socket a
+    // failing test left open would otherwise hold the close — and the runner —
+    // forever.
+    closeOpenStreams();
     await new Promise((resolve) => server.close(resolve));
     store.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   beforeEach(() => {
+    // A stream a previous test left open (because it failed) must not bleed
+    // into the next one's frame assertions.
+    closeOpenStreams();
     wrapRunRegistry._resetForTests();
     wrapPipelineMod.runWrapPipeline = realRunPipeline;
     const active = store.sessions.getActive(projectId);
@@ -227,7 +277,7 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
     assert.equal(stream.status, 200);
     assert.match(stream.headers['content-type'], /^text\/event-stream/);
     assert.match(stream.headers['cache-control'], /no-cache/);
-    await stream.until((s) => s.frames.length >= 3);
+    await stream.until((s) => s.frames.length >= 3, 'three replayed frames');
     assert.deepEqual(stream.frames.map((f) => [f.id, f.event]),
       [[1, 'run-start'], [2, 'step-start'], [3, 'step-done']],
       'the replay is the missed events, in order, with their registry seq as the SSE id');
@@ -237,7 +287,7 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
 
     // Live delivery.
     releaseFirst();
-    await stream.until((s) => s.frames.length >= 4);
+    await stream.until((s) => s.frames.length >= 4, 'a live frame after replay');
     assert.deepEqual([stream.frames[3].id, stream.frames[3].event, stream.frames[3].data.stepId],
       [4, 'step-start', 'changelog-update']);
     assert.equal(stream.ended, false);
@@ -245,7 +295,7 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
     releaseSecond();
     const post = await postPromise;
     assert.equal(post.status, 200);
-    await stream.until((s) => s.ended);
+    await stream.until((s) => s.ended, 'the terminal run-done');
     assert.deepEqual(stream.frames.map((f) => f.event),
       ['run-start', 'step-start', 'step-done', 'step-start', 'step-blocked', 'run-done']);
     assert.equal(stream.frames[4].data.halted, true);
@@ -277,7 +327,7 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
     assert.equal(post.status, 500, 'precondition: a thrown pipeline is the POST\'s 500 path');
     const status = await request(server, 'GET', '/api/sessions/wrap-stream-test/wrap/status');
     const stream = await openStream(server, STREAM(status.body.runId));
-    await stream.until((s) => s.ended);
+    await stream.until((s) => s.ended, 'the terminal run-done');
     assert.deepEqual(stream.frames.map((f) => f.event), ['run-start', 'run-done']);
     assert.equal(stream.frames[1].data.result.ok, false);
     assert.match(stream.frames[1].data.result.error, /handler exploded/);
@@ -307,12 +357,12 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
     assert.equal(post.body.ok, true);
   });
 
-  // R-15 was BLOCKING because the stream is a spectator: the POST stays
-  // authoritative, so every failure degrades silently to the pre-#185
-  // experience. The whole remedy is log lines and console warns — which means
-  // the remedy itself is invisible to a suite that never reads them. The
-  // suite ran green with the entire fix stripped out until these existed.
-  describe('the route says what it did (#185, R-15)', () => {
+  // The stream is a spectator: the POST stays authoritative, so every failure
+  // degrades silently to the pre-#185 experience. The remedy for that is log
+  // lines and console warns — which makes the remedy itself invisible to a
+  // suite that never reads them. This suite ran green with the whole of it
+  // stripped out until these assertions existed.
+  describe('the route says what it did (#185)', () => {
     /**
      * Run `fn` with the logger pinned to a capture buffer at debug level.
      * The suite's own `setLevel('error')` would otherwise suppress exactly
@@ -362,10 +412,10 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
         // Subscribing AFTER two events have been emitted, so the replay depth
         // is a number the line has to have actually computed.
         const stream = await openStream(server, STREAM(runId));
-        await stream.until((st) => st.frames.length >= 2);
+        await stream.until((st) => st.frames.length >= 2, 'the two replayed frames');
         release();
         await postPromise;
-        await stream.until((st) => st.ended);
+        await stream.until((st) => st.ended, 'the terminal run-done');
       });
 
       assert.match(logged, /Wrap stream subscribed/);
@@ -373,9 +423,73 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
         'the replay depth is the one number that says a late subscriber was caught up');
       assert.match(logged, /Wrap stream closed/, 'and the close is recorded, so an open stream is distinguishable');
     });
+
+    it('logs a client that goes away, so an abandoned stream is not read as a live one', async () => {
+      // The fourth of the route's four lines. The other three were asserted
+      // first and this one was individually deletable-green — a family is not
+      // covered by three of its four members.
+      store.sessions.start({ projectId, engineId: 'claude', tmuxSession: 'wrap-stream-gone' });
+      let release;
+      const gate = new Promise((resolve) => { release = resolve; });
+      wrapPipelineMod.runWrapPipeline = async (_name, options) => {
+        options.onStepEvent({ type: 'run-start', steps: [] });
+        await gate;
+        return { ok: true, blockedAt: null, results: [], commitSha: null, summary: null, error: null };
+      };
+
+      const logged = await captureLogs(async () => {
+        const postPromise = request(server, 'POST', '/api/sessions/wrap-stream-test/wrap', {});
+        const runId = await awaitRunId();
+        const addr = server.address();
+        const req = http.get({ hostname: '127.0.0.1', port: addr.port, path: STREAM(runId) });
+        await new Promise((resolve) => req.on('response', resolve));
+        req.destroy();
+        // Let the close event reach the server before the run ends.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        release();
+        await postPromise;
+      });
+
+      assert.match(logged, /Wrap stream client went away/);
+    });
   });
 
-  it('the response carries an error listener, because a failing socket does not throw (R-16)', () => {
+  it('an event that cannot be serialized drops its own frame, not the response', async () => {
+    // `_wrapStreamFrame` JSON-stringifies the event. On the REPLAY loop that
+    // runs after `writeHead(200)`, so a throw escaping it would attempt a
+    // second response on a stream already answered. The live path is absorbed
+    // by the registry's subscriber try/catch; replay has no such net, which is
+    // why the frame is built inside the guard rather than passed into it.
+    store.sessions.start({ projectId, engineId: 'claude', tmuxSession: 'wrap-stream-circular' });
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    wrapPipelineMod.runWrapPipeline = async (_name, options) => {
+      const circular = { stepId: 'commit', kind: 'commit', status: 'done' };
+      circular.output = circular; // JSON.stringify throws on this
+      options.onStepEvent({ type: 'run-start', steps: [] });
+      options.onStepEvent({ type: 'step-done', ...circular });
+      options.onStepEvent({ type: 'step-start', stepId: 'after', kind: 'commit' });
+      await gate;
+      return { ok: true, blockedAt: null, results: [], commitSha: null, summary: null, error: null };
+    };
+
+    const postPromise = request(server, 'POST', '/api/sessions/wrap-stream-test/wrap', {});
+    const runId = await awaitRunId();
+    // Subscribing after the emits, so all three arrive through REPLAY.
+    const stream = await openStream(server, STREAM(runId));
+    await stream.until((st) => st.frames.some((f) => f.event === 'step-start'), 'the frame after the unserializable one');
+    release();
+    const post = await postPromise;
+
+    assert.equal(post.status, 200, 'the wrap itself is untouched by a frame it could not render');
+    const events = stream.frames.map((f) => f.event);
+    assert.ok(!events.includes('step-done'), 'the unserializable frame is dropped');
+    assert.ok(events.includes('step-start'),
+      'and the frames after it still arrive — one bad event must not end the stream');
+    await stream.until((st) => st.ended, 'the terminal run-done');
+  });
+
+  it('the response carries an error listener, because a failing socket does not throw', () => {
     // Deliberately a source pin, and the reason is worth stating rather than
     // hiding: Node emits `'error'` on the response ASYNCHRONOUSLY, via
     // process.nextTick, so the synchronous try/catch around `res.write` never

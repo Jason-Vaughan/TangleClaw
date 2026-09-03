@@ -292,10 +292,10 @@ describe('session.js wiring (#185)', () => {
       'the watch closes any prior drawer (and stream) before subscribing');
   });
 
-  // R-15: the client half of the stream failed silently at three sites, and
-  // the dominant failure — a stream that dies before its first frame — left
-  // no trace anywhere, on either side. These pin that each site says
-  // something; the server half is driven for real in api-wrap-stream.test.js.
+  // The client half of the stream failed silently at three sites, and the
+  // dominant failure — a stream that dies before its first frame — left no
+  // trace anywhere, on either side. These pin that each site says something;
+  // the server half is driven for real in api-wrap-stream.test.js.
   it('each silent failure path now says so, so "live progress never appeared" is bisectable', () => {
     const discovery = functionBody(src, 'async function attachWrapStream(');
     assert.match(discovery, /console\.warn/,
