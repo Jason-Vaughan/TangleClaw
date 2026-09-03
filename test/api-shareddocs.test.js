@@ -404,8 +404,17 @@ describe('shared-doc broadcast never notifies the project that owns the file (#9
     const docPath = path.join(ownerPath, 'ROADMAP_STATE.md');
     fs.writeFileSync(docPath, '# state\n');
 
-    const owner = store.projects.create({ name: 'doc-owner', path: ownerPath, engine: 'claude', groupId: group.id });
-    const peer = store.projects.create({ name: 'doc-peer', path: peerPath, engine: 'claude', groupId: group.id });
+    // Membership through `addMember`, the way the API establishes it. Passing
+    // `groupId` to `projects.create` looks like it joins the group and does
+    // not — `create` silently ignores the key, exactly as `list` did (#1222).
+    // So these two projects were in NO group, and this suite's "the peer must
+    // still be notified" could only pass because the broadcast notified every
+    // project on the machine. Fixing the fixture makes the assertion mean what
+    // it always said; it does not weaken it.
+    const owner = store.projects.create({ name: 'doc-owner', path: ownerPath, engine: 'claude' });
+    const peer = store.projects.create({ name: 'doc-peer', path: peerPath, engine: 'claude' });
+    store.projectGroups.addMember(group.id, owner.id);
+    store.projectGroups.addMember(group.id, peer.id);
 
     const doc = store.sharedDocs.create({
       groupId: group.id, name: 'ROADMAP_STATE', filePath: docPath,
