@@ -15,6 +15,12 @@ const engines = require('../lib/engines');
 const projects = require('../lib/projects');
 const sessionOwnership = require('../lib/session-ownership');
 
+// The reader's one typed failure: the symbol was found but its value is not a
+// literal. Exit status and error code are the contract between the embedded
+// Python and the Node caller — see extractUpstreamInstallReference.
+const REFUSAL_EXIT = 3;
+const REFUSAL_CODE = 'NON_LITERAL_INSTALL_REFERENCE';
+
 /**
  * Read `INSTALL_REFERENCE` out of prawduct's `migrate_plugin.py` by parsing the
  * module as Python source, and return it as JSON text.
@@ -26,7 +32,10 @@ const sessionOwnership = require('../lib/session-ownership');
  *
  * Throws on anything short of a clean read — missing symbol, syntax error, no
  * usable `python3`. Every caller must treat a throw as a failure, never as a
- * skip.
+ * skip. One failure is typed: a value that is not a literal throws an Error
+ * whose `code` is `NON_LITERAL_INSTALL_REFERENCE`, because refusing to
+ * evaluate a computed reference is the property the reader exists for and
+ * its guard must be able to name it.
  *
  * @param {string} src - Absolute path to the installed plugin's `migrate_plugin.py`
  * @returns {string} The reference as a JSON string
@@ -45,21 +54,47 @@ function extractUpstreamInstallReference(src) {
     'for n in ast.walk(tree):',
     '    t = n.target if isinstance(n, ast.AnnAssign) else (n.targets[0] if isinstance(n, ast.Assign) and n.targets else None)',
     '    if getattr(t, "id", "") == "INSTALL_REFERENCE":',
-    '        json.dump(ast.literal_eval(n.value), sys.stdout)',
+    // A non-literal is REFUSED with its own exit status and a fixed prefix,
+    // so the caller can tell "this value is computed, I will not evaluate it"
+    // from every other way the read can fail (syntax error, missing symbol,
+    // no python). literal_eval raises ValueError for exactly that case.
+    '        try:',
+    '            value = ast.literal_eval(n.value)',
+    '        except ValueError as err:',
+    `            sys.stderr.write("${REFUSAL_CODE}: " + str(err) + "\\n")`,
+    `            sys.exit(${REFUSAL_EXIT})`,
+    '        json.dump(value, sys.stdout)',
     '        break',
     'else:',
     '    sys.exit("INSTALL_REFERENCE not found in " + sys.argv[1])'
   ].join('\n');
   // Pipe stderr rather than letting it inherit: several tests below deliberately
-  // provoke Python failures — three raise tracebacks, one exits via sys.exit
-  // with a plain message — and an inherited stderr prints every one of them on a
-  // GREEN run. Failure output scrolling past a passing suite trains the reader
-  // to ignore failure output. `err.message` still carries the child's stderr, so
-  // the matchers are unaffected.
-  return execFileSync('python3', ['-c', program, src], {
-    encoding: 'utf8',
-    stdio: ['pipe', 'pipe', 'pipe']
-  });
+  // provoke Python failures, and an inherited stderr prints every one of them on
+  // a GREEN run. Failure output scrolling past a passing suite trains the reader
+  // to ignore failure output. Piped, the child's stderr is on `err.stderr`,
+  // which is where the matchers read it.
+  try {
+    return execFileSync('python3', ['-c', program, src], {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+  } catch (err) {
+    // The refusal is typed on THIS side of the process boundary, so a test can
+    // assert on `err.code` rather than on Python's wording or on whether Node
+    // happened to append the child's stderr to the message (#969 — it did on
+    // CI and not on a developer machine, so the old guard passed or failed on
+    // host plumbing). The status is read from the child's exit code, which
+    // every Node build reports the same way.
+    if (err && err.status === REFUSAL_EXIT) {
+      const refused = new Error(
+        `refused to read INSTALL_REFERENCE from ${src}: it is not a literal `
+        + `(${String(err.stderr || '').trim() || 'no detail from the reader'})`
+      );
+      refused.code = REFUSAL_CODE;
+      throw refused;
+    }
+    throw err;
+  }
 }
 
 /**
@@ -387,26 +422,33 @@ describe('C1 — per-project plugin migration (#262)', () => {
     // or a typo in the argv index — so unmatched, they would report green over
     // a reader that parsed nothing at all. Tests whose whole subject is
     // "unreadable must not be tolerated" are the last place to accept an
-    // unexamined error. execFileSync folds the child's stderr into
-    // err.message, so matching costs nothing.
+    // unexamined error. The matchers read `err.stderr` — piped and decoded
+    // on every Node build — never `err.message`: whether the child's stderr
+    // is folded into the message depends on the Node build (#969: it is on
+    // the build this was written against, it was not on the one the issue
+    // was filed from), so a matcher over the message passes or fails on host
+    // plumbing, and a mutation back to it cannot be shown red on a folding
+    // build. Reading stderr is the same assertion on every build.
     it('THROWS when the symbol is gone — never returns a default', () => {
       const f = write('gone.py', 'SOMETHING_ELSE = {"a": 1}\n');
-      // Anchored on the interpolated PATH, not the bare sentence. execFileSync
-      // builds err.message from the argv it ran, and that argv contains the
-      // embedded program — including its own `sys.exit("INSTALL_REFERENCE not
-      // found in " + …)` source line. So the unanchored form matches its own
-      // source text on ANY nonzero exit, which is the identical hole this
-      // matcher was added to close, one layer deeper. Only the interpolated
-      // filename proves the program reached that exit for this file.
+      // Anchored on the interpolated PATH, not the bare sentence: the embedded
+      // program's own `sys.exit("INSTALL_REFERENCE not found in " + …)` source
+      // line is in the argv, and on builds that fold argv into the message an
+      // unanchored match would match its own source text on ANY nonzero
+      // exit. Only the interpolated filename proves the program reached that
+      // exit for this file.
       assert.throws(
         () => extractUpstreamInstallReference(f),
-        /INSTALL_REFERENCE not found in \S*gone\.py/
+        (err) => /INSTALL_REFERENCE not found in \S*gone\.py/.test(String(err.stderr || ''))
       );
     });
 
     it('THROWS on a syntax error rather than reporting no drift', () => {
       const f = write('broken.py', 'INSTALL_REFERENCE = {"a": \n');
-      assert.throws(() => extractUpstreamInstallReference(f), /SyntaxError/);
+      assert.throws(
+        () => extractUpstreamInstallReference(f),
+        (err) => /SyntaxError/.test(String(err.stderr || ''))
+      );
     });
 
     it('distinguishes "not installed" from "installed but the module moved"', () => {
@@ -442,39 +484,39 @@ describe('C1 — per-project plugin migration (#262)', () => {
       );
     });
 
-    it('THROWS rather than executing a non-literal value', () => {
+    it('REFUSES a non-literal value with a typed error — not a subprocess error that escaped', () => {
       // literal_eval, not eval: a computed reference is unreadable BY DESIGN,
       // and unreadable must surface as a failure rather than run.
       //
-      // Asserted by a CANARY, not by a message. The previous version matched
-      // Python's `ValueError: malformed node`, which only reaches this
-      // assertion if the child's stderr is appended to the thrown Error — and
-      // whether it is depends on the Node build, not on the code under test. It
-      // failed on a developer machine while passing in CI (#969), and the worse
-      // half is the other direction: a guard pinned to host plumbing can go
-      // GREEN while the refusal it names is gone.
+      // Asserted on `err.code`, which the reader sets from the child's exit
+      // status. The previous shape matched Python's `ValueError: malformed
+      // node` in the thrown message, which only reached the assertion when
+      // the Node build appended the child's stderr — it failed on a developer
+      // machine while passing in CI (#969), and a guard pinned to host
+      // plumbing can equally go GREEN while the refusal it names is gone.
       //
-      // What this CAN assert is the refusal. What it cannot assert, and a first
-      // attempt here wrongly did, is "it did not execute": the reader hands
-      // `literal_eval` an AST NODE, and swapping in `eval` raises on a node
-      // rather than running it, so a side-effect canary stays clean either way.
-      // That mutation was run and came back GREEN — the canary measured nothing,
-      // which is worse than not having one, so it is gone rather than shipped as
-      // reassurance.
-      // AND THIS ASSERTION IS ITSELF WEAK — measured, not assumed. Making the
-      // reader lenient (catch the ValueError and emit `{}`) also leaves this
-      // GREEN, because the caller throws downstream for a different reason. The
-      // mutated snippet was compile-checked first, so that is a real miss and not
-      // a broken mutation.
-      //
-      // Left as the honest floor rather than dressed up: it pins that a computed
-      // reference does not sail through, and nothing more. Asserting WHICH
-      // failure needs the reader to raise a typed refusal instead of letting a
-      // subprocess error escape, which is a change to the helper rather than to
-      // its test. #969 carries it.
+      // Two mutations this catches, both measured: a LENIENT reader (catch
+      // the ValueError, emit `{}`) returns instead of throwing; and
+      // `literal_eval` swapped for `eval` raises TypeError on an AST node,
+      // which is not the typed refusal, so the code is absent. What no shape
+      // can assert is "it did not execute" — eval on a node does not run it —
+      // so the property pinned here is the refusal itself, by name.
       const f = write('computed.py', 'import os\nINSTALL_REFERENCE = os.environ.copy()\n');
-      assert.throws(() => extractUpstreamInstallReference(f),
-        'a computed reference must be refused, not returned');
+      assert.throws(
+        () => extractUpstreamInstallReference(f),
+        (err) => err.code === 'NON_LITERAL_INSTALL_REFERENCE' && /not a literal/.test(err.message)
+      );
+    });
+
+    it('the typed refusal is specific: a syntax error is NOT reported as a refusal', () => {
+      // Every other failure keeps its own shape. If a broken file also
+      // carried the refusal code, "refused a computed value" would mean
+      // nothing.
+      const f = write('broken-not-refused.py', 'INSTALL_REFERENCE = {"a": \n');
+      assert.throws(
+        () => extractUpstreamInstallReference(f),
+        (err) => err.code !== 'NON_LITERAL_INSTALL_REFERENCE'
+      );
     });
   });
 
