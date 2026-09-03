@@ -4788,10 +4788,10 @@ route('GET', '/api/sessions/:project/wrap/stream/:runId', (req, res, params) => 
   // bisect from "live progress never appears". These lines are the only way
   // to tell "it worked" from "it never ran" — nothing else covers the route
   // (only unmatched paths hit the generic log, and only at debug).
-  const write = (event) => {
+  const safeWrite = (text) => {
     if (!open) return;
     try {
-      res.write(_wrapStreamFrame(params.project, event));
+      res.write(text);
     } catch (err) { // prawduct:allow prawduct/broad-except -- a dead socket must end this stream, never reach the process-global handler without wrap context
       log.warn('Wrap stream write failed — closing', {
         project: params.project, runId: params.runId, error: err.message
@@ -4801,6 +4801,7 @@ route('GET', '/api/sessions/:project/wrap/stream/:runId', (req, res, params) => 
       res.end();
     }
   };
+  const write = (event) => safeWrite(_wrapStreamFrame(params.project, event));
   const end = () => {
     if (open) {
       open = false;
@@ -4808,6 +4809,22 @@ route('GET', '/api/sessions/:project/wrap/stream/:runId', (req, res, params) => 
       res.end();
     }
   };
+  // A socket that fails mid-write does NOT throw out of `res.write` — Node
+  // emits `'error'` on the response asynchronously (`process.nextTick`). With
+  // no listener that is an unhandled `'error'` event, which reaches the
+  // process-global handler carrying no wrap context at all, and the
+  // subscription it left behind goes on feeding a dead socket for the rest of
+  // the run. The synchronous `try/catch` in `write` below covers a different
+  // and rarer case (a throw on an already-destroyed stream); this covers the
+  // one that actually happens.
+  res.on('error', (err) => {
+    if (!open) return;
+    open = false;
+    log.warn('Wrap stream socket errored — dropping the subscription', {
+      project: params.project, runId: params.runId, error: err.message
+    });
+    if (sub) sub.unsubscribe();
+  });
   // eslint-disable-next-line prefer-const -- `write`'s error path reads it
   let sub = null;
   sub = sessions.subscribeWrapRun(params.project, params.runId, {
@@ -4845,8 +4862,10 @@ route('GET', '/api/sessions/:project/wrap/stream/:runId', (req, res, params) => 
   open = true;
   // A leading comment line makes the browser treat the stream as open the
   // moment headers land, so `EventSource.onopen` fires before the first
-  // event rather than after it.
-  res.write(': wrap stream\n\n');
+  // event rather than after it. Through the same guarded path as every other
+  // write, so the one raw `res.write` in the route is not the one with no
+  // error handling.
+  safeWrite(': wrap stream\n\n');
   for (const event of sub.replay) write(event);
   if (sub.finished) return end();
   // The client went away (tab closed, phone locked): stop feeding a dead

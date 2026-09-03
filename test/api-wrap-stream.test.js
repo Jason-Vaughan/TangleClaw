@@ -18,7 +18,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const http = require('node:http');
-const { setLevel } = require('../lib/logger');
+const { setLevel, setConsoleStream } = require('../lib/logger');
 
 setLevel('error');
 
@@ -305,6 +305,102 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
     const post = await postPromise;
     assert.equal(post.status, 200, 'the pipeline never waits on, or fails for, a gone subscriber');
     assert.equal(post.body.ok, true);
+  });
+
+  // R-15 was BLOCKING because the stream is a spectator: the POST stays
+  // authoritative, so every failure degrades silently to the pre-#185
+  // experience. The whole remedy is log lines and console warns — which means
+  // the remedy itself is invisible to a suite that never reads them. The
+  // suite ran green with the entire fix stripped out until these existed.
+  describe('the route says what it did (#185, R-15)', () => {
+    /**
+     * Run `fn` with the logger pinned to a capture buffer at debug level.
+     * The suite's own `setLevel('error')` would otherwise suppress exactly
+     * the lines under test.
+     * @param {() => Promise<void>} fn - Body.
+     * @returns {Promise<string>} Everything the logger emitted.
+     */
+    async function captureLogs(fn) {
+      const lines = [];
+      setConsoleStream({ write: (text) => lines.push(text) });
+      setLevel('debug');
+      try {
+        await fn();
+      } finally {
+        setConsoleStream(null);
+        setLevel('error');
+      }
+      return lines.join('\n');
+    }
+
+    it('logs the refusal it answers, with the run and project that were asked for', async () => {
+      const logged = await captureLogs(async () => {
+        const res = await request(server, 'GET', STREAM('0123456789abcdef0123456789abcdef'));
+        assert.equal(res.status, 404);
+      });
+
+      assert.match(logged, /Wrap stream refused/,
+        'the documented restart case must not be silent on the server too — the client falls back quietly');
+      assert.match(logged, /0123456789abcdef0123456789abcdef/, 'and names the run that was asked for');
+      assert.match(logged, /wrap-stream-test/, 'and the project');
+    });
+
+    it('logs the subscription with its replay depth, and the close', async () => {
+      store.sessions.start({ projectId, engineId: 'claude', tmuxSession: 'wrap-stream-log' });
+      let release;
+      const gate = new Promise((resolve) => { release = resolve; });
+      wrapPipelineMod.runWrapPipeline = async (_name, options) => {
+        options.onStepEvent({ type: 'run-start', steps: [] });
+        options.onStepEvent({ type: 'step-start', stepId: 'commit', kind: 'commit' });
+        await gate;
+        return { ok: true, blockedAt: null, results: [], commitSha: null, summary: null, error: null };
+      };
+
+      const logged = await captureLogs(async () => {
+        const postPromise = request(server, 'POST', '/api/sessions/wrap-stream-test/wrap', {});
+        const runId = await awaitRunId();
+        // Subscribing AFTER two events have been emitted, so the replay depth
+        // is a number the line has to have actually computed.
+        const stream = await openStream(server, STREAM(runId));
+        await stream.until((st) => st.frames.length >= 2);
+        release();
+        await postPromise;
+        await stream.until((st) => st.ended);
+      });
+
+      assert.match(logged, /Wrap stream subscribed/);
+      assert.match(logged, /Wrap stream subscribed[^\n]*replayed=2/,
+        'the replay depth is the one number that says a late subscriber was caught up');
+      assert.match(logged, /Wrap stream closed/, 'and the close is recorded, so an open stream is distinguishable');
+    });
+  });
+
+  it('the response carries an error listener, because a failing socket does not throw (R-16)', () => {
+    // Deliberately a source pin, and the reason is worth stating rather than
+    // hiding: Node emits `'error'` on the response ASYNCHRONOUSLY, via
+    // process.nextTick, so the synchronous try/catch around `res.write` never
+    // sees the failure this listener exists for. Reproducing that emit on
+    // demand means racing a RST against a write — which passes on darwin and
+    // goes red on CI, the exact shape of guard this repo has been burned by
+    // three times (#974 reddened `main` and blocked a release).
+    //
+    // What the pin protects is real: with no listener, a mid-write socket
+    // failure is an unhandled `'error'` event that reaches the process-global
+    // handler carrying no wrap context, and the subscription it leaves behind
+    // feeds a dead socket for the rest of the run.
+    const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    const route = src.slice(src.indexOf("route('GET', '/api/sessions/:project/wrap/stream/:runId'"));
+    const body = route.slice(0, route.indexOf("\nroute("));
+    assert.match(body, /res\.on\('error'/, 'an async socket error must have somewhere to land');
+    const handlerStart = body.indexOf("res.on('error'");
+    const handler = body.slice(handlerStart, body.indexOf('\n  });', handlerStart));
+    assert.match(handler, /sub\.unsubscribe\(\)/,
+      'and must drop the subscription — otherwise the run keeps feeding a dead socket');
+    // Every write goes through the one guarded helper: the preamble comment
+    // line used to be the single raw `res.write` in the route, which is how a
+    // "the write path is guarded" claim stays true while one path is not.
+    assert.equal((body.match(/\bres\.write\(/g) || []).length, 1,
+      'exactly one res.write in the route, inside safeWrite');
   });
 
   describe('gate parity with the wrap POST', () => {

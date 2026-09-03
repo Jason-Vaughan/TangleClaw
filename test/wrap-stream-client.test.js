@@ -280,10 +280,39 @@ describe('session.js wiring (#185)', () => {
     assert.ok(functionBody(src, 'function openWrapDrawer(').includes('stopWrapStream()'),
       'the final render supersedes the live feed');
     assert.ok(functionBody(src, 'function closeWrapDrawer()').includes('stopWrapStream()'));
+    // The third terminal render, and the one the family pin kept missing:
+    // `watchWrapRun`'s pipeline-threw / did-not-survive-a-restart banners. No
+    // misrender is reachable through it today, which is exactly why nothing
+    // noticed it was not a member.
+    assert.ok(functionBody(src, 'function openWrapDrawerNotice(').includes('stopWrapStream()'),
+      'the notice is a final render too — a live stream must not repaint over it');
     const watch = functionBody(src, 'async function watchWrapRun(');
     assert.ok(watch.includes('startWrapStream(status.runId'), 'a reattached page gets live rows too');
     assert.ok(watch.indexOf('startWrapStream(') > watch.indexOf('closeWrapDrawer()'),
       'the watch closes any prior drawer (and stream) before subscribing');
+  });
+
+  // R-15: the client half of the stream failed silently at three sites, and
+  // the dominant failure — a stream that dies before its first frame — left
+  // no trace anywhere, on either side. These pin that each site says
+  // something; the server half is driven for real in api-wrap-stream.test.js.
+  it('each silent failure path now says so, so "live progress never appeared" is bisectable', () => {
+    const discovery = functionBody(src, 'async function attachWrapStream(');
+    assert.match(discovery, /console\.warn/,
+      'giving up on discovery is invisible to the operator by design — it must not also be invisible to a maintainer');
+    assert.match(discovery, /no run found to watch/);
+
+    const body = functionBody(src, 'function startWrapStream(');
+    const parseCatch = body.slice(body.indexOf('JSON.parse'), body.indexOf('applyWrapStreamEvent'));
+    assert.match(parseCatch, /console\.warn/, 'a discarded frame is reported, not just returned from');
+
+    const onError = body.slice(body.indexOf('es.onerror'));
+    assert.match(onError, /console\.warn/,
+      'the terminal CLOSED case repaints only when a live drawer is already up — the common failure repaints nothing');
+    // The warn must precede the repaint guard, or the case it exists for
+    // (a stream dead before its first frame, so no live drawer) skips it.
+    assert.ok(onError.indexOf('console.warn') < onError.indexOf('sessionState.wrapDrawerOpen'),
+      'the warn fires before the repaint condition that the dominant failure fails');
   });
 
   it('the live drawer offers no decision: Retry and Done stay hidden until the run is over', () => {
