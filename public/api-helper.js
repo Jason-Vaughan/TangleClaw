@@ -2056,12 +2056,12 @@
     };
   }
 
-  // Only what a page script actually calls is exported: the classifiers the
-  // render sites use, the record builder `tcDegradedRead` (ui.js builds the
-  // Project Rules unknown from it), and `tcRulesUnknownHtml`. `tcCauseText`,
-  // `tcGitFieldText` and `tcSentence` are internal to the classifiers and
-  // reached by closure — exporting them would enlarge the global surface that
-  // every page carries for no consumer.
+  // Only the classifiers the render sites actually call are exported.
+  // Two non-classifiers join them because a page script calls each: the record
+  // builder `tcDegradedRead` (ui.js builds the Project Rules unknown from it)
+  // and `tcRulesUnknownHtml`. `tcCauseText`, `tcGitFieldText` and `tcSentence`
+  // are internal to the classifiers and reached by closure — exporting them
+  // would enlarge the global surface that every page carries for no consumer.
   global.tcSessionLiveness = tcSessionLiveness;
   global.tcSessionRead = tcSessionRead;
   global.tcMasterRead = tcMasterRead;
