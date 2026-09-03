@@ -647,7 +647,7 @@ describe('#931 the release link degrades rather than trusting the wire', () => {
     ctx.beacon.render({ ...AVAILABLE, releaseUrl: null });
 
     assert.equal(ctx.toast().querySelector('A'), null);
-    assert.match(ctx.toast().text, /v5\.1\.2 update available/,
+    assert.match(ctx.toast().text, /v5\.1\.2 or newer — update available/,
       'the notice itself must still be complete');
   });
 
@@ -724,5 +724,67 @@ describe('#931 the beacon does not assume its anchor exists', () => {
     // beacon that renders nothing forever with nothing in the console — the
     // invisible update surface #931 exists to remove, reached by a new door),
     // or dropping the latch that keeps it to one line.
+  });
+});
+
+describe('#994 the beacon never promises a version the applier did not commit to', () => {
+  // The applier resolves its target live (`git ls-remote`, newest tag wins),
+  // so the polled `latestVersion` is a floor, not the number that will be
+  // installed. Observed 2026-08-19: 5.9.0 offered, 5.10.0 published ten
+  // minutes later, a click would have installed 5.10.0 under a 5.9.0 badge.
+  it('toast, dot and confirm all say "or newer"', async () => {
+    const ctx = loadBeacon({ confirmAnswers: [false] });
+    ctx.beacon.render(AVAILABLE);
+
+    assert.match(ctx.toast().text, /v5\.1\.2 or newer/, 'the toast offers a floor, not a promise');
+    assert.match(ctx.dot().title, /v5\.1\.2 or newer available/);
+    assert.match(ctx.dot().getAttribute('aria-label'), /v5\.1\.2 or newer/);
+    await ctx.beacon.apply(AVAILABLE);
+    assert.match(ctx.calls.confirms[0], /v5\.1\.2 or newer and restart\?/,
+      'the confirm is the last word before the checkout moves; it must not name a bare version');
+  });
+
+  it('the after-the-fact message names what the applier checked out, not what was polled', async () => {
+    const ctx = loadBeacon({
+      fetchImpl: (n) => (n === 1
+        ? jsonRes(200, { ok: true, toRef: 'v5.1.3' })
+        : jsonRes(500, { ok: false, error: 'no restart mechanism' }))
+    });
+    ctx.beacon.render(AVAILABLE);
+    await ctx.beacon.apply(AVAILABLE);
+
+    const alerts = ctx.calls.alerts.join('\n');
+    assert.match(alerts, /Updated to v5\.1\.3 on disk/, 'the real checkout, from the applier');
+    assert.doesNotMatch(alerts, /v5\.1\.2/, 'the polled number is never reported as installed');
+  });
+
+  it('with no toRef from the applier it says "the newest release" rather than inventing a number', async () => {
+    const ctx = loadBeacon({
+      fetchImpl: (n) => (n === 1
+        ? jsonRes(200, { ok: true })
+        : jsonRes(500, { ok: false, error: 'no restart mechanism' }))
+    });
+    ctx.beacon.render(AVAILABLE);
+    await ctx.beacon.apply(AVAILABLE);
+
+    const alerts = ctx.calls.alerts.join('\n');
+    assert.match(alerts, /Updated to the newest release on disk/);
+    assert.doesNotMatch(alerts, /v5\.1\.2/);
+  });
+
+  it('no beacon copy renders the polled version as a bare install target', () => {
+    // Every site that interpolates `latestVersion` into operator-facing copy
+    // qualifies it — the family, not one call site. A new site that forgets
+    // "or newer" reintroduces the promise.
+    const lines = BEACON_SRC.split('\n');
+    const sites = lines.map((l, i) => (l.includes('${data.latestVersion}') ? i : -1)).filter((i) => i >= 0);
+    assert.ok(sites.length >= 4, `expected the toast, dot title, dot label and confirm; found ${sites.length}`);
+    for (const i of sites) {
+      // The toast composes the version (a link when there is a release URL,
+      // text otherwise) and its qualifier as two spans, so the qualifier sits
+      // up to a link-branch below the interpolation.
+      const window = lines.slice(i, i + 12).join('\n');
+      assert.match(window, /or newer/, `unqualified version in beacon copy: ${lines[i].trim()}`);
+    }
   });
 });

@@ -209,7 +209,7 @@ silently does nothing.
 ## Status
 - [x] Chunk 1 — #948 (PR #1162)
 - [x] Chunk 2 — #1054 (PR #1163)
-- [ ] Chunk 3 — #1061
+- [x] Chunk 3 — #1061 (PR #1165)
 - [ ] Chunk 4 — #994
 - [ ] Chunk 5 — #1056
 - [ ] Chunk 6 — #741
