@@ -367,12 +367,21 @@ body {
 }
 
 /* Click detail: `.group-popover` chrome, but the detail is a sentence and the
-   engine pill's `white-space: nowrap` must not stretch it across the banner. */
+   engine pill's `white-space: nowrap` must not stretch it across the banner.
+   Never wider than the viewport — `body { overflow: hidden }` would clip the
+   overflow, and the status text moved here from the hover is exactly what
+   would be cut. The engine pill sits to the right of the dot and name, so its
+   detail anchors to the pill's right edge and grows leftwards, where the room
+   is on a phone. */
 .pill-detail {
   white-space: normal;
-  max-width: 260px;
+  max-width: min(260px, calc(100vw - 20px));
   line-height: 1.4;
   cursor: default;
+}
+.banner-engine .pill-detail {
+  left: auto;
+  right: 0;
 }
 .pill-detail-text {
   color: var(--text);

@@ -109,11 +109,14 @@ function loadPills(modelStatus) {
     liftFunction(SESSION_SRC, 'function renderPillDetail(pill, pop)'),
     liftFunction(SESSION_SRC, 'function togglePillDetail(pill)'),
     liftFunction(SESSION_SRC, 'function bindPillDetails()'),
+    liftFunction(SESSION_SRC, 'function clickHitsSelector(event, selector)'),
+    liftFunction(SESSION_SRC, 'function onBannerOutsideClick(e)'),
     liftFunction(SESSION_SRC, 'async function loadModelStatus(engineId)'),
     liftFunction(SESSION_SRC, 'function setConnected(connected)'),
     'globalThis.loadModelStatus = loadModelStatus;',
     'globalThis.setConnected = setConnected;',
     'globalThis.togglePillDetail = togglePillDetail;',
+    'globalThis.onBannerOutsideClick = onBannerOutsideClick;',
     'bindPillDetails();'
   ].join('\n'), sandbox);
   sandbox.ids = ids;
@@ -122,6 +125,20 @@ function loadPills(modelStatus) {
 
 /** @returns {object|null} A pill's detail popover, if it has been created. */
 const popoverOf = (pill) => pill.querySelector('.pill-detail');
+
+/**
+ * A document click as the outside-click handler sees it: the dispatch-time
+ * path, each node answering `matches` for a selector list of classes — the
+ * browser's `Element.matches`, narrowed to what the page's predicate asks.
+ * @param {...object} pathNodes - Target first, then its ancestors.
+ * @returns {object} The event.
+ */
+function documentClick(...pathNodes) {
+  pathNodes.forEach((node) => {
+    node.matches = (sel) => sel.split(',').some((s) => node.classList.contains(s.trim().slice(1)));
+  });
+  return { type: 'click', target: pathNodes[0], composedPath: () => pathNodes };
+}
 
 describe('#104 every banner pill says what kind of thing it is on hover', () => {
   it('version, status and engine pills carry their category label', () => {
@@ -185,6 +202,16 @@ describe('#104 the [data-tooltip] CSS primitive', () => {
     const gate = SESSION_CSS.indexOf('@media (hover: hover)');
     const rule = SESSION_CSS.indexOf('[data-tooltip]:hover::before');
     assert.ok(gate !== -1 && rule > gate, 'the hover rules must sit inside the (hover: hover) gate');
+  });
+
+  it('never lets the detail leave the viewport — the moved status text is what would be cut', () => {
+    const detail = SESSION_CSS.match(/\.pill-detail\s*\{([^}]*)\}/)[1];
+    assert.match(detail, /max-width:\s*min\(260px,\s*calc\(100vw - 20px\)\)/,
+      'body { overflow: hidden } clips anything wider than the viewport');
+    const engine = SESSION_CSS.match(/\.banner-engine \.pill-detail\s*\{([^}]*)\}/);
+    assert.ok(engine, 'the engine pill, right of the name and dot, anchors its detail to its right edge');
+    assert.match(engine[1], /left:\s*auto/);
+    assert.match(engine[1], /right:\s*0/);
   });
 
   it('gives the pills with a click a pointer, and leaves the version pill alone', () => {
@@ -252,6 +279,49 @@ describe('#104 the engine pill says its status on click, not on hover', () => {
     ctx.ids.statusPill.dispatch('click');
     assert.ok(!popoverOf(ctx.ids.bannerEngine).classList.contains('open'), 'engine detail closed');
     assert.ok(popoverOf(ctx.ids.statusPill).classList.contains('open'), 'status detail open');
+  });
+});
+
+describe('#104 the detail closes from outside and from the keyboard', () => {
+  it('the click that opens a detail is not also the click that closes it', async () => {
+    const ctx = loadPills({ claude: { status: 'operational', message: 'fine' } });
+    await ctx.loadModelStatus('claude');
+    const pill = ctx.ids.bannerEngine;
+    const body = ctx.document.body;
+    pill.classList.add('banner-engine');
+    body.classList.add('banner-row');
+
+    pill.dispatch('click');
+    assert.ok(popoverOf(pill).classList.contains('open'));
+    // The same click reaches the document handler after the pill's own.
+    ctx.onBannerOutsideClick(documentClick(pill, body));
+    assert.ok(popoverOf(pill).classList.contains('open'),
+      'a click on the pill that owns the detail is an inside click');
+
+    ctx.onBannerOutsideClick(documentClick(body));
+    assert.ok(!popoverOf(pill).classList.contains('open'), 'a click elsewhere closes it');
+  });
+
+  it('the status pill is inside too, and the document handler is the one that is registered', async () => {
+    const ctx = loadPills();
+    const pill = ctx.ids.statusPill;
+    pill.classList.add('status-pill');
+    pill.dispatch('click');
+    ctx.onBannerOutsideClick(documentClick(pill, ctx.document.body));
+    assert.ok(popoverOf(pill).classList.contains('open'));
+
+    const bind = liftFunction(SESSION_SRC, 'function bindEvents()');
+    assert.match(bind, /document\.addEventListener\('click', onBannerOutsideClick\)/,
+      'the predicate under test must be the one the page binds');
+  });
+
+  it('Escape closes an open detail — a keyboard user opened it with Enter', () => {
+    const bind = liftFunction(SESSION_SRC, 'function bindEvents()');
+    const escape = bind.match(/if \(e\.key !== 'Escape'\) return;([\s\S]*?)\n  \}\);/);
+    assert.ok(escape, 'the Escape handler must exist');
+    assert.match(escape[1], /closeBannerPopovers\(\);/);
+    const bound = bind.match(/pill\.addEventListener\('keydown'/) || SESSION_SRC.match(/pill\.addEventListener\('keydown'/);
+    assert.ok(bound, 'the pills open from the keyboard, so they must close from it');
   });
 });
 

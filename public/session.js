@@ -771,6 +771,20 @@ function togglePillDetail(pill) {
 }
 
 /**
+ * Close the banner popovers on a click outside any pill that owns one. Both
+ * predicates read the dispatch-time path (#566) — a re-rendering inner handler
+ * must never be able to make its own click look like an outside one. The
+ * pills with a click detail count as inside: the click that opens a detail
+ * must not also be the click that closes it.
+ * @param {Event} e - The document click.
+ */
+function onBannerOutsideClick(e) {
+  if (!clickHitsSelector(e, '.group-pill, .status-pill, .banner-engine')) {
+    closeBannerPopovers();
+  }
+}
+
+/**
  * Wire the click (and keyboard) detail on the banner pills that have one:
  * the status dot and the engine pill. The version pill has no detail yet and
  * stays a no-op; group pills bind their own popover inline.
@@ -4896,14 +4910,10 @@ function bindEvents() {
   });
   masterBar.mount();
 
-  // Close group popovers on outside click. Both predicates read the
-  // dispatch-time path (#566) — a re-rendering inner handler must never be able
-  // to make its own click look like an outside one.
+  // Close banner popovers on outside click; see `onBannerOutsideClick`.
   bindPillDetails();
+  document.addEventListener('click', onBannerOutsideClick);
   document.addEventListener('click', (e) => {
-    if (!clickHitsSelector(e, '.group-pill, .status-pill, .banner-engine')) {
-      closeBannerPopovers();
-    }
     // v2 T4 — the loops panel dismisses on outside click like the inbox/peers
     // popovers, which the shared control now handles for itself in `mount()`.
     if (!clickHitsSelector(e, '.medusa-control')) closeMedusaLoopsPanel();
@@ -4982,6 +4992,9 @@ function bindEvents() {
     if (loopsPanel && !loopsPanel.hidden) closeMedusaLoopsPanel();
     const catcher = $('pasteCatcher');
     if (catcher && catcher.classList.contains('open')) closePasteCatcher();
+    // Pill details open from the keyboard (Enter/Space), so they must close
+    // from it too (#104).
+    closeBannerPopovers();
   });
 
   // Banner buttons
