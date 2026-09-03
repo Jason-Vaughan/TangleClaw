@@ -1416,6 +1416,41 @@ describe('#867 — stranded-wrap classification agrees with the server', () => {
       assert.match(out.detail, /preflight/, 'and the warning');
     });
 
+    it('the merged-PR probe cannot erase the gate — the render path, not just the pre-probe banner', () => {
+      // THE case the finding named, and the one the first fix missed: after
+      // `GET /wrap/pr-status` answers `merged`, `composeReleaseBanner` replaces
+      // a `provisional` base outright, dropping its detail. With the warning
+      // living only in that string it vanished, and the operator read
+      // "Wrap shipped — PR merged" in success tone for a wrap whose governance
+      // gate was never met.
+      const { summarizePipelineStatus, composeReleaseBanner } = loadHelpers();
+      const base = summarizePipelineStatus(withWarning({
+        pushed: true, prUrl: 'https://github.com/x/y/pull/1', autoMergeArmed: true, error: null
+      }));
+      assert.equal(base.tone, 'provisional', 'the shape rule 2 does not cover');
+      assert.deepEqual(base.warnings, ['preflight'], 'carried as a field, not only in prose');
+
+      const composed = composeReleaseBanner(base, { outcome: 'merged' });
+
+      assert.match(composed.label, /shipped|merged/i, 'the release outcome still leads');
+      assert.match(composed.detail, /preflight/,
+        'and the unmet gate survives the probe that used to erase it');
+      assert.notEqual(composed.tone, 'success',
+        'a wrap with an unmet gate must not paint as unqualified success');
+    });
+
+    it('a merged release with no warnings is untouched, so the carry-through is not a blanket downgrade', () => {
+      const { summarizePipelineStatus, composeReleaseBanner } = loadHelpers();
+      const clean = summarizePipelineStatus({
+        ok: true, blockedAt: null, commitSha: 'abcdef0123456789',
+        results: [{ stepId: 'commit', kind: 'commit', status: 'done',
+          output: { commitSha: 'abcdef0123456789', autoPr: { pushed: true, prUrl: 'https://x/1', autoMergeArmed: true, error: null } } }]
+      });
+      const composed = composeReleaseBanner(clean, { outcome: 'merged' });
+      assert.equal(composed.tone, 'success', 'a clean release still reads as success');
+      assert.doesNotMatch(composed.detail || '', /Warnings on/);
+    });
+
     it('but a clean commit with a warning DOES report the warning', () => {
       const { summarizePipelineStatus } = loadHelpers();
       const out = summarizePipelineStatus(withWarning(null));

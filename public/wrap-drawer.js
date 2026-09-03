@@ -381,6 +381,11 @@
       if (warningSteps.length === 0) return detail;
       return detail ? `${detail} · ${warningDetail()}` : warningDetail();
     };
+    /** Warning step ids, carried as a FIELD so a later composer can re-append
+     * them. In the detail string alone they are unrecoverable the moment that
+     * string is dropped — which is exactly what `composeReleaseBanner` does to
+     * a `provisional` base once the release probe answers. */
+    const warnIds = warningSteps.map((st) => st.stepId);
     if (pipelineResult.commitSha) {
       // #638 — a committed wrap is NOT a shipped release. When the commit step
       // auto-branched and opened a PR, the version bump / CHANGELOG promotion
@@ -391,7 +396,7 @@
       if (pr && pr.error) {
         // The close-loop failed (push/PR-create/auto-merge-arm) — committed but
         // the branch may dangle and nothing is armed to land it.
-        return { label: 'Wrap committed — release NOT armed', tone: 'warning', detail: withWarnings(pr.error), pr };
+        return { label: 'Wrap committed — release NOT armed', tone: 'warning', detail: withWarnings(pr.error), pr, warnings: warnIds };
       }
       if (pr && pr.stranded) {
         // #867 — pushed, but no PR exists and none is armed. Without this the
@@ -404,7 +409,8 @@
           label: 'Wrap committed — branch left on origin, no PR',
           tone: 'warning',
           detail: withWarnings(pr.skippedReason || 'the wrap branch was pushed but no PR was opened'),
-          pr
+          pr,
+          warnings: warnIds
         };
       }
       if (pr && (pr.armed || pr.prUrl)) {
@@ -414,7 +420,8 @@
           label: 'Wrap committed — release pending PR merge',
           tone: 'provisional',
           detail: withWarnings(`${pipelineResult.commitSha.slice(0, 12)} · not yet on the base branch`),
-          pr
+          pr,
+          warnings: warnIds
         };
       }
       // Nothing about the release needs saying — so a warning, if there is one,
@@ -542,7 +549,11 @@
    *     release outcome appended as detail. Without this a wrap that "completed
    *     with warnings" (or whose close-loop failed to arm) would be repainted
    *     "Wrap shipped — PR merged", re-opening the false-success class.
-   *  3. Otherwise the release banner stands on its own.
+   *  3. Otherwise the release banner stands on its own — but it still carries
+   *     forward `base.warnings`, because a `provisional` base is not covered by
+   *     rule 2 and its detail string is dropped here. That is how an advisory
+   *     `preflight` gate vanished behind "Wrap shipped — PR merged": the fact
+   *     was in the detail, and this function keeps none of it.
    *
    * @param {{label: string, tone: string, detail: string|null}} baseStatus - From `summarizePipelineStatus`.
    * @param {{outcome: string}} prStatus - From `GET /wrap/pr-status`.
@@ -562,6 +573,17 @@
         label: base.label,
         tone: base.tone,
         detail: [base.detail, `release: ${outcome}`].filter(Boolean).join(' · ')
+      };
+    }
+    // A provisional base takes the release banner, but its warnings are not the
+    // release's to discard — they are the only place an advisory step reaches
+    // the operator at all.
+    const carried = Array.isArray(base.warnings) ? base.warnings : [];
+    if (carried.length > 0) {
+      return {
+        ...release,
+        tone: release.tone === 'success' ? 'warning' : release.tone,
+        detail: [release.detail, `Warnings on: ${carried.join(', ')}`].filter(Boolean).join(' · ')
       };
     }
     return release;
