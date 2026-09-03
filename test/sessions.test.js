@@ -2896,8 +2896,9 @@ describe('sessions', () => {
         // `features-toc`; PIDX #426 added `index-describe` after `project-map`;
         // #466 added `learnings-db-write` after `learnings-capture`; #570 added
         // `apply-pr-resolutions` last — prawduct now ships 13 steps.
-        assert.equal(result.pipelineResult.results.length, 14,
-          'prawduct pipeline runs all fourteen steps');
+        assert.equal(result.pipelineResult.results.length,
+          require('../lib/wrap-default-pipeline').steps().length,
+          'every step of the code-owned pipeline reports a result');
         assert.equal(result.wrapCommand, null, 'V2 reports no legacy wrapCommand');
       } finally {
         for (const kind of realKinds) {

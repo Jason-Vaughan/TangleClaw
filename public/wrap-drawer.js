@@ -14,6 +14,7 @@
    * @type {Object<string, string>}
    */
   const KIND_LABELS = {
+    'preflight': 'Preflight',
     'pr-check': 'Check open PRs',
     'pr-merge': 'Apply PR decisions',
     'lint': 'Lint',
@@ -34,6 +35,7 @@
    * @type {Object<string, string>}
    */
   const KIND_DESCRIPTIONS = {
+    'preflight': 'Asks prawduct for its session-end verdict before the wrap writes to any file: in a prawduct-governed project it runs the Stop hook and shows the block text if a gate (Critic review, reflection) is unmet. Advisory by default — the wrap continues; a project can make it blocking in its wrap step settings. Skips in projects without .prawduct/.',
     'pr-check': 'Checks for open GitHub PRs on this branch and asks you to resolve each one (merge, defer, or ignore). Blocks the wrap until you decide; skips silently when GitHub can\u2019t be reached.',
     'pr-merge': 'Applies the PR decisions you made earlier \u2014 each PR you marked \u201cmerge\u201d gets GitHub auto-merge enabled, so it lands once its checks pass. Runs after the wrap commit. Never blocks.',
     'lint': 'Runs the project’s linter over the working tree.',
@@ -220,6 +222,14 @@
     }
     if (!output) return null;
     switch (stepResult.kind) {
+      case 'preflight':
+        // #854 — a clear probe names itself; an advisory block says the wrap
+        // went on, so the blocked badge on a completed wrap is not read as
+        // the wrap having stopped. A halting block needs no line: the row IS
+        // the blocker and the banner says so.
+        if (output.exitCode === 0) return output.detail || 'prawduct gates clear';
+        if (output.advisory === true) return 'advisory — the wrap continued';
+        return null;
       case 'pr-check': {
         const counts = output.counts || {};
         const parts = [];

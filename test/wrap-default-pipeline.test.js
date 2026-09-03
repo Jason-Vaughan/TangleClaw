@@ -22,7 +22,7 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
     // update deliberately, never casually.
     assert.deepStrictEqual(
       defaultPipeline.steps().map((s) => s.id),
-      ['open-pr-check', 'changelog-update', 'version-bump', 'learnings-capture', 'learnings-db-write', 'rule-proposal', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write', 'apply-pr-resolutions']
+      ['preflight', 'open-pr-check', 'changelog-update', 'version-bump', 'learnings-capture', 'learnings-db-write', 'rule-proposal', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write', 'apply-pr-resolutions']
     );
   });
 
@@ -36,6 +36,10 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
       'continuity records the wrap commit, so it must follow it');
     assert.equal(ids[ids.length - 1], 'apply-pr-resolutions',
       'auto-merge authorization stays last');
+    // #854 — the governance verdict is asked for before any step can write.
+    assert.equal(ids[0], 'preflight', 'preflight runs first, ahead of open-pr-check');
+    const preflight = defaultPipeline.steps()[0];
+    assert.equal(preflight.blocker, false, 'advisory by default — a project opts into blocking via wrapStepOverrides');
   });
 
   it('steps() returns a deep copy — mutating a returned spec never leaks into the shared definition', () => {
@@ -43,8 +47,8 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
     first[0].id = 'mutated';
     first.push({ id: 'extra', kind: 'commit' });
     const second = defaultPipeline.steps();
-    assert.equal(second[0].id, 'open-pr-check');
-    assert.equal(second.length, 14);
+    assert.equal(second[0].id, 'preflight');
+    assert.equal(second.length, 15);
   });
 
   it('every ai-content step carries a non-empty prompt (a sane full-featured default, not minimal\'s self-skip shape)', () => {
@@ -118,7 +122,8 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
       assert.ok(!ids.includes('changelog-update'));
       assert.ok(!ids.includes('memory-update'));
       assert.ok(ids.includes('commit'));
-      assert.equal(ids.length, 12);
+      assert.equal(ids.length, defaultPipeline.steps().length - 2,
+        'exactly the two disabled steps are dropped');
     });
   });
 });

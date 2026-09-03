@@ -230,6 +230,16 @@ it is not a default for new ones.
 | `prompt` | string | Replaces the instruction text for an `ai-content` step. An empty string makes the step skip itself |
 | `coveragePaths` | `string[]` | Extra changelog paths (globs) the `changelog-update` coverage check accepts, on top of `verifyChanged`. For monorepos that keep a changelog per package — e.g. `["skills/*/CHANGELOG.md"]`. **Additive only:** it widens what counts as a logged commit, never narrows, and is inert on steps without that check. Glob syntax: `*` within one path segment, `**` across segments, a `**`-then-slash prefix also matching the repo-root file |
 
+**The `preflight` step.** `preflight` is the pipeline's first step and the one override worth
+knowing about by name: it asks prawduct for the verdict its session-end Stop hook would give,
+and it ships **advisory** (`blocker: false`) so an unmet gate is reported and the wrap
+continues. Three reasons it is not blocking out of the box: prawduct's reflection gate wants
+the narrative the wrap's own content steps produce, so a blocking preflight would deadlock
+against it; its Critic gate is minutes of agent time and belongs opted into per project; and
+the escape hatch means writing another framework's state. A project that wants the door shut
+sets `{"preflight": {"blocker": true}}` — the wrap then halts before any step writes to the
+tree. The step skips itself in a project with no `.prawduct/` directory.
+
 **What you cannot change.** Step *order and membership* are framework-owned — no adding,
 removing, or reordering. Order carries correctness contracts between steps (the changelog must
 be written before the version bump reads it to choose a level), guaranteed by one check against
