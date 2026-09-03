@@ -571,7 +571,7 @@ describe('startup session-rule delivery (#595)', () => {
         lines: ['transcript', ...String(pastedText).split('\n'), '> ', '? for shortcuts']
       }));
       stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/agy' }));
-      t.mock.timers.enable({ apis: ['setTimeout'] });
+      t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
 
       const launched = makeProject(`agy-${uid()}`, { engine: 'antigravity' });
       store.sessionRules.create({ content: 'gated directive', projectId: launched.id });
@@ -581,13 +581,16 @@ describe('startup session-rule delivery (#595)', () => {
         assert.equal(result.error, null);
         // Drive mocked time and drain microtasks until the async gate resolves
         // and the paste fires (two settled captures ≈ two poll sleeps).
-        for (let i = 0; i < 20 && pasted === 0; i++) {
+        // Ticks until the LEDGER ROW lands, not until the paste fires: since
+        // #1134 an engine declaring a rejection marker has its send watched, so
+        // the row is written after that window rather than at the send.
+        let rows = [];
+        for (let i = 0; i < 400 && rows.length === 0; i++) {
           t.mock.timers.tick(1000);
           await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+          rows = store.sessionRuleDeliveries.listForSession(result.session.id);
         }
-        assert.equal(pasted, 1, 'the prime is pasted once the pane reads ready');
-
-        const rows = store.sessionRuleDeliveries.listForSession(result.session.id);
+        assert.equal(pasted, 1, 'the prime is pasted once the pane reads ready, and not re-pasted');
         assert.equal(rows.length, 1);
         assert.equal(rows[0].channel, 'prime-paste');
         assert.equal(rows[0].outcome, 'delivered',
@@ -636,10 +639,11 @@ describe('startup session-rule delivery (#595)', () => {
           await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
           rows = store.sessionRuleDeliveries.listForSession(result.session.id);
         }
-        // Two sends: this fixture's pane is the swallowing shape, so the watch
-        // sees the paste fail to land and retries once — bounded, and the whole
-        // point of #1134.
-        assert.equal(pasted, 2, 'the paste fires, is observed not landing, and is retried once');
+        // ONE send. This fixture's pane shows the verify banner but not the
+        // engine's discard text, so nothing was observed rejecting the paste —
+        // and #1134's watch only ever downgrades on positive evidence. A retry
+        // here would be the false-retry failure the design exists to avoid.
+        assert.equal(pasted, 1, 'an unobserved send is not retried');
 
         assert.equal(rows.length, 1);
         assert.equal(rows[0].outcome, 'unverified',
