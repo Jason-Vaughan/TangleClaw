@@ -94,7 +94,7 @@ measurable rather than shrugged at.
 - [x] Chunk 2 — #831 (PR #1156, merged 236bd78)
 - [x] Chunk 3 — #835 (PR #1157, merged 5d889e1)
 - [x] Chunk 4 — #969 (PR #1160, merged 01c7808)
-- [ ] Chunk 5 — #957
+- [x] Chunk 5 — #957 (PR #1158)
 
 ## Context
 Session 2026-09-02/03, autonomous sprint. Work in `.claude/worktrees/train10`; the primary
