@@ -353,3 +353,24 @@ describe('#1178 the fact is Tailscale-INDEPENDENT', () => {
     assert.doesNotMatch(section, /ts\.net/);
   });
 });
+
+describe('#1178 the host is detected FROM THE BROWSER, which needs a same-origin launch', () => {
+  const landing = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
+
+  it('the launch request is relative, so the browser stamps the operator\'s own Host', () => {
+    // This is the whole detection mechanism: a relative fetch makes the browser
+    // send whatever the operator typed in the address bar. Point it at an
+    // absolute origin and the server would read THAT host instead, and the
+    // prime would name a host the operator is not using — silently, because
+    // every other test here feeds headers directly.
+    const call = landing.match(/fetch\(`\/api\/sessions\/\$\{encodeURIComponent\(name\)\}`/);
+    assert.ok(call, 'the launch fetch must stay same-origin and relative for host detection to work');
+  });
+
+  it('a launch with no browser behind it degrades to the probe, not to a wrong host', () => {
+    // CLI/scheduler launches have no request. They must not inherit some other
+    // caller's host; they fall back to probing, and to the honest unknown.
+    const r = sessionOwnership.resolveOperatorHost(undefined, undefined);
+    assert.ok(r.source === 'local-probe' || r.source === null);
+  });
+});
