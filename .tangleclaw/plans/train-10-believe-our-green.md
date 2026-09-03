@@ -33,9 +33,9 @@ run is a hypothesis, not evidence.
 session or this one verified against source, and named options; the two that needed a
 choice (#844, #835) were made from the issue's own option lists and ratified by the Roadmap
 session. Medium on one point: #957's headroom multipliers are chosen, not measured — the
-load run in Car 5's Done-when is what confirms them.
+load run in Chunk 5's Done-when is what confirms them.
 
-## Cars
+## Chunks
 
 ### Chunk 1 — #844 CI names what it did not run
 - `scripts/test-skip-audit.js` reads the junit report node:test writes and compares every
@@ -51,13 +51,13 @@ load run in Car 5's Done-when is what confirms them.
 ### Chunk 2 — #831 bare `git init` inherits the live template dir
 - `test/_temp-repo.js` — one helper (`initRepo(dir, opts)`) that runs `git init` with
   `--template=` so the machine's global `init.templateDir` is never read.
-- Every bare `git init` in `test/` moves to the helper. Exception preserved:
+- Every `git init` and `git clone` in `test/` moves to the helper (`initRepo`/`cloneRepo`), in every shape — command string, argv, local wrapper, `-c init.templateDir=`. Exception preserved:
   `test/git-template.test.js` "git init picks up the installed hook" tests the template
   mechanism itself.
-- A source-scanning guard fails when a test file gains a `git init` without `--template=`
+- A source-scanning guard keyed on the SUBCOMMAND (init/clone), not a syntax, fails when a test file makes a repository any other way
   (the "one call site is not the family" rule, enforced).
-- **Done when:** grep for bare `git init` in `test/` finds only the sanctioned exception, and
-  the guard goes red when a bare invocation is reintroduced.
+- **Done when:** the guard finds only the helper and the sanctioned exception, and goes red
+  when a bare invocation — in any shape — is reintroduced.
 
 ### Chunk 3 — #835 upstream drift check never runs in CI
 - `.github/workflows/upstream-drift.yml`: daily schedule + `workflow_dispatch`; shallow-clones

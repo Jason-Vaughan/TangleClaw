@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-const { initRepo } = require('./_temp-repo');
+const { initRepo, cloneRepo } = require('./_temp-repo');
 
 describe('test/_temp-repo — initRepo isolates the suite from the machine\'s git template', () => {
   let scratch;
@@ -74,6 +74,34 @@ describe('test/_temp-repo — initRepo isolates the suite from the machine\'s gi
     assert.equal(fs.existsSync(path.join(bare, '.git')), false);
   });
 
+  it('a bare `git clone` under the sandbox DOES copy the template hook — clone is init', () => {
+    // Control for the clone half, for the same reason as the init control.
+    const src = fs.mkdtempSync(path.join(scratch, 'clone-src-'));
+    initRepo(src, ['--bare']);
+    const dest = path.join(scratch, 'clone-bare-dest');
+    execFileSync('git', ['clone', '-q', src, dest], { env: sandboxEnv(), stdio: 'pipe' });
+    assert.ok(fs.existsSync(path.join(dest, '.git', 'hooks', 'commit-msg')),
+      'control failed — a bare clone did not apply the sandboxed template');
+  });
+
+  it('cloneRepo does NOT copy the template hook', () => {
+    const src = fs.mkdtempSync(path.join(scratch, 'clone-src2-'));
+    initRepo(src, ['--bare']);
+    const dest = path.join(scratch, 'clone-iso-dest');
+    cloneRepo(src, dest, [], { env: sandboxEnv() });
+    assert.ok(fs.existsSync(path.join(dest, '.git')), 'a clone was made');
+    assert.equal(fs.existsSync(path.join(dest, '.git', 'hooks', 'commit-msg')), false,
+      'the template hook was copied — cloneRepo inherited the global template dir');
+  });
+
+  it('cloneRepo resolves a relative destination against execOpts.cwd', () => {
+    const src = fs.mkdtempSync(path.join(scratch, 'clone-src3-'));
+    initRepo(src, ['--bare']);
+    const parent = fs.mkdtempSync(path.join(scratch, 'clone-parent-'));
+    cloneRepo(src, 'here', [], { cwd: parent });
+    assert.ok(fs.existsSync(path.join(parent, 'here', '.git')));
+  });
+
   it('returns the directory, and throws (does not swallow) when git refuses', () => {
     const dir = fs.mkdtempSync(path.join(scratch, 'ret-'));
     assert.equal(initRepo(dir), dir);
@@ -81,15 +109,15 @@ describe('test/_temp-repo — initRepo isolates the suite from the machine\'s gi
   });
 });
 
-describe('test/ — every `git init` goes through initRepo (the #831 family guard)', () => {
+describe('test/ — every `git init` and `git clone` goes through the helper (the #831 family guard)', () => {
   const TEST_DIR = __dirname;
 
-  // The places a `git init` invocation is allowed to live, and how many each
-  // may carry. `_temp-repo.js` IS the helper. `git-template.test.js` has
-  // one end-to-end case whose subject is the template mechanism itself; it
+  // The places an `init`/`clone` invocation is allowed to live, and how many
+  // each may carry. `_temp-repo.js` IS the helper (one of each). `git-template.test.js`
+  // has one end-to-end case whose subject is the template mechanism itself; it
   // sandboxes its own global config and must keep reading a template.
   const SANCTIONED = {
-    '_temp-repo.js': 1,
+    '_temp-repo.js': 2,
     'git-template.test.js': 1
   };
   // This file is not scanned: it holds the scanner's own fixture strings and
@@ -97,16 +125,31 @@ describe('test/ — every `git init` goes through initRepo (the #831 family guar
   // purpose. Its one real `git init` runs under a private global config.
   const SELF = path.basename(__filename);
 
+  // The PROPERTY: no test reads the machine's git template. Every way git can
+  // do that is a subcommand — `init` or `clone` — so the scanner keys on the
+  // subcommand wherever it appears, not on one call syntax. The first version
+  // pinned two syntaxes and stayed green over four survivors (a local
+  // `git(cmd)` wrapper, and clones); this list is what it missed, kept so the
+  // next shape is added here rather than discovered by the next flake.
+  const SHAPES = [
+    // a command string: execSync('git init …'), a `git clone …` template
+    // literal, or such a string assembled in an array and joined later
+    /['"`]git (init|clone)(\s|['"`])/,
+    // an argv whose subcommand is init/clone, with any -c/--flag elements
+    // before it: execFileSync('git', ['init', …]) or ['-c', 'x=y', 'init', …]
+    // (elements before the subcommand must look like options — `-x` or
+    // `key=value` — so a commit MESSAGE of "init" is not a match)
+    /\bgit['"],\s*\[(?:\s*['"](?:-[^'"]*|[^'"]*=[^'"]*)['"]\s*,)*\s*['"](init|clone)['"]/,
+    // a local wrapper: const git = (cmd) => execSync(`git ${cmd}`); git('init -q')
+    /\bgit\s*\(\s*['"`](init|clone)(\s|['"`])/,
+    // the workaround the helper replaces: a second isolation path is a second
+    // place to forget
+    /init\.templateDir=/
+  ];
+
   /**
-   * Count the lines in a file that invoke `git init`, ignoring comments and
-   * test titles.
-   *
-   * Two shapes are recognised: a string literal starting `git init` (the
-   * `execSync('git init …')` family, including a command assembled in an
-   * array and joined later) and a `git` argv whose first element is `'init'`
-   * (the `execFileSync('git', ['init', …])` family). Comment lines discuss
-   * `git init` freely and are skipped by their leading `//` or `*`; so are
-   * `describe`/`it`/`test` titles, which name the command without running it.
+   * Count the lines in a file that make a repository — `git init` or
+   * `git clone` in any of the shapes above — ignoring comments and test titles.
    *
    * @param {string} file - Absolute path
    * @returns {string[]} The offending lines, trimmed
@@ -117,10 +160,10 @@ describe('test/ — every `git init` goes through initRepo (the #831 family guar
       .map((l) => l.trim())
       .filter((l) => !l.startsWith('//') && !l.startsWith('*') && !l.startsWith('/*'))
       .filter((l) => !/^(describe|it|test)\(/.test(l))
-      .filter((l) => /['"`]git init(\s|['"`])/.test(l) || /\bgit['"],\s*\[\s*['"]init['"]/.test(l));
+      .filter((l) => SHAPES.some((re) => re.test(l)));
   }
 
-  it('no test file runs `git init` on its own — only the helper and the sanctioned template test', () => {
+  it('no test file makes a repository on its own — only the helper and the sanctioned template test', () => {
     const found = {};
     for (const name of fs.readdirSync(TEST_DIR)) {
       if (!name.endsWith('.js') || name === SELF) continue;
@@ -131,8 +174,8 @@ describe('test/ — every `git init` goes through initRepo (the #831 family guar
       .filter(([name, hits]) => (SANCTIONED[name] || 0) < hits.length)
       .map(([name, hits]) => `${name}:\n    ${hits.join('\n    ')}`);
     assert.deepEqual(offenders, [],
-      'a bare `git init` inherits the machine\'s global template dir, which TangleClaw rewrites '
-      + 'under the running suite (#831). Call initRepo() from test/_temp-repo.js instead.');
+      'a bare `git init` or `git clone` inherits the machine\'s global template dir, which TangleClaw '
+      + 'rewrites under the running suite (#831). Call initRepo()/cloneRepo() from test/_temp-repo.js instead.');
   });
 
   it('the sanctioned sites are still present — a stale allowance would let one new site in unnoticed', () => {
@@ -142,7 +185,7 @@ describe('test/ — every `git init` goes through initRepo (the #831 family guar
     }
   });
 
-  it('the scanner recognises both invocation shapes and ignores comments', () => {
+  it('the scanner recognises every shape — string, argv (with -c prefix), wrapper, clone, templateDir — and ignores comments and titles', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-scan-'));
     try {
       const f = path.join(dir, 'x.js');
@@ -155,10 +198,18 @@ describe('test/ — every `git init` goes through initRepo (the #831 family guar
         "execFileSync('git', ['init', '--template=', '-q'], { cwd });",
         'execFileSync("git", ["init"], { cwd });',
         "const setup = ['git init -q -b main', 'git config user.name t'];",
+        "execFileSync('git', ['-c', 'init.templateDir=', 'init', '-q', root]);",
+        "git('init -q .');",
+        "git(`clone ${src} dest`);",
+        "execSync(`git clone -q ${JSON.stringify(remote)} cloned`);",
+        "execFileSync('git', ['clone', '--quiet', '--depth', '1', src, dest]);",
         "execSync('git status');",
-        "execSync('git initialise-nothing');"
+        "execSync('git initialise-nothing');",
+        "git('config user.name t');",
+        "execFileSync('git', ['-c', 'user.name=t', 'commit', '-m', 'x']);",
+        "execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: repo });"
       ].join('\n'));
-      assert.equal(gitInitInvocations(f).length, 4);
+      assert.equal(gitInitInvocations(f).length, 9);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

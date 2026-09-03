@@ -385,13 +385,11 @@ describe('dir-scanner child — projectFacts carries git and config (#884, chunk
     // A stub would test the plumbing and not the thing that made it necessary.
     const root = scratch('facts-git');
     try {
-      // `-c init.templateDir=` isolates this from the host's global git template,
-      // which #831 records as a source of flakes when TangleClaw rewrites it. And
-      // a commit is required, not decoration: a repo with no commits has no
+      // A commit is required, not decoration: a repo with no commits has no
       // resolvable HEAD, so `getInfo` reports branch `unknown` and the assertion
       // below would pass against a repo that proves nothing about branch reading.
-      execFileSync('git', ['-c', 'init.templateDir=', 'init', '-q', '-b', 'trunk', root],
-        { stdio: 'ignore' });
+      fs.mkdirSync(root, { recursive: true });
+      initRepo(root, ['-b', 'trunk']);
       for (const args of [
         ['config', 'user.email', 'test@example.com'],
         ['config', 'user.name', 'Test'],

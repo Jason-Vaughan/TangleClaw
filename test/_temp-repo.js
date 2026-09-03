@@ -16,14 +16,19 @@
  * every developer machine and the one that produces release evidence — and the
  * failure looked like a flake in an unrelated subsystem.
  *
- * ## Why one helper and not ten `--template=` flags
+ * ## Why one helper and not a `--template=` flag at every site
  *
- * Ten call sites each carrying the flag drift: the next test that shells out
- * to `git init` forgets it, and the flake is back with no signal. So the suite
- * has exactly one way to make a repository, here, and `test/temp-repo.test.js`
- * scans `test/` and fails on any other `git init` invocation. Joining the
- * family means calling `initRepo`; the guard is what makes that a rule rather
- * than a convention.
+ * Call sites each carrying the flag drift: the next test that shells out to
+ * `git init` forgets it, and the flake is back with no signal. So the suite
+ * has exactly one way to make a repository — `initRepo` for a fresh one,
+ * `cloneRepo` for a clone, because `git clone` runs the same template copy —
+ * and `test/temp-repo.test.js` scans `test/` and fails on any other `init` or
+ * `clone` invocation, whatever shape it takes: a command string, an argv, a
+ * local `git(cmd)` wrapper, or a `-c init.templateDir=` workaround. Joining
+ * the family means calling one of these two; the guard is what makes that a
+ * rule rather than a convention. (The first version of the guard pinned two
+ * textual shapes and was green over four survivors; it now pins the
+ * subcommand, not the syntax.)
  *
  * The one sanctioned exception is `test/git-template.test.js`'s end-to-end
  * case, which exists to prove the template mechanism works and sandboxes its
@@ -58,4 +63,26 @@ function initRepo(dir, extraArgs = [], execOpts = {}) {
   return dir;
 }
 
-module.exports = { initRepo };
+/**
+ * Run `git clone` with template inheritance disabled.
+ *
+ * A clone initialises its `.git` the same way `init` does, template copy
+ * included (`lib/git-template.js` relies on exactly that), so a bare clone in
+ * a test reads the machine's template too.
+ *
+ * @param {string} src - Repository to clone (path or URL)
+ * @param {string} dest - Destination path, relative to `execOpts.cwd` when given
+ * @param {string[]} [extraArgs=[]] - Further `git clone` arguments, e.g. `['--depth', '1']`
+ * @param {object} [execOpts={}] - Extra `execFileSync` options merged over the
+ *   defaults (piped stdio; `cwd` is the process's unless given)
+ * @returns {string} `dest`, for chaining.
+ */
+function cloneRepo(src, dest, extraArgs = [], execOpts = {}) {
+  execFileSync('git', ['clone', '--template=', '-q', ...extraArgs, src, dest], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    ...execOpts
+  });
+  return dest;
+}
+
+module.exports = { initRepo, cloneRepo };

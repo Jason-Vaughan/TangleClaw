@@ -431,12 +431,10 @@ describe('Setup Wizard', () => {
       // Create a project directory with a git repo
       const projDir = path.join(projectsDir, 'test-git-project');
       fs.mkdirSync(projDir, { recursive: true });
-      try {
-        initRepo(projDir, [], { timeout: 5000 });
-      } catch {
-        // Git might not be available in test environment — skip
-        return;
-      }
+      // No try/catch: git is a hard requirement of the suite (a dozen files
+      // shell out to it unconditionally), and a silent `return` here would
+      // be a skip no ledger can see (#844).
+      initRepo(projDir, [], { timeout: 5000 });
 
       const { status, data } = await request(server, 'POST', '/api/setup/scan', {
         directory: projectsDir

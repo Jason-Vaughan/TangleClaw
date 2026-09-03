@@ -3,7 +3,7 @@
 const { describe, it, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { initRepo } = require('./_temp-repo');
+const { initRepo, cloneRepo } = require('./_temp-repo');
 const git = require('../lib/git');
 
 describe('git', () => {
@@ -107,9 +107,10 @@ describe('git', () => {
     /**
      * Build a repository fixture and return its path.
      *
-     * `--template=` deliberately empty: the default template installs sample
-     * hooks, and a fixture that ships hooks is a fixture that can run them.
-     * Identity is set locally because CI runners have no global git user.
+     * Made through `initRepo`, so no template is read: the default template
+     * installs sample hooks, and a fixture that ships hooks is a fixture that
+     * can run them. Identity is set locally because CI runners have no global
+     * git user.
      *
      * @param {string} label - Directory prefix, for readable failures.
      * @param {string[]} steps - Shell commands run in the fixture, in order.
@@ -237,7 +238,7 @@ describe('git', () => {
 
       const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-git-emptyclone-'));
       made.push(parent);
-      execSync(`git clone -q ${JSON.stringify(remote)} cloned`, { cwd: parent, stdio: 'pipe' });
+      cloneRepo(remote, 'cloned', [], { cwd: parent });
       const dir = path.join(parent, 'cloned');
 
       const info = git._fetchInfo(dir);
