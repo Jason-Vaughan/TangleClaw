@@ -20,16 +20,26 @@
  *
  * Usage: node _dir-scanner-pool-demo.js <leak|scanner> <fifoDir>
  * Prints one line of JSON:
- *   {"mode":…,"rejections":N,"baselineMs":N,"readdirMs":N|null,"readdirStuck":bool}
+ *   {"mode":…,"rejections":N,"baselineMs":N,"baselineMaxMs":N,"baselineSamples":N,
+ *    "budgetMs":N,"readdirMs":N|null,"readdirStuck":bool}
  *
- * `baselineMs` is the same ordinary readdir timed BEFORE the workload, in the
- * same process, under whatever load the machine is carrying right now. The
- * after-probe is judged against it rather than against a fixed number of
- * milliseconds: an absolute bound measured the OS scheduler and every other
- * process on the box, and failed on exactly the runs where a developer was
- * doing something else at the same time (#957). What the scanner is
+ * `baselineMs`/`baselineMaxMs` are the same ordinary readdir timed repeatedly
+ * in THIS process, under whatever load the machine is carrying right now. In
+ * scanner mode the samples are taken DURING the workload — this process's
+ * pool is healthy then, so each sample measures the machine, not the scanner —
+ * which gives the baseline the same exposure to a bursty stall as the
+ * after-probe has. (A warm readdir sampled three times before the workload
+ * reads single-digit milliseconds even on a loaded box, and a bound derived
+ * from that collapses back to the absolute one.) In leak mode the pool is
+ * being destroyed during the workload, so the samples come from before it.
+ *
+ * The after-probe is judged against those samples rather than against a fixed
+ * number of milliseconds: an absolute bound measured the OS scheduler and every
+ * other process on the box, and failed on exactly the runs where a developer
+ * was doing something else at the same time (#957). What the scanner is
  * responsible for is the DELTA — a healthy pool answers the after-probe about
- * as fast as it answered the before-probe; a wounded one does not.
+ * as promptly as the machine was answering during the workload; a wounded one
+ * does not.
  *
  * `UV_THREADPOOL_SIZE` is expected to be set small by the caller; the number of
  * blocking calls issued is read from it, so the demo scales with the pool rather
@@ -70,9 +80,12 @@ const PROBE_CEILING_MS = 10000;
 // before it counts as stuck.
 const PROBE_HEADROOM = 30;
 
-// How many baseline samples to take; the median is used so one scheduler
-// hiccup does not set the budget.
+// How many pre-workload baseline samples to take (leak mode's only baseline).
 const BASELINE_SAMPLES = 3;
+
+// Pause between in-workload samples, so the sampler observes the machine
+// rather than saturating this process's own pool.
+const SAMPLE_GAP_MS = 10;
 
 /**
  * Make a FIFO whose `open` for reading will block, because nothing will ever
@@ -113,15 +126,38 @@ async function measureBaseline() {
 }
 
 /**
- * How long the after-probe may take before it is declared stuck, given the
- * baseline: `PROBE_HEADROOM` times the baseline, never below the floor, never
- * above the ceiling.
+ * Sample an ordinary readdir repeatedly for as long as `work` is running.
  *
- * @param {number} baselineMs - Output of `measureBaseline`
+ * Only meaningful while this process's pool is healthy: the samples measure
+ * how fast the MACHINE answers during the workload, which is the comparison
+ * the after-probe deserves.
+ *
+ * @param {Promise<any>} work - The workload; sampling stops when it settles
+ * @returns {Promise<number[]>} Every sample taken, in ms
+ */
+async function sampleDuring(work) {
+  const samples = [];
+  let done = false;
+  work.then(() => { done = true; }, () => { done = true; });
+  while (!done) {
+    samples.push(await timeOrdinaryReaddir());
+    await new Promise((res) => setTimeout(res, SAMPLE_GAP_MS));
+  }
+  return samples;
+}
+
+/**
+ * How long the after-probe may take before it is declared stuck, given the
+ * worst baseline sample: `PROBE_HEADROOM` times it, never below the floor,
+ * never above the ceiling (a permanently stuck readdir exceeds any finite
+ * budget, so a larger one only slows the leak demonstration — and it must
+ * fit inside the caller's process timeout).
+ *
+ * @param {number} baselineMaxMs - Worst baseline sample
  * @returns {number} Budget in ms
  */
-function probeBudgetMs(baselineMs) {
-  return Math.min(PROBE_CEILING_MS, Math.max(PROBE_FLOOR_MS, baselineMs * PROBE_HEADROOM));
+function probeBudgetMs(baselineMaxMs) {
+  return Math.min(PROBE_CEILING_MS, Math.max(PROBE_FLOOR_MS, baselineMaxMs * PROBE_HEADROOM));
 }
 
 /**
@@ -226,10 +262,24 @@ async function runScanner() {
 
 (async () => {
   fs.mkdirSync(FIFO_DIR, { recursive: true });
-  const baselineMs = await measureBaseline();
-  const rejections = MODE === 'leak' ? await runLeak() : await runScanner();
-  const probe = await probeOrdinaryReaddir(probeBudgetMs(baselineMs));
-  process.stdout.write(JSON.stringify({ mode: MODE, rejections, baselineMs, ...probe }) + '\n');
+  const before = await measureBaseline();
+  let rejections;
+  let samples = [];
+  if (MODE === 'leak') {
+    rejections = await runLeak();
+  } else {
+    const work = runScanner();
+    samples = await sampleDuring(work);
+    rejections = await work;
+  }
+  const all = samples.length > 0 ? samples.slice().sort((a, b) => a - b) : [before];
+  const baselineMs = all[Math.floor(all.length / 2)];
+  const baselineMaxMs = all[all.length - 1];
+  const budgetMs = probeBudgetMs(baselineMaxMs);
+  const probe = await probeOrdinaryReaddir(budgetMs);
+  process.stdout.write(JSON.stringify({
+    mode: MODE, rejections, baselineMs, baselineMaxMs, baselineSamples: all.length, budgetMs, ...probe
+  }) + '\n');
   // Hard exit: in `leak` mode the abandoned reads still hold their threads, so
   // waiting for a clean drain would wait forever.
   process.exit(0);

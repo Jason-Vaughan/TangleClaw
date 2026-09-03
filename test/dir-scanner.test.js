@@ -752,7 +752,7 @@ describe('lib/dir-scanner — the threadpool leak (#883)', () => {
    *
    * @param {string} mode - `leak` or `scanner`.
    * @param {string} fifoDir - Scratch directory for the FIFOs.
-   * @returns {Promise<{mode: string, rejections: number, baselineMs: number, readdirMs: number|null, readdirStuck: boolean}>}
+   * @returns {Promise<{mode: string, rejections: number, baselineMs: number, baselineMaxMs: number, baselineSamples: number, budgetMs: number, readdirMs: number|null, readdirStuck: boolean}>}
    */
   function runDemo(mode, fifoDir) {
     return new Promise((resolve, reject) => {
@@ -802,10 +802,10 @@ describe('lib/dir-scanner — the threadpool leak (#883)', () => {
       'an unrelated readdir should be permanently stuck once the pool is gone');
   });
 
-  // Headroom for the after-probe over the before-probe. The scanner is
-  // answerable for the DELTA between the two, not for the machine's speed:
-  // the previous absolute bound (`readdirMs < 1000`) failed under concurrent
-  // load and passed on an idle box, on exactly the same code (#957). The
+  // Headroom for the after-probe over the WORST readdir the demo observed
+  // while its workload ran. The scanner is answerable for the delta, not for
+  // the machine's speed (#957): the baseline is sampled across the workload
+  // so it has the same exposure to a bursty stall as the after-probe. The
   // floor keeps a sub-millisecond baseline from turning ordinary jitter into a
   // failure; the multiplier is generous because the leak this guards is not a
   // slowdown but a readdir that never returns, which `readdirStuck` catches.
@@ -816,16 +816,20 @@ describe('lib/dir-scanner — the threadpool leak (#883)', () => {
     const verdict = await runDemo('scanner', path.join(tmpRoot, 'demo-scanner'));
 
     assert.equal(verdict.rejections, 3, 'all three hung scans should have been reported');
+    const detail = `baseline median ${verdict.baselineMs}ms, worst ${verdict.baselineMaxMs}ms over `
+      + `${verdict.baselineSamples} in-workload samples, stuck budget ${verdict.budgetMs}ms`;
     assert.equal(verdict.readdirStuck, false,
-      'the parent threadpool should survive more hung scans than it has threads');
-    // The demo measured its own baseline before the workload, on this machine,
-    // under this load. That is the number the after-probe is judged against.
-    assert.equal(typeof verdict.baselineMs, 'number', 'the demo must report the baseline it measured');
-    assert.ok(verdict.baselineMs >= 0);
-    const bound = Math.max(AFTER_PROBE_FLOOR_MS, verdict.baselineMs * AFTER_PROBE_HEADROOM);
+      `the parent threadpool should survive more hung scans than it has threads (${detail})`);
+    // The demo measured the machine while the workload ran. That is what the
+    // after-probe is judged against — and it must be a number in its own
+    // right, so this assertion stands without the one above it.
+    assert.equal(typeof verdict.baselineMaxMs, 'number', 'the demo must report the baseline it measured');
+    assert.ok(verdict.baselineSamples > 0, 'the baseline must rest on at least one sample');
+    assert.equal(typeof verdict.readdirMs, 'number', `the after-probe must have completed (${detail})`);
+    const bound = Math.max(AFTER_PROBE_FLOOR_MS, verdict.baselineMaxMs * AFTER_PROBE_HEADROOM);
     assert.ok(verdict.readdirMs <= bound,
-      `an ordinary readdir should still be about as prompt as before the workload: took `
-      + `${verdict.readdirMs}ms against a ${verdict.baselineMs}ms baseline (bound ${bound}ms)`);
+      `an ordinary readdir should still be about as prompt as the machine was during the workload: `
+      + `took ${verdict.readdirMs}ms against a bound of ${bound}ms (${detail})`);
   });
 });
 
