@@ -130,6 +130,25 @@ The landing page is your dashboard for managing projects and launching sessions.
 
 The header shows the TangleClaw logo (served from `public/logo.png`, with app icons in `public/icons/`), version, and a collapsible system stats panel (CPU, Memory, Disk, Uptime). Tap the stats area to expand or collapse it.
 
+### System Health Panel
+
+Directly under the header, above the project list, TangleClaw shows a **System health** panel
+whenever something machine-wide needs a hand. It is hidden when there is nothing to say — a
+dashboard with no problems has no health panel. Each row names one condition, what was measured,
+and the one-line fix (with a Copy button, since copying out of a phone terminal is unreliable):
+
+| Condition | What fired it | Fix |
+|---|---|---|
+| **Terminal (ttyd) PTY leak** | The macOS PTY pool is nearly full, or ttyd has accumulated leaked `tmux attach` clients — the cause of terminals that stop opening | `launchctl kickstart -k gui/$(id -u)/com.tangleclaw.ttyd` |
+| **Full Disk Access missing** | A read of `~/Documents` never answered — what a protected folder does when the `node` TangleClaw runs has no Full Disk Access | Grant Full Disk Access to that `node`, restart the server; or keep projects outside `~/Documents`, `~/Desktop`, `~/Downloads` |
+| **Server running old code** | The running process is older than the checkout on disk. On this page the stale-server banner already shows this with a Restart button, so the panel leaves it to the banner | Restart TangleClaw |
+
+A row that begins **Could not check** means the measurement itself failed (ttyd not running under
+launchd, `~/Documents` absent, git unreadable) and says why. That is deliberately not hidden: a
+check that could not run has not said the machine is healthy. The same verdicts are available
+as JSON from `GET /api/system/health`, each condition in one of three states — `fired`, `clear`,
+or `unknown` with a reason.
+
 ### PortHub Lease Import Banner
 
 If TangleClaw detects an existing PortHub installation with active leases that haven't been imported yet, a banner appears at the top of the landing page offering to import those leases into TangleClaw's built-in port registry. This is a one-time migration convenience — once imported, TangleClaw manages ports directly.
@@ -675,6 +694,30 @@ tail -50 ~/.tangleclaw/logs/tangleclaw.log
 
 # Health check
 curl -s http://localhost:3102/api/health | python3 -m json.tool
+```
+
+### The Dashboard Shows a System Health Panel
+
+The panel (see [System Health Panel](#system-health-panel)) only appears when a known recurring
+condition fired or could not be measured. Each row carries its own fix; the background for each:
+
+- **Terminal (ttyd) PTY leak** — on macOS, `tmux attach` clients spawned by ttyd can wedge in the
+  kernel's exiting state and hold `/dev/ttys*` slots until ttyd itself restarts. The ttyd watcher
+  restarts it automatically once either gate trips (pool ≥ 85% full, or ≥ 20 leaked children);
+  the panel shows the same reading so you can act before the watcher's next five-minute tick, or
+  when the watcher's own restart did not take. Sessions survive the restart — tmux servers are
+  separate processes and the browser reconnects.
+- **Full Disk Access missing** — the server process cannot read protected folders. A background
+  (launchd-spawned) `node` gets no permission prompt; reads under `~/Documents`, `~/Desktop` and
+  `~/Downloads` simply never return. Grant Full Disk Access to the exact `node` binary the
+  service runs (`which node`, then System Settings → Privacy & Security → Full Disk Access), and
+  restart the server so the grant applies. A brew or Node upgrade moves the binary and silently
+  drops the grant — if this row reappears after an upgrade, that is why.
+- **Could not check …** — the measurement failed and the row says why. It is not an all-clear.
+
+```bash
+# The same verdicts the panel renders
+curl -s http://localhost:3102/api/system/health | python3 -m json.tool
 ```
 
 ### Leftover `dir-scanner-child` Processes

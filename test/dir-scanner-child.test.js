@@ -572,3 +572,16 @@ describe('dir-scanner child — projectFacts carries git and config (#884, chunk
     }
   });
 });
+
+describe('dir-scanner child — probeDir (the health panel\'s Full Disk Access read, #345)', () => {
+  test('answers with the entry count for a readable directory', async () => {
+    const dir = scratch('probe-ok');
+    fs.writeFileSync(path.join(dir, 'a.txt'), '');
+    fs.mkdirSync(path.join(dir, 'b'));
+    assert.deepEqual(await HANDLERS.probeDir({ dir }), { entries: 2 });
+  });
+
+  test('rejects with ENOENT for a directory that is not there, so the caller can say "nothing to probe"', async () => {
+    await assert.rejects(HANDLERS.probeDir({ dir: path.join(tmpRoot, 'probe-missing') }), { code: 'ENOENT' });
+  });
+});

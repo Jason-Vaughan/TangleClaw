@@ -597,3 +597,87 @@ not numeric ?Es
     });
   });
 });
+
+describe('ttyd-watcher measureLeak (#345 — a reading the health panel can trust)', () => {
+  const PS_HEALTHY = '    1 Ss\n12345 S\n12345 S\n12345 R\n';
+  const PS_LEAKING = '    1 Ss\n' + '12345 ?Es\n'.repeat(25) + '12345 S\n';
+
+  beforeEach(() => ttydWatcher._reset());
+  afterEach(() => ttydWatcher._reset());
+
+  it('reports pid null and measures nothing when the job is not running', async () => {
+    const runner = makeRunner({ 'launchctl:list': LAUNCHCTL_OUTPUT_NOT_RUNNING });
+    ttydWatcher._setRunner(runner);
+    const m = (await ttydWatcher.measureLeak());
+    assert.equal(m.pid, null);
+    assert.equal(m.pool, null);
+    assert.equal(m.orphans, null);
+    assert.equal(runner.calls.length, 1, 'no sysctl/ps for a job that has no pid');
+  });
+
+  it('returns both gates read when everything answers', async () => {
+    ttydWatcher._setRunner(makeRunner({
+      'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
+      'sysctl:-n': '511\n',
+      'sh:-c': '40\n',
+      'ps:-A': PS_HEALTHY
+    }));
+    const m = (await ttydWatcher.measureLeak());
+    assert.equal(m.pid, 12345);
+    assert.deepEqual({ used: m.pool.used, cap: m.pool.cap, exhausted: m.pool.exhausted }, { used: 40, cap: 511, exhausted: false });
+    assert.equal(m.orphans, 0);
+    assert.equal(m.orphanThreshold, ttydWatcher.DEFAULT_ORPHAN_THRESHOLD);
+    assert.equal(m.ptyThresholdRatio, ttydWatcher.DEFAULT_PTY_THRESHOLD);
+  });
+
+  it('counts leaked E/Z children as orphans', async () => {
+    ttydWatcher._setRunner(makeRunner({
+      'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
+      'sysctl:-n': '511\n',
+      'sh:-c': '40\n',
+      'ps:-A': PS_LEAKING
+    }));
+    assert.equal((await ttydWatcher.measureLeak()).orphans, 25);
+  });
+
+  it('returns pool null — not the fail-safe zero — when the pool reading broke', async () => {
+    // THE MUTATION THIS CATCHES: passing `_isPtyPoolExhausted`'s sentinel through,
+    // which reads as "0 of 0 used, not exhausted" — a clear the machine never said.
+    ttydWatcher._setRunner(makeRunner({
+      'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
+      'sysctl:-n': new Error('sysctl: unknown oid'),
+      'ps:-A': PS_HEALTHY
+    }));
+    const m = (await ttydWatcher.measureLeak());
+    assert.equal(m.pool, null);
+    assert.equal(m.orphans, 0, 'the other gate is still read');
+  });
+
+  it('returns orphans null — not zero — when ps failed', async () => {
+    ttydWatcher._setRunner(makeRunner({
+      'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
+      'sysctl:-n': '511\n',
+      'sh:-c': '40\n',
+      'ps:-A': new Error('ps: command not found')
+    }));
+    const m = (await ttydWatcher.measureLeak());
+    assert.equal(m.orphans, null);
+    assert.equal(m.pool.cap, 511, 'the other gate is still read');
+  });
+
+  it('runs through an injected async runner when one is set', async () => {
+    const seen = [];
+    ttydWatcher._setAsyncRunner(async (cmd, args) => {
+      seen.push(cmd);
+      if (cmd === 'launchctl') return LAUNCHCTL_OUTPUT_RUNNING;
+      if (cmd === 'sysctl') return '511\n';
+      if (cmd === 'sh') return '40\n';
+      if (cmd === 'ps') return PS_HEALTHY;
+      throw new Error('unexpected ' + cmd);
+    });
+    const m = await ttydWatcher.measureLeak();
+    assert.equal(m.pid, 12345);
+    assert.equal(m.pool.used, 40);
+    assert.deepEqual([...seen].sort(), ['launchctl', 'ps', 'sh', 'sysctl'], 'measured through the async runner');
+  });
+});
