@@ -77,6 +77,40 @@ describe('#261 the wrap sentinel tick feeds engine-error detection', () => {
       'the one-nudge latch must not stop error detection');
   });
 
+  it('an empty capture from a wedged tmux neither clears the error nor re-stamps it (#894 shape)', async () => {
+    const s = tmuxSession(5);
+    ws._internal.listLiveAll = () => [s];
+    let pane = { lines: [CODEX_400, '> '], alternateScreen: false };
+    ws._internal.capturePane = () => pane;
+    await ws._internal.tick();
+    const first = engineErrors.get(5);
+    assert.ok(first);
+    pane = { lines: [], alternateScreen: false }; // capturePane's answer for a failed/timed-out read
+    await ws._internal.tick();
+    assert.deepEqual(engineErrors.get(5), first, 'no reading must not read as no error');
+  });
+
+  it('reads each engine profile once per tick, and a profile that will not load leaves the wrap scan running', async () => {
+    const a = tmuxSession(6);
+    const b = tmuxSession(7);
+    const broken = tmuxSession(8, 'broken');
+    ws._internal.listLiveAll = () => [a, b, broken];
+    let reads = 0;
+    ws._internal.getEngineProfile = (id) => {
+      reads++;
+      if (id === 'broken') throw new SyntaxError('Unexpected token in JSON');
+      return codex;
+    };
+    let brokenPane = ['idle'];
+    ws._internal.capturePane = (name) => ({ lines: name === 'tc-8' ? brokenPane : [CODEX_400] });
+    await ws._internal.tick();
+    assert.equal(reads, 2, 'one read per distinct engine per tick, not per session');
+    assert.ok(engineErrors.get(6) && engineErrors.get(7));
+    brokenPane = ['done', ws.SENTINEL_TOKEN];
+    await ws._internal.tick();
+    assert.equal(ws.isWrapRequested('proj-80'), true, 'a malformed profile must not cost the session its typed-wrap trigger');
+  });
+
   it('an engine with no patterns records nothing, and an ended session is forgotten on prune', async () => {
     const claude = tmuxSession(3, 'claude');
     const codexSession = tmuxSession(4);

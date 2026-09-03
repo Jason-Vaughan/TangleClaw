@@ -25,7 +25,7 @@ const CODEX_500 = '{"type":"error","status":500,"error":{"type":"server_error",'
 
 /** The Codex profile's declaration, as `data/engines/codex.json` ships it. */
 function codexProfile() {
-  return { id: 'codex', errorPatterns: [{ regex: '^\\s*\\{"type":"error"', parser: 'codex-json' }] };
+  return { id: 'codex', errorPatterns: [{ regex: '\\{"type":"error"', parser: 'codex-json' }] };
 }
 
 describe('engine-errors — codex-json parser', () => {
@@ -101,6 +101,19 @@ describe('engine-errors — validatePatterns', () => {
     const errors = engineErrors.validatePatterns([{ regex: '', parser: 'codex-json' }]);
     assert.ok(errors.some((e) => /regex must be a non-empty string/.test(e)));
   });
+
+  it('a nested quantifier is rejected with the reason — the pattern runs on the event loop per row per tick', () => {
+    for (const bad of ['(a+)+', '^(\\d*)*$', '(x+)*y', '(ab*)+', '(a{2,})+']) {
+      const errors = engineErrors.validatePatterns([{ regex: bad, parser: 'codex-json' }]);
+      assert.equal(errors.length, 1, `${bad} must be rejected`);
+      assert.match(errors[0], /nests a quantifier inside a quantified group/);
+    }
+    for (const fine of ['\\{"type":"error"', '(a|b)+', 'a+b*', '(?:x)+', '(a+)']) {
+      assert.deepEqual(engineErrors.validatePatterns([{ regex: fine, parser: 'codex-json' }]), [], `${fine} must be accepted`);
+    }
+    assert.deepEqual(engineErrors.compilePatterns({ id: 'p', errorPatterns: [{ regex: '(a+)+', parser: 'codex-json' }] }), [],
+      'the compiler skips what the validator rejects');
+  });
 });
 
 describe('engine-errors — scanLines', () => {
@@ -122,6 +135,24 @@ describe('engine-errors — scanLines', () => {
     assert.equal(hit.status, 400);
     assert.equal(hit.type, 'invalid_request_error');
     assert.match(hit.message, /choose a different model\.$/, 'reassembly must recover the whole message');
+  });
+
+  it('still finds the line behind a TUI gutter, indent or wrap prefix — the bundled regex is not anchored', () => {
+    const bundled = JSON.parse(require('node:fs').readFileSync(
+      require('node:path').join(__dirname, '..', 'data', 'engines', 'codex.json'), 'utf8'));
+    const list = engineErrors.compilePatterns(bundled);
+    for (const prefix of ['  ', '│ ', '⏺ ', '> ']) {
+      const hit = engineErrors.scanLines([`${prefix}${CODEX_400}`], list);
+      assert.ok(hit && hit.status === 400, `prefix ${JSON.stringify(prefix)} must not defeat detection`);
+    }
+  });
+
+  it('caps the row an operator-authored pattern runs against', () => {
+    const list = engineErrors.compilePatterns({ id: 'p', errorPatterns: [{ regex: 'NEEDLE$', parser: 'codex-json' }] });
+    const long = 'x'.repeat(engineErrors.MAX_ROW_CHARS) + 'NEEDLE';
+    assert.equal(engineErrors.scanLines([long], list), null, 'text past the cap is never seen by the regex');
+    const within = 'x'.repeat(engineErrors.MAX_ROW_CHARS - 200) + CODEX_500;
+    assert.equal(engineErrors.scanLines([within], engineErrors.compilePatterns(codexProfile())).status, 500);
   });
 
   it('reports the most recent of two errors', () => {
@@ -190,6 +221,19 @@ describe('engine-errors — observe: the record/clear rule', () => {
     const cleared = engineErrors.observe(session, ['> next prompt', 'Done — 3 files changed', '> '], codexProfile());
     assert.equal(cleared, null);
     assert.equal(engineErrors.get(7), null);
+  });
+
+  it('an EMPTY capture is no reading — the record and its timestamp survive it (#894 shape)', () => {
+    engineErrors.observe(session, [CODEX_400], codexProfile());
+    const before = engineErrors.get(7);
+    clock += 4_000;
+    // Exactly what `tmux.capturePane` returns when tmux failed or timed out.
+    const empty = { lines: [], alternateScreen: false };
+    assert.deepEqual(engineErrors.observe(session, empty.lines, codexProfile()), before, 'nothing captured must change nothing');
+    clock += 4_000;
+    const again = engineErrors.observe(session, ['above', CODEX_400, '> '], codexProfile());
+    assert.equal(again.timestamp, before.timestamp, 'the next real capture must not re-stamp the same error as new');
+    assert.deepEqual(engineErrors.observe(session, undefined, codexProfile()), before);
   });
 
   it('a different error replaces the record with a fresh timestamp', () => {

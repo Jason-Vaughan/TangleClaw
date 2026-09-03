@@ -72,7 +72,7 @@
   },
   "errorPatterns": [
     {
-      "regex": "^\\s*\\{\"type\":\"error\"",
+      "regex": "\\{\"type\":\"error\"",
       "parser": "codex-json"
     }
   ]
