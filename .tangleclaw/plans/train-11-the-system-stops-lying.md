@@ -306,6 +306,13 @@ can serve a session. TiLT Claw returned `{"ok":true}` while the operator's 2026-
 its SQLite database malformed. The `live` level is therefore "nothing we can check is wrong", not
 "known good", and the state names say so rather than implying more.
 
+**Second stated cost: the verdict is a load-time snapshot.** Every input is measured during
+`init()`, and the only one that keeps arriving stops after the auto-approve poll gives up. Nothing
+re-derives afterwards, so a connection that goes green and then loses its tunnel later keeps a
+green dot — the same sentence this car fixes, displaced from second zero to minute five. Bounding
+it needs a re-measurement signal, which is a mechanism this car does not build; filed as **#1185**
+rather than bolted on after review.
+
 **Out of scope, deliberately:** detecting whether *this browser* is paired (the
 `openclaw.device.auth.v1:wss://…` localStorage entry is same-origin readable, but its exact key
 shape needs one live capture from the operator's browser — filed as a follow-up); the fleet-wide
@@ -334,7 +341,7 @@ spec bundled it on the dead SSH design).
 - [x] Chunk 11 — #429 (PR #1174)
 - [x] Chunk 12 — #1063 (PR #1175)
 - [x] Chunk 13 — #1134 (PR #1177)
-- [ ] Chunk 14 — #1012
+- [x] Chunk 14 — #1012 (PR #1186)
 
 ## Context
 Session 2026-09-02/03, autonomous sprint (same shape as Train 10). Work in

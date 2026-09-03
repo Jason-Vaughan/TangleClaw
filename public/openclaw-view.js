@@ -52,8 +52,6 @@ function setFrameSrc(frame, url) {
  * The connection indicator: every measurement is recorded through it, and
  * recording re-renders. The reduction itself lives in openclaw-tunnel-state.js
  * so it can be exercised directly by tests rather than only pattern-matched.
- *
- * @type {{record: Function, state: Function, evidence: object}}
  */
 const connectionIndicator = tcTunnelState.createConnectionIndicator(
   () => document.getElementById('statusDot')
