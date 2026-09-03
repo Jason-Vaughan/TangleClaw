@@ -79,6 +79,37 @@ describe('sessions', () => {
       assert.ok(prompt.includes('Session Start'));
     });
 
+    it('names every rule source in force, in the engine\'s own config filename — never a hard-coded CLAUDE.md (#796)', () => {
+      const project = store.projects.getByName('prime-test');
+      const claude = store.engines.get('claude');
+      const codex = store.engines.get('codex');
+
+      const onClaude = sessions.generatePrimePrompt(project, claude);
+      assert.match(onClaude, /## Rule sources in force/);
+      assert.match(onClaude, /2 binding rule sources reach this session/, 'global + project rules; this fixture is ungoverned');
+      assert.match(onClaude, /1\. TangleClaw global rules — `data\/global-rules.md`, carried in the managed block of `CLAUDE\.md`/);
+      assert.match(onClaude, /2\. TangleClaw project rules — none active for this project\./);
+      assert.match(onClaude, /when two disagree, say so rather than pick one silently/);
+
+      const onCodex = sessions.generatePrimePrompt(project, codex);
+      assert.match(onCodex, /managed block of `\.codex\.yaml`/, 'the filename is the profile\'s, not Claude\'s');
+      assert.doesNotMatch(onCodex, /CLAUDE\.md/, 'a non-Claude prime must not name Claude\'s file');
+      assert.doesNotMatch(onCodex, /Plugin methodology/, 'plugin governance cannot apply on a non-Claude engine');
+    });
+
+    it('names the plugin methodology as a third source on a plugin-governed Claude project (#796)', () => {
+      const dir = path.join(projectsDir, 'prime-governed');
+      fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(dir, '.claude', 'settings.json'),
+        JSON.stringify({ enabledPlugins: { 'prawduct@prawduct': true } }));
+      store.projects.create({ name: 'prime-governed', path: dir, engine: 'claude' });
+      const project = store.projects.getByName('prime-governed');
+
+      const prompt = sessions.generatePrimePrompt(project, store.engines.get('claude'));
+      assert.match(prompt, /3 binding rule sources reach this session/);
+      assert.match(prompt, /3\. Plugin methodology \(prawduct\)[^\n]*owns merge strategy, attribution/);
+    });
+
     it('tells the session its base branch is red, and says unknown when it could not look (#991)', () => {
       const ciStatus = require('../lib/ci-status');
       const project = store.projects.getByName('prime-test');
@@ -1074,8 +1105,9 @@ describe('sessions', () => {
         // enough for the directives, so the yield is the only way to fit.
         // (2400, was 1800: the #1122 ecosystem primer joined every prime, and
         // its yield pointer is part of the non-yielding floor this scenario
-        // must accommodate.)
-        const TIGHT_BUDGET = 2400;
+        // must accommodate. 3000, was 2400: the #796 "Rule sources in force"
+        // directive joined the floor — ~500 chars that never yield.)
+        const TIGHT_BUDGET = 3000;
         const tight = {
           ...base,
           capabilities: { ...base.capabilities, startupInjection: { maxChars: TIGHT_BUDGET } }
