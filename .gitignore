@@ -40,6 +40,14 @@
 .tangleclaw/*
 !.tangleclaw/plans/
 
+# Priming prompts, for the same reason and by the same mechanism. The Global
+# Rules say a recurring session role's prompt is "a durable artifact, not chat
+# memory" and name this path as git-tracked — but `.tangleclaw/*` above swallowed
+# the directory, so the rule had been quietly unfollowable: `roadmap-triage.md`
+# sat untracked from the day it was written, invisible to a fresh clone and to
+# every review.
+!.tangleclaw/priming/
+
 # Engine configs TangleClaw GENERATES when its own clone is attached as a managed
 # project (#708 — the first-run scan detects the clone and pre-selects it). These
 # are machine-generated, not source, and an untracked one here is not cosmetic: it
