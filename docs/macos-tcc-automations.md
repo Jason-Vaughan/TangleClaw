@@ -15,23 +15,22 @@ launchd → ttyd (com.tangleclaw.ttyd) → tmux → engine (Claude Code, Codex, 
 ```
 
 macOS attributes a privacy check to the **responsible process** of that chain, and for a
-launchd job that is the job's own binary — `ttyd` — not the engine, and not your script. Three
-consequences follow, and none of them is a TangleClaw bug:
+launchd job that is the job's own program — `ProgramArguments[0]`, here `ttyd` — not the
+engine, and not your script. The whole problem is that identity, and two consequences follow
+from it; neither is a TangleClaw bug:
 
-1. **There is no prompt to answer.** The chain runs as a background service with no UI. A read
-   of a protected resource does not fail; it waits for a consent dialog that can never be shown.
-   This is the same mechanism behind the project-scan timeout in the
-   [user guide](user-guide.md#auto-detection-of-existing-projects) and the silent server hang
-   tracked as #324: a launchd-spawned `node` without Full Disk Access blocked forever on opening
-   its own working directory under `~/Documents`.
-2. **A grant keys to a binary's path.** Whatever you grant in System Settings is recorded
-   against the responsible binary's absolute path — for a Homebrew `ttyd` that is a
+1. **A grant keys to the responsible program's path.** Whatever you grant in System Settings
+   is recorded against that binary's absolute path — for a Homebrew `ttyd` that is a
    version-stamped Cellar path — so the next `brew upgrade` mints a new path, the old grant
-   points at a binary that no longer exists, and the chain is back to unprompted denial. The
-   grants TangleClaw itself depends on (`node`, `ttyd`, `caddy`) all behave this way.
-3. **Broadening the chain's grant is the wrong fix.** Granting `ttyd` Calendar access would
-   extend it to every session TangleClaw ever launches, for every project. The scoping you want
-   — *this* script may read *this* resource — cannot be expressed on the shared chain.
+   points at a binary that no longer exists, and the chain is denied again. The grants
+   TangleClaw itself depends on (`node`, `ttyd`, `caddy`) all behave this way: #324 was a
+   launchd-spawned `node` without Full Disk Access blocking forever on opening its own working
+   directory under `~/Documents`, and the project-scan timeout in the
+   [user guide](user-guide.md#auto-detection-of-existing-projects) is the same mechanism.
+2. **The grant cannot be scoped, so broadening it is the wrong fix.** Granting `ttyd` Calendar
+   access would extend it to every session TangleClaw ever launches, for every project. The
+   scoping you want — *this* script may read *this* resource — cannot be expressed on the
+   shared chain.
 
 So a session can write the script, but it cannot prove the script works. "It is blocked from
 here" is the expected result, not a finding.
@@ -49,10 +48,12 @@ directly. The grant then attaches to that job's binary and nothing else.
   `StandardErrorPath` all take absolute paths — launchd runs the job with no shell, no `$PATH`
   of yours, and no notion of the project directory. Point the log paths at a directory inside
   the project so the job's own output is where the next reader looks.
-- **Run a stable binary.** The grant keys to the interpreter that touches the resource. A
-  compiled helper at a fixed path inside the project survives upgrades; `/usr/bin/swift` or a
-  Homebrew interpreter re-keys the grant when it moves. If you must use an interpreter, expect
-  to re-grant after upgrading it.
+- **Make the job's program a stable binary.** Same rule as above: the grant keys to the job's
+  own program — `ProgramArguments[0]` — not to whatever that program goes on to run. A
+  `/bin/sh` wrapper keys the grant to `/bin/sh`, shared with every other shell job on the
+  machine; a Homebrew interpreter re-keys it on every upgrade. A compiled helper at a fixed
+  path inside the project is its own subject and survives both. If you must use an
+  interpreter, expect to re-grant after upgrading it.
 - **Dry-run by default; `--apply` to write.** The first launchd run is the one that raises the
   consent dialog, and the job may run several times before the grant lands. A script that only
   reports what it would change until it is passed an explicit `--apply` cannot do harm while
@@ -72,8 +73,7 @@ A minimal plist, with the paths that must be absolute marked:
   <key>Label</key>              <string>com.example.myproject.calendar-sync</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/me/Projects/myproject/bin/calendar-sync</string>   <!-- absolute -->
-    <string>--apply</string>
+    <string>/Users/me/Projects/myproject/bin/calendar-sync</string>   <!-- absolute; dry-run until --apply is added -->
   </array>
   <key>WorkingDirectory</key>   <string>/Users/me/Projects/myproject</string>            <!-- absolute -->
   <key>StandardOutPath</key>    <string>/Users/me/Projects/myproject/logs/calendar-sync.log</string>
@@ -103,16 +103,23 @@ launchctl print gui/$(id -u)/com.example.myproject.calendar-sync | grep -E 'stat
 ```
 
 `kickstart -k` starts the job now (killing a running instance first). On the first run macOS
-shows the consent dialog for the job's binary; grant it, kickstart again, and the log should
+shows the consent dialog for the job's program; grant it, kickstart again, and the log should
 turn from a denial into the script's dry-run report. A non-zero `last exit code` with an empty
-log usually means a wrong absolute path — launchd could not start the binary at all.
+log usually means a wrong absolute path — launchd could not start the program at all.
 
-After changing the plist, reload it; launchd does not re-read a plist on its own:
+Only once the dry-run report reads correctly does the job get to write: add
+`<string>--apply</string>` after the program in `ProgramArguments` (in the repo copy, then the
+installed copy), reload the plist — launchd does not re-read one on its own — and kickstart
+again:
 
 ```bash
 launchctl bootout gui/$(id -u)/com.example.myproject.calendar-sync
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.myproject.calendar-sync.plist
+launchctl kickstart -k gui/$(id -u)/com.example.myproject.calendar-sync
 ```
+
+The same bootout/bootstrap pair is the reload for any later plist change, including the
+path fix after a project rename.
 
 ## What TangleClaw does — and does not — do about it
 
