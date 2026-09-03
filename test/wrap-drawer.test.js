@@ -1392,6 +1392,30 @@ describe('#867 — stranded-wrap classification agrees with the server', () => {
       assert.match(out.label, /release pending/i);
     });
 
+    it('an armed PR carries the warning too, rather than swallowing it', () => {
+      // The two-sided defect: ordering the warning FIRST hid the release
+      // state; merely moving it below made a governed project whose gate is
+      // unmet and whose PR merged read as plain success, with the gate
+      // nowhere. Both facts compose — release state leads, warning rides.
+      const { summarizePipelineStatus } = loadHelpers();
+      const out = summarizePipelineStatus(withWarning({
+        pushed: true, prUrl: 'https://github.com/x/y/pull/1', autoMergeArmed: true, error: null
+      }));
+      assert.match(out.label, /release pending/i, 'release state still leads');
+      assert.match(out.detail, /preflight/,
+        'and the unmet gate is not discarded — this banner is the only place it surfaces');
+    });
+
+    it('a NOT-armed release names both the close-loop failure and the warning', () => {
+      const { summarizePipelineStatus } = loadHelpers();
+      const out = summarizePipelineStatus(withWarning({
+        pushed: true, prUrl: null, autoMergeArmed: false, error: 'auto-merge disabled on the repo'
+      }));
+      assert.match(out.label, /NOT armed/);
+      assert.match(out.detail, /auto-merge disabled/, 'the release failure');
+      assert.match(out.detail, /preflight/, 'and the warning');
+    });
+
     it('but a clean commit with a warning DOES report the warning', () => {
       const { summarizePipelineStatus } = loadHelpers();
       const out = summarizePipelineStatus(withWarning(null));

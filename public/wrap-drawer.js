@@ -365,6 +365,22 @@
     // fact wins the banner, and the warning still shows on its own step row.
     const warningSteps = (pipelineResult.results || []).filter((r) => r.output && r.output.warning === true);
     const warningDetail = () => `Warnings on: ${warningSteps.map((s) => s.stepId).join(', ')}`;
+    /**
+     * Append the warning note to a release-state detail line, COMPOSING the two
+     * facts instead of choosing between them. Ordering these wrongly is a
+     * two-sided defect and both sides have been live: with the warning check
+     * first it hid "release NOT armed"; with it merely moved below, a governed
+     * project whose gate is unmet and whose PR merged read as plain success,
+     * with no trace of the gate anywhere. Release state leads because it says
+     * whether the work shipped; the warning rides along because it is the only
+     * place an advisory `preflight` block reaches the banner at all.
+     * @param {string|null} detail - The release-state detail.
+     * @returns {string|null} The detail, with the warnings noted.
+     */
+    const withWarnings = (detail) => {
+      if (warningSteps.length === 0) return detail;
+      return detail ? `${detail} · ${warningDetail()}` : warningDetail();
+    };
     if (pipelineResult.commitSha) {
       // #638 — a committed wrap is NOT a shipped release. When the commit step
       // auto-branched and opened a PR, the version bump / CHANGELOG promotion
@@ -375,7 +391,7 @@
       if (pr && pr.error) {
         // The close-loop failed (push/PR-create/auto-merge-arm) — committed but
         // the branch may dangle and nothing is armed to land it.
-        return { label: 'Wrap committed — release NOT armed', tone: 'warning', detail: pr.error, pr };
+        return { label: 'Wrap committed — release NOT armed', tone: 'warning', detail: withWarnings(pr.error), pr };
       }
       if (pr && pr.stranded) {
         // #867 — pushed, but no PR exists and none is armed. Without this the
@@ -387,7 +403,7 @@
         return {
           label: 'Wrap committed — branch left on origin, no PR',
           tone: 'warning',
-          detail: pr.skippedReason || 'the wrap branch was pushed but no PR was opened',
+          detail: withWarnings(pr.skippedReason || 'the wrap branch was pushed but no PR was opened'),
           pr
         };
       }
@@ -397,13 +413,16 @@
         return {
           label: 'Wrap committed — release pending PR merge',
           tone: 'provisional',
-          detail: `${pipelineResult.commitSha.slice(0, 12)} · not yet on the base branch`,
+          detail: withWarnings(`${pipelineResult.commitSha.slice(0, 12)} · not yet on the base branch`),
           pr
         };
       }
       // Nothing about the release needs saying — so a warning, if there is one,
       // is the most important thing left.
       if (warningSteps.length > 0) {
+        // Wording unchanged — `test/wrap-drawer.test.js` pins it as an
+        // operator-facing contract, and R-8 was about the warning being
+        // DISCARDED on the PR paths, not about this label.
         return { label: 'Wrap completed with warnings', tone: 'warning', detail: warningDetail(), pr: null };
       }
       return { label: 'Wrap committed', tone: 'success', detail: pipelineResult.commitSha.slice(0, 12), pr: null };
