@@ -1838,6 +1838,13 @@ body {
   background: var(--elevated-bg);
   color: var(--text-secondary);
 }
+/* #429 — "Needs you" reads as a call to act, not as a failure: amber-on-amber
+   rather than the blocked badge's red-orange, so the operator can tell at a
+   glance which stopped step is theirs to unblock. */
+.wrap-step-status--needs-operator {
+  background: #78350f33;
+  color: #fbbf24;
+}
 .wrap-drawer-decision {
   padding: 12px 16px;
   border-top: 1px solid var(--elevated-bg);

@@ -80,6 +80,16 @@
       label: 'Skipped',
       tone: 'skipped',
       tooltip: 'Step ran but had nothing to do (e.g. ai-content with an empty prompt, version-bump with no [Unreleased] entries). Not a failure.'
+    },
+    // #429 — distinct from `blocked` because the recovery is distinct: a
+    // blocked step may be retryable, skippable, or fixable by the session,
+    // while this one is waiting on something only a person at the keyboard can
+    // do (exit plan mode). Rendering it as `blocked` would offer the operator
+    // the wrong affordances for the wrong reason.
+    'needs-operator': {
+      label: 'Needs you',
+      tone: 'needs-operator',
+      tooltip: 'Step stopped because the session is in a state only you can change (e.g. plan mode is read-only and content steps must edit files). The row says what to do; then Retry.'
     }
   };
 
@@ -146,7 +156,13 @@
       // session can fix, so the "Ask the session to fix this" affordance stays
       // scoped to ai-content blocks. Requires `isBlocker` so it never shows on a
       // historical/non-active row.
-      agentResolvable: blockedAt !== null && stepResult.stepId === blockedAt && stepResult.kind === 'ai-content',
+      // #429 — and NOT when the block is `needs-operator`: that status exists
+      // precisely because the session cannot act (a read-only pane discards
+      // the fix prompt exactly as it discarded the wrap prompt), so offering
+      // "Ask the session to fix this" would promise a recovery that cannot
+      // happen and send the operator round the same five-minute loop.
+      agentResolvable: blockedAt !== null && stepResult.stepId === blockedAt
+        && stepResult.kind === 'ai-content' && status !== 'needs-operator',
       warning
     };
   }
@@ -517,7 +533,11 @@
     for (const r of results) {
       const status = r.status || 'pending';
       if (status === 'done') out.done += 1;
-      else if (status === 'blocked') out.blocked += 1;
+      // #429 — `needs-operator` counts as blocked here. The rollup's buckets
+      // are exhaustive by contract: a status that lands in none of them is
+      // counted in `total` and nowhere else, so the digest under-reports the
+      // wrap's failures — the exact shape this rollup was added to stop.
+      else if (status === 'blocked' || status === 'needs-operator') out.blocked += 1;
       else if (status === 'pending') out.pending += 1;
       else if (status === 'skipped') {
         out.skipped += 1;

@@ -94,6 +94,15 @@
         "verifiedOn": "2026-07-28",
         "source": "https://docs.claude.com/en/docs/claude-code/hooks — 10,000-char cap is per hook output; overflow REPLACES the payload with a truncation preview (probe-verified on a live install, 2026-07-28)"
       }
+    },
+    "readOnlyModeMarker": {
+      "marker": "plan mode on (shift+tab to cycle)",
+      "label": "plan mode",
+      "exit": "shift+tab",
+      "evidence": {
+        "verifiedOn": "2026-09-03",
+        "source": "Claude Code 2.1.259, probed on a live pane: `claude --permission-mode plan` renders `⏸ plan mode on (shift+tab to cycle)` on the footer line beneath the input box. The mode words carry the whole signal — the same footer reads `bypass permissions on (shift+tab to cycle)` under --dangerously-skip-permissions, so the parenthetical alone matches every mode and must not be the marker."
+      }
     }
   },
   "statusPage": {
