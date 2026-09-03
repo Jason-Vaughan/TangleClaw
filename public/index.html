@@ -380,6 +380,12 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
       <span class="orphan-banner-text" id="staleServerBannerText"></span>
       <button type="button" class="btn btn-small orphan-banner-btn hidden" id="staleServerRestartBtn">Restart TangleClaw</button>
     </div>
+    <!-- Behind-origin banner (#227). Hidden until /api/server-info reports
+         behindOrigin.commitsAhead > 0. Info tone, role=status: the remedy is a
+         `git pull` at the operator's convenience, not an alert. -->
+    <div id="behindOriginBanner" class="orphan-banner behind-origin-banner hidden" role="status">
+      <span class="orphan-banner-text" id="behindOriginBannerText"></span>
+    </div>
     <!-- Orphan hooks repair banner (#145, chunk 2). Hidden until scan reports orphans. -->
     <div id="orphanHooksBanner" class="orphan-banner hidden" role="alert">
       <span class="orphan-banner-text" id="orphanHooksBannerText"></span>

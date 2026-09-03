@@ -201,6 +201,20 @@ body {
   border-radius: 3px;
   font-size: 12px;
 }
+/* Behind-origin variant (#227). Info tone — deliberately NOT --danger: the
+   clone lagging origin/main is a heads-up, and the stale-server banner above
+   it must stay the one that reads as urgent when both surface together. */
+.behind-origin-banner {
+  background: var(--root-accent, #4a9eff);
+  color: #fff;
+}
+.behind-origin-banner .orphan-banner-text { color: inherit; }
+.behind-origin-banner code {
+  background: rgba(0, 0, 0, 0.25);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+}
 .orphan-banner-text { flex: 1; }
 /* Settings-save warnings (#1148): one warning per line, and a plist path must
    wrap rather than push the Dismiss button off a phone screen. */

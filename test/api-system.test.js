@@ -229,6 +229,56 @@ describe('API — system, engines, tmux', () => {
     });
   });
 
+  describe('GET /api/server-info carries the behind-origin answer (#227)', () => {
+    const behindOrigin = require('../lib/behind-origin');
+
+    it('reports the cached count with the check enabled, without waiting on git', async () => {
+      const orig = { ...behindOrigin._internal };
+      let fetches = 0;
+      // HEAD on a branch, then a fetch that never completes: the route must
+      // answer anyway, from cache — a hung remote must not hang the poll.
+      behindOrigin._internal.gitSymbolicRef = (cb) => cb(null, 'refs/heads/main\n');
+      behindOrigin._internal.gitFetch = () => { fetches++; };
+      behindOrigin._internal.gitRevList = () => {};
+      behindOrigin._reset();
+      try {
+        const { status, data } = await request('GET', '/api/server-info');
+        assert.equal(status, 200);
+        assert.deepEqual(data.behindOrigin, { enabled: true, commitsAhead: 0, skipped: null, checkedAt: null },
+          'unmeasured yet: enabled, nothing to say, and honest about not having measured');
+        assert.equal(fetches, 1, 'an expired cache starts exactly one background fetch');
+      } finally {
+        Object.assign(behindOrigin._internal, orig);
+        behindOrigin._reset();
+      }
+    });
+
+    it('reports enabled:false and starts no fetch when the operator turned the check off', async () => {
+      const orig = { ...behindOrigin._internal };
+      let fetches = 0;
+      behindOrigin._internal.gitSymbolicRef = (cb) => cb(null, 'refs/heads/main\n');
+      behindOrigin._internal.gitFetch = () => { fetches++; };
+      behindOrigin._reset();
+      try {
+        const patched = await request('PATCH', '/api/config', { behindOriginCheckEnabled: false });
+        assert.equal(patched.status, 200);
+        const { data } = await request('GET', '/api/server-info');
+        assert.deepEqual(data.behindOrigin, { enabled: false, commitsAhead: 0, skipped: null, checkedAt: null });
+        assert.equal(fetches, 0, 'the flag is the operator\'s word that this machine must not call out');
+      } finally {
+        await request('PATCH', '/api/config', { behindOriginCheckEnabled: true });
+        Object.assign(behindOrigin._internal, orig);
+        behindOrigin._reset();
+      }
+    });
+
+    it('refuses a non-boolean behindOriginCheckEnabled', async () => {
+      const { status, data } = await request('PATCH', '/api/config', { behindOriginCheckEnabled: 'no' });
+      assert.equal(status, 400);
+      assert.match(data.error, /behindOriginCheckEnabled must be a boolean/);
+    });
+  });
+
   describe('POST /api/server/restart (#235)', () => {
     // Override the serverInfo module's exported functions to keep the
     // restart route's setTimeout-based exec from actually killing the
