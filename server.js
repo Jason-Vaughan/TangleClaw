@@ -613,10 +613,17 @@ function htmlResponse(res, status, html) {
     'Content-Type': 'text/html; charset=utf-8',
     'Content-Length': Buffer.byteLength(html),
     'Cache-Control': 'no-cache',
-    'X-Content-Type-Options': 'nosniff'
+    'X-Content-Type-Options': 'nosniff',
+    // The page is session-authored content rendered escape-first; the CSP is
+    // the second wall behind that escaping. Inline style is the page's own
+    // stylesheet; nothing else may load or run.
+    'Content-Security-Policy': PLAN_PAGE_CSP
   });
   res.end(html);
 }
+
+/** CSP for every plan-docs HTML response (the page and its refusal pages). */
+const PLAN_PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:";
 
 /**
  * Serve `/plans/:projectId/:file` — a project's plan rendered as a page (#542).
@@ -652,7 +659,10 @@ function servePlanPage(res, pathname) {
       message: 'A plan is named by its file name alone — letters, digits, dots, hyphens and underscores, ending in .md. Directories and path separators are not accepted.'
     }));
   }
-  const pid = Number(parts[2]);
+  // Decimal digits only — the same rule as `_projectByIdOrName`. `Number()`
+  // alone accepts `0x1`, `1e0` and ` 1`, so one project answered under
+  // several spellings of its id.
+  const pid = /^\d+$/.test(parts[2]) ? Number(parts[2]) : NaN;
   const project = Number.isInteger(pid) ? store.projects.get(pid) : null;
   if (!project) {
     return htmlResponse(res, 404, planDocs.renderMessagePage({
@@ -6462,7 +6472,22 @@ async function handleRequest(req, res) {
   // dashboard does (the loopback-by-default listener). No route-level gate is
   // added because none of the pages have one — the perimeter is the gate.
   if (method === 'GET' && pathname.startsWith('/plans/')) {
-    servePlanPage(res, pathname);
+    // Outside the `/api/` branch there is no route try/catch, so a renderer
+    // failure here (a pathological plan, a read race) would leave the
+    // response open forever. Answer with a 500 page instead.
+    try {
+      servePlanPage(res, pathname);
+    } catch (err) {
+      log.error('Plan page failed to render', { path: pathname, error: err.message, stack: err.stack });
+      if (!res.headersSent) {
+        htmlResponse(res, 500, planDocs.renderMessagePage({
+          title: 'Plan could not be rendered',
+          message: 'TangleClaw hit an error rendering this plan. The server log has the detail; the file itself is unchanged.'
+        }));
+      } else {
+        res.end();
+      }
+    }
     const duration = Date.now() - startTime;
     log.info(`${method} ${pathname}`, { status: res.statusCode, duration: `${duration}ms` });
     return;
