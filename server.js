@@ -2742,7 +2742,7 @@ route('GET', '/api/tc/whoami', (req, res) => {
       api: { origin: api, note: 'localhost is correct for YOUR OWN calls from this host' },
       operator: {
         host: operatorHost,
-        note: `operator-facing links must use http(s)://${operatorHost}:<port>, never localhost — the operator is almost never on this machine`
+        note: `Never hand the operator a localhost link — they are almost never on this machine; ${sessionOwnership.operatorLinkDirective(operatorHost)}.`
       },
       capabilities: [
         {
@@ -2775,7 +2775,7 @@ route('GET', '/api/tc/whoami', (req, res) => {
     },
     operator: {
       host: operatorHost,
-      note: `operator-facing links must use http(s)://${operatorHost}:<port>, never localhost — the operator is almost never on this machine`
+      note: `Never hand the operator a localhost link — they are almost never on this machine; ${sessionOwnership.operatorLinkDirective(operatorHost)}.`
     },
     capabilities,
     receiptRecorded: !!receipt
@@ -3840,7 +3840,14 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
   // The operator's own request carries the host they actually reached this
   // server on — better evidence than probing this machine, which names the box
   // rather than whatever proxy hostname they typed. Same trust gate as `owner`.
-  const operatorHost = sessionOwnership.resolveOperatorHost(_req.headers, store.config.load()).host;
+  const operatorTopology = sessionOwnership.resolveOperatorHost(_req.headers, store.config.load());
+  const operatorHost = operatorTopology.host;
+  // `source` is the only thing separating "no header sent" from "a header was
+  // refused as duplicated, malformed or loopback". Without it a prime that says
+  // the host is unknown is indistinguishable from one that never looked.
+  log.debug('Resolved operator host for launch', {
+    project: params.project, host: operatorHost, source: operatorTopology.source
+  });
 
   const result = sessions.launchSession(params.project, {
     primePrompt: body ? body.primePrompt : true,
