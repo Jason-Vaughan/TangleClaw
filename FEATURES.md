@@ -307,3 +307,10 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - **TBD** — touched in this session: `test/_tmux-guard.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/pidfile.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/tmux-guard.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-09-02)
+
+- **TBD** — touched in this session: `test/_temp-repo.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/git-budget.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/project-version.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/temp-repo.test.js`. <!-- describe -->
