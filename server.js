@@ -186,6 +186,7 @@ const wrapSentinel = require('./lib/wrap-sentinel');
 const medusaWake = require('./lib/medusa-wake');
 const authIdentity = require('./lib/auth-identity');
 const sessionOwnership = require('./lib/session-ownership');
+const planDocs = require('./lib/plan-docs');
 const serviceToken = require('./lib/service-token');
 const medusa = require('./lib/medusa');
 
@@ -598,6 +599,96 @@ function serveStatic(res, pathname) {
   });
   res.end(content);
   return true;
+}
+
+/**
+ * Send a complete HTML document.
+ * @param {http.ServerResponse} res
+ * @param {number} status - HTTP status code
+ * @param {string} html - The document
+ */
+function htmlResponse(res, status, html) {
+  res.writeHead(status, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': Buffer.byteLength(html),
+    'Cache-Control': 'no-cache',
+    'X-Content-Type-Options': 'nosniff'
+  });
+  res.end(html);
+}
+
+/**
+ * Serve `/plans/:projectId/:file` — a project's plan rendered as a page (#542).
+ *
+ * Every refusal is a plain HTML page, because a browser is what lands here:
+ * 404 for an unknown project, an absent plan, or one moved to `archive/`
+ * (named as such — that is where a shipped plan's link goes), 400 for a name
+ * that is not a plan name. The name must be a bare `.md` basename and must
+ * resolve by real path to a file directly inside the plans directory
+ * (`lib/plan-docs.js#resolvePlanFile`), so `..`, encoded separators and
+ * symlinks pointing elsewhere are all refused before any read happens.
+ * @param {http.ServerResponse} res
+ * @param {string} pathname - Request path, still percent-encoded
+ */
+function servePlanPage(res, pathname) {
+  const parts = pathname.split('/'); // ['', 'plans', projectId, file]
+  if (parts.length !== 4 || !parts[2] || !parts[3]) {
+    return htmlResponse(res, 404, planDocs.renderMessagePage({
+      title: 'Not found',
+      message: 'A plan is addressed as /plans/<projectId>/<file>.md.'
+    }));
+  }
+  let file;
+  try {
+    file = decodeURIComponent(parts[3]);
+  } catch {
+    file = null;
+  }
+  if (file === null || !planDocs.isValidPlanFileName(file)) {
+    log.warn('Refused plan request with an invalid plan name', { path: pathname });
+    return htmlResponse(res, 400, planDocs.renderMessagePage({
+      title: 'Invalid plan name',
+      message: 'A plan is named by its file name alone — letters, digits, dots, hyphens and underscores, ending in .md. Directories and path separators are not accepted.'
+    }));
+  }
+  const pid = Number(parts[2]);
+  const project = Number.isInteger(pid) ? store.projects.get(pid) : null;
+  if (!project) {
+    return htmlResponse(res, 404, planDocs.renderMessagePage({
+      title: 'Project not found',
+      message: `No project has the id ${parts[2]}. Project ids are numeric — see GET /api/projects.`
+    }));
+  }
+  const resolved = planDocs.resolvePlanFile(project.path, file);
+  if (resolved.status === 'archived') {
+    return htmlResponse(res, 404, planDocs.renderMessagePage({
+      title: 'Plan archived',
+      message: `${file} has been archived in ${project.name}: its work shipped and the plan was moved to the plans archive. It is no longer served.`
+    }));
+  }
+  if (resolved.status !== 'ok') {
+    return htmlResponse(res, 404, planDocs.renderMessagePage({
+      title: 'Plan not found',
+      message: `${project.name} has no plan named ${file} in ${planDocs.plansDirCandidates(project.path).map((c) => c.relative).join(' or ')}.`
+    }));
+  }
+  let markdown;
+  try {
+    markdown = fs.readFileSync(resolved.path, 'utf8');
+  } catch (err) {
+    log.warn('Plan file resolved but could not be read', { path: resolved.path, error: err.message });
+    return htmlResponse(res, 404, planDocs.renderMessagePage({
+      title: 'Plan not readable',
+      message: `${file} exists in ${project.name} but could not be read: ${err.message}`
+    }));
+  }
+  htmlResponse(res, 200, planDocs.renderPlanPage({
+    project: { id: project.id, name: project.name },
+    file,
+    relative: resolved.relative,
+    modifiedAt: resolved.modifiedAt,
+    markdown
+  }));
 }
 
 // ── Parse Query String ──
@@ -2717,6 +2808,14 @@ route('GET', '/api/tc/whoami', (req, res) => {
       detail: `cross-project shared documents: ${api}/api/shared-docs`
     },
     {
+      // #542 — the universal floor for "plans openable from anywhere": every
+      // engine can hand back a served link, not just the one with Artifacts.
+      id: 'plan-docs', enabled: !!project,
+      detail: project
+        ? `plan/design docs are served at a shareable URL: GET ${api}/api/projects/${project.id}/plans lists each .tangleclaw/plans/*.md with its link (/plans/${project.id}/<file>.md, behind the same gate as the dashboard) — hand the operator that link, never a file path`
+        : 'unavailable: this call did not resolve to a registered project'
+    },
+    {
       id: 'switchboard', enabled: medusaEnabled && !!workspaceId,
       detail: medusaEnabled && workspaceId
         ? `message other sessions: POST ${api}/api/sessions/${encodeURIComponent(project.name)}/medusa/send — your workspace id is ${workspaceId}`
@@ -3584,6 +3683,58 @@ route('GET', '/api/projects/:name', async (_req, res, params) => {
     return errorResponse(res, 404, `Project "${params.name}" not found`, 'NOT_FOUND');
   }
   jsonResponse(res, 200, project);
+});
+
+/**
+ * Resolve a `/api/projects/:project/...` segment that may be the numeric id
+ * (what the whoami roster and `/plans/:projectId/...` use) or the project name
+ * (what the rest of the `/api/projects/:name` family uses). The id wins when
+ * the segment is an integer that resolves; a project literally named after a
+ * different project's number is the one ambiguity, and ids are the documented
+ * key. Returns null when neither form resolves.
+ * @param {string} segment - The decoded path segment
+ * @returns {object|null} The stored project row, or null
+ */
+function _projectByIdOrName(segment) {
+  const pid = Number(segment);
+  if (Number.isInteger(pid) && /^\d+$/.test(segment)) {
+    const byId = store.projects.get(pid);
+    if (byId) return byId;
+  }
+  return store.projects.getByName(segment) || null;
+}
+
+// GET /api/projects/:project/plans — every served plan in the project with the
+// link to hand the operator (#542). Accepts the numeric id or the name.
+//
+// The origin is the operator's FRONT DOOR, not this listener: in caddy mode
+// that is Caddy's HTTPS port, and the host is the one the operator reaches
+// this box on (`resolveOperatorHost` — the caller's own Host header when it
+// is not loopback, else the machine's MagicDNS/hostname probe). An agent
+// calling from localhost therefore gets a link that answers from the
+// operator's phone, which is the whole point. When no host can be
+// established, `url` is null and `originNote` says to ask — a fabricated
+// localhost link would be worse than an honest absence.
+route('GET', '/api/projects/:project/plans', (req, res, params) => {
+  const project = _projectByIdOrName(params.project);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  }
+  const config = store.config.load();
+  const topology = sessionOwnership.resolveOperatorHost(req.headers, config);
+  const origin = topology.host ? httpsSetup.effectiveOperatorOrigin(config, topology.host) : null;
+  const plans = planDocs.listPlans(project.path).map((p) => {
+    const urlPath = `/plans/${project.id}/${encodeURIComponent(p.file)}`;
+    return { ...p, urlPath, url: origin ? origin + urlPath : null };
+  });
+  jsonResponse(res, 200, {
+    project: { id: project.id, name: project.name },
+    plansDirs: planDocs.plansDirCandidates(project.path).map((c) => c.relative),
+    origin,
+    originSource: topology.source,
+    originNote: sessionOwnership.operatorLinkDirective(topology.host),
+    plans
+  });
 });
 
 // POST /api/projects
@@ -6226,6 +6377,19 @@ async function handleRequest(req, res) {
       const subPath = parts.slice(3).join('/');
       return proxyToOpenclaw(req, res, ocProject, subPath);
     }
+  }
+
+  // Served plan docs — GET /plans/:projectId/:file renders a project's plan as
+  // a page (#542). Sits with the other pages on purpose: NOT an
+  // AUTH_BYPASS_PATHS entry, so Caddy's basic_auth gates it exactly as it
+  // gates the dashboard, and in direct mode it answers only where the
+  // dashboard does (the loopback-by-default listener). No route-level gate is
+  // added because none of the pages have one — the perimeter is the gate.
+  if (method === 'GET' && pathname.startsWith('/plans/')) {
+    servePlanPage(res, pathname);
+    const duration = Date.now() - startTime;
+    log.info(`${method} ${pathname}`, { status: res.statusCode, duration: `${duration}ms` });
+    return;
   }
 
   // Static files
