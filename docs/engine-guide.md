@@ -294,6 +294,8 @@ You can change a project's engine at any time from the project settings on the l
 
 No data is lost when switching engines. Session history and learnings are engine-independent.
 
+The previous engine's config file does not stay behind as live canon (#858): if TangleClaw wrote it — a managed block between the `tangleclaw` markers, or a whole file carrying the generated header — it is marked with a dated inactive notice naming the live engine and its file. A hand-written file, and a plugin-owned `CLAUDE.md`, are left alone and the reason is logged. Switching back regenerates the file.
+
 ## Model Status Monitoring
 
 TangleClaw monitors the upstream service status for engines with known status pages. The engine badge on project cards reflects real-time operational status:

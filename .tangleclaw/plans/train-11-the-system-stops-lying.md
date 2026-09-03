@@ -185,9 +185,13 @@ silently does nothing.
 
 ### Chunk 10 — #858 an engine switch leaves the previous config file as live canon
 - Option 2 (the `syncEngineHooks` precedent): on an engine switch, the previous engine's config
-  file — only when it carries TangleClaw's managed markers — has its managed block replaced by a
-  short inactive notice naming the live engine and its config file, dated. Hand-written content
-  outside the markers is untouched; a plugin-governed file is never touched.
+  file — when it carries TangleClaw's managed markers OR the generated whole-file header
+  (`GENERATED_HEADER_MARK`, one constant every generator and the detector share) — is marked
+  with a short, locally-dated inactive notice naming the live engine and its config file. A
+  managed block keeps the operator's content outside the markers; a hand-written file and a
+  plugin-owned `CLAUDE.md` are never touched, with the reason logged. A failed retirement
+  (unreadable, unwritable, refused merge) is logged at warn — the file is live canon by accident,
+  not by choice — and no retirement runs when the new engine's config was not written.
 - Switching back regenerates the file normally (verified, not assumed — the issue scoped it out).
 - Tests: switch claude→antigravity marks `CLAUDE.md`; switch back regenerates; plugin-governed
   and unmanaged files untouched.
