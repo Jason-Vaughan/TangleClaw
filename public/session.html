@@ -86,6 +86,12 @@
         <span class="sr-only" id="medusaLive" aria-live="polite"></span>
       </span>
       <button class="banner-btn" id="selectBtn" aria-label="Toggle text selection mode">Select</button>
+      <!-- #438: a drag in the terminal is copied by the TUI on the HOST (pbcopy
+           plus a tmux buffer) and never reaches this device; desktop gets the
+           #431 Option-drag gesture, but a phone has no Option key. This reads
+           that tmux buffer and hands it to the browser clipboard. -->
+      <button class="banner-btn" id="copyBtn" aria-label="Copy the last terminal selection to this device's clipboard"
+              title="Copy the last terminal selection to this device">Copy</button>
       <!-- #402: iOS has no route into xterm's hidden textarea (no Cmd-V, and
            the native Paste callout can't reach it), so touch devices get an
            explicit affordance. Ships hidden; revealed on touch support only —
@@ -170,6 +176,10 @@
       </div>
       <div class="peek-actions">
         <button class="banner-btn" id="peekSearchBtn" aria-label="Search peek">&#128269;</button>
+        <!-- #438: the peek text is real DOM text, so copying it needs no
+             terminal selection at all — the phone's way to grab output. -->
+        <button class="banner-btn" id="peekCopy" aria-label="Copy the peek text to this device's clipboard"
+                title="Copy the peek text to this device">Copy</button>
         <button class="banner-btn peek-jump" id="peekJumpTop" aria-label="Jump to top">&uarr;</button>
         <button class="banner-btn peek-jump" id="peekJumpBottom" aria-label="Jump to bottom">&darr;</button>
         <button class="banner-btn" id="peekRefresh" aria-label="Refresh peek">&#8635;</button>

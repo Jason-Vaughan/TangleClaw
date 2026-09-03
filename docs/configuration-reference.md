@@ -417,6 +417,7 @@ TangleClaw's HTTP API lives under `/api/`; the tables below are the reference. A
 | `/api/sessions/:project/wrap` | POST | Trigger wrap |
 | `/api/sessions/:project/wrap/complete` | POST | Complete wrap with captured data |
 | `/api/sessions/:project/peek` | GET | Peek at output |
+| `/api/sessions/:project/clipboard` | GET | Newest tmux buffer (the last terminal copy); 404 `NO_BUFFER` when nothing has been copied, `TMUX_UNAVAILABLE` when tmux cannot answer |
 | `/api/sessions/:project/history` | GET | Session history |
 
 ### Ports

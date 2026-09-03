@@ -183,6 +183,76 @@
   }
 
   /**
+   * What a Copy button should tell the operator, as one decision (#438).
+   *
+   * Pure so the toast wording is tested rather than eyeballed: the three
+   * honest outcomes — copied N characters, nothing to copy yet, and a named
+   * failure — must never collapse into one "Copied" that lies. Both Copy
+   * buttons on the session page (toolbar → tmux buffer, Peek → its own DOM
+   * text) route through here, so they read the same.
+   *
+   * @param {object} outcome - What happened
+   * @param {string|null} [outcome.text] - The text that was (or would be)
+   *   copied; `''`/null means there was nothing to copy.
+   * @param {boolean} [outcome.copied] - Whether `tcCopyToClipboard` reported
+   *   success. Ignored when there was no text.
+   * @param {string} [outcome.error] - The server's reason when the fetch
+   *   refused (`api.lastError`); named in the toast.
+   * @param {string} [outcome.errorCode] - The server's code (`api.lastErrorCode`).
+   *   `NO_BUFFER` is the "nothing to copy yet" state, not a failure.
+   * @returns {{ msg: string, cls: 'toast-ok'|'toast-warn' }} Toast text and tone.
+   */
+  function tcCopyOutcome(outcome) {
+    const o = outcome || {};
+    if (o.errorCode === 'NO_BUFFER') {
+      // No "select text first": on the phone this button exists for, the
+      // terminal cannot be selected at all — Peek → Copy is that device's path.
+      return { msg: 'Nothing to copy yet — on a phone use Peek → Copy', cls: 'toast-warn' };
+    }
+    if (o.error) {
+      return { msg: `Could not read the terminal selection: ${o.error}`, cls: 'toast-warn' };
+    }
+    const text = typeof o.text === 'string' ? o.text : '';
+    if (text.length === 0) {
+      return { msg: 'Nothing to copy yet', cls: 'toast-warn' };
+    }
+    if (!o.copied) {
+      return { msg: 'Could not copy — the browser refused the clipboard write', cls: 'toast-warn' };
+    }
+    const n = text.length;
+    return { msg: `Copied ${n.toLocaleString()} character${n === 1 ? '' : 's'}`, cls: 'toast-ok' };
+  }
+
+  /**
+   * Which clipboard write a fetch-then-copy button should use (#438).
+   *
+   * The text arrives from the server AFTER an `await`, and iOS Safari drops
+   * the tap's user activation across that await — `writeText` and
+   * `execCommand('copy')` then refuse. The one write Safari keeps activation
+   * for is `navigator.clipboard.write([new ClipboardItem({'text/plain':
+   * <Promise<Blob>>})])` issued synchronously inside the gesture, with the
+   * fetch as the promise. That needs the async Clipboard API's `write`, the
+   * `ClipboardItem` constructor, and a secure context (the API is undefined
+   * outside one). Anything less falls back to the `tcCopyToClipboard` path,
+   * which on plain-HTTP iOS may lose the gesture — stated, not hidden.
+   *
+   * Pure (TST-6L2P lift pattern) so the decision is tested; the browser
+   * behaviour it encodes is documented Safari behaviour, not yet verified on a
+   * device from this page.
+   *
+   * @param {object} caps - Capabilities of the current window
+   * @param {boolean} caps.hasWrite - `navigator.clipboard.write` is a function
+   * @param {boolean} caps.hasClipboardItem - `window.ClipboardItem` is a constructor
+   * @param {boolean} caps.secure - `window.isSecureContext`
+   * @returns {'item'|'legacy'} `item` = promise-valued ClipboardItem write inside
+   *   the gesture; `legacy` = fetch, then `tcCopyToClipboard`.
+   */
+  function tcClipboardWritePath(caps) {
+    const c = caps || {};
+    return (c.hasWrite && c.hasClipboardItem && c.secure) ? 'item' : 'legacy';
+  }
+
+  /**
    * xterm.js theme palettes keyed by TangleClaw theme name — the single
    * source of truth for terminal colors (UI-4C7R). Every terminal iframe
    * (session terminal, landing Master pane, in-session Master drawer) pulls
@@ -1073,6 +1143,8 @@
   global.tcCreateApiMutate = tcCreateApiMutate;
   global.tcCreateRestartFlow = tcCreateRestartFlow;
   global.tcCopyToClipboard = tcCopyToClipboard;
+  global.tcCopyOutcome = tcCopyOutcome;
+  global.tcClipboardWritePath = tcClipboardWritePath;
   global.TC_XTERM_THEMES = TC_XTERM_THEMES;
   global.tcApplyTerminalTheme = tcApplyTerminalTheme;
   global.tcQuantizeScrollDelta = tcQuantizeScrollDelta;

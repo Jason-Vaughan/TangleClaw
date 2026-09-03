@@ -2034,6 +2034,7 @@ function applyWebuiMode() {
     }
   };
   disable('peekBtn', 'Peek not available for Web UI sessions');
+  disable('copyBtn', 'Copy not available for Web UI sessions');
   disable('cmdBtn', 'Command bar not available for Web UI sessions');
   disable('selectBtn', 'Select not available for Web UI sessions');
   disable('uploadBtn', 'Upload not available for Web UI sessions');
@@ -2142,11 +2143,149 @@ function renderCommandPills() {
   }
 }
 
-// ── Peek Drawer ──
+// ── Copy (#438) ──
 
 /**
- * Open the peek drawer and fetch terminal output.
+ * Show the session toast with a message and tone, dismissing after 3s.
+ * @param {string} msg - Toast text
+ * @param {string} cls - Tone class (`toast-ok` / `toast-warn`)
  */
+function flashToast(msg, cls) {
+  const toast = document.getElementById('toast');
+  if (!toast) return;
+  toast.textContent = msg;
+  toast.className = `toast ${cls} visible`;
+  setTimeout(() => { toast.classList.remove('visible'); }, 3000);
+}
+
+/**
+ * Fetch the newest tmux buffer for this project (#438).
+ *
+ * Shared by both write paths of {@link copyTerminalSelection}. Resolves to the
+ * text; rejects with an `outcome` property carrying what `tcCopyOutcome`
+ * needs (the server's reason/code, or `text: ''` for an empty buffer) so the
+ * caller can toast the honest reason whichever path consumed the promise.
+ * @returns {Promise<string>} The buffer text (never empty on resolve).
+ */
+async function fetchTerminalSelection() {
+  const data = await api(`/api/sessions/${encodeURIComponent(projectName)}/clipboard`);
+  if (!data) {
+    const err = new Error(api.lastError || 'clipboard read failed');
+    err.outcome = { error: api.lastError, errorCode: api.lastErrorCode, connected: sessionState.connected };
+    throw err;
+  }
+  const text = typeof data.text === 'string' ? data.text : '';
+  if (text.length === 0) {
+    const err = new Error('empty buffer');
+    err.outcome = { text: '' };
+    throw err;
+  }
+  return text;
+}
+
+/**
+ * Toolbar Copy: read the newest tmux buffer — what the operator last copied
+ * in the terminal — and put it on THIS device's clipboard (#438).
+ *
+ * A drag in the web terminal is consumed by the TUI, which copies on the host
+ * (pbcopy plus a tmux buffer); nothing reaches the viewing device. Desktop
+ * has the #431 Option-drag gesture; a phone has no Option key, so the buffer
+ * is its copy path.
+ *
+ * The text arrives after an `await`, and iOS Safari drops the tap's user
+ * activation across it — a `writeText`/`execCommand` AFTER the fetch would be
+ * refused. So where the browser offers it (`tcClipboardWritePath` → `item`),
+ * the write is issued synchronously inside the gesture as a promise-valued
+ * `ClipboardItem`, with the fetch as the promise: Safari keeps activation for
+ * that form. Otherwise (`legacy`: plain HTTP has no async Clipboard API) it
+ * fetches and then calls `tcCopyToClipboard`, which on iOS over plain HTTP
+ * may lose the gesture — the toast then says the write was refused.
+ *
+ * Verified: the fetch/toast contract (tests) and that the `item` path is
+ * chosen only when every capability it needs is present. NOT yet verified on
+ * a device: that Safari honours the promise-valued item from this page — a
+ * documented behaviour, owed an on-device run.
+ * @returns {Promise<void>}
+ */
+async function copyTerminalSelection() {
+  const nav = window.navigator;
+  const path = tcClipboardWritePath({
+    hasWrite: !!(nav && nav.clipboard && typeof nav.clipboard.write === 'function'),
+    hasClipboardItem: typeof window.ClipboardItem === 'function',
+    secure: !!window.isSecureContext
+  });
+
+  if (path === 'item') {
+    let text = null;
+    let refusal = null;
+    // Built synchronously — nothing is awaited ahead of `write` — so the tap's
+    // activation still covers it. The fetch is the promise the item resolves
+    // through.
+    // The refusal is captured here rather than read off the write's rejection:
+    // a browser rejects `write` with its own DOMException, not our error.
+    const blobPromise = fetchTerminalSelection().then((t) => {
+      text = t;
+      return new Blob([t], { type: 'text/plain' });
+    }, (err) => {
+      refusal = (err && err.outcome) || { error: (err && err.message) || 'clipboard read failed' };
+      throw err;
+    });
+    blobPromise.catch(() => { /* consumed via ClipboardItem; keep the rejection handled */ });
+    try {
+      await nav.clipboard.write([new ClipboardItem({ 'text/plain': blobPromise })]);
+      const { msg, cls } = tcCopyOutcome({ text, copied: true });
+      flashToast(msg, cls);
+      return;
+    } catch (_err) {
+      if (refusal) {
+        // The fetch refused; the write never had text to place.
+        if (refusal.connected === false) return; // the connection toast is already up
+        const { msg, cls } = tcCopyOutcome(refusal);
+        flashToast(msg, cls);
+        return;
+      }
+      if (text === null) return;
+      // The browser refused the item write; try the gesture-less path with the
+      // text in hand, and report a refusal honestly if that fails too.
+      const copied = await tcCopyToClipboard(text);
+      const { msg, cls } = tcCopyOutcome({ text, copied });
+      flashToast(msg, cls);
+      return;
+    }
+  }
+
+  let text;
+  try {
+    text = await fetchTerminalSelection();
+  } catch (err) {
+    const outcome = err && err.outcome;
+    if (!outcome || outcome.connected === false) return;
+    const { msg, cls } = tcCopyOutcome(outcome);
+    flashToast(msg, cls);
+    return;
+  }
+  const copied = await tcCopyToClipboard(text);
+  const { msg, cls } = tcCopyOutcome({ text, copied });
+  flashToast(msg, cls);
+}
+
+/**
+ * Peek Copy: put the drawer's rendered text on this device's clipboard (#438).
+ *
+ * The peek is real DOM text, ANSI-stripped, so no terminal selection is
+ * needed first — on a phone, where xterm renders to a canvas that iOS cannot
+ * select, this is how terminal output gets copied at all.
+ * @returns {Promise<void>}
+ */
+async function copyPeekText() {
+  const text = peekRawText;
+  const copied = text.length > 0 ? await tcCopyToClipboard(text) : false;
+  const { msg, cls } = tcCopyOutcome({ text, copied });
+  flashToast(msg, cls);
+}
+
+// ── Peek Drawer ──
+
 /**
  * Strip ANSI escape codes from a string.
  * @param {string} str - Raw string with potential ANSI codes
@@ -4723,6 +4862,7 @@ function bindEvents() {
 
   // Banner buttons
   $('selectBtn').addEventListener('click', toggleSelect);
+  $('copyBtn').addEventListener('click', copyTerminalSelection);
   $('pasteBtn').addEventListener('click', pasteToTerminal);
   $('pasteCatcherInsert').addEventListener('click', insertFromPasteCatcher);
   $('pasteCatcherCancel').addEventListener('click', closePasteCatcher);
@@ -4787,6 +4927,7 @@ function bindEvents() {
   // Peek drawer
   $('peekClose').addEventListener('click', closePeek);
   $('peekRefresh').addEventListener('click', refreshPeek);
+  $('peekCopy').addEventListener('click', copyPeekText);
   $('peekBackdrop').addEventListener('click', closePeek);
 
   // Peek search

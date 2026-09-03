@@ -286,7 +286,11 @@ Below the terminal, the command bar lets you inject commands without touching th
 
 #### Peek
 
-Tap **Peek** to open a bottom drawer showing the last few lines of terminal output. This lets you check on progress without scrolling through the terminal. Tap refresh to update.
+Tap **Peek** to open a bottom drawer showing the last few lines of terminal output. This lets you check on progress without scrolling through the terminal. Tap refresh to update. The drawer's **Copy** button puts the whole peek text on your device's clipboard — on a phone, where the terminal itself can't be selected, this is the way to grab output (#438).
+
+#### Copy
+
+Tap **Copy** in the banner to put the last terminal selection on *your* device's clipboard (#438). A drag inside the terminal is copied by the engine's TUI on the TangleClaw host — it lands in the host's clipboard and in a tmux buffer, never on the phone or laptop you are viewing from. Desktop has the Option-drag gesture for a local copy (#431); touch devices have no Option key, so **Copy** reads that newest tmux buffer (`tmux show-buffer`) and hands it to the browser, then reports how many characters it copied. Nothing copied yet — or nothing since the tmux server started — shows "Nothing to copy yet" rather than an empty success. The buffer belongs to the tmux server, not to one session: it is the most recent copy from any TangleClaw session on the host, and TangleClaw's own command injections delete their delivery buffers so they never show up here. On an install upgraded from a version that did not delete them, the first press may return an older buffer (typically a switchboard nudge or command-bar send) until a fresh copy is made in the terminal — TangleClaw does not clear existing buffers, since nothing distinguishes an old delivery from something you copied.
 
 #### Select
 
