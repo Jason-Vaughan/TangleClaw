@@ -148,6 +148,16 @@ describe('buildMasterClaudeMd', () => {
     assert.match(md, /confirmed\/sent\/unverified\/no-rules\/unaware/);
   });
 
+  it('tells the Master a project session\'s "port unreachable" is not proof of outage (#1150)', () => {
+    // A sandboxed Codex session read its blocked loopback as "3102 is down" and
+    // the Master would have relayed it. The identity names the host-context
+    // checks that settle it.
+    const md = master.buildMasterClaudeMd({ serverPort: 3102 });
+    assert.match(md, /not proof of outage/);
+    assert.match(md, /launchctl print gui\/\$UID\/com\.tangleclaw\.server/);
+    assert.match(md, /lsof -nP -iTCP/);
+  });
+
   it('renders the API base URL from config port and the SERVED protocol (ENG-5R2W)', () => {
     // https only with the full willServeHttps conjunction (flag + both cert paths).
     const md = master.buildMasterClaudeMd({

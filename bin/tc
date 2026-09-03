@@ -94,8 +94,21 @@ async function main() {
       });
     } catch (err) {
       // Name the exact URL tried — "fetch failed" alone sends the reader
-      // guessing at which of server, port, and path was wrong.
-      throw new Error(`could not reach the TangleClaw API at ${url} — ${err.cause?.message || err.message}. The server may be down`);
+      // guessing at which of server, port, and path was wrong. And say only
+      // what was measured (#1150): a fetch that failed FROM HERE. A managed
+      // sandbox (Codex's, for one) blocks loopback while the host service is
+      // healthy, and "the server may be down" was repeated by agents as a
+      // real outage and relayed to the operator as such.
+      const unreachable = new Error(
+        `the TangleClaw API at ${url} is unreachable from this execution context `
+        + `(${err.cause?.message || err.message}). That is not proof the server is down: a managed sandbox `
+        + 'can block localhost even while the host service is healthy. Before reporting an outage, have a '
+        + 'host-context check made — the launchd state of com.tangleclaw.server, or a listening socket on '
+        + 'the port — by the operator or the Project Master; until then say the API was unreachable from '
+        + 'here, and stop'
+      );
+      unreachable.code = 'API_UNREACHABLE_FROM_CONTEXT';
+      throw unreachable;
     }
     if (!res.ok) {
       // Surface the server's error message — "unregistered peer", "gate
@@ -122,8 +135,10 @@ async function main() {
   try {
     result = await entry.run(ctx);
   } catch (err) {
+    // A stable code rides in front of the prose so a caller (or the agent
+    // reading this) can branch on the failure class rather than the sentence.
     process.stderr.write(
-      `tc: ${verb} failed — ${err.message}. `
+      `tc: ${verb} failed${err.code ? ` [${err.code}]` : ''} — ${err.message}. `
       + 'Do not assume the TangleClaw capability is available or that the action happened; '
       + 'say so instead of improvising.\n'
     );

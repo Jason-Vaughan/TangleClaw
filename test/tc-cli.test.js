@@ -270,8 +270,16 @@ describe('tc CLI vertical slice (ambient-awareness Chunk 02)', () => {
         encoding: 'utf8'
       });
       assert.equal(res.status, 2);
-      assert.match(res.stderr, /could not reach the TangleClaw API at http:\/\/127\.0\.0\.1:1\/api\/tc\/whoami/);
+      assert.match(res.stderr, /\[API_UNREACHABLE_FROM_CONTEXT\]/, 'a stable code, in front of the prose');
+      assert.match(res.stderr, /the TangleClaw API at http:\/\/127\.0\.0\.1:1\/api\/tc\/whoami\S* is unreachable from this execution context/);
       assert.match(res.stderr, /say so instead of improvising/);
+      // #1150: a Codex sandbox blocks loopback while the host service is
+      // healthy; "the server may be down" was relayed to the operator as an
+      // outage. The message says what was measured and what to do next.
+      assert.doesNotMatch(res.stderr, /server may be down/i, 'a failed fetch from here is not an outage verdict');
+      assert.match(res.stderr, /not proof the server is down/);
+      assert.match(res.stderr, /managed sandbox/);
+      assert.match(res.stderr, /host-context check/);
     });
 
     it('an unknown verb exits 1 with usage', () => {
