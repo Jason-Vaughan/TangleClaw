@@ -119,6 +119,34 @@ describe('#542 — served plan docs over HTTP', () => {
       assert.doesNotMatch(r.body, /<script/);
     });
 
+    it('sends a Content-Security-Policy that allows only the inline stylesheet, on the page and its refusals', async () => {
+      const csp = "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:";
+      assert.equal((await get(server, `/plans/${project.id}/train.md`)).headers['content-security-policy'], csp);
+      assert.equal((await get(server, `/plans/${project.id}/never.md`)).headers['content-security-policy'], csp);
+    });
+
+    it('answers a 500 page, not a hung socket, when the renderer throws', async () => {
+      const planDocs = require('../lib/plan-docs');
+      const real = planDocs.renderPlanPage;
+      planDocs.renderPlanPage = () => { throw new RangeError('Maximum call stack size exceeded'); };
+      try {
+        const r = await get(server, `/plans/${project.id}/train.md`);
+        assert.equal(r.status, 500);
+        assert.equal(r.headers['content-type'], 'text/html; charset=utf-8');
+        assert.match(r.body, /<h1>Plan could not be rendered<\/h1>/);
+      } finally {
+        planDocs.renderPlanPage = real;
+      }
+    });
+
+    it('accepts the project id as decimal digits only — 0x1 / 1e0 spellings do not resolve', async () => {
+      const hex = '0x' + project.id.toString(16);
+      const r = await get(server, `/plans/${hex}/train.md`);
+      assert.equal(r.status, 404);
+      assert.match(r.body, /No project has the id/);
+      assert.equal((await get(server, `/plans/${project.id}e0/train.md`)).status, 404);
+    });
+
     it('falls back to the legacy plans directory', async () => {
       const r = await get(server, `/plans/${project.id}/legacy.md`);
       assert.equal(r.status, 200);
