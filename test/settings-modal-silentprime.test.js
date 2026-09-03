@@ -45,12 +45,16 @@ describe('Project Settings modal — silentPrime toggle (#103 chunk 2)', () => {
       assert.match(src, /\$\{preserveChecked\s*\?\s*'checked'\s*:\s*''\}/);
     });
 
-    it('non-supportive engines wipe the container (Critic Mn2 regression)', () => {
-      // When supportsSilent is false, the helper sets container.innerHTML = ''
-      // and returns. This is the structural lock-in for the negative branch — a
-      // future refactor cannot accidentally emit toggle markup on a non-supportive
-      // engine.
-      assert.match(src, /if\s*\(\s*!supportsSilent\s*\)\s*\{[^}]*container\.innerHTML\s*=\s*['"]['"]/);
+    it('non-supportive engines say the setting does not apply — and render no #settingsSilentPrime (#741)', () => {
+      // The negative branch used to wipe the container, which read as "this
+      // engine has no such setting". It now says so in words. The structural
+      // lock-in stays: no `#settingsSilentPrime` element may exist on this
+      // branch, because doSaveSettings attaches `silentPrime` only when it does.
+      const branch = /if\s*\(\s*!supportsSilent\s*\)\s*\{([\s\S]*?)\n    return;\n  \}/.exec(src);
+      assert.ok(branch, 'the not-supported branch exists and returns');
+      assert.match(branch[1], /Not available on/, 'the operator is told the setting does not apply');
+      assert.match(branch[1], /disabled/, 'the control is inert, not hidden');
+      assert.doesNotMatch(branch[1], /id="settingsSilentPrime"/, 'no saveable control on this branch');
     });
 
     it('initial render is wired into openSettings via renderSilentPrimeToggle', () => {

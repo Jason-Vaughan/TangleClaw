@@ -2341,6 +2341,9 @@ body {
   user-select: none;
 }
 .gs-toggle-label input[type="checkbox"] { display: none; }
+/* A setting that does not apply on the selected engine is shown inert, not
+   hidden (#741): the operator reads why in the hint beneath it. */
+.gs-toggle-label--disabled { opacity: 0.55; cursor: not-allowed; }
 .gs-toggle-label .toggle-switch {
   width: 44px;
   height: 26px;

@@ -1246,7 +1246,20 @@ function renderSilentPrimeToggle(engineId, preserveChecked) {
   const profile = (state.engines || []).find(e => e.id === engineId);
   const supportsSilent = !!(profile && profile.capabilities && profile.capabilities.supportsSilentPrime);
   if (!supportsSilent) {
-    container.innerHTML = '';
+    // Said in words rather than hidden (#741): a toggle that vanishes reads
+    // as "this engine has no such setting", and the operator who set it on
+    // another engine is never told it means nothing here. No
+    // `#settingsSilentPrime` element, so the save path attaches no value —
+    // the stored key stays whatever it was and is not applicable.
+    container.innerHTML = `
+    <div class="form-group">
+      <label class="gs-toggle-label gs-toggle-label--disabled">
+        <span>Silent prime (hidden context)</span>
+        <input type="checkbox" id="settingsSilentPrimeNotApplicable" disabled>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint">Not available on ${esc(engineId || 'this engine')} — the session prime is typed into the terminal at launch instead. A silent-prime setting saved under another engine does not apply here.</div>
+    </div>`;
     return;
   }
   container.innerHTML = `
