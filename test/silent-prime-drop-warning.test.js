@@ -1,12 +1,14 @@
 'use strict';
 
 /*
- * #741 — a configured `silentPrime: true` that the engine cannot honor is a
- * DROPPED preference, and a dropped preference that says nothing reads as
- * "Codex sessions behave differently" rather than "your setting was
- * discarded". `defaultLaunchMode` already warns on the identical situation
- * thirty lines below; these pin the same voice for `silentPrime`, on the
- * launch path itself, and only there.
+ * #741 — on an engine without `supportsSilentPrime` the project's `silentPrime`
+ * setting is neither honored nor offered, and nothing said so: the capability
+ * gate fell through in silence and "Codex sessions behave differently" was
+ * the only tell. These pin the one owner of that answer
+ * (`engines.silentPrimeDisposition`) and the launch path's record of it —
+ * recorded at info, not warn, because a stored value on such a project is
+ * indistinguishable from the shipped default, so an alarm would fire on every
+ * non-Claude launch about a preference nobody set.
  */
 
 const { describe, it, before, after } = require('node:test');
@@ -19,7 +21,7 @@ setLevel('error');
 const store = require('../lib/store');
 const { installTmuxGuard, removeTmuxGuard, reapFixtureSessions } = require('./_tmux-guard');
 
-describe('#741 a dropped silentPrime warns like a dropped launch mode', () => {
+describe('#741 a silentPrime that does not apply on this engine says so', () => {
   let tmpDir;
   let projectsDir;
   let sessions;
@@ -68,7 +70,7 @@ describe('#741 a dropped silentPrime warns like a dropped launch mode', () => {
    * @param {string} name - Project name.
    * @param {string} engine - Engine id.
    * @param {boolean} silentPrime - The project's configured preference.
-   * @returns {string[]} Captured log lines at warn level.
+   * @returns {string[]} Captured log lines that mention silentPrime.
    */
   function launchAndCaptureWarnings(name, engine, silentPrime) {
     const dir = path.join(projectsDir, name);
@@ -77,7 +79,7 @@ describe('#741 a dropped silentPrime warns like a dropped launch mode', () => {
     store.projectConfig.save(dir, { engine, silentPrime });
     const lines = [];
     setConsoleStream({ write: (s) => lines.push(String(s)) });
-    setLevel('warn');
+    setLevel('info');
     let result;
     try {
       result = sessions.launchSession(name);
@@ -87,25 +89,55 @@ describe('#741 a dropped silentPrime warns like a dropped launch mode', () => {
     }
     assert.ok(result.session, `launch must succeed: ${result.error}`);
     store.sessions.kill(result.session.id, 'test cleanup');
-    return lines.filter((l) => /WARN/.test(l));
+    return lines.filter((l) => /silentPrime/.test(l));
   }
 
-  it('warns, naming the engine and the setting, when the engine lacks supportsSilentPrime', () => {
-    const warnings = launchAndCaptureWarnings('spd-codex-on', 'codex', true);
-    const hit = warnings.filter((l) => /silentPrime is not usable for this engine/.test(l));
-    assert.equal(hit.length, 1, `exactly one warning, got:\n${warnings.join('')}`);
-    assert.match(hit[0], /"engine":"codex"|engine: 'codex'|engine=codex|codex/, 'names the engine');
-    assert.match(hit[0], /supportsSilentPrime/, 'and says which capability is missing');
-    assert.match(hit[0], /pasted into the pane/, 'and what happens instead');
+  it('records, naming the engine and the setting, that silentPrime does not apply on codex', () => {
+    const lines = launchAndCaptureWarnings('spd-codex-on', 'codex', true);
+    const hit = lines.filter((l) => /silentPrime does not apply on this engine/.test(l));
+    assert.equal(hit.length, 1, `exactly one line, got:\n${lines.join('')}`);
+    assert.match(hit[0], /\bengine=codex\b/, 'names the engine, as the logger renders context');
+    assert.match(hit[0], /setting=silentPrime/, 'and the setting');
+    assert.match(hit[0], /supportsSilentPrime is not true/, 'and why');
+    assert.match(hit[0], /INFO/, 'a record, not an alarm — the value may be the shipped default');
+    assert.doesNotMatch(hit[0], /WARN/);
   });
 
-  it('stays silent when the engine honors the setting', () => {
-    const warnings = launchAndCaptureWarnings('spd-claude-on', 'claude', true);
-    assert.deepEqual(warnings.filter((l) => /silentPrime/.test(l)), []);
+  it('records the same on codex when the stored value is false — the setting is inapplicable either way', () => {
+    const lines = launchAndCaptureWarnings('spd-codex-off', 'codex', false);
+    assert.equal(lines.filter((l) => /does not apply on this engine/.test(l)).length, 1);
   });
 
-  it('stays silent when silentPrime is not configured — nothing was dropped', () => {
-    const warnings = launchAndCaptureWarnings('spd-codex-off', 'codex', false);
-    assert.deepEqual(warnings.filter((l) => /silentPrime/.test(l)), []);
+  it('says nothing on an engine that honors the setting', () => {
+    const lines = launchAndCaptureWarnings('spd-claude-on', 'claude', true);
+    assert.deepEqual(lines.filter((l) => /does not apply/.test(l)), []);
+  });
+
+  describe('silentPrimeDisposition is the one owner of the answer', () => {
+    const engines = require('../lib/engines');
+    const supporting = { capabilities: { supportsSilentPrime: true } };
+    const declaresFalse = { capabilities: { supportsSilentPrime: false } };
+    const declaresNothing = { capabilities: {} };
+
+    it('answers on/off only where the engine can honor it', () => {
+      assert.equal(engines.silentPrimeDisposition({ silentPrime: true }, supporting), 'on');
+      assert.equal(engines.silentPrimeDisposition({ silentPrime: false }, supporting), 'off');
+      assert.equal(engines.silentPrimeDisposition({}, supporting), 'off');
+    });
+
+    it('answers not-applicable for an engine that declares false, declares nothing, or is missing', () => {
+      for (const profile of [declaresFalse, declaresNothing, null]) {
+        assert.equal(engines.silentPrimeDisposition({ silentPrime: true }, profile), 'not-applicable');
+        assert.equal(engines.silentPrimeDisposition({ silentPrime: false }, profile), 'not-applicable');
+      }
+    });
+
+    it('the launch path reads the owner rather than restating the predicate', () => {
+      const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'sessions.js'), 'utf8');
+      const launch = src.slice(src.indexOf('function launchSession('), src.indexOf('function _deferEngineInit'));
+      assert.match(launch, /engines\.silentPrimeDisposition\(projConfig, engineProfile\)/);
+      assert.doesNotMatch(launch, /projConfig\.silentPrime === true\s*&&\s*engineProfile\.capabilities/,
+        'the launch-time predicate has one owner');
+    });
   });
 });

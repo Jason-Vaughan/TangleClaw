@@ -112,17 +112,24 @@ silently does nothing.
 - **Done when:** the LAN-IP case is red before, green after; loopback and socket cases unchanged.
 
 ### Chunk 6 — #741 `silentPrime` is dropped on unsupporting engines without a word
-- `lib/sessions.js`: parity with the `defaultLaunchMode` warning — when `silentPrime: true` and
-  the engine lacks `supportsSilentPrime`, `log.warn` names the engine and the setting and the
-  launch result carries the same warning the way the launch-mode drop does.
-- Descoped in the chunk: a `droppedPreference` field on the delivery ledger row. The ledger is a
-  fixed-column SQLite table with CHECK constraints (`session_rule_deliveries`), so the field is a
-  schema migration for one flag; the issue's own minimum is parity with the launch-mode warning,
-  and the row's `prime-paste` channel already records what happened instead. Revisit with the
-  receipt work in Chunk 12, which changes that table's semantics anyway.
-- Test: codex profile + `silentPrime: true` → warning present, launch proceeds; claude profile →
-  no warning; codex with `silentPrime: false` → no warning (nothing was dropped).
-- **Done when:** the warning appears exactly on the drop path and nowhere else.
+- One owner, `engines.silentPrimeDisposition(projConfig, profile)` → `on` / `off` /
+  `not-applicable`, beside `honorsLaunchMode`. The launch path reads it; no restated predicate.
+- **Why not a warning (the plan's first cut):** `DEFAULT_PROJECT_CONFIG.silentPrime` is `true`, the
+  create path persists it for every engine, and the settings UI hid the toggle on engines
+  without the capability — so a stored `true` on a Codex project is indistinguishable from the
+  default, and a warn-level line would fire on every non-Claude launch about a preference
+  nobody set (Critic R-5 on this car: warning on a default is the shape this train removes).
+- The surface the operator actually reads is the settings modal: on an engine without the
+  capability it now renders the toggle inert with "Not available on codex — the session prime is
+  typed into the terminal at launch instead" rather than hiding it. The launch records the
+  same fact at info level, naming project, engine, setting and why.
+- Descoped: a `droppedPreference` field on the delivery ledger row (fixed-column table with CHECK
+  constraints; the row's `prime-paste` channel already records what happened; revisit with the
+  receipt work in Chunk 12).
+- Tests: the owner's three answers; the launch line on codex (either stored value) and its absence
+  on claude; the settings branch renders the sentence and no saveable control.
+- **Done when:** a non-Claude project's settings say the setting does not apply; the launch
+  records it; nothing at warn level fires on a default.
 
 ### Chunk 7 — #1150 `tc` reports sandbox-blocked loopback as "the server may be down" (third-party)
 - `bin/tc`: a fetch failure says the API is unreachable **from this execution context**, names
