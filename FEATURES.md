@@ -318,3 +318,11 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - **TBD** — touched in this session: `test/git-budget.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/project-version.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/temp-repo.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-09-03)
+
+- **TBD** — touched in this session: `docs/prawduct-feedback.md`. <!-- describe -->
+- **TBD** — touched in this session: `test/chime-at-prompt.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/chime-status-payload.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/project-rules-unknown.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/silent-prime-drop-warning.test.js`. <!-- describe -->
