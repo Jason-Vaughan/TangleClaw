@@ -164,10 +164,18 @@ silently does nothing.
 
 ### Chunk 9 — #796 two binding rule sources contradict and nothing detects it
 - Slice 1 (visibility): the session-start context states how many rule sources are in force and
-  names them (TC global rules, TC project rules, plugin methodology when present).
+  names them (TC global rules, TC project rules, plugin methodology when present). On a
+  plugin-governed project the #1021 operational block carries no rules tier, so the section
+  says the global rules do NOT reach that session by file rather than claiming delivery
+  (Critic R-1 on this car).
 - Slice 2 (pinned overlap): `test/global-rules-boundary.test.js` asserts `data/global-rules.md`
-  does not prescribe on the methodology-owned topics — merge strategy, commit attribution
-  trailers — and lists the checked topics so the guard is a checklist, not a heuristic.
+  does not prescribe on the methodology-owned topics. The topic list is ONE module,
+  `lib/methodology-topics.js`, read by the guard and by the prime's plugin line (Critic R-8:
+  two hand-typed lists had already diverged).
+- TangleClaw's own `CLAUDE.md` is gitignored, plugin-governed and hand-maintained (the learnings
+  file records it): its `--squash` lines were hand-edited on the primary in this car, since no
+  sync reaches them. The wrap pipeline still hard-codes `--squash` in `lib/wrap-steps/`
+  (`commit.js`, `pr-merge.js`) — filed as its own issue; out of this car's minimal scope.
 - The live contradiction is reconciled minimally: the global rule keeps `--auto` and
   `--delete-branch` and drops the `--squash` prescription (merge strategy belongs to the
   methodology layer, ADR 0011). This regenerates managed configs; flagged to the operator as the

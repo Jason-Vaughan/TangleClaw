@@ -82,22 +82,40 @@ describe('sessions', () => {
     it('names every rule source in force, in the engine\'s own config filename — never a hard-coded CLAUDE.md (#796)', () => {
       const project = store.projects.getByName('prime-test');
       const claude = store.engines.get('claude');
-      const codex = store.engines.get('codex');
 
       const onClaude = sessions.generatePrimePrompt(project, claude);
       assert.match(onClaude, /## Rule sources in force/);
       assert.match(onClaude, /2 binding rule sources reach this session/, 'global + project rules; this fixture is ungoverned');
-      assert.match(onClaude, /1\. TangleClaw global rules — `data\/global-rules.md`, carried in the managed block of `CLAUDE\.md`/);
+      assert.match(onClaude, /1\. TangleClaw global rules — `data\/global-rules.md`, carried in the managed block of `CLAUDE\.md`\./);
       assert.match(onClaude, /2\. TangleClaw project rules — none active for this project\./);
       assert.match(onClaude, /when two disagree, say so rather than pick one silently/);
+      assert.doesNotMatch(onClaude, /methodology/i, 'an ungoverned project has no third source');
 
-      const onCodex = sessions.generatePrimePrompt(project, codex);
-      assert.match(onCodex, /managed block of `\.codex\.yaml`/, 'the filename is the profile\'s, not Claude\'s');
-      assert.doesNotMatch(onCodex, /CLAUDE\.md/, 'a non-Claude prime must not name Claude\'s file');
-      assert.doesNotMatch(onCodex, /Plugin methodology/, 'plugin governance cannot apply on a non-Claude engine');
+      // No filename declared: the fallback names "the engine's config file",
+      // never a guessed one.
+      const nameless = { ...claude, configFormat: undefined };
+      assert.match(sessions.generatePrimePrompt(project, nameless), /carried in the managed block of the engine's config file\./);
     });
 
-    it('names the plugin methodology as a third source on a plugin-governed Claude project (#796)', () => {
+    it('counts the project rules and names their channel (#796)', () => {
+      const dir = path.join(projectsDir, 'prime-counted');
+      fs.mkdirSync(dir, { recursive: true });
+      store.projects.create({ name: 'prime-counted', path: dir, engine: 'claude' });
+      const project = store.projects.getByName('prime-counted');
+      const claude = store.engines.get('claude');
+      store.sessionRules.create({ content: 'one', projectId: project.id });
+
+      store.projectConfig.save(dir, { engine: 'claude', silentPrime: false });
+      assert.match(sessions.generatePrimePrompt(project, claude),
+        /2\. TangleClaw project rules — 1 startup rule for this project, delivered in this prime\./);
+
+      store.sessionRules.create({ content: 'two', projectId: project.id });
+      store.projectConfig.save(dir, { engine: 'claude', silentPrime: true });
+      assert.match(sessions.generatePrimePrompt(project, claude),
+        /2\. TangleClaw project rules — 2 startup rules for this project, delivered through the rules hook\./);
+    });
+
+    it('on a plugin-governed Claude project the plugin is a source and the global rules are said NOT to reach it by file (#796)', () => {
       const dir = path.join(projectsDir, 'prime-governed');
       fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
       fs.writeFileSync(path.join(dir, '.claude', 'settings.json'),
@@ -106,8 +124,33 @@ describe('sessions', () => {
       const project = store.projects.getByName('prime-governed');
 
       const prompt = sessions.generatePrimePrompt(project, store.engines.get('claude'));
+      // The #1021 operational block carries no rules tiers, so claiming the
+      // managed block delivers the global rules here would be a false
+      // delivery claim — the exact shape this train removes.
+      assert.match(prompt, /2 binding rule sources reach this session/, 'project rules + the plugin; the global rules are not delivered here');
+      assert.doesNotMatch(prompt, /carried in the managed block/);
+      assert.match(prompt, /global rules \(`data\/global-rules.md`\) do NOT reach this project by file/);
+      assert.match(prompt, /2\. Plugin methodology \(prawduct\)[^\n]*owns merge strategy and commit attribution trailers\./,
+        'the topics the plugin owns are the guard\'s list, verbatim');
+
+      // The engine gate is measured on THIS governed fixture: on a non-Claude
+      // engine the plugin channel cannot apply, so it is not listed.
+      const onCodex = sessions.generatePrimePrompt(project, store.engines.get('codex'));
+      assert.match(onCodex, /managed block of `\.codex\.yaml`/, 'the filename is the profile\'s, not Claude\'s');
+      assert.doesNotMatch(onCodex, /CLAUDE\.md/, 'a non-Claude prime must not name Claude\'s file');
+      assert.doesNotMatch(onCodex, /Plugin methodology/, 'plugin governance cannot apply on a non-Claude engine');
+    });
+
+    it('names a vendored methodology hook as the third source (#796)', () => {
+      const dir = path.join(projectsDir, 'prime-vendored');
+      fs.mkdirSync(path.join(dir, 'tools', 'product-hook'), { recursive: true });
+      store.projects.create({ name: 'prime-vendored', path: dir, engine: 'claude' });
+      const project = store.projects.getByName('prime-vendored');
+
+      const prompt = sessions.generatePrimePrompt(project, store.engines.get('claude'));
       assert.match(prompt, /3 binding rule sources reach this session/);
-      assert.match(prompt, /3\. Plugin methodology \(prawduct\)[^\n]*owns merge strategy, attribution/);
+      assert.match(prompt, /3\. Vendored methodology hook \(`tools\/product-hook`\)/);
+      assert.match(prompt, /1\. TangleClaw global rules — `data\/global-rules.md`, carried in the managed block/, 'a vendored project still gets the full managed block');
     });
 
     it('tells the session its base branch is red, and says unknown when it could not look (#991)', () => {
