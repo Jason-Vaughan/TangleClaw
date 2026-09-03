@@ -2889,13 +2889,10 @@ describe('sessions', () => {
         assert.equal(result.ok, true, 'V2 pipeline of no-op stubs returns ok:true');
         assert.equal(sentCommand, null, 'V2 path must not send any tmux command');
         assert.ok(result.pipelineResult, 'V2 result carries the structured pipeline output');
-        // #207 Chunk 3 added `features-toc` between `next-session-prime`
-        // and `memory-update`; CC-1 appended `continuity-write` after
-        // `commit`; C2 (#353) stripped the L3 `critic-check` step and #570
-        // deleted its handler; PIDX slice 3 (#360) added `project-map` after
-        // `features-toc`; PIDX #426 added `index-describe` after `project-map`;
-        // #466 added `learnings-db-write` after `learnings-capture`; #570 added
-        // `apply-pr-resolutions` last— the count is read off the shared pipeline below, never written here.
+        // The count is read off the shared pipeline, never written here. The
+        // step list has grown six times, and every literal that recorded how
+        // many there were went stale before the code did — the last one was
+        // wrong by two, sitting directly above this assertion.
         assert.equal(result.pipelineResult.results.length,
           require('../lib/wrap-default-pipeline').steps().length,
           'every step of the code-owned pipeline reports a result');
