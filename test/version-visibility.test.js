@@ -675,9 +675,12 @@ describe('#716 update checks happen when they matter', () => {
   /**
    * Wire the version control and fire its click, returning what the label did.
    * @param {object|null} payload - Stubbed response, or an Error to throw.
-   * @returns {Promise<{label: string, title: string}>}
+   * @param {object} [opts] - `oldServer: true` makes the POST 404 the way a
+   *   server that predates `/api/update/check` does, so the click falls back
+   *   to the cached GET (#1061) and `payload` is what that GET answers.
+   * @returns {Promise<{label: string, title: string, live: string}>}
    */
-  async function clickVersion(payload) {
+  async function clickVersion(payload, opts = {}) {
     const handlers = {};
     const version = {
       textContent: 'v4.37.0',
@@ -689,9 +692,10 @@ describe('#716 update checks happen when they matter', () => {
     const versionCheckLive = { textContent: '' };
     const ctx = vm.createContext({
       document: { getElementById: (id) => ({ version, versionCheckLive })[id] || null },
-      api: async () => payload,
+      api: Object.assign(async () => payload, { lastErrorCode: null }),
       apiMutate: async () => {
         if (payload instanceof Error) throw payload;
+        if (opts.oldServer) { ctx.api.lastErrorCode = 'NOT_FOUND'; return null; }
         return payload;
       },
       localStorage: { getItem: () => null, setItem: () => {} },
@@ -720,6 +724,29 @@ describe('#716 update checks happen when they matter', () => {
     await handlers.click();
     return { label: version.textContent, title: version.title, live: versionCheckLive.textContent };
   }
+
+  it('does not say "up to date" for an older server\'s cached answer it could not re-check (#1061)', async () => {
+    // The POST 404s on a server that predates the route; the fallback GET
+    // answers from a cache whose payload carries no `checkOk`. The answer is
+    // real, but no check ran on this click.
+    const r = await clickVersion({
+      updateAvailable: false, latestVersion: null,
+      checkedAt: new Date(Date.now() - 5 * 60000).toISOString()
+    }, { oldServer: true });
+    assert.doesNotMatch(r.label, /up to date/i, 'a cached answer is not a measurement');
+    assert.match(r.label, /cached 5m ago — not re-checked/);
+    assert.match(r.title, /Cached answer from 5m ago/, 'the durable tooltip says the same');
+    assert.doesNotMatch(r.title, /Up to date/);
+  });
+
+  it('says "not checked yet" — the same thing the marker says — for an older server\'s cold cache (#1061)', async () => {
+    const r = await clickVersion({
+      updateAvailable: false, latestVersion: null, checkedAt: null
+    }, { oldServer: true });
+    assert.match(r.label, /not checked yet/i);
+    assert.doesNotMatch(r.label, /up to date/i);
+    assert.match(r.title, /Not checked for updates yet/, 'label and tooltip agree');
+  });
 
   it('answers an operator who asks, so no-pill stops being unfalsifiable', async () => {
     const r = await clickVersion({

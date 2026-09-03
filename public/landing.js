@@ -372,6 +372,13 @@ function renderVersionCheckHint(data) {
   } else if (data.checkOk === false) {
     hint = `Update check failed ${_agoLabel(data.checkedAt)} — tap to retry`;
     mark = 'check-failed';
+  } else if (data.checkOk === undefined) {
+    // No `checkOk` at all means the payload came from a server older than
+    // these assets (#1061): its cache carries an answer but cannot say whether
+    // the check behind it succeeded, and it cannot re-check until it restarts.
+    // A cached answer of unknown quality is not "Up to date".
+    hint = `Cached answer from ${_agoLabel(data.checkedAt)} — the running server predates re-checking; restart it to check now`;
+    mark = 'check-unknown';
   } else if (data.updateAvailable) {
     hint = `v${data.latestVersion} available — checked ${_agoLabel(data.checkedAt)}`;
   } else {
@@ -409,7 +416,16 @@ function wireVersionCheck() {
       // the local form omitted `checkedAt` and only worked because the
       // never-measured payload happens to also carry `checkOk: false`.
       if (!window.tcIsUpdateAnswer(data)) {
-        _showVersionLabel("couldn't check", true);
+        // A payload with no `checkedAt` is a cold cache — nothing was ever
+        // measured — and the marker beside this label already says "Not
+        // checked yet"; the label says the same thing rather than a second
+        // thing (#1061).
+        _showVersionLabel(data && !data.checkedAt ? 'not checked yet' : "couldn't check", true);
+      } else if (data.checkOk === undefined) {
+        // The POST fell back to an older server's cached GET (#1061): the
+        // answer is real but it is not a check that ran just now, and saying
+        // "up to date ✓" for it claimed a measurement that did not happen.
+        _showVersionLabel(`cached ${_agoLabel(data.checkedAt)} — not re-checked`, true);
       } else if (data.updateAvailable) {
         // The pill is the real answer here and it has just been rendered, so the
         // label goes straight back to the version rather than duplicating it.
