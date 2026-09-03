@@ -68,9 +68,13 @@ silently does nothing.
   green throughout.
 
 ### Chunk 2 — #1054 `fetchProjectRules` renders a failed fetch as "No rules yet."
-- `public/ui.js` `fetchProjectRules` returns `null` on failure; the single caller quartet renders
-  a distinct failure via `_setProjectRulesStatus`, and the list body renders
-  `window.tcRulesUnknownHtml` (Chunk 1's shared helper) — no third hand-written sentence.
+- `public/ui.js` `fetchProjectRules` returns `null` on failure; the list body renders
+  `window.tcRulesUnknownHtml` (Chunk 1's shared helper) — no third hand-written sentence. The
+  load loop and the four mutation handlers all re-read through one `refreshProjectRulesList`;
+  a mutation whose re-read fails additionally says so on the status line (the handler's own
+  "Added"/"Deleted" is true, but a green status over "Rules unknown" would contradict it). A
+  failed initial load says it in the list body only — the transient status line is shared by
+  both kinds and would name one failure for two lists.
 - Test through the real fetch path with a failing `api` stub; empty success still says "No rules yet."
 - **Done when:** failure and empty-success render differently, both asserted.
 
