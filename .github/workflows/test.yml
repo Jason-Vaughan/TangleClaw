@@ -19,4 +19,13 @@ jobs:
           # node:sqlite requires Node 22+; matches the production runtime
           node-version: 22
       - name: Run test suite
-        run: node --test 'test/*.test.js'
+        # Two reporters: tap to the log as before, and junit to a file for the
+        # audit below. The audit is what turns "CI green" into a statement of
+        # what CI actually ran — the runner has no engine CLIs, sits in UTC and
+        # is not macOS, so a slice of the suite skips here by design (#844).
+        run: node --test --test-reporter=tap --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results.xml 'test/*.test.js'
+      - name: Audit what this run did not execute
+        # Fails on any skipped test that test/skip-ledger.json does not name,
+        # so a new environment-gated test cannot join the not-run set
+        # unannounced. Writes "certified N of M" to the step summary.
+        run: node scripts/test-skip-audit.js test-results.xml

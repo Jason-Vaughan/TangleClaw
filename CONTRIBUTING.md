@@ -45,6 +45,13 @@ node --test 'test/*.test.js'
 
 The test suite uses `node:test` (built into Node.js 22+). Tests create temporary directories and in-memory SQLite databases — no external services needed.
 
+Some tests can only run where the real thing exists — an installed engine CLI, a non-UTC timezone, a macOS host — and skip elsewhere with a printed reason. CI audits those skips: after the suite, `scripts/test-skip-audit.js` compares every skipped test against `test/skip-ledger.json` and fails on any it does not name, then writes "certified N of M" to the run summary. If you add an environment-gated test, add a ledger entry saying why it cannot run on the runner and where it does run. To see the audit locally:
+
+```bash
+node --test --test-reporter=junit --test-reporter-destination=test-results.xml 'test/*.test.js'
+node scripts/test-skip-audit.js test-results.xml
+```
+
 ## Project Structure
 
 - `server.js` — HTTP server, API routes, reverse proxy, WebSocket upgrade
