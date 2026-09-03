@@ -156,3 +156,8 @@ CLAUDE.md
 
 # Prawduct session files
 .prawduct/.critic-partials-archive/
+
+# node:test junit report, written by the CI suite step and by the local
+# audit recipe in CONTRIBUTING.md (#844). Never a source file; on this clone an
+# untracked file at the root also blocks the self-updater.
+test-results.xml

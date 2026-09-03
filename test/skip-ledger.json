@@ -1,0 +1,56 @@
+{
+  "_comment": [
+    "The tests CI is allowed to NOT run, and why (#844).",
+    "`scripts/test-skip-audit.js` reads this after every CI suite run. A skipped test whose",
+    "full path (`suite > suite > test`) matches no `match` pattern here FAILS the run. Adding",
+    "an environment-gated test means adding an entry: `why` it cannot run on the runner, and",
+    "`runsWhere` it does run — an entry with no such place is a test nothing ever executes.",
+    "Patterns are anchored regexes over the path. Match the tier, not one test, so a sibling",
+    "test in the same tier is covered without a new entry, and keep them narrow enough that a",
+    "test outside the tier is not."
+  ],
+  "entries": [
+    {
+      "id": "engine-cli-launch-flags",
+      "match": "^engine launch flags exist in the installed CLI \\(#731\\) > [a-z0-9-]+ > launch mode \"[^\"]+\" uses args the installed CLI accepts$",
+      "why": "Probes TangleClaw's launch args against the real engine CLI's own parser; the runner has no engine installed.",
+      "runsWhere": "any developer or operator machine with the engine installed — this is where an upstream flag removal (the recorded codex --full-auto learning) surfaces; a self-hosted runner with the engines would run them per PR (#844 option 2, an operator decision)."
+    },
+    {
+      "id": "engine-cli-probe-summary",
+      "match": "^engine launch flags exist in the installed CLI \\(#731\\) > actually probed something, or says plainly that it did not$",
+      "why": "The guard's guard: skips only when no flag-declaring engine is installed, and says so.",
+      "runsWhere": "same hosts as engine-cli-launch-flags."
+    },
+    {
+      "id": "prawduct-upstream-drift",
+      "match": "^C1 — per-project plugin migration \\(#262\\) > engines\\.PRAWDUCT_INSTALL_REFERENCE > matches the installed plugin’s INSTALL_REFERENCE \\(skipped when not installed\\)$",
+      "why": "Compares TangleClaw's install reference with the INSTALLED prawduct plugin's source under ~/.claude; the runner has no plugin checkout.",
+      "runsWhere": "developer machines with prawduct installed, and the scheduled upstream-drift workflow (#835), which fails rather than skips when the checkout is absent."
+    },
+    {
+      "id": "live-caddyfile",
+      "match": "^classifyIngressState > classifies THIS machine's live Caddyfile as protected, when one is present$",
+      "why": "Reads the host's live Caddy ingress config; the runner runs no Caddy.",
+      "runsWhere": "the operator's install, where the Caddyfile exists."
+    },
+    {
+      "id": "host-pty-pool-darwin",
+      "match": "^ttyd-watcher > production runner smoke test \\(darwin only\\) > (_isPtyPoolExhausted|_countTtydZombies) returns .* against the real host shell$",
+      "why": "Exercises the production BSD pgrep/sysctl path for the recurring PTY-exhaustion class (#94, #144, #380); the runner is Linux.",
+      "runsWhere": "every macOS developer machine — the platform the watcher ships on."
+    },
+    {
+      "id": "local-vs-utc-date",
+      "match": "^.*todayIsoLocal.* > returns LOCAL date \\(not UTC\\) when the host is in a non-UTC zone.*$",
+      "why": "The local-vs-UTC distinction is unobservable on a UTC host, and the runner is UTC.",
+      "runsWhere": "any developer machine in a non-UTC zone; the wiring pins beside each of the three copies run everywhere."
+    },
+    {
+      "id": "case-insensitive-fs",
+      "match": "^projects > updateProject > .* > allows a case-only self-rename at the DB-validator level .*$",
+      "why": "A case-only directory rename is unobservable on a case-insensitive filesystem (macOS APFS default). Skips locally, RUNS on the Linux runner; listed so a case-insensitive CI host would not read as an unknown skip.",
+      "runsWhere": "the ubuntu runner and any case-sensitive filesystem; the cross-rename tests beside it exercise the same gate everywhere."
+    }
+  ]
+}
