@@ -1,6 +1,6 @@
 # Engine Guide
 
-Engines in TangleClaw represent AI coding agents. TangleClaw abstracts engine differences so you can switch between Claude Code, Codex, Aider, or any custom engine without reconfiguring your projects.
+Engines in TangleClaw represent AI coding agents. TangleClaw abstracts engine differences so you can switch between Claude Code, Codex, Aider, or any custom engine without reconfiguring your projects. When a project switches engines, the previous engine's TangleClaw-written config file is marked inactive (a dated notice naming the live engine and its file) rather than left on disk as live canon; hand-written and plugin-owned files are left alone, and switching back regenerates the file (#858).
 
 ## How Engines Work
 
@@ -293,6 +293,8 @@ When adding a new engine, verify that its generated config includes all of the f
 You can change a project's engine at any time from the project settings on the landing page or the session settings modal. The change takes effect on the next session launch — TangleClaw regenerates the config file in the new engine's format.
 
 No data is lost when switching engines. Session history and learnings are engine-independent.
+
+The previous engine's config file does not stay behind as live canon (#858): if TangleClaw wrote it — a managed block between the `tangleclaw` markers, or a whole file carrying the generated header — it is marked with a dated inactive notice naming the live engine and its file. A hand-written file, and a plugin-owned `CLAUDE.md`, are left alone and the reason is logged. Switching back regenerates the file.
 
 ## Model Status Monitoring
 
