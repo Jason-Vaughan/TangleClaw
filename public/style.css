@@ -1789,6 +1789,17 @@ body {
   .dash-version { min-height: 44px; padding: 0 10px; }
 }
 
+/* Phone-landscape header (#1192). An 844px-wide phone on its side still gets
+   the desktop header, and brand + stats + seven action pills exceed that width
+   with both outer clusters refusing to shrink, so the trailing pills (Global
+   Rules, the gear) clip at the edge. The pill row wraps under the brand line
+   instead; the portrait block below tightens this further. Same cascade note
+   as that block: this must follow the `.dash-bar` / `.dash-actions` base rules. */
+@media (max-width: 900px) {
+  .dash-bar { flex-wrap: wrap; row-gap: 4px; }
+  .dash-actions { flex-wrap: wrap; }
+}
+
 /* Phone-portrait layout (#1192). Below 600px the dashboard's three single-row
    bars — header, toolbar, card action row — no longer fit, and none of them
    wrapped: the toolbar drew its filter box OVER the session count, the header
@@ -1807,6 +1818,13 @@ body {
   /* Header: the action pills take their own line(s) instead of clipping. */
   .dash-bar { flex-wrap: wrap; row-gap: 4px; }
   .dash-actions { flex: 1 1 100%; flex-wrap: wrap; }
+  /* The auth / bind / ttyd notices render inside the brand cluster, which
+     does not shrink and keeps them on one line (42ch, ellipsized). At phone
+     width a visible notice ran the whole first line off the edge, where the
+     body's overflow: hidden clipped it. The cluster takes the full line and
+     lets a notice wrap onto as many lines as it needs. */
+  .dash-brand { flex: 1 1 100%; flex-wrap: wrap; min-width: 0; }
+  .dash-auth-warning { white-space: normal; max-width: 100%; }
   /* Toolbar: count and + New share the first line; the filter column, which
      cannot shrink below its 160px filter box, drops to a full-width line of
      its own. `order` moves only the center column, so DOM (and tab) order is
