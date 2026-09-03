@@ -616,6 +616,21 @@ Before completing a later move, update or reinstall the LaunchAgent so its
 `WorkingDirectory` refers to the final, fully copied location. Keep the original
 copy until the health check succeeds from that location.
 
+### Dashboard Loads Blank — No Project List, Session Tabs Still Work
+
+The page renders its chrome but no projects appear and nothing recovers, while
+already-open session tabs keep working. The server is fine — it is the cached
+dashboard shell in *this browser* that did not run. Every load that does boot
+leaves a `Dashboard booted` line in `~/.tangleclaw/logs/tangleclaw.log` on the
+server box; a `GET /` with no such line after it is the fault, seen from the
+server side.
+
+Follow [the runbook](runbooks/dashboard-blank.md) **before** reloading or
+clearing anything: the browser-side evidence (console, Cache Storage, the
+service worker's state) is gone the moment the condition clears, which it does
+on its own. The runbook also says why bumping the service worker's
+`CACHE_NAME` is not the fix.
+
 ### Dashboard Constantly Refreshes After Enabling HTTPS
 
 Port 3102 serves either HTTP or HTTPS, not both. If HTTPS is enabled but the

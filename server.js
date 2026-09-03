@@ -691,6 +691,25 @@ function servePlanPage(res, pathname) {
   }));
 }
 
+/**
+ * Log a page navigation at info. Static assets are logged at debug — on a
+ * default install (`logLevel: info`) they never reach the log, and that is
+ * right for a stylesheet. The documents are different: `GET /` is one half of
+ * the pair the blank-dashboard runbook reads — `GET /` followed by `Dashboard
+ * booted` means the shell ran, `GET /` alone means it did not (#817) — and the
+ * session page is what the runbook names as the innocent explanation for a
+ * `GET /` with no beacon. A pair whose first half is invisible by default is
+ * not observable; this is the one line that makes it so.
+ *
+ * @param {string} method - HTTP method
+ * @param {string} pathname - Request path as the browser sent it
+ * @param {number} startTime - `Date.now()` at request start
+ * @param {string} document - The file that answered it (e.g. `index.html`)
+ */
+function logNavigation(method, pathname, startTime, document) {
+  log.info(`${method} ${pathname}`, { status: 200, duration: `${Date.now() - startTime}ms`, document });
+}
+
 // ── Parse Query String ──
 
 /**
@@ -819,6 +838,31 @@ route('GET', '/api/server-info', (_req, res) => {
   // arrives). Surfacing only — never enforces. See docs/auth-status-surfacing.md.
   info.authStatus = authIdentity.resolveAuthStatus(_req.headers, cfg);
   jsonResponse(res, 200, info);
+});
+
+// POST /api/dashboard/boot — the dashboard shell's boot beacon (#817). The
+// client sends it once per page load, after its first successful projects
+// fetch has rendered. A shell that never initialized (a stale precached
+// landing.js, say) loads the document and nothing else — every server signal
+// stays green — so the absence of `GET /api/projects` was the only tell, and
+// that is equally what an operator opening a session page directly leaves
+// behind. This line is the positive signal: `Dashboard booted` in the log
+// after a `GET /` means the shell ran; its absence means it did not. Logged
+// with whatever cache generation the browser reports, because "which precache
+// did it boot against" is the first question the runbook asks
+// (docs/runbooks/dashboard-blank.md). Nothing is stored; 204 by design.
+route('POST', '/api/dashboard/boot', (_req, res, _params, body) => {
+  const payload = body && typeof body === 'object' ? body : {};
+  const { cacheName } = payload;
+  if (cacheName !== undefined && cacheName !== null && typeof cacheName !== 'string') {
+    return errorResponse(res, 400, 'cacheName must be a string or null', 'BAD_REQUEST');
+  }
+  // Bounded: this lands in the log verbatim, and a browser-supplied string
+  // must not be able to fill a rotation window on its own.
+  const reported = typeof cacheName === 'string' ? cacheName.slice(0, 200) : null;
+  log.info('Dashboard booted', { cacheName: reported, swControlled: payload.controlled === true });
+  res.writeHead(204);
+  res.end();
 });
 
 // ── Project Master (chunk G, #331) ──
@@ -6419,6 +6463,12 @@ async function handleRequest(req, res) {
   // Static files
   if (method === 'GET') {
     if (serveStatic(res, pathname)) {
+      // The dashboard document is the one static response logged at info —
+      // see logNavigation. Every other asset stays at debug.
+      if (pathname === '/' || pathname === '') {
+        logNavigation(method, pathname, startTime, 'index.html');
+        return;
+      }
       const duration = Date.now() - startTime;
       log.debug(`${method} ${pathname}`, { status: 200, duration: `${duration}ms` });
       return;
@@ -6447,6 +6497,7 @@ async function handleRequest(req, res) {
   if (method === 'GET' && pathname.startsWith('/session/') && pathname.split('/').length === 3) {
     const sessionName = pathname.split('/')[2];
     if (sessionName && serveStatic(res, '/session.html')) {
+      logNavigation(method, pathname, startTime, 'session.html');
       return;
     }
   }
@@ -6462,6 +6513,7 @@ async function handleRequest(req, res) {
   // Fallback: serve index.html for SPA routing
   if (method === 'GET' && !pathname.includes('.')) {
     if (serveStatic(res, '/')) {
+      logNavigation(method, pathname, startTime, 'index.html');
       return;
     }
   }
