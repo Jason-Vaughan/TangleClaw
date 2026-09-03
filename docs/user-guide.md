@@ -151,7 +151,7 @@ TangleClaw also periodically scans the system for listening TCP ports using `lso
 Below the ports panel, there's a collapsible **Global Rules** panel. These are markdown rules that apply to every project across all engines. When TangleClaw generates an engine config file (e.g., `CLAUDE.md`, `.codex.yaml`), global rules are included automatically.
 
 - **Edit**: Expand the panel, modify the textarea, and tap **Save**
-- **Reset**: Tap **Reset to Defaults** to restore the bundled default rules (with confirmation)
+- **Revert**: restore it from git (`data/global-rules.md` is tracked). There is no Reset button: the old one called an endpoint that, since the canonical-source model (#240), returns the current content unchanged, so it looked like a revert and did nothing (#243)
 - **API**: `GET /api/rules/global`, `PUT /api/rules/global`, `POST /api/rules/global/reset`
 
 Global rules are stored at `~/.tangleclaw/global-rules.md`. On first load, this file is created from the bundled defaults in `data/default-global-rules.md`.

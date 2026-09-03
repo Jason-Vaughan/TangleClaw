@@ -888,25 +888,6 @@ async function saveGlobalRules() {
 }
 
 /**
- * Reset global rules to defaults via the API.
- */
-async function resetGlobalRules() {
-  const data = await apiMutate('/api/rules/global/reset', 'POST', {});
-  const status = document.getElementById('rulesStatus');
-  if (data) {
-    state.globalRulesContent = data.content || '';
-    document.getElementById('rulesEditor').value = state.globalRulesContent;
-    status.textContent = 'Reset to defaults';
-    status.className = 'rules-status rules-status-ok';
-  } else {
-    status.textContent = 'Reset failed';
-    status.className = 'rules-status rules-status-err';
-  }
-  status.classList.remove('hidden');
-  setTimeout(() => { status.classList.add('hidden'); }, 3000);
-}
-
-/**
  * Load project groups from the API.
  */
 async function loadGroups() {

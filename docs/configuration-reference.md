@@ -135,7 +135,7 @@ Editable markdown rules that apply to all projects across all engines. When an e
 - **Default**: `data/default-global-rules.md` (bundled, restore source)
 - **User copy**: `~/.tangleclaw/global-rules.md` (created from defaults on first load)
 - **Edit via**: Landing page "Global Rules" panel, or `PUT /api/rules/global`
-- **Reset**: Landing page Reset button, or `POST /api/rules/global/reset`
+- **Revert**: restore it from git (`data/global-rules.md` is tracked). There is no Reset button (#243): under the canonical-source model (#240) `POST /api/rules/global/reset` is a back-compat no-op that returns the current content unchanged, so a button wired to it looked like a revert and changed nothing.
 
 ## Per-Project Configuration (`project.json`)
 
@@ -435,7 +435,7 @@ TangleClaw's HTTP API lives under `/api/`; the tables below are the reference. A
 |----------|--------|-------------|
 | `/api/rules/global` | GET | Get global rules content |
 | `/api/rules/global` | PUT | Save global rules content |
-| `/api/rules/global/reset` | POST | Reset global rules to defaults |
+| `/api/rules/global/reset` | POST | Back-compat no-op since #240: returns the current content unchanged (the UI no longer calls it, #243) |
 | `/api/activity` | GET | Activity log |
 | `/api/upload` | POST | Upload a file to a project directory (15 MB limit) |
 | `/api/uploads` | GET | List uploads for a project (`?project=name`) |

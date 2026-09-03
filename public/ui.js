@@ -899,28 +899,6 @@ function toggleRules() {
   toggle.setAttribute('aria-expanded', state.rulesOpen);
 }
 
-/**
- * Open the reset confirmation modal.
- */
-function openRulesResetModal() {
-  document.getElementById('rulesResetModal').classList.add('open');
-}
-
-/**
- * Close the reset confirmation modal.
- */
-function closeRulesResetModal() {
-  document.getElementById('rulesResetModal').classList.remove('open');
-}
-
-/**
- * Confirm reset: call API then close modal.
- */
-async function confirmRulesReset() {
-  await resetGlobalRules();
-  closeRulesResetModal();
-}
-
 // ── Filter Toggle (inline — always visible, no toggle needed) ──
 
 function toggleFilter() {
@@ -3899,10 +3877,6 @@ $('openclawDeleteModal').addEventListener('click', (e) => { if (e.target === e.c
 $('groupsToggle').addEventListener('click', toggleGroups);
 $('rulesToggle').addEventListener('click', toggleRules);
 $('rulesSaveBtn').addEventListener('click', saveGlobalRules);
-$('rulesResetBtn').addEventListener('click', openRulesResetModal);
-$('rulesResetCancelBtn').addEventListener('click', closeRulesResetModal);
-$('rulesResetConfirmBtn').addEventListener('click', confirmRulesReset);
-$('rulesResetModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeRulesResetModal(); });
 // filterBtn removed — filter input is always visible inline
 $('newBtn').addEventListener('click', openCreateModal);
 $('createClose').addEventListener('click', closeCreateModal);

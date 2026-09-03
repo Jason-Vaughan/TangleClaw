@@ -120,8 +120,8 @@ describe('API /api/rules/global', () => {
       // Pre-#240 reset restored the per-install file from bundled
       // defaults. Under the canonical-source model the tracked file
       // IS canonical; reset returns current content + the route stays
-      // for back-compat with the UI button (which should be removed
-      // in a follow-up; today it just becomes a no-op refresh).
+      // for back-compat with any external caller. The UI button that
+      // used to call it is gone (#243; test/global-rules-reset-button.test.js).
       const custom = '# Custom Pre-Reset\n\n- this should survive reset\n';
       await request(server, 'PUT', '/api/rules/global', { content: custom });
 
