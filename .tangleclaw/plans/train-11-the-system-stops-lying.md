@@ -272,7 +272,7 @@ silently does nothing.
 - [x] Chunk 10 — #858 (PR #1173)
 - [x] Chunk 11 — #429 (PR #1174)
 - [x] Chunk 12 — #1063 (PR #1175)
-- [ ] Chunk 13 — #1134
+- [x] Chunk 13 — #1134 (PR #1177)
 - [ ] Chunk 14 — #1012
 
 ## Context
