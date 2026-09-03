@@ -158,6 +158,10 @@ describe('#83 — form handlers render the server reason, not a guess', () => {
       const { document, el } = fakeDocument({ wrapPassword: 'pw' });
       const ctx = lift(SRC.session, ['async function confirmWrap('], {
         api, apiMutate, document, watchWrapRun,
+        // #185 fires the progress stream beside the POST without awaiting it.
+        // A no-op here keeps this suite on its own subject — the reason the
+        // POST's refusal puts on screen — rather than the stream's behaviour.
+        attachWrapStream: async () => {},
         wrapInFlight: false, wrapSkippedAiSteps: {}, wrapBumpLevel: '',
         window: { tcWrapDrawerHelpers: { collectOptionsFromAccessors: () => ({}) } },
         sessionState: {}, projectName: 'demo',
@@ -174,6 +178,10 @@ describe('#83 — form handlers render the server reason, not a guess', () => {
       const { document, el } = fakeDocument({});
       const ctx = lift(SRC.session, ['async function confirmWrap('], {
         api, apiMutate, document, watchWrapRun,
+        // #185 fires the progress stream beside the POST without awaiting it.
+        // A no-op here keeps this suite on its own subject — the reason the
+        // POST's refusal puts on screen — rather than the stream's behaviour.
+        attachWrapStream: async () => {},
         wrapInFlight: false, wrapSkippedAiSteps: {}, wrapBumpLevel: '',
         window: { tcWrapDrawerHelpers: { collectOptionsFromAccessors: () => ({}) } },
         sessionState: {}, projectName: 'demo',
