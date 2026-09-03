@@ -258,6 +258,23 @@ describe('#931 the beacon speaks once per version, not once per poll', () => {
 });
 
 describe('#931 the beacon distinguishes "no update" from "no answer" (#716)', () => {
+  it('an older server\'s cached "no update" — no checkOk at all — leaves a live beacon alone (#1061)', () => {
+    // A payload with no `checkOk` came from a server that predates the field:
+    // its cache holds an answer of unknown quality. That is not a measured
+    // "no update", so it must not take down a dot for an update that may well
+    // still be there — the shared `tcUpdateAnswerState` calls it
+    // `cached-unverified`, and every consumer reads that one ladder.
+    const ctx = loadBeacon();
+    ctx.beacon.render(AVAILABLE);
+    ctx.runTimers();
+    ctx.beacon.render({ updateAvailable: false, checkedAt: '2026-08-15T11:00:00.000Z' });
+
+    assert.ok(ctx.dot(), 'an unverifiable cached answer is not a fact; the dot stays');
+    const classified = ctx.tcUpdateAnswerState({ updateAvailable: false, checkedAt: '2026-08-15T11:00:00.000Z' });
+    assert.equal(classified.state, 'cached-unverified');
+    assert.equal(classified.cached, true);
+  });
+
   it('a payload with no checkedAt leaves a live beacon alone', () => {
     const ctx = loadBeacon();
     ctx.beacon.render(AVAILABLE);
@@ -307,7 +324,9 @@ describe('#931 the beacon distinguishes "no update" from "no answer" (#716)', ()
     const ctx = loadBeacon();
     ctx.beacon.render(AVAILABLE);
     ctx.runTimers();
-    ctx.beacon.render({ updateAvailable: false, checkedAt: '2026-08-15T11:00:00.000Z' });
+    // `checkOk: true` because that is what the producer sends for a measured
+    // "no update" — `lib/update-checker.js` stamps `checkOk` on every payload.
+    ctx.beacon.render({ updateAvailable: false, checkOk: true, checkedAt: '2026-08-15T11:00:00.000Z' });
 
     assert.equal(ctx.dot(), null, 'the update was applied — stop announcing it');
     assert.equal(ctx.toast(), null);

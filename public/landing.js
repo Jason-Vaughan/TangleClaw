@@ -356,33 +356,36 @@ function _agoLabel(iso) {
 function renderVersionCheckHint(data) {
   const el = document.getElementById('version');
   if (!el) return;
-  let hint;
   // `unknown` = never measured, `failed` = measured and could not answer. Both
   // must be VISIBLE, not tooltip-only: `title` and `:hover` do not exist on a
   // touch device, and this dashboard is read mostly from a phone, so a
   // tooltip-only signal renders both states identically to "you are current" —
   // exactly the indistinguishability this work exists to remove.
+  //
+  // The state comes from the one shared ladder (`tcUpdateAnswerState`), so this
+  // tooltip, the click label beside it and the beacon cannot disagree about
+  // what a payload means (#1061).
+  const { state, cached } = window.tcUpdateAnswerState(data);
+  const ago = data && data.checkedAt ? _agoLabel(data.checkedAt) : null;
+  const restartRemedy = 'the running server predates re-checking; restart it to check now';
+  let hint;
   let mark = null;
-  if (!data) {
+  if (state === 'unreachable') {
     hint = "Couldn't reach the server to check for updates — tap to retry";
     mark = 'check-failed';
-  } else if (!data.checkedAt) {
-    hint = 'Not checked for updates yet — tap to check now';
+  } else if (state === 'never-checked') {
+    hint = cached ? `Not checked for updates yet — ${restartRemedy}` : 'Not checked for updates yet — tap to check now';
     mark = 'check-unknown';
-  } else if (data.checkOk === false) {
-    hint = `Update check failed ${_agoLabel(data.checkedAt)} — tap to retry`;
+  } else if (state === 'check-failed') {
+    hint = `Update check failed ${ago} — tap to retry`;
     mark = 'check-failed';
-  } else if (data.checkOk === undefined) {
-    // No `checkOk` at all means the payload came from a server older than
-    // these assets (#1061): its cache carries an answer but cannot say whether
-    // the check behind it succeeded, and it cannot re-check until it restarts.
-    // A cached answer of unknown quality is not "Up to date".
-    hint = `Cached answer from ${_agoLabel(data.checkedAt)} — the running server predates re-checking; restart it to check now`;
+  } else if (state === 'cached-unverified') {
+    hint = `Cached answer from ${ago} — ${restartRemedy}`;
     mark = 'check-unknown';
-  } else if (data.updateAvailable) {
-    hint = `v${data.latestVersion} available — checked ${_agoLabel(data.checkedAt)}`;
+  } else if (state === 'update') {
+    hint = `v${data.latestVersion} available — checked ${ago}${cached ? ` (cached; ${restartRemedy})` : ''}`;
   } else {
-    hint = `Up to date — checked ${_agoLabel(data.checkedAt)}. Tap to check now`;
+    hint = `Up to date — checked ${ago}. Tap to check now`;
   }
   el.title = hint;
   el.classList.remove('check-unknown', 'check-failed');
@@ -410,28 +413,26 @@ function wireVersionCheck() {
     _showVersionLabel('checking…', false);
     try {
       const data = await loadUpdateStatus({ refresh: true, manual: true });
-      // No answer and a failed measurement are the same thing to an operator:
-      // the question was not resolved. The shared predicate rather than a local
-      // test, so this cannot drift from what the beacon beside it believes —
-      // the local form omitted `checkedAt` and only worked because the
-      // never-measured payload happens to also carry `checkOk: false`.
-      if (!window.tcIsUpdateAnswer(data)) {
-        // A payload with no `checkedAt` is a cold cache — nothing was ever
-        // measured — and the marker beside this label already says "Not
-        // checked yet"; the label says the same thing rather than a second
-        // thing (#1061).
-        _showVersionLabel(data && !data.checkedAt ? 'not checked yet' : "couldn't check", true);
-      } else if (data.checkOk === undefined) {
-        // The POST fell back to an older server's cached GET (#1061): the
-        // answer is real but it is not a check that ran just now, and saying
-        // "up to date ✓" for it claimed a measurement that did not happen.
-        _showVersionLabel(`cached ${_agoLabel(data.checkedAt)} — not re-checked`, true);
-      } else if (data.updateAvailable) {
+      // One state per payload, from the shared ladder the tooltip and the
+      // beacon read too — so this label cannot say "up to date" for a payload
+      // the marker beside it calls unknown (#1061).
+      const { state } = window.tcUpdateAnswerState(data);
+      if (state === 'update') {
         // The pill is the real answer here and it has just been rendered, so the
         // label goes straight back to the version rather than duplicating it.
         _showVersionLabel(`v${_lastRenderedVersion || data.currentVersion}`, true);
-      } else {
+      } else if (state === 'current') {
         _showVersionLabel('up to date ✓', true);
+      } else if (state === 'cached-unverified') {
+        // The POST fell back to an older server's cached GET: the answer is
+        // real but no check ran on this click, and "up to date ✓" claimed a
+        // measurement that did not happen.
+        _showVersionLabel(`cached ${_agoLabel(data.checkedAt)} — not re-checked`, true);
+      } else if (state === 'never-checked') {
+        // The marker already says "Not checked yet"; say the same thing.
+        _showVersionLabel('not checked yet', true);
+      } else {
+        _showVersionLabel("couldn't check", true);
       }
     } catch (err) { // prawduct:allow prawduct/broad-except -- a throw anywhere in the render path must not strand the label
       // Without this the label stays on "checking…" forever AND, because the

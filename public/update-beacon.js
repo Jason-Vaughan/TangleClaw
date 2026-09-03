@@ -43,7 +43,35 @@
    * @returns {boolean} True when the payload states a fact about the remote.
    */
   function tcIsUpdateAnswer(data) {
-    return !!data && !!data.checkedAt && data.checkOk !== false;
+    const { state } = tcUpdateAnswerState(data);
+    return state === 'update' || state === 'current';
+  }
+
+  /**
+   * Classify an `/api/update-status` payload into the ONE state every surface
+   * renders from — the header label, its tooltip and marker, the beacon, and
+   * the session page's poll cadence. The five raw signals (`data` present,
+   * `checkedAt`, `checkOk` true/false/absent, `updateAvailable`) used to be
+   * re-derived into a state at three sites, and the third state added to one
+   * ladder was invisible to the other two (#1061); this is the single ladder.
+   *
+   * `cached` is true when the payload carries no `checkOk` at all: it came
+   * from a server older than these assets (`checkOk` and the manual re-check
+   * route shipped together), whose cache holds an answer but cannot say
+   * whether the check behind it succeeded, and which cannot re-check until it
+   * restarts. `cached-unverified` is that server's "no update" — an answer of
+   * unknown quality, which is not "up to date".
+   *
+   * @param {object|null} data - An `/api/update-status` payload, or null.
+   * @returns {{state: ('unreachable'|'never-checked'|'check-failed'|'update'|'current'|'cached-unverified'), cached: boolean}}
+   */
+  function tcUpdateAnswerState(data) {
+    if (!data) return { state: 'unreachable', cached: false };
+    const cached = data.checkOk === undefined;
+    if (!data.checkedAt) return { state: 'never-checked', cached };
+    if (data.checkOk === false) return { state: 'check-failed', cached };
+    if (data.updateAvailable && data.latestVersion) return { state: 'update', cached };
+    return { state: cached ? 'cached-unverified' : 'current', cached };
   }
 
   /**
@@ -559,4 +587,5 @@
 
   global.tcCreateUpdateBeacon = tcCreateUpdateBeacon;
   global.tcIsUpdateAnswer = tcIsUpdateAnswer;
+  global.tcUpdateAnswerState = tcUpdateAnswerState;
 })(typeof window !== 'undefined' ? window : globalThis);

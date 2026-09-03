@@ -35,7 +35,7 @@ const BEACON_SRC = fs.readFileSync(
 /**
  * The REAL shared answer predicate, lifted from `update-beacon.js`.
  *
- * Landing's manual-check path consults `window.tcIsUpdateAnswer` rather than
+ * Landing's manual-check path consults `window.tcUpdateAnswerState` rather than
  * testing the payload itself, so these sandboxes have to supply it. Lifted
  * rather than restated: a hand-written stand-in here would keep passing on the
  * day the real rule changed, which is the entire failure mode sharing the rule
@@ -43,19 +43,25 @@ const BEACON_SRC = fs.readFileSync(
  *
  * @returns {(data: object|null) => boolean}
  */
-function realIsUpdateAnswer() {
-  const decl = 'function tcIsUpdateAnswer(data)';
-  const start = BEACON_SRC.indexOf(decl);
-  assert.ok(start > -1, 'update-beacon.js must still declare tcIsUpdateAnswer');
-  let depth = 0;
-  for (let i = BEACON_SRC.indexOf('{', start); i < BEACON_SRC.length; i++) {
-    if (BEACON_SRC[i] === '{') depth++;
-    else if (BEACON_SRC[i] === '}' && --depth === 0) {
-      // eslint-disable-next-line no-new-func
-      return new Function(`${BEACON_SRC.slice(start, i + 1)}; return tcIsUpdateAnswer;`)();
+function realUpdateGlobals() {
+  /**
+   * Brace-match one top-level function out of the beacon source.
+   * @param {string} decl - The declaration to find.
+   * @returns {string} The function source.
+   */
+  const lift = (decl) => {
+    const start = BEACON_SRC.indexOf(decl);
+    assert.ok(start > -1, `update-beacon.js must still declare ${decl}`);
+    let depth = 0;
+    for (let i = BEACON_SRC.indexOf('{', start); i < BEACON_SRC.length; i++) {
+      if (BEACON_SRC[i] === '{') depth++;
+      else if (BEACON_SRC[i] === '}' && --depth === 0) return BEACON_SRC.slice(start, i + 1);
     }
-  }
-  throw new Error('could not brace-match tcIsUpdateAnswer');
+    throw new Error(`could not brace-match ${decl}`);
+  };
+  // eslint-disable-next-line no-new-func
+  return new Function(`${lift('function tcIsUpdateAnswer(data)')}\n${lift('function tcUpdateAnswerState(data)')}\n`
+    + 'return { tcIsUpdateAnswer, tcUpdateAnswerState };')();
 }
 
 /**
@@ -416,6 +422,7 @@ describe('#744 the dashboard stops advertising a version it is not running', () 
         // payload so a test can drive either without changing its expectation.
         apiMutate: async () => payload,
         updateBeacon: { render: (d) => { rendered.push(d); } },
+      window: realUpdateGlobals(),
         esc: (s) => String(s)
       });
       await vm.runInContext(
@@ -495,6 +502,7 @@ describe('#716 update checks happen when they matter', () => {
         return payload;
       },
       updateBeacon: { render: () => {} },
+      window: realUpdateGlobals(),
       esc: (s) => String(s)
     });
     await vm.runInContext(
@@ -545,8 +553,10 @@ describe('#716 update checks happen when they matter', () => {
     // one feature built to stop misreporting update state.
     const dom = makeDom(['version']);
     const calls = [];
+    // The real pre-route shape: `checkOk` and the POST route shipped in one
+    // commit, so a server that 404s the POST never sends `checkOk` either.
     const cached = {
-      updateAvailable: false, latestVersion: null, checkOk: true,
+      updateAvailable: false, latestVersion: null,
       checkedAt: new Date().toISOString()
     };
     const api = async (url) => { calls.push(`GET ${url}`); return cached; };
@@ -556,6 +566,7 @@ describe('#716 update checks happen when they matter', () => {
       api,
       apiMutate: async (url) => { calls.push(`POST ${url}`); return null; },
       updateBeacon: { render: () => {} },
+      window: realUpdateGlobals(),
       esc: (s) => String(s)
     });
     await vm.runInContext(
@@ -565,7 +576,9 @@ describe('#716 update checks happen when they matter', () => {
     );
     assert.deepEqual(calls, ['POST /api/update/check', 'GET /api/update-status'],
       'a 404 on the new route must fall back, not be reported as a failed check');
-    assert.match(dom.els.version.title, /up to date/i);
+    assert.match(dom.els.version.title, /Cached answer from/,
+      'the cached answer is named as cached — an old server cannot vouch for it');
+    assert.doesNotMatch(dom.els.version.title, /up to date/i);
     assert.equal(dom.els.version._classes.has('check-failed'), false,
       'an old server is not a failed check');
   });
@@ -583,6 +596,7 @@ describe('#716 update checks happen when they matter', () => {
       api,
       apiMutate: async (url) => { calls.push(`POST ${url}`); return null; },
       updateBeacon: { render: () => {} },
+      window: realUpdateGlobals(),
       esc: (s) => String(s)
     });
     await vm.runInContext(
@@ -702,7 +716,7 @@ describe('#716 update checks happen when they matter', () => {
       updateBeacon: { render: () => {} },
       // The shared answer rule, as the page really resolves it — a global that
       // `update-beacon.js` publishes and `landing.js` consults.
-      window: { tcIsUpdateAnswer: realIsUpdateAnswer() },
+      window: realUpdateGlobals(),
       esc: (s2) => String(s2),
       console: { error: () => {} },
       // The restore is scheduled, never run here — the assertion is about what
