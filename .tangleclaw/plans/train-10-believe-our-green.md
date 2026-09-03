@@ -32,8 +32,11 @@ run is a hypothesis, not evidence.
 **High.** Every car is a filed issue with an observed failure, a diagnosis the previous
 session or this one verified against source, and named options; the two that needed a
 choice (#844, #835) were made from the issue's own option lists and ratified by the Roadmap
-session. Medium on one point: #957's headroom multipliers are chosen, not measured — the
-load run in Chunk 5's Done-when is what confirms them.
+session. Medium on one point: #957's headroom multipliers are chosen, not measured. The
+load run measured the machine (3ms median, 5–29ms worst in-workload sample, 2–3ms after-probe
+under a concurrent full suite) but did not reproduce the original stall, so the multipliers
+were not exercised; the verdict now carries the numbers, so the next occurrence will be
+measurable rather than shrugged at.
 
 ## Chunks
 
@@ -78,9 +81,10 @@ load run in Chunk 5's Done-when is what confirms them.
 - **Done when:** both mutations red, suite green on this host and CI.
 
 ### Chunk 5 — #957 threadpool assertion fails under load
-- `_dir-scanner-pool-demo.js` samples an ordinary readdir BEFORE the workload as well as
-  after; the test asserts the after-probe is not stuck and is within a bounded multiple of
-  the before-probe rather than under an absolute 1000ms.
+- `_dir-scanner-pool-demo.js` samples an ordinary readdir repeatedly DURING the workload
+  (scanner mode; the pool is healthy so the samples measure the machine); the test asserts the
+  after-probe completed and is within a bounded multiple of the worst in-workload sample rather
+  than under an absolute 1000ms. The verdict carries the numbers.
 - The leak-mode assertion (`readdirStuck === true`) is untouched — it is the regression pin.
 - **Done when:** the scanner-mode test passes with a concurrent full suite running on the same
   box; the leak-mode mutation (route scanner mode through the in-process helper) is red.
@@ -89,8 +93,8 @@ load run in Chunk 5's Done-when is what confirms them.
 - [x] Chunk 1 — #844 (PR #1155, merged 3976a91)
 - [x] Chunk 2 — #831 (PR #1156, merged 236bd78)
 - [x] Chunk 3 — #835 (PR #1157, merged 5d889e1)
-- [ ] Chunk 4 — #969
-- [ ] Chunk 5 — #957
+- [x] Chunk 4 — #969 (PR #1160, merged 01c7808)
+- [x] Chunk 5 — #957 (PR #1158)
 
 ## Context
 Session 2026-09-02/03, autonomous sprint. Work in `.claude/worktrees/train10`; the primary
