@@ -327,6 +327,45 @@ spec bundled it on the dead SSH design).
 - **Done when:** a tunnel that failed renders visibly not-green, and no unverified connection
   renders `live`.
 
+### Chunk 15 — #1178 the prime names a host the operator may not be using
+
+Added after the train's original fourteen, at the operator's request, so the fix ships in the
+same release. Arrived as PR #1179 from the Roadmap session and was rejected on review: its prime
+block never executed (`operatorHost` set on the way in, never forwarded to `generatePrimePrompt`),
+it trusted `x-forwarded-host` with no proxy gate, and it fabricated `localhost:3102`. It also
+added a SECOND producer for a fact the ecosystem primer already states.
+
+- The host is measured from the operator's own **browser** — the dashboard's launch call is a
+  relative `fetch`, so `Host:` is whatever they typed — and fed into the EXISTING primer item.
+- Tailscale-independent by design: LAN IP, mDNS `.local`, or a custom domain all work; a MagicDNS
+  name is one possible value from the last-resort probe, never the mechanism.
+- `x-forwarded-host` only behind `isProxyHeaderTrusted`, the predicate the identity header already
+  answers to. Port stripped, chains take the first entry, duplicates and malformed values refused,
+  unbracketed IPv6 refused rather than truncated, loopback never accepted as an operator host.
+- One producer, `operatorLinkDirective`, for both branches — it had four hand-written copies, and
+  when the resolver became nullable only two learned the unknown branch.
+- **Done when:** no surface names a host that was never measured, and the unknown asks rather than
+  guesses. *Met.*
+
+### Chunk 16 — #1180 the chime rings while the engine is still working
+
+Arrived as PR #1180 and was rejected: it passed `active.engine`, a key session rows do not have,
+so the whole path was dead code; and its stated mechanism (`_assessPane` alone) is the gate #1114
+measured and rejected.
+
+- `medusaWake.assessSessionIdle()` promotes the real composition — marker gates, transcript
+  movement, tick streak — and the wake monitor's own scan reads through it, so there is one gate.
+- **The chime and the injector ask different questions.** `_assessPane` answers "safe to type
+  into"; a permission dialog and a filled composer are both "not a bare prompt", and the first is
+  the case the chime exists for. `_assessActivity` splits the activity question out;
+  `mustBeTypeable` defaults to the safe answer.
+- Stillness requires wall-clock seconds as well as ticks: the poll rate is an operator preference.
+- Degrades to staleness, never to an unknown, and names which gate answered via `idleReason` — a
+  bounded exception to the report-null Direction, recorded in `architecture.md`.
+- Only the chime's call site moved; wrap-completion and the wrap/Critic callers keep the heuristic.
+- **Done when:** a session that is still working does not ring, and a blocked one does. *Met for
+  Claude; antigravity's own at-rest marker is dropped by dialog states, stated as a limit.*
+
 ## Status
 - [x] Chunk 1 — #948 (PR #1162)
 - [x] Chunk 2 — #1054 (PR #1163)
@@ -342,6 +381,8 @@ spec bundled it on the dead SSH design).
 - [x] Chunk 12 — #1063 (PR #1175)
 - [x] Chunk 13 — #1134 (PR #1177)
 - [x] Chunk 14 — #1012 (PR #1186)
+- [x] Chunk 15 — #1178 (PR #1188, replaces #1179)
+- [x] Chunk 16 — #1181/chime (PR #1189, replaces #1180)
 
 ## Context
 Session 2026-09-02/03, autonomous sprint (same shape as Train 10). Work in
