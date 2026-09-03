@@ -257,6 +257,12 @@ describe('wrap step: preflight (#854)', () => {
         assert.equal(result.output.measured, false);
         assert.match(result.output.reason, /neither clear \(0\) nor blocked \(2\)/);
         assert.deepStrictEqual(result.blockers, []);
+        // The drawer renders `output.detail || output.reason` on a skip, so the
+        // stderr tail must NOT be called `detail` — it would outrank the
+        // sentence above and put a raw traceback in the row.
+        assert.equal(result.output.detail, undefined,
+          'the crafted reason is what the operator reads, not the hook\'s stack trace');
+        assert.match(result.output.stderrTail, /Traceback/, 'the raw output is still carried, just not as the row');
       });
     });
 

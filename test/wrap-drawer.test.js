@@ -274,13 +274,16 @@ describe('wrap-drawer helpers — buildStepRow', () => {
 
 describe('wrap-drawer helpers — KIND_DESCRIPTIONS (per-step help)', () => {
   const H = loadHelpers();
-  // The canonical wrap-step kinds (mirrors test/wrap-pipeline.test.js realKinds).
-  // Derived, not hand-copied. This list used to be a second transcription of
-  // the pipeline's kinds, and when `preflight` was added (#854) the producer
-  // was updated and the copy was not — so the guard that exists to catch a
-  // kind shipping without a description skipped exactly the new kind. A drift
-  // guard carrying its own copy of the thing it guards cannot see drift.
-  const CANONICAL_KINDS = Object.keys(H.KIND_LABELS);
+  // Derived from the PRODUCER, which is the only source that can grow a kind.
+  // This was a hand-copied literal, so when `preflight` was added (#854) the
+  // pipeline was updated and the copy was not — the guard that exists to catch
+  // a kind shipping without a description skipped exactly the new kind. The
+  // first fix derived it from `KIND_LABELS` instead, which is a CONSUMER in the
+  // same file the guard protects: 10 keys against the dispatch table's 15, so
+  // five kinds that had descriptions fell out of coverage and the guard was
+  // quietly weakened inside the commit repairing it. Deriving from a consumer
+  // of the map under test cannot detect a producer that outgrew it.
+  const CANONICAL_KINDS = Object.keys(require('../lib/wrap-pipeline').STEP_DISPATCH);
 
   it('surfaces the proposal count, so a wrap that proposed rules does not look like one that did not', () => {
     const row = H.buildStepRow({
