@@ -23,6 +23,7 @@ const os = require('node:os');
 const path = require('node:path');
 const fsp = require('node:fs').promises;
 const { execFileSync } = require('node:child_process');
+const { initRepo } = require('./_temp-repo');
 
 const { HANDLERS, PROJECT_MARKERS } = require('../lib/dir-scanner-child');
 
@@ -75,9 +76,7 @@ describe('dir-scanner child — scanEntries (the wizard walk)', () => {
     const root = scratch('incomplete-projection');
     const repo = path.join(root, 'a-repo');
     fs.mkdirSync(repo);
-    // Empty --template: a bare `git init` inherits the live global template dir,
-    // which TangleClaw rewrites, and that flakes (#831).
-    execFileSync('git', ['init', '--template=', '-q'], { cwd: repo });
+    initRepo(repo);
 
     const { projects } = await HANDLERS.scanEntries({ dir: root, budgetMs: 5000 });
     const found = projects.find(p => p.name === 'a-repo');

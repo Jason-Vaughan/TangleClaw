@@ -6,6 +6,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const { initRepo } = require('./_temp-repo');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const { createServer, _setCutoverSpawner } = require('../server');
@@ -431,11 +432,7 @@ describe('Setup Wizard', () => {
       const projDir = path.join(projectsDir, 'test-git-project');
       fs.mkdirSync(projDir, { recursive: true });
       try {
-        require('node:child_process').execSync('git init', {
-          cwd: projDir,
-          timeout: 5000,
-          stdio: 'pipe'
-        });
+        initRepo(projDir, [], { timeout: 5000 });
       } catch {
         // Git might not be available in test environment — skip
         return;
