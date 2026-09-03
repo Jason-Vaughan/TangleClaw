@@ -1,6 +1,6 @@
 # Engine Guide
 
-Engines in TangleClaw represent AI coding agents. TangleClaw abstracts engine differences so you can switch between Claude Code, Codex, Aider, or any custom engine without reconfiguring your projects.
+Engines in TangleClaw represent AI coding agents. TangleClaw abstracts engine differences so you can switch between Claude Code, Codex, Aider, or any custom engine without reconfiguring your projects. When a project switches engines, the previous engine's TangleClaw-written config file is marked inactive (a dated notice naming the live engine and its file) rather than left on disk as live canon; hand-written and plugin-owned files are left alone, and switching back regenerates the file (#858).
 
 ## How Engines Work
 
