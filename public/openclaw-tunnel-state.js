@@ -429,12 +429,15 @@
        */
       state() { return deriveConnectionState(evidence); },
       /**
-       * A COPY of the evidence, for inspection. Deliberately not the record
-       * itself: handing back the live object lets a caller write to it without
-       * re-rendering, which is the invariant this factory exists to hold.
+       * A DEEP copy of the evidence, for inspection. Deliberately not the
+       * record itself: handing back the live object lets a caller write to it
+       * without re-rendering, which is the invariant this factory exists to
+       * hold. Deep rather than shallow because every value here is a plain
+       * measurement record — a shallow copy shares them, so writing one
+       * field of a nested result still reached the original.
        * @returns {object}
        */
-      snapshot() { return Object.assign({}, evidence); }
+      snapshot() { return JSON.parse(JSON.stringify(evidence)); }
     };
   }
 

@@ -453,7 +453,12 @@ describe('#1012 applyConnectionState — states replace, they do not stack', () 
     ind.record('probe', { reachable: true });
     const snap = ind.snapshot();
     snap.probe = { reachable: false };
-    assert.equal(ind.state().level, 'unverified', 'mutating a snapshot must not reach the indicator');
+    assert.equal(ind.state().level, 'unverified', 'replacing a snapshot key must not reach the indicator');
+    // Top-level replacement was the only shape pinned at first, and a shallow
+    // copy passes that while still sharing every nested record.
+    const nested = ind.snapshot();
+    nested.probe.reachable = false;
+    assert.equal(ind.state().level, 'unverified', 'writing THROUGH a snapshot must not reach the indicator either');
     assert.equal(ind.evidence, undefined, 'the mutable record must not be exported');
   });
 
