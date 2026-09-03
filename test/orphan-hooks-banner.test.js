@@ -91,7 +91,10 @@ describe('Dashboard orphan-hooks banner (#145, chunk 2)', () => {
     });
 
     it('repair path surfaces no-response failure separately from successful empty repair (Critic M1)', () => {
-      assert.match(js, /Repair failed \(no response\)/);
+      // #83: the failure toast carries the server's reason (api.lastError)
+      // rather than the fixed "(no response)" guess, but it must still be a
+      // distinct "Repair failed" message, never the "Repaired 0" success shape.
+      assert.match(js, /Repair failed: \$\{api\.lastError \|\| 'unknown error'\}/);
     });
 
     it('wire handler surfaces thrown errors via toast rather than swallowing (Critic M1)', () => {

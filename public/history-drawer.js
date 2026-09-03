@@ -105,7 +105,7 @@ async function runHistorySearch() {
   const qs = historyQueryString();
   const data = await api(`/api/continuity/${encodeURIComponent(historyTarget)}/search?${qs}`);
   if (!data) {
-    resultsEl.innerHTML = '<div class="form-hint" style="color:var(--danger)">Search failed.</div>';
+    resultsEl.innerHTML = `<div class="form-hint" style="color:var(--danger)">${esc(api.lastError || 'Search failed.')}</div>`;
     return;
   }
   renderHistoryResults(data);
@@ -188,7 +188,7 @@ async function openHistorySession(sid) {
   drill.innerHTML = '<div class="form-hint">Loading session…</div>';
   const data = await api(`/api/continuity/${encodeURIComponent(historyTarget)}/sessions/${encodeURIComponent(sid)}`);
   if (!data) {
-    drill.innerHTML = '<div class="form-hint" style="color:var(--danger)">Failed to load session.</div>';
+    drill.innerHTML = `<div class="form-hint" style="color:var(--danger)">${esc(api.lastError || 'Failed to load session.')}</div>`;
     return;
   }
 
@@ -251,7 +251,7 @@ async function runTranscriptSearch(sid) {
   if (!q) { out.innerHTML = '<div class="form-hint">Enter a search term.</div>'; return; }
   out.innerHTML = '<div class="form-hint">Searching transcript…</div>';
   const data = await api(`/api/continuity/${encodeURIComponent(historyTarget)}/sessions/${encodeURIComponent(sid)}/transcript/search?q=${encodeURIComponent(q)}`);
-  if (!data) { out.innerHTML = '<div class="form-hint" style="color:var(--danger)">Transcript search failed.</div>'; return; }
+  if (!data) { out.innerHTML = `<div class="form-hint" style="color:var(--danger)">${esc(api.lastError || 'Transcript search failed.')}</div>`; return; }
   if (!data.available) {
     out.innerHTML = `<div class="form-hint">${esc(data.reason || 'No transcript available.')}</div>`;
     return;

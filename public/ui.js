@@ -1021,7 +1021,7 @@ async function confirmDelete() {
   const data = await apiMutate(`/api/projects/${encodeURIComponent(deleteTarget)}`, 'DELETE', body);
   if (!data) {
     const action = deleteMode === 'detach' ? 'Detach' : 'Delete';
-    document.getElementById('deleteError').textContent = `${action} failed. Check password.`;
+    document.getElementById('deleteError').textContent = api.lastError || `${action} failed.`;
     document.getElementById('deleteError').classList.remove('hidden');
     return;
   }
@@ -2923,7 +2923,7 @@ async function saveGroup() {
   }
 
   if (!result) {
-    document.getElementById('groupError').textContent = 'Save failed. Name may already exist.';
+    document.getElementById('groupError').textContent = api.lastError || 'Save failed.';
     document.getElementById('groupError').classList.remove('hidden');
     return;
   }
@@ -2994,7 +2994,7 @@ async function syncGroupDir() {
 
   const result = await apiMutate(`/api/groups/${groupEditId}/sync`, 'POST', {});
   if (!result) {
-    statusEl.textContent = 'Sync failed — check the directory path.';
+    statusEl.textContent = api.lastError || 'Sync failed.';
     return;
   }
   const parts = [];
@@ -3398,12 +3398,12 @@ async function saveConnection() {
   if (!result) {
     // Surface the actual server error if api.lastError captured it from the
     // JSON response (api-helper.js, PR #84 / issue #80) — covers PORT_CONFLICT,
-    // CONFLICT, BAD_REQUEST, etc. Falls back to the previous generic message
-    // only when no error payload was returned (e.g. network failure mid-save).
+    // CONFLICT, BAD_REQUEST, etc. Falls back to a plain "Save failed." only
+    // when no error payload was returned (#83).
     const code = api.lastErrorCode ? ` (${api.lastErrorCode})` : '';
     document.getElementById('ocError').textContent = api.lastError
       ? `Save failed: ${api.lastError}${code}`
-      : 'Save failed. Name may already exist.';
+      : 'Save failed.';
     document.getElementById('ocError').classList.remove('hidden');
     return;
   }
@@ -3440,7 +3440,7 @@ async function testConnection() {
 
   const data = await apiMutate('/api/openclaw/test', 'POST', body);
   if (!data) {
-    resultEl.textContent = 'Test failed — could not reach server';
+    resultEl.textContent = `Test failed: ${api.lastError || 'unknown error'}`;
     resultEl.className = 'oc-test-result oc-test-fail';
     return;
   }
@@ -3564,7 +3564,7 @@ async function saveDoc() {
   }
 
   if (!result) {
-    document.getElementById('docError').textContent = 'Save failed. File path may already exist in this group.';
+    document.getElementById('docError').textContent = api.lastError || 'Save failed.';
     document.getElementById('docError').classList.remove('hidden');
     return;
   }

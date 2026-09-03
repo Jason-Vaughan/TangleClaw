@@ -880,7 +880,7 @@ async function saveGlobalRules() {
     status.textContent = 'Saved';
     status.className = 'rules-status rules-status-ok';
   } else {
-    status.textContent = 'Save failed';
+    status.textContent = api.lastError || 'Save failed';
     status.className = 'rules-status rules-status-err';
   }
   status.classList.remove('hidden');
@@ -1027,7 +1027,7 @@ async function repairAllOrphanHooks() {
     const data = await apiMutate('/api/projects/repair-orphan-hooks', 'POST', {});
     if (!data) {
       if (toast) {
-        toast.textContent = 'Repair failed (no response)';
+        toast.textContent = `Repair failed: ${api.lastError || 'unknown error'}`;
         toast.className = 'toast toast-warn visible';
         setTimeout(() => { toast.className = 'toast'; }, 4000);
       }
@@ -1444,9 +1444,9 @@ async function confirmWrap() {
   try {
     const data = await apiMutate(`/api/sessions/${encodeURIComponent(wrapTarget)}/wrap`, 'POST', body);
     if (!data) {
-      // Failure — surface inline and let `finally` re-enable so the operator
-      // can fix (e.g. wrong password) and retry without reopening.
-      document.getElementById('wrapError').textContent = 'Wrap failed. Check password.';
+      // Failure — surface the server's reason inline and let `finally`
+      // re-enable so the operator can fix and retry without reopening.
+      document.getElementById('wrapError').textContent = api.lastError || 'Wrap failed.';
       document.getElementById('wrapError').classList.remove('hidden');
       return;
     }
