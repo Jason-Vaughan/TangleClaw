@@ -185,6 +185,7 @@ const ttydBind = require('./lib/ttyd-bind');
 const wrapSentinel = require('./lib/wrap-sentinel');
 const medusaWake = require('./lib/medusa-wake');
 const authIdentity = require('./lib/auth-identity');
+const sessionOwnership = require('./lib/session-ownership');
 const serviceToken = require('./lib/service-token');
 const medusa = require('./lib/medusa');
 
@@ -2685,7 +2686,13 @@ route('GET', '/api/tc/whoami', (req, res) => {
   const config = store.config.load();
   const protocol = httpsSetup.effectiveServerProtocol(config);
   const port = httpsSetup.effectiveServerPort(config);
-  const operatorHost = require('./lib/session-ownership')._localHost();
+  const operatorTopologyWhoami = sessionOwnership.resolveOperatorHost(req.headers, config);
+  const operatorHost = operatorTopologyWhoami.host;
+  // Same reason as the launch path: without `source`, a null here cannot be
+  // told apart from a header that was refused as malformed or loopback.
+  log.debug('Resolved operator host for whoami', {
+    host: operatorHost, source: operatorTopologyWhoami.source
+  });
 
   let projConfig = null;
   if (project) {
@@ -2741,7 +2748,7 @@ route('GET', '/api/tc/whoami', (req, res) => {
       api: { origin: api, note: 'localhost is correct for YOUR OWN calls from this host' },
       operator: {
         host: operatorHost,
-        note: `operator-facing links must use http(s)://${operatorHost}:<port>, never localhost — the operator is almost never on this machine`
+        note: `Never hand the operator a localhost link — they are almost never on this machine; ${sessionOwnership.operatorLinkDirective(operatorHost)}.`
       },
       capabilities: [
         {
@@ -2774,7 +2781,7 @@ route('GET', '/api/tc/whoami', (req, res) => {
     },
     operator: {
       host: operatorHost,
-      note: `operator-facing links must use http(s)://${operatorHost}:<port>, never localhost — the operator is almost never on this machine`
+      note: `Never hand the operator a localhost link — they are almost never on this machine; ${sessionOwnership.operatorLinkDirective(operatorHost)}.`
     },
     capabilities,
     receiptRecorded: !!receipt
@@ -3836,8 +3843,21 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
   // is an honest unknown in the prime, not a failed launch.
   await ciStatus.refresh(project.path);
 
+  // The operator's own request carries the host they actually reached this
+  // server on — better evidence than probing this machine, which names the box
+  // rather than whatever proxy hostname they typed. Same trust gate as `owner`.
+  const operatorTopology = sessionOwnership.resolveOperatorHost(_req.headers, store.config.load());
+  const operatorHost = operatorTopology.host;
+  // `source` is the only thing separating "no header sent" from "a header was
+  // refused as duplicated, malformed or loopback". Without it a prime that says
+  // the host is unknown is indistinguishable from one that never looked.
+  log.debug('Resolved operator host for launch', {
+    project: params.project, host: operatorHost, source: operatorTopology.source
+  });
+
   const result = sessions.launchSession(params.project, {
     primePrompt: body ? body.primePrompt : true,
+    operatorHost,
     engineOverride: body ? body.engineOverride : null,
     mode: body ? body.mode : undefined,
     launchMode: body ? body.launchMode : undefined,
