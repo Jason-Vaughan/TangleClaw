@@ -186,6 +186,33 @@ body {
   animation: none;
 }
 
+/* OpenClaw connection indicator — three levels, and green means VERIFIED.
+
+   The bug these exist for: the code applied `.dead` and `.live` to this
+   element and neither had a rule, so a tunnel that failed kept the base
+   green breathing dot and the operator was told a dead connection was fine.
+   A state the code can set MUST have a rule here.
+
+   `unverified` is amber rather than green because it covers "we could not
+   check", which is not the same as "checked, and fine". Reaching green
+   requires every check to have come back clean. */
+.status-dot.checking {
+  background: var(--amber);
+  animation: breathe 2s ease-in-out infinite;
+}
+.status-dot.dead {
+  background: var(--danger);
+  animation: none;
+}
+.status-dot.unverified {
+  background: var(--amber);
+  animation: none;
+}
+.status-dot.live {
+  background: var(--primary);
+  animation: breathe 2s ease-in-out infinite;
+}
+
 /* ── Engine Badge ── */
 .banner-engine {
   font-size: 11px;

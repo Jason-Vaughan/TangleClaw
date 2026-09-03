@@ -246,18 +246,79 @@ silently does nothing.
 - **Done when:** the swallowed-paste replay records `unverified`, not `delivered`.
 
 ### Chunk 14 — #1012 OpenClaw connections show a green dot while unusable
-- The connection indicator distinguishes **reachable · paired · authenticated · serving**. The
-  probe goes past HTTP: over the connection's SSH channel it reads the gateway's pending device
-  requests (`openclaw devices list`) and the gateway's health; the UI renders
-  "unpaired — approve device `<id>` on `<host>`" with the exact command, and "reachable, gateway
-  error: <message>" for a gateway that answers HTTP but cannot serve.
-- The Control-UI index is served `Cache-Control: no-store` so a post-update bundle hash cannot
-  pair with a stale index.
-- The `[::1]` recreate-probe lead is measured (does the probe require both stacks?) and fixed or
-  recorded as not-a-defect with the evidence.
-- Tests: each state from a stubbed probe; no-store header on the index route; the fleet smoke
-  (`/api/openclaw/connections` reporting per-connection state) covers all four states.
-- **Done when:** a paired-but-unapproved gateway cannot render a green dot.
+
+**Re-scoped 2026-09-03 against measurement.** The chunk's original spec (an SSH probe running
+`openclaw devices list`, plus a `Cache-Control: no-store` index header) was written on evidence
+that has since been overtaken, and only one of its three legs survives contact with the evidence:
+
+- **The two defects the issue names already shipped.** The no-trailing-slash asset 404 landed in
+  PR #1013 (guarded by `test/openclaw-direct-trailing-slash.test.js`); the 200-then-hang landed in
+  PR #1074 (`test/openclaw-tunnel-state.test.js` — bounded start, pre-flight probe, honest
+  terminal state). The operator's own 2026-08-21 comment on #1012 records both.
+- **The SSH `devices list` probe cannot work.** It runs through `docker exec`
+  (`lib/openclaw-approve.js`), and Kobold and Volta run OpenClaw natively with no container. That
+  is exactly the fault #1076 was filed and fixed for.
+- **The `[::1]` recreate-probe leg is closed as not-a-defect, with the evidence.** The spec asked
+  whether the recreate probe requires both stacks. It already does: `lib/tunnel.js` probes
+  `LOCAL_LOOPBACKS = ['127.0.0.1', '[::1]']` and retries forward targets over
+  `FORWARD_TARGETS = ['127.0.0.1', '[::1]']`, IPv4 first so a dual-stack host pays no added
+  latency, with the IPv6-only fallback documented against Docker-Desktop-for-Mac's post-restart
+  publish. Nothing to fix; recorded here so the leg is disposed of rather than dropped.
+- **There is no gateway HTTP API to probe instead.** Measured against both live gateways: the
+  gateway serves the SPA shell (an HTML 200) for every unmatched path — so a 200 from an
+  invented path proves nothing — and 404s everything under its API namespace. Its one JSON endpoint is
+  `/health` → `{"ok":true,"status":"live"}`. Pairing and gateway errors are WebSocket-level
+  facts, not HTTP-observable.
+
+What remains is the issue's **title**, which is still true: nothing tests past HTTP reachability.
+Three defects carry it, all found by reading the code against the live fleet:
+
+1. **A failed tunnel keeps the green dot.** `failTunnel()` adds `.dead` to `#statusDot`; no rule
+   for `.status-dot.dead` exists in any stylesheet the page loads. `.status-dot`'s base rule is
+   `background: var(--primary)` — green, breathing. `.status-dot.live` is equally unstyled. The
+   only styled failure modifier, `.disconnected`, is never applied. So the dot is green before
+   anything is measured, green when the tunnel is up, and green when it is dead. This is the
+   reported symptom, and it needs no live gateway to reproduce.
+2. **"Connected" is asserted on an HTML 200.** `probeProxy` returning any 2xx/3xx sets the title
+   to `Connected` — the proxy served bytes, which is not the same as the gateway being able to
+   serve. This is the #948 shape at the last hop.
+3. **The pairing evidence the page already holds never reaches the dot.** `startAutoApprove()`
+   receives `{approved, code, reason, count}` per #1076 and spends it on toasts only. `count > 0`
+   positively proves devices are awaiting approval; the terminal codes (`SSH_FAILED`,
+   `DOCKER_NOT_FOUND`, `NO_CONTAINER`, `APPROVE_FAILED`) positively prove TangleClaw *could not
+   tell*. Both are downgrades the indicator must honour.
+
+**Design.** `deriveConnectionState({ probe, health, approve })` maps measurements to one of three
+visual levels, and **only ever downgrades on positive evidence** — the car-13 pattern. Absent or
+unreadable evidence yields the middle state, never the top one:
+
+| Level | Colour | Means |
+|---|---|---|
+| `dead` | red, no animation | the proxy could not serve the connection's base path |
+| `unverified` | amber | reachable, but something the operator needs is unconfirmed — the gateway did not answer `/health` with JSON `ok`, devices are pending approval, or TangleClaw could not check |
+| `live` | green | reachable, the gateway answered its own `/health`, and nothing is pending |
+
+`green` deliberately means *verified*, so a paired-but-unapproved gateway cannot reach it — the
+chunk's original "Done when", satisfied by refusing to assert rather than by detecting pairing.
+
+**Stated cost.** `/health` proves the gateway process answers; it does **not** prove the gateway
+can serve a session. TiLT Claw returned `{"ok":true}` while the operator's 2026-08-21 capture had
+its SQLite database malformed. The `live` level is therefore "nothing we can check is wrong", not
+"known good", and the state names say so rather than implying more.
+
+**Out of scope, deliberately:** detecting whether *this browser* is paired (the
+`openclaw.device.auth.v1:wss://…` localStorage entry is same-origin readable, but its exact key
+shape needs one live capture from the operator's browser — filed as a follow-up); the fleet-wide
+per-connection state column on the OpenClaw connections list endpoint (it would probe every connection on
+every list call); OpenClaw-Genesis's error-card wording; the `Cache-Control: no-store` index
+header (the bundle-hash pairing it guards against is not the reported fault, and the original
+spec bundled it on the dead SSH design).
+
+- Tests: each level from stubbed probe/health/approve triples; the downgrade-only property
+  (no evidence never yields `live`); the CSS rules the code depends on actually exist; the
+  dot is not green before a measurement lands.
+- **Done when:** a tunnel that failed renders visibly not-green, and no unverified connection
+  renders `live`.
 
 ## Status
 - [x] Chunk 1 — #948 (PR #1162)

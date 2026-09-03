@@ -49,6 +49,17 @@ function setFrameSrc(frame, url) {
 }
 
 /**
+ * The connection indicator: every measurement is recorded through it, and
+ * recording re-renders. The reduction itself lives in openclaw-tunnel-state.js
+ * so it can be exercised directly by tests rather than only pattern-matched.
+ *
+ * @type {{record: Function, state: Function, evidence: object}}
+ */
+const connectionIndicator = tcTunnelState.createConnectionIndicator(
+  () => document.getElementById('statusDot')
+);
+
+/**
  * Render the terminal "this tunnel is not usable" state: a persistent warning
  * carrying the reason, and a dead status dot.
  *
@@ -61,10 +72,13 @@ function setFrameSrc(frame, url) {
  */
 function failTunnel(message) {
   showToast(message, 'warn', 0);
-  const dot = document.getElementById('statusDot');
-  dot.title = 'Disconnected';
-  dot.classList.add('dead');
+  // Routed through the indicator, which CLEARS the other level classes first.
+  // Adding `dead` on top of the element's existing class left the previous
+  // colour showing, which is the reported bug.
+  connectionIndicator.fail(message);
 }
+
+
 
 /**
  * Initialize the OpenClaw viewer: start tunnel, load iframe, auto-approve pairing.
@@ -85,6 +99,7 @@ async function init() {
   document.getElementById('bannerName').textContent = conn.name;
   document.getElementById('bannerHost').textContent = `${conn.host}:${conn.port}`;
   document.title = `TangleClaw — ${conn.name}`;
+  connectionIndicator.record('connName', conn.name);
 
   // Start tunnel. #1012: bounded, and verified before the frame is pointed at
   // it — see public/openclaw-tunnel-state.js for why each half is load-bearing.
@@ -118,19 +133,27 @@ async function init() {
   // blocking module execution" card over our own healthy-looking banner.
   // One real request to the path the frame is about to load settles it.
   const probe = await tcTunnelState.probeProxy(connId);
+  connectionIndicator.record('probe', probe);
   if (!probe.reachable) {
     failTunnel(tcTunnelState.describeTunnelFailure('probe', conn.name, probe.reason));
     return;
   }
 
   showToast(tunnel.alreadyUp ? 'Tunnel already up' : 'Tunnel established', 'ok');
-  document.getElementById('statusDot').title = 'Connected';
-  document.getElementById('statusDot').classList.add('live');
 
   // Load the proxy URL in the iframe
   const frame = document.getElementById('terminalFrame');
   const tokenParam = conn.gatewayToken ? `#token=${encodeURIComponent(conn.gatewayToken)}` : '';
   setFrameSrc(frame, `/openclaw-direct/${encodeURIComponent(connId)}/chat?session=main${tokenParam}`);
+
+  // Reaching here means the proxy served bytes — NOT that the gateway behind
+  // it can do anything. Asking the gateway's own health endpoint is the one
+  // step past HTTP reachability it exposes, and until it answers the indicator
+  // must not claim a working connection. Deliberately NOT awaited before the
+  // frame is pointed: the answer gates the INDICATOR, not the page, and
+  // holding the frame back for it bought up to a full probe budget of blank
+  // iframe on every healthy load.
+  tcTunnelState.probeGateway(connId).then((health) => connectionIndicator.record('health', health));
 
   // Start sidecar polling + wire event listeners
   initSidecar();
@@ -169,7 +192,14 @@ function startAutoApprove() {
         headers: { 'Content-Type': 'application/json' },
         body: '{}'
       });
-      if (result) lastOutcome = result;
+      if (result) {
+        lastOutcome = result;
+        // #1076 gave this answer a machine-readable code; until now it reached
+        // the toasts and nothing else. `count > 0` proves devices are waiting,
+        // and a terminal code proves we could not find out — both are reasons
+        // the indicator must not read as a working connection.
+        connectionIndicator.record('approve', result);
+      }
 
       if (result && result.approved) {
         showToast('Device paired successfully', 'ok');

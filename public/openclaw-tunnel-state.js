@@ -114,6 +114,20 @@
   }
 
   /**
+   * The wall-clock budget for a probe.
+   *
+   * Overridable only through the test seam. A test proving the timeout path
+   * fires should not have to spend the production budget in real time — the
+   * assertion is about which branch runs, not how long it waits.
+   *
+   * @param {object} [deps] - Injection seam; `timeoutMs` overrides the default.
+   * @returns {number}
+   */
+  function probeBudget(deps) {
+    return deps && typeof deps.timeoutMs === 'number' ? deps.timeoutMs : PROBE_TIMEOUT_MS;
+  }
+
+  /**
    * Ask the proxy, once, whether it can actually serve this connection before
    * the iframe is pointed at it.
    *
@@ -132,13 +146,13 @@
    * as JSON. Its status code is the entire signal here.
    *
    * @param {string} connId - OpenClaw connection id.
-   * @param {object} [deps] - Injection seam for tests (`fetchImpl`, `AbortControllerImpl`).
+   * @param {object} [deps] - Injection seam for tests (`fetchImpl`, `AbortControllerImpl`, `timeoutMs`).
    * @returns {Promise<{reachable: boolean, status: number|null, reason: string|null}>}
    */
   async function probeProxy(connId, deps) {
     const url = `/openclaw-direct/${encodeURIComponent(connId)}/`;
     try {
-      const res = await fetchWithTimeout(url, { method: 'GET', cache: 'no-store' }, PROBE_TIMEOUT_MS, deps);
+      const res = await fetchWithTimeout(url, { method: 'GET', cache: 'no-store' }, probeBudget(deps), deps);
       const status = typeof res.status === 'number' ? res.status : 0;
       if (status >= 200 && status < 400) return { reachable: true, status, reason: null };
       // 502/503/504 is the proxy reporting a dead upstream; anything else is
@@ -181,11 +195,260 @@
     }
   }
 
+  /**
+   * Terminal auto-approve outcomes: the gateway host could not be asked at all.
+   *
+   * These are not "nothing is pending" — they are TangleClaw failing to find
+   * out. #1076 was filed because the distinction was being thrown away, and the
+   * whole point of surfacing it on the indicator is that "could not check" must
+   * never look like "checked, and fine".
+   *
+   * Deliberately one entry LONGER than the view's `TERMINAL_APPROVE_CODES`,
+   * which answers a different question. That list asks "is another poll worth
+   * making?"; this one asks "did we find out?". `LIST_FAILED` — the devices
+   * list command itself failing — is worth retrying, so it is absent there,
+   * but it still means pairing was never determined, so it belongs here. The
+   * divergence is the point, not a typo.
+   *
+   * @type {string[]}
+   */
+  const PAIRING_UNCHECKABLE_CODES = ['SSH_FAILED', 'DOCKER_NOT_FOUND', 'NO_CONTAINER', 'APPROVE_FAILED', 'LIST_FAILED'];
+
+  /**
+   * Ask the OpenClaw gateway's own health endpoint whether it is answering.
+   *
+   * This is the one step past HTTP reachability that the gateway actually
+   * exposes. Measured against the live fleet: the gateway serves its SPA shell
+   * with `200 text/html` for EVERY unmatched path, and 404s everything under
+   * `/api/`. So a 200 alone proves nothing — only a JSON body carrying `ok`
+   * distinguishes "the gateway answered" from "the static server handed back
+   * index.html". That is why the content is parsed rather than the status
+   * trusted; a status-only check here would be a guard that scores nothing.
+   *
+   * What this does NOT prove: that the gateway can serve a session. The
+   * endpoint reports process liveness only — a gateway with a malformed
+   * database answers `{"ok":true,"status":"live"}` and then fails every real
+   * request. The state this feeds is named for what it measured.
+   *
+   * Never throws, for the same reason `probeProxy` does not: a caller handling
+   * a sick gateway should not also have to handle a sick probe.
+   *
+   * @param {string} connId - OpenClaw connection id.
+   * @param {object} [deps] - Injection seam for tests (`fetchImpl`, `AbortControllerImpl`, `timeoutMs`).
+   * @returns {Promise<{answered: boolean, ok: boolean, reason: string|null}>}
+   */
+  async function probeGateway(connId, deps) {
+    const url = `/openclaw-direct/${encodeURIComponent(connId)}/health`;
+    try {
+      const res = await fetchWithTimeout(url, { method: 'GET', cache: 'no-store' }, probeBudget(deps), deps);
+      const status = typeof res.status === 'number' ? res.status : 0;
+      if (status < 200 || status >= 300) {
+        return { answered: false, ok: false, reason: `gateway health returned ${status}` };
+      }
+      let body = null;
+      try {
+        body = await res.json();
+      } catch (err) {
+        // The SPA fallback lands here: 200, but HTML. Not an answer.
+        return { answered: false, ok: false, reason: 'gateway did not answer its health check' };
+      }
+      if (!body || typeof body !== 'object') {
+        return { answered: false, ok: false, reason: 'gateway health answer was not an object' };
+      }
+      if (body.ok === true) return { answered: true, ok: true, reason: null };
+      return {
+        answered: true,
+        ok: false,
+        reason: `gateway reports ${body.status ? String(body.status) : 'not ok'}`
+      };
+    } catch (err) {
+      return {
+        answered: false,
+        ok: false,
+        reason: err && err.name === 'TimeoutError' ? 'the gateway did not answer' : ((err && err.message) || 'health probe failed')
+      };
+    }
+  }
+
+  /**
+   * Reduce what was actually measured to one indicator state.
+   *
+   * Three levels, and the middle one is the honest default. `live` is reserved
+   * for "every check we can run came back clean" — so evidence that is missing,
+   * unreadable, or says "could not tell" yields `unverified`, never `live`.
+   * The reduction ONLY EVER DOWNGRADES: no combination of absent inputs can
+   * manufacture a green indicator, which is the property that makes this an
+   * honest surface rather than a prettier version of the bug it fixes.
+   *
+   * `live` does not mean "known good" — it means nothing we can check is wrong.
+   * Whether THIS browser is paired with the gateway is not observable from
+   * here at all (it is a WebSocket-level fact held in the frame's own storage),
+   * so the labels never claim it.
+   *
+   * @param {object} [evidence]
+   * @param {{reachable: boolean, reason: string|null}|null} [evidence.probe] - `probeProxy` result.
+   * @param {{ok: boolean, reason: string|null}|null} [evidence.health] - `probeGateway` result.
+   * @param {{approved: boolean, code: string, reason: string, count: number}|null} [evidence.approve] - Latest `approve-pending` answer.
+   * @param {string} [evidence.connName] - Human name of the connection, for the label.
+   * @returns {{level: 'dead'|'unverified'|'live', label: string, detail: string|null}}
+   */
+  function deriveConnectionState(evidence) {
+    const e = evidence || {};
+    const who = e.connName ? `“${e.connName}”` : 'this connection';
+
+    const probe = e.probe;
+    // Not yet probed is not the same as probed and failed. Collapsing the two
+    // painted a normally-starting connection red for the whole tunnel budget —
+    // a measured failure reported before any measurement, which is the exact
+    // defect class this indicator exists to remove, pointing the other way.
+    if (probe === null || probe === undefined) {
+      return { level: 'checking', label: `Checking ${who}\u2026`, detail: null };
+    }
+    if (probe.reachable !== true) {
+      const why = probe.reason || 'the tunnel could not be probed';
+      return { level: 'dead', label: `Not connected — ${why}`, detail: why };
+    }
+
+    const health = e.health;
+    if (!health || health.ok !== true) {
+      const why = (health && health.reason) || 'the gateway was not checked';
+      return {
+        level: 'unverified',
+        label: `Tunnel up, gateway unverified — ${why}`,
+        detail: why
+      };
+    }
+
+    const approve = e.approve;
+    if (!approve || typeof approve !== 'object') {
+      return {
+        level: 'unverified',
+        label: 'Tunnel up, gateway answering — pairing not checked yet',
+        detail: null
+      };
+    }
+    if (typeof approve.count === 'number' && approve.count > 0 && approve.approved !== true) {
+      const n = approve.count;
+      return {
+        level: 'unverified',
+        label: `Tunnel up — ${n} device${n === 1 ? '' : 's'} awaiting approval on ${who}`,
+        detail: approve.reason || null
+      };
+    }
+    if (PAIRING_UNCHECKABLE_CODES.indexOf(approve.code) !== -1) {
+      return {
+        level: 'unverified',
+        label: `Tunnel up — TangleClaw could not check pairing (${approve.code})`,
+        detail: approve.reason || null
+      };
+    }
+    if (approve.approved === true || approve.code === 'NO_PENDING') {
+      return { level: 'live', label: 'Connected — gateway answering, nothing pending', detail: null };
+    }
+    return {
+      level: 'unverified',
+      label: 'Tunnel up, gateway answering — pairing state unknown',
+      detail: approve.reason || null
+    };
+  }
+
+  /**
+   * Every level class the indicator can carry.
+   *
+   * Exported so the caller clears the set rather than adding to it: the
+   * reported bug was an indicator that ACCUMULATED classes, and a `.dead`
+   * added on top of a still-present green class is invisible. Callers must
+   * remove all of these before adding one.
+   *
+   * @type {string[]}
+   */
+  const CONNECTION_STATE_CLASSES = ['checking', 'dead', 'unverified', 'live'];
+
+  /**
+   * Put a derived state onto the indicator element.
+   *
+   * Clears every level class before applying one, so states replace rather
+   * than stack, and writes the label to `title` AND `aria-label` — a colour
+   * alone is not an accessible status, and on a touch device there is no
+   * hover to reveal a tooltip.
+   *
+   * @param {Element|null} el - The indicator element.
+   * @param {{level: string, label: string}} state - A `deriveConnectionState` result.
+   * @returns {void}
+   */
+  function applyConnectionState(el, state) {
+    if (!el || !state) return;
+    for (const cls of CONNECTION_STATE_CLASSES) el.classList.remove(cls);
+    el.classList.add(state.level);
+    el.title = state.label;
+    el.setAttribute('aria-label', `Connection status: ${state.label}`);
+  }
+
+  /**
+   * An indicator that accumulates measurements and re-renders on every one.
+   *
+   * This lives here, rather than in the page, so that "recording a measurement
+   * re-renders the dot" is a property a test can EXECUTE. The same reduction
+   * spelled inline in the view could only ever be checked by pattern-matching
+   * its source, and a source match is satisfied by any call site — including
+   * one that skips the case you care about.
+   *
+   * @param {Element|(() => Element|null)} target - The indicator element, or a getter for it.
+   * @returns {{record: (key: string, value: *) => object, state: () => object, evidence: object}}
+   */
+  function createConnectionIndicator(target) {
+    const evidence = { probe: null, health: null, approve: null, connName: null };
+    const resolve = () => (typeof target === 'function' ? target() : target);
+    return {
+      /**
+       * Record one measurement, then re-render from ALL of them.
+       * @param {'probe'|'health'|'approve'|'connName'} key - Which measurement landed.
+       * @param {*} value - The measurement.
+       * @returns {object} The state now showing.
+       */
+      /**
+       * Render a terminal failure whose reason the caller already phrased.
+       * Routed through the same applier so it cannot stack classes.
+       * @param {string} label - Operator-facing sentence.
+       * @returns {object}
+       */
+      fail(label) {
+        const state = { level: 'dead', label, detail: null };
+        applyConnectionState(resolve(), state);
+        return state;
+      },
+      record(key, value) {
+        evidence[key] = value;
+        const state = deriveConnectionState(evidence);
+        applyConnectionState(resolve(), state);
+        return state;
+      },
+      /**
+       * The state the current evidence reduces to, without re-rendering.
+       * @returns {object}
+       */
+      state() { return deriveConnectionState(evidence); },
+      /**
+       * A COPY of the evidence, for inspection. Deliberately not the record
+       * itself: handing back the live object lets a caller write to it without
+       * re-rendering, which is the invariant this factory exists to hold.
+       * @returns {object}
+       */
+      snapshot() { return Object.assign({}, evidence); }
+    };
+  }
+
   const apiSurface = {
     fetchWithTimeout,
     callWithTimeout,
     probeProxy,
+    probeGateway,
+    deriveConnectionState,
+    applyConnectionState,
+    createConnectionIndicator,
     describeTunnelFailure,
+    PAIRING_UNCHECKABLE_CODES,
+    CONNECTION_STATE_CLASSES,
     TUNNEL_START_TIMEOUT_MS,
     PROBE_TIMEOUT_MS
   };
