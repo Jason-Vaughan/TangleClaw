@@ -142,8 +142,14 @@
     const setInFlight = deps.setInFlight;
     const restart = deps.restart;
     const secondary = deps.secondaryAction || null;
+    // "or newer", everywhere a version is offered (#994): the applier resolves
+    // the target LIVE at apply time (`git ls-remote`, newest tag wins), so the
+    // polled number is the floor of what will be installed, not a promise. A
+    // release landing between the poll and the click made the pill offer one
+    // version and deliver another. The number actually checked out is named
+    // afterwards, from the applier's own answer.
     const confirmText = deps.confirmText || ((data) =>
-      `Update TangleClaw to v${data.latestVersion} and restart?\n\n`
+      `Update TangleClaw to v${data.latestVersion} or newer and restart?\n\n`
       + 'TC fetches the release, switches the checkout to it, and restarts. Active tmux '
       + 'sessions survive; the browser reconnects when the server returns (~3 seconds).');
 
@@ -213,8 +219,8 @@
       // screen once the toast fades, so it has to be reachable by keyboard and
       // announced as actionable — the badge it replaces was neither.
       dot.setAttribute('aria-label',
-        `Update available: v${data.latestVersion}. Show details.`);
-      dot.title = `v${data.latestVersion} available`;
+        `Update available: v${data.latestVersion} or newer. Show details.`);
+      dot.title = `v${data.latestVersion} or newer available`;
     }
 
     /**
@@ -259,6 +265,9 @@
       const label = doc.createElement('span');
       label.className = 'beacon-toast-version';
       const versionText = `v${data.latestVersion}`;
+      // The version is a floor, never the install target (#994); the
+      // qualifier is declared beside it so the pair cannot be split.
+      const qualifier = ' or newer — update available';
       if (isSafeReleaseUrl(data.releaseUrl)) {
         const link = doc.createElement('a');
         link.href = data.releaseUrl;
@@ -271,7 +280,7 @@
         label.textContent = versionText;
       }
       const rest = doc.createElement('span');
-      rest.textContent = ' update available';
+      rest.textContent = qualifier;
       label.appendChild(rest);
       toast.appendChild(label);
 
@@ -543,7 +552,10 @@
 
       // 2. Capture the baseline startedAt, then restart onto the new code.
       setApplyLabel('Restarting…', true);
-      const appliedLabel = applyResp.toRef || `v${data.latestVersion}`;
+      // The applier names what it checked out; that is the only version this
+      // flow may report as installed (#994). Without it, say so rather than
+      // fall back to the polled number the applier never promised.
+      const appliedLabel = applyResp.toRef || 'the newest release';
       let oldStartedAt = null;
       try {
         const pre = await api('/api/server-info');

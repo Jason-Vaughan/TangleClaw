@@ -383,7 +383,9 @@ function renderVersionCheckHint(data) {
     hint = `Cached answer from ${ago} — ${restartRemedy}`;
     mark = 'check-unknown';
   } else if (state === 'update') {
-    hint = `v${data.latestVersion} available — checked ${ago}${cached ? ` (cached; ${restartRemedy})` : ''}`;
+    // "or newer": the applier resolves its target live, so the polled number
+    // is a floor, not the version a click will install (#994).
+    hint = `v${data.latestVersion} or newer available — checked ${ago}${cached ? ` (cached; ${restartRemedy})` : ''}`;
   } else {
     hint = `Up to date — checked ${ago}. Tap to check now`;
   }
