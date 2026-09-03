@@ -2895,7 +2895,7 @@ describe('sessions', () => {
         // deleted its handler; PIDX slice 3 (#360) added `project-map` after
         // `features-toc`; PIDX #426 added `index-describe` after `project-map`;
         // #466 added `learnings-db-write` after `learnings-capture`; #570 added
-        // `apply-pr-resolutions` last — prawduct now ships 13 steps.
+        // `apply-pr-resolutions` last— the count is read off the shared pipeline below, never written here.
         assert.equal(result.pipelineResult.results.length,
           require('../lib/wrap-default-pipeline').steps().length,
           'every step of the code-owned pipeline reports a result');
