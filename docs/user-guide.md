@@ -304,7 +304,7 @@ Tap **Upload** to send a file into the project directory. A file picker opens wh
 
 When enabled, TangleClaw plays an audio chime when the session stops working and is waiting for you.
 
-It does not simply time silence. TangleClaw reads the pane for the engine's own signals — a turn in flight, a running agent fleet — and additionally requires the transcript to have stopped changing, across consecutive polls and for at least ten seconds. A session blocked on a permission prompt counts as waiting for you, and chimes.
+It does not simply time silence. TangleClaw reads the pane for the engine's own signals — a turn in flight, a running agent fleet — and additionally requires the transcript to have stopped changing, across consecutive polls and for at least ten seconds. A session blocked on a permission prompt counts as waiting for you, and chimes — on Claude. On antigravity/Gemini CLI a dialog also hides that engine's own at-rest marker, so those sessions still read as working until the dialog clears; that is a limit of what the terminal shows, not a setting.
 
 Two limits worth knowing:
 
