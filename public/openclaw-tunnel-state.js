@@ -203,6 +203,13 @@
    * whole point of surfacing it on the indicator is that "could not check" must
    * never look like "checked, and fine".
    *
+   * Deliberately one entry LONGER than the view's `TERMINAL_APPROVE_CODES`,
+   * which answers a different question. That list asks "is another poll worth
+   * making?"; this one asks "did we find out?". `LIST_FAILED` — the devices
+   * list command itself failing — is worth retrying, so it is absent there,
+   * but it still means pairing was never determined, so it belongs here. The
+   * divergence is the point, not a typo.
+   *
    * @type {string[]}
    */
   const PAIRING_UNCHECKABLE_CODES = ['SSH_FAILED', 'DOCKER_NOT_FOUND', 'NO_CONTAINER', 'APPROVE_FAILED', 'LIST_FAILED'];
