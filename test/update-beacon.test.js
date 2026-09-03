@@ -780,10 +780,9 @@ describe('#994 the beacon never promises a version the applier did not commit to
     const sites = lines.map((l, i) => (l.includes('${data.latestVersion}') ? i : -1)).filter((i) => i >= 0);
     assert.ok(sites.length >= 4, `expected the toast, dot title, dot label and confirm; found ${sites.length}`);
     for (const i of sites) {
-      // The toast composes the version (a link when there is a release URL,
-      // text otherwise) and its qualifier as two spans, so the qualifier sits
-      // up to a link-branch below the interpolation.
-      const window = lines.slice(i, i + 12).join('\n');
+      // The toast declares its qualifier on the line after the version, so
+      // a short window is enough; a qualifier that drifts away goes red.
+      const window = lines.slice(i, i + 4).join('\n');
       assert.match(window, /or newer/, `unqualified version in beacon copy: ${lines[i].trim()}`);
     }
   });

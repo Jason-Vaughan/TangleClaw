@@ -265,6 +265,9 @@
       const label = doc.createElement('span');
       label.className = 'beacon-toast-version';
       const versionText = `v${data.latestVersion}`;
+      // The version is a floor, never the install target (#994); the
+      // qualifier is declared beside it so the pair cannot be split.
+      const qualifier = ' or newer — update available';
       if (isSafeReleaseUrl(data.releaseUrl)) {
         const link = doc.createElement('a');
         link.href = data.releaseUrl;
@@ -277,7 +280,7 @@
         label.textContent = versionText;
       }
       const rest = doc.createElement('span');
-      rest.textContent = ' or newer — update available';
+      rest.textContent = qualifier;
       label.appendChild(rest);
       toast.appendChild(label);
 
