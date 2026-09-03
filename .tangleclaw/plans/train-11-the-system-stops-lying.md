@@ -120,9 +120,11 @@ silently does nothing.
   default, and a warn-level line would fire on every non-Claude launch about a preference
   nobody set (Critic R-5 on this car: warning on a default is the shape this train removes).
 - The surface the operator actually reads is the settings modal: on an engine without the
-  capability it now renders the toggle inert with "Not available on codex — the session prime is
-  typed into the terminal at launch instead" rather than hiding it. The launch records the
-  same fact at info level, naming project, engine, setting and why.
+  capability it now renders the toggle inert with "Not available on codex" rather than hiding it
+  (the first cut added "— the session prime is typed into the terminal instead", dropped in
+  Chunk 7 because it is false for an engine with no prime channel; the hint states the fact,
+  not a downstream outcome). The launch records the same fact at info level, naming project,
+  engine, setting and why.
 - Descoped: a `droppedPreference` field on the delivery ledger row (fixed-column table with CHECK
   constraints; the row's `prime-paste` channel already records what happened; revisit with the
   receipt work in Chunk 12).

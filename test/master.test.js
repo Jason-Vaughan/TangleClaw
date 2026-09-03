@@ -155,7 +155,7 @@ describe('buildMasterClaudeMd', () => {
     const md = master.buildMasterClaudeMd({ serverPort: 3102 });
     assert.match(md, /not proof of outage/);
     assert.match(md, /launchctl print gui\/\$UID\/com\.tangleclaw\.server/);
-    assert.match(md, /lsof -nP -iTCP/);
+    assert.match(md, /lsof -nP -iTCP:3102 -sTCP:LISTEN/, 'the real port, not a placeholder');
   });
 
   it('renders the API base URL from config port and the SERVED protocol (ENG-5R2W)', () => {

@@ -103,7 +103,10 @@ describe('lib/ecosystem-primer (#1122)', () => {
     // down" and told the operator so. The guide the session reads carries the
     // correction ahead of the failure.
     for (const form of ['md', 'comment']) {
-      const text = primer.tcBootstrapLines(form).join('\n');
+      // The comment form word-wraps after a variable-length verb list, so the
+      // sentence is read with its line breaks and `#` prefixes collapsed —
+      // the assertion is about the words, not where the wrap fell.
+      const text = primer.tcBootstrapLines(form).join(' ').replace(/(^|\s)#\s*/g, ' ').replace(/\s+/g, ' ');
       assert.match(text, /not proof of outage/, `${form}: the claim is bounded`);
       assert.match(text, /host-context check/, `${form}: and the next step is named`);
     }
