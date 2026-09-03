@@ -4697,6 +4697,26 @@ route('GET', '/api/sessions/:project/peek', (req, res, params) => {
   });
 });
 
+// GET /api/sessions/:project/clipboard — the newest tmux buffer, i.e. what the
+// operator last copied in the terminal (#438). Touch devices have no Option
+// key for the #431 local-selection gesture, so this is their copy path: the
+// TUI's own copy sets a tmux buffer server-side, and the session page hands
+// it to the browser clipboard. Every refusal is a 404 with the reason and a
+// code the client can name — "nothing to copy yet" is not "session gone".
+route('GET', '/api/sessions/:project/clipboard', (_req, res, params) => {
+  const result = sessions.clipboard(params.project);
+  if (result.error) {
+    return errorResponse(res, 404, result.error, result.code || 'NOT_FOUND');
+  }
+
+  jsonResponse(res, 200, {
+    text: result.text,
+    chars: result.text.length,
+    project: params.project,
+    tmuxSession: result.tmuxSession
+  });
+});
+
 // GET /api/sessions/:project/history — Session history
 route('GET', '/api/sessions/:project/history', (req, res, params) => {
   const urlObj = reqUrl(req);
