@@ -152,9 +152,9 @@ Below the ports panel, there's a collapsible **Global Rules** panel. These are m
 
 - **Edit**: Expand the panel, modify the textarea, and tap **Save**
 - **Revert**: restore it from git (`data/global-rules.md` is tracked). There is no Reset button: the old one called an endpoint that, since the canonical-source model (#240), returns the current content unchanged, so it looked like a revert and did nothing (#243)
-- **API**: `GET /api/rules/global`, `PUT /api/rules/global`, `POST /api/rules/global/reset`
+- **API**: `GET /api/rules/global`, `PUT /api/rules/global`. `POST /api/rules/global/reset` still exists as a back-compat no-op since #240 — it returns the current content unchanged
 
-Global rules are stored at `~/.tangleclaw/global-rules.md`. On first load, this file is created from the bundled defaults in `data/default-global-rules.md`.
+Global rules live in one git-tracked file, `data/global-rules.md` in the TangleClaw repo (#240). Saving from the panel writes that file directly; there is no bundled default and no per-install copy under `~/.tangleclaw/`. A leftover `~/.tangleclaw/global-rules.md` from an older install is ignored — if its content differs, TangleClaw backs it up next to itself and logs a warning on startup so you can merge what you still want.
 
 ### Toolbar
 

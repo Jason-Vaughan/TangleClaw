@@ -342,7 +342,7 @@ When adding a new engine, verify that its generated config includes all of the f
 - [ ] **Core rules** — all five default rules: CHANGELOG updates, JSDoc comments, unit tests, session wrap protocol, PortHub registration
 - [ ] **Extension rules** — active extension rules (identitySentry, docsParity, decisionFramework, etc.) translated into the engine's format
 - [ ] **PortHub guide or reference** — full Port Management guide (for markdown-based engines) or API reference comment (for YAML-based engines)
-- [ ] **Global rules** — content from `~/.tangleclaw/global-rules.md` injected into the config
+- [ ] **Global rules** — content from `data/global-rules.md` (the git-tracked canonical source, #240) injected into the config
 - [ ] **Generator switch case** — a `case` entry in `generateConfig()` for the new generator name
 - [ ] **Profile `configFormat.generator`** — must exactly match the switch case string
 - [ ] **`_getRulesContent()` used** — the generator function must call `_getRulesContent()` to get the canonical rule set (do not duplicate rule logic)
