@@ -69,11 +69,10 @@ function extractUpstreamInstallReference(src) {
     '    sys.exit("INSTALL_REFERENCE not found in " + sys.argv[1])'
   ].join('\n');
   // Pipe stderr rather than letting it inherit: several tests below deliberately
-  // provoke Python failures — three raise tracebacks, one exits via sys.exit
-  // with a plain message — and an inherited stderr prints every one of them on a
-  // GREEN run. Failure output scrolling past a passing suite trains the reader
-  // to ignore failure output. `err.message` still carries the child's stderr, so
-  // the matchers are unaffected.
+  // provoke Python failures, and an inherited stderr prints every one of them on
+  // a GREEN run. Failure output scrolling past a passing suite trains the reader
+  // to ignore failure output. Piped, the child's stderr is on `err.stderr`,
+  // which is where the matchers read it.
   try {
     return execFileSync('python3', ['-c', program, src], {
       encoding: 'utf8',
