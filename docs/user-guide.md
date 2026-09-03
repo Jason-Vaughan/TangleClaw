@@ -461,6 +461,7 @@ Every plan or design doc a session writes to `<project>/.tangleclaw/plans/<name>
 - Use PWA mode (Add to Home Screen) for the best experience
 - The command bar appears above the keyboard when focused
 - Touch targets are 44px minimum for comfortable tapping
+- The dashboard works in portrait: below 600px the header pills, the toolbar (filters drop under the session count) and each card's action row wrap instead of overlapping or running off the screen edge
 - Safe area insets are respected for notch/home indicator
 
 ### Android (Pixel Fold 9)

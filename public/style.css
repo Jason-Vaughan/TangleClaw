@@ -291,9 +291,9 @@ body {
   padding: 1px 5px;
   border-radius: var(--radius-pill);
 }
-@media (max-width: 600px) {
-  .dash-stats { display: none; }
-}
+/* The phone-portrait block that hides .dash-stats below 600px sits with the
+   other mobile blocks after the card rules (#1192) — it also overrides the
+   toolbar and card-row base rules, which the cascade needs it to follow. */
 
 /* ── Stat value colors (used by dashboard bar) ── */
 .stat-value {
@@ -1297,6 +1297,15 @@ body {
   outline: none;
   border-color: var(--primary);
 }
+/* The engine <select> sizes to its longest option rather than the 100% the
+   base `.filter-input` rule gives inputs. This used to be an inline style on
+   the element (#1192); it lives here so the stylesheet owns every width the
+   toolbar's center column has to fit. Must follow `.filter-input` — same
+   specificity, so only source order lets `auto` beat `100%`. */
+.filter-input--engine {
+  width: auto;
+  margin-right: 8px;
+}
 .filter-clear {
   position: absolute;
   right: 2px;
@@ -1751,8 +1760,46 @@ body {
   color: #fff;
 }
 
-/* Mobile: stack card name above badges + buttons */
-@media (max-width: 480px) {
+/* Touch targets: ensure 44px tap area on mobile even if visual is smaller */
+@media (pointer: coarse) {
+  .btn-compact { min-height: 44px; }
+  .btn-icon-tiny { min-width: 44px; max-width: 44px; min-height: 44px; }
+  .card-row { min-height: 48px; }
+  /* The version doubles as the check-for-updates control (#716). At its natural
+     ~14px it is a genuinely hard target on a phone, which is the primary way
+     this dashboard is used. Padding rather than min-height so it still sits on
+     the header's baseline instead of stretching the bar. */
+  .dash-version { min-height: 44px; padding: 0 10px; }
+}
+
+/* Phone-portrait layout (#1192). Below 600px the dashboard's three single-row
+   bars — header, toolbar, card action row — no longer fit, and none of them
+   wrapped: the toolbar drew its filter box OVER the session count, the header
+   ran the Master pill off the right edge, and the destructive × in a card's
+   action row sat flush against the card edge. Nothing between this breakpoint
+   and the 480px card-stacking rule adapted them, and a phone in portrait sits
+   in exactly that gap. Every rule here wraps rather than shrinks: a wrapped
+   control is still a full-size tap target, a shrunk one is not.
+   This block must stay AFTER the `.toolbar-*` and `.card-row-actions` base
+   rules: it overrides their `flex` / `flex-shrink` / `justify-content` at equal
+   specificity, so source order is what makes it win. It used to sit near the
+   header rules, where the toolbar overrides silently lost.
+   `test/mobile-toolbar-layout.test.js` pins this block and its position. */
+@media (max-width: 600px) {
+  .dash-stats { display: none; }
+  /* Header: the action pills take their own line(s) instead of clipping. */
+  .dash-bar { flex-wrap: wrap; row-gap: 4px; }
+  .dash-actions { flex: 1 1 100%; flex-wrap: wrap; }
+  /* Toolbar: count and + New share the first line; the filter column, which
+     cannot shrink below its 160px filter box, drops to a full-width line of
+     its own. `order` moves only the center column, so DOM (and tab) order is
+     untouched — the filters simply render under the count. */
+  .toolbar { flex-wrap: wrap; row-gap: 6px; }
+  .toolbar-left { flex: 1 1 auto; }
+  .toolbar-center { flex: 1 1 100%; order: 1; justify-content: flex-start; }
+  /* Card row: the project name stacks above badges + buttons. This lived in a
+     480px block, which left 481–600px cramming name, badges and seven buttons
+     into one line; a phone in portrait is inside that gap. */
   .card-row {
     flex-wrap: wrap;
     padding: 8px 12px 6px;
@@ -1766,18 +1813,16 @@ body {
   .status-dot {
     order: -2;
   }
-}
-
-/* Touch targets: ensure 44px tap area on mobile even if visual is smaller */
-@media (pointer: coarse) {
-  .btn-compact { min-height: 44px; }
-  .btn-icon-tiny { min-width: 44px; max-width: 44px; min-height: 44px; }
-  .card-row { min-height: 48px; }
-  /* The version doubles as the check-for-updates control (#716). At its natural
-     ~14px it is a genuinely hard target on a phone, which is the primary way
-     this dashboard is used. Padding rather than min-height so it still sits on
-     the header's baseline instead of stretching the bar. */
-  .dash-version { min-height: 44px; padding: 0 10px; }
+  /* Card action row: seven 44px targets exceed a phone-width card, so the row
+     may wrap; the right margin keeps the destructive × (last in the row) off
+     the card edge, where a thumb aiming at the edge would hit it. */
+  .card-row-actions {
+    flex-shrink: 1;
+    flex-wrap: wrap;
+    min-width: 0;
+    row-gap: 4px;
+    margin-right: 8px;
+  }
 }
 
 /* ── Card Detail Expansion ── */
