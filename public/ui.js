@@ -1411,6 +1411,11 @@ function renderProjectRulesSection(project) {
         <div class="wrap-section-grid">${sectionChecks}</div>
       </div>
       <div class="project-rules-grid">${ruleBlocks}</div>
+      <div class="form-group">
+        <div class="form-label">Rule deliveries</div>
+        <div class="form-hint">The last five launches: whether the startup-rule block reached the engine, on which channel, and why not when it did not.</div>
+        <div class="session-rules-list" id="projRuleDeliveriesList" aria-live="polite"></div>
+      </div>
       <div id="projRulesPwGroup" class="form-group hidden">
         <label class="form-label" for="projRulesPw">Delete password (required to approve a proposed rule)</label>
         <input type="password" class="form-input" id="projRulesPw" autocomplete="current-password">
@@ -1492,7 +1497,8 @@ function renderProjectRulesUnknown(kind, why) {
 }
 
 /**
- * Fetch this project's rules for each kind and render its list.
+ * Fetch this project's rules for each kind and render its list, then the
+ * rule-delivery ledger (#1164).
  * @param {number} projectId - DB project id
  */
 async function loadProjectRules(projectId) {
@@ -1501,35 +1507,76 @@ async function loadProjectRules(projectId) {
     if ((await refreshProjectRulesList(projectId, kind)) === null) return;
   }
 
-  // Load verified delivery ledger
-  try {
-    const deliveriesData = await api(`/api/session-rules/deliveries?projectId=${encodeURIComponent(projectId)}`);
-    if (projectRulesTargetId !== projectId) return;
-    const list = document.getElementById('projRuleDeliveriesList');
-    if (list && deliveriesData && deliveriesData.deliveries) {
-      if (deliveriesData.deliveries.length === 0) {
-        list.innerHTML = '<p class="session-rules-empty">No delivery records found.</p>';
-      } else {
-        list.innerHTML = deliveriesData.deliveries.slice(0, 5).map((d) => {
-          // One owner for the outcome→class map (`tcDeliveryOutcomeClass` in
-          // api-helper.js), so a test can drive it over the ledger's whole
-          // vocabulary. 'unverified' and 'written' (#1063) are deliberately
-          // neither ok nor err: something was put on the channel and nothing
-          // confirmed the far side.
-          const outcomeClass = tcDeliveryOutcomeClass(d.outcome);
-          return `<div class="session-rule-item">
-            <div class="session-rule-content">
-              <strong>${esc(d.sessionId)}</strong>: <span class="${outcomeClass}">${esc(d.outcome)}</span>
-              ${d.skipReason ? `<br><small class="session-rule-meta">Reason: ${esc(d.skipReason)}</small>` : ''}
-              <br><small class="session-rule-meta">Channel: ${esc(d.channel)} | Digest: <code>${esc(d.digest ? d.digest.slice(0, 8) : 'none')}</code> | Rules: ${d.ruleIds ? d.ruleIds.length : 0}</small>
-            </div>
-          </div>`;
-        }).join('');
-      }
-    }
-  } catch (err) {
-    console.error('Failed to load rule deliveries', err);
+  await refreshProjectRuleDeliveries(projectId);
+}
+
+/**
+ * Fetch this project's rule-delivery ledger and render the answer — the rows,
+ * the true empty state, or the unknown (#1164). The same three-state shape as
+ * `refreshProjectRulesList` (#1054): a `null` from `api()` is a read that did
+ * not happen, and a payload without a `deliveries` array is not a ledger —
+ * neither is a project that has never launched, so neither renders as one.
+ * @param {number} projectId - DB project id
+ * @returns {Promise<boolean|null>} `true` when the ledger rendered from a real
+ *   read, `false` when the read failed and the unknown state rendered, `null`
+ *   when the modal moved to another project meanwhile and nothing rendered.
+ */
+async function refreshProjectRuleDeliveries(projectId) {
+  const data = await api(`/api/session-rules/deliveries?projectId=${encodeURIComponent(projectId)}`);
+  // The modal may have been closed/reopened on another project while awaiting.
+  if (projectRulesTargetId !== projectId) return null;
+  if (!data || !Array.isArray(data.deliveries)) {
+    renderProjectRuleDeliveriesUnknown(data ? 'the server answered without a ledger' : api.lastError);
+    return false;
   }
+  renderProjectRuleDeliveries(data.deliveries);
+  return true;
+}
+
+/**
+ * Render the ledger as UNKNOWN through the same helper the rules lists use
+ * (#948), so the alert role, the class pair and the sentence shape match the
+ * lists above it.
+ * @param {string|null} why - `api.lastError`, or the shape defect, when there is one
+ */
+function renderProjectRuleDeliveriesUnknown(why) {
+  const list = document.getElementById('projRuleDeliveriesList');
+  if (!list) return;
+  list.innerHTML = window.tcRulesUnknownHtml('Deliveries',
+    window.tcDegradedRead(false, why, 'Close and reopen Settings to retry.'));
+}
+
+/**
+ * Render the ledger's most recent rows, or the empty state when the read
+ * succeeded and found nothing — stated as a fact about the ledger, not a
+ * claim about the project's launch history, which zero rows cannot prove.
+ * @param {object[]} deliveries - Ledger rows, newest first, as the API returns them
+ */
+function renderProjectRuleDeliveries(deliveries) {
+  const list = document.getElementById('projRuleDeliveriesList');
+  if (!list) return;
+  if (deliveries.length === 0) {
+    // Neutral on purpose: zero rows is not proof the project never launched —
+    // `_recordRuleDelivery` swallows write failures and non-real launches pass
+    // `deliveryBase=null` — so the sentence states what was found, not why.
+    list.innerHTML = '<p class="session-rules-empty">No delivery records — no delivery attempt has been recorded for this project.</p>';
+    return;
+  }
+  list.innerHTML = deliveries.slice(0, 5).map((d) => {
+    // One owner for the outcome→class map (`tcDeliveryOutcomeClass` in
+    // api-helper.js), so a test can drive it over the ledger's whole
+    // vocabulary. 'unverified' and 'written' (#1063) are deliberately
+    // neither ok nor err: something was put on the channel and nothing
+    // confirmed the far side.
+    const outcomeClass = tcDeliveryOutcomeClass(d.outcome);
+    return `<div class="session-rule-item">
+      <div class="session-rule-content">
+        <strong>${esc(d.sessionId)}</strong>: <span class="${outcomeClass}">${esc(d.outcome)}</span>
+        ${d.skipReason ? `<br><small class="session-rule-meta">Reason: ${esc(d.skipReason)}</small>` : ''}
+        <br><small class="session-rule-meta">Channel: ${esc(d.channel)} | Digest: <code>${esc(d.digest ? d.digest.slice(0, 8) : 'none')}</code> | Rules: ${d.ruleIds ? d.ruleIds.length : 0}</small>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 /**

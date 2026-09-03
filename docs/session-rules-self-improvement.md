@@ -210,7 +210,9 @@ was retired in the Phase A settings cleanup: harness posture is now the structur
   wholesale for plugin-governed projects (#1021 has since narrowed that skip to an
   operational block — rules deliberately stay out of it); the tier therefore delivered
   nothing on every governed project while still accepting writes. Each launch now records the outcome in
-  the `session_rule_deliveries` ledger (`GET /api/session-rules/deliveries`), including
+  the `session_rule_deliveries` ledger (`GET /api/session-rules/deliveries`; the newest five
+  rows also render in the Settings modal's **Rule deliveries** block under the Project Rules
+  lists, which says "Deliveries unknown" and why when the read fails), including
   attempts that did **not** arrive — without those rows a severed channel is
   indistinguishable from a project that simply has no rules.
 - `POST /api/session-rules` and `/promote` accept `kind`; `GET /api/session-rules?kind=`
