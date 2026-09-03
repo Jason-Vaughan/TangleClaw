@@ -26,6 +26,39 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-03 — #854: the wrap asks prawduct for its verdict before it writes anything
+
+<!-- prawduct: type=feature | scope=wrap-preflight-854 -->
+
+In a prawduct-onboarded project the plugin's Stop hook blocks the session when governance is unmet
+— no Critic review, no reflection captured. It fires on every turn end, including the turns the
+wrap pipeline itself drives, so the block arrived partway down the pipeline, after
+`changelog-update` and `version-bump` had already written to the tree, leaving a half-applied wrap
+to reason about. The verdict was available before the first step ran.
+
+A new `preflight` step runs first and asks for it, invoking `prawduct-hook stop` with
+`CLAUDE_PROJECT_DIR` pinned to the project being asked about — the server runs under launchd and
+its own environment may name whichever project launched it. The hook is found on PATH, else through
+`~/.claude/plugins/installed_plugins.json`, preferring a user-scope install.
+
+Advisory by default, for three reasons the issue argues: prawduct's reflection gate wants the
+narrative the wrap's own content steps produce, so a blocking preflight would deadlock against it;
+its Critic gate is minutes of agent time that belongs opted into per project; and the escape hatch
+means writing another framework's state. An unmet gate is a `blocked` row carrying prawduct's own
+block text, the pipeline continues, and the banner reads "completed with warnings".
+`wrapStepOverrides.preflight.blocker: true` makes it halt instead, with the tree untouched.
+
+A probe that could not answer is never `done` — hook absent, killed by the 60s deadline, spawn
+refused are each `skipped` with a reason saying the gates were NOT measured. A step reporting clear
+gates it never checked is the false-report class the drawer exists to end, and it is invisible
+exactly when it is wrong.
+
+The step is not a pure read, and the module says so rather than claiming otherwise: `cmd_stop`
+calls `session_review_verdict(record_grants=True)`, which appends one base-advance transfer grant
+to the project's prawduct evidence store. What it guarantees is the guarantee that was wanted — it
+touches nothing in the working tree.
+
+
 ## 2026-09-03 — #185: the wrap drawer paints each pipeline step as it runs
 
 <!-- prawduct: type=feature | scope=wrap-sse-185 -->

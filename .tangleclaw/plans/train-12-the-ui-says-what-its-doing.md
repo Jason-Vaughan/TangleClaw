@@ -167,7 +167,7 @@ an engine's clipboard.
 - [x] Chunk 8 — #104
 - [x] Chunk 9 — #83
 - [x] Chunk 10 — #1148
-- [ ] Chunk 11 — #854
+- [x] Chunk 11 — #854
 - [x] Chunk 12 — #185
 - [x] Chunk 13 — #542
 - [x] Chunk 14 — #261

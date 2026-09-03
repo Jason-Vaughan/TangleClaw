@@ -59,7 +59,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
   describe('STEP_DISPATCH', () => {
     it('covers every step kind referenced by the contract (ADR 0002 dispatch table)', () => {
       const expected = [
-        'pr-check', 'pr-merge', 'lint', 'test',
+        'preflight', 'pr-check', 'pr-merge', 'lint', 'test',
         'ai-content', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit'
       ];
       for (const kind of expected) {
@@ -93,7 +93,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       // dispatch entry to the canonical no-op result for this test only.
       // The real-handler behavior is covered by per-handler describes
       // below.
-      const realKinds = ['lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'pr-check', 'pr-merge', 'commit', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'continuity-write'];
+      const realKinds = ['preflight', 'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'pr-check', 'pr-merge', 'commit', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'continuity-write'];
       const originals = {};
       const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
       for (const kind of realKinds) {
@@ -108,13 +108,10 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
         assert.equal(result.commitSha, null);
         assert.equal(result.summary, null);
         assert.equal(result.error, null);
-        // #207 Chunk 3 added `features-toc` between `next-session-prime`
-        // and `memory-update`; CC-1 appended `continuity-write` after
-        // `commit`; PIDX slice 3 (#360) added `project-map`
-        // after `features-toc`; PIDX #426 added `index-describe` after
-        // `project-map`; #466 added `learnings-db-write` after
-        // `learnings-capture` — prawduct now ships 12 pipeline steps.
-        assert.equal(result.results.length, 14, 'prawduct has fourteen pipeline steps');
+        // Counted off the shared pipeline, never written out: the step list
+        // has grown six times since this assertion was written, and each
+        // time the literal it used to carry went stale before the code did.
+        assert.equal(result.results.length, defaultPipeline.steps().length, 'every pipeline step reports a result');
         for (const stepResult of result.results) {
           assert.equal(stepResult.status, 'done');
           assert.deepStrictEqual(stepResult.blockers, []);
@@ -130,15 +127,16 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       const result = await wrapPipeline.runWrapPipeline('pipeline-test');
       assert.deepStrictEqual(
         result.results.map((r) => r.stepId),
-        ['open-pr-check', 'changelog-update', 'version-bump', 'learnings-capture', 'learnings-db-write', 'rule-proposal', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write', 'apply-pr-resolutions']
+        defaultPipeline.steps().map((s) => s.id),
+        'the runner walks the code-owned list in its declared order'
       );
     });
 
     it('attaches `kind` to each result for the multi-step UI (Chunk 10)', async () => {
       const result = await wrapPipeline.runWrapPipeline('pipeline-test');
       const kinds = result.results.map((r) => r.kind);
-      assert.deepStrictEqual(kinds,
-        ['pr-check', 'ai-content', 'version-bump', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'features-toc', 'project-map', 'index-describe', 'ai-content', 'commit', 'continuity-write', 'pr-merge']);
+      assert.deepStrictEqual(kinds, defaultPipeline.steps().map((s) => s.kind),
+        'each result carries its step\'s kind, in pipeline order');
     });
 
     it('runner is transactionally inert — every stub receives an empty staged scratch and no step writes to it', async () => {
@@ -151,7 +149,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       // Patch every kind the pipeline actually uses (incl. `continuity-write`, CC-1, and
       // `project-map`, PIDX slice 3) so the inertness check captures all ten
       // steps rather than letting a real handler run mid-test.
-      const wrapKinds = ['pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
+      const wrapKinds = ['preflight', 'pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
       const originals = {};
       for (const kind of wrapKinds) {
         originals[kind] = wrapPipeline.STEP_DISPATCH[kind];
@@ -165,7 +163,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
 
       try {
         await wrapPipeline.runWrapPipeline('pipeline-test');
-        assert.equal(capturedStaged.length, 14, 'every prawduct step receives a context');
+        assert.equal(capturedStaged.length, defaultPipeline.steps().length, 'every pipeline step receives a context');
         // All captured references must be the SAME object (single-transaction
         // shared scratch) AND must remain {} (no step wrote to it).
         for (let i = 0; i < capturedStaged.length; i++) {
@@ -186,7 +184,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
   // #185 — `options.onStepEvent` is the richer feed behind the live wrap
   // drawer: the run's shape first, then each step's start and settle.
   describe('runWrapPipeline — onStepEvent (#185)', () => {
-    const wrapKinds = ['pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
+    const wrapKinds = ['preflight', 'pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
 
     /**
      * Stub every dispatch handler with `decide(stepId)` and run the pipeline
@@ -265,6 +263,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       const types = events.map((e) => [e.type, e.stepId || null]);
       assert.deepStrictEqual(types, [
         ['run-start', null],
+        ['step-start', 'preflight'], ['step-done', 'preflight'],
         ['step-start', 'open-pr-check'], ['step-done', 'open-pr-check'],
         ['step-start', 'changelog-update'], ['step-blocked', 'changelog-update']
       ]);

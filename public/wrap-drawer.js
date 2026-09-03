@@ -14,6 +14,7 @@
    * @type {Object<string, string>}
    */
   const KIND_LABELS = {
+    'preflight': 'Preflight',
     'pr-check': 'Check open PRs',
     'pr-merge': 'Apply PR decisions',
     'lint': 'Lint',
@@ -34,6 +35,7 @@
    * @type {Object<string, string>}
    */
   const KIND_DESCRIPTIONS = {
+    'preflight': 'Asks prawduct for its session-end verdict before the wrap writes to any file: in a prawduct-governed project it runs the Stop hook and shows the block text if a gate (Critic review, reflection) is unmet. Advisory by default — the wrap continues; a project can make it blocking in its wrap step settings. Skips in projects without .prawduct/.',
     'pr-check': 'Checks for open GitHub PRs on this branch and asks you to resolve each one (merge, defer, or ignore). Blocks the wrap until you decide; skips silently when GitHub can\u2019t be reached.',
     'pr-merge': 'Applies the PR decisions you made earlier \u2014 each PR you marked \u201cmerge\u201d gets GitHub auto-merge enabled, so it lands once its checks pass. Runs after the wrap commit. Never blocks.',
     'lint': 'Runs the project’s linter over the working tree.',
@@ -220,6 +222,14 @@
     }
     if (!output) return null;
     switch (stepResult.kind) {
+      case 'preflight':
+        // #854 — a clear probe names itself; an advisory block says the wrap
+        // went on, so the blocked badge on a completed wrap is not read as
+        // the wrap having stopped. A halting block needs no line: the row IS
+        // the blocker and the banner says so.
+        if (output.exitCode === 0) return output.detail || 'prawduct gates clear';
+        if (output.advisory === true) return 'advisory — the wrap continued';
+        return null;
       case 'pr-check': {
         const counts = output.counts || {};
         const parts = [];
@@ -345,12 +355,37 @@
       }
       return { label: `Blocked at "${pipelineResult.blockedAt}"`, tone: 'blocked', detail: reason };
     }
-    // ok:true path — check for non-blocking warnings (`output.warning`)
+    // ok:true path. Non-blocking warnings (`output.warning`) are reported only
+    // where they do not displace a RELEASE-STATE banner. This check used to run
+    // first, so one advisory step — `preflight` is advisory by default and warns
+    // on any unmet governance gate (#854) — hid "release NOT armed" (#638),
+    // "branch left on origin, no PR" (#867) and "release pending PR merge"
+    // behind "completed with warnings". Those say the work did not ship; a
+    // warning says it shipped with something to read. The more consequential
+    // fact wins the banner, and the warning still shows on its own step row.
     const warningSteps = (pipelineResult.results || []).filter((r) => r.output && r.output.warning === true);
-    if (warningSteps.length > 0) {
-      const ids = warningSteps.map((s) => s.stepId).join(', ');
-      return { label: 'Wrap completed with warnings', tone: 'warning', detail: `Warnings on: ${ids}`, pr: wrapPrInfo(pipelineResult) };
-    }
+    const warningDetail = () => `Warnings on: ${warningSteps.map((s) => s.stepId).join(', ')}`;
+    /**
+     * Append the warning note to a release-state detail line, COMPOSING the two
+     * facts instead of choosing between them. Ordering these wrongly is a
+     * two-sided defect and both sides have been live: with the warning check
+     * first it hid "release NOT armed"; with it merely moved below, a governed
+     * project whose gate is unmet and whose PR merged read as plain success,
+     * with no trace of the gate anywhere. Release state leads because it says
+     * whether the work shipped; the warning rides along because it is the only
+     * place an advisory `preflight` block reaches the banner at all.
+     * @param {string|null} detail - The release-state detail.
+     * @returns {string|null} The detail, with the warnings noted.
+     */
+    const withWarnings = (detail) => {
+      if (warningSteps.length === 0) return detail;
+      return detail ? `${detail} · ${warningDetail()}` : warningDetail();
+    };
+    /** Warning step ids, carried as a FIELD so a later composer can re-append
+     * them. In the detail string alone they are unrecoverable the moment that
+     * string is dropped — which is exactly what `composeReleaseBanner` does to
+     * a `provisional` base once the release probe answers. */
+    const warnIds = warningSteps.map((st) => st.stepId);
     if (pipelineResult.commitSha) {
       // #638 — a committed wrap is NOT a shipped release. When the commit step
       // auto-branched and opened a PR, the version bump / CHANGELOG promotion
@@ -361,7 +396,7 @@
       if (pr && pr.error) {
         // The close-loop failed (push/PR-create/auto-merge-arm) — committed but
         // the branch may dangle and nothing is armed to land it.
-        return { label: 'Wrap committed — release NOT armed', tone: 'warning', detail: pr.error, pr };
+        return { label: 'Wrap committed — release NOT armed', tone: 'warning', detail: withWarnings(pr.error), pr, warnings: warnIds };
       }
       if (pr && pr.stranded) {
         // #867 — pushed, but no PR exists and none is armed. Without this the
@@ -373,8 +408,9 @@
         return {
           label: 'Wrap committed — branch left on origin, no PR',
           tone: 'warning',
-          detail: pr.skippedReason || 'the wrap branch was pushed but no PR was opened',
-          pr
+          detail: withWarnings(pr.skippedReason || 'the wrap branch was pushed but no PR was opened'),
+          pr,
+          warnings: warnIds
         };
       }
       if (pr && (pr.armed || pr.prUrl)) {
@@ -383,11 +419,23 @@
         return {
           label: 'Wrap committed — release pending PR merge',
           tone: 'provisional',
-          detail: `${pipelineResult.commitSha.slice(0, 12)} · not yet on the base branch`,
-          pr
+          detail: withWarnings(`${pipelineResult.commitSha.slice(0, 12)} · not yet on the base branch`),
+          pr,
+          warnings: warnIds
         };
       }
+      // Nothing about the release needs saying — so a warning, if there is one,
+      // is the most important thing left.
+      if (warningSteps.length > 0) {
+        // Wording unchanged — `test/wrap-drawer.test.js` pins it as an
+        // operator-facing contract, and R-8 was about the warning being
+        // DISCARDED on the PR paths, not about this label.
+        return { label: 'Wrap completed with warnings', tone: 'warning', detail: warningDetail(), pr: null };
+      }
       return { label: 'Wrap committed', tone: 'success', detail: pipelineResult.commitSha.slice(0, 12), pr: null };
+    }
+    if (warningSteps.length > 0) {
+      return { label: 'Wrap completed with warnings', tone: 'warning', detail: warningDetail(), pr: wrapPrInfo(pipelineResult) };
     }
     return { label: 'Wrap completed (no changes to commit)', tone: 'success', detail: null, pr: null };
   }
@@ -501,7 +549,11 @@
    *     release outcome appended as detail. Without this a wrap that "completed
    *     with warnings" (or whose close-loop failed to arm) would be repainted
    *     "Wrap shipped — PR merged", re-opening the false-success class.
-   *  3. Otherwise the release banner stands on its own.
+   *  3. Otherwise the release banner stands on its own — but it still carries
+   *     forward `base.warnings`, because a `provisional` base is not covered by
+   *     rule 2 and its detail string is dropped here. That is how an advisory
+   *     `preflight` gate vanished behind "Wrap shipped — PR merged": the fact
+   *     was in the detail, and this function keeps none of it.
    *
    * @param {{label: string, tone: string, detail: string|null}} baseStatus - From `summarizePipelineStatus`.
    * @param {{outcome: string}} prStatus - From `GET /wrap/pr-status`.
@@ -521,6 +573,17 @@
         label: base.label,
         tone: base.tone,
         detail: [base.detail, `release: ${outcome}`].filter(Boolean).join(' · ')
+      };
+    }
+    // A provisional base takes the release banner, but its warnings are not the
+    // release's to discard — they are the only place an advisory step reaches
+    // the operator at all.
+    const carried = Array.isArray(base.warnings) ? base.warnings : [];
+    if (carried.length > 0) {
+      return {
+        ...release,
+        tone: release.tone === 'success' ? 'warning' : release.tone,
+        detail: [release.detail, `Warnings on: ${carried.join(', ')}`].filter(Boolean).join(' · ')
       };
     }
     return release;
