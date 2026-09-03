@@ -8,7 +8,7 @@ TangleClaw uses a layered configuration system: global config for system-wide se
 |------|---------|
 | `~/.tangleclaw/config.json` | Global configuration |
 | `~/.tangleclaw/engines/*.json` | Engine profiles |
-| `~/.tangleclaw/global-rules.md` | Global rules (applied to all projects) |
+| `<tangleclaw-repo>/data/global-rules.md` | Global rules (applied to all projects; git-tracked, see below) |
 | `~/.tangleclaw/tangleclaw.db` | SQLite database (runtime state) |
 | `<project>/.tangleclaw/project.json` | Per-project configuration |
 
@@ -128,12 +128,12 @@ When `deletePassword` is set, the following operations require the password:
 
 The password is hashed with scrypt before storage. Plaintext passwords from v2 are auto-upgraded on first verification.
 
-## Global Rules (`global-rules.md`)
+## Global Rules (`data/global-rules.md`)
 
 Editable markdown rules that apply to all projects across all engines. When an engine config is generated (e.g., `CLAUDE.md`, `.codex.yaml`), global rules are included as a `## Global Rules` section.
 
-- **Default**: `data/default-global-rules.md` (bundled, restore source)
-- **User copy**: `~/.tangleclaw/global-rules.md` (created from defaults on first load)
+- **File**: `data/global-rules.md` in the TangleClaw repo — the single canonical source since #240, tracked in git. UI/API saves and PR-driven edits both land in this one file; there is no separate bundled default and no per-install copy
+- **Legacy `~/.tangleclaw/global-rules.md`**: no longer read. On startup, if one exists and differs from the canonical file, TangleClaw backs it up beside itself (`.pre-240-backup` suffix) and logs a warning with recovery steps; merge wanted sections by hand via the editor
 - **Edit via**: Landing page "Global Rules" panel, or `PUT /api/rules/global`
 - **Revert**: restore it from git (`data/global-rules.md` is tracked). There is no Reset button (#243): under the canonical-source model (#240) `POST /api/rules/global/reset` is a back-compat no-op that returns the current content unchanged, so a button wired to it looked like a revert and changed nothing.
 
