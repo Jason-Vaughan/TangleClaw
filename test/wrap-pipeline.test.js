@@ -181,71 +181,120 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       }
     });
 
-    // #583 — `options.onStepStart` progress hook feeds the wrap-run
-    // registry so `GET /wrap/status` can report where a running wrap is.
-    it('#583 — invokes onStepStart before each dispatched step, in template order', async () => {
-      const wrapKinds = ['pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
+  });
+
+  // #185 — `options.onStepEvent` is the richer feed behind the live wrap
+  // drawer: the run's shape first, then each step's start and settle.
+  describe('runWrapPipeline — onStepEvent (#185)', () => {
+    const wrapKinds = ['pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
+
+    /**
+     * Stub every dispatch handler with `decide(stepId)` and run the pipeline
+     * collecting events; restores the handlers whatever happens.
+     * @param {(stepId: string) => object} decide - Handler result per step id
+     * @param {object} [extraOptions] - Merged into the run options
+     * @returns {Promise<{events: object[], result: object}>}
+     */
+    async function runCollecting(decide, extraOptions) {
       const originals = {};
-      const dispatched = [];
       for (const kind of wrapKinds) {
         originals[kind] = wrapPipeline.STEP_DISPATCH[kind];
-        wrapPipeline.STEP_DISPATCH[kind] = {
-          run: async (ctx) => {
-            dispatched.push(ctx.step.id);
-            return { ok: true, status: 'done', output: null, blockers: [] };
-          }
-        };
+        wrapPipeline.STEP_DISPATCH[kind] = { run: async (ctx) => decide(ctx.step.id) };
       }
-      const started = [];
+      const events = [];
       try {
-        await wrapPipeline.runWrapPipeline('pipeline-test', {
-          onStepStart: (stepId, kind) => started.push({ stepId, kind })
+        const result = await wrapPipeline.runWrapPipeline('pipeline-test', {
+          onStepEvent: (ev) => events.push(ev),
+          ...(extraOptions || {})
         });
-        assert.equal(started.length, 14, 'hook fires once per step');
-        assert.deepStrictEqual(started.map((s) => s.stepId), dispatched,
-          'hook order matches dispatch order');
-        assert.equal(started[0].kind, 'pr-check', 'hook receives the step kind');
-        // Interleaving contract: the hook for step N fires BEFORE step N
-        // dispatches — pinned by comparing prefixes at each hook call is
-        // overkill; the length equality above plus this first-element
-        // check on a sequential runner suffices.
+        return { events, result };
       } finally {
-        for (const kind of wrapKinds) {
-          wrapPipeline.STEP_DISPATCH[kind] = originals[kind];
-        }
+        for (const kind of wrapKinds) wrapPipeline.STEP_DISPATCH[kind] = originals[kind];
+      }
+    }
+
+    it('emits run-start with every step, then step-start/step-done per step, in run order', async () => {
+      const { events } = await runCollecting(() => ({ ok: true, status: 'done', output: { n: 1 }, blockers: [] }));
+      const ids = defaultPipeline.steps().map((s) => s.id);
+      assert.equal(events[0].type, 'run-start');
+      assert.deepStrictEqual(events[0].steps.map((s) => s.stepId), ids, 'the shape names every step up front');
+      assert.equal(typeof events[0].steps[0].kind, 'string');
+      const expected = [];
+      for (const id of ids) expected.push(['step-start', id], ['step-done', id]);
+      assert.deepStrictEqual(events.slice(1).map((e) => [e.type, e.stepId]), expected,
+        'each step starts before it settles, and no step settles before the previous one did');
+      const done = events.find((e) => e.type === 'step-done');
+      assert.equal(done.status, 'done');
+      assert.deepStrictEqual(done.output, { n: 1 }, 'the settle event carries what the drawer row renders');
+      assert.equal(done.halted, false);
+      assert.ok(!events.some((e) => e.type === 'run-done'), 'run-done is the registry\'s to append — the runner does not know the outer result');
+    });
+
+    it('a step disabled by project config settles as a skipped step-done, with no step-start', async () => {
+      // The live drawer draws one row per step of `run-start`'s shape, so a
+      // disabled step that never settles leaves a row stuck on "pending" for
+      // the whole wrap. Deleting this emit left the suite green: every other
+      // case here runs the default pipeline, where nothing is disabled.
+      const load = store.projectConfig.load;
+      store.projectConfig.load = () => ({ wrapStepOverrides: { 'features-toc': { enabled: false } } });
+      try {
+        const { events } = await runCollecting(() => ({ ok: true, status: 'done', output: null, blockers: [] }));
+        const forStep = events.filter((e) => e.stepId === 'features-toc');
+        assert.deepStrictEqual(forStep.map((e) => e.type), ['step-done'],
+          'a step that never ran must still settle — and must not claim it started');
+        assert.equal(forStep[0].status, 'skipped');
+        assert.equal(forStep[0].halted, false);
+        assert.match(forStep[0].output.reason, /disabled for this project/);
+        // Every step of the run-start shape reaches a terminal event, which is
+        // the property the drawer actually depends on.
+        const shape = events[0].steps.map((st) => st.stepId);
+        const settled = events.filter((e) => e.type === 'step-done' || e.type === 'step-blocked').map((e) => e.stepId);
+        assert.deepStrictEqual(settled, shape, 'no row is left pending at the end of a completed run');
+      } finally {
+        store.projectConfig.load = load;
       }
     });
 
-    it('#583 — onStepStart does not fire for pending steps after a halt, and a throwing hook never alters the outcome', async () => {
-      const wrapKinds = ['pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
-      const originals = {};
-      for (const kind of wrapKinds) {
-        originals[kind] = wrapPipeline.STEP_DISPATCH[kind];
-        wrapPipeline.STEP_DISPATCH[kind] = {
-          run: async (ctx) => (
-            // Halt at the first content step (changelog-update is blocker:true).
-            ctx.step.id === 'changelog-update'
-              ? { ok: false, status: 'blocked', output: null, blockers: ['stub block'] }
-              : { ok: true, status: 'done', output: null, blockers: [] }
-          )
-        };
-      }
-      const started = [];
-      try {
-        const result = await wrapPipeline.runWrapPipeline('pipeline-test', {
-          onStepStart: (stepId) => {
-            started.push(stepId);
-            throw new Error('progress hook exploded');
-          }
-        });
-        assert.equal(result.blockedAt, 'changelog-update', 'throwing hook must not change pipeline outcome');
-        assert.deepStrictEqual(started, ['open-pr-check', 'changelog-update'],
-          'hook fires only for steps that actually dispatch — never for pending steps after the halt');
-      } finally {
-        for (const kind of wrapKinds) {
-          wrapPipeline.STEP_DISPATCH[kind] = originals[kind];
-        }
-      }
+    it('a halting failure is step-blocked with halted:true, and no event fires for the pending steps after it', async () => {
+      const { events, result } = await runCollecting((id) => (
+        id === 'changelog-update'
+          ? { ok: false, status: 'blocked', output: null, blockers: ['stub block'] }
+          : { ok: true, status: 'done', output: null, blockers: [] }
+      ));
+      assert.equal(result.blockedAt, 'changelog-update');
+      const types = events.map((e) => [e.type, e.stepId || null]);
+      assert.deepStrictEqual(types, [
+        ['run-start', null],
+        ['step-start', 'open-pr-check'], ['step-done', 'open-pr-check'],
+        ['step-start', 'changelog-update'], ['step-blocked', 'changelog-update']
+      ]);
+      const blocked = events[events.length - 1];
+      assert.equal(blocked.halted, true);
+      assert.deepStrictEqual(blocked.blockers, ['stub block']);
+      assert.equal(result.results.length, defaultPipeline.steps().length, 'the result still reports every step (pending after the halt)');
+    });
+
+    it('a non-halting failure is step-blocked with halted:false and the run carries on', async () => {
+      // version-bump is `blocker:false` in the shipped pipeline.
+      const { events, result } = await runCollecting((id) => (
+        id === 'version-bump'
+          ? { ok: false, status: 'blocked', output: null, blockers: ['bump failed'] }
+          : { ok: true, status: 'done', output: null, blockers: [] }
+      ));
+      assert.equal(result.blockedAt, null);
+      const blocked = events.find((e) => e.type === 'step-blocked');
+      assert.equal(blocked.stepId, 'version-bump');
+      assert.equal(blocked.halted, false, 'the drawer must not paint a non-halting failure as the pipeline stopping');
+      assert.ok(events.some((e) => e.type === 'step-start' && e.stepId === 'commit'), 'later steps still ran');
+    });
+
+    it('a throwing onStepEvent hook never alters the outcome', async () => {
+      const { result } = await runCollecting(
+        () => ({ ok: true, status: 'done', output: null, blockers: [] }),
+        { onStepEvent: () => { throw new Error('spectator exploded'); } }
+      );
+      assert.equal(result.ok, true);
+      assert.equal(result.results.length, defaultPipeline.steps().length);
     });
   });
 

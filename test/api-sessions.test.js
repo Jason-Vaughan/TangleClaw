@@ -264,9 +264,9 @@ describe('api-sessions', () => {
         // plus the wrap-run registry's progress hook rides along — named
         // here rather than swept into `userOptions`, which would let a
         // future hook land in the user-options assertion unnoticed.
-        const { onStepStart, ...userOptions } = receivedOptions;
+        const { onStepEvent, ...userOptions } = receivedOptions;
         assert.deepEqual(userOptions, { skipTests: true, prHandling: { 42: 'defer' } });
-        assert.equal(typeof onStepStart, 'function', '#583 progress hook threaded to the runner');
+        assert.equal(typeof onStepEvent, 'function', '#583/#185 progress hook threaded to the runner');
         assert.ok(res.body.pipelineResult, 'response must surface pipelineResult');
         assert.equal(res.body.pipelineResult.commitSha, 'deadbeef');
         assert.equal(res.body.status, 'wrapping');
@@ -361,9 +361,9 @@ describe('api-sessions', () => {
         });
         assert.equal(res.status, 200);
         // #583: user options unchanged + the registry progress hook.
-        const { onStepStart, ...userOptions } = receivedOptions;
+        const { onStepEvent, ...userOptions } = receivedOptions;
         assert.deepEqual(userOptions, { prHandling: { '42': 'merge', '43': 'defer' } });
-        assert.equal(typeof onStepStart, 'function');
+        assert.equal(typeof onStepEvent, 'function');
 
         // Pin the key-type contract: string-keyed PR numbers reach the
         // runner unchanged, matching `_normalizeHandling`'s
@@ -399,9 +399,9 @@ describe('api-sessions', () => {
         });
         assert.equal(res.status, 200);
         // #583: a discarded options body still reaches the runner carrying
-        // ONLY the registry progress hook (onStepStart) — no user keys are
+        // ONLY the registry progress hook (onStepEvent) — no user keys are
         // invented from the malformed body.
-        assert.deepEqual(Object.keys(received).sort(), ['onStepStart'],
+        assert.deepEqual(Object.keys(received).sort(), ['onStepEvent'],
           'non-object options bodies must be discarded before reaching the runner (only the registry hook remains)');
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;

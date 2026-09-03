@@ -157,21 +157,21 @@ an engine's clipboard.
 - Tests: each detector's three states; panel renders only the conditions that fired.
 
 ## Status
-- [ ] Chunk 1 — #1192
-- [ ] Chunk 2 — #823
-- [ ] Chunk 3 — #438
-- [ ] Chunk 4 — #243
-- [ ] Chunk 5 — #1164
-- [ ] Chunk 6 — #817
-- [ ] Chunk 7 — #227
-- [ ] Chunk 8 — #104
-- [ ] Chunk 9 — #83
-- [ ] Chunk 10 — #1148
+- [x] Chunk 1 — #1192
+- [x] Chunk 2 — #823
+- [x] Chunk 3 — #438
+- [x] Chunk 4 — #243
+- [x] Chunk 5 — #1164
+- [x] Chunk 6 — #817
+- [x] Chunk 7 — #227
+- [x] Chunk 8 — #104
+- [x] Chunk 9 — #83
+- [x] Chunk 10 — #1148
 - [ ] Chunk 11 — #854
-- [ ] Chunk 12 — #185
-- [ ] Chunk 13 — #542
-- [ ] Chunk 14 — #261
-- [ ] Chunk 15 — #345
+- [x] Chunk 12 — #185
+- [x] Chunk 13 — #542
+- [x] Chunk 14 — #261
+- [x] Chunk 15 — #345
 
 ## Context
 Session 2026-09-03, autonomous overnight sprint. Cars build in parallel in per-agent git

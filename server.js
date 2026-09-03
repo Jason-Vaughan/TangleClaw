@@ -4704,6 +4704,9 @@ route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => 
 function _wrapResultPayload(projectName, result) {
   const payload = {
     ok: result.ok,
+    // #185 — the run's stream handle; absent (not null) on the pre-pipeline
+    // failures that never claimed a run, so the shape of those is unchanged.
+    ...(typeof result.runId === 'string' ? { runId: result.runId } : {}),
     sessionId: result.sessionId,
     project: projectName,
     status: result.ok ? 'wrapping' : 'blocked',
@@ -4714,6 +4717,28 @@ function _wrapResultPayload(projectName, result) {
   if (result.pipelineResult) payload.pipelineResult = result.pipelineResult;
   if (!result.ok && result.error) payload.error = result.error;
   return payload;
+}
+
+/**
+ * Frame one wrap-run event as a Server-Sent Events message (#185): the
+ * registry `seq` as the `id:` (what a reconnecting `EventSource` echoes back
+ * as `Last-Event-ID`), the event `type` as the `event:` name, and the rest as
+ * one JSON `data:` line. JSON never contains a raw newline, so a single
+ * `data:` line is always a complete frame. A `run-done` event's raw result
+ * is shaped through `_wrapResultPayload` — the same shaping the POST and
+ * `GET /wrap/status` apply — so a client can render the stream's terminal
+ * event exactly as it would render either of them.
+ *
+ * @param {string} projectName - Route-level project name (for the payload shape)
+ * @param {{seq: number, type: string}} event - Registry event
+ * @returns {string} The wire frame, terminated by the blank line SSE requires
+ */
+function _wrapStreamFrame(projectName, event) {
+  const { seq, type, ...rest } = event;
+  const data = type === 'run-done'
+    ? { ...rest, result: rest.result ? _wrapResultPayload(projectName, rest.result) : null }
+    : rest;
+  return `id: ${seq}\nevent: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
 
@@ -4727,12 +4752,149 @@ route('GET', '/api/sessions/:project/wrap/status', (_req, res, params) => {
   const status = sessions.getWrapRunStatus(params.project);
   jsonResponse(res, 200, {
     project: params.project,
+    // #185 — the running (or last) run's stream handle, so a client that
+    // wants live progress before its own POST returns can open the stream.
+    runId: status.runId,
     running: status.running,
     sessionId: status.sessionId,
     startedAt: status.startedAt,
     currentStepId: status.currentStepId,
     finishedAt: status.finishedAt,
     result: status.result ? _wrapResultPayload(params.project, status.result) : null
+  });
+});
+
+// GET /api/sessions/:project/wrap/stream/:runId — Live wrap progress (#185),
+// as `text/event-stream`. Replays every event the run has already emitted
+// (so a subscriber arriving at step 6 sees steps 1–5 settle), then streams
+// live ones, and closes on the terminal `run-done`. A run that already
+// finished is replayed in full and closed at once. `Last-Event-ID` (what an
+// `EventSource` sends when it reconnects) resumes after that seq, so a blip
+// mid-wrap does not repaint from scratch. An unknown or foreign `runId` is a
+// 404, not an empty stream — the client falls back to the blocking render.
+//
+// Same read-only surface as /wrap/status: it exposes nothing the status
+// route does not (that route hands out the runId), and it starts nothing,
+// so the wrap POST's password gate is not re-applied here. It sits behind
+// every gate the POST does at the perimeter and in `handleRequest`; in
+// particular it is NOT a Caddy auth-bypass path (test/api-wrap-stream.test.js
+// pins that parity).
+route('GET', '/api/sessions/:project/wrap/stream/:runId', (req, res, params) => {
+  const lastEventId = Number.parseInt(req.headers['last-event-id'], 10);
+  let open = false;
+  // Every path through this route logs, because the feature is a spectator by
+  // design: the POST stays authoritative, so a stream that never runs looks
+  // exactly like the pre-#185 experience and leaves a maintainer nothing to
+  // bisect from "live progress never appears". These lines are the only way
+  // to tell "it worked" from "it never ran" — nothing else covers the route
+  // (only unmatched paths hit the generic log, and only at debug).
+  const safeWrite = (text) => {
+    if (!open) return;
+    try {
+      res.write(text);
+    } catch (err) { // prawduct:allow prawduct/broad-except -- a dead socket must end this stream, never reach the process-global handler without wrap context
+      log.warn('Wrap stream write failed — closing', {
+        project: params.project, runId: params.runId, error: err.message
+      });
+      open = false;
+      if (sub) sub.unsubscribe();
+      res.end();
+    }
+  };
+  // Frame construction is INSIDE the guard, not an argument to it:
+  // `_wrapStreamFrame` JSON-stringifies the event, and on the replay loop below
+  // a throw escaping this would run after `writeHead(200)` and attempt a second
+  // response. The live path is absorbed by the registry's subscriber try/catch;
+  // replay has no such net.
+  const write = (event) => {
+    if (!open) return;
+    let frame;
+    try {
+      frame = _wrapStreamFrame(params.project, event);
+    } catch (err) { // prawduct:allow prawduct/broad-except -- an unserializable event must drop its frame, never the response
+      log.warn('Wrap stream frame could not be built — skipping it', {
+        project: params.project, runId: params.runId, type: event && event.type, error: err.message
+      });
+      return;
+    }
+    safeWrite(frame);
+  };
+  const end = () => {
+    if (open) {
+      open = false;
+      log.info('Wrap stream closed', { project: params.project, runId: params.runId });
+      res.end();
+    }
+  };
+  // A socket that fails mid-write does NOT throw out of `res.write` — Node
+  // emits `'error'` on the response asynchronously (`process.nextTick`). With
+  // no listener that is an unhandled `'error'` event, which reaches the
+  // process-global handler carrying no wrap context at all, and the
+  // subscription it left behind goes on feeding a dead socket for the rest of
+  // the run. The synchronous `try/catch` in `write` below covers a different
+  // and rarer case (a throw on an already-destroyed stream); this covers the
+  // one that actually happens.
+  // Declared before every closure that reads it: the handlers below were
+  // registered above this line, so a synchronous `'error'` emit would have
+  // TDZ-thrown inside the listener whose whole job is to keep a failure legible.
+  // eslint-disable-next-line prefer-const -- assigned once, after subscribe
+  let sub = null;
+  res.on('error', (err) => {
+    if (!open) return;
+    open = false;
+    log.warn('Wrap stream socket errored — dropping the subscription', {
+      project: params.project, runId: params.runId, error: err.message
+    });
+    if (sub) sub.unsubscribe();
+  });
+  sub = sessions.subscribeWrapRun(params.project, params.runId, {
+    afterSeq: Number.isFinite(lastEventId) ? lastEventId : 0,
+    onEvent: write,
+    onEnd: end
+  });
+  if (!sub.ok) {
+    // The documented restart case, and the only refusal this route has. At
+    // warn because the client silently falls back — without this line the
+    // refusal is invisible on both sides.
+    log.warn('Wrap stream refused — no such run for this project', {
+      project: params.project, runId: params.runId
+    });
+    return errorResponse(res, 404,
+      `No wrap run "${params.runId}" for "${params.project}" — it may predate a server restart, or the id is not this project's.`,
+      'WRAP_RUN_NOT_FOUND');
+  }
+  log.info('Wrap stream subscribed', {
+    project: params.project,
+    runId: params.runId,
+    replayed: sub.replay.length,
+    afterSeq: Number.isFinite(lastEventId) ? lastEventId : 0,
+    finished: sub.finished
+  });
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    // Caddy/nginx honour this to disable response buffering, which would
+    // otherwise hold every frame until the run ended — the exact opposite
+    // of live progress.
+    'X-Accel-Buffering': 'no'
+  });
+  open = true;
+  // A leading comment line makes the browser treat the stream as open the
+  // moment headers land, so `EventSource.onopen` fires before the first
+  // event rather than after it. Through the same guarded path as every other
+  // write, so the one raw `res.write` in the route is not the one with no
+  // error handling.
+  safeWrite(': wrap stream\n\n');
+  for (const event of sub.replay) write(event);
+  if (sub.finished) return end();
+  // The client went away (tab closed, phone locked): stop feeding a dead
+  // socket. The run itself is unaffected — the pipeline never waits on
+  // a subscriber.
+  req.on('close', () => {
+    if (open) log.info('Wrap stream client went away', { project: params.project, runId: params.runId });
+    open = false;
+    sub.unsubscribe();
   });
 });
 

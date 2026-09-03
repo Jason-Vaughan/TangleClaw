@@ -10,7 +10,7 @@
 // even after they hit Cmd+Shift+R. The network-first carve-out below
 // is the structural fix; this bump is the one-time unblock for
 // existing installs.
-const CACHE_NAME = 'tangleclaw-v3-60';
+const CACHE_NAME = 'tangleclaw-v3-62';
 const STATIC_ASSETS = [
   '/',
   '/style.css',
@@ -197,6 +197,64 @@ function _withCacheFallbackMarker(cached) {
     : cached;
 }
 
+/**
+ * Whether a response is a live stream rather than a document to keep.
+ *
+ * The service worker is registered at scope `/`, so it sits between the
+ * session page's `EventSource` and the wrap progress route — an unexamined
+ * consumer of the first streaming endpoint this app has ever had. Content
+ * type rather than a path pattern: the property that makes a response
+ * uncacheable is that its body never ends, and a second streaming route
+ * would otherwise have to remember to add itself to a list.
+ *
+ * @param {Response} response - The network response about to be cached.
+ * @returns {boolean} True when it must not be stored.
+ */
+function _isStreaming(response) {
+  const type = response.headers.get('Content-Type') || '';
+  return type.includes('text/event-stream');
+}
+
+/**
+ * Whether the REQUEST is asking for a stream. Keyed on `Accept` rather than on
+ * a path, so a second streaming route is covered without anyone remembering to
+ * add it to a list.
+ *
+ * Needed alongside `_isStreaming` because the two answer different questions at
+ * different times: this one is answerable BEFORE the fetch (so the failure path
+ * can decline to synthesize a response), the other only after it.
+ *
+ * @param {Request} request - The intercepted request.
+ * @returns {boolean} True when the caller wants an event stream.
+ */
+function _wantsStream(request) {
+  return (request.headers.get('Accept') || '').includes('text/event-stream');
+}
+
+/**
+ * Store a response in the cache, or decline to. THE single cache-put site: the
+ * network-first and cache-first branches both route through here, because
+ * joining only one of them to a new rule is how the streaming carve-out and the
+ * rejection handler each landed on exactly half the family.
+ *
+ * Declines a streaming response (one entry per run under a URL nothing
+ * re-requests, and a put of a still-open body rejects when the stream ends),
+ * and swallows a rejected put — quota, an aborted body — because a failed cache
+ * write must never reject the fetch handler and turn a served response into a
+ * network error.
+ *
+ * @param {Request} request - Cache key.
+ * @param {Response} response - The response to clone and store.
+ * @returns {void}
+ */
+function _cachePut(request, response) {
+  if (!response.ok || request.method !== 'GET' || _isStreaming(response)) return;
+  const clone = response.clone();
+  caches.open(CACHE_NAME)
+    .then((cache) => cache.put(request, clone))
+    .catch(() => {});
+}
+
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   const isGet = event.request.method === 'GET';
@@ -212,14 +270,18 @@ self.addEventListener('fetch', (event) => {
   ) {
     event.respondWith(
       fetch(event.request).then((response) => {
-        // Only GET responses are cacheable — `cache.put` THROWS on POST/PUT/…,
-        // and a cached non-GET could never be matched back anyway.
-        if (response.ok && isGet) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-        }
+        _cachePut(event.request, response);
         return response;
       }).catch((err) => {
+        // A stream gets the network error itself, never a synthesized response.
+        // `EventSource` treats any non-200 or non-`text/event-stream` reply as a
+        // FAILED CONNECTION — readyState CLOSED, no retry — so answering a
+        // dropped wifi or a mid-wrap restart with a 503 JSON body converts the
+        // one failure the client is built to survive into the one it cannot.
+        // The whole `Last-Event-ID` resume path this feature ships would never
+        // run, on the page that registers this worker (#185). Keyed on the
+        // REQUEST because the failure path has no response to inspect.
+        if (_wantsStream(event.request)) throw err;
         // Never resolve to `undefined`. A GET can fall back to cache; anything
         // else (and a GET cache miss) returns a real 503 so the failure is
         // legible instead of the opaque "Returned response is null" (#380).
@@ -239,10 +301,7 @@ self.addEventListener('fetch', (event) => {
     caches.match(event.request).then((cached) => {
       if (cached) return cached;
       return fetch(event.request).then((response) => {
-        if (response.ok) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-        }
+        _cachePut(event.request, response);
         return response;
       });
     })

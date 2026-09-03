@@ -417,6 +417,9 @@ TangleClaw's HTTP API lives under `/api/`; the tables below are the reference. A
 | `/api/sessions/:project/command` | POST | Inject command |
 | `/api/sessions/:project/wrap` | POST | Trigger wrap |
 | `/api/sessions/:project/wrap/complete` | POST | Complete wrap with captured data |
+| `/api/sessions/:project/wrap/status` | GET | The wrap-run registry's view of the project (#583): `running`, `runId`, `currentStepId`, and a finished run's `result` in the wrap POST's own shape. This is where a client that did not keep its POST connection finds the outcome — and where it learns the `runId` |
+| `/api/sessions/:project/wrap/stream/:runId` | GET | Live pipeline progress as `text/event-stream` (#185). Replays every event the run has already emitted, then streams live ones, and closes on the terminal `run-done`. `Last-Event-ID` resumes after that seq. An unknown or foreign `runId` is **404 `WRAP_RUN_NOT_FOUND`**, not an empty stream — a client that gets it falls back to the blocking render. Read-only and starts nothing, so the wrap POST's password gate is not re-applied; it sits behind every perimeter gate the POST does |
+| `/api/sessions/:project/wrap/pr-status` | GET | Whether the wrap's PR actually merged (#638) — `merged` / `pending` / `blocked` / `unknown` |
 | `/api/sessions/:project/peek` | GET | Peek at output |
 | `/api/sessions/:project/clipboard` | GET | Newest tmux buffer (the last terminal copy); 404 `NO_BUFFER` when nothing has been copied, `TMUX_UNAVAILABLE` when tmux cannot answer |
 | `/api/sessions/:project/history` | GET | Session history |

@@ -3011,8 +3011,8 @@ describe('sessions', () => {
         pipelineCalls += 1;
         // Report progress like the real runner would, then hold the
         // pipeline open so the second trigger races a genuinely-running run.
-        if (options && typeof options.onStepStart === 'function') {
-          options.onStepStart('changelog-update', 'ai-content');
+        if (options && typeof options.onStepEvent === 'function') {
+          options.onStepEvent({ type: 'step-start', stepId: 'changelog-update', kind: 'ai-content' });
         }
         await gate;
         return { ok: true, blockedAt: null, results: [], commitSha: null, summary: null, error: null };
@@ -3090,6 +3090,73 @@ describe('sessions', () => {
       }
     });
 
+    it('#185 — a throw AFTER the pipeline still settles the run and ends its subscribers', async () => {
+      // `finish` is the run's only terminal transition: it clears `running`,
+      // appends `run-done`, and ends every open stream subscriber. It used to
+      // sit outside any `finally`, so a throw in the reporting BETWEEN the
+      // pipeline returning and that call — the lifecycle transition, tmux
+      // teardown, the shape lookup — left the slot claimed until the 30-minute
+      // stale takeover and every SSE socket hanging with no terminal frame.
+      const project = store.projects.getByName('prime-test');
+      store.projects.update(project.id, { methodology: 'prawduct' });
+      store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'trigger-wrap-post-pipeline-throw'
+      });
+      const wrapPipelineMod = require('../lib/wrap-pipeline');
+      const wrapDefaultPipelineMod = require('../lib/wrap-default-pipeline');
+      const wrapRunRegistry = require('../lib/wrap-run-registry');
+      wrapRunRegistry._resetForTests();
+      const realRun = wrapPipelineMod.runWrapPipeline;
+      const realShape = wrapDefaultPipelineMod.wrapShape;
+      // The subscriber attaches to the run UNDER TEST, from inside the pipeline
+      // stub — the only moment the run exists and is still running. A previous
+      // attempt subscribed to a separate probe run and ended it before
+      // `triggerWrap` ever started, so nothing observed the throw it names;
+      // the assertion was true for the wrong reason, which is the same defect
+      // as the dead counter it replaced.
+      let ended = 0;
+      let subscribed = false;
+      wrapPipelineMod.runWrapPipeline = async () => {
+        const { runId } = sessions.getWrapRunStatus('prime-test');
+        const sub = wrapRunRegistry.subscribe('prime-test', runId, {
+          onEvent: () => {},
+          onEnd: () => { ended += 1; }
+        });
+        subscribed = sub.ok;
+        return { ok: true, blockedAt: null, results: [], commitSha: null, summary: null, error: null };
+      };
+      // A throw in the reporting, not in the pipeline: the wrap itself ran.
+      wrapDefaultPipelineMod.wrapShape = () => { throw new Error('reporting exploded'); };
+
+      try {
+        await assert.rejects(() => sessions.triggerWrap('prime-test'), /reporting exploded/);
+
+        const status = sessions.getWrapRunStatus('prime-test');
+        assert.equal(status.running, false, 'the slot must not outlive the run');
+        assert.ok(status.result && /reporting threw/.test(status.result.error),
+          'and the recorded outcome names the reporting failure, not a wrap failure');
+        assert.equal(subscribed, true,
+          'the fixture must actually attach to the run under test, or this measures nothing');
+        assert.equal(ended, 1,
+          'the finally-path finish must end the open stream subscriber — a socket that '
+          + 'outlives its run waits forever for a terminal frame that never comes');
+
+        // A new wrap is not locked out.
+        wrapDefaultPipelineMod.wrapShape = realShape;
+        wrapPipelineMod.runWrapPipeline = async () => (
+          { ok: true, blockedAt: null, results: [], commitSha: null, summary: null, error: null }
+        );
+        const retry = await sessions.triggerWrap('prime-test');
+        assert.equal(retry.ok, true);
+      } finally {
+        wrapPipelineMod.runWrapPipeline = realRun;
+        wrapDefaultPipelineMod.wrapShape = realShape;
+        wrapRunRegistry._resetForTests();
+      }
+    });
+
     it('forwards triggerWrap options to runWrapPipeline (#139 Chunk 10)', async () => {
       const project = store.projects.getByName('prime-test');
       store.projects.update(project.id, { methodology: 'prawduct' });
@@ -3127,22 +3194,22 @@ describe('sessions', () => {
         // #583 amended the threading contract: user options pass through
         // unchanged, PLUS the wrap-run registry's progress hook rides
         // along (and nothing else).
-        const { onStepStart, ...userOptions } = receivedOptions;
+        const { onStepEvent, ...userOptions } = receivedOptions;
         assert.deepEqual(userOptions, opts,
           'user options must reach runWrapPipeline unchanged');
-        assert.equal(typeof onStepStart, 'function', 'has onStepStart');
+        assert.equal(typeof onStepEvent, 'function', 'has onStepEvent');
 
         // Omitted options still reach the runner carrying ONLY the hook —
         // no user keys invented.
         receivedOptions = 'sentinel-not-set';
         await sessions.triggerWrap('prime-test');
-        assert.deepEqual(Object.keys(receivedOptions).sort(), ['onStepStart'],
-          'omitted options add only the #583 progress hook');
+        assert.deepEqual(Object.keys(receivedOptions).sort(), ['onStepEvent'],
+          'omitted options add only the #583/#185 progress hook');
 
         // A caller-supplied hook (an HTTP body can only carry JSON,
         // but defend the seam) can never displace the registry hook.
-        await sessions.triggerWrap('prime-test', { onStepStart: 'not-a-function' });
-        assert.equal(typeof receivedOptions.onStepStart, 'function',
+        await sessions.triggerWrap('prime-test', { onStepEvent: 'not-a-function' });
+        assert.equal(typeof receivedOptions.onStepEvent, 'function',
           'caller options must not override the registry progress hook');
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;

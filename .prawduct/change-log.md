@@ -26,6 +26,45 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-03 — #185: the wrap drawer paints each pipeline step as it runs
+
+<!-- prawduct: type=feature | scope=wrap-sse-185 -->
+
+A wrap takes minutes and the only sign of life was the wrapping bar; the per-step report arrived
+when the blocking POST returned. Both halves of live progress are built here — the earlier
+CHANGELOG claim that #185 had shipped was wrong on both, which the issue's reopening records.
+
+Server side, `lib/wrap-run-registry.js` mints a `runId` per run and keeps an ordered event log;
+`runWrapPipeline` feeds it through a new `onStepEvent` hook, and `finish` appends the terminal
+`run-done`. `GET /api/sessions/:project/wrap/stream/:runId` serves it as `text/event-stream` —
+replaying what a late subscriber missed, streaming live events, closing on `run-done`, resuming
+from `Last-Event-ID`. Client side, `confirmWrap` learns the handle from `/wrap/status` and
+subscribes with an `EventSource`; each frame folds through a pure reducer into a
+`pipelineResult`-shaped view, so every row renders through the same builder as the final report.
+The POST's return stays authoritative — the stream is a spectator, never the verdict.
+
+Three review rounds shaped it, and the through-line is that a spectator's failures are invisible
+by construction. The route logged nothing, so a stream that never ran was indistinguishable from
+the pre-#185 experience; it now logs subscription with replay depth, the 404 refusal, the client
+going away, and the close, with the three silent client sites warning too. `emit`/`finish` were
+keyed on the project rather than the run, so a displaced pipeline could write into a takeover's
+log and reach its subscribers. `finish` sat outside any `finally`, so a throw in the reporting
+stranded the single-flight slot and every open socket. And `public/sw.js` — registered at scope
+`/`, sitting between the page's `EventSource` and this route — both cached the stream (one
+permanent entry per run under a random URL) and, on a network failure, answered it with a
+synthetic 503, which per EventSource semantics closes the connection permanently and would have
+made the `Last-Event-ID` resume path unreachable on the page that ships it.
+
+Two findings were about the tests rather than the code, and both were self-inflicted: the fix for
+the blocking observability finding had no test (stripping it left the suite green), and a
+teardown assertion counted a variable nothing incremented. The second was reported fixed once
+before it actually was — the first attempt subscribed to a separate probe run and ended it before
+the run under test began.
+
+Filed rather than fixed: the stream's event vocabulary lives in four independent copies (#1228),
+and the live-drawer client path is still guarded only by source-string pins (#1219).
+
+
 ## 2026-08-20 — #1024: the sidecar poller stops burning a socket per tick
 
 <!-- prawduct: type=bugfix | scope=sidecar-poll-churn-1024 -->

@@ -3389,34 +3389,33 @@ async function confirmWrap() {
   // than this instant is some previous wrap's outcome, not this one's.
   const postStartedAt = Date.now();
 
-  // V1 and V2 both enter the wrapping state immediately (#771).
-  // The V2 POST blocks for the full duration of the wrap, so this state is the
-  // only visible indication the pipeline is running until the POST returns.
+  // The wrapping state shows immediately (#771). The POST below blocks for
+  // the full pipeline; the live stream (#185) is what paints progress into
+  // the drawer while it does, and the POST's return is still the final,
+  // authoritative render — the stream is a spectator, never the verdict.
   sessionState.wrapping = true;
   showWrappingState();
 
-  // #185 shipped the SERVER half of live wrap progress — GET /wrap/stream, and
-  // the registry hooks the runner feeds — but no client was ever written. This
-  // called `startWrapSse()`, which is defined nowhere, so it threw a
-  // ReferenceError HERE: after the spinner was shown and an empty drawer was
-  // opened, and BEFORE the POST below. The wrap never started, and because the
-  // throw skipped the `finally`, `wrapInFlight` stayed true and Cancel was
-  // permanently disabled. `node --check` passes on it, so CI stayed green.
-  //
-  // Restored to the honest blocking behaviour: the drawer opens when the POST
-  // returns a pipelineResult. The server-side SSE plumbing this call would
-  // have used (the /wrap/stream route and the registry's event emitter) was
-  // itself dead code with this as its only caller, and was removed in the
-  // #990 review — re-landing live progress means building BOTH sides again,
-  // not just a client against what's here. An empty drawer with no stream
-  // feeding it is worse than a drawer that arrives late.
-
+  // #185 — the run's stream handle is minted when the POST claims the run,
+  // but the POST does not return until the pipeline ends. `/wrap/status`
+  // hands the handle out the moment the run exists, so the stream is
+  // attached by probing status after the POST is fired. A run that was
+  // already running BEFORE this POST is not this wrap's (that is the 409 path
+  // `watchWrapRun` owns), so its id is snapshotted here to tell the two apart
+  // without comparing clocks across devices.
   try {
-    const data = await apiMutate(
+    const priorRun = await api(`/api/sessions/${encodeURIComponent(projectName)}/wrap/status`);
+    const priorRunId = priorRun && typeof priorRun.runId === 'string' ? priorRun.runId : null;
+
+    const postPromise = apiMutate(
       `/api/sessions/${encodeURIComponent(projectName)}/wrap`,
       'POST',
       body
     );
+    // Not awaited: discovery runs beside the POST and gives up on its own if
+    // the POST is refused before a run is claimed.
+    attachWrapStream(priorRunId, pw);
+    const data = await postPromise;
 
     if (!data) {
       // #583: a failed POST does NOT mean no wrap is running. The pipeline
@@ -3448,7 +3447,9 @@ async function confirmWrap() {
       // re-prompting (M1 — the wrap endpoint enforces deleteProtected on
       // every call, V1 and V2 alike).
       clearWrappingState();
-      // SSE pipeline-done might have already drawn it, but fallback just in case:
+      // The stream's `run-done` may already have drawn this exact result;
+      // the POST's return is the authoritative render either way, and
+      // `openWrapDrawer` closes any stream still open.
       openWrapDrawer(data.pipelineResult, pw);
       return;
     }
@@ -3537,6 +3538,10 @@ let currentWrapDisplayedStatus = null;
  *   non-delete-protected installs.
  */
 function openWrapDrawer(pipelineResult, password) {
+  // #185 — the final render supersedes the live feed. Whether this result
+  // arrived by the POST, the stream's own `run-done`, or the reattach poll,
+  // nothing may repaint over it.
+  stopWrapStream();
   if (typeof password === 'string') currentWrapPassword = password;
   currentWrapPipelineResult = pipelineResult;
   // Flag the open drawer so a concurrent session-ended poll doesn't start
@@ -3556,6 +3561,9 @@ function openWrapDrawer(pipelineResult, password) {
  * Hide the drawer and clear retained state.
  */
 function closeWrapDrawer() {
+  // #185 — an operator who closes the live drawer mid-wrap stops watching;
+  // the wrap runs on and its final report still opens the drawer.
+  stopWrapStream();
   document.getElementById('wrapDrawerBackdrop').classList.remove('open');
   document.getElementById('wrapDrawer').classList.remove('open');
   const skipRoll = document.getElementById('wrapDrawerSkipRoll');
@@ -4558,6 +4566,229 @@ async function retryWrap() {
 // .xterm-viewport-targeted, passive-listener version here was dead on iOS
 // (touches land on .xterm-screen; native pan stole the gesture — #443).
 
+// ── Live wrap progress (#185) ──
+
+/**
+ * The open `EventSource` on the running wrap's progress stream, or null when
+ * nothing is being watched. One at a time: a new subscription closes the old.
+ * @type {EventSource|null}
+ */
+let currentWrapStream = null;
+
+/**
+ * The live view of the running wrap, folded from stream events by
+ * `tcWrapDrawerHelpers.applyWrapStreamEvent`. Null until the first event.
+ * @type {object|null}
+ */
+let currentWrapLive = null;
+
+/**
+ * How many times, and how often, `attachWrapStream` probes `/wrap/status`
+ * for the run the wrap POST is claiming. The claim happens before the first
+ * pipeline step, so the first probe usually finds it; the bound exists for a
+ * POST that is refused (wrong password, wrap disabled, no session) and so
+ * never claims one.
+ * @type {number}
+ */
+const WRAP_STREAM_DISCOVERY_ATTEMPTS = 8;
+
+/**
+ * Pause between two `attachWrapStream` probes. Short, because the probe
+ * usually succeeds first time and this only paces the refused-POST case.
+ * @type {number}
+ */
+const WRAP_STREAM_DISCOVERY_DELAY_MS = 400;
+
+/**
+ * Read `/wrap/status` without touching `api()`'s shared error side channel.
+ * Own `fetch` and own error handling: a failure here is a probe that did not
+ * answer, never a claim about the wrap the operator is waiting on.
+ *
+ * @param {string} statusUrl - The status endpoint for this project.
+ * @returns {Promise<object|null>} The parsed status, or null on any failure.
+ */
+async function _probeWrapStatus(statusUrl) {
+  try {
+    const res = await fetch(statusUrl);
+    if (!res.ok) return null;
+    // A service-worker cache stand-in is not the server answering (#709).
+    if (res.headers && res.headers.get && res.headers.get('X-TC-Cache-Fallback')) return null;
+    return await res.json();
+  } catch { // a probe that could not run is simply no run found yet
+    return null;
+  }
+}
+
+/**
+ * Find the run the wrap POST just claimed and subscribe to its stream. A
+ * bounded probe of `/wrap/status`, stopping early once the POST has settled
+ * (`wrapInFlight` is reset in `confirmWrap`'s `finally`). A run whose id
+ * matches `priorRunId` predates this POST — a wrap already in progress — and
+ * is left to `watchWrapRun`, which owns the 409 path. Never throws and never
+ * touches the wrap: on any failure the drawer simply arrives with the POST,
+ * which is the pre-#185 behaviour.
+ *
+ * @param {string|null} priorRunId - The run id `/wrap/status` reported before the POST fired
+ * @param {string} password - Replayed on drawer retries
+ * @returns {Promise<boolean>} True when a stream was opened
+ */
+async function attachWrapStream(priorRunId, password) {
+  const statusUrl = `/api/sessions/${encodeURIComponent(projectName)}/wrap/status`;
+  for (let attempt = 0; attempt < WRAP_STREAM_DISCOVERY_ATTEMPTS && wrapInFlight; attempt += 1) {
+    // Deliberately NOT `api()`. These probes run concurrently with the wrap
+    // POST, and `api()` reports through a single shared side channel
+    // (`lastError` / `lastErrorCode` / `setConnected`) that every caller
+    // overwrites. `confirmWrap` reads `api.lastError` several microtask hops
+    // after its POST resolves, so a probe continuation queued in the same drain
+    // resets it to null in between and the operator is told "Wrap failed."
+    // instead of the server's reason — the exact defect #83 exists to prevent,
+    // reintroduced by a spectator. A spectator must not be able to write to the
+    // channel the authoritative request reports through.
+    const status = await _probeWrapStatus(statusUrl);
+    // Re-checked AFTER the await, not only in the loop condition: the probe's
+    // body was captured server-side before the run ended, so a response landing
+    // after the POST returned would otherwise open a stream on a finished run
+    // and replay "Wrapping — step N of M" over the final report already on
+    // screen. On the outcomes whose `run-done` carries no `pipelineResult`
+    // (thrown pipeline, reporting threw) nothing repaints it back.
+    if (!wrapInFlight) break;
+    if (status && status.running === true && typeof status.runId === 'string' && status.runId !== priorRunId) {
+      startWrapStream(status.runId, password);
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, WRAP_STREAM_DISCOVERY_DELAY_MS));
+  }
+  // The stream is a spectator, so giving up changes nothing the operator can
+  // see — which is the problem. Without this line "live progress never
+  // appeared" is indistinguishable from "the POST was refused before a run
+  // existed", and there is nothing in the console to tell them apart.
+  console.warn('[wrap] live progress: no run found to watch after '
+    + `${WRAP_STREAM_DISCOVERY_ATTEMPTS} probes; the drawer will arrive with the wrap POST instead.`);
+  return false;
+}
+
+/**
+ * Subscribe to a wrap run's progress stream and repaint the drawer as
+ * events arrive. Each frame is folded into `currentWrapLive` and rendered
+ * through the same row builder the final drawer uses; `run-done` closes the
+ * stream and renders its result exactly as the POST's return would. A
+ * browser without `EventSource` gets the blocking render unchanged.
+ *
+ * Error handling follows `EventSource` semantics: a transient drop puts it in
+ * CONNECTING and it reconnects on its own, sending `Last-Event-ID` so the
+ * server resumes rather than replays; only a CLOSED source is terminal
+ * (a 404 after a server restart, a non-stream response) and that is the
+ * fallback — the drawer says live progress is unavailable and the POST's
+ * return still delivers the report.
+ *
+ * @param {string} runId - From `/wrap/status` (or the POST payload)
+ * @param {string} password - Replayed on drawer retries
+ */
+function startWrapStream(runId, password) {
+  if (typeof EventSource !== 'function') return;
+  stopWrapStream();
+  const H = window.tcWrapDrawerHelpers;
+  const es = new EventSource(H.wrapStreamUrl(projectName, runId));
+  currentWrapStream = es;
+  currentWrapLive = null;
+  const handle = (type) => (msg) => {
+    if (currentWrapStream !== es) return;
+    let data;
+    try {
+      data = JSON.parse(msg.data);
+    } catch { // a malformed frame is a spectator's problem, never the wrap's — the POST's return is the truth
+      console.warn('[wrap] live progress: discarded a malformed frame', { type });
+      return;
+    }
+    currentWrapLive = H.applyWrapStreamEvent(currentWrapLive, { type, ...data });
+    if (type === 'run-done') {
+      stopWrapStream();
+      const result = data && data.result;
+      if (result && result.pipelineResult) {
+        closeWrapModal(true);
+        clearWrappingState();
+        openWrapDrawer(result.pipelineResult, password);
+      }
+      return;
+    }
+    renderLiveWrapDrawer(currentWrapLive);
+  };
+  for (const type of ['run-start', 'step-start', 'step-done', 'step-blocked', 'run-done']) {
+    es.addEventListener(type, handle(type));
+  }
+  es.onerror = () => {
+    if (currentWrapStream !== es) return;
+    if (es.readyState !== EventSource.CLOSED) return; // reconnecting on its own
+    // Terminal. The common shape is a stream that died before its first frame
+    // — a 404 after a server restart, a proxy that will not carry
+    // text/event-stream — and the drawer below only repaints when a live one
+    // is already on screen, so that case is otherwise completely silent.
+    console.warn('[wrap] live progress unavailable — the stream closed; '
+      + 'the report still arrives with the wrap POST.', { runId });
+    stopWrapStream();
+    // Only repaint if the live drawer is what is on screen; a drawer already
+    // showing a final result must not be told the wrap is still running.
+    if (currentWrapLive && sessionState.wrapDrawerOpen && !currentWrapLive.done) {
+      paintWrapStatus(H.streamUnavailableStatus(), null, null);
+    }
+  };
+}
+
+/**
+ * Close the progress stream, if any. Idempotent. Called by every path that
+ * renders a final result, by the drawer close, and before a new subscription.
+ */
+function stopWrapStream() {
+  if (currentWrapStream) {
+    currentWrapStream.close();
+    currentWrapStream = null;
+  }
+}
+
+/**
+ * Paint the drawer from the live view of a running wrap (#185): the banner
+ * says which step of how many, every announced step is a row (pending,
+ * running, or settled with the runner's own status, output and blockers),
+ * and the decision widget and Retry/Done stay hidden — there is nothing to
+ * decide about a run that has not finished. Rows go through `renderStepRow`
+ * so a running step gets the `--running` tone the stylesheet reserved.
+ *
+ * @param {object} live - From `tcWrapDrawerHelpers.applyWrapStreamEvent`
+ */
+function renderLiveWrapDrawer(live) {
+  const H = window.tcWrapDrawerHelpers;
+  // The modal's job ended when the run started; the drawer is the surface now.
+  closeWrapModal(true);
+  const asResult = H.liveWrapAsPipelineResult(live);
+  // "Copy report" serialises the run so far.
+  currentWrapPipelineResult = asResult;
+  currentWrapBaseStatus = null;
+  sessionState.wrapDrawerOpen = true;
+  cancelEndedCountdown();
+
+  paintWrapStatus(H.summarizeLiveStatus(live), null, null);
+
+  const skipRoll = document.getElementById('wrapDrawerSkipRoll');
+  skipRoll.innerHTML = '';
+  skipRoll.classList.add('hidden');
+
+  const listEl = document.getElementById('wrapStepList');
+  listEl.innerHTML = '';
+  for (const r of asResult.results) {
+    listEl.appendChild(renderStepRow(H.buildStepRow(r, { blockedAt: asResult.blockedAt })));
+  }
+
+  const decisionEl = document.getElementById('wrapDrawerDecision');
+  decisionEl.innerHTML = '';
+  decisionEl.classList.add('hidden');
+  document.getElementById('wrapDrawerRetryBtn').classList.add('hidden');
+  document.getElementById('wrapDrawerDoneBtn').classList.add('hidden');
+  document.getElementById('wrapDrawerCancelBtn').textContent = 'Close';
+
+  document.getElementById('wrapDrawerBackdrop').classList.add('open');
+  document.getElementById('wrapDrawer').classList.add('open');
+}
+
 // ── Wrapping State ──
 
 /**
@@ -4660,6 +4891,10 @@ async function watchWrapRun(postStartedAtMs, password) {
 
     if (decision === 'watch') {
       showWrappingState();
+      // #185 — a reattached page gets the live rows too: the status payload
+      // carries the run's stream handle. The poll below stays as the
+      // fallback that renders the result if the stream cannot.
+      if (typeof status.runId === 'string') startWrapStream(status.runId, password);
       while (decision === 'watch') {
         await new Promise((resolve) => setTimeout(resolve, 4000));
         const next = await api(statusUrl);
@@ -4724,6 +4959,12 @@ function cancelEndedCountdown() {
  */
 function openWrapDrawerNotice(label, detail) {
   sessionState.wrapDrawerOpen = true;
+  // The third terminal render, and a member of the same family as
+  // `openWrapDrawer` and `closeWrapDrawer`: a path that paints a final result
+  // must not leave a live stream free to repaint over it. Unreachable as a
+  // misrender today — both notice branches are taken only after the run ended
+  // — which is exactly the shape a later change turns into a live one.
+  stopWrapStream();
   cancelEndedCountdown();
   document.getElementById('wrapStepList').innerHTML = '';
   document.getElementById('wrapDrawerDecision').innerHTML = '';
