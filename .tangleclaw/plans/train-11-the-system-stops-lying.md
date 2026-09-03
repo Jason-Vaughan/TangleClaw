@@ -223,13 +223,26 @@ silently does nothing.
 - **Done when:** a launch whose hook never ran cannot produce a `delivered` row.
 
 ### Chunk 13 — #1134 a paste the engine discarded is logged as delivered
-- After a prime paste, the launcher observes the pane for a bounded window: the transcript digest
-  must move with our content (or a response block appear). A swallowed paste records
-  `unverified` with the reason and retries after backoff, bounded (profile-declared attempts).
+- After a prime paste, the launcher watches the pane for a bounded window and records
+  `unverified` with the reason when the send is observed to fail, retrying once, bounded.
+- **Amended during build (Critic R-1, blocking).** The chunk specified watching for the transcript
+  *digest moving with our content*. That is not implementable from a pane tail and was measured to
+  be actively harmful: a real generated prime is 37–225 lines on this machine, so once it echoes
+  and the engine answers, no part of it is still in view — the check reads "not landed" on every
+  healthy launch and re-pastes the whole prime into a session that already had it, which is worse
+  than the defect. Digest movement is no substitute either: measured on agy 1.1.24, typing alone
+  moves the pane digest before Enter, so it is satisfied by our own keystrokes.
+  What shipped watches for the engine's own **rejection** text instead (profile-declared,
+  `pasteRejectedMarker`), which is one line, on screen when it matters, and positive evidence
+  rather than the absence of evidence. It only ever DOWNGRADES: a watch that saw no rejection, or
+  could not look, leaves the pre-existing verdict untouched. The stated cost is that a swallow the
+  engine does not announce is still missed — the reported case closes, the unreported one does not.
 - Uses the readiness signals #1133 shipped; the antigravity profile evidence is re-dated against
   1.1.22.
-- Tests: digest moves → `delivered`; digest static → `unverified` + retry; retry succeeds →
-  `delivered` with attempt count; profile without signals → honest skip reason.
+- Tests: an announced rejection → `unverified` + one bounded re-paste; a healthy pane → the gate's
+  verdict and NO re-paste (the regression guard for the abandoned mechanism); a busy or dead pane →
+  the retry is held; a styled banner still matches; an unreadable pane → `unmeasured`, never
+  "no rejection".
 - **Done when:** the swallowed-paste replay records `unverified`, not `delivered`.
 
 ### Chunk 14 — #1012 OpenClaw connections show a green dot while unusable

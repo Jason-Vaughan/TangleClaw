@@ -276,6 +276,32 @@ Engines without a positive marker cannot be gated and **must declare an explicit
 paste is recorded in the delivery ledger as `unverified`, never `delivered` — `delivered` is
 reserved for a paste whose pane was observed ready.
 
+#### `pasteRejectedMarker`
+
+Optional, and since #1134 the pane being observed ready is **no longer the last word**. An engine
+that has been measured *discarding* a submission declares the text it prints when it does:
+
+```json
+"pasteRejectedMarker": "Please try again shortly"
+```
+
+Antigravity 1.1.22 renders the complete at-rest UI — bare `>` and `? for shortcuts` — while it is
+still verifying an account, and drops whatever is submitted. Both readiness signals pass, so the
+gate alone cannot tell that state from a ready one. After a paste, the pane is watched for this
+marker; when it appears the delivery row is `unverified` with that reason **even though the gate
+was satisfied**, and the prime is re-pasted once (bounded, and only after checking the pane is not
+mid-turn).
+
+It only ever **downgrades**. A watch that saw no rejection, or could not read the pane, leaves the
+pre-existing verdict exactly as it was — so a swallow the engine does not announce is still missed,
+and nothing here can invent a delivery or a retry. That asymmetry is deliberate: a false retry
+pastes a whole prime into a session that already has one.
+
+**Do not infer this marker from another engine, and date what you measured.** Watching for the
+prime to *arrive* instead was tried and abandoned: a generated prime runs to hundreds of lines, so
+once it echoes it is not in a pane tail at all, and the check fires on every healthy launch.
+Omit the field and the engine is not watched, which is the honest default.
+
 ## Config File Generation
 
 When a session launches, TangleClaw generates the engine-specific config file in the project root. This file is built from:
