@@ -182,7 +182,7 @@ describe('#429 read-only pre-check — _readOnlyPrecheck states', () => {
   });
 
   it('the mode line is found even with a full agent roster drawn BELOW it', () => {
-    // Critic R-2. A fixed slice off the bottom of the pane loses the mode line
+    // A fixed slice off the bottom of the pane loses the mode line
     // as soon as enough agents are running, and the pre-check would answer
     // `clear` — regressing to the five-minute timeout #429 exists to remove,
     // in precisely the case that triggers the feature.
@@ -225,7 +225,7 @@ describe('#429 read-only pre-check — _readOnlyPrecheck states', () => {
   });
 
   it('a profile whose marker field is malformed reads as no-marker, not as a clear pane', () => {
-    // Critic R-16 — the one failure on this path that would otherwise announce
+    // The one failure on this path that would otherwise announce
     // itself nowhere. BOTH required strings are covered: dropping either one
     // leaves the check unable to answer, and a version of this test that only
     // removed `marker` stayed green while the `modeLine` validation was
@@ -494,7 +494,7 @@ describe('#429 read-only pre-check — the drawer speaks the status', () => {
     assert.equal(widget.optionsKey, 'skipAiContent');
   });
 
-  it('the banner says the operator is being waited on, not "Blocked at" (Critic R-12)', () => {
+  it('the banner says the operator is being waited on, not "Blocked at"', () => {
     // The banner is the first thing read, and line 1 of the copied report.
     // Keyed on `blockedAt` alone it announced a needs-operator halt in the
     // exact framing the status exists to replace.

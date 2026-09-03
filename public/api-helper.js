@@ -3377,11 +3377,37 @@
     return { mount, setStatus, setModel, setError, setWarning, setAccess, setMedusa, loadAccess, loadModel, killMaster, medusa };
   }
 
+  /**
+   * CSS class for one startup-rule delivery outcome in the deliveries panel.
+   *
+   * A named function rather than a ternary inline in the panel's template so a
+   * test can drive it over the ledger's whole vocabulary: this map went a full
+   * release with `unverified` handled and every other value falling through to
+   * an unstyled string, and a value it has not been taught renders as text that
+   * reads like a pass.
+   *
+   * The default is therefore `warn`, not blank. The ledger's only worth is that
+   * its rows can be trusted as evidence; a row nobody classified is not
+   * evidence of success, and `written` (#1063) — shards on disk, engine hook
+   * never confirmed — is precisely the row that used to render green.
+   *
+   * @param {string} outcome - A `session_rule_deliveries.outcome` value.
+   * @returns {string} A `rules-status-*` class, or '' for the one outcome that
+   *   is genuinely neutral (`no-rules`: nothing was owed).
+   */
+  function tcDeliveryOutcomeClass(outcome) {
+    if (outcome === 'delivered') return 'rules-status-ok';
+    if (outcome === 'skipped') return 'rules-status-err';
+    if (outcome === 'no-rules') return '';
+    return 'rules-status-warn';
+  }
+
   global.tcMedusaIds = tcMedusaIds;
   global.tcMedusaControlMarkup = tcMedusaControlMarkup;
   global.tcEscapeHtml = tcEscapeHtml;
   global.tcCreateMedusaControl = tcCreateMedusaControl;
   global.tcSetRulesStatus = tcSetRulesStatus;
+  global.tcDeliveryOutcomeClass = tcDeliveryOutcomeClass;
   global.tcCreateMasterSettings = tcCreateMasterSettings;
   global.tcMasterPendingReasons = TC_MASTER_PENDING;
   global.tcMasterAccessSegments = TC_MASTER_ACCESS_SEGMENTS;

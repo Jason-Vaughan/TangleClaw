@@ -456,7 +456,28 @@ describe('startup session-rule delivery (#595)', () => {
         // says which of the three branches it actually covers.
         assert.equal(rows[0].channel, 'rules-hook',
           'the ledger names the channel the rules actually rode, not the prime file');
-        assert.equal(rows[0].delivered, true);
+        // #1063 — the launch writes shards; it does NOT know any engine read
+        // them. This row used to say `delivered` here, which is the bug: during
+        // #759 every Claude SessionStart hook failed, sessions booted with no
+        // rules, and this ledger stayed clean for as long as it lasted.
+        assert.equal(rows[0].outcome, 'written',
+          'the launch records what it did (wrote files), not what it cannot know (the engine read them)');
+        assert.equal(rows[0].delivered, false,
+          'nothing has confirmed delivery at this point — the derived flag must not say otherwise');
+
+        // The receipt token is what lets the hook name this row. Without it the
+        // row can never leave `written`, so its absence would make the honest
+        // state a permanent one.
+        const token = JSON.parse(fs2.readFileSync(
+          path.join(launched.path, '.tangleclaw', 'session-rules-receipt.json'), 'utf8'));
+        assert.equal(token.deliveryId, rows[0].id, 'the token names the row this launch recorded');
+        assert.match(token.api, /^https?:\/\//, 'and where to post it');
+
+        // The other half of the contract: posting it is what makes the row read
+        // `delivered`, and only the hook actually running can do that.
+        const upgraded = store.sessionRuleDeliveries.markDelivered(token.deliveryId);
+        assert.equal(upgraded.outcome, 'delivered');
+        assert.equal(store.sessionRuleDeliveries.listForSession(result.session.id)[0].delivered, true);
 
         store.sessions.kill(result.session.id, 'test cleanup');
       } finally {

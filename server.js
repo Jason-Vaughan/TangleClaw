@@ -2582,6 +2582,57 @@ route('GET', '/api/session-rules/deliveries', (req, res) => {
   return jsonResponse(res, 200, { undelivered: store.sessionRuleDeliveries.projectsWithUndeliveredRules() });
 });
 
+// POST /api/tc/rule-receipt — the startup-rules hook vouching that it RAN
+// (#1063).
+//
+// The rules ledger records `written` when TangleClaw puts the shards on disk,
+// because that is all it knows at launch time. This route is the only thing
+// that can turn that into `delivered`: the hook posts the token TangleClaw left
+// beside the shards, and reaching this handler is proof an engine executed the
+// hook. Before it existed, #759 — every Claude SessionStart hook failing, whole
+// sessions booting with no rules — produced a clean ledger across multiple
+// sessions and two projects, invisible to every record TangleClaw kept.
+//
+// Deliberately narrow. It carries one verb, `written` → `delivered`, and
+// `markDelivered` refuses every other transition, so a receipt can never
+// launder a `skipped` or `unverified` row into a success, and the route takes
+// no outcome from the caller — only a row id.
+//
+// The id is not a credential, and the token carrying it is not one either: it
+// is a small integer in a file in the project directory, on a route outside the
+// service-token gate. What bounds the damage is the transition plus a freshness
+// window in `markDelivered`, not a secret. A row already `delivered`, `skipped`
+// or `unverified` is inert here, and a `written` row older than the window is
+// refused.
+//
+// What a receipt proves is that A hook ran in that project directory — not
+// which session's. It cannot prove that: the hook is registered on `startup` in
+// the project's own settings, so every `claude` opened there runs it. The
+// residual, stated rather than claimed closed: a `claude` opened by hand inside
+// the window, for a launch whose own hook failed, confirms that launch's row.
+// The window bounds it; nothing here makes it impossible.
+//
+// Always 200, never an error, when the id simply did not match: the caller is a
+// shell script inside an engine's startup path, and a 4xx there is noise in a
+// place where noise gets fed back to the engine as a synthetic turn. The body
+// says whether anything was upgraded, for the operator and for tests.
+route('POST', '/api/tc/rule-receipt', (req, res, _params, body) => {
+  const deliveryId = body && body.deliveryId;
+  const upgraded = store.sessionRuleDeliveries.markDelivered(deliveryId);
+  if (!upgraded) {
+    // Not an error and not silence: a receipt for a row that is not `written`
+    // is the ordinary shape of a stale token, but a receipt that NEVER matches
+    // means the channel is confirming nothing and the ledger will read
+    // `written` forever, so it is visible at debug level with the id that missed.
+    log.debug('Rule-receipt matched no written delivery', { deliveryId });
+    return jsonResponse(res, 200, { upgraded: false });
+  }
+  log.info('Startup rules confirmed delivered by the engine hook', {
+    deliveryId: upgraded.id, projectId: upgraded.projectId, sessionId: upgraded.sessionId
+  });
+  return jsonResponse(res, 200, { upgraded: true, delivery: upgraded });
+});
+
 // GET /api/tc/whoami — the `tc` CLI's one verb (ambient-awareness Chunk 02).
 // Answers "who am I, where is TangleClaw, and what can I do through it" for the
 // pane that asks, and the GET itself IS the awareness receipt: recording
@@ -2888,7 +2939,7 @@ route('GET', '/api/awareness', (req, res) => {
     states: {
       confirmed: 'the session invoked tc itself — awareness demonstrated',
       sent: 'a channel was observed to deliver; nothing was demonstrated',
-      unverified: 'something was pushed blind and nothing observed it land',
+      unverified: 'something was put on the channel and nothing confirmed the far side — a blind send, or rule shards whose engine hook never posted its receipt',
       'no-rules': 'the launch path ran; the project had no rules to deliver — nothing was owed',
       unaware: 'no evidence awareness ever arrived — the red state',
       'not-running': 'no Master session is running — nothing launched, nothing to be aware (master only)',
