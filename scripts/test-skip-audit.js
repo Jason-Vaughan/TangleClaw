@@ -197,9 +197,7 @@ function formatReport(result, entries) {
   lines.push('');
   if (result.total === 0) {
     lines.push('**No test cases found in the report — nothing was certified.**');
-    lines.push('');
-  }
-  if (skippedCount === 0) {
+  } else if (skippedCount === 0) {
     lines.push('Every test ran. Nothing was skipped.');
   } else {
     lines.push(`${skippedCount} did not run here. Those on the ledger, by tier:`);
@@ -210,6 +208,14 @@ function formatReport(result, entries) {
       lines.push(`- **${e.id}** — ${hits.length} skipped. ${e.why} Runs: ${e.runsWhere}`);
       for (const h of hits) lines.push(`  - ${h.path}${h.message ? ` — _${h.message}_` : ''}`);
     }
+  }
+  // Entries nothing matched are the ledger's lifecycle signal: on this host the
+  // tier ran (fine), or the tier's tests were renamed or deleted and the entry
+  // is dead weight. Silently dropping them is how a ledger grows forever.
+  const idle = entries.filter((e) => result.expected.get(e.id).length === 0).map((e) => e.id);
+  if (idle.length > 0) {
+    lines.push('');
+    lines.push(`Ledger entries with no skipped test on this host (their tier ran here, or the entry is stale): ${idle.join(', ')}`);
   }
   if (result.unknown.length > 0) {
     lines.push('');

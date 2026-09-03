@@ -26,6 +26,14 @@ run is a hypothesis, not evidence.
    an operator decision; the ledger records where those tests DO run); the reader's own
    parsing behaviour (#969 is about its guard); weakening any assertion (#957 says so).
 
+## Requirements Confidence
+
+**High.** Every car is a filed issue with an observed failure, a diagnosis the previous
+session or this one verified against source, and named options; the two that needed a
+choice (#844, #835) were made from the issue's own option lists and ratified by the Roadmap
+session. Medium on one point: #957's headroom multipliers are chosen, not measured — the
+load run in Car 5's Done-when is what confirms them.
+
 ## Cars
 
 ### Car 1 — #844 CI names what it did not run

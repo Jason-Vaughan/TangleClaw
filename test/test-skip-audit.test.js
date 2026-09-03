@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 
 const skipAudit = require('../scripts/test-skip-audit');
 
@@ -149,6 +150,17 @@ describe('scripts/test-skip-audit — formatReport', () => {
     assert.match(text, /todo later \(todo\) — _later_/);
   });
 
+  it('names ledger entries that matched nothing — the ledger\'s lifecycle signal', () => {
+    const entries = skipAudit.compileLedger({ entries: [
+      { id: 'reasoned', match: '^outer > skips with reason$', why: 'w', runsWhere: 'r' },
+      { id: 'inner', match: '^outer > inner & deeper > ', why: 'w', runsWhere: 'r' },
+      { id: 'retired-tier', match: '^gone > ', why: 'w', runsWhere: 'r' }
+    ] });
+    const text = skipAudit.formatReport(skipAudit.audit(skipAudit.parseJunit(NESTED), entries), entries);
+    assert.match(text, /no skipped test on this host .*: retired-tier$/m);
+    assert.doesNotMatch(text, /no skipped test on this host .*reasoned/);
+  });
+
   it('says so when nothing was skipped', () => {
     const text = skipAudit.formatReport(skipAudit.audit({ total: 3, skipped: [] }, []), []);
     assert.match(text, /Every test ran\. Nothing was skipped\./);
@@ -220,6 +232,47 @@ describe('scripts/test-skip-audit — main', () => {
     let out = '';
     assert.equal(skipAudit.main([], { env: {}, stdout: { write: (s) => { out += s; } } }), 1);
     assert.match(out, /usage/);
+  });
+});
+
+describe('scripts/test-skip-audit — against the real producer', () => {
+  // The hand-written NESTED fixture pins the parser's MODEL of node:test's
+  // junit reporter. This pins the reporter itself: a fixture test file is run
+  // through `node --test --test-reporter=junit`, exactly as the CI step runs
+  // the suite, and the report is parsed. If the reporter stopped emitting
+  // `<skipped>` — or changed how it escapes names — the audit would print
+  // "Every test ran" and exit 0, and nothing above would notice.
+  it('a skipped test in a real node:test run is reported with its full path, message, and decoded name', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'skip-audit-real-'));
+    try {
+      const fixture = path.join(dir, 'fixture.test.js');
+      fs.writeFileSync(fixture, [
+        "const { describe, it } = require('node:test');",
+        "describe('outer <suite>', () => {",
+        "  it('passes', () => {});",
+        '  describe(\'mode "auto" & more\', () => {',
+        "    it('skips here', (t) => { t.skip('not on this host'); });",
+        "  });",
+        "});"
+      ].join('\n'));
+      const report = path.join(dir, 'r.xml');
+      // This test itself runs inside node:test, which marks its children with
+      // NODE_TEST_CONTEXT; a nested `node --test` that inherits it behaves as
+      // a child of THIS run and honours no reporter flags. Strip it so the
+      // nested run is a top-level runner, exactly as CI invokes it.
+      const env = { ...process.env };
+      delete env.NODE_TEST_CONTEXT;
+      execFileSync(process.execPath, [
+        '--test', '--test-reporter=junit', `--test-reporter-destination=${report}`, fixture
+      ], { stdio: 'pipe', env });
+      const run = skipAudit.parseJunit(fs.readFileSync(report, 'utf8'));
+      assert.equal(run.total, 2);
+      assert.deepEqual(run.skipped, [
+        { path: 'outer <suite> > mode "auto" & more > skips here', kind: 'skipped', message: 'not on this host' }
+      ]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
