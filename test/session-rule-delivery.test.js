@@ -694,7 +694,7 @@ describe('startup session-rule delivery (#595)', () => {
           await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
           rows = store.sessionRuleDeliveries.listForSession(result.session.id);
         }
-        assert.ok(pasted >= 1, 'an unexpected gate failure must not lose the paste');
+        assert.equal(pasted, 1, 'an unexpected gate failure must not lose the paste, and must not re-paste it');
 
         assert.equal(rows.length, 1);
         assert.equal(rows[0].outcome, 'unverified');

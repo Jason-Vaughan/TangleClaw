@@ -239,7 +239,10 @@ silently does nothing.
   engine does not announce is still missed — the reported case closes, the unreported one does not.
 - Uses the readiness signals #1133 shipped; the antigravity profile evidence is re-dated against
   1.1.22.
-- Tests: digest moves → `delivered`; digest static → `unverified` + retry; retry succeeds →
+- Tests: an announced rejection → `unverified` + one bounded re-paste; a healthy pane → the gate's
+  verdict and NO re-paste (the regression guard for the abandoned mechanism); a busy or dead pane →
+  the retry is held; a styled banner still matches; an unreadable pane → `unmeasured`, never
+  "no rejection".
   `delivered` with attempt count; profile without signals → honest skip reason.
 - **Done when:** the swallowed-paste replay records `unverified`, not `delivered`.
 

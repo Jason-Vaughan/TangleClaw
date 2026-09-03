@@ -96,6 +96,22 @@ describe('#1134 — _observePasteRejected', () => {
     assert.equal(res.observed, 'rejected');
   });
 
+  it('finds it through the SGR runs a TUI actually writes', async () => {
+    // The fixtures are otherwise plain text, so the strip was untested — and a
+    // marker match that silently stops matching because the engine styled its
+    // own banner is the failure mode with no symptom. `medusa-wake` names
+    // `_strip` a production dependency of this path for exactly this reason.
+    const mid = Math.floor(MARKER.length / 2);
+    const styled = { lines: [
+      `\u001b[33m  ⚠ ${MARKER.slice(0, mid)}\u001b[1m${MARKER.slice(mid)}\u001b[0m`,
+      '>', '? for shortcuts'
+    ] };
+    assert.ok(!styled.lines.join('\n').includes(MARKER),
+      'fixture precondition: a RAW match must fail on this pane, or the strip is not what is being tested');
+    const res = await sessions._observePasteRejected('s', 'antigravity', seams([styled]));
+    assert.equal(res.observed, 'rejected', 'a styled banner must still match');
+  });
+
   it('no-rejection: a healthy pane is NOT typed as a failure', async () => {
     // The property the previous design got wrong. A healthy launch must never
     // produce a downgrade or a retry.
@@ -159,6 +175,83 @@ describe('#1134 — _paneIsBusy: three states, so a retry never injects blind', 
       assert.equal(sessions._paneIsBusy('s', 'antigravity'), null, 'unreadable pane');
       assert.equal(sessions._paneIsBusy('s', 'codex'), null, 'engine with no busy marker');
     } finally { require('../lib/tmux').capturePane = saved; }
+  });
+});
+
+describe('#1134 — the retry loop actually runs', () => {
+  // The loop this chunk exists to add had never executed under test: every
+  // fixture asserted the NON-retry path, so the backoff, the second sendKeys,
+  // the re-watch and the busy-branch were all unexecuted code. A retry is the
+  // only thing here that writes to a live pane twice, which makes it the one
+  // path least safe to ship unrun.
+  const sessions2 = require('../lib/sessions');
+  const tmux = require('../lib/tmux');
+
+  /**
+   * Drive the real `_deferEngineInit` paste path with a scripted pane.
+   * @param {object[]} script - Panes returned in order by capturePane.
+   * @param {object} [opts] - `probeLive` (default true).
+   * @returns {Promise<{sends: number, rows: object[]}>}
+   */
+  async function runPaste(script, opts = {}) {
+    const saved = { capturePane: tmux.capturePane, sendKeys: tmux.sendKeys, probeSession: tmux.probeSession, hasSession: tmux.hasSession };
+    let i = 0;
+    let sends = 0;
+    const recorded = [];
+    tmux.capturePane = () => script[Math.min(i++, script.length - 1)];
+    tmux.sendKeys = () => { sends += 1; return true; };
+    tmux.probeSession = () => ({ live: opts.probeLive !== false, answered: true, cause: null });
+    tmux.hasSession = () => true;
+    try {
+      await sessions2._pastePrime({
+        tmuxName: 't', engineId: 'antigravity', projectName: 'p',
+        primeText: '# Session Start — p\nbody',
+        readiness: { gated: true, ready: true },
+        onRecord: (r) => recorded.push(r),
+        sleep: async () => {}
+      });
+    } finally { Object.assign(tmux, saved); }
+    return { sends, rows: recorded };
+  }
+
+  it('a rejected paste is sent again, and the row says the engine discarded it', async () => {
+    // First watch sees the discard banner; the retry's watch sees a clean pane.
+    const rejectedPane = pane({ rejected: true });
+    const cleanPane = pane({ extra: ['  OK.'] });
+    const { sends, rows } = await runPaste([rejectedPane, cleanPane, cleanPane, cleanPane,
+      cleanPane, cleanPane, cleanPane, cleanPane, cleanPane, cleanPane, cleanPane, cleanPane]);
+    assert.equal(sends, 2, 'the prime is pasted a second time after an announced rejection');
+    assert.equal(rows.length, 1, 'one durable row, whatever the attempt count');
+  });
+
+  it('is bounded — a pane that rejects every attempt is not pasted into forever', async () => {
+    const { sends, rows } = await runPaste(Array(60).fill(pane({ rejected: true })));
+    assert.equal(sends, 2, 'the original send plus exactly one retry');
+    assert.equal(rows[0].outcome, 'unverified');
+    assert.match(rows[0].skipReason, new RegExp(MARKER));
+  });
+
+  it('holds the retry when the pane is busy, and says so on the row', async () => {
+    // The branch added by the previous round, which wrote a new string onto the
+    // durable ledger and had never run.
+    const { sends, rows } = await runPaste(
+      [pane({ rejected: true }), pane({ rejected: true, busy: true })].concat(Array(30).fill(pane({ busy: true }))));
+    assert.equal(sends, 1, 'nothing is pasted over a turn in flight');
+    assert.equal(rows[0].outcome, 'unverified');
+    assert.match(rows[0].skipReason, /pane was (busy|not readable as idle)/);
+  });
+
+  it('holds the retry when the session died between the send and the retry', async () => {
+    const { sends } = await runPaste(Array(30).fill(pane({ rejected: true })), { probeLive: false });
+    assert.equal(sends, 1, 'a dead pane is not pasted into');
+  });
+
+  it('a healthy launch is never re-pasted', async () => {
+    // The regression guard for the mechanism this replaced, which would have
+    // re-pasted on every real launch.
+    const { sends, rows } = await runPaste(Array(30).fill(pane({ extra: ['  Working…'] })));
+    assert.equal(sends, 1);
+    assert.equal(rows[0].outcome, 'delivered');
   });
 });
 
