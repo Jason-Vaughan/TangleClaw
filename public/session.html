@@ -35,9 +35,17 @@
       </span>
       <span class="banner-sep" aria-hidden="true">|</span>
       <span class="banner-name" id="bannerName">--</span>
-      <span class="banner-version" id="bannerVersion"></span>
-      <span class="status-dot" id="statusDot" title="Connected"></span>
-      <span class="banner-engine" id="bannerEngine"></span>
+      <!-- Banner pills answer "what is this" on hover (data-tooltip, the
+           category label) and "what does it say" on click (#104). The status
+           dot sits inside a wrapper because the dot's breathing animation is
+           an opacity animation and would fade its own tooltip and popover. -->
+      <span class="banner-version" id="bannerVersion" data-tooltip="Project version"></span>
+      <span class="status-pill" id="statusPill" data-tooltip="Session status"
+            data-pill-detail="Connected" role="button" tabindex="0"
+            aria-label="Session status: Connected">
+        <span class="status-dot" id="statusDot"></span>
+      </span>
+      <span class="banner-engine" id="bannerEngine" data-tooltip="AI engine" role="button" tabindex="0"></span>
       <span id="bannerGroups" class="banner-groups"></span>
     </div>
     <div class="banner-actions">

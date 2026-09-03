@@ -89,7 +89,7 @@ function loadSessionConnectionState() {
   // The page's real static mount points, including the terminal the banner
   // must never displace.
   const { doc, ids } = makeDocument(
-    ['toast', 'statusDot', 'commandSend', 'sessionUnreachable', 'terminalFrame']);
+    ['toast', 'statusDot', 'statusPill', 'commandSend', 'sessionUnreachable', 'terminalFrame']);
 
   const state = { clock: 0, pending: [], probes: 0, serverUp: false };
   const sandbox = {
@@ -114,6 +114,7 @@ function loadSessionConnectionState() {
     liftFunction(SESSION_SRC, 'function hideSessionUnreachable()'),
     liftCall(SESSION_SRC, 'const reconnectPolicy = tcCreateReconnectPolicy('),
     liftFunction(SESSION_SRC, 'async function retrySessionConnectionNow()'),
+    liftFunction(SESSION_SRC, 'function setPillDetail(pill, detail)'),
     liftFunction(SESSION_SRC, 'function setConnected(connected)'),
     'globalThis.reconnectPolicy = reconnectPolicy;',
     'globalThis.setConnected = setConnected;',

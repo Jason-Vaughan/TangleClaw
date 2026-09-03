@@ -303,6 +303,80 @@ body {
 .group-pill:hover {
   background: rgba(74, 158, 255, 0.3);
 }
+
+/* ── Pill UX contract (#104): hover = category label, click = status detail ──
+   `data-tooltip` is the hover primitive: pure CSS, reusable on any pill, table
+   cell or button. The tooltip hangs BELOW the element because the banner sits
+   at the top of the viewport — a tooltip above it would be clipped by the
+   window edge on every page. Gated on `(hover: hover)` because a touch tap
+   leaves `:hover` stuck on until the next tap, which would pin the label on
+   top of the popover that already carries the same words; touch users get the
+   label from the popover's title instead. The tooltip also hides while the
+   pill's own popover is open, so the two never stack. */
+[data-tooltip] {
+  position: relative;
+}
+@media (hover: hover) {
+  [data-tooltip]:hover::before {
+    content: attr(data-tooltip);
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--tooltip-bg, var(--elevated-bg));
+    color: var(--tooltip-fg, var(--text));
+    border: 1px solid var(--text-muted);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro', system-ui, sans-serif;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.3;
+    padding: 4px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 1000;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  }
+  [data-tooltip]:hover::after {
+    content: '';
+    position: absolute;
+    top: calc(100% - 2px);
+    left: 50%;
+    transform: translateX(-50%);
+    border: 4px solid transparent;
+    border-bottom-color: var(--text-muted);
+    pointer-events: none;
+    z-index: 1000;
+  }
+  [data-tooltip]:has(> .group-popover.open)::before,
+  [data-tooltip]:has(> .group-popover.open)::after {
+    display: none;
+  }
+}
+
+/* The status dot's wrapper: the pill that carries the tooltip and the click
+   popover, so neither inherits the dot's opacity animation. */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.banner-engine {
+  cursor: pointer;
+}
+
+/* Click detail: `.group-popover` chrome, but the detail is a sentence and the
+   engine pill's `white-space: nowrap` must not stretch it across the banner. */
+.pill-detail {
+  white-space: normal;
+  max-width: 260px;
+  line-height: 1.4;
+  cursor: default;
+}
+.pill-detail-text {
+  color: var(--text);
+}
 /* .group-popover*, .medusa-heads, .medusa-msg*, .medusa-panel-head/-close moved to
    shared-controls.css (#996): the Master control bar renders the same inbox
    panel on the dashboard, which does not load this sheet. */

@@ -288,7 +288,10 @@ The top banner shows:
 - **Back link** — return to the landing page
 - **Project name** and **version**
 - **Status dot** — green (connected), red (disconnected), with a breathing animation
-- **Engine badge** — which engine is running
+- **Engine badge** — which engine is running; its colour follows the engine's published status (green operational, amber degraded, red outage)
+- **Group pills** — the project groups this project belongs to
+
+Every pill follows one contract: **hover** shows what kind of thing it is (*Project version*, *Session status*, *AI engine*, *Project group*), and **click** shows what it currently says — the engine's status message, the session's connection state, or a group's member projects. On a phone there is no hover; the click popover repeats the label, so nothing is lost.
 
 #### Terminal Viewport
 
