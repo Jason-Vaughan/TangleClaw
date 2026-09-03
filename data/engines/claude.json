@@ -96,12 +96,13 @@
       }
     },
     "readOnlyModeMarker": {
+      "modeLine": "(shift+tab to cycle)",
       "marker": "plan mode on (shift+tab to cycle)",
       "label": "plan mode",
       "exit": "shift+tab",
       "evidence": {
         "verifiedOn": "2026-09-03",
-        "source": "Claude Code 2.1.259, probed on a live pane: `claude --permission-mode plan` renders `⏸ plan mode on (shift+tab to cycle)` on the footer line beneath the input box. The mode words carry the whole signal — the same footer reads `bypass permissions on (shift+tab to cycle)` under --dangerously-skip-permissions, so the parenthetical alone matches every mode and must not be the marker."
+        "source": "Claude Code 2.1.259, probed on a live pane: `claude --permission-mode plan` renders `⏸ plan mode on (shift+tab to cycle)` beneath the input box. `modeLine` is the signature EVERY permission mode draws — the same line reads `bypass permissions on (shift+tab to cycle)` under --dangerously-skip-permissions — so it locates the mode line; `marker` is what makes that line read-only. Locating and deciding are separate fields because a pane with subagents running draws `⏺ main` and one row per agent BELOW the mode line (live captures in test/medusa-wake.test.js, #783/#1101), so the mode line is not the last line and cannot be found by position."
       }
     }
   },

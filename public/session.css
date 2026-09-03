@@ -1688,6 +1688,8 @@ body {
 .wrap-drawer-status--blocked { color: #f59e0b; }
 .wrap-drawer-status--warning { color: #f59e0b; }
 .wrap-drawer-status--error { color: #ef4444; }
+/* #429 — a halt that is waiting on the operator, not on a fix. */
+.wrap-drawer-status--needs-operator { color: #fbbf24; }
 /* #638 — a committed wrap whose PR has not yet merged: honestly not-yet-shipped,
    distinct from both success (green) and failure (red). */
 .wrap-drawer-status--provisional { color: #38bdf8; }

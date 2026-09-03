@@ -181,6 +181,7 @@ cache, so an engine you have just installed is never refused.
 | `supportsCoAuthor` | Engine supports git co-author attribution |
 | `supportsSilentPrime` | Engine can receive the prime as hidden context at startup, rather than as typed input |
 | `startupInjection.maxChars` | How many characters this engine's startup channel can carry before *it* truncates — see below |
+| `readOnlyModeMarker` | How this engine's TUI says the session is in a read-only mode, so a wrap refuses instead of timing out — see below |
 
 #### `startupInjection.maxChars`
 
@@ -206,6 +207,48 @@ and when in a sibling `evidence` block** — `"startupInjection": { "maxChars": 
 this repo stays green forever after the upstream changes. Re-verify if directives start going
 missing — a value copied from another engine, or left stale after the harness changes, fails
 silently and in the one place nothing else is watching.
+
+#### `readOnlyModeMarker`
+
+Optional. An engine whose TUI has a read-only mode — Claude Code's plan mode — declares how to
+recognise it:
+
+```json
+"readOnlyModeMarker": {
+  "modeLine": "(shift+tab to cycle)",
+  "marker": "plan mode on (shift+tab to cycle)",
+  "label": "plan mode",
+  "exit": "shift+tab",
+  "evidence": { "verifiedOn": "YYYY-MM-DD", "source": "…" }
+}
+```
+
+A wrap's content steps have to **edit files**. In a read-only mode the engine answers with a plan
+and waits on an approval that never comes, so before `ai-content` sends anything it samples the
+pane: a present marker fails the step in under a second with `status: 'needs-operator'` and the
+exit instruction, instead of polling for five minutes and reporting `blocked` (#429).
+
+The two string fields answer two different questions and both are required:
+
+- **`modeLine`** *locates* the line. It must match the pane in **every** mode, not just the
+  read-only one — otherwise a writable session and an unreadable pane are indistinguishable.
+- **`marker`** *decides*. It is the mode line plus the words that make it read-only. A marker
+  equal to `modeLine` would refuse every wrap.
+
+Locating by signature rather than by position is load-bearing: subagent rows render *below* the
+mode line, so it is not the last line of the pane and a fixed slice off the bottom loses it as
+soon as enough agents are running — which is exactly when a plan-mode session is doing work.
+
+`label` names the mode in operator-facing copy; `exit` says how to leave it (both optional, with
+neutral fallbacks). **Declare `evidence` with the date and how it was measured** — this is a claim
+about another product's UI, and the same reasoning as `startupInjection.maxChars` applies: an
+assertion with both sides in this repo stays green forever after upstream changes its footer. The
+shipped Claude value was probed on a live pane, not recalled.
+
+**Omit the field entirely and nothing is measured** — the step proceeds exactly as it did before
+the check existed, and the step record says which engine declared no marker rather than implying a
+clean pane. A field that is present but missing `marker` or `modeLine` is a profile defect: it is
+treated as absent and logged at warn.
 
 #### The ambient-awareness floor (`tc` on PATH)
 

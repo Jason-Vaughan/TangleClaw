@@ -322,10 +322,24 @@ Engine profiles define how TangleClaw interacts with an AI engine. See the [Engi
         "verifiedOn": "string — ISO date maxChars was measured upstream (required when maxChars is declared; the profile guard suite fails an unevidenced value)",
         "source": "string — where it was measured (upstream doc / probe)"
       }
+    },
+    "readOnlyModeMarker": {
+      "modeLine": "string — the mode-line signature this engine's TUI draws in EVERY mode; locates the line. Required.",
+      "marker": "string — the mode line as it reads in the read-only mode; decides. Required, and must not equal modeLine.",
+      "label": "string — how the mode is named in operator copy (default: 'read-only mode')",
+      "exit": "string — the keystroke that leaves it, for the remediation line",
+      "evidence": {
+        "verifiedOn": "string — ISO date the marker was measured against the live engine",
+        "source": "string — how it was measured"
+      }
     }
   }
 }
 ```
+
+Omit `readOnlyModeMarker` and the wrap's read-only pre-check does nothing for that engine (the
+honest default — the step behaves as it did before the check existed). See
+`docs/engine-guide.md` → Capabilities for why locating and deciding are separate fields.
 
 ## SQLite Database
 

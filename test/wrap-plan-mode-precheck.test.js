@@ -48,23 +48,44 @@ after(() => {
 });
 
 /**
- * A pane capture whose LAST lines are the engine footer. Everything passed in
- * `above` sits in the scrolled-back conversation, where the check must not
- * look.
- * @param {string[]} above - Transcript lines above the footer.
- * @param {string} footer - The mode line the TUI draws under the input box.
+ * A pane capture in the real shape Claude Code draws.
+ *
+ * `below` matters: subagent rows render UNDER the mode line (live captures in
+ * `test/medusa-wake.test.js`, #783/#1101), so the mode line is NOT the last
+ * line and a fixture that always puts it last cannot catch a locator that
+ * assumes it is.
+ *
+ * @param {string[]} above - Transcript lines above the input box.
+ * @param {string} modeLine - The mode line the TUI draws under the input box.
+ * @param {string[]} [below] - Rows drawn beneath it (agent roster, `⏺ main`).
  * @returns {{lines: string[]}}
  */
-function pane(above, footer) {
+function pane(above, modeLine, below) {
   return {
     lines: [
       ...above,
       '─'.repeat(40),
       '> ',
       '─'.repeat(40),
-      `  ${footer}`
+      '  TangleClaw (main) | Opus 5 (1M context) | 77% left',
+      `  ${modeLine}`,
+      ...(below || [])
     ]
   };
+}
+
+/**
+ * The agent roster a pane draws below the mode line, one row per running agent
+ * (plus the blank + `⏺ main` header). Four agents is enough to push the mode
+ * line out of any fixed slice off the bottom — and plan mode dispatching
+ * parallel read-only agents is exactly the shape this check exists to catch.
+ * @param {number} n - How many agents are running.
+ * @returns {string[]}
+ */
+function agentRoster(n) {
+  const rows = ['', '  ⏺ main'];
+  for (let i = 0; i < n; i++) rows.push(`  ◯ general-purpose  Reading lib files ${i}                    ${i + 1}s`);
+  return rows;
 }
 
 describe('#429 read-only pre-check — the engine profile', () => {
@@ -78,11 +99,23 @@ describe('#429 read-only pre-check — the engine profile', () => {
   });
 
   it('the marker names the MODE, so it cannot match a session in another mode', () => {
-    // The same footer line renders for every permission mode; only the mode
-    // words differ. A marker of just the parenthetical would refuse every wrap.
+    // The same line renders for every permission mode; only the mode words
+    // differ. A marker of just the parenthetical would refuse every wrap.
     assert.ok(!BYPASS_FOOTER.includes(CLAUDE_MARKER.marker),
-      'the bypass-mode footer must not contain the plan-mode marker');
+      'the bypass-mode line must not contain the plan-mode marker');
     assert.ok(PLAN_FOOTER.includes(CLAUDE_MARKER.marker));
+  });
+
+  it('modeLine locates every mode, and marker decides only one of them', () => {
+    // Two fields because locating and deciding are different questions: the
+    // mode line has to be findable on a pane that is NOT in plan mode, or the
+    // absent case cannot be told from an unreadable pane.
+    assert.ok(BYPASS_FOOTER.includes(CLAUDE_MARKER.modeLine), 'modeLine must match a writable pane too');
+    assert.ok(PLAN_FOOTER.includes(CLAUDE_MARKER.modeLine));
+    assert.ok(CLAUDE_MARKER.marker.includes(CLAUDE_MARKER.modeLine),
+      'the marker is the mode line plus the mode words');
+    assert.notEqual(CLAUDE_MARKER.marker, CLAUDE_MARKER.modeLine,
+      'a marker equal to the locator refuses every mode');
   });
 
   it('engines with no read-only mode declare no marker', () => {
@@ -110,16 +143,16 @@ describe('#429 read-only pre-check — _readOnlyPrecheck states', () => {
   });
   afterEach(() => { Object.assign(aic._internal, saved); });
 
-  it('read-only: the marker is on the footer', () => {
+  it('read-only: the marker is on the mode line', () => {
     aic._internal.capturePane = () => pane(['working on it'], PLAN_FOOTER);
     const res = aic._readOnlyPrecheck({ engineId: 'claude' }, 'sess');
     assert.equal(res.state, 'read-only');
     assert.equal(res.label, 'plan mode');
     assert.equal(res.exit, 'shift+tab');
-    assert.match(res.reason, /footer reads/);
+    assert.match(res.reason, /mode line reads/);
   });
 
-  it('clear: a marker is declared and the footer shows a different mode', () => {
+  it('clear: a marker is declared and the mode line shows a different mode', () => {
     aic._internal.capturePane = () => pane(['working on it'], BYPASS_FOOTER);
     const res = aic._readOnlyPrecheck({ engineId: 'claude' }, 'sess');
     assert.equal(res.state, 'clear');
@@ -148,18 +181,76 @@ describe('#429 read-only pre-check — _readOnlyPrecheck states', () => {
     assert.equal(aic._readOnlyPrecheck({ engineId: 'claude' }, 'sess').state, 'unmeasured');
   });
 
-  it('the marker is looked for ONLY in the footer window, not the whole pane', () => {
-    // Not hypothetical: the session that built this check had the marker string
-    // in its own transcript while discussing it. A whole-pane search refuses a
-    // session that is perfectly able to write.
-    const chatter = [];
-    for (let i = 0; i < 40; i++) chatter.push(`transcript line ${i}`);
-    chatter.push(`the marker we look for is "${CLAUDE_MARKER.marker}"`);
-    for (let i = 0; i < aic.READ_ONLY_FOOTER_LINES; i++) chatter.push(`more output ${i}`);
+  it('the mode line is found even with a full agent roster drawn BELOW it', () => {
+    // Critic R-2. A fixed slice off the bottom of the pane loses the mode line
+    // as soon as enough agents are running, and the pre-check would answer
+    // `clear` — regressing to the five-minute timeout #429 exists to remove,
+    // in precisely the case that triggers the feature.
+    for (const n of [1, 4, 8]) {
+      aic._internal.capturePane = () => pane(['thinking'], PLAN_FOOTER, agentRoster(n));
+      assert.equal(aic._readOnlyPrecheck({ engineId: 'claude' }, 'sess').state, 'read-only',
+        `${n} agent rows below the mode line hid it`);
+    }
+  });
 
-    aic._internal.capturePane = () => pane(chatter, BYPASS_FOOTER);
-    assert.equal(aic._readOnlyPrecheck({ engineId: 'claude' }, 'sess').state, 'clear',
-      'the marker quoted in the conversation above the footer must not refuse the wrap');
+  it('the same roster does not turn a writable pane into a refusal', () => {
+    aic._internal.capturePane = () => pane(['thinking'], BYPASS_FOOTER, agentRoster(8));
+    assert.equal(aic._readOnlyPrecheck({ engineId: 'claude' }, 'sess').state, 'clear');
+  });
+
+  it('no mode line on the pane is unmeasured, NOT clear', () => {
+    // An engine that changed its footer, a pane that has not drawn one yet, or
+    // a roster deep enough to push it past the tail. None of those is evidence
+    // that the session can write.
+    aic._internal.capturePane = () => ({ lines: ['some output', 'and some more'] });
+    const res = aic._readOnlyPrecheck({ engineId: 'claude' }, 'sess');
+    assert.equal(res.state, 'unmeasured');
+    assert.match(res.reason, /mode line/);
+  });
+
+  it('an empty-but-present tail is unmeasured, not a measured clear', () => {
+    aic._internal.capturePane = () => ({ lines: ['', '', ''] });
+    assert.equal(aic._readOnlyPrecheck({ engineId: 'claude' }, 'sess').state, 'unmeasured');
+  });
+
+  it('the marker quoted in the transcript does not refuse a writable session', () => {
+    // Not hypothetical: the session that built this check had the marker string
+    // in its own scrollback while discussing it. The REAL mode line is the
+    // lowest one on the pane, so the last match wins.
+    aic._internal.capturePane = () => pane([
+      `the marker we look for is "⏸ ${CLAUDE_MARKER.marker}"`,
+      'and here is some more conversation about it'
+    ], BYPASS_FOOTER);
+    assert.equal(aic._readOnlyPrecheck({ engineId: 'claude' }, 'sess').state, 'clear');
+  });
+
+  it('a profile whose marker field is malformed reads as no-marker, not as a clear pane', () => {
+    // Critic R-16 — the one failure on this path that would otherwise announce
+    // itself nowhere. BOTH required strings are covered: dropping either one
+    // leaves the check unable to answer, and a version of this test that only
+    // removed `marker` stayed green while the `modeLine` validation was
+    // deleted (found by mutating it).
+    const original = store.engines.get('claude');
+    const good = original.capabilities.readOnlyModeMarker;
+    const broken = {
+      'no marker': { modeLine: good.modeLine, label: 'plan mode' },
+      'no modeLine': { marker: good.marker, label: 'plan mode' },
+      'blank marker': { modeLine: good.modeLine, marker: '   ' },
+      'blank modeLine': { modeLine: '  ', marker: good.marker },
+      'neither': { label: 'plan mode' }
+    };
+    try {
+      for (const [name, field] of Object.entries(broken)) {
+        store.engines.save({ ...original, capabilities: { ...original.capabilities, readOnlyModeMarker: field } });
+        assert.equal(aic._readOnlyModeMarker({ engineId: 'claude' }), null, name);
+        assert.equal(aic._readOnlyPrecheck({ engineId: 'claude' }, 'sess').state, 'no-marker', name);
+      }
+      // Control: the shipped field is not rejected by the same validation.
+      store.engines.save(original);
+      assert.ok(aic._readOnlyModeMarker({ engineId: 'claude' }), 'the real profile must survive the validation');
+    } finally {
+      store.engines.save(original);
+    }
   });
 });
 
@@ -389,6 +480,37 @@ describe('#429 read-only pre-check — the drawer speaks the status', () => {
     const widget = H.decisionWidgetForBlockedStep(built);
     assert.ok(widget, 'a refused content step is still skippable');
     assert.equal(widget.optionsKey, 'skipAiContent');
+  });
+
+  it('the banner says the operator is being waited on, not "Blocked at" (Critic R-12)', () => {
+    // The banner is the first thing read, and line 1 of the copied report.
+    // Keyed on `blockedAt` alone it announced a needs-operator halt in the
+    // exact framing the status exists to replace.
+    const H = loadHelpers();
+    const result = {
+      blockedAt: 'changelog-update',
+      results: [row()]
+    };
+    const banner = H.summarizePipelineStatus(result);
+    assert.match(banner.label, /Waiting on you/);
+    assert.ok(!/Blocked/.test(banner.label), `banner still says blocked: ${banner.label}`);
+    assert.equal(banner.tone, 'needs-operator');
+    assert.match(banner.detail, /Exit plan mode/);
+
+    // Control: an ordinary blocked halt is untouched.
+    const ordinary = H.summarizePipelineStatus({
+      blockedAt: 'changelog-update',
+      results: [row({ status: 'blocked' })]
+    });
+    assert.match(ordinary.label, /^Blocked at/);
+    assert.equal(ordinary.tone, 'blocked');
+  });
+
+  it('the banner tone has a stylesheet rule', () => {
+    const H = loadHelpers();
+    const tone = H.summarizePipelineStatus({ blockedAt: 'changelog-update', results: [row()] }).tone;
+    const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.css'), 'utf8');
+    assert.ok(css.includes(`.wrap-drawer-status--${tone} {`), `no CSS rule for banner tone "${tone}"`);
   });
 
   it('the skip rollup counts it — a status in no bucket makes the digest under-report', () => {
