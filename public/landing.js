@@ -945,6 +945,67 @@ async function loadConfig() {
   if (data) state.config = data;
 }
 
+// ── Boot beacon (#817) ──
+// A dashboard whose shell never initializes is server-invisible: the document
+// and the non-precached scripts load over the network, the precached shell
+// scripts (landing.js, ui.js — cache-first, see sw.js STATIC_ASSETS) never
+// execute, and no API call follows. Every server signal stays green. The only
+// server-side proxy was the absence of `GET /api/projects`, and that is
+// ambiguous — an operator who opened a session page directly leaves the same
+// gap. This beacon is the positive signal: it is sent ONCE per page load, only
+// after the first successful projects fetch has rendered, so its presence in
+// the access log means "the shell booted" and its absence after a `GET /`
+// means it did not.
+let bootBeaconSent = false;
+
+/**
+ * Name the TangleClaw cache generations present in this origin's Cache
+ * Storage, so the beacon records which service-worker precache the page booted
+ * against. Read from Cache Storage rather than asked of the worker: it is the
+ * same store the runbook has an operator inspect by hand, and it answers even
+ * when the worker is between versions (both generations are then listed).
+ *
+ * @returns {Promise<string|null>} Comma-joined `tangleclaw-*` cache names, or
+ *   null when Cache Storage is unavailable, unreadable, or holds none.
+ */
+async function readSwCacheName() {
+  if (typeof caches === 'undefined' || !caches || typeof caches.keys !== 'function') return null;
+  try {
+    const keys = await caches.keys();
+    const mine = keys.filter((k) => typeof k === 'string' && k.startsWith('tangleclaw-'));
+    return mine.length ? mine.join(',') : null;
+  } catch (err) {
+    console.error('boot beacon: Cache Storage could not be read:', err);
+    return null;
+  }
+}
+
+/**
+ * Tell the server the dashboard shell booted. Fires at most once per page
+ * load; its only caller invokes it after the projects list has rendered, so it
+ * can never claim a boot that did not happen. A bare `fetch`, not `api()`: the
+ * reply is an empty 204 (no JSON to parse) and a failed beacon must not touch
+ * the connection state or the toast — it is a log line, not a dependency.
+ *
+ * @returns {Promise<void>} Resolves whether or not the beacon reached the server.
+ */
+async function sendBootBeacon() {
+  if (bootBeaconSent) return;
+  bootBeaconSent = true;
+  const cacheName = await readSwCacheName();
+  const controlled = typeof navigator !== 'undefined'
+    && !!(navigator.serviceWorker && navigator.serviceWorker.controller);
+  try {
+    await fetch('/api/dashboard/boot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cacheName, controlled })
+    });
+  } catch (err) {
+    console.error('boot beacon failed:', err);
+  }
+}
+
 async function loadProjects() {
   const data = await api('/api/projects?archived=true');
   if (!data) return;
@@ -969,6 +1030,10 @@ async function loadProjects() {
   renderProjects();
   renderSessionCount();
   updateUnregisteredToggle();
+  // The shell is on screen: this is the moment "the dashboard booted" becomes
+  // true, and the only place it is said (#817). Not awaited — the beacon is a
+  // side channel and must not hold up the poll or the banners below.
+  sendBootBeacon();
 
   // Update audit incident count badge
   const totalIncidents = state.projects.reduce((sum, p) =>

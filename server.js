@@ -821,6 +821,31 @@ route('GET', '/api/server-info', (_req, res) => {
   jsonResponse(res, 200, info);
 });
 
+// POST /api/dashboard/boot — the dashboard shell's boot beacon (#817). The
+// client sends it once per page load, after its first successful projects
+// fetch has rendered. A shell that never initialized (a stale precached
+// landing.js, say) loads the document and nothing else — every server signal
+// stays green — so the absence of `GET /api/projects` was the only tell, and
+// that is equally what an operator opening a session page directly leaves
+// behind. This line is the positive signal: `Dashboard booted` in the log
+// after a `GET /` means the shell ran; its absence means it did not. Logged
+// with whatever cache generation the browser reports, because "which precache
+// did it boot against" is the first question the runbook asks
+// (docs/runbooks/dashboard-blank.md). Nothing is stored; 204 by design.
+route('POST', '/api/dashboard/boot', (_req, res, _params, body) => {
+  const payload = body && typeof body === 'object' ? body : {};
+  const { cacheName } = payload;
+  if (cacheName !== undefined && cacheName !== null && typeof cacheName !== 'string') {
+    return errorResponse(res, 400, 'cacheName must be a string or null', 'BAD_REQUEST');
+  }
+  // Bounded: this lands in the log verbatim, and a browser-supplied string
+  // must not be able to fill a rotation window on its own.
+  const reported = typeof cacheName === 'string' ? cacheName.slice(0, 200) : null;
+  log.info('Dashboard booted', { cacheName: reported, swControlled: payload.controlled === true });
+  res.writeHead(204);
+  res.end();
+});
+
 // ── Project Master (chunk G, #331) ──
 // Operator routes for the global fleet assistant — a reserved tmux
 // session, NOT a sessions-table row (see lib/master.js). Deliberately outside
