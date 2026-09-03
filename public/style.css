@@ -668,7 +668,6 @@ body {
 .master-access-option .form-hint { grid-column: 3; margin: 0; }
 .master-access-disabled { opacity: 0.5; cursor: not-allowed; }
 .master-access-name { font-weight: 600; text-transform: capitalize; }
-.master-rules-section .btn { min-height: 32px; }
 .master-rule-history {
   margin: 0 0 8px 24px;
   padding: 6px 8px;
@@ -1220,12 +1219,20 @@ body {
   flex-shrink: 0;
 }
 
-/* ── Buttons ── */
+/* ── Buttons ──
+   44px minimum, the same floor `.form-input` / `.form-select` already hold
+   (#823). The project is mobile-first and the operator is almost never at the
+   machine, so a button is a thumb target before it is a mouse target; at the
+   old 32px a modal's fields were tappable and its Save was not. Dense
+   exceptions are NAMED classes with a comment saying why — `.btn-compact`
+   below (card action rows, 44px on a coarse pointer) — never a silent
+   contextual override. `test/button-touch-targets.test.js` pins the floor
+   and the exception list. */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 32px;
+  min-height: 44px;
   padding: 4px 12px;
   border: 1px solid var(--elevated-bg);
   border-radius: var(--radius-btn);
@@ -1259,13 +1266,16 @@ body {
   background: var(--danger-dark);
   color: #fff;
 }
+/* "Small" is typographic — tighter padding and a 12px label — not a smaller
+   target. Modal Save/Skip/Retry and the Master rules' per-rule controls carry
+   this class on a phone and keep the 44px floor (#823). */
 .btn-small {
-  min-height: 28px;
+  min-height: 44px;
   padding: 2px 10px;
   font-size: 12px;
 }
 .btn-icon {
-  min-width: 32px;
+  min-width: 44px;
   padding: 4px;
 }
 /* ── Search/Filter ── */
@@ -1696,6 +1706,13 @@ body {
   flex-shrink: 0;
   align-items: center;
 }
+/* NAMED EXCEPTION to the 44px `.btn` floor (#823): the card action row puts up
+   to seven of these side by side in every project card, and at 44px on a
+   mouse-driven desktop the card list becomes a wall of buttons. They stay
+   32px only where a pointer is fine; the `@media (pointer: coarse)` block
+   below lifts them to 44px wherever a finger is involved, which is the case
+   the floor exists for. Keep the exception here, on the class — not as a
+   contextual `.something .btn` override — so the contract test can see it. */
 .btn-compact {
   display: inline-flex;
   align-items: center;
@@ -1775,6 +1792,17 @@ body {
   .dash-version { min-height: 44px; padding: 0 10px; }
 }
 
+/* Phone-landscape header (#1192). An 844px-wide phone on its side still gets
+   the desktop header, and brand + stats + seven action pills exceed that width
+   with both outer clusters refusing to shrink, so the trailing pills (Global
+   Rules, the gear) clip at the edge. The pill row wraps under the brand line
+   instead; the portrait block below tightens this further. Same cascade note
+   as that block: this must follow the `.dash-bar` / `.dash-actions` base rules. */
+@media (max-width: 900px) {
+  .dash-bar { flex-wrap: wrap; row-gap: 4px; }
+  .dash-actions { flex-wrap: wrap; }
+}
+
 /* Phone-portrait layout (#1192). Below 600px the dashboard's three single-row
    bars — header, toolbar, card action row — no longer fit, and none of them
    wrapped: the toolbar drew its filter box OVER the session count, the header
@@ -1793,6 +1821,13 @@ body {
   /* Header: the action pills take their own line(s) instead of clipping. */
   .dash-bar { flex-wrap: wrap; row-gap: 4px; }
   .dash-actions { flex: 1 1 100%; flex-wrap: wrap; }
+  /* The auth / bind / ttyd notices render inside the brand cluster, which
+     does not shrink and keeps them on one line (42ch, ellipsized). At phone
+     width a visible notice ran the whole first line off the edge, where the
+     body's overflow: hidden clipped it. The cluster takes the full line and
+     lets a notice wrap onto as many lines as it needs. */
+  .dash-brand { flex: 1 1 100%; flex-wrap: wrap; min-width: 0; }
+  .dash-auth-warning { white-space: normal; max-width: 100%; }
   /* Toolbar: count and + New share the first line; the filter column, which
      cannot shrink below its 160px filter box, drops to a full-width line of
      its own. `order` moves only the center column, so DOM (and tab) order is
