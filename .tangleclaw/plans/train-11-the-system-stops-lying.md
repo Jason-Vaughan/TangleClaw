@@ -104,9 +104,11 @@ silently does nothing.
 
 ### Chunk 5 — #1056 a LAN-IP-bound ttyd reports not-wide
 - `lib/ttyd-bind.js` `describeInstalledBind`: `wide` derives as "neither loopback nor a unix
-  socket" instead of enumerating wide forms; an unparseable/unknown bind stays unknown (existing bias).
-- Tests: `--interface 192.168.1.5` → wide; `127.0.0.1`/`::1`/`localhost`/unix socket → not wide;
-  missing/unknown → the existing unknown outcome.
+  socket" instead of enumerating wide forms. The surface models exposed/not-exposed only, so a
+  bind the reader cannot classify is reported EXPOSED (the existing bias: a false alarm costs a
+  notice, silence costs an open shell).
+- Tests: `--interface 192.168.1.5` / `en0` → wide; `127.0.0.1`/`::1`/`localhost`/`lo0`/unix
+  socket → not wide; missing → wide.
 - **Done when:** the LAN-IP case is red before, green after; loopback and socket cases unchanged.
 
 ### Chunk 6 — #741 `silentPrime` is dropped on unsupporting engines without a word

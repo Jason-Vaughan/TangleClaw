@@ -71,7 +71,11 @@ function beaconConstruction(src) {
 function loadPage(page, opts = {}) {
   const { doc, ids } = makeDocument(['updateBeacon']);
   const calls = { confirms: [], alerts: [], fetches: [], timers: [], injected: [] };
-  const src = page === 'dashboard' ? LANDING_SRC : SESSION_SRC;
+  // A lookup with no default: a misspelled page name must refuse, not quietly
+  // run the session page and let a guard pass on the wrong wiring.
+  const SOURCES = { dashboard: LANDING_SRC, session: SESSION_SRC };
+  const src = SOURCES[page];
+  assert.ok(src, `loadPage: unknown page "${page}" — expected 'dashboard' or 'session'`);
 
   const sandbox = {
     console, Response, Headers,
