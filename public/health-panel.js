@@ -28,9 +28,13 @@
    * @returns {string} Markup.
    */
   function firedRow(c) {
+    // `hint` is the prose AROUND a runnable fix (a Settings gesture, an
+    // alternative) — drawn as text, never inside the copyable <code>.
+    const hint = c.hint ? '<span class="health-hint">' + escapeHtml(c.hint) + '</span>' : '';
     return '<div class="health-row health-fired" data-condition="' + escapeHtml(c.id) + '">'
       + '<span class="health-title">' + escapeHtml(c.title) + '</span>'
       + '<span class="health-detail">' + escapeHtml(c.detail) + '</span>'
+      + hint
       + '<span class="health-fix"><code>' + escapeHtml(c.remediation) + '</code>'
       + '<button type="button" class="btn btn-small health-copy" data-fix="' + escapeHtml(c.remediation) + '"'
       + ' title="Copy the fix">Copy</button></span>'

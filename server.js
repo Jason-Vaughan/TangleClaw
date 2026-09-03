@@ -7615,6 +7615,9 @@ if (require.main === module) {
     });
     // Start ttyd zombie-child watcher (#94). macOS-only; no-op elsewhere.
     ttydWatcher.start();
+    // First ttyd health reading (#345), so the dashboard's first poll after a
+    // restart finds a measurement. Fire-and-forget; the route never awaits one.
+    systemHealth.warm();
     // Start OpenClaw tunnel liveness monitor (#294) — auto-recreates tunnels
     // that die out from under an open Web UI so they self-heal without a
     // manual re-launch.

@@ -250,6 +250,7 @@ body {
 .health-row + .health-row { border-top: 1px solid rgba(255, 255, 255, 0.25); }
 .health-title { font-weight: 700; }
 .health-detail { flex: 1 1 24ch; min-width: 0; opacity: 0.92; }
+.health-hint { flex: 1 1 100%; font-size: 12px; font-weight: 400; opacity: 0.92; }
 .health-fix {
   flex: 1 1 100%;
   display: flex;

@@ -91,6 +91,23 @@ describe('public/health-panel.js (#345)', () => {
     assert.doesNotMatch(panel.innerHTML, /health-fix/, 'nothing was found, so there is nothing to fix');
   });
 
+  it('draws a hint as prose beside the fix, and keeps it out of the copyable code', () => {
+    const { render, panel } = load();
+    const fda = {
+      id: 'full-disk-access', title: 'Full Disk Access missing', state: 'fired',
+      detail: '/Users/op/Documents did not answer within 5s',
+      remediation: 'launchctl kickstart -k gui/$(id -u)/com.tangleclaw.server',
+      hint: 'First grant Full Disk Access to the node binary TangleClaw runs (`which node`).'
+    };
+    render(panel, { conditions: [fda] });
+    assert.match(panel.innerHTML, /<span class="health-hint">First grant Full Disk Access/);
+    assert.match(panel.innerHTML, /<code>launchctl kickstart -k gui\/\$\(id -u\)\/com\.tangleclaw\.server<\/code>/);
+    assert.match(panel.innerHTML, /data-fix="launchctl kickstart -k gui\/\$\(id -u\)\/com\.tangleclaw\.server"/);
+    assert.doesNotMatch(panel.innerHTML, /<code>[^<]*First grant/, 'prose never lands in the copy target');
+    render(panel, { conditions: [FIRED_TTYD] });
+    assert.doesNotMatch(panel.innerHTML, /health-hint/, 'no hint element when the condition carries none');
+  });
+
   it('draws fired rows before unknown rows', () => {
     const { render, panel } = load();
     render(panel, { conditions: [UNKNOWN_FDA, CLEAR_STALE, FIRED_TTYD] });
