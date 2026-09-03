@@ -855,6 +855,28 @@ async function loadUpdateStatus(opts) {
   return data;
 }
 
+// ── System health panel (#345) ──
+// Machine-wide conditions with a one-line fix each: ttyd PTY leak (#94),
+// stale server (#199), missing Full Disk Access (#324). Drawn by
+// public/health-panel.js; this block only fetches and hands over.
+
+/**
+ * Fetch `/api/system/health` and render the panel. The stale-server condition
+ * is omitted here because this page already renders it through the dedicated
+ * banner (#199/#235) with its Restart button — the panel is the machine-wide
+ * surface, the banner is the richer one, and one screen should state a fact once.
+ * A missing renderer (an older cached shell) leaves the panel hidden rather
+ * than throwing; a failed fetch leaves whatever was last drawn.
+ * @returns {Promise<void>}
+ */
+async function loadSystemHealth() {
+  const data = await api('/api/system/health');
+  if (!data) return;
+  const panel = document.getElementById('systemHealthPanel');
+  if (!panel || typeof window.tcRenderHealthPanel !== 'function') return;
+  window.tcRenderHealthPanel(panel, data, { omit: ['stale-server'] });
+}
+
 async function loadStats() {
   const data = await api('/api/system');
   if (!data) return;
@@ -1726,6 +1748,7 @@ async function init() {
       console.error('update check on load failed:', err);
       return null;
     }),
+    loadSystemHealth(),
     loadServerInfo()]);
   checkPortImports();
   maybeShowFilter();
@@ -1758,6 +1781,10 @@ function startPolling() {
   // when the operator merges/pulls while a tab is open. Slower cadence than
   // the others because it shells out to git on the server every tick.
   loop(loadServerInfo, 60000);
+  // System health (#345) — same cadence as server-info: the ttyd reading
+  // shells out on the server and the Full Disk Access probe reads a directory
+  // in the scanner child, so a faster poll buys nothing.
+  loop(loadSystemHealth, 60000);
   // The pill was previously decided once, at page load, and could never
   // change its mind. It now re-asks, because two of its answers are provisional
   // by construction: a restart resets the server's in-memory check to "not

@@ -31,6 +31,11 @@ const STATIC_ASSETS = [
   // landing.js it is dual-listed (precached here for offline coherence of
   // '/', network-first below because it is cache-bust-critical).
   '/sw-register.js',
+  // health-panel.js (#345) is dual-listed like update-beacon.js: precached for
+  // offline coherence of '/', network-first below so it stays lockstep with the
+  // landing.js that calls it. landing.js guards the call, so a worker that has
+  // not yet learned this file degrades to "no panel", never a ReferenceError.
+  '/health-panel.js',
   // reconnect-policy.js is dual-listed for the same reason, with a sharper
   // failure mode: a network-first MISS while the network is down returns the
   // synthetic JSON 503, and a `<script src>` served a 503 leaves both pages
@@ -132,6 +137,11 @@ const NETWORK_FIRST_PATHS = new Set([
   // what produced the repeating credential prompt in #710.
   '/update-beacon.js',
   '/beacon.css',
+  // health-panel.js draws the dashboard's system health panel (#345). Same
+  // category as the beacon: the surface that tells an operator the machine
+  // needs a hand must not be served stale behind an active worker. Network-first
+  // rather than a CACHE_NAME bump (#710).
+  '/health-panel.js',
   // reconnect-policy.js is a shared frontend base like api-helper.js: both page
   // scripts call `tcCreateReconnectPolicy` at load, so a stale copy served
   // against a fresh landing.js or session.js is not a cosmetic skew but a

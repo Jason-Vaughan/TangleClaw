@@ -219,6 +219,68 @@ body {
 /* Settings-save warnings (#1148): one warning per line, and a plist path must
    wrap rather than push the Dismiss button off a phone screen. */
 .settings-warnings-text { white-space: pre-line; overflow-wrap: anywhere; }
+/* System health panel (#345). Sits above the stale-server banner in the same
+   alert stack; one row per condition that fired (with its fix) or could not be
+   measured. Hidden entirely when nothing needs saying. */
+.system-health {
+  background: var(--danger, #c53030);
+  color: #fff;
+  padding: 10px 16px;
+  margin: 0 0 12px 0;
+  border-radius: var(--radius-card);
+  font-size: 13px;
+  font-weight: 500;
+}
+.system-health.hidden { display: none; }
+.health-heading {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.85;
+  margin-bottom: 6px;
+}
+.health-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 4px 0;
+}
+.health-row + .health-row { border-top: 1px solid rgba(255, 255, 255, 0.25); }
+.health-title { font-weight: 700; }
+.health-detail { flex: 1 1 24ch; min-width: 0; opacity: 0.92; }
+.health-fix {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.health-fix code {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: pre;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+.health-copy {
+  background: #1a1a1a;
+  color: #fff;
+  border: none;
+  font-weight: 600;
+  white-space: nowrap;
+  min-height: 44px;
+  min-width: 44px;
+}
+.health-copy:hover { background: #333; }
+/* An unmeasured condition is a caution, not an alarm: muted against the same
+   ground so it reads as "could not check", never as a second red row. */
+.health-unknown { opacity: 0.8; font-weight: 400; }
+.health-unknown .health-title { font-weight: 600; }
 .orphan-banner-btn {
   background: #1a1a1a;
   color: var(--amber);

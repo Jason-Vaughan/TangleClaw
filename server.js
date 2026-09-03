@@ -145,6 +145,7 @@ function refreshSharedDocWatchers() {
 // ---------------------------
 
 const system = require('./lib/system');
+const systemHealth = require('./lib/system-health');
 const engines = require('./lib/engines');
 const { isInsideProject } = require('./lib/project-paths');
 const gitHooks = require('./lib/git-hooks');
@@ -3398,6 +3399,16 @@ route('POST', '/api/session-rules/:id/restore', (_req, res, params, body) => {
 route('GET', '/api/system', (_req, res) => {
   const stats = system.getStats();
   jsonResponse(res, 200, stats);
+});
+
+// GET /api/system/health — the machine-wide conditions the dashboard's system
+// health panel renders (#345): ttyd PTY leak, stale server, missing Full Disk
+// Access. Each condition is `fired` / `clear` / `unknown`; see lib/system-health.
+// Async because the Full Disk Access probe reads a directory in the scanner
+// child under a deadline — the one read that must never happen on this loop (#859).
+route('GET', '/api/system/health', async (_req, res) => {
+  const health = await systemHealth.getHealth();
+  jsonResponse(res, 200, health);
 });
 
 // GET /api/engines — `?refresh=1` re-reads the operator's login PATH before

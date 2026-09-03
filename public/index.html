@@ -373,6 +373,9 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
 
   <!-- Main Content -->
   <main id="projectsContainer" aria-label="Projects">
+    <!-- System health panel (#345). Hidden until /api/system/health reports a
+         condition that fired or could not be measured; rendered by health-panel.js. -->
+    <div id="systemHealthPanel" class="system-health hidden" role="alert" aria-label="System health"></div>
     <!-- Stale-server banner (#199). Hidden until /api/server-info reports isStale. -->
     <!-- Restart button (#235) is rendered only when /api/server-info reports a
          non-null restartMechanism; otherwise the banner shows text only. -->
@@ -663,6 +666,7 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
   <script src="/api-helper.js"></script>
   <script src="/reconnect-policy.js"></script>
   <script src="/update-beacon.js"></script>
+  <script src="/health-panel.js"></script>
   <script src="/sw-register.js"></script>
   <script src="/landing.js"></script>
   <!-- Loaded before ui.js: renderCardDetail calls renderNextMarkdown at render time. -->
