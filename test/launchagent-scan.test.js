@@ -91,13 +91,27 @@ describe('launchagent-scan (#1148)', () => {
     it('does not match a sibling whose name merely starts with the path', () => {
       writePlist(dir, 'com.example.sibling', { Label: 'com.example.sibling', WorkingDirectory: `${OLD}-2` });
       writePlist(dir, 'com.example.sibling-dot', { Label: 'com.example.sibling-dot', WorkingDirectory: `${OLD}.bak` });
+      // A space or a non-ASCII character is also a sibling's suffix; a
+      // character-class denylist let both of these through.
+      writePlist(dir, 'com.example.sibling-space', { Label: 'com.example.sibling-space', WorkingDirectory: `${OLD} (old)` });
+      writePlist(dir, 'com.example.sibling-unicode', { Label: 'com.example.sibling-unicode', WorkingDirectory: `${OLD}日本` });
       assert.deepEqual(scan.scanLaunchAgents(OLD, dir).matches, []);
     });
 
-    it('matches a path boundary: the path as a directory prefix, or at end of string', () => {
+    it('matches a path boundary: a directory beneath the path, the closing tag, a quote, or end of line', () => {
       writePlist(dir, 'a-prefix', { WorkingDirectory: `${OLD}/sub` });
       writePlist(dir, 'b-exact', { WorkingDirectory: OLD });
-      assert.deepEqual(scan.scanLaunchAgents(OLD, dir).matches.map(m => m.label), ['a-prefix', 'b-exact']);
+      writePlist(dir, 'c-quoted', { ProgramArguments: ['/bin/sh', '-c', `cd "${OLD}" &amp;&amp; ./run.sh`] });
+      writePlist(dir, 'd-single-quoted', { ProgramArguments: ['/bin/sh', '-c', `cd '${OLD}'`] });
+      fs.writeFileSync(path.join(dir, 'e-eol.plist'), `${OLD}\nmore\n`);
+      assert.deepEqual(scan.scanLaunchAgents(OLD, dir).matches.map(m => m.label),
+        ['a-prefix', 'b-exact', 'c-quoted', 'd-single-quoted', 'e-eol']);
+    });
+
+    it('is case-sensitive and does not read an unquoted path followed by a space in a one-liner (documented limits)', () => {
+      writePlist(dir, 'com.example.case', { WorkingDirectory: OLD.toUpperCase() });
+      writePlist(dir, 'com.example.unquoted', { ProgramArguments: ['/bin/sh', '-c', `cd ${OLD} &amp;&amp; ./run.sh`] });
+      assert.deepEqual(scan.scanLaunchAgents(OLD, dir).matches, []);
     });
 
     it('ignores files that are not plists', () => {
