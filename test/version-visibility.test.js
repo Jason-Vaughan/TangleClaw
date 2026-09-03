@@ -35,7 +35,7 @@ const BEACON_SRC = fs.readFileSync(
 /**
  * The REAL shared answer predicate, lifted from `update-beacon.js`.
  *
- * Landing's manual-check path consults `window.tcIsUpdateAnswer` rather than
+ * Landing's manual-check path consults `window.tcUpdateAnswerState` rather than
  * testing the payload itself, so these sandboxes have to supply it. Lifted
  * rather than restated: a hand-written stand-in here would keep passing on the
  * day the real rule changed, which is the entire failure mode sharing the rule
@@ -43,19 +43,25 @@ const BEACON_SRC = fs.readFileSync(
  *
  * @returns {(data: object|null) => boolean}
  */
-function realIsUpdateAnswer() {
-  const decl = 'function tcIsUpdateAnswer(data)';
-  const start = BEACON_SRC.indexOf(decl);
-  assert.ok(start > -1, 'update-beacon.js must still declare tcIsUpdateAnswer');
-  let depth = 0;
-  for (let i = BEACON_SRC.indexOf('{', start); i < BEACON_SRC.length; i++) {
-    if (BEACON_SRC[i] === '{') depth++;
-    else if (BEACON_SRC[i] === '}' && --depth === 0) {
-      // eslint-disable-next-line no-new-func
-      return new Function(`${BEACON_SRC.slice(start, i + 1)}; return tcIsUpdateAnswer;`)();
+function realUpdateGlobals() {
+  /**
+   * Brace-match one top-level function out of the beacon source.
+   * @param {string} decl - The declaration to find.
+   * @returns {string} The function source.
+   */
+  const lift = (decl) => {
+    const start = BEACON_SRC.indexOf(decl);
+    assert.ok(start > -1, `update-beacon.js must still declare ${decl}`);
+    let depth = 0;
+    for (let i = BEACON_SRC.indexOf('{', start); i < BEACON_SRC.length; i++) {
+      if (BEACON_SRC[i] === '{') depth++;
+      else if (BEACON_SRC[i] === '}' && --depth === 0) return BEACON_SRC.slice(start, i + 1);
     }
-  }
-  throw new Error('could not brace-match tcIsUpdateAnswer');
+    throw new Error(`could not brace-match ${decl}`);
+  };
+  // eslint-disable-next-line no-new-func
+  return new Function(`${lift('function tcIsUpdateAnswer(data)')}\n${lift('function tcUpdateAnswerState(data)')}\n`
+    + 'return { tcIsUpdateAnswer, tcUpdateAnswerState };')();
 }
 
 /**
@@ -416,6 +422,7 @@ describe('#744 the dashboard stops advertising a version it is not running', () 
         // payload so a test can drive either without changing its expectation.
         apiMutate: async () => payload,
         updateBeacon: { render: (d) => { rendered.push(d); } },
+      window: realUpdateGlobals(),
         esc: (s) => String(s)
       });
       await vm.runInContext(
@@ -495,6 +502,7 @@ describe('#716 update checks happen when they matter', () => {
         return payload;
       },
       updateBeacon: { render: () => {} },
+      window: realUpdateGlobals(),
       esc: (s) => String(s)
     });
     await vm.runInContext(
@@ -545,8 +553,10 @@ describe('#716 update checks happen when they matter', () => {
     // one feature built to stop misreporting update state.
     const dom = makeDom(['version']);
     const calls = [];
+    // The real pre-route shape: `checkOk` and the POST route shipped in one
+    // commit, so a server that 404s the POST never sends `checkOk` either.
     const cached = {
-      updateAvailable: false, latestVersion: null, checkOk: true,
+      updateAvailable: false, latestVersion: null,
       checkedAt: new Date().toISOString()
     };
     const api = async (url) => { calls.push(`GET ${url}`); return cached; };
@@ -556,6 +566,7 @@ describe('#716 update checks happen when they matter', () => {
       api,
       apiMutate: async (url) => { calls.push(`POST ${url}`); return null; },
       updateBeacon: { render: () => {} },
+      window: realUpdateGlobals(),
       esc: (s) => String(s)
     });
     await vm.runInContext(
@@ -565,7 +576,9 @@ describe('#716 update checks happen when they matter', () => {
     );
     assert.deepEqual(calls, ['POST /api/update/check', 'GET /api/update-status'],
       'a 404 on the new route must fall back, not be reported as a failed check');
-    assert.match(dom.els.version.title, /up to date/i);
+    assert.match(dom.els.version.title, /Cached answer from/,
+      'the cached answer is named as cached — an old server cannot vouch for it');
+    assert.doesNotMatch(dom.els.version.title, /up to date/i);
     assert.equal(dom.els.version._classes.has('check-failed'), false,
       'an old server is not a failed check');
   });
@@ -583,6 +596,7 @@ describe('#716 update checks happen when they matter', () => {
       api,
       apiMutate: async (url) => { calls.push(`POST ${url}`); return null; },
       updateBeacon: { render: () => {} },
+      window: realUpdateGlobals(),
       esc: (s) => String(s)
     });
     await vm.runInContext(
@@ -675,9 +689,12 @@ describe('#716 update checks happen when they matter', () => {
   /**
    * Wire the version control and fire its click, returning what the label did.
    * @param {object|null} payload - Stubbed response, or an Error to throw.
-   * @returns {Promise<{label: string, title: string}>}
+   * @param {object} [opts] - `oldServer: true` makes the POST 404 the way a
+   *   server that predates `/api/update/check` does, so the click falls back
+   *   to the cached GET (#1061) and `payload` is what that GET answers.
+   * @returns {Promise<{label: string, title: string, live: string}>}
    */
-  async function clickVersion(payload) {
+  async function clickVersion(payload, opts = {}) {
     const handlers = {};
     const version = {
       textContent: 'v4.37.0',
@@ -689,16 +706,17 @@ describe('#716 update checks happen when they matter', () => {
     const versionCheckLive = { textContent: '' };
     const ctx = vm.createContext({
       document: { getElementById: (id) => ({ version, versionCheckLive })[id] || null },
-      api: async () => payload,
+      api: Object.assign(async () => payload, { lastErrorCode: null }),
       apiMutate: async () => {
         if (payload instanceof Error) throw payload;
+        if (opts.oldServer) { ctx.api.lastErrorCode = 'NOT_FOUND'; return null; }
         return payload;
       },
       localStorage: { getItem: () => null, setItem: () => {} },
       updateBeacon: { render: () => {} },
       // The shared answer rule, as the page really resolves it — a global that
       // `update-beacon.js` publishes and `landing.js` consults.
-      window: { tcIsUpdateAnswer: realIsUpdateAnswer() },
+      window: realUpdateGlobals(),
       esc: (s2) => String(s2),
       console: { error: () => {} },
       // The restore is scheduled, never run here — the assertion is about what
@@ -720,6 +738,29 @@ describe('#716 update checks happen when they matter', () => {
     await handlers.click();
     return { label: version.textContent, title: version.title, live: versionCheckLive.textContent };
   }
+
+  it('does not say "up to date" for an older server\'s cached answer it could not re-check (#1061)', async () => {
+    // The POST 404s on a server that predates the route; the fallback GET
+    // answers from a cache whose payload carries no `checkOk`. The answer is
+    // real, but no check ran on this click.
+    const r = await clickVersion({
+      updateAvailable: false, latestVersion: null,
+      checkedAt: new Date(Date.now() - 5 * 60000).toISOString()
+    }, { oldServer: true });
+    assert.doesNotMatch(r.label, /up to date/i, 'a cached answer is not a measurement');
+    assert.match(r.label, /cached 5m ago — not re-checked/);
+    assert.match(r.title, /Cached answer from 5m ago/, 'the durable tooltip says the same');
+    assert.doesNotMatch(r.title, /Up to date/);
+  });
+
+  it('says "not checked yet" — the same thing the marker says — for an older server\'s cold cache (#1061)', async () => {
+    const r = await clickVersion({
+      updateAvailable: false, latestVersion: null, checkedAt: null
+    }, { oldServer: true });
+    assert.match(r.label, /not checked yet/i);
+    assert.doesNotMatch(r.label, /up to date/i);
+    assert.match(r.title, /Not checked for updates yet/, 'label and tooltip agree');
+  });
 
   it('answers an operator who asks, so no-pill stops being unfalsifiable', async () => {
     const r = await clickVersion({

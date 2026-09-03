@@ -111,6 +111,7 @@ function loadTick(clock, replies) {
     // the whole point of sharing it is that one rule governs both surfaces, and
     // a restated copy in the test would hide the day they diverge.
     lift('function tcIsUpdateAnswer(data)', BEACON_SRC),
+    lift('function tcUpdateAnswerState(data)', BEACON_SRC),
     'window.tcIsUpdateAnswer = tcIsUpdateAnswer;',
     lift('function updateCheckDue(lastAt, now, intervalMs)'),
     lift('async function loadUpdateStatus()'),

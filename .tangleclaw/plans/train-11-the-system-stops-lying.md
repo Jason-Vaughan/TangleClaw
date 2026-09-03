@@ -80,8 +80,11 @@ silently does nothing.
 
 ### Chunk 3 — #1061 manual update-check says "up to date ✓" for a check that did not run
 - `public/landing.js` `wireVersionCheck`: `checkOk === undefined` (an older server's cached GET)
-  renders "served from cache — not re-checked" with the cache age, never "up to date ✓"; cold
-  cache (`checkedAt` null) renders check-unknown consistently in marker and label.
+  renders "cached 5m ago — not re-checked", never "up to date ✓"; a cold cache renders "not
+  checked yet" in label and marker alike. The payload is classified ONCE, in
+  `tcUpdateAnswerState` beside the shared `tcIsUpdateAnswer` predicate in `update-beacon.js`,
+  and the tooltip ladder, the click ladder, the beacon and the session poll all read that one
+  state (Critic R-5 on this car: three parallel ladders had begun to disagree).
 - `test/version-visibility.test.js` gains the fallback path (no `checkOk`, both cache states).
 - **Done when:** the fallback tests are red before, green after; every existing `clickVersion`
   case unchanged.
@@ -205,7 +208,7 @@ silently does nothing.
 
 ## Status
 - [x] Chunk 1 — #948 (PR #1162)
-- [ ] Chunk 2 — #1054
+- [x] Chunk 2 — #1054 (PR #1163)
 - [ ] Chunk 3 — #1061
 - [ ] Chunk 4 — #994
 - [ ] Chunk 5 — #1056
