@@ -331,6 +331,10 @@ describe('session.js wiring (#185)', () => {
     const probe = functionBody(src, 'async function _probeWrapStatus(');
     assert.doesNotMatch(probe, /api\.lastError|api\.lastErrorCode|setConnected/,
       'and that reader writes no part of the shared side channel');
+    // The reader itself must not reach for `api()` either — forbidding it only
+    // in the caller closes the site this happened to take, not the class.
+    assert.doesNotMatch(probe, /\bapi\s*\(/,
+      'the probe reads with its own fetch, not by delegating back to the shared helper');
     assert.match(probe, /X-TC-Cache-Fallback/,
       'while still refusing a service-worker cache stand-in as a server answer (#709)');
   });

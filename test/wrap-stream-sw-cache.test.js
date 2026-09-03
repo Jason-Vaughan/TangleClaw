@@ -201,6 +201,7 @@ describe('the service worker and the wrap progress stream (#185)', () => {
     const out = await fetchEvent(sw2.handlers, { url: STATUS_URL });
 
     assert.ok(out, 'an ordinary API read never resolves to undefined');
+    assert.equal(out.status, 503, 'and it is the legible 503, which is what the title claims');
   });
 
   it('both cache-put sites go through one helper, so a rule cannot land on half the family', async () => {
