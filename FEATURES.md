@@ -151,6 +151,7 @@ fails any auto-stub section older than 14 days.
 - **ADR: wrap-pipeline contract** — decision record for the code-owned wrap pipeline shape (one pipeline for every project, #538). `docs/adr/0002-wrap-pipeline-contract.md`.
 - **ADR: project-master session model** — decision record for the Project Master session + access model (#331). `docs/adr/0008-project-master-session-model.md`.
 - **Engine guide** — operator doc on engine profiles, detection, and per-engine config parity. `docs/engine-guide.md`.
+- **Prawduct feedback accumulator** — observations about Prawduct itself (its hooks, skills, gates, Critic workflow) gathered while using it and batched for upstream submission, since `/prawduct:report-bug` routes one at a time. Not TangleClaw defects. `docs/prawduct-feedback.md`.
 - **ADR: ingress model** — decision record for reverse-proxy (Caddy) ingress, adopted reversibly behind `ingressMode` default `direct`, so it stays inert until an operator cuts over (AUTH-1, #395). `docs/adr/0003-ingress-model.md`.
 - **ADR: secure by default** — decision record for shipping protected out of the box, opt-out rather than opt-in; supersedes the VPN-as-perimeter posture of ADR 0003 and the optional-login framing of ADR 0004 (#710). `docs/adr/0009-secure-by-default.md`.
 - **ADR: one update mechanism** — decision record requiring every surface that starts an update to call the applier rather than restate it, after the session badge shipped an unguarded `git pull` beside the guarded button (#730). `docs/adr/0010-one-update-mechanism.md`.
@@ -305,24 +306,12 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/degraded-reads-frontend.test.js` — #885: the dashboard must render an unestablished read as unknown, never as its negative (a wedged tmux drew running sessions as "no session"; `dirty: null` drew a dirty repo as clean). Covers the pure decision helpers in `public/api-helper.js` that every render site branches on. Scan codes are driven through the real `dirScanner.failureCode` rather than hand-written, so a server-side rename fails these guards instead of leaving the dashboard branching on a dead value.
 - `test/feature-index-prime.test.js` — **Feature Index scan counters** (#568): the pure counters behind the session prime's census (`lib/sessions.js`) and graduate mode's conservation baseline (`lib/wrap-steps/index-describe.js`); the prime carries a pointer + census, never the curated body (PRM-4H8N).
 - `test/prime-readiness-gate.test.js` — **Readiness-gated prime paste + honest delivery ledger** (#999/#1063/#1106): the paste waits for the engine's at-rest marker instead of a fixed 1500ms (the 2026-08-18 regression: 41s antigravity boots swallowed the prime while the ledger said `delivered`), and a blind markerless paste records `unverified`, never `delivered`. **Since #1134 the gate is no longer the last word:** an engine may declare a `pasteRejectedMarker`, and when the engine's own discard text appears after the send the row is `unverified` even though the gate was satisfied — an at-rest pane is not evidence the send was taken (antigravity 1.1.22 renders the full at-rest UI while still verifying an account). It only ever downgrades: a watch that saw no rejection, or could not look, leaves the gate's verdict untouched, so a swallow the engine does not announce is still missed. `lib/sessions.js#_observePasteRejected`, `#_paneIsBusy`. Tests: `test/paste-rejection-observation.test.js`.
-
-## TODO (auto-stubbed 2026-09-02)
-
-- **TBD** — touched in this session: `test/_tmux-guard.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/pidfile.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/tmux-guard.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-09-02)
-
-- **TBD** — touched in this session: `test/_temp-repo.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/git-budget.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/project-version.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/temp-repo.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-09-03)
-
-- **TBD** — touched in this session: `docs/prawduct-feedback.md`. <!-- describe -->
-- **TBD** — touched in this session: `test/chime-at-prompt.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/chime-status-payload.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/project-rules-unknown.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/silent-prime-drop-warning.test.js`. <!-- describe -->
+- `test/_tmux-guard.js` — the suite's poison that makes `lib/tmux.js#createSession` unreachable, so a block reaching `lib/sessions.js#launchSession` without its own stub cannot spawn a real engine process that outlives the run (#902); `test/tmux-guard.test.js` — the guard's own tests, needed because once every caller stubs correctly the guard catches nothing and neutering it left the session suite green (mutation: 180/180 passed).
+- `test/_temp-repo.js` — the suite's only way to make a git repository (`test/_temp-repo.js#initRepo`, `test/_temp-repo.js#cloneRepo`), holding `init.templateDir` away from the machine's global template so a running TangleClaw rewriting `~/.tangleclaw/git-template` cannot break a test's `git init` mid-copy (#831); `test/temp-repo.test.js` — that isolation plus the family guard that every `git init`/`git clone` under `test/` goes through the helper.
+- `test/git-budget.test.js` — one budget across all of `lib/git.js#_fetchInfo`'s spawns (#891): seven 5s-capped invocations sat behind a 5s scan deadline, so a stalled repository was SIGKILLed and reported as a Full Disk Access problem it did not have. Drives a real slow `git` on PATH rather than a stubbed `_exec`, because `execSync` leaves `killed` unset on a timeout — a stub would have asserted the arithmetic and reproduced none of the bug.
+- `test/pidfile.test.js` — `lib/pidfile.js` write/read/check/remove, plus the #1029 PID-reuse path (`readRecord`, `predatesBoot`, `isForeignProcess`).
+- `test/project-version.test.js` — `lib/project-version.js` version detection and caching (#101): `lib/project-version.js#detectVersion`, `lib/project-version.js#recordVersion`, and the git-tag fallback.
+- `test/chime-at-prompt.test.js` — #1180: the session chime asks the composed gate `lib/medusa-wake.js#assessSessionIdle`, not the busy-marker gates alone, which call a mid-stream Claude pane at-prompt. Pins that stillness is measured in TIME rather than in polls, and that the fix reads `engineId` — a first attempt passed `active.engine`, a key no session row carries, leaving the whole path dead code no test noticed.
+- `test/chime-status-payload.test.js` — #1180: the half that exists only once `lib/sessions.js#getSessionStatus` runs — that the endpoint asks the notifier's gate and that `idleReason` provenance survives the trip. Both were green mutations while every guard stopped at the helper's return value.
+- `test/project-rules-unknown.test.js` — #1054: a failed Project Rules read renders as unknown, not "No rules yet" — `public/ui.js#fetchProjectRules` flattened a null API result into `[]`, so an outage looked exactly like an empty ruleset. Runs the real lifted functions against the real `public/api-helper.js#tcRulesUnknownHtml` / `public/api-helper.js#tcDegradedRead`, so the assertion is about what the operator's list says.
+- `test/silent-prime-drop-warning.test.js` — #741: on an engine without `supportsSilentPrime` a project's `silentPrime` setting is neither honored nor offered and nothing said so. Pins `lib/engines.js#silentPrimeDisposition` as the one owner of that answer, and the launch path's record of it at info rather than warn — a stored value on such a project is indistinguishable from the shipped default, so an alarm would fire on every non-Claude launch about a preference nobody set.

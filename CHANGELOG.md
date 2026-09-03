@@ -4,6 +4,9 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Internal
+- **The Feature Index's 12 auto-stubbed TODO entries are described and folded into their sections.** The wrap step appends a `**TBD** — touched in this session` line per new file and leaves the description to a human, so three stub sections had accumulated across 2026-09-02 and 2026-09-03 — and they shipped that way in v5.18.0. `test/features-index.test.js` fails any stub section older than 14 days, so this was a deadline, not a tidy-up. Eleven test files are now described in `## Tests` (the #902 tmux guard and its own guard test, the #831 `_temp-repo` helper and its family guard, #891's git budget, #1029's pidfile PID-reuse path, #101's project-version, #1180's two chime files, #1054's Project Rules unknown, #741's silentPrime disposition) and `docs/prawduct-feedback.md` is entered under Governance / Engines. Every `path#symbol` anchor written here was grepped against its file first, per the index's citation contract.
+
 ## [5.18.0] - 2026-09-03
 
 ### Changed
