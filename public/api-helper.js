@@ -1474,6 +1474,26 @@
     setTimeout(() => { status.classList.add('hidden'); }, 3000);
   }
 
+  /**
+   * Markup for a rules surface whose read FAILED (#948). A `null` from `api()`
+   * is not an empty list; rendering it as one told the operator "the shipped
+   * baseline applies" on evidence that did not exist. Every rules surface —
+   * the Master's Hard rules, its version history, the Project Rules lists —
+   * renders its unknown through THIS one function, so the alert role, the
+   * class pair and the sentence shape cannot drift between copies. Takes the
+   * shared degraded-read record so the cause and remedy speak in the same
+   * vocabulary as the dashboard's other unknowns.
+   * @param {string} label - What could not be read, e.g. 'Rules', 'History'.
+   * @param {{known: boolean, why: string|null, remedy: string|null}} read -
+   *   A `tcDegradedRead(false, why, remedy)` record.
+   * @returns {string} HTML for the list/panel body.
+   */
+  function tcRulesUnknownHtml(label, read) {
+    const why = read.why ? ` — ${tcEscapeHtml(read.why)}` : '';
+    const remedy = read.remedy ? ` ${tcEscapeHtml(read.remedy)}` : '';
+    return `<p class="session-rules-empty session-rules-unknown" role="alert"><strong>${tcEscapeHtml(label)} unknown:</strong> the read failed${why}.${remedy}</p>`;
+  }
+
   // ── Master settings component ──
   // Access level (read-only enforced; higher tiers disabled until each ships
   // with real structural enforcement), engine, scope, availability, and the
@@ -1753,7 +1773,8 @@
     function renderMasterRulesUnknown(why) {
       const list = document.getElementById('masterRulesList');
       if (!list) return;
-      list.innerHTML = `<p class="session-rules-empty session-rules-unknown" role="alert"><strong>Rules unknown:</strong> the Hard-rules read failed${why ? ` — ${esc(why)}` : ''}. Whether the shipped baseline or operator rules are in force cannot be shown. Close and reopen to retry.</p>`;
+      list.innerHTML = tcRulesUnknownHtml('Rules', tcDegradedRead(false, why,
+        'Whether the shipped baseline or operator rules are in force cannot be shown. Close and reopen to retry.'));
     }
 
     /**
@@ -1875,8 +1896,8 @@
       if (!data) {
         // Same flatten as the rules list, same lie (#948): a failed read is
         // not "No history." — it is a history nobody fetched.
-        const why = api.lastError;
-        panel.innerHTML = `<p class="session-rules-empty session-rules-unknown" role="alert"><strong>History unknown:</strong> the version-history read failed${why ? ` — ${esc(why)}` : ''}. Toggle again to retry.</p>`;
+        panel.innerHTML = tcRulesUnknownHtml('History',
+          tcDegradedRead(false, api.lastError, 'Toggle again to retry.'));
         panel.classList.remove('hidden');
         return;
       }
@@ -2042,6 +2063,7 @@
   global.tcSessionLiveness = tcSessionLiveness;
   global.tcSessionRead = tcSessionRead;
   global.tcMasterRead = tcMasterRead;
+  global.tcRulesUnknownHtml = tcRulesUnknownHtml;
   global.tcGitDirtyState = tcGitDirtyState;
   global.tcGitRead = tcGitRead;
   global.tcScanNotice = tcScanNotice;

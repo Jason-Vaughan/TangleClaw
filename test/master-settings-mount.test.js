@@ -290,3 +290,20 @@ describe('#948 — a failed Hard-rules read is an unknown, not the shipped basel
     assert.doesNotMatch(panel.innerHTML, /History unknown/);
   });
 });
+
+describe('#948 — every rules surface renders its unknown through one helper', () => {
+  it('api-helper.js carries the unknown-state class in exactly one place and exports the helper', () => {
+    // Critic R-7 on car 1: two hand-written sentences that varied only in
+    // label/remedy. A second copy is the drift the shared helper exists to
+    // prevent, so the class name is allowed to appear once — in the helper.
+    const sites = HELPER_SRC.split('session-rules-unknown').length - 1;
+    assert.equal(sites, 1, 'the class must be authored only inside tcRulesUnknownHtml');
+    const sandbox = loadHelper();
+    assert.equal(typeof sandbox.tcRulesUnknownHtml, 'function', 'exported for the Project Rules copy in ui.js');
+    const html = sandbox.tcRulesUnknownHtml('Rules', { known: false, why: 'a <b>reason</b>', remedy: 'Retry.' });
+    assert.match(html, /role="alert"/);
+    assert.match(html, /Rules unknown:/);
+    assert.match(html, /a &lt;b&gt;reason&lt;\/b&gt;/, 'the transport reason is escaped');
+    assert.match(html, /Retry\.<\/p>$/);
+  });
+});

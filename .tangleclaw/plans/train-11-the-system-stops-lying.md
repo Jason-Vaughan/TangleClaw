@@ -2,7 +2,7 @@
 
 **Roadmap:** `TangleClaw-Roadmap/ROADMAP_STATE.md` "Blessed Next Train" — Train 11 follows Train 10
 (complete 2026-09-03). Sequencing is the Roadmap session's; this plan holds the executable cars.
-**Working artifact:** (published after the first commit; same link updated in place)
+**Working artifact:** https://claude.ai/code/artifact/19374776-7690-4603-b793-9c573d42c0e4
 **Critic mode:** chunk per car (each car is its own branch + PR); `final` on the last car.
 Cars are numbered as chunks (`Chunk N`) so the record lint can grade each one.
 
@@ -58,8 +58,9 @@ silently does nothing.
 
 ### Chunk 1 — #948 Master rules modal renders a failed fetch as the shipped baseline
 - `public/api-helper.js` `loadMasterRules` and `toggleMasterRuleHistory`: a `null` from `api()`
-  renders the degraded-read state (`tcDegradedRead` vocabulary already used by three sibling
-  surfaces) naming the failure and the remedy — never "No rules — the shipped baseline applies".
+  renders the unknown state through ONE shared helper, `tcRulesUnknownHtml(label, read)`, fed a
+  `tcDegradedRead(false, why, remedy)` record — never "No rules — the shipped baseline applies".
+  The helper is exported so Chunk 2's copy of the widget renders through it too (Critic R-7).
 - Empty-but-successful (`{rules: []}`, `{versions: []}`) still renders the affirmative empty state.
 - `test/master-settings-mount.test.js` drives both through the real component with a stubbed
   `api`; red first on the null case.
@@ -68,7 +69,8 @@ silently does nothing.
 
 ### Chunk 2 — #1054 `fetchProjectRules` renders a failed fetch as "No rules yet."
 - `public/ui.js` `fetchProjectRules` returns `null` on failure; the single caller quartet renders
-  a distinct failure via `_setProjectRulesStatus`, and the list body says the fetch failed.
+  a distinct failure via `_setProjectRulesStatus`, and the list body renders
+  `window.tcRulesUnknownHtml` (Chunk 1's shared helper) — no third hand-written sentence.
 - Test through the real fetch path with a failing `api` stub; empty success still says "No rules yet."
 - **Done when:** failure and empty-success render differently, both asserted.
 
