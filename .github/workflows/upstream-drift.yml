@@ -1,0 +1,52 @@
+name: Upstream drift
+
+# Compare TangleClaw's PRAWDUCT_INSTALL_REFERENCE against the install reference
+# in prawduct's own source, on a schedule (#835).
+#
+# The comparison lives in test/c1-plugin-migration.test.js and reads the
+# INSTALLED plugin's migrate_plugin.py from under $HOME. On the per-PR runner
+# that checkout does not exist, so the check skipped on every CI run and only
+# ever ran on developer machines — upstream could rename the module or change
+# the reference and main stayed green.
+#
+# This workflow is the place the check is REQUIRED to run. It clones the
+# marketplace to the exact path the test reads, then runs the file with
+# TANGLECLAW_REQUIRE_UPSTREAM set, which turns the "not installed" skip into a
+# failure: a scheduled run cannot be green by absence. The main test workflow
+# is untouched and stays hermetic — drift is a slow-moving concern that does
+# not need per-PR resolution, and a network clone on every PR would pin every
+# merge to whatever upstream main held at that moment.
+
+on:
+  schedule:
+    # Daily, off the hour so it does not queue behind everyone else's
+    # top-of-the-hour crons.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # Matches the production runtime and the test workflow.
+          node-version: 22
+
+      - name: Check out the prawduct marketplace where the test reads it
+        # The path is the test's contract, not a convenience: it reads
+        # ~/.claude/plugins/marketplaces/prawduct, the marketplace checkout
+        # rather than a versioned cache dir, so it compares against the
+        # installed contract and not whichever release sorts first.
+        run: git clone --depth 1 https://github.com/brookstalley/prawduct.git "$HOME/.claude/plugins/marketplaces/prawduct"
+
+      - name: Compare install references
+        env:
+          # Absence is a failure here, not a skip. See the test.
+          TANGLECLAW_REQUIRE_UPSTREAM: '1'
+        run: node --test test/c1-plugin-migration.test.js
