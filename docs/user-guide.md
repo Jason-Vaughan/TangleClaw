@@ -445,6 +445,15 @@ POST /api/shared-docs/<doc-id>/lock
 ```
 Locks expire after 30 minutes and are auto-released when sessions wrap or are killed.
 
+### Served Plan Documents
+
+Every plan or design doc a session writes to `<project>/.tangleclaw/plans/<name>.md` (or the legacy `.claude/plans/`) is served by TangleClaw at a stable URL — `/plans/<projectId>/<name>.md` — rendered as a page that follows your device's light/dark theme, with tables and code scrolling sideways inside their own box rather than the whole page. It sits behind the same access gate as the dashboard (the Caddy login in caddy mode; loopback/tailnet reach in direct mode), so the link opens from your phone and from nowhere it shouldn't. This is the floor every engine gets: a Gemini, Codex or Antigravity session can hand back a link, not just a file path, and Claude Code may still publish its richer Artifacts on top.
+
+- The link stays the same as the file changes; reload to read the latest.
+- A plan moved to `plans/archive/` answers 404 with **Plan archived**, so a stale link says why it stopped working.
+- A plan is addressed by its file name alone — a path, `..`, or a symlink pointing outside the plans directory is refused.
+- Sessions discover the links with `GET /api/projects/<projectId>/plans` (numeric id or project name), which returns every plan with its URL on the host you reach TangleClaw on — never `localhost`, and `url: null` with a note when TangleClaw cannot tell which host that is. `tc capabilities` names the endpoint.
+
 ## Mobile Tips
 
 ### iPhone Safari

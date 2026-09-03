@@ -4,6 +4,9 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Plans are served at a shareable URL, on every engine.** `GET /plans/<projectId>/<file>.md` renders a project's `.tangleclaw/plans/` doc (legacy `.claude/plans/` fallback) as a theme-aware page behind the same perimeter as the dashboard, and `GET /api/projects/<id>/plans` lists each plan with its operator-facing link — derived from the host the operator reaches TangleClaw on (caddy mode gets the HTTPS front door), never `localhost` — so a Gemini, Codex or Antigravity session can satisfy the "plans openable from anywhere" rule that only Claude's Artifacts could reach before; `tc capabilities` (`plan-docs`) and a sentence in every generated engine config name the endpoint. A plan is a bare basename resolved by real path (`..`, encoded separators and symlinks out of the plans directory are refused) and an archived plan answers 404 saying so. `lib/plan-docs.js`, `server.js#servePlanPage`, `lib/ecosystem-primer.js#planDocsLine` (#542).
+
 ### Changed
 - **The Global Rules editor no longer offers "Reset to Defaults" (#243).** Under the canonical-source model (#240) the button's endpoint, `POST /api/rules/global/reset`, returns the current content unchanged — so clicking it looked like a revert and changed nothing. The button, its confirmation modal and the `resetGlobalRules` client handler are removed from `public/index.html`, `public/ui.js` and `public/landing.js`; the route stays for back-compat. Revert the file from git instead (`data/global-rules.md` is tracked). Tests: `test/global-rules-reset-button.test.js`.
 

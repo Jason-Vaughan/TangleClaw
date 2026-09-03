@@ -1514,6 +1514,30 @@ describe('engines', () => {
       const content = engines._generateGeminiMd(projectConfig, undefined, '/tmp/x');
       assert.match(content, /tc capabilities/);
     });
+
+    it('the served-plans sentence rides every carrier beside it, whatever sections are off (#542)', () => {
+      // Same family, same reason: a non-Claude session has no other way to
+      // learn the link exists. Kept out of the prime (budget-capped), so the
+      // config carriers are the ONLY channel — every one of them must ship it.
+      const bare = { rules: { core: { porthubRegistration: false } } };
+      const profiles = store.engines.list().filter(p =>
+        p.capabilities && p.capabilities.supportsConfigFile
+      );
+      assert.ok(profiles.length >= 4);
+      for (const profile of profiles) {
+        for (const cfg of [projectConfig, bare]) {
+          const content = engines.generateConfig(profile.id, cfg);
+          // Wrap-tolerant: the comment form may break the phrase across
+          // #-prefixed lines.
+          assert.match(content, /GET\s+(# )?\/api\/projects\/<projectId>\/plans/,
+            `${profile.id}: carrier is missing the served-plans endpoint`);
+          assert.match(content, /never a local file\s+(# )?path/,
+            `${profile.id}: the sentence must say what to hand back instead`);
+        }
+      }
+      const gemini = engines._generateGeminiMd(projectConfig, undefined, '/tmp/x');
+      assert.match(gemini, /\/api\/projects\/<projectId>\/plans/);
+    });
   });
 
   describe('project version recording NOT injected (#101)', () => {
