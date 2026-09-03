@@ -188,6 +188,13 @@
 @media (prefers-reduced-motion: reduce) {
   .medusa-control.has-live-loop:not(.is-off):not(.is-error) .medusa-mark { animation: none; }
 }
+/* NAMED EXCEPTION to the 44px button floor `.btn` holds (#823). The banner is
+   a fixed bar above the terminal, which on a phone is the surface the operator
+   is actually working in; its rows already stack below 600px, and 44px
+   controls would take another ~30px of terminal from a viewport the keyboard
+   has already halved. Height is what the exception buys, so it stays a
+   deliberate 30px on this class rather than inheriting `.btn`. Revisit if
+   the banner ever collapses to a single row on phones. */
 .banner-btn {
   display: flex;
   align-items: center;

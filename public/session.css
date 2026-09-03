@@ -1053,8 +1053,11 @@ body {
   background: var(--danger-dark);
   color: #fff;
 }
+/* "Small" is typographic, not a smaller target: same 44px floor as `.btn`
+   and the form inputs (#823). Back to Projects / Stay in the unsaved-changes
+   modal and the wrap-proposal Approve / Reject carry this on a phone. */
 .btn-small {
-  min-height: 36px;
+  min-height: 44px;
   padding: 4px 12px;
   font-size: 12px;
 }
@@ -2124,7 +2127,6 @@ body {
 .master-access-option .form-hint { grid-column: 3; margin: 0; }
 .master-access-disabled { opacity: 0.5; cursor: not-allowed; }
 .master-access-name { font-weight: 600; text-transform: capitalize; }
-.master-rules-section .btn { min-height: 32px; }
 .master-rule-history {
   margin: 0 0 8px 24px;
   padding: 6px 8px;

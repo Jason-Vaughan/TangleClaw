@@ -665,7 +665,6 @@ body {
 .master-access-option .form-hint { grid-column: 3; margin: 0; }
 .master-access-disabled { opacity: 0.5; cursor: not-allowed; }
 .master-access-name { font-weight: 600; text-transform: capitalize; }
-.master-rules-section .btn { min-height: 32px; }
 .master-rule-history {
   margin: 0 0 8px 24px;
   padding: 6px 8px;
@@ -1217,12 +1216,20 @@ body {
   flex-shrink: 0;
 }
 
-/* ── Buttons ── */
+/* ── Buttons ──
+   44px minimum, the same floor `.form-input` / `.form-select` already hold
+   (#823). The project is mobile-first and the operator is almost never at the
+   machine, so a button is a thumb target before it is a mouse target; at the
+   old 32px a modal's fields were tappable and its Save was not. Dense
+   exceptions are NAMED classes with a comment saying why — `.btn-compact`
+   below (card action rows, 44px on a coarse pointer) — never a silent
+   contextual override. `test/button-touch-targets.test.js` pins the floor
+   and the exception list. */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 32px;
+  min-height: 44px;
   padding: 4px 12px;
   border: 1px solid var(--elevated-bg);
   border-radius: var(--radius-btn);
@@ -1256,13 +1263,16 @@ body {
   background: var(--danger-dark);
   color: #fff;
 }
+/* "Small" is typographic — tighter padding and a 12px label — not a smaller
+   target. Modal Save/Skip/Retry and the Master rules' per-rule controls carry
+   this class on a phone and keep the 44px floor (#823). */
 .btn-small {
-  min-height: 28px;
+  min-height: 44px;
   padding: 2px 10px;
   font-size: 12px;
 }
 .btn-icon {
-  min-width: 32px;
+  min-width: 44px;
   padding: 4px;
 }
 /* ── Search/Filter ── */
@@ -1693,6 +1703,13 @@ body {
   flex-shrink: 0;
   align-items: center;
 }
+/* NAMED EXCEPTION to the 44px `.btn` floor (#823): the card action row puts up
+   to seven of these side by side in every project card, and at 44px on a
+   mouse-driven desktop the card list becomes a wall of buttons. They stay
+   32px only where a pointer is fine; the `@media (pointer: coarse)` block
+   below lifts them to 44px wherever a finger is involved, which is the case
+   the floor exists for. Keep the exception here, on the class — not as a
+   contextual `.something .btn` override — so the contract test can see it. */
 .btn-compact {
   display: inline-flex;
   align-items: center;
