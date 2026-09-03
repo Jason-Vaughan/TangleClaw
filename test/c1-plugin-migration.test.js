@@ -116,6 +116,52 @@ function assertMatchesUpstreamReference(src) {
   );
 }
 
+/**
+ * The upstream cross-check's decision, separated from where it looks so a test
+ * can aim it at a chosen root.
+ *
+ * Three states, three dispositions. `present` compares. `moved` — the
+ * marketplace exists but the module does not — fails: upstream relocated the
+ * file, which is the event the check exists to notice. `absent` skips on a
+ * developer machine, because "prawduct is not installed here" is a fact about
+ * the host and not about the reference — EXCEPT when `TANGLECLAW_REQUIRE_UPSTREAM`
+ * is set, which the scheduled drift workflow does (#835): that run exists to
+ * compare against upstream, so a missing checkout there is a broken run, and a
+ * broken run must not report green by skipping.
+ *
+ * @param {string} root - Marketplace checkout to inspect
+ * @param {object} env - Environment to consult for the require flag
+ * @param {function(string): void} skip - Called with the reason when skipping is legitimate
+ * @returns {void} Throws an AssertionError on moved, on required-but-absent, or on drift.
+ */
+function crossCheckUpstream(root, env, skip) {
+  const { state, src } = classifyUpstreamSource(root);
+  if (state === 'absent') {
+    if (env.TANGLECLAW_REQUIRE_UPSTREAM) {
+      assert.fail(
+        `prawduct is not installed at ${root}, and TANGLECLAW_REQUIRE_UPSTREAM is set: this run `
+        + 'exists to compare against upstream, so absence is a failure here, not a skip (#835)'
+      );
+    }
+    skip('prawduct plugin not installed on this machine');
+    return;
+  }
+  // Installed, but the module is gone: upstream moved or renamed it. Only
+  // "not installed at all" earns a skip — see classifyUpstreamSource.
+  assert.notEqual(
+    state, 'moved',
+    `prawduct is installed at ${root} but ${src} is missing — the module moved or was renamed. `
+    + 'Retarget this check at its new home rather than letting it skip.'
+  );
+  // Parsed as an AST, never scraped as text. A text window has to guess
+  // where the literal ends, and a guess that lands wrong does not fail —
+  // it silently matches keys from a NEIGHBOURING literal and compares
+  // against values that were never the install reference. Wrong-and-quiet
+  // is the failure mode this whole constant exists to prevent, so the
+  // check that guards it must not reintroduce it one level up.
+  assertMatchesUpstreamReference(src);
+}
+
 describe('C1 — per-project plugin migration (#262)', () => {
   let tmpDir;
   let pluginsHomeInstalled; // installed_plugins.json names prawduct
@@ -222,25 +268,69 @@ describe('C1 — per-project plugin migration (#262)', () => {
       // against whichever release happened to sort first rather than the
       // installed contract.
       const root = path.join(os.homedir(), '.claude', 'plugins', 'marketplaces', 'prawduct');
-      const { state, src } = classifyUpstreamSource(root);
-      if (state === 'absent') {
-        t.skip('prawduct plugin not installed on this machine');
-        return;
+      crossCheckUpstream(root, process.env, (why) => t.skip(why));
+    });
+
+    // The decision above, aimed at roots a test can build. The real test can
+    // only ever see whatever is under $HOME; these reach every branch.
+    describe('crossCheckUpstream — the decision, aimable (#835)', () => {
+      /**
+       * A Python module carrying `ref` as INSTALL_REFERENCE.
+       * @param {string} root - Marketplace root to populate
+       * @param {object} ref - The reference to write
+       * @returns {void}
+       */
+      function installPlugin(root, ref) {
+        fs.mkdirSync(path.join(root, 'plugin', 'lib'), { recursive: true });
+        const py = JSON.stringify(ref, null, 1).replace(/\btrue\b/g, 'True').replace(/\bfalse\b/g, 'False');
+        fs.writeFileSync(path.join(root, 'plugin', 'lib', 'migrate_plugin.py'), `INSTALL_REFERENCE = ${py}\n`);
       }
-      // Installed, but the module is gone: upstream moved or renamed it. Only
-      // "not installed at all" earns a skip — see classifyUpstreamSource.
-      assert.notEqual(
-        state, 'moved',
-        `prawduct is installed at ${root} but ${src} is missing — the module moved or was renamed. `
-        + 'Retarget this check at its new home rather than letting it skip.'
-      );
-      // Parsed as an AST, never scraped as text. A text window has to guess
-      // where the literal ends, and a guess that lands wrong does not fail —
-      // it silently matches keys from a NEIGHBOURING literal and compares
-      // against values that were never the install reference. Wrong-and-quiet
-      // is the failure mode this whole constant exists to prevent, so the
-      // check that guards it must not reintroduce it one level up.
-      assertMatchesUpstreamReference(src);
+
+      it('absent, flag unset: skips with the reason, and does not throw', () => {
+        const root = path.join(tmpDir, 'absent-dev');
+        const skips = [];
+        crossCheckUpstream(root, {}, (why) => skips.push(why));
+        assert.deepEqual(skips, ['prawduct plugin not installed on this machine']);
+      });
+
+      it('absent, TANGLECLAW_REQUIRE_UPSTREAM set: FAILS — the scheduled run cannot be green by absence', () => {
+        const root = path.join(tmpDir, 'absent-ci');
+        const skips = [];
+        assert.throws(
+          () => crossCheckUpstream(root, { TANGLECLAW_REQUIRE_UPSTREAM: '1' }, (why) => skips.push(why)),
+          /TANGLECLAW_REQUIRE_UPSTREAM is set.*absence is a failure/
+        );
+        assert.deepEqual(skips, [], 'must not also skip');
+      });
+
+      it('an empty flag is unset — an `env: FLAG:` with no value must not silently require', () => {
+        const root = path.join(tmpDir, 'absent-empty');
+        const skips = [];
+        crossCheckUpstream(root, { TANGLECLAW_REQUIRE_UPSTREAM: '' }, (why) => skips.push(why));
+        assert.equal(skips.length, 1);
+      });
+
+      it('moved: FAILS whether or not the flag is set', () => {
+        const root = path.join(tmpDir, 'moved');
+        fs.mkdirSync(root, { recursive: true });
+        for (const env of [{}, { TANGLECLAW_REQUIRE_UPSTREAM: '1' }]) {
+          assert.throws(() => crossCheckUpstream(root, env, () => assert.fail('must not skip')),
+            /moved or was renamed/);
+        }
+      });
+
+      it('present and matching: passes without skipping', () => {
+        const root = path.join(tmpDir, 'present-ok');
+        installPlugin(root, engines.PRAWDUCT_INSTALL_REFERENCE);
+        crossCheckUpstream(root, { TANGLECLAW_REQUIRE_UPSTREAM: '1' }, () => assert.fail('must not skip'));
+      });
+
+      it('present and drifted: FAILS naming the drift', () => {
+        const root = path.join(tmpDir, 'present-drift');
+        installPlugin(root, { ...engines.PRAWDUCT_INSTALL_REFERENCE, extra: 'key' });
+        assert.throws(() => crossCheckUpstream(root, {}, () => assert.fail('must not skip')),
+          /has drifted/);
+      });
     });
   });
 
