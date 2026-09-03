@@ -103,6 +103,28 @@ describe('ttyd-bind.describeInstalledBind', () => {
     assert.equal(d.iface, '127.0.0.1');
     assert.equal(d.wide, false);
   });
+
+  it('reads a job hand-bound to a LAN address as WIDE — it is reachable from the whole network (#1056)', () => {
+    // The list form ("0.0.0.0 or no --interface") said not-wide here, so the
+    // exposure notice that reads this field stayed silent on an exposed job.
+    for (const iface of ['192.168.1.5', '10.0.0.7', 'en0', '[::]', '0.0.0.0']) {
+      const { args } = parseProgramArguments(pinnedPlist(iface));
+      assert.equal(describeInstalledBind(args).wide, true, `${iface} is reachable from off the box`);
+    }
+  });
+
+  it('reads every spelling of loopback, and a unix socket, as not wide', () => {
+    for (const iface of ['127.0.0.1', '127.0.0.2', '::1', 'localhost', 'lo0', 'lo', '/var/run/ttyd.sock']) {
+      const { args } = parseProgramArguments(pinnedPlist(iface));
+      assert.equal(describeInstalledBind(args).wide, false, `${iface} is local-only`);
+    }
+  });
+
+  it('a plan for a LAN-bound job reports it still wide until the rewrite lands', () => {
+    const plan = planReconcile(pinnedPlist('192.168.1.5'), { ingressMode: 'direct' });
+    assert.equal(plan.action, 'rewrite', 'a LAN pin is re-pinned to loopback like any other widened job');
+    assert.equal(plan.stillWide, true, 'and the operator is told the job is exposed as it stands');
+  });
 });
 
 describe('ttyd-bind.planReconcile', () => {

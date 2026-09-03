@@ -210,7 +210,7 @@ describe('#931 each page keeps what is genuinely its own', () => {
     // The session page overrides `confirmText`; the beacon's default test
     // cannot see it, so the last word before the checkout moves is pinned here
     // on the page's OWN wiring.
-    for (const page of ['landing', 'session']) {
+    for (const page of ['dashboard', 'session']) {
       const ctx = loadPage(page, { confirm: false });
       ctx.beacon.render(AVAILABLE);
       await ctx.beacon.apply(AVAILABLE);
