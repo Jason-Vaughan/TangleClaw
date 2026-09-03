@@ -34,7 +34,11 @@ describe('CI workflow (.github/workflows/test.yml)', () => {
 
   it('runs the canonical test command README documents', () => {
     const src = workflowSource();
-    assert.match(src, /node --test 'test\/\*\.test\.js'/);
+    // Reporter flags may sit between `--test` and the glob: they change how
+    // the run is REPORTED, not what runs (they must precede the glob — node
+    // treats anything after it as a test argument). The glob and the command
+    // stay pinned verbatim; any other flag still fails this.
+    assert.match(src, /node --test(?: --test-reporter(?:-destination)?=\S+)* 'test\/\*\.test\.js'/);
     const readme = fs.readFileSync(README, 'utf8');
     assert.ok(
       readme.includes("node --test 'test/*.test.js'"),
@@ -63,6 +67,19 @@ describe('CI workflow (.github/workflows/test.yml)', () => {
     const listed = branches[1].split(',').map((b) => b.trim());
     assert.deepEqual(listed, ['main', 'v5-baseline'],
       'CI must run on pushes to main and to the v5 integration branch');
+  });
+
+  it('audits what the run did not execute, from the junit report the suite writes (#844)', () => {
+    // The two halves must agree on the file name, or the audit reads nothing
+    // and fails every run — or, worse, a stale report from a previous step.
+    const src = workflowSource();
+    const dest = src.match(/--test-reporter=junit --test-reporter-destination=(\S+)/);
+    assert.ok(dest, 'the suite must write a junit report for the audit to read');
+    assert.match(src, new RegExp(`node scripts/test-skip-audit\\.js ${dest[1].replace(/\./g, '\\.')}`),
+      'the audit step must read the report the suite step wrote');
+    // The audit must run in the same job, AFTER the suite — a separate job would
+    // need the artifact shipped across, and before it there is nothing to read.
+    assert.ok(src.indexOf('scripts/test-skip-audit.js') > src.indexOf("'test/*.test.js'"));
   });
 
   it('pins Node 22 (node:sqlite floor / production runtime)', () => {
