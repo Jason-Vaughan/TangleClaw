@@ -301,3 +301,9 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/degraded-reads-frontend.test.js` — #885: the dashboard must render an unestablished read as unknown, never as its negative (a wedged tmux drew running sessions as "no session"; `dirty: null` drew a dirty repo as clean). Covers the pure decision helpers in `public/api-helper.js` that every render site branches on. Scan codes are driven through the real `dirScanner.failureCode` rather than hand-written, so a server-side rename fails these guards instead of leaving the dashboard branching on a dead value.
 - `test/feature-index-prime.test.js` — **Feature Index scan counters** (#568): the pure counters behind the session prime's census (`lib/sessions.js`) and graduate mode's conservation baseline (`lib/wrap-steps/index-describe.js`); the prime carries a pointer + census, never the curated body (PRM-4H8N).
 - `test/prime-readiness-gate.test.js` — **Readiness-gated prime paste + honest delivery ledger** (#999/#1063/#1106): the paste waits for the engine's at-rest marker instead of a fixed 1500ms (the 2026-08-18 regression: 41s antigravity boots swallowed the prime while the ledger said `delivered`), and a blind markerless paste records `unverified`, never `delivered`.
+
+## TODO (auto-stubbed 2026-09-02)
+
+- **TBD** — touched in this session: `test/_tmux-guard.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/pidfile.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/tmux-guard.test.js`. <!-- describe -->
