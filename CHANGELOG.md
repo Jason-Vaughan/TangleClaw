@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.18.0] - 2026-09-03
+
 ### Changed
 - **Every session is told which rule sources bind it, and the global rules stop legislating merge strategy (#796).** Two binding rule sources said opposite things about how to merge — `data/global-rules.md` prescribed `gh pr merge --auto --squash`, the plugin methodology says merge commits — and a session saw one seamless text, so which it obeyed depended on which it read first; the fork lived two months across hundreds of sessions. Two slices, per the issue: the prime now carries **Rule sources in force** — TangleClaw global rules (named with the engine's own config filename, never a hard-coded `CLAUDE.md`; on a plugin-governed project it says they do NOT reach the session by file, since the operational block carries no rules tier), the project's startup rules with their count and channel, and the plugin or vendored methodology where governance applies — with the instruction to say so when two disagree rather than pick silently; and `test/global-rules-boundary.test.js` pins `data/global-rules.md` out of the methodology layer's topics as a checklist that fails at CI, not in a session. The topics are one list, `lib/methodology-topics.js`, read by the prime and the guard alike. The live contradiction is reconciled at its root: the global rule keeps `--auto --delete-branch` and now says the merge strategy is the methodology layer's call. This regenerates the managed block in every non-governed managed project's config on its next sync — the one vetoable decision of Train 11; TangleClaw's own hand-maintained `CLAUDE.md` was edited by hand to match. The wrap pipeline's own `--squash` in `lib/wrap-steps/` is filed separately.
 
