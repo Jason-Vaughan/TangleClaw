@@ -26,6 +26,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
+const { cloneRepo } = require('./_temp-repo');
 const store = require('../lib/store');
 const dirScanner = require('../lib/dir-scanner');
 const { HANDLERS } = require('../lib/dir-scanner-child');
@@ -123,8 +124,7 @@ describe('setup scan excludes the running install (#708)', () => {
     // checkout is excluded, never a repository that happens to be TangleClaw.
     const cloneParent = path.join(tmpDir, 'projects');
     fs.mkdirSync(cloneParent, { recursive: true });
-    execFileSync('git', ['clone', '--quiet', '--depth', '1',
-      `file://${REPO_ROOT}`, path.join(cloneParent, 'TangleClaw')], { stdio: 'pipe' });
+    cloneRepo(`file://${REPO_ROOT}`, path.join(cloneParent, 'TangleClaw'), ['--depth', '1']);
 
     const result = await projects.scanDirectoryForProjects(cloneParent);
 

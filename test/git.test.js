@@ -3,6 +3,7 @@
 const { describe, it, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const { initRepo, cloneRepo } = require('./_temp-repo');
 const git = require('../lib/git');
 
 describe('git', () => {
@@ -106,9 +107,10 @@ describe('git', () => {
     /**
      * Build a repository fixture and return its path.
      *
-     * `--template=` deliberately empty: the default template installs sample
-     * hooks, and a fixture that ships hooks is a fixture that can run them.
-     * Identity is set locally because CI runners have no global git user.
+     * Made through `initRepo`, so no template is read: the default template
+     * installs sample hooks, and a fixture that ships hooks is a fixture that
+     * can run them. Identity is set locally because CI runners have no global
+     * git user.
      *
      * @param {string} label - Directory prefix, for readable failures.
      * @param {string[]} steps - Shell commands run in the fixture, in order.
@@ -117,8 +119,8 @@ describe('git', () => {
     function repo(label, steps) {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), `tc-git-${label}-`));
       made.push(dir);
+      initRepo(dir, ['-b', 'main']);
       const setup = [
-        'git init --template= -q -b main',
         'git config user.email t@example.com',
         'git config user.name Test',
         ...steps
@@ -232,11 +234,11 @@ describe('git', () => {
       // there is no second place for it to be forgotten.
       const remote = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-git-emptyremote-'));
       made.push(remote);
-      execSync('git init --template= -q -b main --bare', { cwd: remote, stdio: 'pipe' });
+      initRepo(remote, ['-b', 'main', '--bare']);
 
       const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-git-emptyclone-'));
       made.push(parent);
-      execSync(`git clone -q ${JSON.stringify(remote)} cloned`, { cwd: parent, stdio: 'pipe' });
+      cloneRepo(remote, 'cloned', [], { cwd: parent });
       const dir = path.join(parent, 'cloned');
 
       const info = git._fetchInfo(dir);
@@ -382,7 +384,7 @@ describe('git', () => {
     it('takes the branch name alone when an upstream is tracked', () => {
       const remote = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-git-remote-'));
       made.push(remote);
-      execSync('git init --template= -q -b main --bare', { cwd: remote, stdio: 'pipe' });
+      initRepo(remote, ['-b', 'main', '--bare']);
       const dir = repo('tracking', [
         'echo a > a.txt', 'git add a.txt', 'git commit -qm s',
         `git remote add origin ${JSON.stringify(remote)}`, 'git push -q -u origin main',
@@ -491,7 +493,8 @@ describe('git', () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'git-test-'));
       try {
         // Local identity: CI runners ship git with no global user configured
-        execSync('git init && git config user.email t@example.com && git config user.name Test && git commit --allow-empty -m "init"', { cwd: tmp, encoding: 'utf8' });
+        initRepo(tmp);
+        execSync('git config user.email t@example.com && git config user.name Test && git commit --allow-empty -m "init"', { cwd: tmp, encoding: 'utf8' });
         const info = git._fetchInfo(tmp);
         assert.ok(info !== null);
         assert.equal(info.latestTag, null);

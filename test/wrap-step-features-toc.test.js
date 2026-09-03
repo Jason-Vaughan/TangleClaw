@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { execSync } = require('node:child_process');
+const { initRepo } = require('./_temp-repo');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -875,7 +876,7 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       fs.mkdirSync(path.join(projectPath, 'lib'), { recursive: true });
 
       const git = (cmd) => execSync(`git ${cmd}`, { cwd: projectPath, stdio: 'ignore' });
-      git('init -q');
+      initRepo(projectPath);
       git('config user.email test@example.com');
       git('config user.name Test');
       git('config commit.gpgsign false');
