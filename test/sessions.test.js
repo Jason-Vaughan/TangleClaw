@@ -11,12 +11,19 @@ setLevel('error');
 
 const store = require('../lib/store');
 const medusa = require('../lib/medusa');
+const { installTmuxGuard, removeTmuxGuard, reapFixtureSessions } = require('./_tmux-guard');
 
 describe('sessions', () => {
   let tmpDir;
   let projectsDir;
 
   before(() => {
+    // #902: `launchSession` calls tmux.createSession UNCONDITIONALLY, so a block
+    // that stubs only `hasSession` still spawns a real engine process that
+    // outlives the run. Make the real one unreachable; a block that needs it
+    // stubs it and fails loudly if it forgets.
+    installTmuxGuard();
+
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-sessions-'));
     store._setBasePath(tmpDir);
     store.init();
@@ -33,7 +40,12 @@ describe('sessions', () => {
 
   after(() => {
     store.close();
+    // Reap before the temp root goes: a session whose cwd has been deleted is
+    // the exact broken state #902 reported, so order matters here.
+    removeTmuxGuard();
+    const leaked = reapFixtureSessions(['orphan-test', 'stale-wrap', 'prime-test']);
     fs.rmSync(tmpDir, { recursive: true, force: true });
+    assert.deepEqual(leaked, [], `test suite leaked tmux sessions: ${leaked.join(', ')}`);
   });
 
   // Since sessions.js depends on tmux (shell commands), we test the logic
@@ -3633,6 +3645,7 @@ describe('sessions', () => {
     let sessions;
     let originalHasSession;
     let originalDetectEngine;
+    let originalCreateSession;
 
     before(() => {
       sessions = require('../lib/sessions');
@@ -3650,10 +3663,15 @@ describe('sessions', () => {
     beforeEach(() => {
       originalHasSession = tmux.hasSession;
       originalDetectEngine = enginesModule.detectEngine;
+      // `launchSession` calls createSession unconditionally — stubbing
+      // `hasSession` alone does not stop a real engine process (#902).
+      originalCreateSession = tmux.createSession;
+      tmux.createSession = () => true;
     });
 
     afterEach(() => {
       tmux.hasSession = originalHasSession;
+      tmux.createSession = originalCreateSession;
       enginesModule.detectEngine = originalDetectEngine;
       // Clean up any active sessions so tests are independent
       const project = store.projects.getByName('orphan-test');
@@ -3929,6 +3947,7 @@ describe('sessions', () => {
     let sessions;
     let originalHasSession;
     let originalDetectEngine;
+    let originalCreateSession;
 
     before(() => {
       sessions = require('../lib/sessions');
@@ -3944,10 +3963,15 @@ describe('sessions', () => {
     beforeEach(() => {
       originalHasSession = tmux.hasSession;
       originalDetectEngine = enginesModule.detectEngine;
+      // `launchSession` calls createSession unconditionally — stubbing
+      // `hasSession` alone does not stop a real engine process (#902).
+      originalCreateSession = tmux.createSession;
+      tmux.createSession = () => true;
     });
 
     afterEach(() => {
       tmux.hasSession = originalHasSession;
+      tmux.createSession = originalCreateSession;
       enginesModule.detectEngine = originalDetectEngine;
       const project = store.projects.getByName('silent-prime-test');
       if (project) {
@@ -3956,9 +3980,11 @@ describe('sessions', () => {
         // Clean up prime file + project config so each test starts fresh
         try { fs.rmSync(path.join(project.path, '.tangleclaw'), { recursive: true, force: true }); } catch {}
       }
-      // Real tmux session may have been spawned by launchSession — clean it up
-      // so the next test starts without leftover state.
-      try { require('node:child_process').execSync('tmux kill-session -t silent-prime-test 2>/dev/null', { stdio: 'ignore' }); } catch {}
+      // The real `tmux kill-session` that used to run here is gone with #902.
+      // It existed because these tests DID spawn a real session — the spawn is
+      // now prevented rather than cleaned up after, so there is nothing to kill.
+      // Reaching for a real tmux command in teardown was the tell that the
+      // suite knew it was leaking and had settled for mopping up.
     });
 
     it('_writePrimeFile creates .tangleclaw/session-prime.md and returns its path', () => {
