@@ -621,8 +621,9 @@ copy until the health check succeeds from that location.
 The page renders its chrome but no projects appear and nothing recovers, while
 already-open session tabs keep working. The server is fine — it is the cached
 dashboard shell in *this browser* that did not run. Every load that does boot
-leaves a `Dashboard booted` line in `~/.tangleclaw/logs/tangleclaw.log`; a
-`GET /` with no such line after it is the fault, seen from the server side.
+leaves a `Dashboard booted` line in `~/.tangleclaw/logs/tangleclaw.log` on the
+server box; a `GET /` with no such line after it is the fault, seen from the
+server side.
 
 Follow [the runbook](runbooks/dashboard-blank.md) **before** reloading or
 clearing anything: the browser-side evidence (console, Cache Storage, the

@@ -170,6 +170,48 @@ describe('POST /api/dashboard/boot — the beacon reaches the log (#817)', () =>
     assert.ok(m, 'the boot is still logged');
     assert.equal(m[1].length, 200);
   });
+
+  /**
+   * GET a path from the running server, discarding the body.
+   * @param {string} urlPath - Path.
+   * @returns {Promise<number>} The status code.
+   */
+  function get(urlPath) {
+    return new Promise((resolve, reject) => {
+      const req = http.request({
+        hostname: '127.0.0.1', port: server.address().port, path: urlPath, method: 'GET'
+      }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  // The pair the runbook reads is `GET /` then `Dashboard booted`. Static
+  // responses are logged at debug, which a default install never writes, so
+  // without the lines below the first half of the pair is invisible exactly
+  // where the runbook sends the operator to look (Critic, #817).
+  it('the dashboard document is logged at info on a default install, so the pair is observable', async () => {
+    let status;
+    const lines = await captureLog(async () => { status = await get('/'); });
+    assert.equal(status, 200);
+    assert.match(lines.join(''), /\[INFO\] \[server\] GET \/ status=200 duration=\d+ms document=index\.html/);
+  });
+
+  it('the SPA fallback and the session page are navigations too, and say which document answered', async () => {
+    const lines = await captureLog(async () => {
+      assert.equal(await get('/some-client-route'), 200);
+      assert.equal(await get('/session/some-session'), 200);
+    });
+    const joined = lines.join('');
+    assert.match(joined, /\[INFO\] \[server\] GET \/some-client-route status=200 .*document=index\.html/);
+    assert.match(joined, /\[INFO\] \[server\] GET \/session\/some-session status=200 .*document=session\.html/,
+      'the innocent explanation for a beacon-less GET / must itself be in the log');
+  });
+
+  it('every other static asset stays at debug — the info log does not become an asset log', async () => {
+    const lines = await captureLog(async () => { assert.equal(await get('/style.css'), 200); });
+    assert.doesNotMatch(lines.join(''), /GET \/style\.css/);
+  });
 });
 
 describe('the dashboard sends the beacon after the shell boots, not before (#817)', () => {
@@ -183,6 +225,8 @@ describe('the dashboard sends the beacon after the shell boots, not before (#817
    *   leaves Cache Storage undefined, as on a browser without it.
    * @param {boolean} [opts.controlled] - Whether a worker controls the page.
    * @param {boolean} [opts.fetchFails] - Make the beacon's fetch reject.
+   * @param {number} [opts.fetchStatus] - Status the beacon's fetch resolves
+   *   with (default 204); anything outside 2xx resolves with `ok: false`.
    * @returns {object} The context, with `calls` (fetch calls), `marks` (order
    *   of renders and beacon sends) and `serverUp` (what `api` answers).
    */
@@ -208,7 +252,8 @@ describe('the dashboard sends the beacon after the shell boots, not before (#817
         marks.push('beacon');
         calls.push({ url, init });
         if (opts.fetchFails) throw new TypeError('Failed to fetch');
-        return { status: 204, ok: true };
+        const status = opts.fetchStatus || 204;
+        return { status, ok: status >= 200 && status < 300 };
       }
     };
     // Mirrors the real contract: `api` answers data when the server is up and
@@ -275,14 +320,33 @@ describe('the dashboard sends the beacon after the shell boots, not before (#817
   });
 
   it('fires after the shell has rendered, never before', async () => {
+    // Pinned on the lifted body's TEXT, not on runtime order: the beacon's
+    // fetch sits behind two awaits, so a call moved ABOVE renderProjects()
+    // still reaches `fetch` after the synchronous renders and the runtime
+    // marks stay in the "right" order — a check that passes for the wrong
+    // reason (Critic, #817). The source position is the fact.
+    const body = liftFunction(LANDING_SRC, 'async function loadProjects()');
+    const rendered = body.indexOf('renderProjects();');
+    const call = body.indexOf('sendBootBeacon();');
+    assert.notEqual(rendered, -1);
+    assert.notEqual(call, -1);
+    assert.ok(call > rendered, 'sendBootBeacon() must be written after renderProjects() in loadProjects');
+
+    // And the beacon does go out on that path.
     const ctx = loadShell({ cacheKeys: ['tangleclaw-v3-60'] });
     await ctx.loadProjects();
     await settle();
-    const rendered = ctx.marks.indexOf('renderProjects');
-    const beacon = ctx.marks.indexOf('beacon');
-    assert.notEqual(rendered, -1);
-    assert.notEqual(beacon, -1);
-    assert.ok(beacon > rendered, `beacon at ${beacon} must follow renderProjects at ${rendered}: ${ctx.marks}`);
+    assert.ok(ctx.marks.includes('renderProjects') && ctx.marks.includes('beacon'), String(ctx.marks));
+  });
+
+  it('a refused beacon names the status in the console — from the log it looks like a shell that never ran', async () => {
+    // 403 for an unserved Host, 415 for a non-JSON body, 404 before the server
+    // restarts into this route: each returns before the access-log line.
+    const ctx = loadShell({ cacheKeys: ['tangleclaw-v3-60'], fetchStatus: 404 });
+    await ctx.loadProjects();
+    await settle();
+    assert.equal(ctx.calls.length, 1);
+    assert.ok(ctx.errors.some((e) => e === 'boot beacon refused: HTTP 404'), ctx.errors.join('\n'));
   });
 
   it('a first success on a later poll still counts as the boot — the wizard path defers the first fetch', async () => {

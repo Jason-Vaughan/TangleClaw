@@ -996,11 +996,15 @@ async function sendBootBeacon() {
   const controlled = typeof navigator !== 'undefined'
     && !!(navigator.serviceWorker && navigator.serviceWorker.controller);
   try {
-    await fetch('/api/dashboard/boot', {
+    const res = await fetch('/api/dashboard/boot', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cacheName, controlled })
     });
+    // A refusal (an unserved Host, a pre-restart 404) returns before the
+    // server's access-log line, so from the log it is indistinguishable from
+    // a shell that never ran. Say so where the browser side can see it.
+    if (!res.ok) console.error(`boot beacon refused: HTTP ${res.status}`);
   } catch (err) {
     console.error('boot beacon failed:', err);
   }

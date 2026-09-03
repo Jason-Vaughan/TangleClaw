@@ -45,29 +45,43 @@ now and steps 1–3 from a desktop browser if one reproduces.
    → Expected: one worker, activated, source `/sw.js`. A waiting worker beside
    a running one means an update was mid-cycle — record both.
 
-4. Read the beacon from the server log. Every dashboard load that boots
-   sends `POST /api/dashboard/boot` after its first projects fetch renders,
-   and the server logs it as `Dashboard booted`:
+4. Read the beacon from the server log — **on the server box, over SSH**
+   (`ssh <server>`); the log and `localhost` are the server's, never the
+   phone's. Every dashboard load that boots sends `POST /api/dashboard/boot`
+   after its first projects fetch renders, and the server logs it as
+   `Dashboard booted`. Page navigations (`GET /`, `GET /session/<name>`) are
+   logged at info for exactly this pairing; other static assets are not.
 
    ```bash
-   grep -E 'GET / |Dashboard booted|POST /api/dashboard/boot' ~/.tangleclaw/logs/tangleclaw.log | tail -30
+   grep -E 'GET / |GET /session/|Dashboard booted|POST /api/dashboard/boot|Refused' ~/.tangleclaw/logs/tangleclaw.log | tail -30
    ```
 
-   → Expected on a healthy load: `GET / status=200` followed within seconds by
+   → Expected on a healthy load: `GET / status=200 … document=index.html`
+   followed within seconds by
    `Dashboard booted cacheName=tangleclaw-v3-NN swControlled=true`.
    → The fault: `GET /` lines with **no** `Dashboard booted` after them. A
    `GET /` followed by `GET /session/<name>` and no beacon is an operator who
    went straight to a session page, not this fault.
+   → A `[WARN] … Refused …` line (an unserved Host, a cross-site request, a
+   write whose body is not JSON) right after the `GET /` is the **other**
+   explanation for a missing beacon: the shell ran and the server turned the
+   beacon away before its access-log line. The browser console then shows
+   `boot beacon refused: HTTP <status>` (step 1) — that is a serving or
+   ingress problem, not this runbook.
    → `cacheName=null` on a booted load means the browser had no TangleClaw
    cache at all — a first visit, or a browser that just cleared site data.
    The log rotates by size (`tangleclaw.log.1`, `.2`); grep those too if the
    window is more than a few hours old.
 
-5. Recover **this browser only**: Application → Service Workers →
-   **Unregister**, then reload the page. If the list still does not render,
-   Application → Storage → **Clear site data**, then reload.
-   Clear site data also drops this browser's saved dashboard preferences
-   (the `tc_*` keys in local storage) — nothing server-side.
+5. Recover **this browser only** — never every browser (see below).
+   - Desktop: DevTools → Application → Service Workers → **Unregister**, then
+     reload. If the list still does not render, Application → Storage →
+     **Clear site data**, then reload.
+   - iOS Safari: Settings → Safari → Advanced → **Website Data** → find the
+     TangleClaw host → swipe left → **Delete**, then reopen the page. This
+     removes the worker and its caches for that site only.
+   Either path also drops this browser's saved dashboard preferences (the
+   `tc_*` keys in local storage) — nothing server-side.
    → Expected: the reload produces a `Dashboard booted` line (step 4's grep)
    and the project list renders.
 
@@ -99,8 +113,8 @@ A new asset or a stale script is a network-first carve-out in
 ## If this doesn't work
 
 If step 5 does not produce a `Dashboard booted` line and a rendered list, the
-fault is not the cached shell. Check the server answers the same request the
-shell makes:
+fault is not the cached shell. On the server box (over SSH, as in step 4),
+check the server answers the same request the shell makes:
 
 ```bash
 curl -s http://localhost:3102/api/projects | head -c 300
