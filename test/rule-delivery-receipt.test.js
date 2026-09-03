@@ -66,10 +66,14 @@ describe('#1063 — the ledger distinguishes written from delivered', () => {
     }), /channel 'none' cannot be written/);
   });
 
-  it('the outcome vocabulary and the DB CHECK agree', () => {
-    // The enum guard and the CHECK constraint are two independent gates; a
-    // value in one and not the other fails at a different layer than the
-    // author expects.
+  it('every declared outcome is accepted by the DB, and none is rejected only there', () => {
+    // Critic R-5: the vocabulary has five owners — the fresh-install CHECK, the
+    // two constraint CHECKs, `SESSION_RULE_DELIVERY_OUTCOMES`, and the JS guards
+    // in `record`. They ALREADY diverged during this change: `written` went into
+    // the enum and the CHECK but not the channel-'none' guard, so callers got a
+    // raw SQLite error instead of a BAD_REQUEST naming the field. Driven over
+    // the declared list rather than a retyped one, so the next value added to
+    // the enum without teaching the table fails here.
     assert.ok(store.SESSION_RULE_DELIVERY_OUTCOMES.includes('written'));
     for (const outcome of store.SESSION_RULE_DELIVERY_OUTCOMES) {
       const entry = {
@@ -80,6 +84,34 @@ describe('#1063 — the ledger distinguishes written from delivered', () => {
       if (outcome === 'skipped' || outcome === 'unverified') entry.skipReason = 'r';
       assert.doesNotThrow(() => store.sessionRuleDeliveries.record(entry),
         `the DB rejects '${outcome}', which the enum accepts`);
+    }
+  });
+
+  it('the JS guards and the table CHECKs refuse the same channel-none states', () => {
+    // The specific divergence above, pinned as a property: whatever the table
+    // forbids through `none`, `record` must forbid FIRST — with a StoreError
+    // naming the field, not a SQLite CHECK message leaking to the caller.
+    for (const outcome of store.SESSION_RULE_DELIVERY_OUTCOMES) {
+      if (outcome === 'no-rules') continue;
+      const entry = {
+        sessionId: 9101, projectId: 1, engineId: 'claude',
+        channel: 'none', outcome, ruleIds: [], digest: ''
+      };
+      // Both reason-requiring outcomes get one, so this test reaches the
+      // CHANNEL guard rather than stopping at the earlier skipReason guard.
+      if (outcome === 'skipped' || outcome === 'unverified') entry.skipReason = 'r';
+      if (outcome === 'skipped') {
+        assert.doesNotThrow(() => store.sessionRuleDeliveries.record(entry),
+          "a skip through no channel is a real state — something was owed and no channel carried it");
+        continue;
+      }
+      assert.throws(() => store.sessionRuleDeliveries.record(entry),
+        (err) => {
+          assert.match(err.message, new RegExp(`cannot be ${outcome}`),
+            `'${outcome}' through channel none is refused by SQLite, not by the guard — the caller sees a CHECK message instead of a named field`);
+          return true;
+        },
+        `'${outcome}' through channel none must be refused`);
     }
   });
 });
@@ -360,6 +392,138 @@ describe('#1063 — a launch whose hook never runs cannot produce a delivered ro
     assert.equal(store.sessionRuleDeliveries.listForSession(9500)[0].delivered, true);
     assert.equal(store.awarenessReceipts.sessionAwareness(9500).state, 'sent',
       'delivered-but-no-tc-invocation is `sent`, exactly as it was before this change');
+  });
+});
+
+describe('#1063 — POST /api/tc/rule-receipt, driven through the real server', () => {
+  // Critic R-1 (blocking): both ends were covered and the JOINT was not. The
+  // hook test posted to a stand-in server and the ledger tests called
+  // `markDelivered` directly, so deleting the route registration — or renaming
+  // the field it reads — left the suite green while the mechanism shipped
+  // inert. That is the failure this whole chunk exists to prevent, one level up.
+  const http = require('node:http');
+  const { createServer } = require('../server');
+  let server;
+  let port;
+
+  before(async () => {
+    server = createServer();
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    port = server.address().port;
+  });
+  after(async () => { await new Promise((r) => server.close(r)); });
+
+  /**
+   * POST a JSON body to the running server.
+   * @param {string} urlPath - Path.
+   * @param {object} body - JSON body.
+   * @returns {Promise<{status: number, data: any}>}
+   */
+  function post(urlPath, body) {
+    return new Promise((resolve, reject) => {
+      const raw = JSON.stringify(body);
+      const req = http.request({
+        hostname: '127.0.0.1', port, path: urlPath, method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(raw) }
+      }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8');
+          let data; try { data = JSON.parse(text); } catch { data = text; }
+          resolve({ status: res.statusCode, data });
+        });
+      });
+      req.on('error', reject);
+      req.write(raw);
+      req.end();
+    });
+  }
+
+  it('upgrades the named written row and reports what it did', async () => {
+    const row = writtenRow(9700);
+    const res = await post('/api/tc/rule-receipt', { deliveryId: row.id });
+    assert.equal(res.status, 200);
+    assert.equal(res.data.upgraded, true);
+    assert.equal(res.data.delivery.outcome, 'delivered');
+    assert.ok(res.data.delivery.confirmedAt, 'the row records WHEN the hook vouched for it');
+    assert.equal(store.sessionRuleDeliveries.listForSession(9700)[0].delivered, true);
+  });
+
+  it('reads `deliveryId` — the exact field the token carries', async () => {
+    // Renaming the field on either side breaks the mechanism silently, and the
+    // token is written by `writeReceiptToken`, so the two are pinned together.
+    const row = writtenRow(9701);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-1063-field-'));
+    try {
+      const tokenPath = rulesChannel.writeReceiptToken(dir, { deliveryId: row.id, api: `http://127.0.0.1:${port}` });
+      const token = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
+      // Posted VERBATIM, exactly as the hook's `--data-binary @file` does.
+      const res = await post('/api/tc/rule-receipt', token);
+      assert.equal(res.data.upgraded, true, 'the route must read the token the writer actually produces');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('answers 200 with upgraded:false for a stale, unknown or malformed id', async () => {
+    // The caller is a shell script inside an engine's startup path; a 4xx there
+    // is noise where noise is fed back to the engine as a synthetic turn.
+    for (const body of [{ deliveryId: 999999 }, { deliveryId: 'nope' }, {}, { id: 1 }]) {
+      const res = await post('/api/tc/rule-receipt', body);
+      assert.equal(res.status, 200, JSON.stringify(body));
+      assert.equal(res.data.upgraded, false, JSON.stringify(body));
+    }
+  });
+
+  it('cannot launder a skipped row through the route', async () => {
+    const row = store.sessionRuleDeliveries.record({
+      sessionId: 9702, projectId: 1, engineId: 'claude',
+      channel: 'rules-hook', outcome: 'skipped', skipReason: 'shards failed', ruleIds: [1], digest: 'x'
+    });
+    const res = await post('/api/tc/rule-receipt', { deliveryId: row.id });
+    assert.equal(res.data.upgraded, false);
+    assert.equal(store.sessionRuleDeliveries.listForSession(9702)[0].outcome, 'skipped');
+  });
+
+  it('the real hook, run end to end, drives the real route', async () => {
+    // The whole joint in one test: launch-side token → the shipped hook script
+    // → the shipped route → the ledger.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-1063-e2e-'));
+    try {
+      fs.mkdirSync(path.join(dir, '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(path.join(dir, '.tangleclaw', 'session-rules-1.json'),
+        JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: 'R' } }) + '\n');
+      const row = writtenRow(9703);
+      rulesChannel.writeReceiptToken(dir, { deliveryId: row.id, api: `http://127.0.0.1:${port}` });
+
+      await execFileAsync('/bin/bash', [HOOK, '1'], { env: { ...process.env, CLAUDE_PROJECT_DIR: dir } });
+
+      assert.equal(store.sessionRuleDeliveries.listForSession(9703)[0].outcome, 'delivered',
+        'the shipped hook and the shipped route must actually agree');
+      assert.equal(fs.existsSync(rulesChannel.receiptTokenPath(dir)), false,
+        'and the hook consumes the token on success — an unconsumed one is replayable by any later claude in this directory');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a failed post LEAVES the token, so a genuine retry still works', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-1063-retry-'));
+    try {
+      fs.mkdirSync(path.join(dir, '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(path.join(dir, '.tangleclaw', 'session-rules-1.json'),
+        JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: 'R' } }) + '\n');
+      const row = writtenRow(9704);
+      rulesChannel.writeReceiptToken(dir, { deliveryId: row.id, api: 'http://127.0.0.1:1' });
+
+      await execFileAsync('/bin/bash', [HOOK, '1'], { env: { ...process.env, CLAUDE_PROJECT_DIR: dir } });
+      assert.equal(fs.existsSync(rulesChannel.receiptTokenPath(dir)), true,
+        'consuming a token whose post failed would make the failure permanent');
+      assert.equal(store.sessionRuleDeliveries.listForSession(9704)[0].outcome, 'written');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

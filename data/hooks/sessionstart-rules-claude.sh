@@ -43,14 +43,29 @@ if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$RULES_FILE" ] && [ -r "$RULES_FILE
   # which is the honest state anyway.
   RECEIPT_FILE="${CLAUDE_PROJECT_DIR}/.tangleclaw/session-rules-receipt.json"
   if [ "$SHARD" = "1" ] && [ -r "$RECEIPT_FILE" ] && command -v curl >/dev/null 2>&1; then
-    (
-      curl -fsS -m 3 -X POST \
-        -H 'Content-Type: application/json' \
-        -H 'x-tangleclaw-aux: 1' \
-        --data-binary "@${RECEIPT_FILE}" \
-        "$(sed -n 's/.*"api"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$RECEIPT_FILE")/api/tc/rule-receipt" \
-        >/dev/null 2>&1
-    ) || true
+    RECEIPT_API="$(sed -n 's/.*"api"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$RECEIPT_FILE")"
+    if [ -n "$RECEIPT_API" ]; then
+      # `-k`: on an HTTPS install the API is served under a mkcert CA that this
+      # shell has no reason to trust, and the connection is to the operator's
+      # own machine. Without it every row stays `written` forever with nothing
+      # anywhere naming TLS as the cause. Same convention the PortHub guide
+      # states for these URLs.
+      if curl -fsS -k -m 3 -X POST \
+          -H 'Content-Type: application/json' \
+          -H 'x-tangleclaw-aux: 1' \
+          --data-binary "@${RECEIPT_FILE}" \
+          "${RECEIPT_API}/api/tc/rule-receipt" >/dev/null 2>&1; then
+        # SINGLE USE. The token names one delivery row and is otherwise a
+        # standing credential in the project directory: this hook is registered
+        # on `startup` in the project's own settings, so ANY later `claude`
+        # opened in this directory would replay it. In the case that matters —
+        # the row still `written` because this session's hook never ran — that
+        # replay credits one session's delivery to another. Consuming it on
+        # success closes that; a failed post deliberately leaves it, so a real
+        # retry still works.
+        rm -f "$RECEIPT_FILE" || true
+      fi
+    fi
   fi
 fi
 

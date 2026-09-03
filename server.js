@@ -2595,10 +2595,18 @@ route('GET', '/api/session-rules/deliveries', (req, res) => {
 //
 // Deliberately narrow. It carries one verb, `written` → `delivered`, and
 // `markDelivered` refuses every other transition, so a receipt can never
-// launder a `skipped` or `unverified` row into a success. It takes no outcome
-// from the caller — only a row id — so the worst a forged or replayed token can
-// do is re-confirm a delivery that was already recorded as written for that
-// exact row.
+// launder a `skipped` or `unverified` row into a success, and the route takes
+// no outcome from the caller — only a row id.
+//
+// The id is not a credential, and the token carrying it is not one either: it
+// is a small integer in a file in the project directory, on a route outside the
+// service-token gate. What bounds the damage is the transition, not the secret
+// — the only reachable abuse is confirming a `written` row that some session
+// genuinely was owed, and the hook consumes its token on success so the
+// standing-token replay (any later `claude` in that directory re-posting an
+// unconsumed token, crediting one session's delivery to another) has no token
+// to replay. A row already `delivered`, `skipped` or `unverified` is inert
+// here.
 //
 // Always 200, never an error, when the id simply did not match: the caller is a
 // shell script inside an engine's startup path, and a 4xx there is noise in a
