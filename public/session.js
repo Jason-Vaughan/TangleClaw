@@ -3403,10 +3403,10 @@ async function confirmWrap() {
   // already running BEFORE this POST is not this wrap's (that is the 409 path
   // `watchWrapRun` owns), so its id is snapshotted here to tell the two apart
   // without comparing clocks across devices.
-  const priorRun = await api(`/api/sessions/${encodeURIComponent(projectName)}/wrap/status`);
-  const priorRunId = priorRun && typeof priorRun.runId === 'string' ? priorRun.runId : null;
-
   try {
+    const priorRun = await api(`/api/sessions/${encodeURIComponent(projectName)}/wrap/status`);
+    const priorRunId = priorRun && typeof priorRun.runId === 'string' ? priorRun.runId : null;
+
     const postPromise = apiMutate(
       `/api/sessions/${encodeURIComponent(projectName)}/wrap`,
       'POST',
@@ -4923,6 +4923,12 @@ function cancelEndedCountdown() {
  */
 function openWrapDrawerNotice(label, detail) {
   sessionState.wrapDrawerOpen = true;
+  // The third terminal render, and a member of the same family as
+  // `openWrapDrawer` and `closeWrapDrawer`: a path that paints a final result
+  // must not leave a live stream free to repaint over it. Unreachable as a
+  // misrender today — both notice branches are taken only after the run ended
+  // — which is exactly the shape a later change turns into a live one.
+  stopWrapStream();
   cancelEndedCountdown();
   document.getElementById('wrapStepList').innerHTML = '';
   document.getElementById('wrapDrawerDecision').innerHTML = '';
