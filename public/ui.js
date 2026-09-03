@@ -1258,7 +1258,7 @@ function renderSilentPrimeToggle(engineId, preserveChecked) {
         <input type="checkbox" id="settingsSilentPrimeNotApplicable" disabled>
         <span class="toggle-switch"></span>
       </label>
-      <div class="form-hint">Not available on ${esc(engineId || 'this engine')} — the session prime is typed into the terminal at launch instead. A silent-prime setting saved under another engine does not apply here.</div>
+      <div class="form-hint">Not available on ${esc(engineId || 'this engine')}. A silent-prime setting saved under another engine does not apply here.</div>
     </div>`;
     return;
   }

@@ -98,6 +98,20 @@ describe('lib/ecosystem-primer (#1122)', () => {
       'the one honest absence case: tc missing means the pane is not TangleClaw-launched');
   });
 
+  it('says a failed localhost tc/curl is not proof of outage, in both forms (#1150)', () => {
+    // A Codex session read its own sandbox-blocked loopback as "port 3102 is
+    // down" and told the operator so. The guide the session reads carries the
+    // correction ahead of the failure.
+    for (const form of ['md', 'comment']) {
+      // The comment form word-wraps after a variable-length verb list, so the
+      // sentence is read with its line breaks and `#` prefixes collapsed —
+      // the assertion is about the words, not where the wrap fell.
+      const text = primer.tcBootstrapLines(form).join(' ').replace(/(^|\s)#\s*/g, ' ').replace(/\s+/g, ' ');
+      assert.match(text, /not proof of outage/, `${form}: the claim is bounded`);
+      assert.match(text, /host-context check/, `${form}: and the next step is named`);
+    }
+  });
+
   it('the bootstrap line derives its verb list from VERB_ROSTER — a new verb reaches every carrier by existing', () => {
     const { VERB_ROSTER } = require('../lib/tc-verbs');
     const md = primer.tcBootstrapLines('md').join('\n');
