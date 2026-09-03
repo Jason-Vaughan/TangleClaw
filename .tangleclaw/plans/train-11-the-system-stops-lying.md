@@ -200,7 +200,7 @@ silently does nothing.
 - **Done when:** a paired-but-unapproved gateway cannot render a green dot.
 
 ## Status
-- [ ] Chunk 1 — #948
+- [x] Chunk 1 — #948 (PR #1162)
 - [ ] Chunk 2 — #1054
 - [ ] Chunk 3 — #1061
 - [ ] Chunk 4 — #994
