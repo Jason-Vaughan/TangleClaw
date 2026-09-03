@@ -10,7 +10,7 @@
 // even after they hit Cmd+Shift+R. The network-first carve-out below
 // is the structural fix; this bump is the one-time unblock for
 // existing installs.
-const CACHE_NAME = 'tangleclaw-v3-60';
+const CACHE_NAME = 'tangleclaw-v3-61';
 const STATIC_ASSETS = [
   '/',
   '/style.css',
@@ -197,6 +197,24 @@ function _withCacheFallbackMarker(cached) {
     : cached;
 }
 
+/**
+ * Whether a response is a live stream rather than a document to keep.
+ *
+ * The service worker is registered at scope `/`, so it sits between the
+ * session page's `EventSource` and the wrap progress route — an unexamined
+ * consumer of the first streaming endpoint this app has ever had. Content
+ * type rather than a path pattern: the property that makes a response
+ * uncacheable is that its body never ends, and a second streaming route
+ * would otherwise have to remember to add itself to a list.
+ *
+ * @param {Response} response - The network response about to be cached.
+ * @returns {boolean} True when it must not be stored.
+ */
+function _isStreaming(response) {
+  const type = response.headers.get('Content-Type') || '';
+  return type.includes('text/event-stream');
+}
+
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   const isGet = event.request.method === 'GET';
@@ -213,10 +231,20 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(event.request).then((response) => {
         // Only GET responses are cacheable — `cache.put` THROWS on POST/PUT/…,
-        // and a cached non-GET could never be matched back anyway.
-        if (response.ok && isGet) {
+        // and a cached non-GET could never be matched back anyway. A streaming
+        // response is excluded too (#185): the wrap progress stream is a
+        // long-lived `text/event-stream` GET under a per-run random URL, so
+        // caching it stores one entry per wrap that nothing will ever match,
+        // forever — and `cache.put` on a stream that is still open rejects
+        // when the run ends and the body aborts. `.catch` covers every other
+        // way a put can reject (quota, an aborted body); a failed cache write
+        // must never reject the fetch handler, which would turn a served
+        // response into a network error.
+        if (response.ok && isGet && !_isStreaming(response)) {
           const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          caches.open(CACHE_NAME)
+            .then((cache) => cache.put(event.request, clone))
+            .catch(() => {});
         }
         return response;
       }).catch((err) => {

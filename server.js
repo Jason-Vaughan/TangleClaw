@@ -4782,22 +4782,57 @@ route('GET', '/api/sessions/:project/wrap/status', (_req, res, params) => {
 route('GET', '/api/sessions/:project/wrap/stream/:runId', (req, res, params) => {
   const lastEventId = Number.parseInt(req.headers['last-event-id'], 10);
   let open = false;
+  // Every path through this route logs, because the feature is a spectator by
+  // design: the POST stays authoritative, so a stream that never runs looks
+  // exactly like the pre-#185 experience and leaves a maintainer nothing to
+  // bisect from "live progress never appears". These lines are the only way
+  // to tell "it worked" from "it never ran" — nothing else covers the route
+  // (only unmatched paths hit the generic log, and only at debug).
   const write = (event) => {
-    if (open) res.write(_wrapStreamFrame(params.project, event));
+    if (!open) return;
+    try {
+      res.write(_wrapStreamFrame(params.project, event));
+    } catch (err) { // prawduct:allow prawduct/broad-except -- a dead socket must end this stream, never reach the process-global handler without wrap context
+      log.warn('Wrap stream write failed — closing', {
+        project: params.project, runId: params.runId, error: err.message
+      });
+      open = false;
+      if (sub) sub.unsubscribe();
+      res.end();
+    }
   };
   const end = () => {
-    if (open) { open = false; res.end(); }
+    if (open) {
+      open = false;
+      log.info('Wrap stream closed', { project: params.project, runId: params.runId });
+      res.end();
+    }
   };
-  const sub = sessions.subscribeWrapRun(params.project, params.runId, {
+  // eslint-disable-next-line prefer-const -- `write`'s error path reads it
+  let sub = null;
+  sub = sessions.subscribeWrapRun(params.project, params.runId, {
     afterSeq: Number.isFinite(lastEventId) ? lastEventId : 0,
     onEvent: write,
     onEnd: end
   });
   if (!sub.ok) {
+    // The documented restart case, and the only refusal this route has. At
+    // warn because the client silently falls back — without this line the
+    // refusal is invisible on both sides.
+    log.warn('Wrap stream refused — no such run for this project', {
+      project: params.project, runId: params.runId
+    });
     return errorResponse(res, 404,
       `No wrap run "${params.runId}" for "${params.project}" — it may predate a server restart, or the id is not this project's.`,
       'WRAP_RUN_NOT_FOUND');
   }
+  log.info('Wrap stream subscribed', {
+    project: params.project,
+    runId: params.runId,
+    replayed: sub.replay.length,
+    afterSeq: Number.isFinite(lastEventId) ? lastEventId : 0,
+    finished: sub.finished
+  });
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache, no-transform',
@@ -4817,7 +4852,11 @@ route('GET', '/api/sessions/:project/wrap/stream/:runId', (req, res, params) => 
   // The client went away (tab closed, phone locked): stop feeding a dead
   // socket. The run itself is unaffected — the pipeline never waits on
   // a subscriber.
-  req.on('close', () => { open = false; sub.unsubscribe(); });
+  req.on('close', () => {
+    if (open) log.info('Wrap stream client went away', { project: params.project, runId: params.runId });
+    open = false;
+    sub.unsubscribe();
+  });
 });
 
 // GET /api/sessions/:project/wrap/pr-status — Live wrap-PR outcome (#638). The

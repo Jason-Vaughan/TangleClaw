@@ -4622,6 +4622,12 @@ async function attachWrapStream(priorRunId, password) {
     }
     await new Promise((resolve) => setTimeout(resolve, WRAP_STREAM_DISCOVERY_DELAY_MS));
   }
+  // The stream is a spectator, so giving up changes nothing the operator can
+  // see — which is the problem. Without this line "live progress never
+  // appeared" is indistinguishable from "the POST was refused before a run
+  // existed", and there is nothing in the console to tell them apart.
+  console.warn('[wrap] live progress: no run found to watch after '
+    + `${WRAP_STREAM_DISCOVERY_ATTEMPTS} probes; the drawer will arrive with the wrap POST instead.`);
   return false;
 }
 
@@ -4655,6 +4661,7 @@ function startWrapStream(runId, password) {
     try {
       data = JSON.parse(msg.data);
     } catch { // a malformed frame is a spectator's problem, never the wrap's — the POST's return is the truth
+      console.warn('[wrap] live progress: discarded a malformed frame', { type });
       return;
     }
     currentWrapLive = H.applyWrapStreamEvent(currentWrapLive, { type, ...data });
@@ -4676,6 +4683,12 @@ function startWrapStream(runId, password) {
   es.onerror = () => {
     if (currentWrapStream !== es) return;
     if (es.readyState !== EventSource.CLOSED) return; // reconnecting on its own
+    // Terminal. The common shape is a stream that died before its first frame
+    // — a 404 after a server restart, a proxy that will not carry
+    // text/event-stream — and the drawer below only repaints when a live one
+    // is already on screen, so that case is otherwise completely silent.
+    console.warn('[wrap] live progress unavailable — the stream closed; '
+      + 'the report still arrives with the wrap POST.', { runId });
     stopWrapStream();
     // Only repaint if the live drawer is what is on screen; a drawer already
     // showing a final result must not be told the wrap is still running.
