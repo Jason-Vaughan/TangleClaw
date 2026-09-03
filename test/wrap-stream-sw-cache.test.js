@@ -108,7 +108,12 @@ function loadSw(cfg) {
 async function fetchEvent(handlers, req) {
   let responded;
   handlers.fetch({
-    request: { method: req.method || 'GET', mode: req.mode || 'cors', url: req.url },
+    request: {
+      method: req.method || 'GET',
+      mode: req.mode || 'cors',
+      url: req.url,
+      headers: makeHeaders(req.headers || {})
+    },
     respondWith: (p) => { responded = p; }
   });
   return responded;
@@ -166,6 +171,50 @@ describe('the service worker and the wrap progress stream (#185)', () => {
     assert.equal(out, served, 'the response is delivered regardless of the cache write');
     // Give the put's rejection a turn to surface if it is unhandled.
     await new Promise((resolve) => setImmediate(resolve));
+  });
+
+  it('a network failure reaches the stream as a failure, not as a synthetic 503', async () => {
+    // The caching axis was fixed first and the FAILURE axis was not. The stream
+    // matches `/api/`, so it enters the network-first branch, whose `.catch`
+    // answers a rejected fetch with a synthetic 503 JSON response. Per
+    // EventSource semantics any non-200 or non-`text/event-stream` reply FAILS
+    // THE CONNECTION — readyState CLOSED, no retry — so a dropped wifi or a
+    // mid-wrap restart would permanently kill the stream, and the whole
+    // `Last-Event-ID` resume path this feature ships would never run on the
+    // page this worker controls.
+    const boom = new Error('network down');
+    const sw2 = loadSw({ fetchImpl: () => Promise.reject(boom) });
+
+    await assert.rejects(
+      () => fetchEvent(sw2.handlers, { url: STREAM_URL, headers: { Accept: 'text/event-stream' } }),
+      /network down/,
+      'the stream sees the real network error, so EventSource reconnects on its own'
+    );
+  });
+
+  it('a non-stream request still gets the legible 503 stand-in on a network failure', async () => {
+    // The bypass must be narrow: #380's synthetic response exists so a dead
+    // server is legible instead of an opaque null, and every ordinary request
+    // still needs it.
+    const sw2 = loadSw({ fetchImpl: () => Promise.reject(new Error('network down')) });
+
+    const out = await fetchEvent(sw2.handlers, { url: STATUS_URL });
+
+    assert.ok(out, 'an ordinary API read never resolves to undefined');
+  });
+
+  it('both cache-put sites go through one helper, so a rule cannot land on half the family', async () => {
+    // The streaming carve-out and the rejection handler each originally landed
+    // on the network-first branch only; the static cache-first branch had
+    // neither. A generality test that uses an `/api/` URL measures branch-local
+    // behaviour however it is named — this one reads a STATIC path, which is
+    // the branch that was missed.
+    served = makeResponse({ contentType: 'text/event-stream' });
+
+    await fetchEvent(sw.handlers, { url: 'https://tc.test/some-static-asset.css' });
+
+    assert.deepEqual(sw.puts, [],
+      'the cache-first branch declines a streaming response too');
   });
 
   it('a non-ok stream response is not cached either', async () => {

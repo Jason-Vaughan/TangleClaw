@@ -3116,7 +3116,26 @@ describe('sessions', () => {
       // A throw in the reporting, not in the pipeline: the wrap itself ran.
       wrapDefaultPipelineMod.wrapShape = () => { throw new Error('reporting exploded'); };
 
+      // A REAL subscriber, because the title promises subscriber teardown and
+      // the counter that used to stand in for it was never incremented by
+      // anything — trivially true, and green against a `finally` that cleared
+      // `running` without ever calling `_endSubscribers`. The subscription has
+      // to exist before the wrap so the throw happens underneath it.
       let ended = 0;
+      let events = 0;
+      const claim = wrapRunRegistry.begin('prime-test', null);
+      wrapRunRegistry.subscribe('prime-test', claim.runId, {
+        onEvent: () => { events += 1; },
+        onEnd: () => { ended += 1; }
+      });
+      // Release the probe claim so `triggerWrap` can take the slot; the
+      // subscriber is ended by that takeover, which is itself the contract.
+      wrapRunRegistry.finish('prime-test', claim.runId, null);
+      assert.equal(events, 1, 'finish delivers the terminal run-done BEFORE it ends the subscriber');
+      assert.equal(ended, 1, 'and then ends it — the mechanism this test relies on works');
+      ended = 0;
+      events = 0;
+
       try {
         await assert.rejects(() => sessions.triggerWrap('prime-test'), /reporting exploded/);
 
@@ -3128,7 +3147,9 @@ describe('sessions', () => {
         wrapDefaultPipelineMod.wrapShape = realShape;
         const retry = await sessions.triggerWrap('prime-test');
         assert.equal(retry.ok, true);
-        assert.equal(ended, 0, 'sanity: no subscriber was attached in this half');
+        // No events reached the probe subscriber: it was ended by the takeover
+        // before this wrap began, so a run it does not belong to cannot feed it.
+        assert.equal(events, 0, 'an ended subscriber receives nothing from a later run');
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
         wrapDefaultPipelineMod.wrapShape = realShape;

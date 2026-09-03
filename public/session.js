@@ -4600,6 +4600,26 @@ const WRAP_STREAM_DISCOVERY_ATTEMPTS = 8;
 const WRAP_STREAM_DISCOVERY_DELAY_MS = 400;
 
 /**
+ * Read `/wrap/status` without touching `api()`'s shared error side channel.
+ * Own `fetch` and own error handling: a failure here is a probe that did not
+ * answer, never a claim about the wrap the operator is waiting on.
+ *
+ * @param {string} statusUrl - The status endpoint for this project.
+ * @returns {Promise<object|null>} The parsed status, or null on any failure.
+ */
+async function _probeWrapStatus(statusUrl) {
+  try {
+    const res = await fetch(statusUrl);
+    if (!res.ok) return null;
+    // A service-worker cache stand-in is not the server answering (#709).
+    if (res.headers && res.headers.get && res.headers.get('X-TC-Cache-Fallback')) return null;
+    return await res.json();
+  } catch { // a probe that could not run is simply no run found yet
+    return null;
+  }
+}
+
+/**
  * Find the run the wrap POST just claimed and subscribe to its stream. A
  * bounded probe of `/wrap/status`, stopping early once the POST has settled
  * (`wrapInFlight` is reset in `confirmWrap`'s `finally`). A run whose id
@@ -4615,7 +4635,23 @@ const WRAP_STREAM_DISCOVERY_DELAY_MS = 400;
 async function attachWrapStream(priorRunId, password) {
   const statusUrl = `/api/sessions/${encodeURIComponent(projectName)}/wrap/status`;
   for (let attempt = 0; attempt < WRAP_STREAM_DISCOVERY_ATTEMPTS && wrapInFlight; attempt += 1) {
-    const status = await api(statusUrl);
+    // Deliberately NOT `api()`. These probes run concurrently with the wrap
+    // POST, and `api()` reports through a single shared side channel
+    // (`lastError` / `lastErrorCode` / `setConnected`) that every caller
+    // overwrites. `confirmWrap` reads `api.lastError` several microtask hops
+    // after its POST resolves, so a probe continuation queued in the same drain
+    // resets it to null in between and the operator is told "Wrap failed."
+    // instead of the server's reason — the exact defect #83 exists to prevent,
+    // reintroduced by a spectator. A spectator must not be able to write to the
+    // channel the authoritative request reports through.
+    const status = await _probeWrapStatus(statusUrl);
+    // Re-checked AFTER the await, not only in the loop condition: the probe's
+    // body was captured server-side before the run ended, so a response landing
+    // after the POST returned would otherwise open a stream on a finished run
+    // and replay "Wrapping — step N of M" over the final report already on
+    // screen. On the outcomes whose `run-done` carries no `pipelineResult`
+    // (thrown pipeline, reporting threw) nothing repaints it back.
+    if (!wrapInFlight) break;
     if (status && status.running === true && typeof status.runId === 'string' && status.runId !== priorRunId) {
       startWrapStream(status.runId, password);
       return true;

@@ -315,6 +315,41 @@ describe('session.js wiring (#185)', () => {
       'the warn fires before the repaint condition that the dominant failure fails');
   });
 
+  it('the discovery probe never writes api()\'s shared error channel', () => {
+    // The probe runs concurrently with the wrap POST. `api()` reports failures
+    // through ONE set of function properties every caller overwrites, and
+    // `confirmWrap` reads `api.lastError` several microtask hops after its own
+    // POST resolves — so a probe continuation queued in the same drain nulls it
+    // in between and the operator reads "Wrap failed." instead of the server's
+    // reason. That is the defect #83 exists to prevent, reintroduced by a
+    // spectator.
+    const body = functionBody(src, 'async function attachWrapStream(');
+    assert.doesNotMatch(body, /\bawait api\(/,
+      'the probe must not go through the shared api() helper');
+    assert.match(body, /_probeWrapStatus\(/, 'it uses its own reader');
+
+    const probe = functionBody(src, 'async function _probeWrapStatus(');
+    assert.doesNotMatch(probe, /api\.lastError|api\.lastErrorCode|setConnected/,
+      'and that reader writes no part of the shared side channel');
+    assert.match(probe, /X-TC-Cache-Fallback/,
+      'while still refusing a service-worker cache stand-in as a server answer (#709)');
+  });
+
+  it('a probe that resolves after the wrap ended does not open a stream over the final report', () => {
+    // The loop condition samples `wrapInFlight` BEFORE the await; the decision
+    // to subscribe happens after it. A probe issued at the last step, whose
+    // body was captured server-side while the run was still going, otherwise
+    // starts a stream on a finished run and replays "Wrapping — step N of M"
+    // over the report already on screen — and on the outcomes whose `run-done`
+    // carries no `pipelineResult` nothing repaints it back.
+    const body = functionBody(src, 'async function attachWrapStream(');
+    const afterAwait = body.slice(body.indexOf('_probeWrapStatus('));
+    assert.match(afterAwait, /if \(!wrapInFlight\) break;/,
+      'the flag is re-read after the await, not only in the loop condition');
+    assert.ok(afterAwait.indexOf('if (!wrapInFlight) break;') < afterAwait.indexOf('startWrapStream('),
+      'and before anything subscribes');
+  });
+
   it('the live drawer offers no decision: Retry and Done stay hidden until the run is over', () => {
     const body = functionBody(src, 'function renderLiveWrapDrawer(');
     assert.ok(body.includes("getElementById('wrapDrawerRetryBtn').classList.add('hidden')"));
