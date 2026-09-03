@@ -26,6 +26,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { execSync } = require('node:child_process');
+const { initRepo } = require('./_temp-repo');
 const { setLevel, setConsoleStream } = require('../lib/logger');
 
 setLevel('error');
@@ -105,7 +106,7 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
       name: `sandbox-${path.basename(projectPath)}`,
       path: projectPath
     }).id;
-    execSync('git init --quiet', { cwd: projectPath });
+    initRepo(projectPath);
     execSync('git config user.email t@example.com && git config user.name Test',
       { cwd: projectPath, shell: '/bin/sh' });
     fs.writeFileSync(path.join(projectPath, 'README.md'), 'init\n');

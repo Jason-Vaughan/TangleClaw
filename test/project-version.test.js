@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
+const { initRepo } = require('./_temp-repo');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -42,7 +43,7 @@ describe('project-version (#101)', () => {
     });
 
     it('falls back to git tag when no manifest sources exist', () => {
-      execFileSync('git', ['init', '-q'], { cwd: tmpDir });
+      initRepo(tmpDir);
       execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'], { cwd: tmpDir });
       execFileSync('git', ['tag', 'v2.5.1'], { cwd: tmpDir });
       assert.deepEqual(projectVersion.detectVersion(tmpDir), { version: '2.5.1', source: 'git tag' });
@@ -69,7 +70,7 @@ describe('project-version (#101)', () => {
     });
 
     it('strips leading "v" from git tags so it matches manifest sources', () => {
-      execFileSync('git', ['init', '-q'], { cwd: tmpDir });
+      initRepo(tmpDir);
       execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'], { cwd: tmpDir });
       execFileSync('git', ['tag', 'v3.0.0'], { cwd: tmpDir });
       assert.equal(projectVersion.detectVersion(tmpDir).version, '3.0.0');
@@ -181,20 +182,20 @@ describe('project-version (#101)', () => {
     });
 
     it('returns null for a git repo with no tags', () => {
-      execFileSync('git', ['init', '-q'], { cwd: tmpDir });
+      initRepo(tmpDir);
       execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'], { cwd: tmpDir });
       assert.equal(projectVersion._readGitTagVersion(tmpDir), null);
     });
 
     it('returns the most recent tag, "v" prefix stripped', () => {
-      execFileSync('git', ['init', '-q'], { cwd: tmpDir });
+      initRepo(tmpDir);
       execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'], { cwd: tmpDir });
       execFileSync('git', ['tag', 'v1.0.0'], { cwd: tmpDir });
       assert.equal(projectVersion._readGitTagVersion(tmpDir), '1.0.0');
     });
 
     it('preserves tags without a "v" prefix', () => {
-      execFileSync('git', ['init', '-q'], { cwd: tmpDir });
+      initRepo(tmpDir);
       execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'init'], { cwd: tmpDir });
       execFileSync('git', ['tag', '1.0.0'], { cwd: tmpDir });
       assert.equal(projectVersion._readGitTagVersion(tmpDir), '1.0.0');

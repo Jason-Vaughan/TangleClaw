@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const { initRepo } = require('./_temp-repo');
 const { setLevel, getLevel, setConsoleStream } = require('../lib/logger');
 
 setLevel('error');
@@ -843,7 +844,7 @@ describe('wrap-step lint (#139 Chunk 4)', () => {
     const realRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-wrap-step-lint-realgit-'));
     try {
       const { execSync } = require('node:child_process');
-      execSync('git init --quiet', { cwd: realRepo });
+      initRepo(realRepo);
       execSync('git config user.email t@example.com && git config user.name Test',
         { cwd: realRepo, shell: '/bin/sh' });
       fs.writeFileSync(path.join(realRepo, 'tracked.js'), 'console.log(1)\n');
@@ -2251,7 +2252,7 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
     // Fresh sandbox repo per test — git state must not leak between cases.
     Object.assign(commitStep._internal, originals);
     projectPath = fs.mkdtempSync(path.join(tmpDir, 'repo-'));
-    execSync('git init --quiet', { cwd: projectPath });
+    initRepo(projectPath);
     execSync('git config user.email t@example.com && git config user.name Test',
       { cwd: projectPath, shell: '/bin/sh' });
     fs.writeFileSync(path.join(projectPath, 'README.md'), 'init\n');
@@ -2384,7 +2385,7 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
     // A repo whose very first commit is the wrap commit — HEAD~1 does not resolve,
     // so there is no pre-wrap base and the stamp falls back to the wrap commit.
     const rootRepo = fs.mkdtempSync(path.join(tmpDir, 'rootrepo-'));
-    execSync('git init --quiet', { cwd: rootRepo });
+    initRepo(rootRepo);
     execSync('git config user.email t@example.com && git config user.name Test',
       { cwd: rootRepo, shell: '/bin/sh' });
     fs.writeFileSync(path.join(rootRepo, 'first.txt'), 'hi\n');
@@ -2399,8 +2400,11 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
   });
 
   it('returns blocked when git commit exits non-zero (pre-commit hook rejection)', async () => {
-    // Install a pre-commit hook that rejects everything.
+    // Install a pre-commit hook that rejects everything. The hooks directory
+    // is created here: an isolated `git init` copies no template, so nothing
+    // else makes it (#831).
     const hookDir = path.join(projectPath, '.git/hooks');
+    fs.mkdirSync(hookDir, { recursive: true });
     const hookPath = path.join(hookDir, 'pre-commit');
     fs.writeFileSync(hookPath, '#!/bin/sh\necho "rejected by hook" >&2\nexit 1\n');
     fs.chmodSync(hookPath, 0o755);

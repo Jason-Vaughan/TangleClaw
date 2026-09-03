@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { execSync } = require('node:child_process');
+const { initRepo } = require('./_temp-repo');
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -27,7 +28,7 @@ describe('lib/actions/invoke-critic (#139 Chunk 11b)', () => {
   beforeEach(() => {
     // Fresh project dir per test so file state is isolated.
     projectPath = fs.mkdtempSync(path.join(tmpDir, 'project-'));
-    execSync('git init -q', { cwd: projectPath });
+    initRepo(projectPath);
     execSync('git config user.email test@example.com', { cwd: projectPath });
     execSync('git config user.name test-user', { cwd: projectPath });
     execSync('git commit --allow-empty -m init -q', { cwd: projectPath });
@@ -227,7 +228,7 @@ describe('lib/actions/invoke-critic (#267 — real-invocation paths)', () => {
 
   beforeEach(() => {
     projectPath = fs.mkdtempSync(path.join(tmpDir, 'project-'));
-    execSync('git init -q', { cwd: projectPath });
+    initRepo(projectPath);
     execSync('git config user.email test@example.com', { cwd: projectPath });
     execSync('git config user.name test-user', { cwd: projectPath });
     execSync('git commit --allow-empty -m init -q', { cwd: projectPath });
