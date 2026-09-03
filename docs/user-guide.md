@@ -712,6 +712,21 @@ curl -s http://localhost:3100
 - Check the chime toggle in session settings
 - Verify your device isn't in silent mode (iOS)
 
+### A Project Script Cannot Reach Calendar, Contacts or a Protected Folder
+
+A script run from inside a session cannot obtain a macOS privacy (TCC) grant: the session is a
+launchd chain (`ttyd` → `tmux` → engine) whose responsible process is `ttyd`, there is no prompt
+to answer, and a grant keyed to that binary's path is dropped on its next upgrade — the same
+mechanism as the Full Disk Access hang above. The supported pattern is a project-owned
+LaunchAgent that runs the script as its own process, verified with `launchctl kickstart` and the
+job's own log. [macOS automations that need a privacy grant](macos-tcc-automations.md) walks
+through it.
+
+Because such a plist carries the project's absolute path, **renaming a project** in the Settings
+modal reports every LaunchAgent that still names the old path in a banner on the dashboard (it
+stays until dismissed). TangleClaw does not edit the plists; the page above shows the
+edit-then-reload sequence.
+
 ### Resetting TangleClaw
 
 To reset all configuration and state:

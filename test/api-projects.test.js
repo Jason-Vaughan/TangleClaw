@@ -212,6 +212,33 @@ describe('api-projects', () => {
       assert.equal(status, 404);
     });
 
+    // #1148 — a rename's after-the-fact warning (a LaunchAgent still naming
+    // the old path) must reach the wire on the same `warnings` field the
+    // dashboard already reads for partial failures, with the rename still 200.
+    it('carries a rename\'s LaunchAgent warning on the response warnings field', async () => {
+      const launchAgentScan = require('../lib/launchagent-scan');
+      const laDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-la-'));
+      const realDir = launchAgentScan.defaultLaunchAgentsDir;
+      launchAgentScan.defaultLaunchAgentsDir = () => laDir;
+      try {
+        projects.createProject({ name: 'api-la-src', gitInit: false });
+        const oldPath = store.projects.getByName('api-la-src').path;
+        fs.writeFileSync(path.join(laDir, 'com.example.sync.plist'),
+          `<plist version="1.0"><dict><key>Label</key><string>com.example.sync</string>`
+          + `<key>WorkingDirectory</key><string>${oldPath}</string></dict></plist>\n`);
+
+        const { status, data } = await request('PATCH', '/api/projects/api-la-src', { name: 'api-la-dst' });
+        assert.equal(status, 200);
+        assert.equal(data.name, 'api-la-dst');
+        assert.equal(Array.isArray(data.warnings) && data.warnings.length, 1, 'exactly one warning on the wire');
+        assert.match(data.warnings[0], /1 LaunchAgent still references the old path /);
+        assert.match(data.warnings[0], /com\.example\.sync/);
+      } finally {
+        launchAgentScan.defaultLaunchAgentsDir = realDir;
+        fs.rmSync(laDir, { recursive: true, force: true });
+      }
+    });
+
     // #103 chunk 2 — per-project silentPrime opt-in via PATCH
     it('persists silentPrime=true and surfaces it on the enriched response', async () => {
       const { status, data } = await request('PATCH', '/api/projects/api-test-project', {

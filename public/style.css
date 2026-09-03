@@ -202,6 +202,9 @@ body {
   font-size: 12px;
 }
 .orphan-banner-text { flex: 1; }
+/* Settings-save warnings (#1148): one warning per line, and a plist path must
+   wrap rather than push the Dismiss button off a phone screen. */
+.settings-warnings-text { white-space: pre-line; overflow-wrap: anywhere; }
 .orphan-banner-btn {
   background: #1a1a1a;
   color: var(--amber);
