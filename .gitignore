@@ -1,8 +1,22 @@
 # macOS
 .DS_Store
 
-# Claude Code (personal settings)
-.claude/
+# Claude Code. Everything here is machine-local EXCEPT the plugin install
+# reference, which is governance state (#833): `enabledPlugins` and
+# `extraKnownMarketplaces` in settings.json are what `isPluginGoverned()` reads,
+# and a clone without them reads as ungoverned — which switches CLAUDE.md's
+# merge strategy from managed-block to WHOLE-FILE and destroys it on first
+# launch. Tracking the file is what makes a committed CLAUDE.md survive.
+#
+# `settings.local.json` (permissions) stays ignored: genuinely per-machine.
+# The `hooks` block inside settings.json carries absolute paths and is rewritten
+# by `syncEngineHooks` at every launch, so a clone at a different path will show
+# it as a diff on first launch. That visibility is the point of #833 — the
+# reference silently held three different values across two days before this —
+# but the cleaner split (machine-local hooks out of the tracked file) is the
+# follow-up recorded on that issue.
+.claude/*
+!.claude/settings.json
 
 # Prawduct dogfooding state (TC builds itself with Prawduct).
 # Contents are ignored fail-closed; only the change-log is tracked — it feeds
@@ -155,12 +169,15 @@ secrets.*.json
 logs/
 
 # Engine config and local planning notes — machine state, not repo content.
-# CLAUDE.md here is plugin-governed (Prawduct), hand-maintained, and duplicates
-# data/global-rules.md, which IS tracked. NOTE: lib/engines.js isPluginGoverned()
-# keys on .claude/settings.json, which is also ignored — so on a FRESH CLONE with
-# no plugin reference, TC will generate a CLAUDE.md rather than leave it alone.
-# That coupling is issue #833; revisit this line when #833 is decided.
-CLAUDE.md
+#
+# CLAUDE.md is NOT in that category and is tracked (#833). It is the file Claude
+# Code reads in this directory, and leaving it untracked meant a fresh clone got
+# whatever TangleClaw generated instead of the hand-maintained content. It is
+# safe to track only because `.claude/settings.json` is now tracked too: that is
+# what makes `isPluginGoverned()` true in a clone, which forces CLAUDE.md's merge
+# strategy to managed-block. Ungoverned, the strategy is whole-file and the first
+# launch overwrites the file entirely — CLAUDE.md is not in
+# SHARED_CONVENTION_CARRIERS, so nothing else protects it.
 
 # Prawduct session files
 .prawduct/.critic-partials-archive/

@@ -39,6 +39,25 @@ All notable changes to TangleClaw are documented in this file.
   mute still outranks it, gated where it always was, inside `playChime`.
 
 ### Fixed
+- **`CLAUDE.md` is a committed artifact again, and a fresh clone no longer destroys it (#833).**
+  `CLAUDE.md` — the file Claude Code actually reads in this directory — was gitignored, so a clone
+  got whatever TangleClaw generated rather than the hand-maintained content. Committing it alone
+  would have been worse than leaving it: `writeEngineConfig` picks its merge strategy from
+  governance (`governed ? 'managed-block' : declared || 'whole-file'`), `CLAUDE.md` is not in
+  `SHARED_CONVENTION_CARRIERS`, and `data/engines/claude.json` declares no strategy of its own — so
+  an ungoverned clone resolves **whole-file** and the first session launch overwrites the committed
+  file entirely. Governance is read from `.claude/settings.json`, which was itself ignored, so no
+  clone could ever read as governed. Both files are now tracked, which closes the loop: the
+  reference makes `isPluginGoverned()` true, that forces managed-block, and TangleClaw splices its
+  region instead of replacing the document. `settings.local.json` (per-machine permissions) and the
+  agent worktrees stay ignored — the negation is deliberately one file wide.
+  `test/repo-governance-reference.test.js` asserts the whole chain, because every link is invisible
+  on the machine that breaks it and only shows up on someone else's first clone. Tracking the file
+  also makes the reference reviewable, which is what #833 was filed about: it silently held three
+  different values across two days with no diff and no commit. **Known residual:** the `hooks` block
+  inside `settings.json` carries absolute paths and is rewritten by `syncEngineHooks` at every
+  launch, so a clone at a different path shows it as a diff after first launch; splitting
+  machine-local keys out of the tracked file is the recorded follow-up.
 - **A chime switched off no longer leaves its indicator lit (#1181).** `updateChimeIndicator` only
   ever *added* the `active` class, so disarming the chime left the button lit until reload — and it
   painted onto the Cmd button, whose `active` state also means "the command bar is open", putting
