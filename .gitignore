@@ -1,8 +1,24 @@
 # macOS
 .DS_Store
 
-# Claude Code (personal settings)
-.claude/
+# Claude Code. Everything here is machine-local EXCEPT the plugin install
+# reference, which is governance state (#833). `isPluginGoverned()` reads
+# `enabledPlugins`; `extraKnownMarketplaces` is load-bearing for a different
+# reason — without it the plugin never resolves, which `_isCompletePluginRef`
+# is the contract for — so both halves are committed. A clone without the
+# reference reads as ungoverned, which switches CLAUDE.md's merge strategy from
+# managed-block to WHOLE-FILE and destroys it on first launch. Tracking this
+# file is what makes a committed CLAUDE.md survive.
+#
+# `settings.local.json` (permissions) stays ignored: genuinely per-machine.
+#
+# The `hooks` block is NOT committed. It carries absolute paths to one machine's
+# checkout, and a clone elsewhere would run two commands that do not exist at
+# every Claude Code start — a broken hook, not merely a stale path. `syncEngineHooks`
+# writes it at launch, so **expect this tracked file to show as modified**; that is
+# known, and moving machine-local keys out for good is #1242.
+.claude/*
+!.claude/settings.json
 
 # Prawduct dogfooding state (TC builds itself with Prawduct).
 # Contents are ignored fail-closed; only the change-log is tracked — it feeds
@@ -56,8 +72,16 @@
 # TangleClaw generated `.codex.yaml` into its own clone, and the resulting dirty
 # tree stranded them on the version containing the bug they were working around.
 #
-# CLAUDE.md is deliberately NOT listed: this repo is plugin-governed, so its
-# CLAUDE.md is hand-authored and tracked (TC never regenerates it here).
+# CLAUDE.md is deliberately NOT listed: it is tracked (#833). TangleClaw does
+# write to it — since #1021 it splices its own BEGIN/END:tangleclaw block on
+# every launch — but only inside those markers, so the hand-authored content
+# around them survives. Expect it to show as modified: the generated block is
+# rendered from this machine's state (the API base URL carries the live port,
+# the Medusa routes carry the project name), so a clone on a different port
+# dirties it at first launch exactly as settings.json does. Same follow-up,
+# #1242. A regenerated CLAUDE.md also strands the self-updater — that is #1241,
+# and it is deliberately NOT fixed by widening the discard set, because a
+# tracked hand edit outside the markers must not be discardable.
 .codex.yaml
 .aider.conf.yml
 
@@ -154,13 +178,17 @@ secrets.*.json
 *.log
 logs/
 
-# Engine config and local planning notes — machine state, not repo content.
-# CLAUDE.md here is plugin-governed (Prawduct), hand-maintained, and duplicates
-# data/global-rules.md, which IS tracked. NOTE: lib/engines.js isPluginGoverned()
-# keys on .claude/settings.json, which is also ignored — so on a FRESH CLONE with
-# no plugin reference, TC will generate a CLAUDE.md rather than leave it alone.
-# That coupling is issue #833; revisit this line when #833 is decided.
-CLAUDE.md
+# Why CLAUDE.md is NOT ignored here — the rules it would have sat among are the
+# `.claude/*` block near the top of this file.
+#
+# CLAUDE.md is tracked (#833). It is the file Claude
+# Code reads in this directory, and leaving it untracked meant a fresh clone got
+# whatever TangleClaw generated instead of the hand-maintained content. It is
+# safe to track only because `.claude/settings.json` is now tracked too: that is
+# what makes `isPluginGoverned()` true in a clone, which forces CLAUDE.md's merge
+# strategy to managed-block. Ungoverned, the strategy is whole-file and the first
+# launch overwrites the file entirely — CLAUDE.md is not in
+# SHARED_CONVENTION_CARRIERS, so nothing else protects it.
 
 # Prawduct session files
 .prawduct/.critic-partials-archive/

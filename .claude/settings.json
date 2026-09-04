@@ -1,0 +1,15 @@
+{
+  "enabledPlugins": {
+    "prawduct@prawduct": true
+  },
+  "extraKnownMarketplaces": {
+    "prawduct": {
+      "source": {
+        "source": "github",
+        "repo": "brookstalley/prawduct",
+        "ref": "main"
+      },
+      "autoUpdate": true
+    }
+  }
+}

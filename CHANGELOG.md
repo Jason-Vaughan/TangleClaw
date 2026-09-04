@@ -39,6 +39,34 @@ All notable changes to TangleClaw are documented in this file.
   mute still outranks it, gated where it always was, inside `playChime`.
 
 ### Fixed
+- **`CLAUDE.md` is a committed artifact again, and a fresh clone no longer destroys it (#833).**
+  `CLAUDE.md` — the file Claude Code actually reads in this directory — was gitignored, so a clone
+  got whatever TangleClaw generated rather than the hand-maintained content. Committing it alone
+  would have been worse than leaving it: `writeEngineConfig` picks its merge strategy from
+  governance (`governed ? 'managed-block' : declared || 'whole-file'`), `CLAUDE.md` is not in
+  `SHARED_CONVENTION_CARRIERS`, and `data/engines/claude.json` declares no strategy of its own — so
+  an ungoverned clone resolves **whole-file** and the first session launch overwrites the committed
+  file entirely. Governance is read from `.claude/settings.json`, which was itself ignored, so no
+  clone could ever read as governed. Both files are now tracked, which closes the loop: the
+  reference makes `isPluginGoverned()` true, that forces managed-block, and TangleClaw splices its
+  region instead of replacing the document. `settings.local.json` (per-machine permissions) and the
+  agent worktrees stay ignored — the negation is deliberately one file wide.
+  `test/repo-governance-reference.test.js` asserts the whole chain, because every link is invisible
+  on the machine that breaks it and only shows up on someone else's first clone. Tracking the file
+  also makes the reference reviewable, which is what #833 was filed about: it silently held three
+  different values across two days with no diff and no commit. Only the portable governance keys are
+  committed — the `hooks` block is stripped, because its absolute paths would make every clone
+  elsewhere run two nonexistent commands at each Claude Code start; `syncEngineHooks` rewrites it at
+  launch, so the tracked file shows as modified from then on, and moving machine-local keys out for
+  good is **#1242**. While in the file: `CLAUDE.md` regained the `PRAWDUCT:ANCHOR` governance section
+  its own header pointed at (absent, most likely eaten by an earlier ungoverned whole-file write —
+  the failure this change prevents), gained a section recording this repo's exceptions to the
+  mirrored Global Rules so `docs/release-process.md`'s "do not tag by hand" citation is finally true,
+  and its Global Rules mirror is now pinned equal to `data/global-rules.md` by test rather than by
+  hope. Two hazards surfaced by tracking the file are filed rather than folded in: **#1240** (the
+  ungoverned `_generateClaudeMd` path can inline a live service token into what is now a tracked
+  file) and **#1241** (a regenerated `CLAUDE.md` lands in the self-updater's hard-refusal path, which
+  cannot be fixed without amending a ratified decision about discarding hand edits).
 - **The launch-mode picker now opens on the project's configured mode, which is what makes that
   setting work at all (#596).** A project could store a `defaultLaunchMode` and never launch in it.
   The picker seeded its selection from the *engine's* default (`public/landing.js`) and then sent
