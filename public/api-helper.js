@@ -3608,6 +3608,13 @@
    * @returns {string} A `rules-status-*` class, or '' for the one outcome that
    *   is genuinely neutral (`no-rules`: nothing was owed).
    */
+  function tcDeliveryOutcomeClass(outcome) {
+    if (outcome === 'delivered') return 'rules-status-ok';
+    if (outcome === 'skipped') return 'rules-status-err';
+    if (outcome === 'no-rules') return '';
+    return 'rules-status-warn';
+  }
+
   /**
    * The launch modes an engine will actually run, in declaration order.
    *
@@ -3631,13 +3638,6 @@
     const modes = engine && engine.launchModes;
     if (!modes) return [];
     return Object.entries(modes).filter(([, mode]) => mode && mode.disabled !== true);
-  }
-
-  function tcDeliveryOutcomeClass(outcome) {
-    if (outcome === 'delivered') return 'rules-status-ok';
-    if (outcome === 'skipped') return 'rules-status-err';
-    if (outcome === 'no-rules') return '';
-    return 'rules-status-warn';
   }
 
   global.tcHonoredLaunchModes = tcHonoredLaunchModes;

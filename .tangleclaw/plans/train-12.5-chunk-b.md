@@ -26,7 +26,7 @@ Re-scope recorded on the issue: https://github.com/Jason-Vaughan/TangleClaw/issu
 predicate to reuse already exists with a stated single-definition rationale, and the behavior the
 operator asked for is written down in their own words on the issue.
 
-## B1 · `defaultLaunchMode` is dead whenever the picker is visible
+## Chunk B1 · `defaultLaunchMode` is dead whenever the picker is visible
 
 **Problem, traced.** Three facts compose into the defect:
 
@@ -57,7 +57,7 @@ then does nothing observable with it.
   default rather than checking a radio that is not there.
 - A project with no stored default is unchanged: engine default, exactly as today.
 
-## B2 · The picker offers modes its own gate excluded
+## Chunk B2 · The picker offers modes its own gate excluded
 
 **Found while reading B1, and it is the predicate B1 needs.** Two lines in one file disagree about
 the same flag:
@@ -144,18 +144,18 @@ Every new test gets a named mutation, verified red.
 
 ## Status
 
-- [x] B1 · preselect from the project's `defaultLaunchMode`
-- [x] B2 · one honored-mode predicate, both sites
+- [x] Chunk B1 · preselect from the project's `defaultLaunchMode`
+- [x] Chunk B2 · one honored-mode predicate, all four browser sites
 - [x] Tests written — every new test has a named mutation, each verified red (table below)
-- [x] Suite green (7759 pass, 1 skip), evidence recorded from JUnit
+- [x] Suite green, evidence recorded from JUnit (`prawduct-hook test-status`)
 - [x] CHANGELOG entry
-- [ ] Cumulative Critic, findings dispositioned
+- [x] Cumulative Critic + verify-resolutions: 0 blocking / 0 warning / 0 note; 9 fixed, R-1 waived (see below)
 - [ ] PR
 
 ## Mutation evidence
 
-Each mutation was applied to `public/landing.js`, the picker suite run, then the file restored and
-checksummed against its pre-mutation copy.
+Each mutation was applied to the named source file, the picker suite run, then the file restored
+and checksummed against its pre-mutation copy.
 
 | # | Mutation | Goes red |
 |---|---|---|
@@ -165,6 +165,7 @@ checksummed against its pre-mutation copy.
 | M4 | gate counts `Object.keys(...)` instead of honored modes | does-not-open-for-one-honored-mode |
 | M5 | `return engineDefault` without checking it is honored | falls-past-the-engine-default |
 | M6 | drop the `if (!modes) return []` guard | launches-directly-when-engine-unknown |
+| M7 | `tcHonoredLaunchModes` drifts to `!mode.disabled` (`api-helper.js`) | the browser/server parity test |
 
 **M4 was GREEN on its first run, and that was the finding.** The fixture built its engine as
 `Object.assign({ id: 'solo' }, readEngine('claude'))` — the profile JSON carries its own `id`, so
@@ -205,3 +206,18 @@ predicate to `!disabled` left the new parity test passing, because every fixture
 true`, where the two spellings agree. The test could not see the drift it existed to prevent. Fixed
 by adding truthy non-`true` fixtures (`'yes'`, `1`); M7 then reds. Second instance this chunk of a
 fixture that could not reach its subject.
+
+## Why R-1 was waived rather than fixed, and what it means beyond this chunk
+
+R-1's named cause was fixed — `active_build_plan` points at this plan. The check still did not run.
+`buildplan_refs._CHUNK_HEADING_RE` requires the literal word **`Chunk`** before the id, and this
+plan was authored with `## B1 ·` / `## B2 ·`. **No `--chunk` value graded it.** The headings and
+Status items above are now in the `Chunk B1` form so the check can grade.
+
+Two things worth carrying past this chunk:
+
+- **`train-12.5-chunk-a.md` uses the same `### A1 ·` style, so chunk A's deliverable check never
+  ran either.** Nobody noticed, because the failure is silent unless a review is dispatched with an
+  explicit `--chunk`.
+- **Omitting `--chunk` produces no `unchecked` line at all** — a silent no-op rather than a warning.
+  A plan whose headings do not match is indistinguishable from one that graded clean.
