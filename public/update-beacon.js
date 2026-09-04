@@ -489,7 +489,10 @@
             'The update is blocked only by files TangleClaw itself wrote:\n\n'
             + d.discardable.map((f) => `  ${f}`).join('\n')
             + '\n\nDiscard these files and update? Nothing of yours is in this list — '
-            + 'anything TangleClaw could not prove it wrote would have blocked instead.'
+            + 'anything TangleClaw could not prove it wrote would have blocked instead. '
+            + 'A file TangleClaw shares with you (CLAUDE.md) appears only when your copy '
+            + 'matches the committed one everywhere outside TangleClaw\'s own section, so '
+            + 'discarding restores that section and changes nothing you wrote.'
           );
           if (proceedDiscard) {
             try {
@@ -509,7 +512,8 @@
             + 'so nothing was touched.\n\nIn the way:\n'
             + d.realWork.map((f) => `  ${f}`).join('\n')
             + (d.discardable.length
-              ? '\n\nAlso present (TangleClaw-written, discardable once the above are resolved):\n'
+              ? '\n\nAlso present (TangleClaw-written, or shared files it changed only inside its '
+                + 'own section — discardable once the above are resolved):\n'
                 + d.discardable.map((f) => `  ${f}`).join('\n')
               : '')
             + '\n\nCommit or stash them in the install directory, then update again.'
