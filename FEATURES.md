@@ -350,3 +350,9 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - **TBD** — touched in this session: `lib/wrap-steps/_exec-shell.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/orphan-hooks-banner.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/ttyd-watcher.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-09-04)
+
+- **TBD** — touched in this session: `test/chime-control.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/repo-governance-reference.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/settings-launch-mode-render.test.js`. <!-- describe -->
