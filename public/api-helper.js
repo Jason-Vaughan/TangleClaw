@@ -1,8 +1,22 @@
 'use strict';
-/* ── TangleClaw v3 — Shared frontend API helper ── */
-/* Single source of truth for the `api()` / `apiMutate()` helpers used by */
-/* landing.js, session.js, and openclaw-view.js. Loaded as a plain script */
-/* before any page script, exposing two factories on `window`. */
+/* ── TangleClaw v3 — Shared frontend helpers and components ── */
+/* Loaded as a plain script before any page script, exposing everything it */
+/* publishes on `window`. Two kinds of thing live here: */
+/*                                                                        */
+/*   1. The `api()` / `apiMutate()` factories used by landing.js,          */
+/*      session.js and openclaw-view.js.                                   */
+/*   2. Browser COMPONENTS a page mounts — the Medusa control, the Master  */
+/*      settings and control bar, the settings-warnings banner, the chime  */
+/*      control. They live here for two reasons that keep proving          */
+/*      themselves: a component rendered on more than one page must have   */
+/*      one implementation or the surfaces drift, and a page script cannot */
+/*      be require()d, so anything only reachable from `session.js` can be */
+/*      tested by grepping its source and no other way.                    */
+/*                                                                        */
+/* Tests lift this file into a sandbox (`test/_api-helper-globals.js`) and */
+/* RUN what it publishes against the mini DOM. That is the point: a source */
+/* probe once proved a branch existed while the real `api()` made it       */
+/* unreachable (#928 R-1). */
 
 (function (global) {
   /**
@@ -1526,6 +1540,26 @@
     ].filter(Boolean).join(' ');
     return tcDegradedRead(false, why,
       tcSentence(project.unreadableHint) || TC_CODE_REMEDY[code] || null);
+  }
+
+  /**
+   * The settings-warnings banner's markup — the ids and the classes together,
+   * so a page hosting it cannot declare two of the three and lose the styling.
+   *
+   * The session page originally hand-copied this and reached for its nearest
+   * neighbour, `.engine-error-banner`, which is danger-red with a red left
+   * border — so a sentence whose entire point is that the save SUCCEEDED
+   * rendered as an engine failure, and a second warning ran onto one line for
+   * want of `pre-line`. Single-sourced for the same reason
+   * `tcMedusaControlMarkup` is.
+   *
+   * @returns {string} The banner, hidden.
+   */
+  function tcSettingsWarningsMarkup() {
+    return '<div id="settingsWarningsBanner" class="settings-warnings-banner hidden" role="alert">'
+      + '<span class="settings-warnings-text" id="settingsWarningsText"></span>'
+      + '<button type="button" class="settings-warnings-dismiss" id="settingsWarningsDismissBtn">Dismiss</button>'
+      + '</div>';
   }
 
   /**
@@ -3586,6 +3620,7 @@
   global.tcEscapeHtml = tcEscapeHtml;
   global.tcCreateMedusaControl = tcCreateMedusaControl;
   global.tcCreateChimeControl = tcCreateChimeControl;
+  global.tcSettingsWarningsMarkup = tcSettingsWarningsMarkup;
   global.tcRenderSettingsWarnings = tcRenderSettingsWarnings;
   global.tcSetRulesStatus = tcSetRulesStatus;
   global.tcDeliveryOutcomeClass = tcDeliveryOutcomeClass;

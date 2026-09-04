@@ -2763,7 +2763,18 @@ async function closeSettings() {
     const res = await apiMutate(`/api/projects/${encodeURIComponent(projectName)}`, 'PATCH', {
       engine: newEngine
     });
-    window.tcRenderSettingsWarnings(document, res && res.warnings);
+    if (!res) {
+      // A rejected save must not be the one silent outcome. The modal has
+      // already closed and the picker still shows the engine the operator
+      // chose, so with nothing rendered here they see exactly the false "it
+      // took effect" this work exists to remove. The dashboard surfaces
+      // `api.lastError` in the same case; so does this.
+      window.tcRenderSettingsWarnings(document, [
+        `Engine not saved: ${api.lastError || 'the server rejected the update'}`
+      ]);
+    } else {
+      window.tcRenderSettingsWarnings(document, res.warnings);
+    }
   }
 
   // Apply mouse toggle — an operator's deliberate Settings choice IS a
@@ -4262,6 +4273,12 @@ async function setActivePlan(sel, btn, noteEl) {
       || 'Could not set the active plan. Try again.';
     return;
   }
+  // Reads `warnings` as "the plan was NOT set". That is only sound because this
+  // PATCH body carries `activePlan` alone: the same array also carries advisories
+  // about a save that fully SUCCEEDED (#758's launch-time-only notice, #1148's
+  // LaunchAgent list), and treating one of those as a failure here would tell the
+  // operator their plan did not save when it did. Precondition, not history — if
+  // this body ever gains a second key, this branch has to distinguish them.
   if (Array.isArray(data.warnings) && data.warnings.length > 0) {
     btn.disabled = false;
     sel.disabled = false;
@@ -5127,6 +5144,18 @@ function bindEvents() {
   });
   masterSettings.mount();
 
+  // The chime control mounts here, with its siblings, rather than at the end of
+  // initSession: the persisted value is already in hand, and mounting late left
+  // the button reading "off" on a session that will chime — through four awaits,
+  // and never at all on the project-not-found path, where every neighbouring
+  // banner button is live. That is the same lie #1181 exists to retire.
+  chimeControl.mount(sessionState.chimeEnabled);
+
+  // The settings-warnings banner (#758), from the same builder the dashboard's
+  // markup uses, so the two cannot drift.
+  const warnHost = document.getElementById('settingsWarningsHost');
+  if (warnHost) warnHost.innerHTML = window.tcSettingsWarningsMarkup();
+
   // The Master control bar. Same component as the dashboard panel, so the two
   // surfaces cannot drift; only the ids and the label differ.
   masterBar = window.tcCreateMasterControlBar({
@@ -5456,8 +5485,6 @@ async function initSession() {
     document.getElementById('pasteBtn').hidden = false;
   }
 
-  // Bind and paint the banner chime control from the persisted state (#1181).
-  chimeControl.mount(sessionState.chimeEnabled);
 
   // Start polling if session is active
   if (!sessionState.ended) {

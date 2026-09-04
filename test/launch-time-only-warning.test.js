@@ -27,7 +27,7 @@ const { setLevel } = require('../lib/logger');
 
 setLevel('error');
 
-const { LAUNCH_TIME_ONLY_SETTINGS, launchTimeOnlyChanges } = projects;
+const { LAUNCH_TIME_ONLY_SETTINGS, launchTimeOnlyChanges, formatLaunchTimeWarnings } = projects;
 
 /**
  * Any value that differs from `v`, derived from its type — so this test needs
@@ -76,6 +76,21 @@ describe('#758 — launch-time-only settings', () => {
     return row;
   }
 
+  /**
+   * A PATCH body that really changes `key`, derived from what the project holds
+   * now — a literal here is how the first version of this test sent
+   * `silentPrime: true` to a project whose default is already `true` and
+   * concluded the code was broken.
+   * @param {object} row - The project row from mkProject.
+   * @param {string} key - A LAUNCH_TIME_ONLY_SETTINGS key.
+   * @returns {object} A one-key update.
+   */
+  function changeOf(row, key) {
+    const s = LAUNCH_TIME_ONLY_SETTINGS.find(e => e.key === key);
+    assert.ok(s, `${key} is not a declared launch-time-only setting`);
+    return { [key]: differentFrom(s.current(row, store.projectConfig.load(row.path))) };
+  }
+
   // The roster is exercised against the REAL shapes its readers will see — a
   // project row the store created and that project's own on-disk config. A
   // synthetic fixture carrying only today's three keys made these tests
@@ -89,13 +104,45 @@ describe('#758 — launch-time-only settings', () => {
       return { project, cfg: store.projectConfig.load(project.path) };
     }
 
-    it('every declared setting has a key, a label, and a reader', () => {
+    it('every declared setting has a key, a label, a reader and a divergence', () => {
       assert.ok(LAUNCH_TIME_ONLY_SETTINGS.length > 0);
       for (const s of LAUNCH_TIME_ONLY_SETTINGS) {
         assert.equal(typeof s.key, 'string', 'a setting needs a key');
         assert.ok(s.label && typeof s.label === 'string', `${s.key} needs a label`);
         assert.equal(typeof s.current, 'function', `${s.key} needs a current reader`);
+        assert.ok(['running', 'next-launch'].includes(s.divergence),
+          `${s.key} needs a divergence — the two groups get opposite advice, and a `
+          + 'setting with neither would be told to relaunch on a guess');
       }
+    });
+
+    it('each declared setting produces the advice its divergence promises', () => {
+      for (const s of LAUNCH_TIME_ONLY_SETTINGS) {
+        const [line] = formatLaunchTimeWarnings([s]);
+        assert.ok(line.startsWith(`${s.label} is saved.`), `${s.key}: ${line}`);
+        if (s.divergence === 'running') {
+          assert.match(line, /close and relaunch/i,
+            `${s.key} diverges from the running session, so a relaunch is the remedy`);
+        } else {
+          assert.doesNotMatch(line, /relaunch/i,
+            `${s.key} is read fresh at the next launch — telling the operator to kill `
+            + 'live work for it is the same kind of lie #758 removes');
+          assert.match(line, /next launch/i);
+        }
+      }
+      // Both branches above must actually run, or one is asserted by nobody.
+      const groups = new Set(LAUNCH_TIME_ONLY_SETTINGS.map(s => s.divergence));
+      assert.deepEqual([...groups].sort(), ['next-launch', 'running']);
+    });
+
+    it('the two groups are separate sentences — one cannot be true of both', () => {
+      const changed = LAUNCH_TIME_ONLY_SETTINGS.filter(
+        (s, i) => LAUNCH_TIME_ONLY_SETTINGS.findIndex(o => o.divergence === s.divergence) === i
+      );
+      const lines = formatLaunchTimeWarnings(changed);
+      assert.equal(lines.length, 2, 'one warning per divergence group present');
+      assert.equal(lines.filter(l => /relaunch/i.test(l)).length, 1,
+        'exactly one of the two asks for a relaunch');
     });
 
     it('every reader resolves against a real project — no reader names a dead field', () => {
@@ -113,7 +160,7 @@ describe('#758 — launch-time-only settings', () => {
         const changed = launchTimeOnlyChanges(
           { [s.key]: differentFrom(s.current(project, cfg)) }, project, cfg
         );
-        assert.deepEqual(changed, [s.label],
+        assert.deepEqual(changed.map(c => c.label), [s.label],
           `${s.key} changed but produced no warning — add it to the warning path`);
       }
     });
@@ -122,7 +169,7 @@ describe('#758 — launch-time-only settings', () => {
       const { project, cfg } = realShapes();
       for (const s of LAUNCH_TIME_ONLY_SETTINGS) {
         const changed = launchTimeOnlyChanges({ [s.key]: s.current(project, cfg) }, project, cfg);
-        assert.deepEqual(changed, [],
+        assert.deepEqual(changed.map(c => c.label), [],
           `${s.key} warned on a no-op — the settings modal sends every key on every save`);
       }
     });
@@ -141,7 +188,7 @@ describe('#758 — launch-time-only settings', () => {
       const updates = {};
       for (const s of picked) updates[s.key] = differentFrom(s.current(project, cfg));
       const changed = launchTimeOnlyChanges(updates, project, cfg);
-      assert.deepEqual(changed, picked.map(s => s.label),
+      assert.deepEqual(changed.map(c => c.label), picked.map(s => s.label),
         'both changes must be reported, in the order the roster declares them');
     });
   });
@@ -153,7 +200,24 @@ describe('#758 — launch-time-only settings', () => {
     assert.equal(res.warnings.length, 1);
     assert.match(res.warnings[0], /Default launch mode is saved/);
     assert.match(res.warnings[0], /running session/);
-    assert.match(res.warnings[0], /relaunch/, 'the warning must name the action, not just the fact');
+  });
+
+  it('a setting the running process really holds asks for a relaunch', async () => {
+    const row = mkProject('lt-relaunch', true);
+    const res = await projects.updateProject('lt-relaunch', changeOf(row, 'silentPrime'));
+    assert.equal(res.warnings.length, 1);
+    assert.match(res.warnings[0], /Silent prime is saved/);
+    assert.match(res.warnings[0], /close and relaunch/i,
+      'the warning must name the action, not just the fact');
+  });
+
+  it('a setting read fresh at the next launch does NOT ask for a relaunch', async () => {
+    mkProject('lt-norelaunch', true);
+    const res = await projects.updateProject('lt-norelaunch', { defaultLaunchMode: 'plan' });
+    assert.doesNotMatch(res.warnings[0], /relaunch/i,
+      'launchSession reads this fresh every time — asking the operator to kill live '
+      + 'work for it would be a new lie in place of the old one');
+    assert.match(res.warnings[0], /next launch/i);
   });
 
   it('still SAVES the value — nothing reverts and nothing blocks', async () => {
@@ -182,13 +246,23 @@ describe('#758 — launch-time-only settings', () => {
       'the modal sends engine on every save; a no-op must not warn');
   });
 
-  it('names both settings when two change at once', async () => {
+  it('names both settings in one sentence when they share a divergence', async () => {
     mkProject('lt-two', true);
     const res = await projects.updateProject('lt-two', {
       defaultLaunchMode: 'plan', showLaunchModePicker: false
     });
-    assert.equal(res.warnings.length, 1, 'one sentence, not one per setting');
+    assert.equal(res.warnings.length, 1, 'one sentence per group, not one per setting');
     assert.match(res.warnings[0], /Default launch mode and Show launch mode picker are saved/);
+  });
+
+  it('splits into two sentences when the changes need opposite advice', async () => {
+    const row = mkProject('lt-split', true);
+    const res = await projects.updateProject('lt-split', {
+      ...changeOf(row, 'silentPrime'), defaultLaunchMode: 'plan'
+    });
+    assert.equal(res.warnings.length, 2,
+      'one sentence covering both could only be true of one of them');
+    assert.equal(res.warnings.filter(w => /relaunch/i.test(w)).length, 1);
   });
 
   it('says nothing about which engine — the class is engine-agnostic', async () => {
@@ -254,21 +328,59 @@ describe('#758 — the banner that carries it', () => {
       'this project bans timer-driven UI lifecycle (#98, #268)');
   });
 
-  it('both pages carry the banner the renderer drives', () => {
+  it('the builder emits every id the renderer drives, hidden and advisory', () => {
+    const html = G.tcSettingsWarningsMarkup();
+    for (const id of ['settingsWarningsBanner', 'settingsWarningsText', 'settingsWarningsDismissBtn']) {
+      assert.ok(html.includes(`id="${id}"`), `the builder is missing ${id}`);
+    }
+    assert.match(html, /class="settings-warnings-banner hidden"/, 'it must start hidden');
+    assert.match(html, /role="alert"/);
+    assert.ok(!/engine-error-banner|orphan-banner/.test(html),
+      'a save that SUCCEEDED must not borrow the danger-red or another feature\'s banner');
+  });
+
+  it('both pages host the builder rather than hand-copying its markup', () => {
     const pub = path.join(__dirname, '..', 'public');
     for (const page of ['index.html', 'session.html']) {
       const html = fs.readFileSync(path.join(pub, page), 'utf8');
-      for (const id of ['settingsWarningsBanner', 'settingsWarningsText', 'settingsWarningsDismissBtn']) {
-        assert.ok(html.includes(`id="${id}"`), `${page} is missing ${id}`);
-      }
+      assert.ok(html.includes('id="settingsWarningsHost"'), `${page} has no host element`);
+      assert.ok(!html.includes('id="settingsWarningsBanner"'),
+        `${page} still declares the banner by hand — that is how it drifted into danger-red`);
+    }
+    for (const script of ['ui.js', 'session.js']) {
+      const src = fs.readFileSync(path.join(pub, script), 'utf8');
+      assert.match(src, /settingsWarningsHost[\s\S]{0,120}tcSettingsWarningsMarkup\(\)/,
+        `${script} does not fill its host from the shared builder`);
     }
   });
 
-  it('the session page surfaces the PATCH response instead of discarding it', () => {
+  it('every class the builder emits is defined in the stylesheet BOTH pages load', () => {
+    const pub = path.join(__dirname, '..', 'public');
+    // session.html does not load style.css, so a rule that lives only there is
+    // invisible on the session page — which is how the first version of this
+    // banner would have shipped unstyled and permanently visible.
+    const shared = fs.readFileSync(path.join(pub, 'shared-controls.css'), 'utf8');
+    const classes = [...G.tcSettingsWarningsMarkup().matchAll(/class="([^"]+)"/g)]
+      .flatMap(m => m[1].split(/\s+/))
+      .filter(c => c !== 'hidden');
+    assert.ok(classes.length > 0);
+    for (const c of classes) {
+      assert.ok(shared.includes(`.${c}`), `.${c} is not in shared-controls.css`);
+    }
+    for (const page of ['index.html', 'session.html']) {
+      const html = fs.readFileSync(path.join(pub, page), 'utf8');
+      assert.match(html, /href="\/shared-controls\.css"/, `${page} must load it`);
+    }
+  });
+
+  it('the session page surfaces BOTH outcomes of the PATCH, not just the good one', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
     const start = src.indexOf('async function closeSettings()');
     const body = src.slice(start, src.indexOf('\n}', start));
-    assert.match(body, /tcRenderSettingsWarnings\(document, res && res\.warnings\)/,
+    assert.match(body, /tcRenderSettingsWarnings\(document, res\.warnings\)/,
       'the engine change on this page is the launch-time-only case #758 exists for');
+    assert.match(body, /if \(!res\)[\s\S]{0,400}api\.lastError/,
+      'a REJECTED save must not be the one silent outcome — that is the same false '
+      + '"it took effect" this work removes');
   });
 });

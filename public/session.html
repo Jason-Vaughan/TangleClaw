@@ -112,7 +112,7 @@
            Arming it before stepping away is the common case and was three
            interactions deep. Painted by `tcCreateChimeControl`; the label and
            title carry the state, so the meaning does not rest on colour. -->
-      <button class="banner-btn chime-btn" id="chimeBtn" type="button" aria-pressed="false"
+      <button class="banner-btn" id="chimeBtn" type="button" aria-pressed="false"
               aria-label="Chime when this session goes idle: off. Activate to turn it on."
               title="Chime on idle: off">&#128276;</button>
       <button class="banner-btn" id="peekBtn" aria-label="Peek at terminal output">Peek</button>
@@ -140,16 +140,15 @@
        nothing to say. -->
   <div class="engine-error-banner hidden" id="engineErrorBanner" role="alert" aria-live="polite"></div>
 
-  <!-- #758: warnings a successful settings save came back with. This page's own
-       engine picker changes a setting the session resolved AT LAUNCH, so the
-       save succeeds and the running session keeps what it started with — the
-       one place that is guaranteed true, and the one place the response used to
-       be discarded. Ids match the dashboard's banner; both render through
-       `tcRenderSettingsWarnings`. No timer: it names an action (relaunch). -->
-  <div id="settingsWarningsBanner" class="engine-error-banner hidden" role="alert">
-    <span id="settingsWarningsText"></span>
-    <button type="button" class="banner-btn" id="settingsWarningsDismissBtn">Dismiss</button>
-  </div>
+  <!-- #758: warnings a settings save came back with. This page's own engine
+       picker changes a setting that only takes effect at launch, so the save
+       succeeds while the running session carries on as it was — the one place
+       a live session is guaranteed, and the one place the response used to be
+       discarded. Empty on purpose: the markup is single-sourced in
+       `tcSettingsWarningsMarkup` so this page cannot drift from the dashboard's
+       copy, which is how it first shipped wearing danger-red. No timer — it
+       names an action. -->
+  <div id="settingsWarningsHost"></div>
 
   <!-- Session Wrapping Bar -->
   <div class="session-wrapping hidden" id="sessionWrapping">

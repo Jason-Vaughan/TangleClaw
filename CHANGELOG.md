@@ -10,18 +10,27 @@ All notable changes to TangleClaw are documented in this file.
   — was stored immediately and never reached the running process, so the modal accepted the
   input, reported success, and changed nothing observable. `lib/projects.js` now declares that
   class once as `LAUNCH_TIME_ONLY_SETTINGS` and `launchTimeOnlyChanges` reports which of them an
-  update actually *changes*, measured against the values the session launched with and before any
-  mutation runs. When the project has an active session, `updateProject` adds a warning naming
-  them and the action — close and relaunch — onto the existing `warnings` channel (#1148), so it
-  reaches every caller rather than one modal, and never names an engine: settings apply at next
-  launch on all of them. Declared as one list on purpose, because warning for a single setting
-  while its siblings stay silent teaches that no warning means "this applied", which would then be
-  false for the rest. A PATCH carrying a key at its existing value stays silent — the settings
-  modal sends `engine` on every save — and a project with no live session behaves exactly as
-  before. The session page, whose own engine picker is the one place a live session is guaranteed,
-  was discarding the PATCH response entirely; it now renders it into a dismissible banner, and the
-  renderer both pages use moved to `tcRenderSettingsWarnings` in `public/api-helper.js` rather
-  than being copied. No timer: the warning names something the operator must go and do.
+  update actually *changes*, compared against what is stored and read before any mutation runs.
+  When the project has an active session, `updateProject` adds a warning onto the existing
+  `warnings` channel (#1148), so it reaches every caller rather than one modal, and never names
+  an engine: settings resolve at launch on all of them. Declared as one list on purpose, because
+  warning for a single setting while its siblings stay silent teaches that no warning means "this
+  applied", which would then be false for the rest. **The advice is not one sentence, because the
+  four are not one situation.** `engine` and `silentPrime` leave the live process genuinely
+  diverged, and only a relaunch reconciles them; `defaultLaunchMode` and `showLaunchModePicker`
+  are read fresh at the start of every launch (`lib/sessions.js`), so nothing about the running
+  session is stale and telling the operator to relaunch would ask them to kill live work for
+  nothing — each group gets its own sentence, and both tails are asserted by iterating the roster.
+  A PATCH carrying a key at its stored value stays silent (the settings modal sends `engine` on
+  every save), and a project with no live session behaves exactly as before. The session page,
+  whose own engine picker is the one place a live session is guaranteed, was discarding the PATCH
+  response entirely; it now renders both outcomes — the warning, and `api.lastError` when the save
+  is rejected, which had been the one silent case left. The banner's markup and renderer are
+  single-sourced in `public/api-helper.js` (`tcSettingsWarningsMarkup`, `tcRenderSettingsWarnings`)
+  with its styles in the stylesheet both pages load, after the hand-copied first version rendered
+  a successful save in danger-red. `setActivePlan` reads the same `warnings` array as a failure
+  report; that remains sound only because its PATCH body carries one key, and now says so. No
+  timer: the warning names something the operator must go and do.
 - **The session chime toggle moved to the live session banner (#1181).** Arming the chime before
   stepping away was three interactions deep inside the Session Settings modal. It is now a control
   in the banner itself (`#chimeBtn`), built by `tcCreateChimeControl` in `public/api-helper.js` so

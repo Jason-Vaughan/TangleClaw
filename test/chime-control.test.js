@@ -120,6 +120,28 @@ describe('#1181 — the chime moved, it was not duplicated', () => {
       'two controls for one setting is how they drift');
   });
 
+  // The component above is RUN; these two lines are what make it a live feature
+  // on the page, and nothing else asserts them. Delete either and the suite
+  // stays green while the banner button is inert or its state stops persisting —
+  // which is exactly the plan's Done-when going unmeasured.
+  it('the session page mounts the control with the persisted state', () => {
+    const start = sessionJs.indexOf('function bindEvents(');
+    assert.ok(start > 0, 'bindEvents not found');
+    const body = sessionJs.slice(start, sessionJs.indexOf('\nfunction ', start + 1));
+    assert.match(body, /chimeControl\.mount\(sessionState\.chimeEnabled\)/,
+      'mounting late left the button reading "off" on a session that will chime, '
+      + 'and never binding at all on the project-not-found path');
+  });
+
+  it('toggling persists through saveSetting', () => {
+    const start = sessionJs.indexOf('window.tcCreateChimeControl({');
+    assert.ok(start > 0, 'the control is not constructed');
+    const body = sessionJs.slice(start, sessionJs.indexOf('});', start));
+    assert.match(body, /sessionState\.chimeEnabled = enabled/);
+    assert.match(body, /saveSetting\('chime', enabled\)/,
+      'without this the toggle looks right and forgets on reload');
+  });
+
   it('the Cmd button no longer carries chime state', () => {
     assert.ok(!/updateChimeIndicator/.test(sessionJs),
       'the one-directional indicator must be gone, not merely corrected');

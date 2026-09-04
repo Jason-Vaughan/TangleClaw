@@ -228,10 +228,17 @@ describe('launchagent-scan (#1148)', () => {
       assert.doesNotMatch(renderBody.slice(0, renderBody.indexOf('\n  }\n')), /setTimeout/,
         'a warning that names a file to edit must not auto-dismiss');
       assert.match(renderBody, /text\.textContent = list\.join/, 'warning text is set as text, never as HTML');
+      // The banner's markup moved to `tcSettingsWarningsMarkup` at the same
+      // time and for the same reason, so the dashboard now hosts it rather than
+      // declaring it. What this page still owes is the host and the fill.
       const html = read('public/index.html');
-      assert.match(html, /id="settingsWarningsBanner"[^>]*role="alert"/);
-      assert.match(html, /id="settingsWarningsText"/);
-      assert.match(html, /id="settingsWarningsDismissBtn"/);
+      assert.match(html, /id="settingsWarningsHost"/, 'the dashboard must host the banner');
+      assert.match(ui, /settingsWarningsHost[\s\S]{0,120}tcSettingsWarningsMarkup\(\)/,
+        'and fill it from the shared builder');
+      assert.match(render, /function tcSettingsWarningsMarkup\(\)[\s\S]{0,600}role="alert"/);
+      for (const id of ['settingsWarningsBanner', 'settingsWarningsText', 'settingsWarningsDismissBtn']) {
+        assert.match(render, new RegExp(`id="${id}"`), `the builder must emit ${id}`);
+      }
     });
   });
 });

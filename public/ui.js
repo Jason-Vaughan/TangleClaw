@@ -3919,6 +3919,13 @@ const masterSettings = window.tcCreateMasterSettings({
   onSaved: () => { if (masterBar) masterBar.loadAccess(); }
 });
 
+// The settings-warnings banner (#1148, #758), from the same builder the session
+// page uses, so the two surfaces cannot drift.
+{
+  const warnHost = document.getElementById('settingsWarningsHost');
+  if (warnHost) warnHost.innerHTML = window.tcSettingsWarningsMarkup();
+}
+
 // The Master control bar. Same component the session drawer mounts, so the two
 // surfaces render from one implementation; only ids and label differ.
 masterBar = window.tcCreateMasterControlBar({

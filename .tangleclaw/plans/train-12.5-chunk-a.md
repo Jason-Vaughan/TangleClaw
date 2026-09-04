@@ -69,12 +69,15 @@ issue's own Recommendation section anticipates this and asks for the **class**, 
 declared list, rather than a bespoke check. That is what this car builds. The launch-time-only keys
 reachable from this modal:
 
-| key | evidence it is launch-time-only |
-|---|---|
-| `engine` | modal hint already reads "Takes effect on next session launch" (`ui.js:1154`) |
-| `silentPrime` | hint reads "Takes effect on next session launch" (`ui.js:1275`) |
-| `defaultLaunchMode` | resolved into the launch flow, not read by a running session |
-| `showLaunchModePicker` | same — it governs the launch flow only |
+| key | what a running session does about it | advice |
+|---|---|---|
+| `engine` | the live process IS the old engine | relaunch |
+| `silentPrime` | the session was primed the old way | relaunch |
+| `defaultLaunchMode` | read fresh every launch (`lib/sessions.js:350`) — nothing stale | next launch |
+| `showLaunchModePicker` | read by the launch flow at click time — nothing stale | next launch |
+
+The split in the third column arrived with the Critic (R-7) and is the difference between
+correcting an expectation and asking someone to kill live work for nothing.
 
 Two of these already carry a static hint. The hint is shown unconditionally, so it says the same
 thing whether or not a session is live — which is exactly why it does not land. The gap is the
@@ -89,8 +92,8 @@ expectation. Recorded here rather than decided silently during the build.
 - One declared list of launch-time-only keys is the single source; no per-key bespoke checks.
 - The notice appears only when the project has a live session **and** the save actually changes at
   least one key in that list from its stored value — a save of tags alone stays silent.
-- The copy states both halves: the change is saved, and it applies on the next session start —
-  and names the action (close and relaunch the session).
+- The copy states both halves: the change is saved, and what the running session does about it —
+  a relaunch ONLY for the settings a relaunch actually reconciles.
 - Nothing reverts and nothing blocks: the PATCH proceeds exactly as today.
 - A project with **no** live session behaves byte-identically to today. No new friction.
 - Engine-agnostic: "settings apply at next launch" is how TangleClaw launches every engine, so
@@ -129,7 +132,8 @@ else in this chunk depends on the answer, so A1 and A2 proceed regardless.
 - [x] A1 · #1181 chime toggle in the banner
 - [x] A2 · #758 launch-time-only advisory
 - [ ] A3 · #1227 — blocked on operator ruling (premise disproven)
-- [ ] Cumulative Critic, findings dispositioned
+- [x] Cumulative Critic, findings dispositioned
+- [ ] Operator verification of the two banner surfaces (enqueued)
 - [ ] Suite green, CHANGELOG entry, PR
 
 ### What A2 became, and why it differs from the plan above
@@ -144,6 +148,28 @@ It also exposed a second half the plan did not anticipate: the **session page** 
 — a launch-time-only key — from the one place a live session is guaranteed, and was discarding
 the PATCH response entirely. That page now renders the warning too, and the renderer both pages
 use moved to `tcRenderSettingsWarnings` in `public/api-helper.js` rather than being copied.
+
+### What the Critic changed — the copy was telling its own lie
+
+The review's sharpest finding (R-7) was that the warning over-claimed, and it was right. Only
+`engine` and `silentPrime` leave a running session genuinely diverged. `defaultLaunchMode` and
+`showLaunchModePicker` are read **fresh at the start of every launch** (`lib/sessions.js:350`),
+so a running session never held a copy of them to go stale — telling the operator to "close and
+relaunch to apply" asked them to kill live work for nothing. A car whose whole premise is
+stopping the settings modal from lying had shipped a different lie.
+
+The roster stays one list; each member now carries a `divergence` (`running` / `next-launch`)
+and each group gets its own sentence, because one sentence covering both could only be true of
+one of them. Both tails are asserted by iterating the roster.
+
+Nine other findings landed in the same pass: the session page's REJECTED save was the only
+silent outcome left (it now shows `api.lastError`); the banner had been hand-copied onto the
+session page wearing `.engine-error-banner`, i.e. danger-red for a save that SUCCEEDED, so its
+markup is now single-sourced in `tcSettingsWarningsMarkup` with its styles in the stylesheet
+BOTH pages load; the chime control mounted after four awaits and an early `return`, so it read
+"off" on a session that would chime and never bound at all on the not-found path; a third
+`warnings` consumer (`setActivePlan`) reads the array as a FAILURE and now says why that is
+sound; and the docs that described the moved chime toggle and the moved renderer were repointed.
 
 ### Guards, and what each was mutated against
 
@@ -170,4 +196,5 @@ All three cars touch `public/`, and the primary checkout is the live install —
 the worktree at `.claude/worktrees/train-12.5-chunk-a`, with the ignored `.prawduct/` state
 symlinked back to the primary so governance sees one source of truth.
 
-Baseline suite at `5ed3585`: green (7727 passing, 1 skipped).
+Baseline suite at `5ed3585`: green. (No count recorded — the evidence store holds pass/fail per
+tree and nothing parses a number in prose, so one written here could only drift.)
