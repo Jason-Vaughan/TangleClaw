@@ -512,7 +512,8 @@
             + 'so nothing was touched.\n\nIn the way:\n'
             + d.realWork.map((f) => `  ${f}`).join('\n')
             + (d.discardable.length
-              ? '\n\nAlso present (TangleClaw-written, discardable once the above are resolved):\n'
+              ? '\n\nAlso present (TangleClaw-written, or shared files it changed only inside its '
+                + 'own section — discardable once the above are resolved):\n'
                 + d.discardable.map((f) => `  ${f}`).join('\n')
               : '')
             + '\n\nCommit or stash them in the install directory, then update again.'

@@ -25,6 +25,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 
 const applier = require('../lib/update-applier');
@@ -164,6 +165,37 @@ describe('_classifyDirty routes carriers on containment, not on path (#1241)', (
       () => true);
     assert.deepEqual(d.discardable.map((e) => e.path), ['.tangleclaw/x', '.claude/settings.json']);
     assert.deepEqual(d.realWork, ['.claude/settings.local.json', 'lib/a.js']);
+  });
+});
+
+describe('the self-update path does not drag in the engine layer', () => {
+  it('loads without pulling lib/engines.js or lib/store.js into require.cache', () => {
+    // This module is what repairs a broken install, so an import failure in the
+    // engine layer must not take it down with it — which is why the `engines`
+    // require lives inside `_managedRegionOnlyDiff` rather than at the top of
+    // the file, where this repo's style would otherwise put it.
+    //
+    // THE MUTATION THIS CATCHES: hoisting that require back to module scope.
+    // It is a one-line wiring decision that changes no behaviour any other test
+    // can observe — the same shape as the applyUpdate seam, one commit later.
+    //
+    // Asserted in a FRESH process: this one has loaded `engines` already via
+    // other suites, so an in-process check would pass while the defect is live.
+    const probe = 'require("./lib/update-applier");'
+      + 'process.stdout.write(String(Object.keys(require.cache).some('
+      + 'k => k.endsWith("/lib/engines.js") || k.endsWith("/lib/store.js"))))';
+    const loaded = execFileSync(process.execPath, ['-e', probe], {
+      cwd: path.join(__dirname, '..'), encoding: 'utf8'
+    });
+    assert.equal(loaded, 'false',
+      'update-applier must load without the engine layer or the database');
+  });
+
+  it('still answers containment, so the lazy require actually resolves', () => {
+    // The isolation above is trivially satisfiable by breaking the require.
+    // This proves the deferred import works when it is finally reached.
+    assert.equal(
+      containment(file('# Doc', 'old', 'tail'), file('# Doc', 'new', 'tail')), true);
   });
 });
 
