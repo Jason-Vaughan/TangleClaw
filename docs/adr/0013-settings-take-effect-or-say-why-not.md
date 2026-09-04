@@ -143,8 +143,9 @@ said.
 - Every new setting whose effect is engine-conditional owes a disposition and a rendered reason
   before it ships. This is a real cost per setting, accepted because the alternative is the
   four-issue pattern above.
-- The generic disposition mechanism (Train 12.5 chunk C2a) is what makes the cost small; until it
-  exists, each instance is hand-built, which is how three parallel predicates accumulated.
+- A generic disposition mechanism is what makes the cost small; until it exists, each instance is
+  hand-built, which is how two parallel predicates accumulated with a third setting class already
+  waiting. Its enforcement check is tracked as item (h) on #1070.
 - Where an engine genuinely has no carrier for a concern — OpenClaw has no config file at all — the
   correct outcome is still a stated reason, not a silent skip. The silence in
   `writeEngineConfig` (#1251) was locally reasonable and globally wrong.

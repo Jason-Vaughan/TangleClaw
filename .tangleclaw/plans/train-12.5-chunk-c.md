@@ -66,9 +66,9 @@ narrow build is reversible and a wide one is not.
 #626 asks that creation collect the first-session-load-bearing settings, and proposes as its
 "defensible split": *name, engine, launch posture, silent prime.*
 
-**That shipped.** `public/ui.js:2377` — `createData` carries `defaultLaunchMode` and `silentPrime`;
-`:2431` renders a step titled literally **"First-Session Settings"** with a Launch Posture select
-and a Silent Prime toggle; `:2511` collects both; `:2535` POSTs both. #626's own title counts
+**That shipped.** `public/ui.js#createData` — `createData` carries `defaultLaunchMode` and `silentPrime`;
+`the "First-Session Settings" step` renders a step titled literally **"First-Session Settings"** with a Launch Posture select
+and a Silent Prime toggle; `createNext` collects both; `submitCreate` POSTs both. #626's own title counts
 *fields*, and the wizard now collects five of them.
 
 Its sequencing note also defers the full form to *"Wrap v2 Chunk 04, which replaces methodology
@@ -158,9 +158,8 @@ against it.
 
 `lib/engines.js` carries **two** capability predicates with separate implementations —
 `honorsLaunchMode` and `silentPrimeDisposition`. `reconcileLaunchMode` is a *caller*, not a third
-instance: it delegates to `honorsLaunchMode`. (An earlier draft of this plan claimed three parallel
-instances and that `silentPrimeDisposition`'s docblock declares deliberate duplication; both were
-wrong — the docblock's "One definition on purpose" asserts single ownership per question.)
+instance: it delegates to `honorsLaunchMode`. The docblock's "One definition on purpose" asserts single
+ownership per question, not deliberate duplication.
 
 **Two is not the rework signal, so the justification is not "three strikes."** It is the norm's
 migrate retroactivity: #1251–#1255 each need a disposition and a rendered reason, and hand-building
@@ -175,8 +174,10 @@ or stay as named wrappers over it — a rename is not the goal, one definition i
   value a real operator choice" — the third part needs the setting's shipped default as an input,
   or the warn/info level below stays hand-picked per call site and the rule survives only as long
   as each author remembers it.
-- The three existing predicates route through it or are expressed in terms of it; no fourth
-  parallel implementation exists.
+- The two existing predicates (`honorsLaunchMode`, `silentPrimeDisposition`) route through it or
+  are expressed in terms of it, and `reconcileLaunchMode` — already a caller, not an
+  implementation — keeps delegating rather than growing one. No new parallel implementation
+  exists at the end of the chunk.
 - The warn/info asymmetry survives: a dropped value the operator actually chose warns
   (`defaultLaunchMode`); one indistinguishable from the shipped default records at info
   (`silentPrime`). A test pins both, because collapsing them is the obvious "cleanup".
@@ -188,14 +189,14 @@ or stay as named wrappers over it — a rename is not the goal, one definition i
 ### Chunk C2b — Eval Audit becomes reachable (#1236)
 
 Resolved by C1's §1 split: audit ingestion is server-side (`POST /api/audit/ingest`,
-`server.js:6767`), so Eval Audit is a **universal** per-project setting and needs no engine surface
+`server.js, the POST /api/audit/ingest route`), so Eval Audit is a **universal** per-project setting and needs no engine surface
 and no shell. Its home is the project settings modal.
 
 Three separate gaps, all verified absent:
 - `updateProject` has **no `evalAuditMode` branch at all** — the whole write path is new.
 - `enrichProject` returns only a derived `{enabled, openIncidents}` summary
-  (`lib/projects.js:915`), so the modal cannot read back what it needs to render a control.
-- The dashboard empty state reads "No projects have Eval Audit enabled." (`public/ui.js:3712`) —
+  (`lib/projects.js#enrichProject`), so the modal cannot read back what it needs to render a control.
+- The dashboard empty state reads "No projects have Eval Audit enabled." (`public/ui.js#renderAuditPanel`) —
   true, and actionable by nobody.
 
 **Done when**
@@ -240,6 +241,12 @@ carries a real guard: hiding the picker while the resolved default carries a war
   checkout stays on `main`.
 - **`Fixes #1236` and `Fixes #626`** on the PR. PR #1235 omitted the keyword and #758/#1181 sat
   open after merging.
+- **`#764` stays OPEN deliberately, and the PR says so.** C2 builds only the project half of the
+  two-surface split; the per-engine global surface (defaults, installed-extension inventory, and
+  #581's tunables) is still owed. Post a re-scope comment on #764 recording that split and pointing
+  at `docs/adr/0013-settings-take-effect-or-say-why-not.md`, which is the tracked carrier — this
+  plan is archived when the chunk ships, and an archived plan is not where the next reader looks.
+  Do **not** let a `Fixes` keyword near #764 into the PR body.
 - **Squash merge, branch single-use** (`project-preferences.md` § Workflow overrides Prawduct's
   merge-commit default).
 - Every new test gets a named mutation verified red. A fixture that cannot reach its subject passes

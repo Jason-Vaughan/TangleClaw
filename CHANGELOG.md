@@ -143,8 +143,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 - **Ratified the norm that a setting TangleClaw offers must take effect, or say why it does not
-  (`docs/adr/0013-settings-take-effect-or-say-why-not.md`).** Train 12.5 chunk C1 classified every
-  per-project and global setting against the engine roster and found that "universal but unevenly
+  (`docs/adr/0013-settings-take-effect-or-say-why-not.md`).** The design pass classified the
+  per-project and global settings it audited against the engine roster and found that "universal but unevenly
   supported" is not the edge case between universal and engine-specific — it is nearly the whole
   population, so the rule for that class carries the settings surface. The norm is recorded in
   `architecture.md` § Direction and registered in `project-preferences.md` § Enforcement, but the

@@ -23,8 +23,8 @@ multi-engine.**
 A **project settings modal is scoped to one project, and a project has exactly one engine.** It
 never needs to display Codex's settings beside Claude's — it needs to display *this project's*
 engine's settings, correctly. That is not a tab problem. It is the problem the codebase already
-solves inline, twice, in `renderSilentPrimeToggle` (`public/ui.js:1247`) and
-`renderLaunchModeSettings` (`public/ui.js:1335`) — a capability-gated control that re-renders when
+solves inline, twice, in `renderSilentPrimeToggle` (`public/ui.js#renderSilentPrimeToggle`) and
+`renderLaunchModeSettings` (`public/ui.js#renderLaunchModeSettings`) — a capability-gated control that re-renders when
 the engine dropdown changes.
 
 The genuinely multi-engine surface is a different one: **per-engine defaults and per-engine
@@ -51,8 +51,7 @@ global settings, which is exactly the second surface.
 One constraint is decisive; a second consideration reinforces it.
 
 **The roster grows without a UI change — which is the point of #764, and the problem for tabs.**
-Correcting an earlier reading of this design: the picker roster is **exactly four**, not unbounded.
-`listWithAvailability`'s own docblock (`lib/engines.js#listWithAvailability`) records that
+The picker roster is **exactly four**, not unbounded: `listWithAvailability`'s own docblock (`lib/engines.js#listWithAvailability`) records that
 per-connection virtual engines "were removed for the same reason" as `pickerHidden` — only
 `getWithAvailability('openclaw:<id>')` still resolves them, for launch paths. So there is no
 runtime multiplication.
@@ -112,9 +111,8 @@ collapses into one rule plus two thin edges.
 > **Retroactivity: migrate.** Known live instances are named in §5; each is a defect under this
 > norm from the moment it is ratified, not a grandfathered exception.
 
-**Mechanism, reusing the shipped pattern rather than inventing one.** #741's fix is *not* generic,
-but the count matters and an earlier draft of this design got it wrong. `lib/engines.js` carries
-**two** capability predicates — `honorsLaunchMode` and `silentPrimeDisposition` — with separate
+**Mechanism, reusing the shipped pattern rather than inventing one.** #741's fix is *not* generic.
+`lib/engines.js` carries **two** capability predicates — `honorsLaunchMode` and `silentPrimeDisposition` — with separate
 implementations. `reconcileLaunchMode` is a *caller*, not a third instance: it delegates to
 `honorsLaunchMode`. And `silentPrimeDisposition`'s docblock ("One definition on purpose, like
 `honorsLaunchMode` above") asserts single ownership of each question, not deliberate duplication.
@@ -124,8 +122,8 @@ instances (#1251–#1255) each need a disposition and a rendered reason, and han
 is how a shape stops being a shape.
 
 One asymmetry the generalization must preserve, because it is deliberate and easy to flatten:
-`defaultLaunchMode` logs at **warn** when dropped (`lib/sessions.js:355`); `silentPrime` logs at
-**info** (`lib/sessions.js:329`). The comment there explains why — `silentPrime` defaults to `true`
+`defaultLaunchMode` logs at **warn** when dropped (`lib/sessions.js#launchSession`); `silentPrime` logs at
+**info** (`lib/sessions.js#launchSession`). The comment there explains why — `silentPrime` defaults to `true`
 for every engine, so a stored `true` is indistinguishable from "operator never touched this," and
 warn would fire on every non-Claude launch about a preference nobody set. **The log level is a
 function of whether the stored value was a real choice, not of the setting's importance.**
@@ -142,49 +140,59 @@ assumed covered.
 
 **Genuinely universal** (identical on every engine): `versionBumpEnabled`, `versionFilePath`,
 `wrapSections`, `wrapStepOverrides`, `testCommand`, `lintCommand`, `wrapAutoPrEnabled`, `tags`,
-`medusaEnabled` (the listener is TC-server-side — `lib/projects.js:2172`), `evalAuditMode`
+`medusaEnabled` (the listener is TC-server-side — `lib/projects.js#_syncLiveMedusaListener`), `evalAuditMode`
 (ingestion is server-side).
 
 **Engine-specific with an honest guard today** — the shape to generalize: `defaultLaunchMode`
 (validated against the intended engine, reconciled to `'default'` on an engine switch —
-`lib/projects.js:2444`, `2593`), `silentPrime` (rejected at write for a non-supporting engine
-`lib/projects.js:2338`, disposition at launch, disabled-with-reason in the modal), `medusaWake`
-(skipped and logged once per session, never silent — `lib/medusa-wake.js:48`).
+`lib/projects.js#updateProject`, `2593`), `silentPrime` (rejected at write for a non-supporting engine
+`lib/projects.js#updateProject`, disposition at launch, disabled-with-reason in the modal).
+
+That list is **two settings, not three**. `medusaWake` was classified here in an earlier pass and
+has been moved down: its guard is a log line, and §4 says in terms that a log line the operator
+never reads is not compliance. Classifying it as the shape to generalize would have made the norm
+exempt the most plausible wrong answer to itself.
 
 **Silently inert — defects under §4.** Each was verified against source:
 
 1. **`rules.core.*` and `rules.extensions.*` have zero effect on `openclaw`, deliberately and
    silently.** `writeEngineConfig` returns `{skipped: true}` when the profile has no
-   `configFormat.filename` (`lib/engines.js:2389`), and the comment says the silence is intentional
+   `configFormat.filename` (`lib/engines.js#writeEngineConfig`), and the comment says the silence is intentional
    — *"Per #240 PR Critic — silently skip so callers don't surface a spurious … error/warning."*
    The reasoning was sound for its own scope (don't shout on every launch) and produced the exact
    failure #764 exists to prevent: a project with `independentCritic: true` on OpenClaw gets
    nothing, and nothing anywhere says so. **This is the loudest instance in the codebase.**
 2. **`featureIndexEnabled` / `projectMapEnabled` are half-inert off Claude.** The wrap-side seeding
    runs on every engine, but the *prime pointer* that tells the agent to read the file is gated on
-   `supportsSilentPrime === true` (`lib/sessions.js:1326`, `1374`) — Claude only. So on every other
-   engine the toggle builds a file no session is ever told to open. `lib/project-config.js:38`
+   `supportsSilentPrime === true` (`lib/sessions.js#generatePrimePrompt`, `1374`) — Claude only. So on every other
+   engine the toggle builds a file no session is ever told to open. `lib/project-config.js#DEFAULT_PROJECT_CONFIG`
    states the toggle is "engine-agnostic so the toggle is not engine-gated" — true of the wrap
    half, false of the prime half, and nothing tells the operator.
 3. **`rules.extensions.loggingLevel` is inert on three of five generators.** Its default is the
-   string `'info'`, and `_getRulesContent` filters `v === true` (`lib/engines.js:1263`), so it never
+   string `'info'`, and `_getRulesContent` filters `v === true` (`lib/engines.js#_getRulesContent`), so it never
    renders as prose. Only `codex-yaml` and `aider-conf` consume it directly.
 4. **Five declared capabilities are never read by any app code** — `supportsSlashCommands`,
    `supportsCoAuthor`, `supportsRemote`, `supportsModes`, `awareness` appear only in tests. Any
    panel rendering "this engine's capabilities" would present dead flags as meaningful.
 5. **Per-engine data living outside the profiles.** `ENGINE_WAKE_PROFILES`
-   (`lib/medusa-wake.js:96`) hardcodes `claude` and `antigravity` only. This is the shape
+   (`lib/medusa-wake.js#ENGINE_WAKE_PROFILES`) hardcodes `claude` and `antigravity` only. This is the shape
    `prime-delivery-direction.md` § Direction §1 already forbids for channel limits, one layer over.
+6. **`medusaWake` tells the log, not the operator.** An engine with no wake profile is skipped and
+   logged "once per session, never silent" (`lib/medusa-wake.js module docblock`) — genuinely better
+   than instances 1-3, and still not compliant: the operator is remote and does not read the log.
+   The settings modal compounds it by claiming the feature is "Claude sessions only for now"
+   (`public/ui.js#openSettings`) when antigravity has been supported since #560, so the one
+   operator-facing string is both the wrong channel and out of date. Tracked on #1255.
 
 **Settings with no write path at all** (hand-edit only): `evalAuditMode` (#1236),
 `orchestrationKeyRef` / `orchestration_profile`. **Raw-PATCH only, no UI:** `wrapDisabled`,
 `wrapAutoPrEnabled`, `wrapStepOverrides`, `testCommand`, `lintCommand`, `rules.extensions.*`.
-**Dead:** per-project `quickCommands` (written `lib/projects.js:2696`, read by nothing — the
-session page reads the *global* list at `public/session.js:2273`), per-project `ports`
-(`lib/project-config.js:129`, read by nothing; the real port data is the DB column).
+**Dead:** per-project `quickCommands` (written `lib/projects.js#updateProject`, read by nothing — the
+session page reads the *global* list at `public/session.js#renderCommandPills`), per-project `ports`
+(`lib/project-config.js#DEFAULT_PROJECT_CONFIG`, read by nothing; the real port data is the DB column).
 
 **Taxonomy trap.** The settings modal's "Project Rules" section (`renderProjectRulesSection`,
-`public/ui.js:1403`) is a *different feature* from `project.json`'s `rules.core` / `rules.extensions`
+`public/ui.js#renderProjectRulesSection`) is a *different feature* from `project.json`'s `rules.core` / `rules.extensions`
 — free-text `session_rules` DB rows versus a config object, separate storage, separate consumer,
 shared word. They are two rows in any taxonomy, never one.
 
@@ -196,24 +204,22 @@ shared word. They are two rows in any taxonomy, never one.
 does not wait for anything.** #1236 deferred its home to #764 on the reasoning that the modal was
 about to be restructured into per-engine tabs and Eval Audit is OpenClaw-fed. Neither half survives:
 the modal is not getting tabs, and audit ingestion is server-side (`POST /api/audit/ingest`,
-`server.js:6767`) — it is not an engine capability at all, so it is universal by §5.
+`server.js, the POST /api/audit/ingest route`) — it is not an engine capability at all, so it is universal by §5.
 
 Three things C2 must get right, all from #1236's own text:
 - The empty state must name what Eval Audit does and how to enable it. Today it reads *"No projects
-  have Eval Audit enabled."* (`public/ui.js:3712`) — true, and actionable by nobody.
+  have Eval Audit enabled."* (`public/ui.js#renderAuditPanel`) — true, and actionable by nobody.
 - Enabling it starts LLM-judge calls at Tier 2/3. The control makes that cost visible; it must not
   read as a free checkbox.
 - `updateProject` has no `evalAuditMode` branch at all (verified — zero hits in the validation
   block), and `enrichProject` returns only a derived `{enabled, openIncidents}` summary
-  (`lib/projects.js:915`). Both the write path and the read shape are new work.
+  (`lib/projects.js#enrichProject`). Both the write path and the read shape are new work.
 
 ---
 
 ## 6b. Where a per-engine default is applied, and what happens to existing projects
 
-This is the design's question 3, and it was missing from the first draft — flagged BLOCKING by the
-Critic, because ruling R1 simultaneously asserted the deferred surface's design was "settled."
-It is settled now, and the answer is **forced by a ratified norm rather than chosen**.
+The answer is **forced by a ratified norm rather than chosen**.
 
 **How defaults reach a project today.** There is no per-engine setting default anywhere in the
 product. Two mechanisms exist, both at creation and both one-shot:
@@ -272,7 +278,7 @@ The second surface — engine settings in global settings — is built once and 
   #581's content is built in C2.
 
 **A hard caveat the design records rather than fixes.** `_syncBundledEngines` runs once, from
-`store.init()` (`lib/store.js:227`). A brand-new engine profile never reaches
+`store.init()` (`lib/store.js#init`). A brand-new engine profile never reaches
 `~/.tangleclaw/engines/`, which is the directory every read actually uses — so **a newly added
 engine will not appear in any roster until the server restarts.** That is #737, it is open, and C2
 must not invent its own re-sync to paper over it.
@@ -281,7 +287,7 @@ must not invent its own re-sync to paper over it.
 project half, and the project modal reads what it already reads). `GET /api/engines` returns a
 deliberate subset (`id`, `name`,
 `interactionModel`, `available`, `command`, `install`, `capabilities`, `commands`, `launchModes`,
-`defaultLaunchMode` — `lib/engines.js:884`). It omits `configFormat`, `statusPage`, `errorPatterns`.
+`defaultLaunchMode` — `lib/engines.js#listWithAvailability`). It omits `configFormat`, `statusPage`, `errorPatterns`.
 A panel showing "this engine's config file" cannot get it from the list route.
 
 ---
@@ -289,11 +295,11 @@ A panel showing "this engine's config file" cannot get it from the list route.
 ## 8. #626 — substantially shipped
 
 Verified against source: the wizard is **four steps** (0–3: Name, Engine, *First-Session Settings*,
-Tags) collecting **five fields** — `createData` at `public/ui.js:2377` carries `defaultLaunchMode`
-and `silentPrime`, both posted at `:2535`. That is #626's own "defensible split" (launch posture +
+Tags) collecting **five fields** — `createData` at `public/ui.js#createData` carries `defaultLaunchMode`
+and `silentPrime`, both posted at `submitCreate`. That is #626's own "defensible split" (launch posture +
 silent prime at creation), already built. The issue's cited line numbers no longer correspond to
 the wizard, and it lists `methodology` as one of its four fields — **methodology was deleted from
-the codebase**, not deferred (migration v27→v28, `lib/store.js:1993`, which throws if the column
+the codebase**, not deferred (migration v27→v28, `lib/store.js#_migrateDropMethodology`, which throws if the column
 survives). Its "Sequencing note" defers the rest to Wrap v2 Chunk 04; that chunk shipped and Phase
 B is closed.
 
@@ -328,7 +334,7 @@ a `.claude/settings.json` plugin key and would be a real no-op on codex/gemini/a
 
 So **#764's one concrete motivating case cannot be built as a setting** without reopening a refused
 decision. The honest surface is the existing read-only `isPluginGoverned` detection
-(`lib/governance-state.js:43`) shown as *status*, never a toggle.
+(`lib/governance-state.js#isPluginGoverned`) shown as *status*, never a toggle.
 
 Also not to be re-solved: #737's staleness (§7), #738's `available` predicate (use the existing
 strict reading), and #741's disposition *pattern* (reuse the shape, generalize the code).
