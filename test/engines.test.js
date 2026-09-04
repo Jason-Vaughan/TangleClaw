@@ -991,14 +991,21 @@ describe('engines', () => {
         }
       });
 
-      it('every engine with launchModes has >1 mode so the modal renders', () => {
-        // public/landing.js:470 renders the modal only when Object.keys(launchModes).length > 1.
-        // A single-entry launchModes block would silently skip the picker.
+      it('every engine with launchModes offers >1 HONORED mode, or the picker never opens', () => {
+        // The landing page opens the picker only when more than one mode is
+        // honored — declared and not `disabled`. Counting declared keys is the
+        // wrong measure: a profile that disables all but one leaves a key-count
+        // check green while the picker silently stops appearing, which is the
+        // failure this guard exists to catch.
         const list = engines.listWithAvailability();
-        for (const engine of list.filter(e => e.launchModes)) {
+        const withModes = list.filter(e => e.launchModes);
+        assert.ok(withModes.length > 0, 'no engine declares launchModes — this would assert nothing');
+        for (const engine of withModes) {
+          const honored = Object.keys(engine.launchModes)
+            .filter(key => engines.honorsLaunchMode(engine, key));
           assert.ok(
-            Object.keys(engine.launchModes).length > 1,
-            `engine "${engine.id}" must have >1 launchMode or the picker won't render`
+            honored.length > 1,
+            `engine "${engine.id}" must honor >1 launchMode or the picker won't render`
           );
         }
       });

@@ -8,6 +8,8 @@ const vm = require('node:vm');
 const { makeDocument, withIdParsingInnerHTML } = require('./_mini-dom');
 
 const LANDING_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
+const API_HELPER_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
+const engines = require('../lib/engines');
 
 const readEngine = (id) => JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'engines', `${id}.json`), 'utf8'));
 
@@ -41,7 +43,9 @@ function setupLanding(state) {
   };
 
   vm.createContext(ctx);
-  vm.runInContext(liftFunction(LANDING_SRC, 'function honoredLaunchModes'), ctx);
+  // The honored-mode predicate is shared frontend base (`public/api-helper.js`,
+  // loaded before every page script), not landing-page code.
+  vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
   vm.runInContext(liftFunction(LANDING_SRC, 'function preselectedLaunchMode'), ctx);
   vm.runInContext(liftFunction(LANDING_SRC, 'function updateLaunchModeWarning'), ctx);
   vm.runInContext(liftFunction(LANDING_SRC, 'function openLaunchModeModal'), ctx);
@@ -53,19 +57,19 @@ function setupLanding(state) {
 /**
  * Drive the picker through its REAL entry point, with `doLaunchProject` captured.
  *
- * Calling `openLaunchModeModal` directly is what let the preselect defect live:
- * a fixture that hands the modal an engine has already made the decision the
- * production caller actually makes, so a wrong seed is invisible to it.
+ * The seed under test is chosen from the project, and only the production
+ * caller supplies one — a fixture that calls `openLaunchModeModal` directly has
+ * already made the decision being asserted, so a wrong seed is invisible to it.
  *
  * @param {object|null} project - Project record as `state.projects` holds it
  * @param {string} engineId - Engine the project resolves to
  * @returns {object} `{ doc, ctx, launched }`; `launched.called` marks a launch
  */
 function launchThroughGate(project, engineId = 'claude') {
-  // `id` last: the profile JSON carries its own, and letting it win silently
-  // decoupled the fixture's engine from the one the gate looks up — the gate
-  // then found nothing and launched directly, passing a test for the opposite
-  // reason to the one it claimed.
+  // `id` last: the profile JSON carries its own. If it wins, the fixture's
+  // engine is not the one `state.engines.find` resolves, the gate finds nothing
+  // and launches directly — and the assertions still pass, for the opposite
+  // reason to the one they name.
   const engine = Object.assign({}, readEngine(engineId), { id: engineId });
   const state = {
     engines: [engine],
@@ -96,14 +100,18 @@ function launchThroughGate(project, engineId = 'claude') {
  *
  * @param {string} engineId - Bundled profile to read
  * @param {string[]} disabled - Mode keys to mark `disabled`
+ * @param {*} value - Value to write into `disabled` (default `true`). Only
+ *   exact `true` disables a mode; a truthy non-`true` value is the case where a
+ *   `!disabled` spelling and a `disabled !== true` spelling disagree, so the
+ *   parity check needs one to have anything to compare.
  * @returns {object} Engine object
  */
-function engineWithDisabled(engineId, disabled) {
+function engineWithDisabled(engineId, disabled, value = true) {
   const engine = Object.assign({}, readEngine(engineId), { id: engineId });
   const modes = Object.assign({}, engine.launchModes);
   for (const key of disabled) {
     assert.ok(modes[key], `fixture names a mode "${key}" that ${engineId} does not declare`);
-    modes[key] = Object.assign({}, modes[key], { disabled: true });
+    modes[key] = Object.assign({}, modes[key], { disabled: value });
   }
   engine.launchModes = modes;
   return engine;
@@ -135,11 +143,9 @@ describe('Launch Mode picker (#596)', () => {
     assert.match(html, /value="auto"/);
     assert.match(html, /value="bypassPermissions"/);
     
-    // Checked with NO project supplied — the only case where the engine's own
-    // default is still the right seed. A project that configured
-    // `defaultLaunchMode` overrides it; see the preselect suite below. This
-    // assertion narrowed because the requirement changed (the operator's
-    // 2026-07-17 scope addition on #596), not because it was relaxed.
+    // No project is supplied here, which is the only case where the engine's
+    // own default is the seed. A project carrying `defaultLaunchMode` overrides
+    // it — see the preselect suite below.
     assert.match(html, /value="default" checked/);
   });
   
@@ -178,19 +184,15 @@ describe('Launch Mode picker (#596)', () => {
 });
 
 /*
- * The picker preselects the PROJECT's configured launch mode (#596, the
- * operator's 2026-07-17 scope addition).
+ * The picker preselects the PROJECT's configured launch mode (#596).
  *
- * Why this is a defect and not a missing nicety: the picker sends its selection
- * explicitly on every launch, and `lib/sessions.js` applies the project's
- * stored `defaultLaunchMode` only when the caller sent none. Seeded from the
- * engine, the picker therefore overrode the setting on every launch it showed —
- * and it shows by default (`showLaunchModePicker` defaults true). A project
- * configured to launch in `plan` launched interactive, forever, unless someone
- * re-picked by hand.
+ * The picker sends its selection explicitly on every launch, and
+ * `lib/sessions.js` applies the project's stored `defaultLaunchMode` only when
+ * the caller sent none. The seed is therefore what makes that setting apply at
+ * all on a launch showing the picker — the shipped default.
  *
- * These drive `proceedWithLaunchModeCheck` — the real caller — because the seed
- * is chosen from the project that only the real caller supplies.
+ * These drive `proceedWithLaunchModeCheck`, the real caller, because the seed
+ * comes from the project only the real caller supplies.
  */
 describe('launch picker preselects the project default (#596)', () => {
   it('opens on the project\'s configured mode, not the engine\'s', () => {
@@ -268,15 +270,10 @@ describe('launch picker preselects the project default (#596)', () => {
 });
 
 /*
- * The picker's options and the gate that opens it read the same flag.
- *
- * `proceedWithLaunchModeCheck` counted only non-disabled modes to decide the
- * picker was worth showing, while the picker rendered every mode the profile
- * declared — so the gate could see two real choices and the picker offer three,
- * one of which the engine refuses. Latent today (no bundled profile ships a
- * disabled mode) but `disabled` is a supported field: `updateProject` rejects a
- * disabled mode key, and test/launch-mode-settings.test.js pins that rejection
- * as "symmetric with the picker filter" — a symmetry that did not exist here.
+ * Every browser surface offering a launch mode, and the gate that decides to
+ * open the picker, read one predicate: `tcHonoredLaunchModes`. A surface that
+ * answers "which modes will this engine run" differently offers the operator a
+ * mode another surface refuses.
  */
 describe('launch picker offers only modes the engine honors (#596)', () => {
   it('omits a disabled mode from the rendered options', () => {
@@ -308,6 +305,41 @@ describe('launch picker offers only modes the engine honors (#596)', () => {
 
     assert.deepEqual(launched, { name: 'Ghost', mode: null });
     assert.equal(doc.getElementById('launchModeList').innerHTML, '');
+  });
+
+  it('answers exactly what the server predicate answers, for every bundled profile', () => {
+    // The browser copy exists because `public/` cannot require `lib/` — no
+    // bundler, no build step. What keeps it a boundary rather than a variant is
+    // this assertion: `engines.honorsLaunchMode` is the server's definition of
+    // "this engine will run that mode", and the two must not drift apart.
+    const { ctx } = setupLanding();
+    const profiles = fs.readdirSync(path.join(__dirname, '..', 'data', 'engines'))
+      .filter((f) => f.endsWith('.json'))
+      .map((f) => readEngine(path.basename(f, '.json')));
+    assert.ok(profiles.length > 0, 'no bundled profiles found — this would assert nothing');
+
+    const fixtures = profiles.concat([
+      engineWithDisabled('claude', ['plan', 'auto']),
+      // The only shape the two spellings disagree on. Without it this loop
+      // compares `!disabled` and `disabled !== true` over values where they
+      // agree, and passes while the copies have drifted.
+      engineWithDisabled('claude', ['plan'], 'yes'),
+      engineWithDisabled('claude', ['auto'], 1)
+    ]);
+
+    let modesChecked = 0;
+    for (const profile of fixtures) {
+      // `Array.from` in this realm: the helper runs inside a vm context, so the
+      // array it returns has that realm's prototype and deepStrictEqual reports
+      // two identical-looking lists as unequal.
+      const browser = Array.from(ctx.tcHonoredLaunchModes(profile), ([key]) => key);
+      const server = Object.keys(profile.launchModes || {})
+        .filter((key) => engines.honorsLaunchMode(profile, key));
+      assert.deepEqual(browser, server,
+        `${profile.id}: the browser and server predicates must honor the same modes`);
+      modesChecked += Object.keys(profile.launchModes || {}).length;
+    }
+    assert.ok(modesChecked > 0, 'the profiles carried no launch modes — nothing was compared');
   });
 
   it('does not open the picker when only one mode is honored', () => {

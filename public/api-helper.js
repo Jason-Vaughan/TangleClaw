@@ -3608,6 +3608,31 @@
    * @returns {string} A `rules-status-*` class, or '' for the one outcome that
    *   is genuinely neutral (`no-rules`: nothing was owed).
    */
+  /**
+   * The launch modes an engine will actually run, in declaration order.
+   *
+   * Every browser surface that offers a launch mode reads this: the landing
+   * page's per-launch picker and the gate that decides to open it, the settings
+   * modal's default-mode dropdown, and the create flow's Launch Posture. They
+   * are one question, and a surface that answers it differently offers the
+   * operator a mode another surface will not accept.
+   *
+   * `disabled !== true` rather than `!disabled`, matching the server's
+   * `honorsLaunchMode` (`lib/engines.js`): the two are the same predicate on
+   * either side of a process boundary that cannot be bridged — `public/` runs
+   * in a browser, `lib/` is CommonJS, and this project has no build step.
+   * `test/launch-mode-picker.test.js` asserts the two agree over every bundled
+   * profile, so the copy stays a boundary instead of drifting into a variant.
+   *
+   * @param {object|null} engine - Engine object or profile with `launchModes`
+   * @returns {Array<[string, object]>} Honored `[key, mode]` pairs
+   */
+  function tcHonoredLaunchModes(engine) {
+    const modes = engine && engine.launchModes;
+    if (!modes) return [];
+    return Object.entries(modes).filter(([, mode]) => mode && mode.disabled !== true);
+  }
+
   function tcDeliveryOutcomeClass(outcome) {
     if (outcome === 'delivered') return 'rules-status-ok';
     if (outcome === 'skipped') return 'rules-status-err';
@@ -3615,6 +3640,7 @@
     return 'rules-status-warn';
   }
 
+  global.tcHonoredLaunchModes = tcHonoredLaunchModes;
   global.tcMedusaIds = tcMedusaIds;
   global.tcMedusaControlMarkup = tcMedusaControlMarkup;
   global.tcEscapeHtml = tcEscapeHtml;
