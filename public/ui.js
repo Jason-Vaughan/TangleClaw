@@ -1336,12 +1336,7 @@ function renderLaunchModeSettings(engineId, preserveMode, preserveShow) {
   const container = document.getElementById('settingsLaunchModeContainer');
   if (!container) return;
   const profile = (state.engines || []).find(e => e.id === engineId);
-  const modes = profile && profile.launchModes ? profile.launchModes : null;
-  if (!modes) {
-    container.innerHTML = '';
-    return;
-  }
-  const enabledEntries = Object.entries(modes).filter(([, m]) => !m.disabled);
+  const enabledEntries = tcHonoredLaunchModes(profile);
   if (enabledEntries.length === 0) {
     container.innerHTML = '';
     return;
@@ -2437,20 +2432,17 @@ function renderCreateStep() {
     const profile = (state.engines || []).find(e => e.id === createData.engine);
     
     let launchModeHtml = '';
-    const modes = profile && profile.launchModes ? profile.launchModes : null;
-    if (modes) {
-      const enabledEntries = Object.entries(modes).filter(([, m]) => !m.disabled);
-      if (enabledEntries.length > 0) {
-        const opts = enabledEntries.map(([key, m]) =>
-          `<option value="${esc(key)}" ${key === createData.defaultLaunchMode ? 'selected' : ''}>${esc(m.label || key)}${m.warning ? ' ⚠' : ''}</option>`
-        ).join('');
-        launchModeHtml = `
-          <div class="form-group">
-            <label class="form-label" for="createLaunchMode">Launch Posture</label>
-            <select class="form-select" id="createLaunchMode">${opts}</select>
-            <div class="form-hint">The default mode this project launches in.</div>
-          </div>`;
-      }
+    const enabledEntries = tcHonoredLaunchModes(profile);
+    if (enabledEntries.length > 0) {
+      const opts = enabledEntries.map(([key, m]) =>
+        `<option value="${esc(key)}" ${key === createData.defaultLaunchMode ? 'selected' : ''}>${esc(m.label || key)}${m.warning ? ' ⚠' : ''}</option>`
+      ).join('');
+      launchModeHtml = `
+        <div class="form-group">
+          <label class="form-label" for="createLaunchMode">Launch Posture</label>
+          <select class="form-select" id="createLaunchMode">${opts}</select>
+          <div class="form-hint">The default mode this project launches in.</div>
+        </div>`;
     }
 
     let silentPrimeHtml = '';

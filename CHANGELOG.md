@@ -67,6 +67,37 @@ All notable changes to TangleClaw are documented in this file.
   ungoverned `_generateClaudeMd` path can inline a live service token into what is now a tracked
   file) and **#1241** (a regenerated `CLAUDE.md` lands in the self-updater's hard-refusal path, which
   cannot be fixed without amending a ratified decision about discarding hand edits).
+- **The launch-mode picker now opens on the project's configured mode, which is what makes that
+  setting work at all (#596).** A project could store a `defaultLaunchMode` and never launch in it.
+  The picker seeded its selection from the *engine's* default (`public/landing.js`) and then sent
+  that selection **explicitly** on every launch — and an explicit caller choice beats the stored
+  default server-side by design (`lib/sessions.js`). So the setting was consulted only on the
+  hidden-picker path, and never on the shipped default where the picker is shown
+  (`showLaunchModePicker` defaults true): a project set to `plan` launched interactive every time
+  unless someone re-picked by hand. The picker now seeds from the project, falling back to the
+  engine default when the stored key is stale or disabled rather than checking a radio that is not
+  rendered. A warning-carrying mode the operator configured is preselected like any other — the
+  settings modal's eyes-open guard already refuses to *hide* the picker for that combination, and
+  that guard only means something if a shown picker reflects what is stored. Same shape as #741
+  and #758: a control that saved the operator's choice and then did nothing observable with it.
+  Found while re-scoping #596, whose written body (facelift plus a test net) had already shipped
+  in PR #1003 without the issue being closed.
+- **Every browser surface offering a launch mode now agrees on which modes exist (#596).** Four
+  places asked "which modes will this engine run" and answered it three different ways:
+  `proceedWithLaunchModeCheck` counted non-disabled modes to decide the picker was worth opening,
+  the picker itself rendered *every* declared mode, and the settings modal's default-mode dropdown
+  and the create flow's Launch Posture each spelled it `!m.disabled`. Two consequences. The gate
+  could see two real choices while the picker offered three, one of which the engine refuses. And
+  `!m.disabled` is not the same predicate as the server's `disabled !== true`: for a truthy
+  non-`true` value the picker would offer a mode both dropdowns hide, so the operator could not
+  configure the mode they had just been offered. All four now read `tcHonoredLaunchModes` in
+  `public/api-helper.js` — the shared frontend base, so no site depends on `index.html`'s script
+  order — and `test/launch-mode-picker.test.js` pins it against `engines.honorsLaunchMode` over
+  every bundled profile, including that disagreeing value shape, so the browser copy stays a
+  process boundary rather than drifting into a variant. Latent rather than live: no bundled
+  profile ships a `disabled` mode today, but `updateProject` already validates against the field
+  and `test/launch-mode-settings.test.js` pins that rejection as "symmetric with the picker
+  filter" — a symmetry that did not exist.
 - **A chime switched off no longer leaves its indicator lit (#1181).** `updateChimeIndicator` only
   ever *added* the `active` class, so disarming the chime left the button lit until reload — and it
   painted onto the Cmd button, whose `active` state also means "the command bar is open", putting

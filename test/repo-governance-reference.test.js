@@ -16,9 +16,9 @@
  *
  * And governance is read from `.claude/settings.json` — a file that was ignored
  * until #833, so a fresh clone carried no reference and read as ungoverned. The
- * three assertions below are one chain: the file is tracked, it carries the
- * reference, and therefore this repo reads as governed. Breaking any link
- * silently re-arms the overwrite, and the damage would only ever appear on
+ * assertions below are one chain: the file is tracked and un-ignored, it carries
+ * a complete reference, and therefore this repo reads as governed. Breaking any
+ * link silently re-arms the overwrite, and the damage would only ever appear on
  * someone else's first clone — never on the machine that broke it.
  */
 
@@ -101,10 +101,14 @@ describe("this repo's plugin install reference is committed (#833)", () => {
     // fail for the reason this test exists.
     assert.equal(isIgnored('.claude/settings.json'), false,
       '.claude/settings.json must not be ignored, or no clone reads as governed');
+    // `.claude/worktrees` is the sensitive one: nothing else re-ignores it, so
+    // widening the negation to `!.claude/*` reds here. `settings.local.json`
+    // carries its own later rule in .gitignore and would survive that widening,
+    // so it is asserted for completeness, not as the tripwire.
+    assert.equal(isIgnored('.claude/worktrees'), true,
+      'agent worktrees must stay ignored — this is what a widened negation breaks');
     assert.equal(isIgnored('.claude/settings.local.json'), true,
       'settings.local.json holds per-machine permissions and must stay ignored');
-    assert.equal(isIgnored('.claude/worktrees'), true,
-      'agent worktrees must stay ignored');
   });
 
   it('carries a COMPLETE plugin reference, both halves', () => {
