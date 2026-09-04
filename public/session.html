@@ -108,6 +108,13 @@
       <button class="banner-btn" id="uploadBtn" aria-label="Upload file to project">Upload</button>
       <button class="banner-btn" id="cmdBtn" aria-label="Toggle command bar"
               aria-expanded="false" aria-controls="commandBar">Cmd</button>
+      <!-- #1181: the per-session chime, promoted out of the settings modal.
+           Arming it before stepping away is the common case and was three
+           interactions deep. Painted by `tcCreateChimeControl`; the label and
+           title carry the state, so the meaning does not rest on colour. -->
+      <button class="banner-btn chime-btn" id="chimeBtn" type="button" aria-pressed="false"
+              aria-label="Chime when this session goes idle: off. Activate to turn it on."
+              title="Chime on idle: off">&#128276;</button>
       <button class="banner-btn" id="peekBtn" aria-label="Peek at terminal output">Peek</button>
       <button class="banner-btn" id="masterBtn" aria-label="Open Project Master" aria-expanded="false"
               aria-controls="masterDrawer"
@@ -132,6 +139,17 @@
        Filled by session.js from the status poll; hidden while there is
        nothing to say. -->
   <div class="engine-error-banner hidden" id="engineErrorBanner" role="alert" aria-live="polite"></div>
+
+  <!-- #758: warnings a successful settings save came back with. This page's own
+       engine picker changes a setting the session resolved AT LAUNCH, so the
+       save succeeds and the running session keeps what it started with — the
+       one place that is guaranteed true, and the one place the response used to
+       be discarded. Ids match the dashboard's banner; both render through
+       `tcRenderSettingsWarnings`. No timer: it names an action (relaunch). -->
+  <div id="settingsWarningsBanner" class="engine-error-banner hidden" role="alert">
+    <span id="settingsWarningsText"></span>
+    <button type="button" class="banner-btn" id="settingsWarningsDismissBtn">Dismiss</button>
+  </div>
 
   <!-- Session Wrapping Bar -->
   <div class="session-wrapping hidden" id="sessionWrapping">
@@ -232,17 +250,8 @@
     <div class="modal-content settings-content" role="dialog" aria-label="Session settings" aria-modal="true">
       <h3 class="modal-title">Session Settings</h3>
       <div id="settingsBody">
-        <div class="form-group">
-          <label class="form-label">Chime</label>
-          <div class="toggle-row">
-            <span class="toggle-label">Play sound when idle</span>
-            <label class="toggle-switch">
-              <input type="checkbox" id="chimeToggle">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="form-hint">Chime plays when terminal output stops changing</div>
-        </div>
+        <!-- #1181: the chime toggle moved to the banner (`#chimeBtn`). Not
+             duplicated here — two controls for one setting is how they drift. -->
         <div class="form-group">
           <label class="form-label" for="pollInterval">Poll interval</label>
           <select class="form-select" id="pollInterval">

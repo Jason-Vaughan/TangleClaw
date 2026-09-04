@@ -218,9 +218,15 @@ describe('launchagent-scan (#1148)', () => {
       const submit = ui.slice(ui.indexOf('async function _submitSettings('));
       const body = submit.slice(0, submit.indexOf('\n}\n'));
       assert.match(body, /renderSettingsWarnings\(res\.warnings\)/, '_submitSettings must hand the warnings to the renderer');
-      const render = ui.slice(ui.indexOf('function renderSettingsWarnings('));
-      const renderBody = render.slice(0, render.indexOf('\n}\n'));
-      assert.doesNotMatch(renderBody, /setTimeout/, 'a warning that names a file to edit must not auto-dismiss');
+      // The renderer itself moved to `tcRenderSettingsWarnings` in
+      // api-helper.js when the session page needed the same banner (#758), and
+      // is now RUN in test/launch-time-only-warning.test.js — no-timer, set as
+      // text, dismiss-clears — rather than grepped. What stays pinned here is
+      // that this page still routes through it.
+      const render = read('public/api-helper.js');
+      const renderBody = render.slice(render.indexOf('function tcRenderSettingsWarnings('));
+      assert.doesNotMatch(renderBody.slice(0, renderBody.indexOf('\n  }\n')), /setTimeout/,
+        'a warning that names a file to edit must not auto-dismiss');
       assert.match(renderBody, /text\.textContent = list\.join/, 'warning text is set as text, never as HTML');
       const html = read('public/index.html');
       assert.match(html, /id="settingsWarningsBanner"[^>]*role="alert"/);

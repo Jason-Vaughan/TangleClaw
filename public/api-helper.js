@@ -1529,6 +1529,113 @@
   }
 
   /**
+   * Show the warnings a SUCCESSFUL settings save came back with, or hide the
+   * banner when there are none.
+   *
+   * Shared by the dashboard and the session page (#758). The session page needs
+   * it because its own engine picker changes a launch-time-only setting from
+   * inside a running session — the exact case the warning exists for — and it
+   * used to discard the PATCH response entirely.
+   *
+   * No timer. Every warning here names something the operator must go and do
+   * (edit a LaunchAgent, relaunch a session), so it stays until dismissed.
+   *
+   * @param {Document} doc - Owning document.
+   * @param {string[]|undefined} warnings - `warnings` from PATCH /api/projects/:name.
+   */
+  function tcRenderSettingsWarnings(doc, warnings) {
+    const banner = doc.getElementById('settingsWarningsBanner');
+    const text = doc.getElementById('settingsWarningsText');
+    if (!banner || !text) return;
+    const list = Array.isArray(warnings)
+      ? warnings.filter(w => typeof w === 'string' && w.length > 0)
+      : [];
+    if (list.length === 0) {
+      text.textContent = '';
+      banner.classList.add('hidden');
+      return;
+    }
+    text.textContent = list.join('\n');
+    banner.classList.remove('hidden');
+    const dismiss = doc.getElementById('settingsWarningsDismissBtn');
+    if (dismiss && !dismiss.dataset.wired) {
+      dismiss.dataset.wired = '1';
+      dismiss.addEventListener('click', () => tcRenderSettingsWarnings(doc, []));
+    }
+  }
+
+  /**
+   * The live session banner's chime control (#1181).
+   *
+   * The per-session chime used to be reachable only from inside the Session
+   * Settings modal, so arming it before stepping away cost three interactions.
+   * It lives here rather than in `session.js` for the reason the Medusa control
+   * does: browser code in that file cannot be require()d, so its only available
+   * test is a source pin, and a pin proves a branch exists rather than that it
+   * runs.
+   *
+   * The indicator this replaces painted onto the Cmd button and only ever ADDED
+   * its `active` class — so switching the chime off left the button lit until
+   * reload, on a pixel that also meant "the command bar is open". Painting both
+   * directions onto a control of its own is the fix, and `render` is the single
+   * place that does it.
+   *
+   * Whether a chime is actually AUDIBLE is a separate question this control
+   * does not answer: the install-wide mute is honoured inside `playChime`, so a
+   * muted install shows an armed control that stays silent. That split is
+   * deliberate — this toggle is the session's intent, not the speaker's state.
+   *
+   * @param {object} opts
+   * @param {Document} opts.doc - Owning document.
+   * @param {string} [opts.buttonId] - The control's element id.
+   * @param {Function} opts.onToggle - Called with the NEXT enabled state when
+   *   the operator clicks. The caller owns persistence; this component owns
+   *   only what the control looks like.
+   * @returns {{mount: Function, render: Function}}
+   */
+  function tcCreateChimeControl({ doc, buttonId = 'chimeBtn', onToggle }) {
+    /**
+     * Paint the control for a given state — both directions, always.
+     * @param {boolean} enabled - Whether the session's chime is armed.
+     */
+    function render(enabled) {
+      const btn = doc.getElementById(buttonId);
+      if (!btn) return;
+      const on = Boolean(enabled);
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      // The label carries the state as well as the action, because `aria-pressed`
+      // alone is announced inconsistently across the mobile screen readers this
+      // banner is used from.
+      btn.setAttribute('aria-label', on
+        ? 'Chime when this session goes idle: on. Activate to turn it off.'
+        : 'Chime when this session goes idle: off. Activate to turn it on.');
+      btn.title = on ? 'Chime on idle: on' : 'Chime on idle: off';
+    }
+
+    /**
+     * Bind the click once. Idempotent: a second call is a no-op, so a re-render
+     * of the banner cannot stack handlers and double-toggle.
+     * @param {boolean} enabled - The state to paint on first mount.
+     */
+    function mount(enabled) {
+      const btn = doc.getElementById(buttonId);
+      if (!btn) return;
+      if (!btn.dataset.chimeBound) {
+        btn.dataset.chimeBound = '1';
+        btn.addEventListener('click', () => {
+          const next = btn.getAttribute('aria-pressed') !== 'true';
+          render(next);
+          if (onToggle) onToggle(next);
+        });
+      }
+      render(enabled);
+    }
+
+    return { mount, render };
+  }
+
+  /**
    * Transient status message in a rules section — used by the Project Rules
    * surface and by the Master settings component below, which is why it lives
    * here rather than in either page's script.
@@ -3478,6 +3585,8 @@
   global.tcMedusaControlMarkup = tcMedusaControlMarkup;
   global.tcEscapeHtml = tcEscapeHtml;
   global.tcCreateMedusaControl = tcCreateMedusaControl;
+  global.tcCreateChimeControl = tcCreateChimeControl;
+  global.tcRenderSettingsWarnings = tcRenderSettingsWarnings;
   global.tcSetRulesStatus = tcSetRulesStatus;
   global.tcDeliveryOutcomeClass = tcDeliveryOutcomeClass;
   global.tcCreateMasterSettings = tcCreateMasterSettings;

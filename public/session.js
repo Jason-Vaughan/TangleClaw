@@ -2725,9 +2725,6 @@ function openSettings() {
   const currentEngine = sessionState.project ? (sessionState.project.engine ? sessionState.project.engine.id : '') : '';
   engineSelect.innerHTML = buildEngineOptions(sessionState.engines, currentEngine);
 
-  // Chime toggle
-  document.getElementById('chimeToggle').checked = sessionState.chimeEnabled;
-
   // Poll interval
   document.getElementById('pollInterval').value = String(sessionState.pollInterval);
 
@@ -2748,14 +2745,6 @@ function openSettings() {
 async function closeSettings() {
   document.getElementById('settingsModal').classList.remove('open');
 
-  // Apply chime
-  const newChime = document.getElementById('chimeToggle').checked;
-  if (newChime !== sessionState.chimeEnabled) {
-    sessionState.chimeEnabled = newChime;
-    saveSetting('chime', newChime);
-    updateChimeIndicator();
-  }
-
   // Apply poll interval
   const newInterval = parseInt(document.getElementById('pollInterval').value, 10);
   if (newInterval !== sessionState.pollInterval) {
@@ -2764,13 +2753,17 @@ async function closeSettings() {
     if (!sessionState.ended) startPolling();
   }
 
-  // Apply engine change
+  // Apply engine change. The engine is resolved at launch, so on THIS page the
+  // change never reaches the session the operator is looking at — the server
+  // says so in `warnings` (#758) and the banner carries it. Discarding the
+  // response here is what made the save look like it had taken effect.
   const newEngine = document.getElementById('settingsEngine').value;
   if (sessionState.project && sessionState.project.engine &&
       newEngine !== sessionState.project.engine.id) {
-    await apiMutate(`/api/projects/${encodeURIComponent(projectName)}`, 'PATCH', {
+    const res = await apiMutate(`/api/projects/${encodeURIComponent(projectName)}`, 'PATCH', {
       engine: newEngine
     });
+    window.tcRenderSettingsWarnings(document, res && res.warnings);
   }
 
   // Apply mouse toggle — an operator's deliberate Settings choice IS a
@@ -2786,15 +2779,15 @@ async function closeSettings() {
   }
 }
 
-/**
- * Update the chime indicator on the Cmd button.
- */
-function updateChimeIndicator() {
-  const btn = document.getElementById('cmdBtn');
-  if (sessionState.chimeEnabled) {
-    btn.classList.add('active');
+// #1181: the chime lives on its own banner control. `tcCreateChimeControl`
+// owns what it looks like; the session owns the state and its persistence.
+const chimeControl = window.tcCreateChimeControl({
+  doc: document,
+  onToggle: (enabled) => {
+    sessionState.chimeEnabled = enabled;
+    saveSetting('chime', enabled);
   }
-}
+});
 
 // ── Select Mode ──
 
@@ -5463,8 +5456,8 @@ async function initSession() {
     document.getElementById('pasteBtn').hidden = false;
   }
 
-  // Update chime indicator
-  updateChimeIndicator();
+  // Bind and paint the banner chime control from the persisted state (#1181).
+  chimeControl.mount(sessionState.chimeEnabled);
 
   // Start polling if session is active
   if (!sessionState.ended) {

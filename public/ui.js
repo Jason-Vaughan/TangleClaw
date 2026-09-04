@@ -1906,32 +1906,15 @@ async function _submitSettings(body) {
 }
 
 /**
- * Show the warnings a SUCCESSFUL settings save came back with, or hide the
- * banner when there are none. Today that is the rename-time list of
- * LaunchAgents still naming the old project path (#1148) and any engine-switch
- * partial failure — each names a file the operator has to go and edit, so a
- * timed toast (gone before a path is read) is the wrong surface: this banner
- * stays until dismissed. One warning per line; the text is set as text, never
- * as HTML.
+ * This page's name over the shared renderer. The implementation moved to
+ * `tcRenderSettingsWarnings` in api-helper.js when the session page needed the
+ * same banner (#758); the rationale for the surface — every warning names
+ * something the operator must go and do, so it stays until dismissed rather
+ * than riding a timer — lives with it there.
  * @param {string[]|undefined} warnings - `warnings` from PATCH /api/projects/:name
  */
 function renderSettingsWarnings(warnings) {
-  const banner = document.getElementById('settingsWarningsBanner');
-  const text = document.getElementById('settingsWarningsText');
-  if (!banner || !text) return;
-  const list = Array.isArray(warnings) ? warnings.filter(w => typeof w === 'string' && w.length > 0) : [];
-  if (list.length === 0) {
-    text.textContent = '';
-    banner.classList.add('hidden');
-    return;
-  }
-  text.textContent = list.join('\n');
-  banner.classList.remove('hidden');
-  const dismiss = document.getElementById('settingsWarningsDismissBtn');
-  if (dismiss && !dismiss.dataset.wired) {
-    dismiss.dataset.wired = '1';
-    dismiss.addEventListener('click', () => renderSettingsWarnings([]));
-  }
+  window.tcRenderSettingsWarnings(document, warnings);
 }
 
 // ── Bypass-default + hidden-picker confirm (eyes-open guard) ──
