@@ -39,6 +39,20 @@ All notable changes to TangleClaw are documented in this file.
   mute still outranks it, gated where it always was, inside `playChime`.
 
 ### Fixed
+- **The project settings modal opens again.** #596's `ui.js` refactor routed
+  `renderLaunchModeSettings` through the shared `tcHonoredLaunchModes` helper and removed the
+  `const modes` binding it replaced — but a reference to `modes` survived further down the same
+  function. That is a `ReferenceError` on every open of the modal, and it reached the live install.
+  Membership is now tested against the entries actually rendered, which also fixes a smaller bug the
+  original carried: a stored mode the engine *declares but has disabled* was named as `selected`
+  even though no such `<option>` exists, so the browser showed the first entry while the markup
+  claimed another.
+  **Why a green suite and five review rounds missed it:** the only two guards on that function were
+  `assert.match(uiSource, /renderLaunchModeSettings/)` — source-text pins that prove the symbol is
+  spelled, and nothing else. No test called the function, so an undeclared identifier inside it was
+  invisible. `test/settings-launch-mode-render.test.js` now RUNS the renderer against real bundled
+  profiles; with the defect reinstated it fails with `ReferenceError` while the source-regex suite
+  still passes every case. This is the concrete instance of #1037, which asks for exactly this shift.
 - **`CLAUDE.md` is a committed artifact again, and a fresh clone no longer destroys it (#833).**
   `CLAUDE.md` — the file Claude Code actually reads in this directory — was gitignored, so a clone
   got whatever TangleClaw generated rather than the hand-maintained content. Committing it alone

@@ -1343,7 +1343,11 @@ function renderLaunchModeSettings(engineId, preserveMode, preserveShow) {
   }
   // A carried-over key that the new engine doesn't define falls back to
   // 'default' (every bundled engine defines it) so no invalid value is sent.
-  const selected = Object.prototype.hasOwnProperty.call(modes, preserveMode) ? preserveMode : 'default';
+  // Membership is tested against the rendered options, not the profile's whole
+  // `launchModes`: selecting a key the engine declares but has DISABLED would
+  // name an <option> that is not in the list, and the browser would silently
+  // show the first one instead — reporting a stored mode the operator never set.
+  const selected = enabledEntries.some(([key]) => key === preserveMode) ? preserveMode : 'default';
   const opts = enabledEntries.map(([key, m]) =>
     `<option value="${esc(key)}" ${key === selected ? 'selected' : ''}>${esc(m.label || key)}${m.warning ? ' ⚠' : ''}</option>`
   ).join('');
