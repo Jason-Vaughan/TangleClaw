@@ -131,10 +131,16 @@ else in this chunk depends on the answer, so A1 and A2 proceed regardless.
 
 - [x] A1 · #1181 chime toggle in the banner
 - [x] A2 · #758 launch-time-only advisory
-- [ ] A3 · #1227 — blocked on operator ruling (premise disproven)
-- [x] Cumulative Critic, findings dispositioned
-- [ ] Operator verification of the two banner surfaces (enqueued)
-- [ ] Suite green, CHANGELOG entry, PR
+- [x] A3 · #1227 — CLOSED not-planned: premise disproven, the button stays. Real defect = #1236
+- [x] Cumulative Critic, all 26 findings dispositioned (15 fixed, 11 accepted)
+- [x] verify-resolutions: 0 blocking / 0 warnings / 0 notes; all 10 warnings confirmed fixed
+- [x] Suite green on the reviewed tree, evidence ingested from JUnit
+- [x] CHANGELOG entry
+- [x] PR #1235 merged (`7f6bdbe`), pulled into the live install, server restarted 18:28
+- [~] Operator verification — the chime bell is confirmed toggling BOTH ways on a phone, which is
+      #1181's actual defect. Still unseen by a human: whether the chime SOUNDS when armed, and
+      #758's amber banner (needs an engine change on a live session). See
+      `.prawduct/operator-verification.md` → "PARTIAL RESULT".
 
 ### What A2 became, and why it differs from the plan above
 
