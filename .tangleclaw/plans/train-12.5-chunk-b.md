@@ -149,8 +149,8 @@ Every new test gets a named mutation, verified red.
 - [x] Tests written — every new test has a named mutation, each verified red (table below)
 - [x] Suite green, evidence recorded from JUnit (`prawduct-hook test-status`)
 - [x] CHANGELOG entry
-- [x] Cumulative Critic + verify-resolutions rounds; 9 findings fixed, R-1 waived then actually fixed (see below)
-- [ ] PR
+- [x] Cumulative Critic + verify-resolutions rounds; all findings fixed or accepted, final round 0/0/0
+- [x] PR
 
 ## Mutation evidence
 
@@ -207,7 +207,7 @@ true`, where the two spellings agree. The test could not see the drift it existe
 by adding truthy non-`true` fixtures (`'yes'`, `1`); M7 then reds. Second instance this chunk of a
 fixture that could not reach its subject.
 
-## Why R-1 was waived rather than fixed, and what it means beyond this chunk
+## R-1 took two corrections, and what that means beyond this chunk
 
 R-1's named cause was fixed — `active_build_plan` points at this plan — and the check still did not
 run. It took **two** corrections, and the first one was not enough:
