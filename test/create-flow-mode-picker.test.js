@@ -27,6 +27,7 @@ const vm = require('node:vm');
 const PUB = path.join(__dirname, '..', 'public');
 const UI_SRC = fs.readFileSync(path.join(PUB, 'ui.js'), 'utf8');
 const LANDING_SRC = fs.readFileSync(path.join(PUB, 'landing.js'), 'utf8');
+const API_HELPER_SRC = fs.readFileSync(path.join(PUB, 'api-helper.js'), 'utf8');
 
 // The REAL bundled profile — the shape a fresh install seeds (#251 syncs it
 // on every boot), not a hand-invented launchModes block.
@@ -126,6 +127,9 @@ describe('create flow routes through the launch gate (#401)', () => {
     sandbox.window = sandbox;
     vm.createContext(sandbox);
     vm.runInContext([
+      // The gate asks the shared helper which modes the engine will run, so it
+      // comes along: running the REAL gate is the point of this test.
+      liftFunction(API_HELPER_SRC, 'function tcHonoredLaunchModes(engine)'),
       liftFunction(LANDING_SRC, 'function proceedWithLaunchModeCheck(name, project, continuityMode)'),
       liftFunction(LANDING_SRC, 'async function launchProject(name)'),
       'globalThis.launchProject = launchProject;'
@@ -160,6 +164,9 @@ describe('create flow routes through the launch gate (#401)', () => {
     sandbox.window = sandbox;
     vm.createContext(sandbox);
     vm.runInContext([
+      // The gate asks the shared helper which modes the engine will run, so it
+      // comes along: running the REAL gate is the point of this test.
+      liftFunction(API_HELPER_SRC, 'function tcHonoredLaunchModes(engine)'),
       liftFunction(LANDING_SRC, 'function proceedWithLaunchModeCheck(name, project, continuityMode)'),
       liftFunction(LANDING_SRC, 'async function launchProject(name)'),
       'globalThis.launchProject = launchProject;'
