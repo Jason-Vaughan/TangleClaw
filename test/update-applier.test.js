@@ -250,6 +250,12 @@ describe('update-applier (UB #228/#229)', () => {
       // settings.local.json is the operator\'s; a modified CLAUDE.md is not
       // provably TC\'s even when TC once generated it — a later hand edit
       // must never be discarded under "nothing of yours is in this list".
+      //
+      // #1241 did not widen that line, and this case still proves it: with NO
+      // containment test supplied, a carrier stays real work. The carrier is
+      // admitted only when a caller can show the delta sits inside TC's markers
+      // — test/update-applier-managed-carrier.test.js owns that half, including
+      // the case where a hand edit outside them keeps this exact refusal.
       const d = applier._classifyDirty(' M .claude/settings.local.json\n M CLAUDE.md\n');
       assert.deepEqual(d.discardable, []);
       assert.deepEqual(d.realWork, ['.claude/settings.local.json', 'CLAUDE.md']);
