@@ -13,9 +13,9 @@ settings cleanup.)
   promotion, autonomous edits for safe/non-conflicting cases, conflict-surfacing, and an
   independent **Critic gate** for conflicting/autonomous edits.
 
-This doc is the **canonical, git-tracked** reference (TC gitignores `.claude/`, so the
-paste-able priming copy at `.claude/priming/d1b-rule-review.md` is per-clone and points
-here).
+This doc is the **canonical, git-tracked** reference. Everything under `.claude/` is ignored
+except `settings.json`, which carries the plugin install reference (#833) — so the paste-able
+priming copy at `.claude/priming/d1b-rule-review.md` is still per-clone and points here.
 
 ## Data model
 

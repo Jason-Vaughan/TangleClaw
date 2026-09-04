@@ -3,9 +3,15 @@
 <!-- This repo is governed by the Prawduct Claude Code plugin — see "Governance (Prawduct)"
 below, under the PRAWDUCT:ANCHOR marker.
 
-Two regions, and the marker is the boundary. Everything ABOVE `<!-- BEGIN:tangleclaw -->`
-is hand-maintained and safe to edit. Everything between BEGIN:tangleclaw and END:tangleclaw
-is written by TangleClaw and replaced on its next write — do not hand-edit inside it.
+Three owners, and the markers are the boundaries. Everything ABOVE the BEGIN:tangleclaw
+marker is hand-maintained and safe to edit, EXCEPT the "Governance (Prawduct)" section under
+PRAWDUCT:ANCHOR — that one belongs to the plugin and its doctor check grades on it. Everything
+between the BEGIN:tangleclaw and END:tangleclaw markers is written by TangleClaw and replaced
+on its next write, so do not hand-edit inside it.
+
+Do not spell either marker in full anywhere else in this file. TangleClaw counts occurrences
+before splicing, and a second literal makes the count read as malformed — it then refuses to
+write and its block silently freezes at whatever it last contained.
 
 The "Global Rules" section below is a hand-maintained MIRROR of data/global-rules.md, the
 file TC injects into every OTHER (non-plugin-governed) project's config. The two are pinned

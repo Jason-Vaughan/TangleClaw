@@ -53,7 +53,27 @@ function isTracked(relPath) {
  * @returns {boolean}
  */
 function isIgnored(relPath) {
-  return gitAnswer(['check-ignore', '-q', '--', relPath]);
+  // `--no-index` or this answers nothing: check-ignore consults the index first
+  // and reports any TRACKED path as not-ignored, whatever .gitignore says. Since
+  // the path under test is tracked on purpose, the plain form returns "not
+  // ignored" even with the negation deleted — green for a reason unrelated to
+  // the rule it claims to check.
+  return gitAnswer(['check-ignore', '-q', '--no-index', '--', relPath]);
+}
+
+/**
+ * A file's contents as COMMITTED at HEAD.
+ *
+ * The working tree is not the artifact for anything a clone receives: every
+ * TangleClaw launch rewrites machine-local state back into these files, so a
+ * disk read reds on the machine that develops the repo and passes only where
+ * nothing has launched.
+ *
+ * @param {string} relPath - Repo-relative path.
+ * @returns {string} File contents at HEAD.
+ */
+function committed(relPath) {
+  return execFileSync('git', ['show', `HEAD:${relPath}`], { cwd: REPO_ROOT, encoding: 'utf8' });
 }
 
 /**
@@ -119,20 +139,26 @@ describe("this repo's plugin install reference is committed (#833)", () => {
     // silently wherever prawduct is not already registered — invisible on the
     // machine that wrote it. The recorded follow-up (splitting machine-local
     // keys out of this file) is exactly the edit that could drop that half.
-    const settings = JSON.parse(
-      fs.readFileSync(path.join(REPO_ROOT, '.claude', 'settings.json'), 'utf8'));
+    const settings = JSON.parse(committed('.claude/settings.json'));
     assert.equal(engines._isCompletePluginRef(settings), true,
       `the committed reference must be complete (got ${JSON.stringify(settings)})`);
   });
 
   it('commits no absolute path, so a clone at another path is not broken', () => {
-    // The `hooks` block TangleClaw writes carries absolute paths to THIS
-    // checkout. Committed, every clone elsewhere would run two commands that do
-    // not exist at every Claude Code start — and hook failures here feed back as
-    // synthetic user messages. Only the portable governance keys are tracked.
-    const raw = fs.readFileSync(path.join(REPO_ROOT, '.claude', 'settings.json'), 'utf8');
-    assert.doesNotMatch(raw, /"\/(Users|home)\//,
-      'the tracked settings must carry no machine-absolute path');
+    // Read the COMMITTED blob, not the working tree. The property is about what
+    // a clone receives, and the working copy is expected to differ: every
+    // TangleClaw launch calls `syncEngineHooks`, which writes a `hooks` block
+    // full of absolute paths back into this file. Reading from disk would red
+    // this on the machine that develops the repo — and the cheapest-looking fix
+    // for that red is deleting the two assertions holding the portable half of
+    // the #833 reference.
+    //
+    // The hooks block matters because its paths point at one checkout: committed,
+    // a clone elsewhere would run commands that do not exist at every Claude Code
+    // start, and hook failures here feed back as synthetic user messages.
+    const raw = committed('.claude/settings.json');
+    assert.doesNotMatch(raw, /"?\/(Users|home)\//,
+      'the COMMITTED settings must carry no machine-absolute path');
     assert.equal(JSON.parse(raw).hooks, undefined,
       'the hooks block is machine-local — syncEngineHooks writes it at launch');
   });
@@ -162,6 +188,33 @@ describe("this repo's plugin install reference is committed (#833)", () => {
       + 'changes, CLAUDE.md is protected on its own and this coupling can be revisited.');
   });
 
+  it('is still spliceable — the real merge accepts the committed file', () => {
+    // The whole point of governance here is that TangleClaw splices its region
+    // instead of replacing the document. That property dies quietly if the file
+    // ever contains a SECOND marker literal: `_mergeManagedBlock` counts
+    // occurrences, reads 2-begin/1-end as malformed, refuses to write, and both
+    // call sites only `log.warn` — so the block silently freezes at whatever it
+    // last held while everything still looks fine.
+    //
+    // Writing prose *about* the markers is exactly how a second literal gets in;
+    // this file's own header did it. Driving the real merge rather than counting
+    // markers here, so the assertion tracks the predicate instead of restating
+    // one half of it.
+    const claudeMd = fs.readFileSync(path.join(REPO_ROOT, 'CLAUDE.md'), 'utf8');
+    const markers = engines._managedBlockMarkers('markdown');
+    assert.ok(markers, 'markdown must have a managed-block comment form');
+    assert.ok(claudeMd.includes(markers.begin),
+      'CLAUDE.md must carry the managed block, or this asserts nothing');
+
+    const { merged, error } = engines._mergeManagedBlock(claudeMd, 'PROBE BODY', 'markdown');
+    assert.equal(error, null, `TangleClaw could not splice its own config: ${error}`);
+    assert.ok(merged.includes('PROBE BODY'), 'the spliced body must land in the file');
+    assert.ok(merged.includes('## Core Rules (Enforced)'),
+      'hand-maintained content above the markers must survive the splice');
+    assert.ok(merged.includes('PRAWDUCT:ANCHOR'),
+      'the plugin-owned anchor must survive the splice too');
+  });
+
   it('carries no live service token, now that the file is public', () => {
     // `_generateClaudeMd` still inlines a live `Authorization: Bearer <token>`
     // when the AUTH-4 gate is on, because `committedCarrier` is a per-generator
@@ -170,7 +223,7 @@ describe("this repo's plugin install reference is committed (#833)", () => {
     // gate enabled writes an M2M bearer into a tracked file. Deriving the flag
     // from whether the target is actually tracked is the class fix (#1240);
     // this asserts the outcome that would matter in the meantime.
-    const claudeMd = fs.readFileSync(path.join(REPO_ROOT, 'CLAUDE.md'), 'utf8');
+    const claudeMd = committed('CLAUDE.md');
     for (const m of claudeMd.matchAll(/Authorization:\s*Bearer\s+(\S+)/gi)) {
       assert.match(m[1], /^[`<]/,
         `CLAUDE.md is tracked and must carry no live bearer token (found "${m[1].slice(0, 12)}…")`);

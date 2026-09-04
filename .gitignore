@@ -178,9 +178,10 @@ secrets.*.json
 *.log
 logs/
 
-# Engine config and local planning notes — machine state, not repo content.
+# Why CLAUDE.md is NOT ignored here — the rules it would have sat among are the
+# `.claude/*` block near the top of this file.
 #
-# CLAUDE.md is NOT in that category and is tracked (#833). It is the file Claude
+# CLAUDE.md is tracked (#833). It is the file Claude
 # Code reads in this directory, and leaving it untracked meant a fresh clone got
 # whatever TangleClaw generated instead of the hand-maintained content. It is
 # safe to track only because `.claude/settings.json` is now tracked too: that is
