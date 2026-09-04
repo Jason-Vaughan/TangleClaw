@@ -343,3 +343,9 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/engine-errors.test.js` — #261: the `codex-json` parser on real Codex error shapes (a 400 `invalid_request_error`, a 500, a line tmux wrapped across rows), `errorPatterns` validation (bad regex and unknown parser rejected), and the record/clear rule of `lib/engine-errors.js#observe`. `test/engine-error-surface.test.js` — the same fact reaching the wrap sentinel's tick, `lib/sessions.js#getSessionStatus` and `lib/projects.js#enrichProject`. `test/engine-error-ui.test.js` — the session banner and card badge rendered from the payload, and hidden again when it is null.
 - `test/pill-ux-contract.test.js` — #104: every session banner pill carries its `data-tooltip` category label and no `title`; the `[data-tooltip]` primitive exists in `public/session.css` and hangs below the pill; `public/session.js#loadModelStatus` puts the engine status text into the click detail (`#togglePillDetail`) while the colour state still applies; `#setConnected` keeps the status pill's detail and accessible name current.
 - `test/silent-prime-drop-warning.test.js` — #741: on an engine without `supportsSilentPrime` a project's `silentPrime` setting is neither honored nor offered and nothing said so. Pins `lib/engines.js#silentPrimeDisposition` as the one owner of that answer, and the launch path's record of it at info rather than warn — a stored value on such a project is indistinguishable from the shipped default, so an alarm would fire on every non-Claude launch about a preference nobody set.
+
+## TODO (auto-stubbed 2026-09-03)
+
+- **TBD** — touched in this session: `lib/wrap-steps/_exec-shell.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/orphan-hooks-banner.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/ttyd-watcher.test.js`. <!-- describe -->
