@@ -489,7 +489,10 @@
             'The update is blocked only by files TangleClaw itself wrote:\n\n'
             + d.discardable.map((f) => `  ${f}`).join('\n')
             + '\n\nDiscard these files and update? Nothing of yours is in this list — '
-            + 'anything TangleClaw could not prove it wrote would have blocked instead.'
+            + 'anything TangleClaw could not prove it wrote would have blocked instead. '
+            + 'A file TangleClaw shares with you (CLAUDE.md) appears only when your copy '
+            + 'matches the committed one everywhere outside TangleClaw\'s own section, so '
+            + 'discarding restores that section and changes nothing you wrote.'
           );
           if (proceedDiscard) {
             try {

@@ -56,7 +56,11 @@ All notable changes to TangleClaw are documented in this file.
   "yes" costs them their uncommitted work. The containment test is **injected**, defaulting to null,
   so `_classifyDirty` stays pure over its string input and a caller that cannot answer gets the
   pre-#1241 refusal rather than a guess. An untracked carrier is never discardable: `git checkout --`
-  has nothing to restore it from.
+  has nothing to restore it from. Every verdict is logged, positive and negative, naming which of
+  the five causes declined it — the five are indistinguishable from outside, and a silent refusal
+  would reproduce the opacity this fix exists to remove. The dashboard's discard confirmation and
+  the agent-facing update prompt both say what changed: `discardable` can now name a file the
+  operator and the plugin also write, and it appears only when their content is provably untouched.
 - **The project settings modal opens again.** #596's `ui.js` refactor routed
   `renderLaunchModeSettings` through the shared `tcHonoredLaunchModes` helper and removed the
   `const modes` binding it replaced — but a reference to `modes` survived further down the same

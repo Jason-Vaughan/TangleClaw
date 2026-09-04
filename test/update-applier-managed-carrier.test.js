@@ -101,6 +101,15 @@ describe('managed-block containment (#1241)', () => {
     assert.equal(containment(doubled, doubled), false);
   });
 
+  it('fails closed when the end marker precedes the begin marker', () => {
+    // Claimed in the JSDoc and the CHANGELOG; asserted here so the claim is
+    // not the only thing holding it. Counts are 1/1, so only the ordering
+    // check rejects this.
+    const inverted = `head\n${M.end}\nbody\n${M.begin}\ntail\n`;
+    assert.equal(containment(inverted, inverted), false);
+    assert.equal(applier._outsideManagedBlock(inverted, M), null);
+  });
+
   it('fails closed when the file is absent from HEAD or unreadable', () => {
     assert.equal(containment(new Error('fatal: path does not exist'), file('a', 'b', 'c')), false);
     assert.equal(containment(file('a', 'b', 'c'), new Error('ENOENT')), false);
@@ -159,12 +168,114 @@ describe('_classifyDirty routes carriers on containment, not on path (#1241)', (
 });
 
 describe('the carrier list tracks its source of truth', () => {
+  const profile = JSON.parse(fs.readFileSync(
+    path.join(__dirname, '..', 'data', 'engines', 'claude.json'), 'utf8'));
+
   it('names the filename the claude engine profile declares', () => {
     // A rename in the profile must fail here rather than leave the list
     // pointing at a file that no longer exists.
-    const profile = JSON.parse(fs.readFileSync(
-      path.join(__dirname, '..', 'data', 'engines', 'claude.json'), 'utf8'));
     assert.ok(applier.MANAGED_BLOCK_CARRIERS.includes(profile.configFormat.filename),
       `MANAGED_BLOCK_CARRIERS must include "${profile.configFormat.filename}"`);
+  });
+
+  it('locates markers with the syntax that profile declares', () => {
+    // The other half of the same coupling, and the quieter one: a syntax change
+    // makes the markers unmatchable, so containment answers false forever and
+    // #1241 is silently back — with the filename pin above still green.
+    assert.equal(applier.MANAGED_BLOCK_SYNTAX, profile.configFormat.syntax);
+    assert.ok(engines._managedBlockMarkers(applier.MANAGED_BLOCK_SYNTAX),
+      'the declared syntax must resolve to a real comment form');
+  });
+});
+
+/*
+ * The seam between `applyUpdate` and the containment predicate.
+ *
+ * Both halves were covered in isolation, and that was not enough: deleting the
+ * second argument at the single call site restores the #1241 dead end with the
+ * whole suite green, because `_classifyDirty`'s default IS the pre-fix
+ * behaviour. Only driving `applyUpdate` itself pins the wiring.
+ */
+describe('applyUpdate wires the containment test in (#1241)', () => {
+  // Mirrors the stub table in test/update-applier.test.js — the same git calls
+  // applyUpdate really makes, so this drives the production path rather than a
+  // shape invented here.
+  const SHA = 'aaaaaaa0000000000000000000000000000000';
+  const HAPPY = {
+    'rev-parse HEAD': `${SHA}\n`,
+    'rev-parse --abbrev-ref HEAD': 'main\n',
+    'fetch --tags origin': '',
+    'ls-remote --tags origin': 'sha1\trefs/tags/v9.9.9\n',
+    'checkout v9.9.9': '',
+    [`diff --name-only ${SHA} ${SHA}`]: ''
+  };
+
+  /**
+   * @param {string} porcelain - status output, then clean on any later call.
+   * @returns {object} `{ fn, calls }` git stub.
+   */
+  function gitStub(porcelain) {
+    const calls = [];
+    let n = 0;
+    return {
+      calls,
+      fn: (args) => {
+        const key = args.join(' ');
+        calls.push(key);
+        if (key === 'status --porcelain') return n++ === 0 ? porcelain : '';
+        if (key.startsWith('checkout -- ') || key.startsWith('clean -fd -- ')) return '';
+        if (key.startsWith('show HEAD:')) return CONTAINED_HEAD;
+        if (!(key in HAPPY)) throw new Error(`unexpected git call: ${key}`);
+        return HAPPY[key];
+      }
+    };
+  }
+
+  const CONTAINED_HEAD = file('# Doc', 'old body', 'tail');
+  const CONTAINED_WORK = file('# Doc', 'NEW body', 'tail');
+  const EDITED_WORK = file('# Doc\n\nmy note', 'NEW body', 'tail');
+
+  /**
+   * Run applyUpdate with stubs in place, restoring them afterwards.
+   *
+   * @param {string} work - Working-tree content for the carrier.
+   * @param {object} opts - Passed to applyUpdate.
+   * @returns {object} `{ result, calls }`
+   */
+  function run(work, opts) {
+    const real = { ...applier._internal };
+    const { fn, calls } = gitStub(' M CLAUDE.md\n');
+    applier._internal.git = fn;
+    applier._internal.readFile = () => work;
+    applier._internal.checkForUpdate = () => ({ updateAvailable: true, latestVersion: '9.9.9' });
+    try {
+      return { result: applier.applyUpdate(opts), calls };
+    } finally {
+      Object.assign(applier._internal, real);
+    }
+  }
+
+  it('offers the discard for a carrier whose delta is inside the block', () => {
+    const { result } = run(CONTAINED_WORK, {});
+    assert.equal(result.ok, false, 'the discard is still opt-in per request');
+    assert.equal(result.code, 'dirty-tree');
+    assert.deepEqual(result.dirty, { discardable: ['CLAUDE.md'], realWork: [] });
+    assert.match(result.error, /discard option/,
+      'an all-TC refusal must tell the operator the way out exists — this is the #1241 dead end');
+  });
+
+  it('discards it and proceeds when asked', () => {
+    const { result, calls } = run(CONTAINED_WORK, { discardDirty: true });
+    assert.equal(result.ok, true, 'the update must proceed once the tree is provably clean');
+    assert.ok(calls.includes('checkout -- CLAUDE.md'),
+      'the carrier is restored from HEAD, and TC rewrites its own region on next boot');
+  });
+
+  it('still refuses hard when the operator edited outside the block', () => {
+    const { result, calls } = run(EDITED_WORK, { discardDirty: true });
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.dirty, { discardable: [], realWork: ['CLAUDE.md'] });
+    assert.equal(calls.some((c) => c.startsWith('checkout -- ')), false,
+      'a hand edit outside the markers must never be discarded');
   });
 });
