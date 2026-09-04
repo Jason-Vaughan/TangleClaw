@@ -39,6 +39,24 @@ All notable changes to TangleClaw are documented in this file.
   mute still outranks it, gated where it always was, inside `playChime`.
 
 ### Fixed
+- **A regenerated `CLAUDE.md` no longer strands the self-updater (#1241).** TangleClaw manages its
+  own clone, so it splices its `BEGIN/END:tangleclaw` region into `CLAUDE.md` on every launch — and
+  since #833 that file is tracked, so any release changing generated guide text dirtied it.
+  `_classifyDirty` counted only `.tangleclaw/*` and `.claude/settings.json` as TC-written, so the
+  carrier landed in `realWork` and `POST /api/update/apply` returned a hard 409 **with no discard
+  offer**, leaving the operator stuck on the running version. Same shape as the `.codex.yaml`
+  incident that motivated ignoring generated engine configs here in the first place.
+  **The ratified rule it collided with is preserved, not relaxed.** "A modified `CLAUDE.md` is not
+  provably TC's, and a hand edit must never be discarded" still holds — what changed is that the
+  question is now answerable: a carrier is discardable only when the working copy matches HEAD
+  *everywhere outside the markers*, which is compared by eliding the managed region from both sides.
+  Content outside the block is a hand edit and stays real work, so the existing guard on that rule
+  passes unchanged. Every branch fails closed — file absent from HEAD, unreadable, markers missing,
+  duplicated or inverted — because a wrong "no" costs the operator the old refusal while a wrong
+  "yes" costs them their uncommitted work. The containment test is **injected**, defaulting to null,
+  so `_classifyDirty` stays pure over its string input and a caller that cannot answer gets the
+  pre-#1241 refusal rather than a guess. An untracked carrier is never discardable: `git checkout --`
+  has nothing to restore it from.
 - **The project settings modal opens again.** #596's `ui.js` refactor routed
   `renderLaunchModeSettings` through the shared `tcHonoredLaunchModes` helper and removed the
   `const modes` binding it replaced — but a reference to `modes` survived further down the same
