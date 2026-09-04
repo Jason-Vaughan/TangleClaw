@@ -126,6 +126,9 @@ describe('create flow routes through the launch gate (#401)', () => {
     sandbox.window = sandbox;
     vm.createContext(sandbox);
     vm.runInContext([
+      // The gate asks this helper which modes the engine will actually run, so
+      // it has to come along — running the real gate is the point of this test.
+      liftFunction(LANDING_SRC, 'function honoredLaunchModes(engine)'),
       liftFunction(LANDING_SRC, 'function proceedWithLaunchModeCheck(name, project, continuityMode)'),
       liftFunction(LANDING_SRC, 'async function launchProject(name)'),
       'globalThis.launchProject = launchProject;'
@@ -160,6 +163,9 @@ describe('create flow routes through the launch gate (#401)', () => {
     sandbox.window = sandbox;
     vm.createContext(sandbox);
     vm.runInContext([
+      // The gate asks this helper which modes the engine will actually run, so
+      // it has to come along — running the real gate is the point of this test.
+      liftFunction(LANDING_SRC, 'function honoredLaunchModes(engine)'),
       liftFunction(LANDING_SRC, 'function proceedWithLaunchModeCheck(name, project, continuityMode)'),
       liftFunction(LANDING_SRC, 'async function launchProject(name)'),
       'globalThis.launchProject = launchProject;'

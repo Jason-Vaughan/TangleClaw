@@ -1363,12 +1363,9 @@ function proceedWithLaunchModeCheck(name, project, continuityMode) {
 
   const engineId = project ? (project.engineId || (state.config && state.config.defaultEngine) || 'claude') : 'claude';
   const engine = (state.engines || []).find(e => e.id === engineId);
-  if (engine && engine.launchModes) {
-    const enabledModes = Object.values(engine.launchModes).filter(m => !m.disabled);
-    if (enabledModes.length > 1) {
-      openLaunchModeModal(name, engine, continuityMode);
-      return;
-    }
+  if (honoredLaunchModes(engine).length > 1) {
+    openLaunchModeModal(name, engine, continuityMode, project);
+    return;
   }
 
   doLaunchProject(name, null, continuityMode);
@@ -1445,21 +1442,74 @@ let launchModeTarget = null;
 let selectedLaunchMode = null;
 
 /**
+ * The launch modes an engine will actually run, in render order.
+ *
+ * One definition because two sites answer this question: the gate that decides
+ * whether a picker is worth opening, and the picker that renders the options.
+ * They used to spell it separately, so the gate could count two real choices
+ * while the picker rendered three — offering a mode the engine refuses.
+ *
+ * The server has its own copy of this predicate (`honorsLaunchMode`,
+ * `lib/engines.js`). That is a boundary, not a restatement: `public/` runs in a
+ * browser and cannot require server code, and this project has no build step.
+ *
+ * @param {object|null} engine - Engine object with `launchModes`
+ * @returns {Array<[string, object]>} Honored `[key, mode]` pairs
+ */
+function honoredLaunchModes(engine) {
+  const modes = engine && engine.launchModes;
+  if (!modes) return [];
+  return Object.entries(modes).filter(([, mode]) => mode && mode.disabled !== true);
+}
+
+/**
+ * The mode the picker opens on: the project's configured default when this
+ * engine will honor it, otherwise the engine's own.
+ *
+ * Seeding from the engine alone is what made the `defaultLaunchMode` project
+ * setting inert. The picker sends its selection EXPLICITLY on every launch, and
+ * an explicit choice beats the stored default server-side by design
+ * (`lib/sessions.js`) — so a mode saved in the settings modal was consulted
+ * only on the hidden-picker path, and never on the shipped default where the
+ * picker is shown.
+ *
+ * A stored mode this engine cannot honor falls back rather than checking a
+ * radio that is not rendered. That state is already prevented at the source
+ * (`updateProject` resets a stranded mode on engine switch) and reported where
+ * the setting lives (the settings modal labels it), so the picker does not tell
+ * that story a fourth time.
+ *
+ * @param {object|null} project - Project record, may carry `defaultLaunchMode`
+ * @param {object|null} engine - Engine object with `launchModes`
+ * @returns {string|undefined} Mode key to preselect, or undefined if none
+ */
+function preselectedLaunchMode(project, engine) {
+  const honored = honoredLaunchModes(engine).map(([key]) => key);
+  const stored = project && project.defaultLaunchMode;
+  if (stored && honored.includes(stored)) return stored;
+  const engineDefault = engine && engine.defaultLaunchMode;
+  if (engineDefault && honored.includes(engineDefault)) return engineDefault;
+  return honored[0];
+}
+
+/**
  * Open the launch mode picker modal.
  * @param {string} name - Project name
  * @param {object} engine - Engine object with launchModes
+ * @param {string|null} continuityMode - Continuity choice to carry into launch
+ * @param {object|null} project - Project whose configured default seeds the pick
  */
-function openLaunchModeModal(name, engine, continuityMode = null) {
+function openLaunchModeModal(name, engine, continuityMode = null, project = null) {
   pendingContinuityMode = continuityMode;
   launchModeTarget = name;
-  selectedLaunchMode = engine.defaultLaunchMode || Object.keys(engine.launchModes)[0];
+  selectedLaunchMode = preselectedLaunchMode(project, engine);
 
   document.getElementById('launchModeText').innerHTML =
     `Choose a launch mode for <strong>${esc(name)}</strong>:`;
 
   const list = document.getElementById('launchModeList');
   let html = '';
-  for (const [key, mode] of Object.entries(engine.launchModes)) {
+  for (const [key, mode] of honoredLaunchModes(engine)) {
     const checked = key === selectedLaunchMode ? 'checked' : '';
     const warning = mode.warning ? `<span class="launch-mode-warning">${esc(mode.warning)}</span>` : '';
     html += `
