@@ -2,30 +2,6 @@
   "enabledPlugins": {
     "prawduct@prawduct": true
   },
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "startup",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"/Users/jasonvaughan/Documents/Projects/TangleClaw/data/hooks/sessionstart-prime-claude.sh\"",
-            "statusMessage": "Loading session prime..."
-          }
-        ]
-      },
-      {
-        "matcher": "startup",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"/Users/jasonvaughan/Documents/Projects/TangleClaw/data/hooks/sessionstart-rules-claude.sh\" 1",
-            "statusMessage": "Loading project rules..."
-          }
-        ]
-      }
-    ]
-  },
   "extraKnownMarketplaces": {
     "prawduct": {
       "source": {

@@ -2,19 +2,21 @@
 .DS_Store
 
 # Claude Code. Everything here is machine-local EXCEPT the plugin install
-# reference, which is governance state (#833): `enabledPlugins` and
-# `extraKnownMarketplaces` in settings.json are what `isPluginGoverned()` reads,
-# and a clone without them reads as ungoverned — which switches CLAUDE.md's
-# merge strategy from managed-block to WHOLE-FILE and destroys it on first
-# launch. Tracking the file is what makes a committed CLAUDE.md survive.
+# reference, which is governance state (#833). `isPluginGoverned()` reads
+# `enabledPlugins`; `extraKnownMarketplaces` is load-bearing for a different
+# reason — without it the plugin never resolves, which `_isCompletePluginRef`
+# is the contract for — so both halves are committed. A clone without the
+# reference reads as ungoverned, which switches CLAUDE.md's merge strategy from
+# managed-block to WHOLE-FILE and destroys it on first launch. Tracking this
+# file is what makes a committed CLAUDE.md survive.
 #
 # `settings.local.json` (permissions) stays ignored: genuinely per-machine.
-# The `hooks` block inside settings.json carries absolute paths and is rewritten
-# by `syncEngineHooks` at every launch, so a clone at a different path will show
-# it as a diff on first launch. That visibility is the point of #833 — the
-# reference silently held three different values across two days before this —
-# but the cleaner split (machine-local hooks out of the tracked file) is the
-# follow-up recorded on that issue.
+#
+# The `hooks` block is NOT committed. It carries absolute paths to one machine's
+# checkout, and a clone elsewhere would run two commands that do not exist at
+# every Claude Code start — a broken hook, not merely a stale path. `syncEngineHooks`
+# writes it at launch, so **expect this tracked file to show as modified**; that is
+# known, and moving machine-local keys out for good is #1242.
 .claude/*
 !.claude/settings.json
 
@@ -70,8 +72,16 @@
 # TangleClaw generated `.codex.yaml` into its own clone, and the resulting dirty
 # tree stranded them on the version containing the bug they were working around.
 #
-# CLAUDE.md is deliberately NOT listed: this repo is plugin-governed, so its
-# CLAUDE.md is hand-authored and tracked (TC never regenerates it here).
+# CLAUDE.md is deliberately NOT listed: it is tracked (#833). TangleClaw does
+# write to it — since #1021 it splices its own BEGIN/END:tangleclaw block on
+# every launch — but only inside those markers, so the hand-authored content
+# around them survives. Expect it to show as modified: the generated block is
+# rendered from this machine's state (the API base URL carries the live port,
+# the Medusa routes carry the project name), so a clone on a different port
+# dirties it at first launch exactly as settings.json does. Same follow-up,
+# #1242. A regenerated CLAUDE.md also strands the self-updater — that is #1241,
+# and it is deliberately NOT fixed by widening the discard set, because a
+# tracked hand edit outside the markers must not be discardable.
 .codex.yaml
 .aider.conf.yml
 

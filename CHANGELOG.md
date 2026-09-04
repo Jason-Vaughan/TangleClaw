@@ -54,10 +54,19 @@ All notable changes to TangleClaw are documented in this file.
   `test/repo-governance-reference.test.js` asserts the whole chain, because every link is invisible
   on the machine that breaks it and only shows up on someone else's first clone. Tracking the file
   also makes the reference reviewable, which is what #833 was filed about: it silently held three
-  different values across two days with no diff and no commit. **Known residual:** the `hooks` block
-  inside `settings.json` carries absolute paths and is rewritten by `syncEngineHooks` at every
-  launch, so a clone at a different path shows it as a diff after first launch; splitting
-  machine-local keys out of the tracked file is the recorded follow-up.
+  different values across two days with no diff and no commit. Only the portable governance keys are
+  committed — the `hooks` block is stripped, because its absolute paths would make every clone
+  elsewhere run two nonexistent commands at each Claude Code start; `syncEngineHooks` rewrites it at
+  launch, so the tracked file shows as modified from then on, and moving machine-local keys out for
+  good is **#1242**. While in the file: `CLAUDE.md` regained the `PRAWDUCT:ANCHOR` governance section
+  its own header pointed at (absent, most likely eaten by an earlier ungoverned whole-file write —
+  the failure this change prevents), gained a section recording this repo's exceptions to the
+  mirrored Global Rules so `docs/release-process.md`'s "do not tag by hand" citation is finally true,
+  and its Global Rules mirror is now pinned equal to `data/global-rules.md` by test rather than by
+  hope. Two hazards surfaced by tracking the file are filed rather than folded in: **#1240** (the
+  ungoverned `_generateClaudeMd` path can inline a live service token into what is now a tracked
+  file) and **#1241** (a regenerated `CLAUDE.md` lands in the self-updater's hard-refusal path, which
+  cannot be fixed without amending a ratified decision about discarding hand edits).
 - **A chime switched off no longer leaves its indicator lit (#1181).** `updateChimeIndicator` only
   ever *added* the `active` class, so disarming the chime left the button lit until reload — and it
   painted onto the Cmd button, whose `active` state also means "the command bar is open", putting

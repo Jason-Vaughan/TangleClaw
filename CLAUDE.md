@@ -1,9 +1,17 @@
 # CLAUDE.md
 
-<!-- This repo is governed by the Prawduct Claude Code plugin, so TangleClaw does NOT
-regenerate this file (see "Governance" at the bottom). It is maintained by hand.
-Global Rules and the API guides below mirror data/global-rules.md and data/*-guide.md,
-which TC injects into every OTHER (non-plugin-governed) project's config. -->
+<!-- This repo is governed by the Prawduct Claude Code plugin — see "Governance (Prawduct)"
+below, under the PRAWDUCT:ANCHOR marker.
+
+Two regions, and the marker is the boundary. Everything ABOVE `<!-- BEGIN:tangleclaw -->`
+is hand-maintained and safe to edit. Everything between BEGIN:tangleclaw and END:tangleclaw
+is written by TangleClaw and replaced on its next write — do not hand-edit inside it.
+
+The "Global Rules" section below is a hand-maintained MIRROR of data/global-rules.md, the
+file TC injects into every OTHER (non-plugin-governed) project's config. The two are pinned
+equal by test/repo-governance-reference.test.js, so edit data/global-rules.md and copy it
+here, never one alone. Where a mirrored rule does not hold for THIS repo, the exceptions
+section immediately above it is the authority. -->
 
 ## Core Rules (Enforced)
 
@@ -18,6 +26,20 @@ which TC injects into every OTHER (non-plugin-governed) project's config. -->
 - Update docs in same commit as code changes
 - Use decision framework before adding code
 - Independent Critic review after medium+ work
+
+## This Repo's Exceptions To The Global Rules Below
+
+The Global Rules section that follows is TangleClaw's guidance for the projects it manages, mirrored
+here. TangleClaw is itself one of those managed projects, so the rules apply — except where this
+repo's own tooling makes them wrong. Each exception below is the authority for this repo; the
+mirrored rule stays as written because it is correct everywhere else.
+
+- **Do not tag releases by hand.** The Releases & Versioning rule says to suggest
+  `git tag -a vX.Y.Z && git push --tags` after a substantive merge. Not here: `.github/workflows/release.yml`
+  creates the tag and publishes the Release as separate steps, so a hand-made tag races the workflow
+  and can pin a commit whose `version.json` disagrees with the tag. `docs/release-process.md` is the
+  authority on how a release is cut here, and it cites this exception.
+- **The post-commit hook is opt-in**, and is not the tagger — see `docs/release-process.md`.
 
 # Global Rules
 
@@ -144,6 +166,31 @@ When a project is shown to contributors, clients, or hiring evaluators, help fli
 - Discoverable from the user's GitHub profile (pin a showcase repo; mention it in the profile README).
 
 Treat the user's GitHub profile as their public portfolio: commit activity, public repos, GitHub Releases, stars, and contributions to others' repos all feed dev-for-hire credibility. Visibility is a feature, not a side-effect — when work crosses a showable milestone, suggest the visibility action.
+
+<!-- PRAWDUCT:ANCHOR — static governance pointer managed by the prawduct plugin. Keep it small and version-free: principles, methodology, and the active version live in the plugin and are injected at session start. -->
+
+## Governance (Prawduct)
+
+This repo is governed by **Prawduct**, installed as a Claude Code plugin — not as
+committed framework files. The principles, methodology, Critic protocol, and PR
+review live in the plugin and are read on demand (run `/prawduct:methodology`);
+they are intentionally not copied into this repo.
+
+**Before writing any code, STOP and read the build cycle: `/prawduct:methodology building`.**
+Skipping it is the #1 governance failure.
+
+The hardest rules (everything else is in the plugin):
+
+- **Tests are contracts** — fix the code, never weaken a test.
+- **No "pre-existing" exception** — fix what you find, or flag why you can't.
+- **Never silently drop a requirement** — say so explicitly.
+- **Run `/prawduct:critic` after medium+ work** — never write Critic findings
+  yourself; the independence is the value.
+
+**Enforcement is structural:** the plugin's Stop hook runs at session end and
+**blocks** if code changed against an active build plan with no Critic findings.
+The session-start banner shows the active version and what changed — this anchor
+stays version-free.
 
 <!-- BEGIN:tangleclaw -->
 ## TangleClaw Operational Guide — generated; edits inside the markers are overwritten
