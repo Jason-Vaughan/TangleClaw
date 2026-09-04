@@ -141,6 +141,35 @@ All notable changes to TangleClaw are documented in this file.
   control paints its own pressed state in both directions, and carries the state in its label and
   title so the meaning does not rest on colour.
 
+### Internal
+- **Ratified the norm that a setting TangleClaw offers must take effect, or say why it does not
+  (`docs/adr/0013-settings-take-effect-or-say-why-not.md`).** Train 12.5 chunk C1 classified every
+  per-project and global setting against the engine roster and found that "universal but unevenly
+  supported" is not the edge case between universal and engine-specific — it is nearly the whole
+  population, so the rule for that class carries the settings surface. The norm is recorded in
+  `architecture.md` § Direction and registered in `project-preferences.md` § Enforcement, but the
+  **ADR is authoritative**: `.prawduct/artifacts/*` is gitignored so ~54 internal design docs
+  including the security model stay out of a public repo, which would otherwise leave a ratified
+  norm alive on one machine only — the same reasoning ADR 0012 and ADR 0009 already record. It is
+  deliberately distinct from two neighbours it would otherwise be folded into: ADR 0001 governs
+  internal state symmetry across two storage locations, and the honest-degradation Direction
+  governs a read that could not be *established*. This governs a read that succeeded and returned
+  a real value the engine will not act on — nothing is unknown, so reporting `null` would be its
+  own falsehood; the value is known and the *effect* is missing. Retroactivity is migrate, and the
+  five instances the audit found are filed as #1251-#1255 rather than grandfathered. The ADR also
+  pins the log-level rule that is easiest to "clean up" wrongly: the level is a function of whether
+  the stored value was a real choice, which is why `defaultLaunchMode` warns when dropped and
+  `silentPrime` records at info.
+- **Train 12.5 chunk C1 design and the chunk C2 build plan** (`.tangleclaw/plans/`). The design
+  records the finding that reframes #764: a project settings modal is scoped to one project, which
+  has exactly one engine, so it never needs the per-engine tabs the issue asks for. The genuinely
+  multi-engine surface is per-engine *global* defaults and inventory, which is also where #581's
+  tunables dock. Splitting them resolves two constraints at once that tabs cannot meet — the
+  ratified mobile norm — the modal is 288-337px on the primary client against a >=44px floor, and
+  #764 requires the tab set to grow with the roster without a UI change, which a bar sized for
+  today's four engines cannot do. Also records that #764's motivating example is dead: #763, which
+  it calls "the mechanism", was closed not-planned on the engine-agnostic rule itself.
+
 ## [5.19.0] - 2026-09-03
 
 ### Added
