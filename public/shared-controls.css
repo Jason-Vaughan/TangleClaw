@@ -555,3 +555,41 @@
 }
 .medusa-panel-close:hover { color: var(--text); background: var(--elevated-bg); }
 .medusa-panel-close:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
+
+/* ── Settings-warnings banner (#758) ──────────────────────────────────────────
+   The warnings a settings save came back with, rendered from
+   `tcSettingsWarningsMarkup` on BOTH the dashboard and the session page.
+
+   It lives here for this file's stated reason. The session page first carried a
+   hand-copied banner that reached for its nearest neighbour, `.engine-error-
+   banner` — danger-red, red left border — so a sentence whose whole point is
+   that the save SUCCEEDED read as an engine failure. Amber and advisory: the
+   save worked; something is outstanding.
+
+   `pre-line` is load-bearing, not decoration: the renderer joins warnings with
+   '\n', so without it two warnings run onto one line. */
+.settings-warnings-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--amber);
+  color: #1a1a1a;
+  padding: 10px 16px;
+  margin: 0 0 12px 0;
+  border-radius: var(--radius-card);
+  font-size: 13px;
+  font-weight: 500;
+}
+.settings-warnings-banner.hidden { display: none; }
+.settings-warnings-text { flex: 1; white-space: pre-line; overflow-wrap: anywhere; }
+.settings-warnings-dismiss {
+  background: rgba(0,0,0,0.06);
+  border: none;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1a1a1a;
+  cursor: pointer;
+}
+.settings-warnings-dismiss:hover { background: rgba(0,0,0,0.12); }

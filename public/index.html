@@ -395,14 +395,14 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
       <button type="button" class="btn btn-small orphan-banner-btn" id="orphanHooksRepairBtn">Repair All</button>
       <button type="button" class="orphan-banner-details" id="orphanHooksDetailsBtn" aria-label="Show affected projects">Details</button>
     </div>
-    <!-- Warnings a successful project-settings save came back with (#1148: a
-         renamed project's old path is still named by a LaunchAgent; or an
-         engine switch that only partly applied). Each names files the operator
-         must edit, so no timer — it stays until dismissed. -->
-    <div id="settingsWarningsBanner" class="orphan-banner hidden" role="alert">
-      <span class="orphan-banner-text settings-warnings-text" id="settingsWarningsText"></span>
-      <button type="button" class="orphan-banner-details" id="settingsWarningsDismissBtn">Dismiss</button>
-    </div>
+    <!-- Warnings a project-settings save came back with (#1148: a renamed
+         project's old path is still named by a LaunchAgent; an engine switch
+         that only partly applied; or #758: a launch-time-only setting changed
+         under a running session). Each names something the operator must go and
+         do, so no timer — it stays until dismissed. Empty on purpose: the markup
+         is single-sourced in `tcSettingsWarningsMarkup`, so this page and the
+         session page cannot drift. -->
+    <div id="settingsWarningsHost"></div>
     <div class="cards-grid" id="cardsGrid"></div>
   </main>
   </div>

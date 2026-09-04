@@ -338,14 +338,14 @@ Two limits worth knowing:
 - **Engines with no captured idle signature** (anything outside Claude and antigravity/Gemini CLI) fall back to the older behaviour: silence for ten seconds. The session status reports `idleReason` beginning `staleness:` when that is what answered, so the fallback is visible rather than assumed.
 
 - Uses Web Audio API for reliable mobile playback
-- Toggle via the Settings modal
+- Toggle with the bell in the session banner — one tap, lit while the chime is on
+- Global Settings carries a **Global chime mute** that silences every session regardless
 - Works on both iOS and Android
 
 #### Settings
 
 The settings modal lets you configure:
 
-- **Chime toggle** — enable/disable idle chime
 - **Poll interval** — how often to check session status (2s–30s)
 - **Engine selector** — switch engine for next session
 - **Mouse mode** — toggle tmux mouse mode on/off
@@ -780,7 +780,8 @@ curl -s http://localhost:3100
 ### Chime Not Working on Mobile
 
 - Tap anywhere on the page first — browsers require user interaction before playing audio
-- Check the chime toggle in session settings
+- Check the bell in the session banner — it is lit when the chime is on for this session
+- Check that **Global chime mute** is off in Global Settings; it silences every session
 - Verify your device isn't in silent mode (iOS)
 
 ### A Project Script Cannot Reach Calendar, Contacts or a Protected Folder

@@ -199,9 +199,17 @@ describe('Session Wrapper UI', () => {
 
     it('should include settings modal', () => {
       assert.ok(html.includes('settingsModal'));
-      assert.ok(html.includes('chimeToggle'));
       assert.ok(html.includes('pollInterval'));
       assert.ok(html.includes('mouseToggle'));
+    });
+
+    // #1181 moved the chime out of this modal and onto the banner. The control's
+    // own coverage — that it exists, and that it paints both directions — is in
+    // test/chime-control.test.js; what belongs here is that it did not stay
+    // behind as a second control for one setting.
+    it('should NOT keep a chime control in the settings modal', () => {
+      assert.ok(!html.includes('chimeToggle'));
+      assert.ok(html.includes('chimeBtn'));
     });
 
     it('should include kill confirmation modal', () => {

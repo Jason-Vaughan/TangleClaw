@@ -4,6 +4,48 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **A settings save says when the running session will not see it (#758).** A setting the
+  session resolves at launch — engine, silent prime, default launch mode, show-launch-mode-picker
+  — was stored immediately and never reached the running process, so the modal accepted the
+  input, reported success, and changed nothing observable. `lib/projects.js` now declares that
+  class once as `LAUNCH_TIME_ONLY_SETTINGS` and `launchTimeOnlyChanges` reports which of them an
+  update actually *changes*, compared against what is stored and read before any mutation runs.
+  When the project has an active session, `updateProject` adds a warning onto the existing
+  `warnings` channel (#1148), so it reaches every caller rather than one modal, and never names
+  an engine: settings resolve at launch on all of them. Declared as one list on purpose, because
+  warning for a single setting while its siblings stay silent teaches that no warning means "this
+  applied", which would then be false for the rest. **The advice is not one sentence, because the
+  four are not one situation.** `engine` and `silentPrime` leave the live process genuinely
+  diverged, and only a relaunch reconciles them; `defaultLaunchMode` and `showLaunchModePicker`
+  are read fresh at the start of every launch (`lib/sessions.js`), so nothing about the running
+  session is stale and telling the operator to relaunch would ask them to kill live work for
+  nothing — each group gets its own sentence, and both tails are asserted by iterating the roster.
+  A PATCH carrying a key at its stored value stays silent (the settings modal sends `engine` on
+  every save), and a project with no live session behaves exactly as before. The session page,
+  whose own engine picker is the one place a live session is guaranteed, was discarding the PATCH
+  response entirely; it now renders both outcomes — the warning, and `api.lastError` when the save
+  is rejected, which had been the one silent case left. The banner's markup and renderer are
+  single-sourced in `public/api-helper.js` (`tcSettingsWarningsMarkup`, `tcRenderSettingsWarnings`)
+  with its styles in the stylesheet both pages load, after the hand-copied first version rendered
+  a successful save in danger-red. `setActivePlan` reads the same `warnings` array as a failure
+  report; that remains sound only because its PATCH body carries one key, and now says so. No
+  timer: the warning names something the operator must go and do.
+- **The session chime toggle moved to the live session banner (#1181).** Arming the chime before
+  stepping away was three interactions deep inside the Session Settings modal. It is now a control
+  in the banner itself (`#chimeBtn`), built by `tcCreateChimeControl` in `public/api-helper.js` so
+  it can be lifted and run by a test rather than pinned by source-matching. Moved, not duplicated —
+  the modal's row is gone, because two controls for one setting is how they drift. The install-wide
+  mute still outranks it, gated where it always was, inside `playChime`.
+
+### Fixed
+- **A chime switched off no longer leaves its indicator lit (#1181).** `updateChimeIndicator` only
+  ever *added* the `active` class, so disarming the chime left the button lit until reload — and it
+  painted onto the Cmd button, whose `active` state also means "the command bar is open", putting
+  two unrelated meanings on one pixel. The function is retired rather than corrected: the new
+  control paints its own pressed state in both directions, and carries the state in its label and
+  title so the meaning does not rest on colour.
+
 ## [5.19.0] - 2026-09-03
 
 ### Added
