@@ -263,7 +263,7 @@ commentary: a field that loses "this was measured" becomes an assumption the nex
 - [x] D2a — `generatedConfig` disposition row, reason declared in the profile (#1251)
 - [x] D2a — settings modal renders it; launch path stops discarding `skipReason`
 - [x] D2a — tests written, every new test mutation-verified red
-- [ ] D2a — chunk Critic, findings addressed
+- [x] D2a — chunk Critic, findings addressed
 - [ ] D2b — `wake` block declared in both profiles with per-field `evidence` (#1255)
 - [ ] D2b — `ENGINE_WAKE_PROFILES` derived from the profiles, consumers untouched
 - [ ] D2b — `medusaWake` disposition row; modal copy corrected
