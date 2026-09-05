@@ -2341,6 +2341,13 @@ body {
   color: var(--text-muted);
   margin-top: 4px;
 }
+/* A setting that takes effect only in PART says which part does not (ADR 0013,
+   #1252). Distinct from `.form-hint`, which describes what the control does:
+   the same muted grey would file "half of this does nothing here" alongside the
+   description as more explanation, which is how the gap went unread. Not
+   `.form-error` either — nothing is broken, and a red row on a working toggle
+   invites the operator to go fix something they cannot. */
+.form-hint--caveat { color: var(--warning, #ffb300); }
 .form-error {
   font-size: 11px;
   color: var(--danger);

@@ -143,6 +143,51 @@ All notable changes to TangleClaw are documented in this file.
   correctly only until a disposition row reads something other than the id.
 
 ### Fixed
+- **The Feature Index and Project Map toggles say which half of them does not run here (#1252).**
+  Both settings have two halves and only one is engine-agnostic: the wrap seeds and maintains
+  `FEATURES.md` / `PROJECT-MAP.md` on every engine, while the SessionStart pointer that tells the
+  agent the file exists is gated on `capabilities.supportsSilentPrime`, which only Claude declares.
+  On four of five engines the toggle therefore built a file no session was ever told to read, and
+  the modal said nothing — the silence ADR 0013 forbids. **The disposition mechanism grew a third
+  answer for it.** `applies` is a boolean, and neither value was honest here: reporting the setting
+  as not applying would call a running feature dead, reporting it as applying would say nothing
+  about the half that is lost. A row in `ENGINE_CONDITIONAL_SETTINGS` may now declare a `caveat`
+  instead of an `applies` gate, and `settingDisposition` answers `applies: true` with the sentence
+  naming what does not happen here — derived once by the mechanism rather than composed at each
+  call site, restated in `tcSettingDisposition` for the browser, and held to the server's wording
+  by the cross-realm parity test like every other reason. The caveat asks
+  `silentPrimeDisposition`, the same predicate the pointer itself is gated on, so it cannot report
+  a loss the launch path does not have; a test drives both over every bundled profile and fails if
+  they ever disagree. **The gate is a triple, and the operator's own leg is now named too:**
+  turning silent prime off on Claude costs the pointer as well, which was true and undocumented.
+  The two rows render as one function, because written twice the caveat would appear in one toggle
+  and be forgotten in the other. `lib/project-config.js`'s "engine-agnostic so the toggle is not
+  engine-gated" comment stopped being half-false.
+- **A rule that carries a value reaches the generated config (#1253).** `_getRulesContent`
+  collected extension rules with `filter(([, v]) => v === true)`, so `loggingLevel` — the only
+  non-boolean rule the product ships, default `'info'` — could never reach the prose path.
+  `_generateCodexYaml` and `_generateAiderConf` read it straight off the config and worked; the
+  three markdown generators never mentioned it, making a real setting do nothing on three of five
+  engines. Repaired rather than removed: removal was available (no project on this install sets a
+  non-default level) but would have changed every codex and aider config to buy nothing, and left
+  the underlying filter unable to render any value-carrying rule ever added. A string or finite
+  number now renders with its value on every generator, including at its default — the two engines
+  that read the key emit their native field at the default too, and a rule the agent hears about on
+  codex but not on claude is the same inconsistency in a new place. `false`, absence, an empty
+  string and an object stay unrendered: this widens the filter, it does not remove it, and the
+  boolean rules are pinned to the exact sentences they have always produced.
+- **Read engine capabilities are distinguishable from declared ones (#1254).** An engine profile
+  declares more than TangleClaw consumes — `supportsSlashCommands`, `supportsCoAuthor` (with its
+  `coAuthorFormat` payload), `supportsRemote` and `supportsModes` have no readers at all — and
+  nothing in the data said so, so a capability panel (#764) would render `supportsCoAuthor: true`
+  on aider as a promise the product does not keep. `lib/engines.js` now exports
+  `READ_CAPABILITIES`, the flags application code actually acts on and what each decides, and a
+  guard holds it to the code in both directions: a listed flag with no reader outside `test/`
+  fails, and a flag that gains a reader without being listed fails too, so the set cannot decay
+  into a description of what somebody once believed. Nothing was deleted from `data/engines/*.json`
+  — the unread flags describe the engines accurately, and wiring any one of them is a feature
+  decision per flag rather than a cleanup. `docs/engine-guide.md`'s capability table now carries
+  the distinction as a column.
 - **A regenerated `CLAUDE.md` no longer strands the self-updater (#1241).** TangleClaw manages its
   own clone, so it splices its `BEGIN/END:tangleclaw` region into `CLAUDE.md` on every launch — and
   since #833 that file is tracked, so any release changing generated guide text dirtied it.

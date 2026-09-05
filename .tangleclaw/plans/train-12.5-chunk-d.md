@@ -128,11 +128,11 @@ the prose path. `_generateCodexYaml` and `_generateAiderConf` read it directly a
 
 ## Status
 
-- [ ] D1a — the partial-application caveat, and both toggles rendering it (#1252)
-- [ ] D1b — non-boolean extension rules render (#1253)
-- [ ] D1c — read vs declared capabilities, guarded (#1254)
-- [ ] D1 — tests written, every new test mutation-verified red
-- [ ] D1 — suite green, evidence recorded
-- [ ] D1 — CHANGELOG entry
+- [x] D1a — the partial-application caveat, and both toggles rendering it (#1252)
+- [x] D1b — non-boolean extension rules render (#1253)
+- [x] D1c — read vs declared capabilities, guarded (#1254)
+- [x] D1 — tests written, every new test mutation-verified red
+- [x] D1 — suite green, evidence recorded
+- [x] D1 — CHANGELOG entry
 - [ ] D1 — cumulative Critic + verify-resolutions, final round clean
 - [ ] D1 — PR with `Fixes` for each car it closes

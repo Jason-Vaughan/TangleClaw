@@ -1202,13 +1202,35 @@ function openSettings(name) {
     </div>
     ${renderProjectRulesSection(project)}`;
 
+  /**
+   * Re-render both index toggles for an engine and a silent-prime state,
+   * carrying over whatever each checkbox currently shows.
+   *
+   * Both, always: their caveat comes from the same two inputs, so re-rendering
+   * one without the other leaves the modal telling the operator that half of
+   * one setting is dead while the identical loss on its neighbour goes unsaid.
+   *
+   * @param {string} engineId - The engine dropdown's current value.
+   * @param {boolean} silentChecked - The silent-prime state now on screen.
+   * @returns {void}
+   */
+  const renderIndexToggles = (engineId, silentChecked) => {
+    const featureEl = document.getElementById('settingsFeatureIndex');
+    const mapEl = document.getElementById('settingsProjectMap');
+    renderFeatureIndexToggle(engineId,
+      featureEl ? featureEl.checked : initialFeatureIndexChecked,
+      project.engine || null, silentChecked);
+    renderProjectMapToggle(engineId,
+      mapEl ? mapEl.checked : initialProjectMapChecked,
+      project.engine || null, silentChecked);
+  };
+
   // Initial render — based on the project's current engine
   renderSilentPrimeToggle(project.engine ? project.engine.id : '', initialSilentChecked,
     project.engine || null);
   renderEvalAuditToggle(project.engine ? project.engine.id : '', initialEvalAuditChecked,
     project.engine || null, project.evalAudit || null);
-  renderFeatureIndexToggle(initialFeatureIndexChecked);
-  renderProjectMapToggle(initialProjectMapChecked);
+  renderIndexToggles(project.engine ? project.engine.id : '', initialSilentChecked);
   renderLaunchModeSettings(
     project.engine ? project.engine.id : '',
     project.defaultLaunchMode || 'default',
@@ -1228,6 +1250,11 @@ function openSettings(name) {
     const checkbox = document.getElementById('settingsSilentPrime');
     const checkedNow = checkbox ? checkbox.checked : initialSilentChecked;
     renderSilentPrimeToggle(e.target.value, checkedNow, project.engine || null);
+    // The index toggles stay live on every engine, but what they say does not:
+    // an engine that delivers no hidden prime maintains the file and tells no
+    // session it is there. Re-rendered here so the operator reads that before
+    // saving, not after a launch that quietly does half the job.
+    renderIndexToggles(e.target.value, checkedNow);
     const auditEl = document.getElementById('settingsEvalAudit');
     renderEvalAuditToggle(e.target.value,
       auditEl ? auditEl.checked : initialEvalAuditChecked,
@@ -1240,6 +1267,18 @@ function openSettings(name) {
       showEl ? showEl.checked : (project.showLaunchModePicker !== false)
     );
   });
+
+  // Turning silent prime off costs the operator the index pointers too — the
+  // gate is a triple, and this is the one leg they control. Delegated to the
+  // container, which survives every re-render, rather than bound to the
+  // checkbox, which `renderSilentPrimeToggle` replaces on each engine change.
+  const silentPrimeHost = document.getElementById('settingsSilentPrimeContainer');
+  if (silentPrimeHost) {
+    silentPrimeHost.addEventListener('change', (e) => {
+      if (!e.target || e.target.id !== 'settingsSilentPrime') return;
+      renderIndexToggles(document.getElementById('settingsEngine').value, e.target.checked);
+    });
+  }
 
   modal.classList.add('open');
 }
@@ -1385,48 +1424,93 @@ function renderEvalAuditToggle(engineId, preserveChecked, projectEngine, audit) 
 }
 
 /**
- * Render the Feature Index toggle (#207, chunk 1). Engine-agnostic — always
- * rendered because the FEATURES.md file and (future) wrap-step parity work
- * regardless of which engine the project uses. SessionStart injection
- * (chunk 2) layers its own engine-capability gate on top at the injection
- * site.
+ * Render the Feature Index toggle (#207, chunk 1). Always a live control: the
+ * wrap half — seeding and maintaining FEATURES.md — runs on every engine.
  *
+ * What does NOT run everywhere is the other half. The SessionStart pointer that
+ * tells the agent the file exists rides the hidden prime, so on an engine that
+ * delivers none, this toggle maintains a file no session is told to read. That
+ * is the caveat the disposition returns, and it is rendered here rather than
+ * composed here — the same rule the inert controls follow (#1252, ADR 0013).
+ *
+ * @param {string} engineId - Engine id from the dropdown's current value
  * @param {boolean} preserveChecked - The checkbox state to carry over (or initial)
+ * @param {object|null} [projectEngine] - The project's own enriched engine, for
+ *   the connection-backed ids `state.engines` omits.
+ * @param {boolean} [silentPrimeChecked] - The silent-prime state the modal
+ *   currently shows; the pointer's gate is a triple, and the operator who turns
+ *   silent prime off loses the pointer on an engine that could deliver it.
  */
-function renderFeatureIndexToggle(preserveChecked) {
-  const container = document.getElementById('settingsFeatureIndexContainer');
+function renderFeatureIndexToggle(engineId, preserveChecked, projectEngine, silentPrimeChecked) {
+  renderIndexToggle({
+    containerId: 'settingsFeatureIndexContainer',
+    setting: 'featureIndexEnabled',
+    inputId: 'settingsFeatureIndex',
+    label: 'Feature Index',
+    hint: 'Maintain a FEATURES.md at the project root mapping feature names to file paths. Enabling creates a template stub at &lt;project-root&gt;/FEATURES.md (existing files are preserved). Edit the file directly to add entries.',
+    engineId, preserveChecked, projectEngine, silentPrimeChecked
+  });
+}
+
+/**
+ * The shared body of the two index toggles — one live checkbox plus whatever
+ * the disposition says about the half of it that may not run here.
+ *
+ * One function because the two toggles differ only in their labels: written
+ * twice, the caveat would be rendered in one and forgotten in the other, which
+ * is the shape of the defect that made them both audit findings.
+ *
+ * @param {object} opts - `containerId`, `setting`, `inputId`, `label`, `hint`,
+ *   `engineId`, `preserveChecked`, `projectEngine`, `silentPrimeChecked`.
+ */
+function renderIndexToggle(opts) {
+  const container = document.getElementById(opts.containerId);
   if (!container) return;
+  // `state.engines` is the picker roster and drops connection-backed ids, so an
+  // OpenClaw project finds nothing there; its own enriched engine carries the
+  // capabilities. Same fallback as the silent-prime row, for the same reason.
+  const roster = (state.engines || []).find(e => e.id === opts.engineId);
+  const profile = roster
+    || (opts.projectEngine && opts.projectEngine.id === opts.engineId ? opts.projectEngine : null);
+  const disposition = tcSettingDisposition(opts.setting,
+    { [opts.setting]: opts.preserveChecked, silentPrime: opts.silentPrimeChecked === true },
+    profile);
+  const caveat = disposition.caveat
+    ? `<div class="form-hint form-hint--caveat">${esc(disposition.caveat)}</div>`
+    : '';
   container.innerHTML = `
     <div class="form-group">
       <label class="gs-toggle-label">
-        <span>Feature Index</span>
-        <input type="checkbox" id="settingsFeatureIndex" ${preserveChecked ? 'checked' : ''}>
+        <span>${esc(opts.label)}</span>
+        <input type="checkbox" id="${opts.inputId}" ${opts.preserveChecked ? 'checked' : ''}>
         <span class="toggle-switch"></span>
       </label>
-      <div class="form-hint">Maintain a FEATURES.md at the project root mapping feature names to file paths. Enabling creates a template stub at &lt;project-root&gt;/FEATURES.md (existing files are preserved). Edit the file directly to add entries.</div>
+      <div class="form-hint">${opts.hint /* a literal from this file, already carrying its own entities */}</div>
+      ${caveat}
     </div>`;
 }
 
 /**
  * Render the Project Map toggle (PIDX #360, #356) into its stable container.
- * Engine-agnostic and always rendered; the SessionStart prime POINTS the agent
- * at PROJECT-MAP.md (reference, not inline) gated by silentPrime + the engine's
- * supportsSilentPrime capability at the injection site.
+ * Always a live control — the wrap maintains PROJECT-MAP.md on every engine —
+ * and it carries the same caveat as the Feature Index when the pointer that
+ * names the file to a session cannot be delivered here (#1252).
  *
+ * @param {string} engineId - Engine id from the dropdown's current value
  * @param {boolean} preserveChecked - The checkbox state to carry over (or initial)
+ * @param {object|null} [projectEngine] - The project's own enriched engine, for
+ *   the connection-backed ids `state.engines` omits.
+ * @param {boolean} [silentPrimeChecked] - The silent-prime state the modal shows.
  */
-function renderProjectMapToggle(preserveChecked) {
-  const container = document.getElementById('settingsProjectMapContainer');
-  if (!container) return;
-  container.innerHTML = `
-    <div class="form-group">
-      <label class="gs-toggle-label">
-        <span>Project Map</span>
-        <input type="checkbox" id="settingsProjectMap" ${preserveChecked ? 'checked' : ''}>
-        <span class="toggle-switch"></span>
-      </label>
-      <div class="form-hint">Maintain a PROJECT-MAP.md at the project root — a "where things live" structural map the agent consults first. Enabling creates it with an auto-generated top-level-directory skeleton (existing files are preserved); fill in the descriptions. Distinct from the Feature Index (which maps features to paths).</div>
-    </div>`;
+function renderProjectMapToggle(engineId, preserveChecked, projectEngine, silentPrimeChecked) {
+  renderIndexToggle({
+    containerId: 'settingsProjectMapContainer',
+    setting: 'projectMapEnabled',
+    inputId: 'settingsProjectMap',
+    label: 'Project Map',
+    hint: 'Maintain a PROJECT-MAP.md at the project root — a "where things live" structural map the agent consults first. Enabling creates it with an auto-generated top-level-directory skeleton (existing files are preserved); fill in the descriptions. Distinct from the Feature Index (which maps features to paths).',
+    engineId, preserveChecked, projectEngine, silentPrimeChecked
+  });
 }
 
 /**

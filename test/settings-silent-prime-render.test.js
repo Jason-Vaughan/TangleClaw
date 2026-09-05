@@ -72,6 +72,7 @@ function render({ roster = [], engineId = 'claude', preserveChecked = true, proj
   vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcSettingDisposition'), ctx);
   vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcEngineDisplayName'), ctx);
   vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
+  vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcIndexPointerCaveat'), ctx);
   // `tcSettingDisposition` closes over module-level `TC_SETTING_*` tables.
   // Lifted by PATTERN rather than by name: naming them one at a time means the
   // next table added is missing here, and the failure is a ReferenceError from
