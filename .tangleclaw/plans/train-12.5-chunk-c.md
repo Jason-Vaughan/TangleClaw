@@ -291,7 +291,7 @@ carries a real guard: hiding the picker while the resolved default carries a war
 - [x] Chunk C2 — suite green, evidence from `prawduct-hook test-status`
 - [x] Chunk C2 — CHANGELOG entry
 - [x] Chunk C2 — cumulative Critic + verify-resolutions, final round clean
-- [ ] Chunk C2 — PR with `Fixes` for each car it closes
+- [x] Chunk C2 — PR with `Fixes` for each car it closes (#1262)
 
 ## Open for the operator
 
