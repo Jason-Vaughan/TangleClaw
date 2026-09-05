@@ -60,7 +60,13 @@ function jsFiles(dir) {
  * @returns {string[]} Sorted repo-relative paths.
  */
 function readersOf(flag) {
-  return codeFilesMatching((t) => t.includes(flag) && /\bcaps\b|capabilit/.test(t));
+  // Member-expression form, not a bare mention: `READ_CAPABILITIES`'s own
+  // entries are `flag: '<what it decides>'` lines in a searched file, and a
+  // description containing the word "capabilities" would otherwise match
+  // itself — the list would satisfy its own has-a-reader guard and the whole
+  // check would pass with no reader anywhere.
+  const member = new RegExp(`\\.${flag}\\b|\\[['"\`]${flag}['"\`]\\]`);
+  return codeFilesMatching((t) => member.test(t) && /\bcaps\b|capabilit/.test(t));
 }
 
 /**
@@ -119,6 +125,12 @@ describe('read capabilities are distinguishable from declared ones (#1254)', () 
     assert.ok(plainReadersOf('settingDisposition').length > 0,
       'the bare search reaches no code — every "no readers" verdict below is vacuous');
     assert.deepEqual(readersOf('__noSuchCapability__'), [], 'and it does not match everything');
+    // And it does not count the list as its own reader. `supportsSlashCommands`
+    // is unread; adding it to READ_CAPABILITIES with a description mentioning
+    // capabilities must not make it look wired.
+    const selfMatch = "  supportsSlashCommands: 'the capabilities this engine offers',";
+    assert.equal(/\.supportsSlashCommands\b/.test(selfMatch), false,
+      'a list entry is not a member expression, so it cannot satisfy the guard');
   });
 
   it('every key in the read set has a reader in application code', () => {
@@ -166,6 +178,31 @@ describe('read capabilities are distinguishable from declared ones (#1254)', () 
       assert.ok(declaredCapabilities().includes(flag), `${flag} must stay declared`);
       assert.equal(Object.prototype.hasOwnProperty.call(engines.READ_CAPABILITIES, flag), false,
         `${flag} is in the read set — if it is now wired, that is the fix, not this list`);
+    }
+  });
+
+  it('the engine guide\'s Read? column agrees with the read set', () => {
+    // A third copy of the distinction, and the one a reader building #764's
+    // panel — or deciding a flag is safe to delete — would act on. The failure
+    // is asymmetric: a flag that gains wiring forces the READ_CAPABILITIES edit
+    // the cases above demand, and leaves the doc saying "declared only" with
+    // nothing to catch it. Parsed rather than eyeballed, because the table is
+    // machine-readable and the guard already reads files off disk.
+    const guide = fs.readFileSync(path.join(ROOT, 'docs', 'engine-guide.md'), 'utf8');
+    const section = guide.slice(guide.indexOf('### Capabilities'), guide.indexOf('#### `startupInjection'));
+    const documented = new Map();
+    for (const line of section.split('\n')) {
+      const row = /^\|\s*`([^`]+)`\s*\|\s*([^|]+?)\s*\|/.exec(line);
+      if (!row) continue;
+      documented.set(row[1].split('.')[0], /\*\*read\*\*/.test(row[2]));
+    }
+    assert.ok(documented.size > 0, 'the capability table did not parse — this compares nothing');
+    for (const [flag, saysRead] of documented) {
+      assert.equal(saysRead, Object.prototype.hasOwnProperty.call(engines.READ_CAPABILITIES, flag),
+        `docs/engine-guide.md and READ_CAPABILITIES disagree about ${flag}`);
+    }
+    for (const flag of Object.keys(engines.READ_CAPABILITIES)) {
+      assert.ok(documented.has(flag), `${flag} is read but absent from the engine guide's table`);
     }
   });
 

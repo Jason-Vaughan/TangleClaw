@@ -3641,6 +3641,33 @@
   }
 
   /**
+   * The engine profile a settings surface hands the disposition, for the id the
+   * dropdown currently names.
+   *
+   * `state.engines` is the picker roster and drops connection-backed ids
+   * (`openclaw:<connId>`), so an OpenClaw project finds nothing there — while
+   * the server resolves the base profile and answers from its capabilities. The
+   * project's own enriched engine carries those capabilities, so it is the
+   * fallback, but only while the dropdown still names it: once the operator
+   * picks a different engine it describes a different one.
+   *
+   * One owner because this is the input that decides whether a control prints
+   * "TangleClaw has no profile for this engine" — the false sentence the whole
+   * disposition exists to prevent. Written out at each surface, the next engine
+   * family whose ids the roster omits has to be remembered in three places.
+   *
+   * @param {Array<object>|null} roster - `state.engines`.
+   * @param {string} engineId - The engine dropdown's current value.
+   * @param {object|null} projectEngine - The project's own enriched engine.
+   * @returns {object|null} The profile, or null when nothing was read for it.
+   */
+  function tcResolveEngineProfile(roster, engineId, projectEngine) {
+    const found = (roster || []).find((e) => e.id === engineId);
+    if (found) return found;
+    return projectEngine && projectEngine.id === engineId ? projectEngine : null;
+  }
+
+  /**
    * The shipped defaults the disposition compares a stored value against.
    *
    * Restated from `lib/project-config.js` (`DEFAULT_PROJECT_CONFIG`) for the
@@ -3883,6 +3910,7 @@
   }
 
   global.tcHonoredLaunchModes = tcHonoredLaunchModes;
+  global.tcResolveEngineProfile = tcResolveEngineProfile;
   global.tcSettingDisposition = tcSettingDisposition;
   global.tcCreateProjectBody = tcCreateProjectBody;
   global.tcSettingDefaults = TC_SETTING_DEFAULTS;

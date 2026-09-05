@@ -83,6 +83,7 @@ function render(row, { roster = [], engineId = 'claude', checked = true, silentP
   vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcSettingDisposition'), ctx);
   vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcEngineDisplayName'), ctx);
   vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
+  vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcResolveEngineProfile'), ctx);
   vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcIndexPointerCaveat'), ctx);
   // Lifted by PATTERN, not by name: the next table added is otherwise missing
   // here, and the failure would be a ReferenceError from inside the lifted

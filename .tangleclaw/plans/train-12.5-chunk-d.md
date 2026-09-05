@@ -58,6 +58,21 @@ throwing anything away. `capabilities.awareness` (openclaw only) is a deliberate
 Neither ruling deletes anything, which is why neither was escalated: the reversible option was also
 the better one.
 
+## Requirements Confidence
+
+**High.** Each of the three is a filed issue with a reproducible statement, and the two that asked
+for a *decision* were resolved against evidence rather than judgement — the `loggingLevel` census
+across this install, and a grep establishing the four unread capability flags (both recorded above).
+The one thing D1 invents rather than reads is the caveat's wording, and it is checked mechanically
+against the predicate the prime pointer is actually gated on rather than asserted.
+
+The open assumption, recorded because it is the one a reader could not derive: **rendering the
+caveat regardless of the toggle's own value is a choice.** It reads as a property of the setting on
+this engine, not of what the project currently stores, so an operator deciding whether to turn the
+toggle on sees it first. Phrasing it the other way — describing only the stored state — would go
+silent for exactly the person best placed to act on it. Resolvable by the operator disagreeing at
+verification; nothing else hinges on it.
+
 ## Chunk D1 — three defects that ride the mechanism
 
 **Visual change:** yes — #1252 changes two settings toggles.

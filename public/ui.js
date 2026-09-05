@@ -1127,7 +1127,8 @@ function openSettings(name) {
   // touching the rest of the modal. The container is always in the DOM; it just
   // becomes empty for engines that don't advertise supportsSilentPrime.
   const initialSilentChecked = !!project.silentPrime;
-  // Feature Index toggle (#207, chunk 1) — engine-agnostic, so always rendered.
+  // Feature Index toggle (#207, chunk 1) — always rendered; what varies by
+  // engine is how much of it takes effect, which the disposition says.
   const initialFeatureIndexChecked = !!project.featureIndexEnabled;
   // `enrichProject` reports `evalAudit` for every project now, enabled or not —
   // a modal cannot render a toggle whose current value it cannot read.
@@ -1135,7 +1136,7 @@ function openSettings(name) {
   // project stored on where the setting cannot apply, so it is the one place
   // that must see the raw value rather than the effective one.
   const initialEvalAuditChecked = !!(project.evalAudit && project.evalAudit.storedEnabled);
-  // Project Map toggle (PIDX #360, #356) — engine-agnostic, so always rendered.
+  // Project Map toggle (PIDX #360, #356) — always rendered, same as above.
   const initialProjectMapChecked = !!project.projectMapEnabled;
   // Auto version-bump opt-out (#318) — engine-agnostic; default on (only an
   // explicit false disables it).
@@ -1306,14 +1307,9 @@ function openSettings(name) {
 function renderSilentPrimeToggle(engineId, preserveChecked, projectEngine) {
   const container = document.getElementById('settingsSilentPrimeContainer');
   if (!container) return;
-  // `state.engines` is the picker roster and drops connection-backed ids
-  // (`openclaw:<connId>`), so an OpenClaw project finds nothing there — while
-  // the server resolves the base profile and answers from its capabilities.
-  // The project's own enriched engine carries those capabilities, so use it
-  // rather than report "no profile" for an engine TangleClaw knows.
-  const roster = (state.engines || []).find(e => e.id === engineId);
-  const profile = roster
-    || (projectEngine && projectEngine.id === engineId ? projectEngine : null);
+  // One owner for "which profile is this dropdown value" — the input that
+  // decides whether the row prints "no profile for this engine".
+  const profile = tcResolveEngineProfile(state.engines, engineId, projectEngine);
   // One owner for "does this setting apply here, and what do we say when it
   // does not" (ADR 0013) — `tcSettingDisposition`, the browser half of the
   // server's `engines.settingDisposition`. The reason is rendered rather than
@@ -1377,9 +1373,7 @@ function renderSilentPrimeToggle(engineId, preserveChecked, projectEngine) {
 function renderEvalAuditToggle(engineId, preserveChecked, projectEngine, audit) {
   const container = document.getElementById('settingsEvalAuditContainer');
   if (!container) return;
-  const roster = (state.engines || []).find(e => e.id === engineId);
-  const profile = roster
-    || (projectEngine && projectEngine.id === engineId ? projectEngine : null);
+  const profile = tcResolveEngineProfile(state.engines, engineId, projectEngine);
   const disposition = tcSettingDisposition('evalAuditMode', { evalAuditMode: { enabled: preserveChecked } }, profile);
   if (!disposition.applies) {
     // Inert, but repairable. A project can hold a stored `true` from a
@@ -1466,12 +1460,7 @@ function renderFeatureIndexToggle(engineId, preserveChecked, projectEngine, sile
 function renderIndexToggle(opts) {
   const container = document.getElementById(opts.containerId);
   if (!container) return;
-  // `state.engines` is the picker roster and drops connection-backed ids, so an
-  // OpenClaw project finds nothing there; its own enriched engine carries the
-  // capabilities. Same fallback as the silent-prime row, for the same reason.
-  const roster = (state.engines || []).find(e => e.id === opts.engineId);
-  const profile = roster
-    || (opts.projectEngine && opts.projectEngine.id === opts.engineId ? opts.projectEngine : null);
+  const profile = tcResolveEngineProfile(state.engines, opts.engineId, opts.projectEngine);
   const disposition = tcSettingDisposition(opts.setting,
     { [opts.setting]: opts.preserveChecked, silentPrime: opts.silentPrimeChecked === true },
     profile);
@@ -2001,7 +1990,6 @@ async function doSaveSettings() {
   if (silentPrimeEl) {
     body.silentPrime = silentPrimeEl.checked;
   }
-  // Feature Index (#207, chunk 1) — always present (engine-agnostic)
   // Only `enabled` is sent, and it is sent as a one-key object the server
   // MERGES: `evalAuditMode` holds the scoring tunables too, and posting the
   // whole object back would let a stale modal overwrite a hand-edited cost cap.
@@ -2014,7 +2002,7 @@ async function doSaveSettings() {
   if (featureIndexEl) {
     body.featureIndexEnabled = featureIndexEl.checked;
   }
-  // Project Map (PIDX #360, #356) — always present (engine-agnostic)
+  // Project Map (PIDX #360, #356) — always present
   const projectMapEl = document.getElementById('settingsProjectMap');
   if (projectMapEl) {
     body.projectMapEnabled = projectMapEl.checked;

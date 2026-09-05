@@ -161,8 +161,11 @@ All notable changes to TangleClaw are documented in this file.
   they ever disagree. **The gate is a triple, and the operator's own leg is now named too:**
   turning silent prime off on Claude costs the pointer as well, which was true and undocumented.
   The two rows render as one function, because written twice the caveat would appear in one toggle
-  and be forgotten in the other. `lib/project-config.js`'s "engine-agnostic so the toggle is not
-  engine-gated" comment stopped being half-false.
+  and be forgotten in the other, and the launch logs the same sentence at the level the disposition
+  derives — ADR 0013 names that log as the record behind the modal, so an operator who enabled the
+  toggle on an engine that cannot announce the file leaves a trail rather than a file nothing reads
+  and nothing to find. `lib/project-config.js`'s "engine-agnostic so the toggle is not
+  engine-gated" comment stopped being half-false, as did four more of it in `public/ui.js`.
 - **A rule that carries a value reaches the generated config (#1253).** `_getRulesContent`
   collected extension rules with `filter(([, v]) => v === true)`, so `loggingLevel` — the only
   non-boolean rule the product ships, default `'info'` — could never reach the prose path.

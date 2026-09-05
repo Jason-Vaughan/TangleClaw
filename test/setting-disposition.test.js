@@ -189,6 +189,26 @@ describe('settingDisposition — the one answer to "does this setting apply here
       'the profile fact stays available for the log');
   });
 
+  it('refuses a row that declares neither a gate nor a caveat', () => {
+    // The mechanism's central invariant, and the one nothing else catches: a
+    // row with no `applies` is read as "not gated" and one with no `caveat` as
+    // "nothing to say", so a row declaring neither — or one that misspells
+    // `caveat` — answers `{applies: true, caveat: null}` and ships the exact
+    // silence ADR 0013 exists to end. Both roster helpers skip such a row, and
+    // the parity test only catches a one-sided typo. The roster grows (D2 adds
+    // #1251 and #1255), so this is checked over the table rather than trusted
+    // to the docblock that states it.
+    for (const [setting, spec] of Object.entries(engines.ENGINE_CONDITIONAL_SETTINGS)) {
+      assert.ok(typeof spec.applies === 'function' || typeof spec.caveat === 'function',
+        `${setting} declares neither an applies gate nor a caveat — it is not `
+        + 'engine-conditional, or a key is misspelled');
+      if (typeof spec.applies === 'function') {
+        assert.equal(typeof spec.reason, 'function', `${setting} gates without a reason to render`);
+        assert.equal(typeof spec.evidence, 'function', `${setting} gates without a profile fact`);
+      }
+    }
+  });
+
   it('refuses a setting nobody declared a gate for, rather than answering "it applies"', () => {
     // A silent yes here would be the exact no-op ADR 0013 exists to end: a
     // caller asks about a setting, gets "fine", and ships a control that does
@@ -670,7 +690,15 @@ describe('settingDisposition — the one answer to "does this setting apply here
         // and no bundled profile has one, so without this fixture the whole
         // evalAuditMode row would only ever be compared on `applies: false` —
         // the two realms agreeing about the case that needs no gate.
-        { id: 'openclaw:conn-1', name: 'Studio (OpenClaw)', capabilities: {}, launchModes: {} }
+        { id: 'openclaw:conn-1', name: 'Studio (OpenClaw)', capabilities: {}, launchModes: {} },
+        // No profile at all. Both realms hand-write a sentence for this case
+        // and nothing compared them: the browser reaches it whenever the
+        // settings dropdown names an engine that is neither in `state.engines`
+        // nor the project's own — a retired engine id, or a project with none.
+        // Uncompared, an edit to one realm's wording leaves the other stale and
+        // the suite stays green, which is the failure this whole loop exists
+        // to prevent.
+        null
       ]);
 
       // Probe values per setting, checked against the server's roster so a
@@ -702,7 +730,7 @@ describe('settingDisposition — the one answer to "does this setting apply here
           // objects as unequal on their prototypes.
           for (const field of ['setting', 'value', 'applies', 'chosen', 'reason', 'evidence', 'caveat', 'level']) {
             assert.equal(browser[field], server[field],
-              `${profile.id}/${setting}=${JSON.stringify(projConfig[setting])}: `
+              `${profile ? profile.id : 'no-profile'}/${setting}=${JSON.stringify(projConfig[setting])}: `
               + `${field} must match the server (browser ${JSON.stringify(browser[field])}, `
               + `server ${JSON.stringify(server[field])})`);
           }
