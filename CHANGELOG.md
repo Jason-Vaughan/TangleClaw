@@ -153,9 +153,9 @@ All notable changes to TangleClaw are documented in this file.
   every surface it can land on. Nothing enforced that floor, which is why this shipped five times;
   `test/theme-contrast.test.js` now measures every semantic text token against the surfaces its own
   theme declares. It found six further pairs below the floor in the v2 palette — recorded with
-  their exact measured ratios, so a regression fails while the status quo passes, and filed rather
-  than dropped from the guard, because changing what `--danger` looks like product-wide is not a
-  side effect this chunk gets to have.
+  their exact measured ratios, so a regression fails while the status quo passes, and filed as
+  #1265 rather than dropped from the guard, because changing what `--danger` looks like
+  product-wide is not a side effect this chunk gets to have.
 - **An unchecked silent prime survives browsing the engine dropdown (#1252, found reviewing it).**
   The modal recovered that checkbox's state from an element the inert branch does not render, so
   claude → codex → claude re-checked a box the operator had unchecked and saved it back on. The

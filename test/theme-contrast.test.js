@@ -42,22 +42,29 @@ const FLOOR = 4.5;
  *
  * Both are in the v2 palette, which `public/style.css` marks "do not change" —
  * changing what `--danger` looks like product-wide is the operator's call, not
- * a side effect of the chunk that added a caveat line. Filed rather than fixed
- * or silently dropped from `TEXT_TOKENS`: narrowing the guard to the token this
- * bundle happened to touch would leave the sheet claiming a floor it does not
- * meet.
+ * a side effect of the chunk that added a caveat line. Filed as #1265 rather
+ * than fixed or silently dropped from `TEXT_TOKENS`: narrowing the guard to the
+ * token this bundle happened to touch would leave the sheet claiming a floor it
+ * does not meet.
  *
  * Pinned to the exact ratio so the waiver cannot absorb a REGRESSION: making
  * either pair worse fails here, and making it pass means deleting its entry.
  */
-const KNOWN_BELOW_FLOOR = [
-  { theme: ':root', token: '--text-muted', surface: '--card-bg', ratio: 4.34 },
-  { theme: ':root', token: '--text-muted', surface: '--elevated-bg', ratio: 3.89 },
-  { theme: '[data-theme="light"]', token: '--text-muted', surface: '--elevated-bg', ratio: 4.35 },
-  { theme: '[data-theme="light"]', token: '--danger', surface: '--bg', ratio: 3.20 },
-  { theme: '[data-theme="light"]', token: '--danger', surface: '--card-bg', ratio: 3.49 },
-  { theme: '[data-theme="light"]', token: '--danger', surface: '--elevated-bg', ratio: 2.64 }
-];
+const KNOWN_BELOW_FLOOR = [];
+for (const sheet of ['style.css', 'session.css']) {
+  // Keyed by SHEET as well as theme/token/surface: the two carry identical
+  // values today, so a waiver written once would silently cover the other, and
+  // the day they diverge is the day the waiver would be answering for a colour
+  // nobody measured.
+  KNOWN_BELOW_FLOOR.push(
+    { sheet, theme: ':root', token: '--text-muted', surface: '--card-bg', ratio: 4.34 },
+    { sheet, theme: ':root', token: '--text-muted', surface: '--elevated-bg', ratio: 3.89 },
+    { sheet, theme: '[data-theme="light"]', token: '--text-muted', surface: '--elevated-bg', ratio: 4.35 },
+    { sheet, theme: '[data-theme="light"]', token: '--danger', surface: '--bg', ratio: 3.20 },
+    { sheet, theme: '[data-theme="light"]', token: '--danger', surface: '--card-bg', ratio: 3.49 },
+    { sheet, theme: '[data-theme="light"]', token: '--danger', surface: '--elevated-bg', ratio: 2.64 }
+  );
+}
 
 /**
  * The custom properties a theme block declares, as `{ token: '#rrggbb' }`.
@@ -140,8 +147,8 @@ describe('a semantic colour token is readable on its own theme\'s surfaces', () 
             for (const surface of SURFACES) {
               if (!tokens[token] || !tokens[surface]) continue;
               const ratio = contrast(tokens[token], tokens[surface]);
-              const known = KNOWN_BELOW_FLOOR.find((k) =>
-                k.theme === theme && k.token === token && k.surface === surface);
+              const known = KNOWN_BELOW_FLOOR.find((k) => k.sheet === sheet
+                && k.theme === theme && k.token === token && k.surface === surface);
               if (known) {
                 assert.equal(ratio.toFixed(2), known.ratio.toFixed(2),
                   `${sheet} ${theme}: ${token} on ${surface} is recorded below the floor at `

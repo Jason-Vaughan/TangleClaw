@@ -3661,9 +3661,10 @@
    * `doSaveSettings`'s bypass-hidden guard still read `state.engines` directly
    * and are not handed the project's own engine at all — so a connection-backed
    * OpenClaw project resolves to nothing there and loses its launch-mode
-   * section entirely. That is a real defect and a separate one: routing it
-   * through here changes what those surfaces render, which is a behavior change
-   * owing its own verification rather than a side effect of this extraction.
+   * section entirely. That is a real defect and a separate one (#1264): routing
+   * it through here changes what those surfaces render, which is a behavior
+   * change owing its own verification rather than a side effect of this
+   * extraction.
    *
    * @param {Array<object>|null} roster - `state.engines`.
    * @param {string} engineId - The engine dropdown's current value.
