@@ -128,6 +128,8 @@ Create a JSON file at `~/.tangleclaw/engines/<engine-id>.json`:
 
 The `configFormat` above is set to `null` because config file generation requires a built-in generator. The available generators are `claude-md`, `codex-yaml`, `aider-conf`, `gemini-md` (generic markdown; kept for custom profiles after the Gemini engine's retirement), and `antigravity-md`. If your engine doesn't use a TangleClaw-generated config file, set `filename`, `syntax` and `generator` to `null`. To add a new generator, you'd need to add a handler in `lib/engines.js`.
 
+**A carrier-less engine owes one more field: `configFormat.absentReason`.** With no config file, the project's rule settings and TangleClaw's PortHub, shared-docs and session-memory guides reach no session on that engine — and ADR 0013 (`docs/adr/0013-settings-take-effect-or-say-why-not.md`) requires the surface offering a setting to say when it will not take effect. TangleClaw supplies the first half of that sentence itself ("*Foo* has no config file, so the project rule settings and TangleClaw guides it would carry never reach a session here."); `absentReason` is the engine's own second half, saying *why* there is no carrier. It is rendered verbatim in the settings modal under the Engine dropdown, so write it as one plain sentence addressed to an operator — see `openclaw.json` for the shipped example. Omit it and the notice still appears, just without the explanation; there is no code to change either way.
+
 ### Engine Profile Fields
 
 | Field | Type | Required | Description |
@@ -136,7 +138,7 @@ The `configFormat` above is set to `null` because config file generation require
 | `name` | string | yes | Display name |
 | `command` | string\|null | yes | CLI command to launch (null for persistent engines) |
 | `interactionModel` | string | yes | `"session"` or `"persistent"` |
-| `configFormat` | object | yes | Engine-specific config file details |
+| `configFormat` | object | yes | Engine-specific config file details: `filename`, `syntax`, `generator`, plus `absentReason` where all three are `null` (see above) |
 | `coAuthorFormat` | string\|null | yes | Git co-author pattern (null if unsupported) |
 | `commands` | array | yes | Slash commands (shown as pills in command bar) |
 | `detection` | object | yes | How to detect if installed |

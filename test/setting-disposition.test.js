@@ -39,6 +39,26 @@ function bundledProfiles() {
 }
 
 /**
+ * Every bundled profile as the BROWSER receives it.
+ *
+ * The server reads whole profiles off disk; `public/` only ever sees what
+ * `engineClientPayload` projects, and a predicate reading a field the
+ * projection drops answers for every engine as though the capability were
+ * absent — silently, and identically to a correct answer about an engine that
+ * genuinely lacks it. Comparing the two realms over raw profiles cannot see
+ * that: both sides get a field production never sends, and agree.
+ *
+ * So the browser side is driven through the real producer. A field added to a
+ * predicate in `public/` and not to the projection fails here rather than in
+ * the modal.
+ *
+ * @returns {object[]}
+ */
+function clientProfiles() {
+  return bundledProfiles().map((p) => engines.engineClientPayload(p, { available: true }));
+}
+
+/**
  * Every file under `dir` carrying a CODE read of a capability flag.
  *
  * Comment lines are excluded deliberately: prose naming the flag is a pointer,
@@ -687,7 +707,11 @@ describe('settingDisposition — the one answer to "does this setting apply here
     });
 
     it('agrees field for field over every bundled profile and every gated setting', () => {
-      const profiles = bundledProfiles();
+      // Projected, not raw: this loop is the one place the two realms are held
+      // to the same sentence, and feeding the browser a profile richer than
+      // production ever sends it is how a row keyed on an unprojected field
+      // passes here and answers for every engine in the modal.
+      const profiles = clientProfiles();
       assert.ok(profiles.length > 0, 'no bundled profiles found — this would assert nothing');
 
       // Fixtures the bundled set does not contain, so the loop compares more
@@ -836,8 +860,9 @@ describe('an engine with no config file says what it cannot carry (#1251)', () =
     assert.equal(d.applies, false);
     assert.equal(d.evidence, 'configFormat.filename is null');
     assert.match(d.reason, /OpenClaw has no config file/);
-    assert.match(d.reason, /rules and TangleClaw's operational guides/,
-      'the sentence must name what is lost, not just that something is');
+    assert.match(d.reason, /rule settings and TangleClaw guides it would carry/,
+      'the sentence must name what is lost, and scope it to what that file carries — '
+      + 'the modal has a separate Project Rules section this row has not checked');
   });
 
   it('applies on every bundled engine that does have one', () => {
@@ -924,7 +949,7 @@ describe('an engine with no config file says what it cannot carry (#1251)', () =
     it('the browser restates the shipped extension rules it compares against', () => {
       // The browser cannot require `lib/project-config.js`. A default that
       // changes on one side only reclassifies a real choice as a default.
-      assert.deepEqual({ ...ctx.tcRuleExtensionDefaults },
+      assert.deepEqual({ ...ctx.tcSettingRuleDefaults },
         { ...DEFAULT_PROJECT_CONFIG.rules.extensions });
     });
   });
@@ -990,18 +1015,21 @@ describe('an engine with no config file says what it cannot carry (#1251)', () =
       assert.deepEqual(lines, []);
     });
 
-    it('every writeEngineConfig call site routes its skip through the one reporter', () => {
-      // One call site is not the family: the skip was discarded at all four
-      // writers, and a fifth added later would discard it again unless the
-      // pairing is checked rather than remembered.
-      for (const rel of [['lib', 'sessions.js'], ['lib', 'projects.js']]) {
-        const src = fs.readFileSync(path.join(__dirname, '..', ...rel), 'utf8');
-        const writes = (src.match(/engines\.writeEngineConfig\(/g) || []).length;
-        const reports = (src.match(/engines\.reportMissingConfigCarrier\(/g) || []).length;
-        assert.equal(reports, writes,
-          `${rel.join('/')} writes an engine config ${writes} time(s) but reports a missing `
-          + `carrier ${reports} time(s) — a skip nobody reports is the defect #1251 filed`);
-      }
+    it('the writer reports its own skip, so no call site has to remember', () => {
+      // The first version of this paired a report with each call site and
+      // checked the pairing over a hardcoded two-file list — which holds until
+      // a fifth writer appears somewhere the list does not look, and then
+      // reintroduces #1251 with the guard green. The obligation is discharged
+      // inside `writeEngineConfig` instead, so there is nothing left to pair.
+      const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'engines.js'), 'utf8');
+      assert.match(declarationSource(src, 'function writeEngineConfig'),
+        /reportMissingConfigCarrier\(/,
+        'the writer must report the missing carrier itself');
+      // And nothing outside that module calls it, which would double the line
+      // and put the obligation back on the caller.
+      const callers = capabilityReads(path.join(__dirname, '..', 'lib'), 'reportMissingConfigCarrier');
+      assert.deepEqual(callers, ['lib/engines.js'],
+        'only the writer reports; a caller doing it too is the pattern this replaced');
     });
   });
 
@@ -1016,5 +1044,122 @@ describe('an engine with no config file says what it cannot carry (#1251)', () =
     // Re-rendered against the dropdown, not only the saved engine: the operator
     // needs to read it while choosing, not after a launch that dropped the lot.
     assert.match(UI, /renderGeneratedConfigNotice\(e\.target\.value/);
+  });
+});
+
+describe('what the browser is sent is what its predicates may read (#1251)', () => {
+  const helpers = loadApiHelperGlobals();
+  const vm = require('node:vm');
+  const { makeDocument } = require('./_mini-dom');
+  const UI_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+  const API_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
+
+  it('the carrier the gate reads survives the projection', () => {
+    // The defect this closes: the browser gated on `configFormat.filename`, no
+    // payload carried `configFormat`, and so the row answered "no config file"
+    // for every engine — the notice firing on claude, codex, aider and
+    // antigravity, and the declared sentence never appearing on the one engine
+    // it was written for.
+    const openclaw = engines.engineClientPayload(
+      bundledProfiles().find((p) => p.id === 'openclaw'), { available: true });
+    assert.ok(openclaw.configFormat, 'the browser must receive the carrier declaration');
+    assert.equal(openclaw.configFormat.filename, null);
+    assert.equal(typeof openclaw.configFormat.absentReason, 'string',
+      'and the sentence declared beside it, which is the whole point of declaring it there');
+
+    const claude = engines.engineClientPayload(
+      bundledProfiles().find((p) => p.id === 'claude'), { available: true });
+    assert.equal(claude.configFormat.filename, 'CLAUDE.md');
+  });
+
+  it('both realms answer the same for a client-shaped engine', () => {
+    // The parity loop below runs over projected profiles now, but state this
+    // directly too: it is the assertion whose absence let the bug ship.
+    for (const profile of bundledProfiles()) {
+      const client = engines.engineClientPayload(profile, { available: true });
+      const server = engines.settingDisposition('generatedConfig', {}, profile);
+      const browser = helpers.tcSettingDisposition('generatedConfig', {}, client);
+      assert.equal(browser.applies, server.applies, `${profile.id}: applies`);
+      assert.equal(browser.reason, server.reason, `${profile.id}: reason`);
+    }
+  });
+
+  it('every engine the client receives comes from the one projection', () => {
+    // `listWithAvailability` drops `pickerHidden` profiles, so OpenClaw — the
+    // engine this row exists for — reaches the modal ONLY through the
+    // per-project payload. Two hand-built shapes is how one of them stayed
+    // thinner than the other without anybody noticing.
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'projects.js'), 'utf8');
+    assert.doesNotMatch(src, /engine = \{/,
+      'lib/projects.js must not hand-build a client engine beside engineClientPayload');
+    assert.equal((src.match(/engines\.engineClientPayload\(/g) || []).length, 2,
+      'both enrichProject branches project through the shared definition');
+    // Sliced rather than brace-matched: this declaration's first brace is its
+    // `options = {}` default, so the brace matcher closes on the parameter list.
+    const enginesSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'engines.js'), 'utf8');
+    const at = enginesSrc.indexOf('function listWithAvailability');
+    assert.ok(at >= 0, 'the engine roster builder must exist');
+    assert.match(enginesSrc.slice(at, at + 800), /engineClientPayload\(/,
+      'so does the engine roster');
+  });
+
+  describe('the notice renders in a real document', () => {
+    /**
+     * Run the shipped renderer against a mini-DOM and return the container's
+     * HTML — the real function, lifted from source, not a copy.
+     * @param {object} opts - `engineId`, `projectEngine`, `engines` (roster).
+     * @returns {string}
+     */
+    function render(opts) {
+      const { doc } = makeDocument(['settingsGeneratedConfigContainer']);
+      const ctx = {
+        document: doc,
+        state: { engines: opts.engines || [] },
+        esc: (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+      };
+      vm.createContext(ctx);
+      // By pattern, so a table added later and not named here fails as a
+      // ReferenceError from inside the lifted function rather than silently.
+      const tables = API_SRC.match(/const TC_SETTING_\w+ = \{[\s\S]*?\n {2}\};/g) || [];
+      assert.ok(tables.length >= 3, `expected the setting tables to lift, found ${tables.length}`);
+      for (const table of tables) vm.runInContext(table, ctx);
+      vm.runInContext(declarationSource(API_SRC, 'function tcHonoredLaunchModes'), ctx);
+      vm.runInContext(declarationSource(API_SRC, 'function tcEngineDisplayName'), ctx);
+      vm.runInContext(declarationSource(API_SRC, 'function tcSettingDisposition'), ctx);
+      vm.runInContext(declarationSource(API_SRC, 'function tcResolveEngineProfile'), ctx);
+      vm.runInContext(declarationSource(UI_SRC, 'function renderGeneratedConfigNotice'), ctx);
+      ctx.renderGeneratedConfigNotice(opts.engineId, opts.projectEngine || null);
+      return doc.getElementById('settingsGeneratedConfigContainer').innerHTML;
+    }
+
+    const client = (id) => engines.engineClientPayload(
+      bundledProfiles().find((p) => p.id === id), { available: true });
+
+    it('says what OpenClaw cannot carry, in the profile\'s own words', () => {
+      const projectEngine = client('openclaw');
+      const html = render({ engineId: 'openclaw', projectEngine });
+      assert.match(html, /OpenClaw has no config file/);
+      assert.ok(html.includes(projectEngine.configFormat.absentReason),
+        'the declared sentence reaches the rendered markup');
+    });
+
+    it('renders nothing at all on an engine that has a config file', () => {
+      const claude = client('claude');
+      assert.equal(render({ engineId: 'claude', projectEngine: claude, engines: [claude] }), '',
+        'a notice here would be a false statement about four engines to fix one');
+    });
+
+    it('escapes the declared sentence rather than trusting it', () => {
+      // `absentReason` is profile data, and an operator profile in
+      // ~/.tangleclaw/engines/ is a file a human edits.
+      const hostile = {
+        id: 'evil', name: 'Evil', capabilities: {}, launchModes: {},
+        configFormat: { filename: null, absentReason: '<img src=x onerror=alert(1)>' }
+      };
+      const html = render({ engineId: 'evil', projectEngine: hostile, engines: [hostile] });
+      assert.doesNotMatch(html, /<img/);
+      assert.match(html, /&lt;img/);
+    });
   });
 });

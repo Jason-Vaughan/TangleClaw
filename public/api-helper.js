@@ -3704,7 +3704,7 @@
    * reclassify a real choice as a default in the browser and not the server.
    * `test/setting-disposition.test.js` asserts this equals what ships.
    */
-  const TC_RULE_EXTENSION_DEFAULTS = {
+  const TC_SETTING_RULE_DEFAULTS = {
     identitySentry: false,
     docsParity: false,
     decisionFramework: false,
@@ -3739,7 +3739,7 @@
     generatedConfig: (cfg) => {
       const stored = cfg && cfg.rules && cfg.rules.extensions;
       if (!stored || typeof stored !== 'object') return false;
-      return Object.keys(stored).some((rule) => stored[rule] !== TC_RULE_EXTENSION_DEFAULTS[rule]);
+      return Object.keys(stored).some((rule) => stored[rule] !== TC_SETTING_RULE_DEFAULTS[rule]);
     }
   };
 
@@ -3847,8 +3847,8 @@
       applies = Boolean(engine && engine.configFormat && engine.configFormat.filename);
       if (!applies) {
         const declared = engine && engine.configFormat && engine.configFormat.absentReason;
-        reason = name + ' has no config file, so this project\'s rules and TangleClaw\'s '
-          + 'operational guides are not delivered to a session here.'
+        reason = name + ' has no config file, so the project rule settings and TangleClaw '
+          + 'guides it would carry never reach a session here.'
           + (declared ? ' ' + declared : '');
         evidence = 'configFormat.filename is null';
       }
@@ -3964,7 +3964,7 @@
   global.tcSettingDisposition = tcSettingDisposition;
   global.tcCreateProjectBody = tcCreateProjectBody;
   global.tcSettingDefaults = TC_SETTING_DEFAULTS;
-  global.tcRuleExtensionDefaults = TC_RULE_EXTENSION_DEFAULTS;
+  global.tcSettingRuleDefaults = TC_SETTING_RULE_DEFAULTS;
   global.tcMedusaIds = tcMedusaIds;
   global.tcMedusaControlMarkup = tcMedusaControlMarkup;
   global.tcEscapeHtml = tcEscapeHtml;

@@ -241,8 +241,13 @@ commentary: a field that loses "this was measured" becomes an assumption the nex
   module's first safety property forbids guessing one. Declaring an unmeasured signature to make the
   disposition read better would be the exact dishonesty this chunk exists to end.
 - **The plugin-governed non-`claude-md` skip.** `writeEngineConfig` has a second silent skip for
-  governed projects on a non-Claude carrier. It is the same class as #1251 and is not filed; note it
-  and file it rather than absorbing it.
+  governed projects on a non-Claude carrier. Same class as #1251 — **filed as #1268**. Not absorbed
+  because governance is a per-*project* fact and the disposition's signature carries only the
+  engine, which is a design question rather than another row.
+- **The Project Rules section on an engine that cannot receive startup rules.** The modal's
+  free-text `session_rules` editor is live on OpenClaw, where the startup-rules channel never runs.
+  **Filed as #1269.** D2a's sentence is scoped to what the config file carries precisely so it does
+  not make a claim about that channel.
 
 ### Standing constraints
 

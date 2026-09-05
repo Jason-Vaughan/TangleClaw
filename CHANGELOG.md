@@ -154,23 +154,39 @@ All notable changes to TangleClaw are documented in this file.
   the new `generatedConfig` row in `ENGINE_CONDITIONAL_SETTINGS` gates on `configFormat.filename`
   and the settings modal renders its reason where the engine is chosen, re-rendered on every
   dropdown change so it is read while deciding rather than after a launch that dropped the lot.
-  It is keyed and labelled after the file the operator can go and look at, not after its contents:
-  the modal already has a "Project Rules" section, which is the free-text `session_rules` feature
-  and a different thing with the same word. **The engine-specific half of the sentence is declared
-  in the profile** (`configFormat.absentReason`) rather than written in `lib/`, so both realms read
-  the same bytes and cross-realm parity is structural instead of a hand-copied string — a test
-  asserts neither `lib/engines.js`, `public/api-helper.js` nor `public/ui.js` contains a copy of
-  it, and a sixth engine with no carrier states its own case in its own file with no code change.
+  It is keyed after the file the operator can go and look at, not after its contents, and the
+  sentence says "the project rule settings and TangleClaw guides *it would carry*" for the same
+  reason: the modal has a separate "Project Rules" section a few groups down — free-text
+  `session_rules` riding a different channel — and this row has not checked that one (filed as
+  #1269, along with #1268 for `writeEngineConfig`'s second silent skip). **The engine-specific half
+  of the sentence is declared in the profile** (`configFormat.absentReason`, documented in
+  `docs/engine-guide.md`) rather than written in `lib/`, so both realms read the same bytes and
+  cross-realm parity is structural instead of a hand-copied string — a test asserts neither
+  `lib/engines.js`, `public/api-helper.js` nor `public/ui.js` contains a copy of it, and a sixth
+  engine with no carrier states its own case in its own file with no code change.
   All four writers (launch, create, engine PATCH, boot sync) discarded the skip, so it also reaches
-  the log now through one reporter whose **level the disposition derives**: a project that turned
+  the log now — reported by `writeEngineConfig` **itself** rather than by each caller, because a
+  guard pairing a report with every call site holds only until a fifth writer appears where the
+  guard does not look. Its **level the disposition derives**: a project that turned
   `independentCritic` on and gets nothing has lost real intent and warns, while one running the
   stock rules never expressed a preference and records at info. The provenance input is derived,
   because a rules block has no single stored scalar to compare — `rules.core` is deliberately not
   consulted, since `updateProject` refuses to disable a core rule and counting it would report
-  every project as customized. A guard pins the four call sites against the four writes, and a test
-  pins that the four engines which *do* have a config file are unaffected — a gate keyed on the
-  wrong field would ship a "your rules are not delivered" notice on all of them to fix the one
-  where they genuinely are not.
+  every project as customized. A test pins that the four engines which *do* have a config file are
+  unaffected — a gate keyed on the wrong field would ship a "your rules are not delivered" notice
+  on all of them to fix the one where they genuinely are not.
+- **The engine the browser receives has one definition (#1251, found reviewing it).** The row above
+  gates on `configFormat`, and no engine payload carried it: `listWithAvailability` and
+  `enrichProject` each hand-built their own projection of a profile, and neither projected that
+  field. So the browser answered "no config file" for *every* engine — the notice firing on claude,
+  codex, aider and antigravity, contradicting the server, and the declared sentence never appearing
+  on the one engine it was written for. Both now project through `engines.engineClientPayload`,
+  and the cross-realm parity test drives its browser side through that same function rather than
+  through raw bundled profiles: a predicate reading a field the projection drops is
+  indistinguishable from one reading a field about an engine that genuinely lacks it, and a fixture
+  richer than production hides exactly that. The two shapes mattered unequally and invisibly —
+  `listWithAvailability` drops `pickerHidden` profiles, so OpenClaw, the engine the row exists for,
+  reaches the modal *only* through the per-project payload, which was the thinner of the two.
 - **Warning text is readable in the Light theme (#1252, found reviewing it).** `--warning` was
   spelled at five sites across `public/style.css` and `public/session.css` and declared in no
   palette, so every one of them silently took its `#ffb300` fallback — 1.79:1 against the Light
