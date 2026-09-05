@@ -215,6 +215,37 @@ describe('settingDisposition — the one answer to "does this setting apply here
       assert.ok(Object.keys(ctx.tcSettingDefaults).length > 0, 'an empty table compares nothing');
     });
 
+    it('covers the same settings the server declares', () => {
+      // Driven off the server's roster, not a list written here: a setting
+      // added to `ENGINE_CONDITIONAL_SETTINGS` with no browser row falls into
+      // the browser's unknown-key branch and renders "could not determine" on a
+      // control the server is happy to gate — silent, and invisible to a
+      // fixture that enumerates today's keys.
+      const declared = Object.keys(engines.ENGINE_CONDITIONAL_SETTINGS);
+      assert.ok(declared.length > 0, 'an empty roster compares nothing');
+      assert.deepEqual(Object.keys(ctx.tcSettingDefaults).sort(), declared.slice().sort(),
+        'the browser must carry a shipped default for every setting the server gates');
+      for (const setting of declared) {
+        const d = ctx.tcSettingDisposition(setting, {}, { id: 'barebones', name: 'Barebones', capabilities: {}, launchModes: {} });
+        assert.doesNotMatch(String(d.reason), /could not determine/,
+          `the browser has no branch for "${setting}"`);
+      }
+    });
+
+    it('every declared setting produces words and a profile fact when it does not apply', () => {
+      // The roster is the fixture: a row added with a missing or empty reason
+      // renders a disabled control explaining nothing, which is the shape
+      // ADR 0013 forbids.
+      const barebones = { id: 'barebones', name: 'Barebones', capabilities: {}, launchModes: {} };
+      for (const setting of Object.keys(engines.ENGINE_CONDITIONAL_SETTINGS)) {
+        const d = engines.settingDisposition(setting, {}, barebones);
+        assert.equal(d.applies, false, `${setting} must not apply on a profile declaring nothing`);
+        assert.ok(d.reason && d.reason.length > 0, `${setting} owes the operator a reason`);
+        assert.match(d.reason, /Barebones/, `${setting}'s reason must name the engine`);
+        assert.ok(d.evidence && d.evidence.length > 0, `${setting} owes the log a profile fact`);
+      }
+    });
+
     it('agrees field for field over every bundled profile and every gated setting', () => {
       const profiles = bundledProfiles();
       assert.ok(profiles.length > 0, 'no bundled profiles found — this would assert nothing');
@@ -231,15 +262,22 @@ describe('settingDisposition — the one answer to "does this setting apply here
         { id: 'barebones', name: 'Barebones', capabilities: {}, launchModes: {} }
       ]);
 
-      const cases = [
-        ['silentPrime', { silentPrime: true }],
-        ['silentPrime', { silentPrime: false }],
-        ['silentPrime', {}],
-        ['defaultLaunchMode', { defaultLaunchMode: 'default' }],
-        ['defaultLaunchMode', { defaultLaunchMode: 'plan' }],
-        ['defaultLaunchMode', { defaultLaunchMode: 'bypassPermissions' }],
-        ['defaultLaunchMode', {}]
-      ];
+      // Probe values per setting, checked against the server's roster so a
+      // setting added there without probes fails here rather than going
+      // uncompared.
+      const probes = {
+        silentPrime: [true, false],
+        defaultLaunchMode: ['default', 'plan', 'bypassPermissions']
+      };
+      assert.deepEqual(Object.keys(probes).sort(),
+        Object.keys(engines.ENGINE_CONDITIONAL_SETTINGS).sort(),
+        'every gated setting needs probe values, or the parity loop skips it');
+
+      const cases = [];
+      for (const [setting, values] of Object.entries(probes)) {
+        for (const value of values) cases.push([setting, { [setting]: value }]);
+        cases.push([setting, {}]);  // absent: the shipped-default path
+      }
 
       let compared = 0;
       for (const profile of fixtures) {
