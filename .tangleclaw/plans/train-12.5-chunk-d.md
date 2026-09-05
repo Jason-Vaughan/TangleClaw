@@ -150,4 +150,4 @@ the prose path. `_generateCodexYaml` and `_generateAiderConf` read it directly a
 - [x] D1 — suite green, evidence recorded
 - [x] D1 — CHANGELOG entry
 - [x] D1 — cumulative Critic + verify-resolutions, final round clean
-- [ ] D1 — PR with `Fixes` for each car it closes
+- [x] D1 — PR with `Fixes` for each car it closes (#1266)
