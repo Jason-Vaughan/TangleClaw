@@ -257,7 +257,15 @@ describe('settingDisposition — the one answer to "does this setting apply here
     });
 
     it('a plain profile keeps its own display name', () => {
-      const d = engines.settingDisposition('evalAuditMode', {}, engines.resolveProfile('claude'));
+      // From the BUNDLED profile, not `resolveProfile('claude')`: that reads
+      // the engine store this machine happens to have installed, so the
+      // assertion passed on a dev Mac and failed on CI, where no install
+      // exists and the id resolves to nothing. A test whose verdict depends on
+      // host plumbing is the recurring red-on-CI shape in this repo.
+      const claude = bundledProfiles().find((p2) => p2.id === 'claude');
+      assert.ok(claude, 'the bundled claude profile must exist');
+      const d = engines.settingDisposition('evalAuditMode', {}, claude);
+      assert.equal(claude.name, 'Claude Code', 'the fixture carries the name being asserted');
       assert.match(d.reason, /Claude Code/, 'the profile name, not the id');
       assert.doesNotMatch(d.reason, /^claude /);
     });
