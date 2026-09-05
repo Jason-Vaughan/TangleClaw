@@ -286,10 +286,10 @@ carries a real guard: hiding the picker while the resolved default carries a war
 - [x] Chunk C1 — C2 build plan written
 - [x] Chunk C2a — one disposition mechanism
 - [x] Chunk C2b — Eval Audit reachable (#1236)
-- [ ] Chunk C2c — showLaunchModePicker at creation, close #626
-- [ ] Chunk C2 — tests written, every new test mutation-verified red
-- [ ] Chunk C2 — suite green, evidence from `prawduct-hook test-status`
-- [ ] Chunk C2 — CHANGELOG entry
+- [x] Chunk C2c — showLaunchModePicker at creation, close #626
+- [x] Chunk C2 — tests written, every new test mutation-verified red
+- [x] Chunk C2 — suite green, evidence from `prawduct-hook test-status`
+- [x] Chunk C2 — CHANGELOG entry
 - [ ] Chunk C2 — cumulative Critic + verify-resolutions, final round clean
 - [ ] Chunk C2 — PR with `Fixes` for each car it closes
 

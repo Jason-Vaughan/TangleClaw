@@ -62,6 +62,24 @@ All notable changes to TangleClaw are documented in this file.
   *"No projects have Eval Audit enabled."* is replaced by copy naming what the feature does, what
   it costs, where to turn it on, and why most projects cannot: the old string was true and
   actionable by nobody, and it is what #1227 read.
+- **Project creation collects the launch posture it was already half-asking about (#626).** Step 2
+  showed a Launch Posture dropdown and then dropped its pair on the floor: `showLaunchModePicker`
+  could only be set by creating the project and editing it. The wizard now collects it and
+  `createProject` persists it.
+  **The reason it is not merely a fifth field is the guard it carries.** Hiding the picker while the
+  default mode carries a warning (`bypassPermissions` / `fullAuto` / `yesAlways`) removes the red
+  isolated-environments warning from the launch flow entirely, so `updateProject` has refused that
+  combination without an explicit confirm since the settings existed. `createProject` never has —
+  and creation is both where the posture is first established and the one route the guard had never
+  run on, so a project could be made that launches straight into a warned mode having shown the
+  warning to nobody. Both halves run there now: the server refuses, and the browser routes through
+  the **same** confirm modal the edit path uses rather than a create-only copy, because the warning
+  text is the guard and a second copy is the one that goes stale. Creation also validates
+  `defaultLaunchMode` against the engine, which an edit has always done — the route that
+  establishes a project's posture was the one route that did not check it — and it refuses in the
+  disposition's own words. A refusal happens before the directory is created, so it leaves nothing
+  on disk.
+
 ### Changed
 - **One mechanism answers whether a setting applies on a project's engine, and says why it does
   not (ADR 0013).** `lib/engines.js` carried two capability predicates written in the same shape

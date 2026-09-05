@@ -1968,7 +1968,7 @@ async function doSaveSettings() {
     const guardProfile = (state.engines || []).find(e => e.id === body.engine);
     const modeConfig = guardProfile && guardProfile.launchModes && guardProfile.launchModes[effMode];
     if (!effShow && modeConfig && modeConfig.warning) {
-      openBypassHiddenModal(body, effMode, modeConfig);
+      openBypassHiddenModal(body, effMode, modeConfig, settingsTarget, _submitSettings);
       return;
     }
   }
@@ -2017,18 +2017,25 @@ function renderSettingsWarnings(warnings) {
 
 /** The settings PATCH body parked while the confirm modal is open. */
 let pendingBypassHiddenBody = null;
+// What the confirm resends to. Editing a project sends a PATCH; creating one
+// sends the create POST. One modal, because the question and the warning the
+// operator must read are identical — two would drift.
+let pendingBypassHiddenSubmit = null;
 
 /**
- * Open the eyes-open confirm for saving a hidden picker with a
- * warning-carrying default launch mode.
- * @param {object} body - The PATCH body to send on confirm
+ * Open the eyes-open confirm for a hidden picker over a warning-carrying
+ * default launch mode.
+ * @param {object} body - The body to resend on confirm
  * @param {string} modeKey - The effective default mode key
  * @param {object} modeConfig - The engine's launchModes entry for that key
+ * @param {string} subject - The project the posture applies to
+ * @param {Function} [onConfirm] - Async sender; defaults to the settings PATCH
  */
-function openBypassHiddenModal(body, modeKey, modeConfig) {
+function openBypassHiddenModal(body, modeKey, modeConfig, subject, onConfirm) {
   pendingBypassHiddenBody = body;
+  pendingBypassHiddenSubmit = onConfirm || _submitSettings;
   document.getElementById('bypassHiddenText').innerHTML =
-    `<p>Every launch of <strong>${esc(settingsTarget)}</strong> will start directly in <strong>${esc(modeConfig.label || modeKey)}</strong> mode — no picker, and no warning shown at launch.</p>`
+    `<p>Every launch of <strong>${esc(subject === undefined ? settingsTarget : subject)}</strong> will start directly in <strong>${esc(modeConfig.label || modeKey)}</strong> mode — no picker, and no warning shown at launch.</p>`
     + (modeConfig.warning ? `<p class="launch-mode-warning">${esc(modeConfig.warning)}</p>` : '');
   document.getElementById('bypassHiddenModal').classList.add('open');
 }
@@ -2036,17 +2043,20 @@ function openBypassHiddenModal(body, modeKey, modeConfig) {
 /** Close the confirm modal without saving. */
 function closeBypassHiddenModal() {
   pendingBypassHiddenBody = null;
+  pendingBypassHiddenSubmit = null;
   document.getElementById('bypassHiddenModal').classList.remove('open');
 }
 
 /** Confirm — resend the parked body with the server guard's confirm flag. */
 async function confirmBypassHidden() {
   const body = pendingBypassHiddenBody;
+  const submit = pendingBypassHiddenSubmit || _submitSettings;
   if (!body) return;
   pendingBypassHiddenBody = null;
+  pendingBypassHiddenSubmit = null;
   document.getElementById('bypassHiddenModal').classList.remove('open');
   body.confirmBypassHidden = true;
-  await _submitSettings(body);
+  await submit(body);
 }
 
 // ── Global Settings Modal ──
@@ -2471,7 +2481,7 @@ async function saveGlobalSettings() {
 // ── Create Project Drawer ──
 
 let createStep = 0;
-let createData = { name: '', engine: '', defaultLaunchMode: 'default', silentPrime: true, tags: '' };
+let createData = { name: '', engine: '', defaultLaunchMode: 'default', showLaunchModePicker: true, silentPrime: true, tags: '' };
 
 function openCreateModal() {
   createStep = 0;
@@ -2483,6 +2493,9 @@ function openCreateModal() {
     // engine the machine does not have (#707).
     engine: resolvePickerEngine(state.engines, state.config ? state.config.defaultEngine : ''),
     defaultLaunchMode: 'default',
+    // #626: the pair of `defaultLaunchMode`. Shipped default, so a wizard the
+    // operator clicks straight through creates exactly what it did before.
+    showLaunchModePicker: true,
     silentPrime: true,
     tags: ''
   };
@@ -2543,6 +2556,14 @@ function renderCreateStep() {
           <label class="form-label" for="createLaunchMode">Launch Posture</label>
           <select class="form-select" id="createLaunchMode">${opts}</select>
           <div class="form-hint">The default mode this project launches in.</div>
+        </div>
+        <div class="form-group">
+          <label class="gs-toggle-label">
+            <span>Show launch mode picker</span>
+            <input type="checkbox" id="createShowLaunchPicker" ${createData.showLaunchModePicker ? 'checked' : ''}>
+            <span class="toggle-switch"></span>
+          </label>
+          <div class="form-hint">When off, Launch skips the mode picker and starts the session directly in the default mode.</div>
         </div>`;
     }
 
@@ -2620,6 +2641,8 @@ function createNext() {
   } else if (createStep === 2) {
     const modeEl = document.getElementById('createLaunchMode');
     if (modeEl) createData.defaultLaunchMode = modeEl.value;
+    const showEl = document.getElementById('createShowLaunchPicker');
+    if (showEl) createData.showLaunchModePicker = showEl.checked;
     const silentEl = document.getElementById('createSilentPrime');
     if (silentEl) createData.silentPrime = silentEl.checked;
   }
@@ -2635,6 +2658,22 @@ function createBack() {
 
 async function submitCreate() {
   createData.tags = document.getElementById('createTags').value;
+  // Eyes-open guard, client half (#626). The server refuses the combination
+  // outright; asking here is what lets the operator SEE the warning they are
+  // switching off, which is the entire point of the guard. Creation is where
+  // the posture is established, so it is the last place it should be implicit.
+  if (!createData.confirmBypassHidden && createData.showLaunchModePicker === false) {
+    const profile = (state.engines || []).find(e => e.id === createData.engine);
+    const mode = createData.defaultLaunchMode || 'default';
+    const modeConfig = profile && profile.launchModes && profile.launchModes[mode];
+    if (modeConfig && modeConfig.warning) {
+      openBypassHiddenModal({}, mode, modeConfig, createData.name || 'this project', async () => {
+        createData.confirmBypassHidden = true;
+        await submitCreate();
+      });
+      return;
+    }
+  }
   const btn = document.getElementById('createSubmitBtn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>';
@@ -2644,8 +2683,13 @@ async function submitCreate() {
     name: createData.name,
     engine: createData.engine,
     defaultLaunchMode: createData.defaultLaunchMode,
+    showLaunchModePicker: createData.showLaunchModePicker,
     silentPrime: createData.silentPrime,
-    tags
+    tags,
+    // The eyes-open guard runs on the create path now, and a hidden picker over
+    // a warned default is refused unless the operator has actually seen the
+    // warning. `confirmCreateBypassHidden` sets this after they do.
+    ...(createData.confirmBypassHidden ? { confirmBypassHidden: true } : {})
   });
 
   if (!result) {
