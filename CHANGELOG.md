@@ -38,6 +38,110 @@ All notable changes to TangleClaw are documented in this file.
   the modal's row is gone, because two controls for one setting is how they drift. The install-wide
   mute still outranks it, gated where it always was, inside `playChime`.
 
+- **Eval Audit can be switched on from the settings modal, and says where it works (#1236).** It
+  had no write path at all: the only way to enable it was hand-editing `project.json`, so the
+  dashboard panel was empty on every install and the feature read as dead — #1227 was filed to
+  delete a complete, working feature (three scoring tiers, 15 API routes) and closed NOT_PLANNED
+  once that premise was disproven. `PATCH /api/projects/:name` now accepts `evalAuditMode`, the
+  modal renders a control, and `enrichProject` reports the setting for every project rather than
+  only for the ones that already had it on — a modal cannot render a toggle whose value it cannot
+  read, which is why it stayed hand-edit-only.
+  **It is not a universal setting, and the design that said so was wrong.** `POST /api/audit/ingest`
+  authenticates a bearer token against `openclaw_connections.auditSecret` and resolves the project
+  as the one whose engine is `openclaw:<connectionId>`; that is the only write path into
+  `evalExchanges`, and every score, anomaly and incident is downstream of an exchange. So the
+  control is live on a project fed by an OpenClaw connection and **inert with a stated reason
+  everywhere else**, through the disposition table rather than a fourth hand-built gate — shipping
+  the universal toggle would have re-created the exact defect #1236 was filed for.
+  **The cost is visible before the switch**, which #1236 asks for by name: the hint says enabling
+  spends real money, and names this project's own judge model and per-session cap rather than the
+  shipped pair, so an operator who has edited them reads what they set. The write **merges** — the
+  key holds fifteen scoring tunables beside `enabled`, and assigning over it would let a settings
+  save quietly destroy settings — and an unknown key is refused rather than ignored, since
+  accepting input that does nothing is the defect this whole train is closing. The dashboard's
+  *"No projects have Eval Audit enabled."* is replaced by copy naming what the feature does, what
+  it costs, where to turn it on, and why most projects cannot: the old string was true and
+  actionable by nobody, and it is what #1227 read.
+- **Project creation collects the launch posture it was already half-asking about (#626).** Step 2
+  showed a Launch Posture dropdown and then dropped its pair on the floor: `showLaunchModePicker`
+  could only be set by creating the project and editing it. The wizard now collects it and
+  `createProject` persists it.
+  **The reason it is not merely a fifth field is the guard it carries.** Hiding the picker while the
+  default mode carries a warning (`bypassPermissions` / `fullAuto` / `yesAlways`) removes the red
+  isolated-environments warning from the launch flow entirely, so `updateProject` has refused that
+  combination without an explicit confirm since the settings existed. `createProject` never has —
+  and creation is both where the posture is first established and the one route the guard had never
+  run on, so a project could be made that launches straight into a warned mode having shown the
+  warning to nobody. Both halves run there now: the server refuses, and the browser routes through
+  the **same** confirm modal the edit path uses rather than a create-only copy, because the warning
+  text is the guard and a second copy is the one that goes stale. Creation also validates
+  `defaultLaunchMode` against the engine, which an edit has always done — the route that
+  establishes a project's posture was the one route that did not check it — and it refuses in the
+  disposition's own words. A refusal happens before the directory is created, so it leaves nothing
+  on disk. `silentPrime` gets the same treatment for the same reason — creation stored it raw while
+  a `PATCH` refused both a non-boolean and an engine that cannot honor it, and every reader tests
+  `=== true`, so a stored `"true"` ran with silent prime off against a shipped default of on. The
+  guard itself is one function both routes call rather than a refusal sentence written twice with
+  its inputs derived differently, and the wizard's confirmation is keyed to the engine and mode
+  actually confirmed: a failed create leaves the drawer open, and a latched boolean would have
+  waved a *different* warned mode through without showing its warning. The drawer's POST body is
+  built by `tcCreateProjectBody`, which re-asks the disposition against the engine finally chosen —
+  toggling silent prime on Claude, going Back and switching to an engine that cannot honor it left
+  the value set with no control on screen, and the server now refuses it, so the operator would
+  have read a rejection for a setting they could no longer see.
+
+### Changed
+- **One mechanism answers whether a setting applies on a project's engine, and says why it does
+  not (ADR 0013).** `lib/engines.js` carried two capability predicates written in the same shape
+  with separate implementations — `honorsLaunchMode` and `silentPrimeDisposition` — and each
+  surface that offered one of those settings composed its own explanation, or offered none.
+  `engines.settingDisposition(setting, projConfig, engineProfile)` is now the single answer:
+  whether the setting applies, an operator-readable reason when it does not, the profile fact
+  behind that reason for the log, and whether the stored value was a real operator choice. It is
+  not a rename of the two — `honorsLaunchMode` still owns "will this engine run that mode",
+  because the launch picker asks that about a mode nobody has stored, and the disposition table is
+  expressed in terms of it; `silentPrimeDisposition` keeps its tri-state answer and now asks the
+  mechanism for the gate. A setting with no declared gate throws rather than answering "it
+  applies", because a silent yes is the no-op the norm exists to end.
+  **The log level is derived from provenance, not attached to the setting**, which is the part
+  most likely to be flattened by a later cleanup: a stored value that differs from what the
+  product ships is real intent being dropped and warns, while one indistinguishable from the
+  shipped default was set by nobody and records at info. That makes `silentPrime` no longer "the
+  info one" — a stored `false` is a choice and now warns where it previously recorded. Deriving it
+  is why the mechanism takes the shipped default as an input; a signature without it leaves every
+  call site picking a level by hand.
+  The browser cannot `require()` `lib/`, so `public/api-helper.js` carries the restated copy
+  (`tcSettingDisposition`) and `test/setting-disposition.test.js` asserts the two agree field for
+  field — **reason text included** — over every bundled profile plus a declared-but-disabled mode
+  and a profile declaring nothing. A reason that drifts tells the operator something the server
+  does not believe. The settings modal and the create wizard now render that reason rather than
+  their own words, and the wizard no longer drops the Silent Prime control on an engine that
+  cannot honor it: an absent control answers no question, so it renders inert with the reason
+  beside it.
+  Three consequences of having one owner, each of which was a separate small wrong answer before:
+  the five remaining sites that spelled the silent-prime gate by hand — the baseline-hooks builder,
+  the rules-channel choice, the two prime pointers and the `PATCH` validation — now ask it, and a
+  guard counts every capability read across `lib/` and `public/` so a sixth cannot appear quietly;
+  **an engine TangleClaw holds no profile for is told apart from one whose profile says no**, and
+  reads "TangleClaw has no profile for this engine, so it cannot say whether this setting applies
+  here" rather than a stated fact about a flag nobody read; and `'default'` is treated as the
+  absence of a launch mode rather than one an engine must declare, matching `reconcileLaunchMode`,
+  so a profile declaring no modes stops producing *"does not offer the launch mode "default", so
+  this project launches in its engine default instead"* on every launch of a project that
+  configured nothing.
+  An **OpenClaw project's settings modal reads its capabilities from the project rather than the
+  picker roster**, which drops connection-backed ids — the row was reporting that TangleClaw has
+  no profile for an engine it does know. And `renderSilentPrimeToggle` is now *executed* by a test
+  against a mini-DOM (#1037) instead of matched as source: it depends on a global published by
+  another file, and a regex cannot tell whether that identifier resolves — the failure mode is a
+  `ReferenceError` on every open of the modal, which has shipped to the live install once before.
+  **The engine a gate asks about is resolved, never fabricated.** `engines.resolveProfile` is the
+  one answer to "which profile is this id", including the connection-backed `openclaw:<id>` form
+  that `store.engines.get` returns null for; `getWithAvailability` layers detection on top of it.
+  Three call sites had resolved it three ways, so the same project could be refused by the API in
+  different words from the ones its settings modal renders — and a synthesized stub answers
+  correctly only until a disposition row reads something other than the id.
+
 ### Fixed
 - **A regenerated `CLAUDE.md` no longer strands the self-updater (#1241).** TangleClaw manages its
   own clone, so it splices its `BEGIN/END:tangleclaw` region into `CLAUDE.md` on every launch — and

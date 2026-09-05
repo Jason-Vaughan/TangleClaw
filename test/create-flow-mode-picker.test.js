@@ -96,9 +96,24 @@ describe('create flow routes through the launch gate (#401)', () => {
     };
     sandbox.window = sandbox;
     vm.createContext(sandbox);
+    // `submitCreate` builds its POST body through `tcCreateProjectBody`
+    // (api-helper.js), which the page loads first. Lifted here with the
+    // predicate and tables it closes over — this test caught the omission as a
+    // ReferenceError from inside the real function, which is what running the
+    // code buys over matching its source.
+    const settingTables = API_HELPER_SRC.match(/const TC_SETTING_\w+ = \{[\s\S]*?\n {2}\};/g) || [];
+    assert.ok(settingTables.length >= 2, 'the setting tables must lift');
     vm.runInContext([
       'let createStep = 0;',
       "let createData = { name: 'proj-x', engine: 'claude', tags: '' };",
+      // The body builder resolves the chosen engine off `state.engines`, the
+      // same roster the drawer's picker is built from.
+      `let state = { engines: [${JSON.stringify(CLAUDE_PROFILE)}] };`,
+      ...settingTables,
+      liftFunction(API_HELPER_SRC, 'function tcHonoredLaunchModes'),
+      liftFunction(API_HELPER_SRC, 'function tcEngineDisplayName'),
+      liftFunction(API_HELPER_SRC, 'function tcSettingDisposition'),
+      liftFunction(API_HELPER_SRC, 'function tcCreateProjectBody'),
       liftFunction(UI_SRC, 'async function submitCreate()'),
       'globalThis.submitCreate = submitCreate;'
     ].join('\n'), sandbox);

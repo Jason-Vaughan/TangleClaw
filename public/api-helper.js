@@ -3640,7 +3640,188 @@
     return Object.entries(modes).filter(([, mode]) => mode && mode.disabled !== true);
   }
 
+  /**
+   * The shipped defaults the disposition compares a stored value against.
+   *
+   * Restated from `lib/project-config.js` (`DEFAULT_PROJECT_CONFIG`) for the
+   * same reason the predicate below is restated: `public/` runs in a browser
+   * and this project has no build step. `test/setting-disposition.test.js`
+   * asserts each entry equals the shipped default it names, so a changed
+   * default fails rather than silently making the browser call a real choice a
+   * default (or the reverse).
+   */
+  const TC_SETTING_DEFAULTS = {
+    silentPrime: true,
+    defaultLaunchMode: 'default',
+    evalAuditMode: false
+  };
+
+  /**
+   * How a setting's value is read out of a project config, where it is not
+   * simply `config[setting]`. `evalAuditMode` holds its flag inside an object
+   * of tunables, and provenance is a scalar comparison — an object is never
+   * `!==`-equal to its own default. Mirrors the server table's `read`.
+   */
+  const TC_SETTING_READERS = {
+    evalAuditMode: (cfg) => (cfg && cfg.evalAuditMode ? cfg.evalAuditMode.enabled : undefined)
+  };
+
+  /**
+   * Whether an engine-conditional setting applies to a project, and what to
+   * say when it does not (ADR 0013).
+   *
+   * The browser half of `engines.settingDisposition` (`lib/engines.js`). Every
+   * surface that offers one of these settings needs the same two answers — is
+   * this control live here, and what does the operator read when it is not —
+   * and a surface that answers differently tells the operator something the
+   * server does not believe. The reason text is as much of that boundary as
+   * the boolean: `test/setting-disposition.test.js` asserts the two agree,
+   * field for field, over every bundled profile.
+   *
+   * @param {string} setting - `silentPrime` or `defaultLaunchMode`.
+   * @param {object|null} projConfig - Project config or record carrying the value.
+   * @param {object|null} engine - Engine object or profile.
+   * @returns {{setting: string, value: *, applies: boolean, chosen: boolean,
+   *   reason: string|null, evidence: string|null, level: string|null}}
+   */
+  function tcSettingDisposition(setting, projConfig, engine) {
+    const name = tcEngineDisplayName(engine);
+    const reader = TC_SETTING_READERS[setting];
+    const has = projConfig && Object.prototype.hasOwnProperty.call(projConfig, setting);
+    const stored = reader ? reader(projConfig) : (has ? projConfig[setting] : undefined);
+    const shipped = TC_SETTING_DEFAULTS[setting];
+    const chosen = stored !== undefined && stored !== shipped;
+    const value = stored === undefined ? shipped : stored;
+    let applies;
+    let reason = null;
+    let evidence = null;
+
+    // No profile is not evidence that a capability is absent. Mirrors the
+    // server: an engine TangleClaw holds no profile for gets "cannot say",
+    // never a stated fact about a flag nobody read.
+    if (!engine) {
+      return {
+        setting,
+        value,
+        applies: false,
+        chosen,
+        reason: 'TangleClaw has no profile for this engine, so it cannot say whether this setting applies here.',
+        evidence: 'no engine profile',
+        level: chosen ? 'warn' : 'info'
+      };
+    }
+
+    if (setting === 'silentPrime') {
+      applies = Boolean(engine && engine.capabilities
+        && engine.capabilities.supportsSilentPrime === true);
+      if (!applies) {
+        reason = name + ' does not deliver a hidden prime, so this setting has no effect on this project.';
+        evidence = 'capabilities.supportsSilentPrime is not true';
+      }
+    } else if (setting === 'evalAuditMode') {
+      // Scored exchanges arrive over an OpenClaw connection bound to this
+      // project — the only write path there is. Mirrors the server.
+      applies = Boolean(engine && typeof engine.id === 'string' && engine.id.indexOf('openclaw:') === 0);
+      if (!applies) {
+        reason = name + ' does not feed Eval Audit — scored exchanges arrive over an OpenClaw connection bound to this project, so nothing would be scored here.';
+        evidence = 'audit ingestion authenticates an OpenClaw connection and resolves the project by openclaw:<connectionId>';
+      }
+    } else if (setting === 'defaultLaunchMode') {
+      // `'default'` is the absence of a mode, not one an engine must declare —
+      // mirrors the server, where asking the honored-modes predicate about it
+      // produced a reason that contradicted itself.
+      applies = value === 'default'
+        || tcHonoredLaunchModes(engine).some(([key]) => key === value);
+      if (!applies) {
+        // Declared AND switched off. A key holding nothing usable was never
+        // offered, so calling it "disabled" would send the operator looking
+        // for a switch that does not exist. Mirrors `_modeDisabledHere`.
+        const modes = engine && engine.launchModes;
+        const declared = Boolean(modes && typeof value === 'string'
+          && Object.prototype.hasOwnProperty.call(modes, value)
+          && modes[value] && modes[value].disabled === true);
+        const label = typeof value === 'string' && value ? '"' + value + '"' : 'that launch mode';
+        reason = declared
+          ? name + ' has disabled the launch mode ' + label + ', so this project launches in its engine default instead.'
+          : name + ' does not offer the launch mode ' + label + ', so this project launches in its engine default instead.';
+        evidence = declared ? 'mode is disabled' : 'engine does not define this mode';
+      }
+    } else {
+      // Unknown key: the server throws rather than answering "it applies",
+      // because a silent yes is the no-op this mechanism exists to end. The
+      // browser cannot afford to break a render, so it fails closed the other
+      // way — the control is inert and says it could not be judged.
+      return {
+        setting, value: stored, applies: false, chosen: false,
+        reason: 'TangleClaw could not determine whether this setting applies to ' + name + '.',
+        evidence: 'no engine gate declared for "' + setting + '"',
+        level: 'info'
+      };
+    }
+
+    return {
+      setting,
+      value,
+      applies,
+      chosen,
+      reason,
+      evidence,
+      level: applies ? null : (chosen ? 'warn' : 'info')
+    };
+  }
+
+  /**
+   * The POST body for creating a project, from what the wizard collected.
+   *
+   * A function rather than an object literal inside `submitCreate` because it
+   * makes three conditionals testable: which settings are sent at all, whether
+   * the eyes-open confirmation is attached, and how tags are split. The one
+   * that bites is `silentPrime` — the wizard hides its control on an engine
+   * that cannot honor it, but `createData` keeps whatever was toggled on a
+   * PREVIOUS engine, and the server refuses that value. Posting it would show
+   * the operator a rejection for a setting no longer on screen. Omitted rather
+   * than forced to false: the shipped default is what such a project keeps.
+   *
+   * @param {object} createData - The wizard's collected state.
+   * @param {Array<object>} engineRoster - `state.engines`.
+   * @returns {object} The body for `POST /api/projects`.
+   */
+  function tcCreateProjectBody(createData, engineRoster) {
+    const data = createData || {};
+    const engine = (engineRoster || []).find((e) => e.id === data.engine) || null;
+    const body = {
+      name: data.name,
+      engine: data.engine,
+      defaultLaunchMode: data.defaultLaunchMode,
+      showLaunchModePicker: data.showLaunchModePicker,
+      tags: String(data.tags || '').split(',').map((t) => t.trim()).filter(Boolean)
+    };
+    if (tcSettingDisposition('silentPrime', data, engine).applies) {
+      body.silentPrime = data.silentPrime;
+    }
+    // The confirm callback records which engine+mode the operator actually saw
+    // warned; a bare boolean would carry across a Back-and-change.
+    if (data.confirmBypassHiddenFor) body.confirmBypassHidden = true;
+    return body;
+  }
+
+  /**
+   * How an engine is named to the operator — the profile's own `name` where it
+   * has one, so a reason reads "Codex" rather than "codex". Restated from the
+   * server's own display-name helper in `lib/engines.js`, which is internal to
+   * that module.
+   * @param {object|null} engine - Engine object or profile.
+   * @returns {string}
+   */
+  function tcEngineDisplayName(engine) {
+    if (!engine) return 'This engine';
+    return engine.name || engine.id || 'This engine';
+  }
+
   global.tcHonoredLaunchModes = tcHonoredLaunchModes;
+  global.tcSettingDisposition = tcSettingDisposition;
+  global.tcCreateProjectBody = tcCreateProjectBody;
+  global.tcSettingDefaults = TC_SETTING_DEFAULTS;
   global.tcMedusaIds = tcMedusaIds;
   global.tcMedusaControlMarkup = tcMedusaControlMarkup;
   global.tcEscapeHtml = tcEscapeHtml;

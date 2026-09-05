@@ -140,8 +140,16 @@ assumed covered.
 
 **Genuinely universal** (identical on every engine): `versionBumpEnabled`, `versionFilePath`,
 `wrapSections`, `wrapStepOverrides`, `testCommand`, `lintCommand`, `wrapAutoPrEnabled`, `tags`,
-`medusaEnabled` (the listener is TC-server-side — `lib/projects.js#_syncLiveMedusaListener`), `evalAuditMode`
-(ingestion is server-side).
+`medusaEnabled` (the listener is TC-server-side — `lib/projects.js#_syncLiveMedusaListener`).
+
+> **CORRECTION (2026-09-04, found while building C2b). `evalAuditMode` was listed here and is not
+> universal.** This pass reasoned from "ingestion is server-side" without asking who can
+> authenticate to it. `POST /api/audit/ingest` matches its bearer token against
+> `openclaw_connections.auditSecret` and resolves the project as the one whose engine is
+> `openclaw:<conn.id>`; it is the only write path into `evalExchanges`, and every score, anomaly and
+> incident is downstream of an exchange. So on any other engine the setting stores a value no row
+> can follow. It is engine-conditional and ships as a row in `ENGINE_CONDITIONAL_SETTINGS`. §6 below
+> reaches the same wrong conclusion from the same premise and is corrected by this note.
 
 **Engine-specific with an honest guard today** — the shape to generalize: `defaultLaunchMode`
 (validated against the intended engine, reconciled to `'default'` on an engine switch —
@@ -201,10 +209,14 @@ shared word. They are two rows in any taxonomy, never one.
 ## 6. #1236 — Eval Audit's home
 
 **Resolved by §1: it is a per-project setting, so it belongs in the project settings modal, and it
-does not wait for anything.** #1236 deferred its home to #764 on the reasoning that the modal was
+does not wait for anything.** (Its *home* survived the build; its **classification did not** — see
+the correction in §5. It is engine-conditional, not universal.) #1236 deferred its home to #764 on the reasoning that the modal was
 about to be restructured into per-engine tabs and Eval Audit is OpenClaw-fed. Neither half survives:
 the modal is not getting tabs, and audit ingestion is server-side (`POST /api/audit/ingest`,
-`server.js, the POST /api/audit/ingest route`) — it is not an engine capability at all, so it is universal by §5.
+`server.js, the POST /api/audit/ingest route`). **The second half of that reasoning is wrong and is
+struck:** the route being server-side says nothing about who can authenticate to it, and only an
+OpenClaw connection can — see the CORRECTION in §5. Eval Audit is engine-conditional. Its *home* is
+unaffected: the project settings modal, no shell, no waiting.
 
 Three things C2 must get right, all from #1236's own text:
 - The empty state must name what Eval Audit does and how to enable it. Today it reads *"No projects

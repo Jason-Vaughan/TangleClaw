@@ -28,12 +28,16 @@ describe('Project Settings modal — silentPrime toggle (#103 chunk 2)', () => {
   });
 
   describe('openSettings render', () => {
-    it('declares a capability gate via state.engines profile.capabilities.supportsSilentPrime', () => {
-      // The gate lives in the renderSilentPrimeToggle helper: it looks up the
-      // selected engine in `state.engines` and reads `profile.capabilities.supportsSilentPrime`.
-      // Gating on the capability flag (not on `engine.id === 'claude'`) keeps the
-      // UI honest if the capability is later added to other engines.
-      assert.match(src, /profile\.capabilities\.supportsSilentPrime/);
+    it('asks the shared disposition for the gate rather than reading a capability flag here', () => {
+      // The gate is a capability check, not `engine.id === 'claude'`, so the UI
+      // stays honest if the capability is later added to another engine. It now
+      // lives in ONE place for both realms — `tcSettingDisposition`
+      // (`public/api-helper.js`), whose answer `test/setting-disposition.test.js`
+      // pins against the server's over every bundled profile. Reading the flag
+      // here again would be the second implementation ADR 0013 forbids.
+      assert.match(src, /tcSettingDisposition\('silentPrime'/);
+      assert.doesNotMatch(src, /profile\.capabilities\.supportsSilentPrime/);
+      assert.doesNotMatch(src, /engineId\s*===\s*'claude'/);
       // Engine resolution from the dropdown's value, not from the project record.
       assert.match(src, /state\.engines.*\.find\(e\s*=>\s*e\.id\s*===\s*engineId\)/);
     });
@@ -50,9 +54,10 @@ describe('Project Settings modal — silentPrime toggle (#103 chunk 2)', () => {
       // engine has no such setting". It now says so in words. The structural
       // lock-in stays: no `#settingsSilentPrime` element may exist on this
       // branch, because doSaveSettings attaches `silentPrime` only when it does.
-      const branch = /if\s*\(\s*!supportsSilent\s*\)\s*\{([\s\S]*?)\n    return;\n  \}/.exec(src);
+      const branch = /if\s*\(\s*!disposition\.applies\s*\)\s*\{([\s\S]*?)\n    return;\n  \}/.exec(src);
       assert.ok(branch, 'the not-supported branch exists and returns');
-      assert.match(branch[1], /Not available on/, 'the operator is told the setting does not apply');
+      assert.match(branch[1], /esc\(disposition\.reason\)/,
+        'the operator is told the setting does not apply, in the words the server would use');
       assert.match(branch[1], /disabled/, 'the control is inert, not hidden');
       assert.doesNotMatch(branch[1], /id="settingsSilentPrime"/, 'no saveable control on this branch');
     });

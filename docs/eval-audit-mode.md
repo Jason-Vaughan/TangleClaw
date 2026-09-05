@@ -306,6 +306,28 @@ Open incidents: N
 
 ---
 
+## Turning It On
+
+**Project Settings → Eval Audit.** The toggle states the cost before you flip it — this project's
+judge model and its per-session cap — because enabling it starts LLM-judge calls that spend real
+money. Until #1236 there was no control at all and the only route in was hand-editing
+`project.json`, which is why the dashboard panel was empty on every install and the feature read as
+dead.
+
+**It is offered only where it can work.** Scored exchanges arrive over `POST /api/audit/ingest`,
+which authenticates against an OpenClaw connection's `auditSecret` and attributes the exchange to
+the project bound to that connection. (When no project is bound to the connection, the route falls
+back to a project name the payload supplies — that fallback is a defect, tracked as #1261, and the
+control below deliberately does not follow it.) On a project running any other engine the control renders
+disabled with that reason rather than storing a value nothing can follow (ADR 0013). A project
+hand-edited to `enabled: true` on such an engine is reported as off everywhere it would otherwise
+be acted on — the dashboard, the incident badge, the session prime — and the settings modal offers
+a live switch to clear it.
+
+Only `enabled` is settable through the API. The scoring tunables below are hand-edited in
+`project.json`; a `PATCH` naming one is refused rather than ignored, and enabling through the modal
+**merges**, so a cap you configured survives a toggle.
+
 ## Configuration Reference
 
 All settings live in the project config under `evalAuditMode`:

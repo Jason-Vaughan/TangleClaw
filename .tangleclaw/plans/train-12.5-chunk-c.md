@@ -178,9 +178,12 @@ or stay as named wrappers over it — a rename is not the goal, one definition i
   are expressed in terms of it, and `reconcileLaunchMode` — already a caller, not an
   implementation — keeps delegating rather than growing one. No new parallel implementation
   exists at the end of the chunk.
-- The warn/info asymmetry survives: a dropped value the operator actually chose warns
-  (`defaultLaunchMode`); one indistinguishable from the shipped default records at info
-  (`silentPrime`). A test pins both, because collapsing them is the obvious "cleanup".
+- The warn/info asymmetry survives, and it belongs to the VALUE rather than the setting: a
+  dropped value the operator actually chose warns; one indistinguishable from what the product
+  ships records at info. So a stored `defaultLaunchMode` of `'plan'` warns and a stored
+  `silentPrime` of `true` records — but a stored `silentPrime` of `false` warns too, same setting,
+  other value. A test pins both directions, because collapsing them is the obvious "cleanup" and
+  naming a setting as "the info one" is how the per-setting rule creeps back.
 - The browser predicate stays in parity with the server's — `public/` cannot `require()` `lib/`,
   so the existing restated-copy-plus-parity-test arrangement continues rather than being invented
   differently. **The reason *text* is part of that surface**, not just the boolean: a reason that
@@ -188,9 +191,24 @@ or stay as named wrappers over it — a rename is not the goal, one definition i
 
 ### Chunk C2b — Eval Audit becomes reachable (#1236)
 
-Resolved by C1's §1 split: audit ingestion is server-side (`POST /api/audit/ingest`,
-`server.js, the POST /api/audit/ingest route`), so Eval Audit is a **universal** per-project setting and needs no engine surface
-and no shell. Its home is the project settings modal.
+**Design correction, found while building (2026-09-04). C1 §5/§6 classified `evalAuditMode` as
+genuinely universal on the grounds that "ingestion is server-side". The route is server-side; the
+*feed* is not.** `POST /api/audit/ingest` authenticates a bearer token against
+`openclaw_connections.auditSecret` and resolves the project as the one whose
+`engineId === 'openclaw:<conn.id>'`. It is the only write path into `evalExchanges` — verified by
+grep across `lib/` and `server.js` — and every score, anomaly and incident is downstream of an
+exchange. So on a project not bound to an OpenClaw connection, enabling Eval Audit stores a value
+that can never produce a row.
+
+That is the same shape as the design's own §5 defects, and building the universal toggle C1
+specified would ship the exact defect #1236 was filed for. **The classification changes to
+engine-conditional and the control goes through C2a's mechanism** — which is what the plan predicted
+when it said C2a is what makes each of these cheap. The design pass reasoned from "the route is
+server-side" without asking who can authenticate to it; that is the same *diagnosis-is-a-hypothesis*
+failure the chunk header warns about, one layer up, and it is the fourth Train 12.5 car whose
+written premise did not survive being checked.
+
+Its home is still the project settings modal (nothing about the two-surface split changes).
 
 Three separate gaps, all verified absent:
 - `updateProject` has **no `evalAuditMode` branch at all** — the whole write path is new.
@@ -202,6 +220,13 @@ Three separate gaps, all verified absent:
 **Done when**
 - Eval Audit can be enabled and disabled from the project settings modal, and the value round-trips
   through `PATCH /api/projects/:name` with validation.
+- The control is live on a project bound to an OpenClaw connection and **inert with a rendered
+  reason everywhere else**, through `ENGINE_CONDITIONAL_SETTINGS` rather than a fourth hand-built
+  gate. A `PATCH` enabling it on a project that cannot feed it is refused with the same sentence.
+- The merge is a merge: `evalAuditMode` holds fifteen hand-edit-only tunables beside `enabled`, so
+  a PATCH that replaced the object would silently discard a configured `costCapPerSession` or
+  `judgeModel`. Unknown keys are refused rather than ignored — silently accepting input that does
+  nothing is the norm's own failure.
 - The control makes the cost visible before it is switched on. Enabling starts LLM-judge calls at
   Tier 2/3; #1236 asks for this explicitly, and a checkbox that reads free is the wrong answer.
 - The empty state names what Eval Audit does and how to switch it on, replacing the dead-end string.
@@ -259,14 +284,14 @@ carries a real guard: hiding the picker while the resolved default carries a war
 - [x] Chunk C1 — design: the split, the hard-class norm, #1236's home, #626's re-scope
 - [x] Chunk C1 — operator rulings surfaced and answered (R1 project-half, R2 ratify-migrate, R3 file)
 - [x] Chunk C1 — C2 build plan written
-- [ ] Chunk C2a — one disposition mechanism
-- [ ] Chunk C2b — Eval Audit reachable (#1236)
-- [ ] Chunk C2c — showLaunchModePicker at creation, close #626
-- [ ] Chunk C2 — tests written, every new test mutation-verified red
-- [ ] Chunk C2 — suite green, evidence from `prawduct-hook test-status`
-- [ ] Chunk C2 — CHANGELOG entry
-- [ ] Chunk C2 — cumulative Critic + verify-resolutions, final round clean
-- [ ] Chunk C2 — PR with `Fixes` for each car it closes
+- [x] Chunk C2a — one disposition mechanism
+- [x] Chunk C2b — Eval Audit reachable (#1236)
+- [x] Chunk C2c — showLaunchModePicker at creation, close #626
+- [x] Chunk C2 — tests written, every new test mutation-verified red
+- [x] Chunk C2 — suite green, evidence from `prawduct-hook test-status`
+- [x] Chunk C2 — CHANGELOG entry
+- [x] Chunk C2 — cumulative Critic + verify-resolutions, final round clean
+- [x] Chunk C2 — PR with `Fixes` for each car it closes (#1262)
 
 ## Open for the operator
 

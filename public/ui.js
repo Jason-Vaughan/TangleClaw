@@ -1129,6 +1129,12 @@ function openSettings(name) {
   const initialSilentChecked = !!project.silentPrime;
   // Feature Index toggle (#207, chunk 1) — engine-agnostic, so always rendered.
   const initialFeatureIndexChecked = !!project.featureIndexEnabled;
+  // `enrichProject` reports `evalAudit` for every project now, enabled or not —
+  // a modal cannot render a toggle whose current value it cannot read.
+  // `storedEnabled`, not `enabled`: the modal is the surface that repairs a
+  // project stored on where the setting cannot apply, so it is the one place
+  // that must see the raw value rather than the effective one.
+  const initialEvalAuditChecked = !!(project.evalAudit && project.evalAudit.storedEnabled);
   // Project Map toggle (PIDX #360, #356) — engine-agnostic, so always rendered.
   const initialProjectMapChecked = !!project.projectMapEnabled;
   // Auto version-bump opt-out (#318) — engine-agnostic; default on (only an
@@ -1163,6 +1169,7 @@ function openSettings(name) {
       <div id="settingsSilentPrimeContainer"></div>
       <div id="settingsFeatureIndexContainer"></div>
       <div id="settingsProjectMapContainer"></div>
+      <div id="settingsEvalAuditContainer"></div>
       <div class="form-group">
         <label class="gs-toggle-label">
           <span>Auto version bump</span>
@@ -1196,7 +1203,10 @@ function openSettings(name) {
     ${renderProjectRulesSection(project)}`;
 
   // Initial render — based on the project's current engine
-  renderSilentPrimeToggle(project.engine ? project.engine.id : '', initialSilentChecked);
+  renderSilentPrimeToggle(project.engine ? project.engine.id : '', initialSilentChecked,
+    project.engine || null);
+  renderEvalAuditToggle(project.engine ? project.engine.id : '', initialEvalAuditChecked,
+    project.engine || null, project.evalAudit || null);
   renderFeatureIndexToggle(initialFeatureIndexChecked);
   renderProjectMapToggle(initialProjectMapChecked);
   renderLaunchModeSettings(
@@ -1217,7 +1227,11 @@ function openSettings(name) {
   document.getElementById('settingsEngine').addEventListener('change', (e) => {
     const checkbox = document.getElementById('settingsSilentPrime');
     const checkedNow = checkbox ? checkbox.checked : initialSilentChecked;
-    renderSilentPrimeToggle(e.target.value, checkedNow);
+    renderSilentPrimeToggle(e.target.value, checkedNow, project.engine || null);
+    const auditEl = document.getElementById('settingsEvalAudit');
+    renderEvalAuditToggle(e.target.value,
+      auditEl ? auditEl.checked : initialEvalAuditChecked,
+      project.engine || null, project.evalAudit || null);
     const modeEl = document.getElementById('settingsDefaultLaunchMode');
     const showEl = document.getElementById('settingsShowLaunchPicker');
     renderLaunchModeSettings(
@@ -1231,24 +1245,46 @@ function openSettings(name) {
 }
 
 /**
- * Render (or clear) the silent-prime toggle inside #settingsSilentPrimeContainer
- * based on the engine selected in the dropdown. Capability is read from the
- * engine profile in `state.engines` (same source the dropdown is built from).
+ * Render the silent-prime toggle inside #settingsSilentPrimeContainer for the
+ * engine selected in the dropdown — live where the engine honors the setting,
+ * inert with the reason where it does not. The engine comes from
+ * `state.engines`, the same source the dropdown is built from; whether the
+ * setting applies, and what the operator reads when it does not, come from
+ * `tcSettingDisposition`.
  *
  * Preserves the checkbox's `checked` value across engine switches: if the user
  * toggles silent prime on, then clicks a different engine and back, their
- * intent is remembered. When the new engine doesn't support the capability the
- * markup is wiped (so doSaveSettings can't pick up a stale checkbox).
+ * intent is remembered. The inert branch carries no `#settingsSilentPrime`
+ * element, so `doSaveSettings` attaches no value and cannot pick up a stale
+ * checkbox.
  *
  * @param {string} engineId - Engine id from the dropdown's current value
  * @param {boolean} preserveChecked - The checkbox state to carry over (or initial)
+ * @param {object|null} [projectEngine] - The project's own enriched engine, used
+ *   only while the dropdown still names it — `state.engines` omits
+ *   connection-backed ids, and this is where their capabilities come from.
  */
-function renderSilentPrimeToggle(engineId, preserveChecked) {
+function renderSilentPrimeToggle(engineId, preserveChecked, projectEngine) {
   const container = document.getElementById('settingsSilentPrimeContainer');
   if (!container) return;
-  const profile = (state.engines || []).find(e => e.id === engineId);
-  const supportsSilent = !!(profile && profile.capabilities && profile.capabilities.supportsSilentPrime);
-  if (!supportsSilent) {
+  // `state.engines` is the picker roster and drops connection-backed ids
+  // (`openclaw:<connId>`), so an OpenClaw project finds nothing there — while
+  // the server resolves the base profile and answers from its capabilities.
+  // The project's own enriched engine carries those capabilities, so use it
+  // rather than report "no profile" for an engine TangleClaw knows.
+  const roster = (state.engines || []).find(e => e.id === engineId);
+  const profile = roster
+    || (projectEngine && projectEngine.id === engineId ? projectEngine : null);
+  // One owner for "does this setting apply here, and what do we say when it
+  // does not" (ADR 0013) — `tcSettingDisposition`, the browser half of the
+  // server's `engines.settingDisposition`. The reason is rendered rather than
+  // written here, so the modal cannot tell the operator something the launch
+  // path does not believe. A profile that genuinely cannot be found stays
+  // missing: synthesising `{ id }` made the hint state a capability fact about
+  // an engine nothing was read for.
+  const disposition = tcSettingDisposition('silentPrime', { silentPrime: preserveChecked },
+    profile);
+  if (!disposition.applies) {
     // Said in words rather than hidden (#741): a toggle that vanishes reads
     // as "this engine has no such setting", and the operator who set it on
     // another engine is never told it means nothing here. No
@@ -1261,7 +1297,7 @@ function renderSilentPrimeToggle(engineId, preserveChecked) {
         <input type="checkbox" id="settingsSilentPrimeNotApplicable" disabled>
         <span class="toggle-switch"></span>
       </label>
-      <div class="form-hint">Not available on ${esc(engineId || 'this engine')}. A silent-prime setting saved under another engine does not apply here.</div>
+      <div class="form-hint">${esc(disposition.reason)}</div>
     </div>`;
     return;
   }
@@ -1273,6 +1309,78 @@ function renderSilentPrimeToggle(engineId, preserveChecked) {
         <span class="toggle-switch"></span>
       </label>
       <div class="form-hint">Deliver the session prime via Claude Code's SessionStart hook instead of typing it into the terminal — clean scrollback, prime stays in model context. Takes effect on next session launch.</div>
+    </div>`;
+}
+
+/**
+ * Render the Eval Audit toggle (#1236) — live where scored exchanges can
+ * actually reach this project, inert with the reason where they cannot.
+ *
+ * Eval Audit had no write path at all before this: the only way to switch it on
+ * was hand-editing `project.json`, so the dashboard panel was empty on every
+ * install and the feature read as dead — #1227 was filed to delete it.
+ *
+ * The hint names the cost before the switch, not after. Enabling starts
+ * LLM-judge passes that spend real money, and #1236 asks for that to be visible
+ * rather than a free-looking checkbox; the numbers come from the project's own
+ * stored config, so an operator who has edited them reads their values and not
+ * a hardcoded pair.
+ *
+ * @param {string} engineId - Engine id from the dropdown's current value
+ * @param {boolean} preserveChecked - The checkbox state to carry over (or initial)
+ * @param {object|null} [projectEngine] - The project's own enriched engine —
+ *   `state.engines` omits connection-backed ids, which are the only ids this
+ *   setting applies to, so without it the control is inert on every project
+ *   that can use it.
+ * @param {object|null} [audit] - The project's enriched `evalAudit`, whose
+ *   `judgeModel` and `costCapPerSession` carry this project's real numbers.
+ */
+function renderEvalAuditToggle(engineId, preserveChecked, projectEngine, audit) {
+  const container = document.getElementById('settingsEvalAuditContainer');
+  if (!container) return;
+  const roster = (state.engines || []).find(e => e.id === engineId);
+  const profile = roster
+    || (projectEngine && projectEngine.id === engineId ? projectEngine : null);
+  const disposition = tcSettingDisposition('evalAuditMode', { evalAuditMode: { enabled: preserveChecked } }, profile);
+  if (!disposition.applies) {
+    // Inert, but repairable. A project can hold a stored `true` from a
+    // hand-edit made before this gate existed; rendering a permanently disabled
+    // checkbox would leave the only surface that can clear it unable to. So a
+    // STRANDED project gets a live control that can only go one way — the
+    // server refuses enabling here and allows disabling, and this matches it.
+    const stranded = !!(audit && audit.storedEnabled);
+    container.innerHTML = stranded
+      ? `
+    <div class="form-group">
+      <label class="gs-toggle-label">
+        <span>Eval Audit</span>
+        <input type="checkbox" id="settingsEvalAudit" ${preserveChecked ? 'checked' : ''}>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint"><strong>Stored on, doing nothing.</strong> ${esc(disposition.reason)} Switch it off to clear it.</div>
+    </div>`
+      : `
+    <div class="form-group">
+      <label class="gs-toggle-label gs-toggle-label--disabled">
+        <span>Eval Audit</span>
+        <input type="checkbox" id="settingsEvalAuditNotApplicable" disabled>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint">${esc(disposition.reason)}</div>
+    </div>`;
+    return;
+  }
+  const cfg = audit || {};
+  const judge = cfg.judgeModel || 'the configured judge model';
+  const cap = typeof cfg.costCapPerSession === 'number' ? `$${cfg.costCapPerSession.toFixed(2)}` : 'the configured cap';
+  container.innerHTML = `
+    <div class="form-group">
+      <label class="gs-toggle-label">
+        <span>Eval Audit</span>
+        <input type="checkbox" id="settingsEvalAudit" ${preserveChecked ? 'checked' : ''}>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint"><strong>Costs money while on.</strong> Scores this project's session exchanges for quality and raises an incident when it drops. The structural pass is free; the deeper passes send exchanges to an LLM judge (${esc(judge)}), capped at ${esc(cap)} per session. Scoring tunables are edited in <code>project.json</code>.</div>
     </div>`;
 }
 
@@ -1810,6 +1918,14 @@ async function doSaveSettings() {
     body.silentPrime = silentPrimeEl.checked;
   }
   // Feature Index (#207, chunk 1) — always present (engine-agnostic)
+  // Only `enabled` is sent, and it is sent as a one-key object the server
+  // MERGES: `evalAuditMode` holds the scoring tunables too, and posting the
+  // whole object back would let a stale modal overwrite a hand-edited cost cap.
+  const evalAuditEl = document.getElementById('settingsEvalAudit');
+  if (evalAuditEl) {
+    body.evalAuditMode = { enabled: evalAuditEl.checked };
+  }
+
   const featureIndexEl = document.getElementById('settingsFeatureIndex');
   if (featureIndexEl) {
     body.featureIndexEnabled = featureIndexEl.checked;
@@ -1871,7 +1987,7 @@ async function doSaveSettings() {
     const guardProfile = (state.engines || []).find(e => e.id === body.engine);
     const modeConfig = guardProfile && guardProfile.launchModes && guardProfile.launchModes[effMode];
     if (!effShow && modeConfig && modeConfig.warning) {
-      openBypassHiddenModal(body, effMode, modeConfig);
+      openBypassHiddenModal(body, effMode, modeConfig, settingsTarget, _submitSettings);
       return;
     }
   }
@@ -1920,18 +2036,25 @@ function renderSettingsWarnings(warnings) {
 
 /** The settings PATCH body parked while the confirm modal is open. */
 let pendingBypassHiddenBody = null;
+// What the confirm resends to. Editing a project sends a PATCH; creating one
+// sends the create POST. One modal, because the question and the warning the
+// operator must read are identical — two would drift.
+let pendingBypassHiddenSubmit = null;
 
 /**
- * Open the eyes-open confirm for saving a hidden picker with a
- * warning-carrying default launch mode.
- * @param {object} body - The PATCH body to send on confirm
+ * Open the eyes-open confirm for a hidden picker over a warning-carrying
+ * default launch mode.
+ * @param {object} body - The body to resend on confirm
  * @param {string} modeKey - The effective default mode key
  * @param {object} modeConfig - The engine's launchModes entry for that key
+ * @param {string} subject - The project the posture applies to
+ * @param {Function} [onConfirm] - Async sender; defaults to the settings PATCH
  */
-function openBypassHiddenModal(body, modeKey, modeConfig) {
+function openBypassHiddenModal(body, modeKey, modeConfig, subject, onConfirm) {
   pendingBypassHiddenBody = body;
+  pendingBypassHiddenSubmit = onConfirm || _submitSettings;
   document.getElementById('bypassHiddenText').innerHTML =
-    `<p>Every launch of <strong>${esc(settingsTarget)}</strong> will start directly in <strong>${esc(modeConfig.label || modeKey)}</strong> mode — no picker, and no warning shown at launch.</p>`
+    `<p>Every launch of <strong>${esc(subject === undefined ? settingsTarget : subject)}</strong> will start directly in <strong>${esc(modeConfig.label || modeKey)}</strong> mode — no picker, and no warning shown at launch.</p>`
     + (modeConfig.warning ? `<p class="launch-mode-warning">${esc(modeConfig.warning)}</p>` : '');
   document.getElementById('bypassHiddenModal').classList.add('open');
 }
@@ -1939,17 +2062,20 @@ function openBypassHiddenModal(body, modeKey, modeConfig) {
 /** Close the confirm modal without saving. */
 function closeBypassHiddenModal() {
   pendingBypassHiddenBody = null;
+  pendingBypassHiddenSubmit = null;
   document.getElementById('bypassHiddenModal').classList.remove('open');
 }
 
 /** Confirm — resend the parked body with the server guard's confirm flag. */
 async function confirmBypassHidden() {
   const body = pendingBypassHiddenBody;
+  const submit = pendingBypassHiddenSubmit || _submitSettings;
   if (!body) return;
   pendingBypassHiddenBody = null;
+  pendingBypassHiddenSubmit = null;
   document.getElementById('bypassHiddenModal').classList.remove('open');
   body.confirmBypassHidden = true;
-  await _submitSettings(body);
+  await submit(body);
 }
 
 // ── Global Settings Modal ──
@@ -2374,7 +2500,7 @@ async function saveGlobalSettings() {
 // ── Create Project Drawer ──
 
 let createStep = 0;
-let createData = { name: '', engine: '', defaultLaunchMode: 'default', silentPrime: true, tags: '' };
+let createData = { name: '', engine: '', defaultLaunchMode: 'default', showLaunchModePicker: true, silentPrime: true, tags: '' };
 
 function openCreateModal() {
   createStep = 0;
@@ -2386,6 +2512,9 @@ function openCreateModal() {
     // engine the machine does not have (#707).
     engine: resolvePickerEngine(state.engines, state.config ? state.config.defaultEngine : ''),
     defaultLaunchMode: 'default',
+    // #626: the pair of `defaultLaunchMode`. Shipped default, so a wizard the
+    // operator clicks straight through creates exactly what it did before.
+    showLaunchModePicker: true,
     silentPrime: true,
     tags: ''
   };
@@ -2446,12 +2575,28 @@ function renderCreateStep() {
           <label class="form-label" for="createLaunchMode">Launch Posture</label>
           <select class="form-select" id="createLaunchMode">${opts}</select>
           <div class="form-hint">The default mode this project launches in.</div>
+        </div>
+        <div class="form-group">
+          <label class="gs-toggle-label">
+            <span>Show launch mode picker</span>
+            <input type="checkbox" id="createShowLaunchPicker" ${createData.showLaunchModePicker ? 'checked' : ''}>
+            <span class="toggle-switch"></span>
+          </label>
+          <div class="form-hint">When off, Launch skips the mode picker and starts the session directly in the default mode.</div>
         </div>`;
     }
 
-    let silentPrimeHtml = '';
-    if (profile && profile.capabilities && profile.capabilities.supportsSilentPrime) {
-      silentPrimeHtml = `
+    // Same owner as the settings modal's toggle (ADR 0013): the wizard used to
+    // drop the control on an engine that cannot honor it, which reads as "this
+    // engine has no such setting" to an operator who set it on another project.
+    // The inert branch carries no `#createSilentPrime`, so `createNext` reads
+    // nothing there — but `createData` keeps whatever was toggled on a PREVIOUS
+    // engine, which is why `submitCreate` re-asks the disposition before it
+    // posts rather than trusting the absence of an element.
+    const silentPrimeFit = tcSettingDisposition('silentPrime', { silentPrime: createData.silentPrime },
+      profile || null);
+    const silentPrimeHtml = silentPrimeFit.applies
+      ? `
         <div class="form-group">
           <label class="gs-toggle-label">
             <span>Silent Prime</span>
@@ -2459,13 +2604,21 @@ function renderCreateStep() {
             <span class="toggle-switch"></span>
           </label>
           <div class="form-hint">Skip the initial context prime prompt.</div>
+        </div>`
+      : `
+        <div class="form-group">
+          <label class="gs-toggle-label gs-toggle-label--disabled">
+            <span>Silent Prime</span>
+            <input type="checkbox" id="createSilentPrimeNotApplicable" disabled>
+            <span class="toggle-switch"></span>
+          </label>
+          <div class="form-hint">${esc(silentPrimeFit.reason)}</div>
         </div>`;
-    }
 
     body.innerHTML = `
       ${launchModeHtml}
       ${silentPrimeHtml}
-      ${!launchModeHtml && !silentPrimeHtml ? '<div class="form-hint">No first-session settings for this engine.</div><br>' : ''}
+      ${!launchModeHtml ? '<div class="form-hint">This engine offers no launch postures to choose from.</div><br>' : ''}
       <div style="display:flex;gap:8px">
         <button class="btn" style="flex:1" onclick="createBack()">Back</button>
         <button class="btn btn-primary" style="flex:1" onclick="createNext()">Next</button>
@@ -2509,6 +2662,8 @@ function createNext() {
   } else if (createStep === 2) {
     const modeEl = document.getElementById('createLaunchMode');
     if (modeEl) createData.defaultLaunchMode = modeEl.value;
+    const showEl = document.getElementById('createShowLaunchPicker');
+    if (showEl) createData.showLaunchModePicker = showEl.checked;
     const silentEl = document.getElementById('createSilentPrime');
     if (silentEl) createData.silentPrime = silentEl.checked;
   }
@@ -2524,18 +2679,39 @@ function createBack() {
 
 async function submitCreate() {
   createData.tags = document.getElementById('createTags').value;
+  // Eyes-open guard, client half (#626). The server refuses the combination
+  // outright; asking here is what lets the operator SEE the warning they are
+  // switching off, which is the entire point of the guard. Creation is where
+  // the posture is established, so it is the last place it should be implicit.
+  if (createData.showLaunchModePicker === false) {
+    const profile = (state.engines || []).find(e => e.id === createData.engine);
+    const mode = createData.defaultLaunchMode || 'default';
+    const modeConfig = profile && profile.launchModes && profile.launchModes[mode];
+    // Keyed to what was actually confirmed, not a sticky boolean. A failed
+    // create leaves the drawer open with the flag latched, so Back → pick a
+    // DIFFERENT warned mode → Create would resend a confirmation for a warning
+    // the operator never saw. They did see a warning; just not this one, which
+    // is the whole content of the guard.
+    const confirmedFor = `${createData.engine}:${mode}`;
+    if (modeConfig && modeConfig.warning && createData.confirmBypassHiddenFor !== confirmedFor) {
+      // The parked body is unused on this path: the create resends through its
+      // own closure over `createData`, not by mutating a PATCH body.
+      openBypassHiddenModal({}, mode, modeConfig, createData.name || 'this project', async () => {
+        createData.confirmBypassHiddenFor = confirmedFor;
+        await submitCreate();
+      });
+      return;
+    }
+  }
   const btn = document.getElementById('createSubmitBtn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>';
 
-  const tags = createData.tags.split(',').map(t => t.trim()).filter(Boolean);
-  const result = await apiMutate('/api/projects', 'POST', {
-    name: createData.name,
-    engine: createData.engine,
-    defaultLaunchMode: createData.defaultLaunchMode,
-    silentPrime: createData.silentPrime,
-    tags
-  });
+  // Built by `tcCreateProjectBody` (api-helper.js) so the three conditionals in
+  // it — which settings are sent, whether the confirmation rides along, how
+  // tags split — can be run by a test rather than matched as source text.
+  const result = await apiMutate('/api/projects', 'POST',
+    tcCreateProjectBody(createData, state.engines));
 
   if (!result) {
     const errEl = document.getElementById('createError');
@@ -3709,7 +3885,18 @@ function renderAuditPanel() {
   const auditProjects = state.projects.filter(p => p.evalAudit && p.evalAudit.enabled);
 
   if (auditProjects.length === 0) {
-    panel.innerHTML = '<div class="audit-empty">No projects have Eval Audit enabled.</div>';
+    // "No projects have Eval Audit enabled" was true and actionable by nobody:
+    // it named a state without naming the feature, where to switch it on, or
+    // why most projects cannot. #1227 read this panel, concluded the button was
+    // a dead placeholder, and filed to delete a complete working feature.
+    panel.innerHTML = '<div class="audit-empty">'
+      + '<strong>Eval Audit scores your sessions.</strong> It grades each exchange for quality and '
+      + 'raises an incident when it drops \u2014 a free structural pass, then optional LLM-judge passes '
+      + 'that spend real money.'
+      + '<br><br>Turn it on per project in <strong>Settings \u2192 Eval Audit</strong>. It is available on '
+      + 'projects running through an OpenClaw connection, which is how scored exchanges reach '
+      + 'TangleClaw; on any other engine the setting says so rather than sitting there doing nothing.'
+      + '</div>';
     return;
   }
 
