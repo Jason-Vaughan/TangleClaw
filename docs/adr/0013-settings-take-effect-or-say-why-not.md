@@ -163,6 +163,17 @@ said.
   `ENGINE_CONDITIONAL_SETTINGS` and its two reason strings rather than a fresh predicate. Its
   enforcement check — a gate that refuses a setting offered with no declared disposition — is
   tracked as item (h) on #1070 and is not built.
+- **The migration found a third answer this ADR did not anticipate, and the mechanism grew it
+  rather than each caller inventing one.** "The disposition is applies / does-not-apply" above is
+  the shape two of the five instances needed. #1252 is a setting with two halves — the Feature
+  Index and Project Map toggles maintain their file on every engine, then point a session at it
+  through a channel four engines cannot deliver — and both booleans lie about it: *does not apply*
+  reports a running feature dead, *applies* in silence is the gap this norm closes. So a row may
+  declare a `caveat` instead of an `applies` gate, and the disposition answers `applies: true` with
+  the sentence naming the half that does not run. The norm is unchanged and better served; what was
+  incomplete was the assumption that engine-conditionality is always all-or-nothing. Anyone
+  implementing #1255 should expect the same: check whether the setting is wholly gated before
+  writing an `applies` predicate for it.
 - Where an engine genuinely has no carrier for a concern — OpenClaw has no config file at all — the
   correct outcome is still a stated reason, not a silent skip. The silence in
   `writeEngineConfig` (#1251) was locally reasonable and globally wrong.

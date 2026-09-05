@@ -242,6 +242,7 @@ describe('#1236 Eval Audit is reachable, and honest about where it works', () =>
       vm.runInContext(lift(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
       vm.runInContext(lift(API_HELPER_SRC, 'function tcEngineDisplayName'), ctx);
       vm.runInContext(lift(API_HELPER_SRC, 'function tcSettingDisposition'), ctx);
+      vm.runInContext(lift(API_HELPER_SRC, 'function tcResolveEngineProfile'), ctx);
       vm.runInContext(lift(UI_SRC, 'function renderEvalAuditToggle'), ctx);
       ctx.renderEvalAuditToggle(engineId, checked, projectEngine, audit);
       return doc.getElementById('settingsEvalAuditContainer').innerHTML;
@@ -318,6 +319,7 @@ describe('#1236 Eval Audit is reachable, and honest about where it works', () =>
       vm.runInContext(lift(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
       vm.runInContext(lift(API_HELPER_SRC, 'function tcEngineDisplayName'), ctx);
       vm.runInContext(lift(API_HELPER_SRC, 'function tcSettingDisposition'), ctx);
+      vm.runInContext(lift(API_HELPER_SRC, 'function tcResolveEngineProfile'), ctx);
       vm.runInContext(lift(UI_SRC, 'function renderEvalAuditToggle'), ctx);
       ctx.renderEvalAuditToggle('claude', true,
         { id: 'claude', name: 'Claude Code', capabilities: {} }, { storedEnabled: true });
@@ -342,6 +344,7 @@ describe('#1236 Eval Audit is reachable, and honest about where it works', () =>
       vm.runInContext(lift(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
       vm.runInContext(lift(API_HELPER_SRC, 'function tcEngineDisplayName'), ctx);
       vm.runInContext(lift(API_HELPER_SRC, 'function tcSettingDisposition'), ctx);
+      vm.runInContext(lift(API_HELPER_SRC, 'function tcResolveEngineProfile'), ctx);
       vm.runInContext(lift(UI_SRC, 'function renderEvalAuditToggle'), ctx);
       ctx.renderEvalAuditToggle('claude', false,
         { id: 'claude', name: 'Claude Code', capabilities: {} }, { storedEnabled: false });

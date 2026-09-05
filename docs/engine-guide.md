@@ -174,15 +174,27 @@ cache, so an engine you have just installed is never refused.
 
 ### Capabilities
 
-| Flag | Description |
-|------|-------------|
-| `supportsSlashCommands` | Engine has slash command input |
-| `supportsPrimePrompt` | Engine accepts injected prime prompts |
-| `supportsConfigFile` | Engine reads a config file from the project root |
-| `supportsCoAuthor` | Engine supports git co-author attribution |
-| `supportsSilentPrime` | Engine can receive the prime as hidden context at startup, rather than as typed input |
-| `startupInjection.maxChars` | How many characters this engine's startup channel can carry before *it* truncates — see below |
-| `readOnlyModeMarker` | How this engine's TUI says the session is in a read-only mode, so a wrap refuses instead of timing out — see below |
+| Flag | Read? | Description |
+|------|-------|-------------|
+| `supportsSlashCommands` | declared only | Engine has slash command input |
+| `supportsPrimePrompt` | **read** | Engine accepts injected prime prompts |
+| `supportsConfigFile` | **read** | Engine reads a config file from the project root |
+| `supportsCoAuthor` | declared only | Engine supports git co-author attribution (with its `coAuthorFormat` payload) |
+| `supportsSilentPrime` | **read** | Engine can receive the prime as hidden context at startup, rather than as typed input |
+| `supportsRemote` | declared only | Engine drives a machine other than this one |
+| `supportsModes` | declared only | The connection modes an engine offers |
+| `startupInjection.maxChars` | **read** | How many characters this engine's startup channel can carry before *it* truncates — see below |
+| `readOnlyModeMarker` | **read** | How this engine's TUI says the session is in a read-only mode, so a wrap refuses instead of timing out — see below |
+| `awareness` | declared only | OpenClaw only. Its own `reason` text records why no context carrier can be placed on the remote side — a documented gap rather than an oversight |
+
+**"Declared only" means the flag describes the engine accurately and TangleClaw does nothing with
+it.** The distinction is not decoration: a surface that renders declared flags renders promises the
+product does not keep, and by looking at the data there is no way to tell the two apart. The read
+set is `READ_CAPABILITIES` in `lib/engines.js`, and `test/engine-capability-reads.test.js` holds it
+to the code both ways — a listed flag with no reader fails, and a flag that gains one without being
+listed fails too. The same guard parses this column and fails when it disagrees with the list, so
+wiring a flag makes the suite red until both are updated. Wiring one is a feature decision per
+flag, not a cleanup.
 
 #### A capability that gates a per-project setting owes a disposition
 
@@ -197,6 +209,15 @@ call site, and derives the log level from whether the stored value was a real ch
 leaving each site to pick one. Restate the row in `tcSettingDisposition`
 (`public/api-helper.js`) — `public/` runs in a browser and cannot require `lib/` —
 and `test/setting-disposition.test.js` will hold the two to the same answer, reason text included.
+
+**A setting with two halves declares a `caveat` instead of an `applies` gate.** Some settings do
+part of their job on every engine and the rest only where a capability allows it — the Feature
+Index and Project Map toggles maintain their file everywhere, then point a session at it through
+the hidden prime. `applies: false` would report a running setting as dead and `applies: true` in
+silence is the gap ADR 0013 closes, so the disposition has a third answer: it applies, and here is
+the half that does not run. One or the other — a row declaring neither does not belong in the
+table, and a row declaring both is not representable in the browser mirror until that table carries
+per-row caveat functions. The guard fails either at the table rather than at the operator.
 
 #### `startupInjection.maxChars`
 

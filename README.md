@@ -89,7 +89,7 @@ What started as session persistence grew into a full orchestration platform — 
 - **Orchestration profiles** — bind a project to an OpenAI-compatible endpoint (e.g. a LiteLLM front door serving local models) and its engine launches against it, per project, with no engine-config edits. Key references stay hygienic: `env:`/`file:` indirection, never keys in argv
 - **[PortHub](https://github.com/Jason-Vaughan/PortHub) built in** — central port registry preventing conflicts across all projects, with permanent and TTL leases, heartbeats, system-wide conflict detection, and auto-allocation of non-colliding ports for new connections
 - **Project groups & shared docs** — link related projects into a group, then share markdown documents across them with per-doc locking. Shared directories auto-sync `.md` files on session launch
-- **Project Map & Feature Index** — self-maintaining project indexes (`PROJECT-MAP.md`, `FEATURES.md`) refreshed at wrap time, so agents stop hunting for where things live
+- **Project Map & Feature Index** — self-maintaining project indexes (`PROJECT-MAP.md`, `FEATURES.md`) refreshed at wrap time on every engine and, on engines that deliver a hidden prime, pointed at from the session prime so agents stop hunting for where things live
 - **Dashboard & mobile PWA** — manage projects, launch sessions, and talk to agents from any browser or phone on your network. Installable on iOS and Android, with one-click **Update now** when a new TangleClaw release ships
 - **Zero dependencies** — Node.js 22+ stdlib only. No npm install, no build step, no bundler
 

@@ -27,6 +27,26 @@ describe('Project Settings modal — silentPrime toggle (#103 chunk 2)', () => {
     src = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
   });
 
+  /**
+   * One function's body, declaration through its closing brace at column 0.
+   *
+   * Bounded by the function rather than by a character count: the two probes
+   * below used `fnIdx + 9000`, a window already widened once when the modal
+   * grew and outgrown a second time when the silent-prime state moved into a
+   * closure. A window that has to be re-tuned every time the subject grows
+   * fails for a reason that has nothing to do with what it asserts.
+   *
+   * @param {string} decl - Text opening the declaration.
+   * @returns {string}
+   */
+  function functionBody(decl) {
+    const start = src.indexOf(decl);
+    assert.notEqual(start, -1, `${decl} must exist`);
+    const end = src.indexOf('\n}\n', start);
+    assert.notEqual(end, -1, `${decl} must close`);
+    return src.slice(start, end + 2);
+  }
+
   describe('openSettings render', () => {
     it('asks the shared disposition for the gate rather than reading a capability flag here', () => {
       // The gate is a capability check, not `engine.id === 'claude'`, so the UI
@@ -65,13 +85,7 @@ describe('Project Settings modal — silentPrime toggle (#103 chunk 2)', () => {
     it('initial render is wired into openSettings via renderSilentPrimeToggle', () => {
       // openSettings must call renderSilentPrimeToggle(engineId, initialChecked)
       // so the toggle's first paint reflects the project's current state.
-      const fnIdx = src.indexOf('function openSettings');
-      assert.ok(fnIdx >= 0);
-      // Window spans the whole openSettings body; widened from 5000 as the modal
-      // grew (MED-2K9P Chunk 02 added the Medusa pill), which pushed the
-      // settingsEngine change listener past the old probe bound. Assertions below
-      // are openSettings-specific, so a slightly over-wide window is harmless.
-      const slice = src.slice(fnIdx, fnIdx + 9000);
+      const slice = functionBody('function openSettings');
       assert.match(slice, /renderSilentPrimeToggle\(/);
       assert.match(slice, /initialSilentChecked\s*=\s*!!project\.silentPrime/);
     });
@@ -81,12 +95,7 @@ describe('Project Settings modal — silentPrime toggle (#103 chunk 2)', () => {
       // with the dropdown's new value, so switching to a non-supportive engine
       // hides the toggle and switching back restores it. Preserves the checkbox's
       // current state across the swap.
-      const fnIdx = src.indexOf('function openSettings');
-      // Window spans the whole openSettings body; widened from 5000 as the modal
-      // grew (MED-2K9P Chunk 02 added the Medusa pill), which pushed the
-      // settingsEngine change listener past the old probe bound. Assertions below
-      // are openSettings-specific, so a slightly over-wide window is harmless.
-      const slice = src.slice(fnIdx, fnIdx + 9000);
+      const slice = functionBody('function openSettings');
       assert.match(slice, /getElementById\(['"]settingsEngine['"]\)\.addEventListener\(['"]change['"]/);
       // The change handler must call renderSilentPrimeToggle (not just update state)
       assert.match(slice, /addEventListener\(['"]change['"][\s\S]+?renderSilentPrimeToggle\(/);
@@ -125,8 +134,7 @@ describe('Project Settings modal — silentPrime toggle (#103 chunk 2)', () => {
       // The render is gated, so reading the checkbox must also be gated to avoid
       // sending an undefined silentPrime field on non-Claude engines. A truthy
       // `if (silentPrimeEl)` guard or equivalent is required.
-      const fnIdx = src.indexOf('async function doSaveSettings');
-      const slice = src.slice(fnIdx, fnIdx + 1500);
+      const slice = functionBody('async function doSaveSettings');
       assert.match(slice, /if\s*\(\s*silentPrimeEl\s*\)/);
     });
   });

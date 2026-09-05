@@ -3641,6 +3641,43 @@
   }
 
   /**
+   * The engine profile a settings surface hands the disposition, for the id the
+   * dropdown currently names.
+   *
+   * `state.engines` is the picker roster and drops connection-backed ids
+   * (`openclaw:<connId>`), so an OpenClaw project finds nothing there — while
+   * the server resolves the base profile and answers from its capabilities. The
+   * project's own enriched engine carries those capabilities, so it is the
+   * fallback, but only while the dropdown still names it: once the operator
+   * picks a different engine it describes a different one.
+   *
+   * One owner because this is the input that decides whether a control prints
+   * "TangleClaw has no profile for this engine" — the false sentence the whole
+   * disposition exists to prevent. Written out at each surface, the next engine
+   * family whose ids the roster omits has to be remembered separately at each.
+   *
+   * **It owns the surfaces that feed a disposition, which is not every profile
+   * lookup in the settings modal.** `renderLaunchModeSettings` and
+   * `doSaveSettings`'s bypass-hidden guard still read `state.engines` directly
+   * and are not handed the project's own engine at all — so a connection-backed
+   * OpenClaw project resolves to nothing there and loses its launch-mode
+   * section entirely. That is a real defect and a separate one (#1264): routing
+   * it through here changes what those surfaces render, which is a behavior
+   * change owing its own verification rather than a side effect of this
+   * extraction.
+   *
+   * @param {Array<object>|null} roster - `state.engines`.
+   * @param {string} engineId - The engine dropdown's current value.
+   * @param {object|null} projectEngine - The project's own enriched engine.
+   * @returns {object|null} The profile, or null when nothing was read for it.
+   */
+  function tcResolveEngineProfile(roster, engineId, projectEngine) {
+    const found = (roster || []).find((e) => e.id === engineId);
+    if (found) return found;
+    return projectEngine && projectEngine.id === engineId ? projectEngine : null;
+  }
+
+  /**
    * The shipped defaults the disposition compares a stored value against.
    *
    * Restated from `lib/project-config.js` (`DEFAULT_PROJECT_CONFIG`) for the
@@ -3653,7 +3690,19 @@
   const TC_SETTING_DEFAULTS = {
     silentPrime: true,
     defaultLaunchMode: 'default',
-    evalAuditMode: false
+    evalAuditMode: false,
+    featureIndexEnabled: false,
+    projectMapEnabled: false
+  };
+
+  /**
+   * The index file each half-engine-gated toggle maintains. Membership is also
+   * the flag for "this setting is never gated outright, only caveated" — the
+   * browser half of a server row that declares `caveat` and no `applies`.
+   */
+  const TC_SETTING_CAVEAT_FILES = {
+    featureIndexEnabled: 'FEATURES.md',
+    projectMapEnabled: 'PROJECT-MAP.md'
   };
 
   /**
@@ -3678,11 +3727,15 @@
    * the boolean: `test/setting-disposition.test.js` asserts the two agree,
    * field for field, over every bundled profile.
    *
-   * @param {string} setting - `silentPrime` or `defaultLaunchMode`.
+   * A setting that takes effect only in part answers `applies: true` with a
+   * `caveat` — mirrors the server's third state.
+   *
+   * @param {string} setting - A key of `TC_SETTING_DEFAULTS`.
    * @param {object|null} projConfig - Project config or record carrying the value.
    * @param {object|null} engine - Engine object or profile.
    * @returns {{setting: string, value: *, applies: boolean, chosen: boolean,
-   *   reason: string|null, evidence: string|null, level: string|null}}
+   *   reason: string|null, evidence: string|null, caveat: string|null,
+   *   level: string|null}}
    */
   function tcSettingDisposition(setting, projConfig, engine) {
     const name = tcEngineDisplayName(engine);
@@ -3692,9 +3745,21 @@
     const shipped = TC_SETTING_DEFAULTS[setting];
     const chosen = stored !== undefined && stored !== shipped;
     const value = stored === undefined ? shipped : stored;
+    const level = chosen ? 'warn' : 'info';
     let applies;
     let reason = null;
     let evidence = null;
+
+    // Never gated outright, so it takes the answer BEFORE the no-profile
+    // branch: mirrors the server, where a row declaring no `applies` skips
+    // that branch because its engine-agnostic half runs regardless.
+    if (TC_SETTING_CAVEAT_FILES[setting]) {
+      const caveat = tcIndexPointerCaveat(engine, projConfig, TC_SETTING_CAVEAT_FILES[setting]);
+      return {
+        setting, value, applies: true, chosen, reason: null, evidence: null,
+        caveat, level: caveat ? level : null
+      };
+    }
 
     // No profile is not evidence that a capability is absent. Mirrors the
     // server: an engine TangleClaw holds no profile for gets "cannot say",
@@ -3707,7 +3772,8 @@
         chosen,
         reason: 'TangleClaw has no profile for this engine, so it cannot say whether this setting applies here.',
         evidence: 'no engine profile',
-        level: chosen ? 'warn' : 'info'
+        caveat: null,
+        level
       };
     }
 
@@ -3755,6 +3821,7 @@
         setting, value: stored, applies: false, chosen: false,
         reason: 'TangleClaw could not determine whether this setting applies to ' + name + '.',
         evidence: 'no engine gate declared for "' + setting + '"',
+        caveat: null,
         level: 'info'
       };
     }
@@ -3766,8 +3833,42 @@
       chosen,
       reason,
       evidence,
-      level: applies ? null : (chosen ? 'warn' : 'info')
+      caveat: null,
+      level: applies ? null : level
     };
+  }
+
+  /**
+   * What is lost when an index toggle's SessionStart pointer cannot be
+   * delivered, or null when the whole setting takes effect.
+   *
+   * The browser half of `_indexPointerCaveat` (`lib/engines.js`). Asks the
+   * silent-prime disposition rather than the capability flag, because the
+   * pointer this sentence is about is emitted under exactly that predicate at
+   * launch — and the two ways it fails read differently to the operator: an
+   * engine that cannot deliver a hidden prime is nothing they can change,
+   * their own silent-prime switch is.
+   *
+   * @param {object|null} engine - Engine object or profile.
+   * @param {object|null} projConfig - Project config carrying `silentPrime`.
+   * @param {string} file - The index file this toggle maintains.
+   * @returns {string|null}
+   */
+  function tcIndexPointerCaveat(engine, projConfig, file) {
+    if (!engine) {
+      return 'TangleClaw has no profile for this engine, so it cannot say whether a session here is '
+        + 'told ' + file + ' exists; the wrap maintains the file either way.';
+    }
+    const name = tcEngineDisplayName(engine);
+    if (!tcSettingDisposition('silentPrime', projConfig, engine).applies) {
+      return 'Only half of this setting takes effect on ' + name + ': the wrap maintains ' + file
+        + ', but ' + name + ' delivers no hidden prime, so no session is told the file exists.';
+    }
+    // `=== true` and not a merged default: mirrors `silentPrimeDisposition`,
+    // which reads the stored flag directly.
+    if (projConfig && projConfig.silentPrime === true) return null;
+    return 'Only half of this setting takes effect while silent prime is off: the wrap maintains '
+      + file + ', but the pointer that tells a session ' + file + ' exists rides the hidden prime.';
   }
 
   /**
@@ -3819,6 +3920,7 @@
   }
 
   global.tcHonoredLaunchModes = tcHonoredLaunchModes;
+  global.tcResolveEngineProfile = tcResolveEngineProfile;
   global.tcSettingDisposition = tcSettingDisposition;
   global.tcCreateProjectBody = tcCreateProjectBody;
   global.tcSettingDefaults = TC_SETTING_DEFAULTS;

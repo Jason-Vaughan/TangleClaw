@@ -118,8 +118,42 @@ const PROBES = {
     shipped: 'default', chosen: 'plan', inapplicable: 'plan',
     // A mode claude declares and codex does not, and one no profile declares.
     extras: ['bypassPermissions', 'nosuchmode']
-  }
+  },
+  // No `inapplicable`: these two are never gated outright. Their engine
+  // conditionality is a caveat, and the fixtures that reach both of ITS
+  // outcomes are the silent-prime states crossed in below.
+  featureIndexEnabled: { shipped: false, chosen: true, extras: [] },
+  projectMapEnabled: { shipped: false, chosen: true, extras: [] }
 };
+
+// The silent-prime states every case is crossed with. A caveat row's answer
+// turns on the project's own `silentPrime` as well as the engine's capability,
+// and a fixture set that never varied it would compare the two realms only on
+// the half of the condition the engine decides — the operator's own switch,
+// the one leg they control, would go uncompared. Harmless for the gated rows:
+// `configWith` is spread last, so a case about `silentPrime` itself keeps its
+// own value.
+const SILENT_PRIME_STATES = [{}, { silentPrime: true }, { silentPrime: false }];
+
+/**
+ * The settings gated outright — the rows declaring `applies`, whose answer is
+ * a live control or an inert one with a reason.
+ * @returns {string[]}
+ */
+function gatedSettings() {
+  return Object.entries(engines.ENGINE_CONDITIONAL_SETTINGS)
+    .filter(([, spec]) => typeof spec.applies === 'function').map(([key]) => key);
+}
+
+/**
+ * The settings that always take effect but may do so only in part — the rows
+ * declaring `caveat`.
+ * @returns {string[]}
+ */
+function caveatSettings() {
+  return Object.entries(engines.ENGINE_CONDITIONAL_SETTINGS)
+    .filter(([, spec]) => typeof spec.caveat === 'function').map(([key]) => key);
+}
 
 /**
  * The project config that stores `value` for `setting`, in the shape the
@@ -153,6 +187,32 @@ describe('settingDisposition — the one answer to "does this setting apply here
       'the sentence the operator reads is not a field path');
     assert.equal(d.evidence, 'capabilities.supportsSilentPrime is not true',
       'the profile fact stays available for the log');
+  });
+
+  it('refuses a row that declares neither a gate nor a caveat', () => {
+    // The mechanism's central invariant, and the one nothing else catches: a
+    // row with no `applies` is read as "not gated" and one with no `caveat` as
+    // "nothing to say", so a row declaring neither — or one that misspells
+    // `caveat` — answers `{applies: true, caveat: null}` and ships the exact
+    // silence ADR 0013 exists to end. Both roster helpers skip such a row, and
+    // the parity test only catches a one-sided typo. The roster grows (D2 adds
+    // #1251 and #1255), so this is checked over the table rather than trusted
+    // to the docblock that states it.
+    for (const [setting, spec] of Object.entries(engines.ENGINE_CONDITIONAL_SETTINGS)) {
+      const declared = ['applies', 'caveat'].filter((k) => typeof spec[k] === 'function');
+      // Exactly one, matching what both the docblock and the engine guide say.
+      // Neither is the silence above. BOTH is a row the browser mirror cannot
+      // represent — membership in `TC_SETTING_CAVEAT_FILES` answers before any
+      // gate runs — so the server would gate it and the browser would not.
+      assert.deepEqual(declared.length, 1,
+        `${setting} declares ${JSON.stringify(declared)} — a row declares an applies gate `
+        + 'OR a caveat: neither is a control that says nothing, and both is a shape the '
+        + 'browser mirror cannot answer until TC_SETTING_CAVEAT_FILES carries caveat functions');
+      if (typeof spec.applies === 'function') {
+        assert.equal(typeof spec.reason, 'function', `${setting} gates without a reason to render`);
+        assert.equal(typeof spec.evidence, 'function', `${setting} gates without a profile fact`);
+      }
+    }
   });
 
   it('refuses a setting nobody declared a gate for, rather than answering "it applies"', () => {
@@ -342,6 +402,115 @@ describe('settingDisposition — the one answer to "does this setting apply here
     });
   });
 
+  describe('the third state — a setting that takes effect only in part (#1252)', () => {
+    // The two index toggles seed and maintain a file on every engine, then
+    // point a session at it through the hidden prime, which four of five
+    // engines cannot deliver. `applies: false` would be false, and
+    // `applies: true` in silence is what ADR 0013 forbids.
+    const claudeOn = { id: 'claude', name: 'Claude Code', capabilities: { supportsSilentPrime: true } };
+    const INDEX_FILES = { featureIndexEnabled: 'FEATURES.md', projectMapEnabled: 'PROJECT-MAP.md' };
+
+    it('says nothing when the whole setting takes effect', () => {
+      for (const setting of caveatSettings()) {
+        const d = engines.settingDisposition(setting, { [setting]: true, silentPrime: true }, claudeOn);
+        assert.equal(d.applies, true);
+        assert.equal(d.caveat, null, `${setting} loses nothing here, so there is nothing to say`);
+        assert.equal(d.reason, null, 'a caveat row is never inert');
+        assert.equal(d.level, null, 'and owes no log line either');
+      }
+    });
+
+    it('names the half that does not run on an engine that delivers no hidden prime', () => {
+      for (const setting of caveatSettings()) {
+        const d = engines.settingDisposition(setting, { [setting]: true, silentPrime: true }, notSupporting);
+        assert.equal(d.applies, true, 'the wrap half runs on every engine — the control stays live');
+        assert.ok(d.caveat, `${setting} owes the operator the half it loses`);
+        assert.match(d.caveat, /Codex/, 'the caveat names the engine as the operator knows it');
+        assert.ok(d.caveat.includes(INDEX_FILES[setting]),
+          `${setting}'s caveat must name the file it still maintains`);
+        assert.doesNotMatch(d.caveat, /capabilities\./, 'not a field path');
+      }
+    });
+
+    it('names the operator\'s own switch when that is the leg that fails', () => {
+      // The gate is a triple. On Claude with silent prime off the pointer is
+      // lost too — the same loss, from the one leg the operator controls, and
+      // undocumented until now.
+      for (const setting of caveatSettings()) {
+        const d = engines.settingDisposition(setting, { [setting]: true, silentPrime: false }, claudeOn);
+        assert.equal(d.applies, true);
+        assert.ok(d.caveat, `${setting} loses the pointer here too`);
+        assert.match(d.caveat, /silent prime is off/,
+          'the sentence must point at the switch, not at the engine that could honor it');
+        assert.doesNotMatch(d.caveat, /Claude Code/,
+          'blaming a capable engine would send the operator looking in the wrong place');
+      }
+    });
+
+    it('reads the same as the whole setting being on when the toggle is off', () => {
+      // The caveat describes what the setting DOES on this engine, not what
+      // this project currently stores — the operator deciding whether to turn
+      // it on is the one who most needs to read it.
+      for (const setting of caveatSettings()) {
+        const on = engines.settingDisposition(setting, { [setting]: true, silentPrime: true }, notSupporting);
+        const off = engines.settingDisposition(setting, { [setting]: false, silentPrime: true }, notSupporting);
+        assert.equal(off.caveat, on.caveat);
+      }
+    });
+
+    it('does not claim a capability fact about an engine no profile was read for', () => {
+      for (const setting of caveatSettings()) {
+        const d = engines.settingDisposition(setting, { [setting]: true, silentPrime: true }, null);
+        assert.equal(d.applies, true,
+          'the wrap half runs regardless, so "cannot say" must not read as "does nothing"');
+        assert.match(d.caveat, /cannot say/);
+        assert.doesNotMatch(d.caveat, /no hidden prime/, 'nothing was read to support that');
+      }
+    });
+
+    it('derives the level from provenance, exactly like a reason does', () => {
+      // `featureIndexEnabled` ships false, so a stored true is intent the
+      // operator expressed and is only half being honored.
+      for (const setting of caveatSettings()) {
+        assert.equal(DEFAULT_PROJECT_CONFIG[setting], false,
+          `if ${setting}'s shipped default changes, this case is no longer the one described`);
+        assert.equal(engines.settingDisposition(setting, { [setting]: true }, notSupporting).level, 'warn');
+        assert.equal(engines.settingDisposition(setting, { [setting]: false }, notSupporting).level, 'info');
+      }
+    });
+
+    it('fires on exactly the predicate the prime pointer is gated on', () => {
+      // The caveat is a statement about a block in `sessions.js`. Asked a
+      // different way it would report a loss the launch path does not have, or
+      // stay quiet through one it does — so the row delegates rather than
+      // restating the triple, and the pointer keeps gating on the same call.
+      const SESSIONS = fs.readFileSync(path.join(__dirname, '..', 'lib', 'sessions.js'), 'utf8');
+      for (const toggle of ['featureIndexEnabled', 'projectMapEnabled']) {
+        assert.match(SESSIONS, new RegExp(
+          `projConfig\\.${toggle} === true\\s*\\n\\s*&& engines\\.silentPrimeDisposition\\(projConfig, engineProfile\\) === 'on'`),
+        `the ${toggle} pointer must gate on the disposition the caveat speaks for`);
+      }
+      const helper = declarationSource(
+        fs.readFileSync(path.join(__dirname, '..', 'lib', 'engines.js'), 'utf8'),
+        'function _indexPointerCaveat(');
+      assert.match(helper, /silentPrimeDisposition\(projConfig, engineProfile\)/,
+        'the caveat asks the same predicate the pointer is gated on');
+      assert.doesNotMatch(helper, /supportsSilentPrime/, 'and does not restate it');
+      // Driven end to end rather than by source match: for every bundled
+      // profile and both silent-prime states, a caveat must appear exactly
+      // when the pointer would be skipped.
+      for (const profile of bundledProfiles()) {
+        for (const silentPrime of [true, false]) {
+          const projConfig = { featureIndexEnabled: true, silentPrime };
+          const pointerEmitted = engines.silentPrimeDisposition(projConfig, profile) === 'on';
+          const d = engines.settingDisposition('featureIndexEnabled', projConfig, profile);
+          assert.equal(d.caveat === null, pointerEmitted,
+            `${profile.id}/silentPrime=${silentPrime}: caveat and pointer must not disagree`);
+        }
+      }
+    });
+  });
+
   describe('one implementation, not a third', () => {
     const SRC = fs.readFileSync(path.join(__dirname, '..', 'lib', 'engines.js'), 'utf8');
 
@@ -378,9 +547,17 @@ describe('settingDisposition — the one answer to "does this setting apply here
       assert.deepEqual(serverReads, [], 'the route layer asks the owner, it does not read the flag');
       assert.deepEqual(capabilityReads(path.join(root, 'lib'), 'supportsSilentPrime'),
         ['lib/engines.js'], 'one file may read it');
-      const table = declarationSource(SRC, 'const ENGINE_CONDITIONAL_SETTINGS = {');
+      // Two permitted homes, and only one of them can hold a gate. The second
+      // is `READ_CAPABILITIES`, which NAMES this flag as a key to record that
+      // the product acts on it (#1254) — a listing, not a read. That home is
+      // safe because its own guard pins every value to a string, so no
+      // predicate can hide there; the property this case defends is unchanged.
+      const homes = [
+        declarationSource(SRC, 'const ENGINE_CONDITIONAL_SETTINGS = {'),
+        declarationSource(SRC, 'const READ_CAPABILITIES = {')
+      ];
       for (const line of codeLinesMentioning(SRC, 'supportsSilentPrime')) {
-        assert.ok(table.includes(line),
+        assert.ok(homes.some((home) => home.includes(line)),
           `a read outside ENGINE_CONDITIONAL_SETTINGS is a second implementation: ${line}`);
       }
     });
@@ -473,7 +650,7 @@ describe('settingDisposition — the one answer to "does this setting apply here
       assert.deepEqual(Object.keys(ctx.tcSettingDefaults).sort(), declared.slice().sort(),
         'the browser must carry a shipped default for every setting the server gates');
       for (const setting of declared) {
-        const d = ctx.tcSettingDisposition(setting, configWith(setting, PROBES[setting].inapplicable),
+        const d = ctx.tcSettingDisposition(setting, configWith(setting, PROBES[setting].chosen),
           { id: 'barebones', name: 'Barebones', capabilities: {}, launchModes: {} });
         assert.doesNotMatch(String(d.reason), /could not determine/,
           `the browser has no branch for "${setting}"`);
@@ -488,7 +665,10 @@ describe('settingDisposition — the one answer to "does this setting apply here
       assert.deepEqual(Object.keys(PROBES).sort(),
         Object.keys(engines.ENGINE_CONDITIONAL_SETTINGS).sort(),
         'every gated setting needs a value that cannot apply, or it goes untested here');
-      for (const setting of Object.keys(engines.ENGINE_CONDITIONAL_SETTINGS)) {
+      assert.ok(gatedSettings().length > 0, 'an empty roster proves nothing');
+      for (const setting of gatedSettings()) {
+        assert.notEqual(PROBES[setting].inapplicable, undefined,
+          `${setting} is gated outright, so it needs a value that cannot apply`);
         const d = engines.settingDisposition(setting, configWith(setting, PROBES[setting].inapplicable), barebones);
         assert.equal(d.applies, false, `${setting} must not apply on a profile declaring nothing`);
         assert.ok(d.reason && d.reason.length > 0, `${setting} owes the operator a reason`);
@@ -516,7 +696,15 @@ describe('settingDisposition — the one answer to "does this setting apply here
         // and no bundled profile has one, so without this fixture the whole
         // evalAuditMode row would only ever be compared on `applies: false` —
         // the two realms agreeing about the case that needs no gate.
-        { id: 'openclaw:conn-1', name: 'Studio (OpenClaw)', capabilities: {}, launchModes: {} }
+        { id: 'openclaw:conn-1', name: 'Studio (OpenClaw)', capabilities: {}, launchModes: {} },
+        // No profile at all. Both realms hand-write a sentence for this case
+        // and nothing compared them: the browser reaches it whenever the
+        // settings dropdown names an engine that is neither in `state.engines`
+        // nor the project's own — a retired engine id, or a project with none.
+        // Uncompared, an edit to one realm's wording leaves the other stale and
+        // the suite stays green, which is the failure this whole loop exists
+        // to prevent.
+        null
       ]);
 
       // Probe values per setting, checked against the server's roster so a
@@ -528,10 +716,14 @@ describe('settingDisposition — the one answer to "does this setting apply here
 
       const cases = [];
       for (const [setting, values] of Object.entries(PROBES)) {
-        for (const value of new Set([values.shipped, values.chosen, values.inapplicable, ...values.extras])) {
-          cases.push([setting, configWith(setting, value)]);
+        const stored = new Set([values.shipped, values.chosen, ...values.extras]);
+        if (values.inapplicable !== undefined) stored.add(values.inapplicable);
+        for (const ambient of SILENT_PRIME_STATES) {
+          for (const value of stored) {
+            cases.push([setting, { ...ambient, ...configWith(setting, value) }]);
+          }
+          cases.push([setting, { ...ambient }]);  // absent: the shipped-default path
         }
-        cases.push([setting, {}]);  // absent: the shipped-default path
       }
 
       let compared = 0;
@@ -542,9 +734,9 @@ describe('settingDisposition — the one answer to "does this setting apply here
           // Compared field by field rather than deep-equal: the browser object
           // is built in a vm realm, so `deepStrictEqual` reports two identical
           // objects as unequal on their prototypes.
-          for (const field of ['setting', 'value', 'applies', 'chosen', 'reason', 'evidence', 'level']) {
+          for (const field of ['setting', 'value', 'applies', 'chosen', 'reason', 'evidence', 'caveat', 'level']) {
             assert.equal(browser[field], server[field],
-              `${profile.id}/${setting}=${JSON.stringify(projConfig[setting])}: `
+              `${profile ? profile.id : 'no-profile'}/${setting}=${JSON.stringify(projConfig[setting])}: `
               + `${field} must match the server (browser ${JSON.stringify(browser[field])}, `
               + `server ${JSON.stringify(server[field])})`);
           }
@@ -552,10 +744,12 @@ describe('settingDisposition — the one answer to "does this setting apply here
         }
       }
       assert.ok(compared >= fixtures.length * cases.length, 'the loop must have run');
-      // Every gated setting must have been compared on BOTH verdicts. A loop
-      // where one row only ever answers `false` proves the two realms agree
-      // about the case that needs no gate.
-      for (const setting of Object.keys(engines.ENGINE_CONDITIONAL_SETTINGS)) {
+      // Every setting must have been compared on BOTH of its outcomes. A loop
+      // where one row only ever answers one way proves the two realms agree
+      // about the case that needs no gate. Which two outcomes depends on which
+      // question the row answers: a gated row swings on `applies`, a caveat row
+      // is always applied and swings on whether it says something.
+      for (const setting of gatedSettings()) {
         const verdicts = new Set();
         for (const profile of fixtures) {
           for (const [s2, cfg] of cases) {
@@ -564,6 +758,20 @@ describe('settingDisposition — the one answer to "does this setting apply here
         }
         assert.deepEqual([...verdicts].sort(), [false, true],
           `${setting} was only ever compared on one verdict — the fixtures cannot reach the other`);
+      }
+      assert.ok(caveatSettings().length > 0, 'an empty caveat roster compares nothing');
+      for (const setting of caveatSettings()) {
+        const spoken = new Set();
+        for (const profile of fixtures) {
+          for (const [s2, cfg] of cases) {
+            if (s2 !== setting) continue;
+            const d = engines.settingDisposition(s2, cfg, profile);
+            assert.equal(d.applies, true, `${setting} is not gated outright and must always apply`);
+            spoken.add(d.caveat !== null);
+          }
+        }
+        assert.deepEqual([...spoken].sort(), [false, true],
+          `${setting} was only ever compared with the caveat one way — the fixtures cannot reach the other`);
       }
     });
 

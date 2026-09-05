@@ -174,4 +174,45 @@ describe('#741 a silentPrime that does not apply on this engine says so', () => 
         'the launch-time predicate has one owner');
     });
   });
+
+  describe('an index maintained where no session is told it exists leaves a record (#1252)', () => {
+    // The launch-time half of the caveat the settings modal renders. ADR 0013
+    // names the log as the record behind the modal, and without it an operator
+    // who enabled Feature Index on codex gets a file nothing reads and a
+    // maintainer debugging it finds nothing.
+    for (const [setting, file] of [['featureIndexEnabled', 'FEATURES.md'], ['projectMapEnabled', 'PROJECT-MAP.md']]) {
+      it(`warns when ${setting} is on and the engine delivers no hidden prime`, () => {
+        launchAndCaptureWarnings(`spd-idx-${setting}`, 'codex', true, { [setting]: true });
+        const hit = lastLaunchLines.filter((l) => /no session here is told it exists/.test(l)
+          && new RegExp(`setting=${setting}`).test(l));
+        assert.equal(hit.length, 1, `exactly one line, got:\n${lastLaunchLines.join('')}`);
+        assert.match(hit[0], /WARN/, 'the operator turned it on — real intent, half honored');
+        assert.ok(hit[0].includes(file), 'the record names the file still being maintained');
+        assert.ok(hit[0].includes('Codex'), 'and the engine, as the operator knows it');
+      });
+
+      it(`says nothing about ${setting} when the whole setting takes effect`, () => {
+        launchAndCaptureWarnings(`spd-idx-ok-${setting}`, 'claude', true, { [setting]: true });
+        assert.deepEqual(
+          lastLaunchLines.filter((l) => new RegExp(`setting=${setting}`).test(l)), []);
+      });
+
+      it(`says nothing about ${setting} when the toggle is off`, () => {
+        // The caveat describes what the setting DOES here, which is the right
+        // sentence on a control and the wrong one for a launch that was never
+        // asked to do it.
+        launchAndCaptureWarnings(`spd-idx-off-${setting}`, 'codex', true, { [setting]: false });
+        assert.deepEqual(
+          lastLaunchLines.filter((l) => new RegExp(`setting=${setting}`).test(l)), []);
+      });
+    }
+
+    it('names the operator\'s own switch when that is the leg that failed', () => {
+      launchAndCaptureWarnings('spd-idx-sp-off', 'claude', false, { featureIndexEnabled: true });
+      const hit = lastLaunchLines.filter((l) => /no session here is told it exists/.test(l));
+      assert.equal(hit.length, 1, `exactly one line, got:\n${lastLaunchLines.join('')}`);
+      assert.ok(hit[0].includes('while silent prime is off'),
+        'on a capable engine the loss is theirs to undo, so the record must not blame the engine');
+    });
+  });
 });

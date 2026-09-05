@@ -19,6 +19,13 @@
   --text-muted: #777;
   --root-accent: #4a9eff;
   --amber: #FFA726;
+  /* Amber that survives its own background. The literal every `var(--warning,
+     #ffb300)` fell back to is 1.8:1 on the Light theme's white card — a caveat
+     the operator cannot read is the failure the caveat exists to remove
+     (`nonfunctional-requirements.md` § Direction: 4.5:1). Declared per theme so
+     the five sites that spell the token stay one decision; the dark value is
+     the historical literal, so dark and high-contrast render byte-identically. */
+  --warning: #ffb300;
   /* Semantic aliases */
   --engine-claude: #8BC34A;
   --engine-codex: #42A5F5;
@@ -38,6 +45,7 @@
 
 /* ── Light Theme ── */
 [data-theme="light"] {
+  --warning: #7A4F00;  /* 7.1:1 on the white card, 5.4:1 on the elevated grey */
   --bg: #F5F5F5;
   --card-bg: #FFFFFF;
   --elevated-bg: #E0E0E0;
@@ -2341,6 +2349,13 @@ body {
   color: var(--text-muted);
   margin-top: 4px;
 }
+/* A setting that takes effect only in PART says which part does not (ADR 0013,
+   #1252). Distinct from `.form-hint`, which describes what the control does:
+   the same muted grey would file "half of this does nothing here" alongside the
+   description as more explanation, which is how the gap went unread. Not
+   `.form-error` either — nothing is broken, and a red row on a working toggle
+   invites the operator to go fix something they cannot. */
+.form-hint--caveat { color: var(--warning, #ffb300); }
 .form-error {
   font-size: 11px;
   color: var(--danger);

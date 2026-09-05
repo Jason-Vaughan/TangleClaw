@@ -185,6 +185,11 @@ Stored in `<project>/.tangleclaw/project.json`. Created when a project is added 
 | `independentCritic` | boolean | `false` | Independent Critic review required |
 | `adversarialTesting` | boolean | `false` | Adversarial test cases required |
 
+A boolean rule is rendered into every generated engine config when it is `true`. A rule that
+carries a **value** rather than a switch — `loggingLevel` is the one shipped that way — renders
+with its value, on every generator, including at its default. Codex and Aider additionally get a
+native field (`logging_level:` / `verbose:`) their engines act on directly.
+
 ### Wrap Step Overrides
 
 `wrapStepOverrides` turns off or reconfigures an individual wrap step for one project. It is
