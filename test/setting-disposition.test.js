@@ -143,6 +143,17 @@ describe('settingDisposition — the one answer to "does this setting apply here
       assert.equal(d.reason, null);
     });
 
+    it('a key holding nothing usable is not called disabled', () => {
+      // `hasOwnProperty` alone would report "the engine disabled this mode" for
+      // a profile whose key holds `null` — sending the operator to look for a
+      // switch nobody ever offered.
+      const hollow = { id: 'x', name: 'Hollow', launchModes: { default: { label: 'Interactive' }, plan: null } };
+      const d = engines.settingDisposition('defaultLaunchMode', { defaultLaunchMode: 'plan' }, hollow);
+      assert.equal(d.applies, false);
+      assert.match(d.reason, /does not offer the launch mode "plan"/);
+      assert.equal(d.evidence, 'engine does not define this mode');
+    });
+
     it('a non-string stored value is still judged rather than skipped', () => {
       // The pre-mechanism launch path guarded on `typeof === 'string'` and fell
       // through in silence for anything else — a stored value producing no
@@ -259,7 +270,8 @@ describe('settingDisposition — the one answer to "does this setting apply here
           capabilities: { supportsSilentPrime: true },
           launchModes: { default: { label: 'Interactive' }, plan: { label: 'Plan', disabled: true } }
         },
-        { id: 'barebones', name: 'Barebones', capabilities: {}, launchModes: {} }
+        { id: 'barebones', name: 'Barebones', capabilities: {}, launchModes: {} },
+        { id: 'hollow', name: 'Hollow', capabilities: {}, launchModes: { default: { label: 'Interactive' }, plan: null } }
       ]);
 
       // Probe values per setting, checked against the server's roster so a

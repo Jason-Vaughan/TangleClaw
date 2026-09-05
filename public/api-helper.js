@@ -3694,9 +3694,13 @@
     } else if (setting === 'defaultLaunchMode') {
       applies = tcHonoredLaunchModes(engine).some(([key]) => key === value);
       if (!applies) {
+        // Declared AND switched off. A key holding nothing usable was never
+        // offered, so calling it "disabled" would send the operator looking
+        // for a switch that does not exist. Mirrors `_modeDisabledHere`.
         const modes = engine && engine.launchModes;
         const declared = Boolean(modes && typeof value === 'string'
-          && Object.prototype.hasOwnProperty.call(modes, value));
+          && Object.prototype.hasOwnProperty.call(modes, value)
+          && modes[value] && modes[value].disabled === true);
         const label = typeof value === 'string' && value ? '"' + value + '"' : 'that launch mode';
         reason = declared
           ? name + ' has disabled the launch mode ' + label + ', so this project launches in its engine default instead.'
