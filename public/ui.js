@@ -1153,8 +1153,8 @@ function openSettings(name) {
   // Medusa session-comms auto-enable (MED-2K9P Chunk 02) — engine-agnostic;
   // default OFF (only an explicit true opts in).
   const initialMedusaChecked = !!project.medusaEnabled;
-  // Medusa idle-gated wake nudge (MED-2K9P v2 T2) — engine-gated server-side
-  // (Claude/tmux only in Slice 1); default OFF (a wake spends a real turn).
+  // Medusa idle-gated wake nudge (MED-2K9P v2 T2) — engine-gated on the
+  // engine's declared idle signature; default OFF (a wake spends a real turn).
   const initialMedusaWakeChecked = !!project.medusaWake;
   document.getElementById('settingsBody').innerHTML = `
     <div class="form-group">
@@ -1202,14 +1202,7 @@ function openSettings(name) {
         </label>
         <div class="form-hint">Auto-start this project's sessions on the Medusa switchboard so inbound messages badge in the banner without a manual toggle. Off by default; the banner control is always available as a per-session override.</div>
       </div>
-      <div class="form-group">
-        <label class="gs-toggle-label">
-          <span>Auto-wake on inbound messages</span>
-          <input type="checkbox" id="settingsMedusaWake" ${initialMedusaWakeChecked ? 'checked' : ''}>
-          <span class="toggle-switch"></span>
-        </label>
-        <div class="form-hint">When a Medusa message arrives and this project's session is idle, nudge the session to read its inbox — spending a turn. Never interrupts a busy turn; waits for the next idle moment. Claude sessions only for now. Off by default.</div>
-      </div>
+      <div id="settingsMedusaWakeContainer"></div>
     </div>
     ${renderProjectRulesSection(project)}`;
 
@@ -1243,6 +1236,8 @@ function openSettings(name) {
     project.engine || null, project.evalAudit || null);
   renderIndexToggles(project.engine ? project.engine.id : '', initialSilentChecked);
   renderGeneratedConfigNotice(project.engine ? project.engine.id : '', project.engine || null);
+  renderMedusaWakeToggle(project.engine ? project.engine.id : '', initialMedusaWakeChecked,
+    project.engine || null);
   renderLaunchModeSettings(
     project.engine ? project.engine.id : '',
     project.defaultLaunchMode || 'default',
@@ -1275,6 +1270,13 @@ function openSettings(name) {
     // Rendered against the dropdown rather than the saved engine so they read
     // it while deciding, not after a launch that silently dropped the lot.
     renderGeneratedConfigNotice(e.target.value, project.engine || null);
+    // The wake nudge is typed into the engine's own pane, so switching to an
+    // engine with no measured idle signature costs the setting entirely. Same
+    // reason as above: read it while deciding, not after a save.
+    const wakeEl = document.getElementById('settingsMedusaWake');
+    renderMedusaWakeToggle(e.target.value,
+      wakeEl ? wakeEl.checked : initialMedusaWakeChecked,
+      project.engine || null);
     const auditEl = document.getElementById('settingsEvalAudit');
     renderEvalAuditToggle(e.target.value,
       auditEl ? auditEl.checked : initialEvalAuditChecked,
@@ -1336,6 +1338,58 @@ function renderGeneratedConfigNotice(engineId, projectEngine) {
   container.innerHTML = disposition.applies
     ? ''
     : `<div class="form-hint form-hint--caveat">${esc(disposition.reason)}</div>`;
+}
+
+/**
+ * Render the Medusa auto-wake toggle (#1255) — live where the engine has a
+ * measured idle signature, inert with the reason where it does not.
+ *
+ * Which engines can be nudged is a fact about their panes, and it moves: an
+ * engine joins the set the day somebody captures its idle signature. A hint
+ * that names engines is a claim nothing derives, so it goes stale with nothing
+ * turning red — and the engines that genuinely cannot be nudged get no warning
+ * at all, which is the half ADR 0013 is about.
+ *
+ * So nothing here decides: `tcSettingDisposition` answers from the engine's
+ * own `capabilities.wake` block, which is the same declaration the monitor
+ * reads. A sixth engine that publishes a live-probed signature turns this
+ * control on with no edit in this file.
+ *
+ * @param {string} engineId - Engine id from the dropdown's current value
+ * @param {boolean} preserveChecked - The checkbox state to carry over (or initial)
+ * @param {object|null} [projectEngine] - The project's own enriched engine, for
+ *   the connection-backed ids `state.engines` omits.
+ */
+function renderMedusaWakeToggle(engineId, preserveChecked, projectEngine) {
+  const container = document.getElementById('settingsMedusaWakeContainer');
+  if (!container) return;
+  const profile = tcResolveEngineProfile(state.engines, engineId, projectEngine);
+  const disposition = tcSettingDisposition('medusaWake', { medusaWake: preserveChecked }, profile);
+  if (!disposition.applies) {
+    // Said in words rather than hidden (#741): a control that vanishes reads as
+    // "no such setting", and the operator who turned it on for another engine
+    // is never told it means nothing here. No `#settingsMedusaWake` element, so
+    // the save path attaches no value and the stored key stays as it was.
+    container.innerHTML = `
+    <div class="form-group">
+      <label class="gs-toggle-label gs-toggle-label--disabled">
+        <span>Auto-wake on inbound messages</span>
+        <input type="checkbox" id="settingsMedusaWakeNotApplicable" disabled>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint">${esc(disposition.reason)}</div>
+    </div>`;
+    return;
+  }
+  container.innerHTML = `
+    <div class="form-group">
+      <label class="gs-toggle-label">
+        <span>Auto-wake on inbound messages</span>
+        <input type="checkbox" id="settingsMedusaWake" ${preserveChecked ? 'checked' : ''}>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint">When a Medusa message arrives and this project's session is idle, nudge the session to read its inbox — spending a turn. Never interrupts a busy turn; waits for the next idle moment. Off by default.</div>
+    </div>`;
 }
 
 /**
@@ -2077,7 +2131,10 @@ async function doSaveSettings() {
   if (medusaEl) {
     body.medusaEnabled = medusaEl.checked;
   }
-  // Medusa idle-gated wake opt-in (MED-2K9P v2 T2) — always present (server gates engine)
+  // Medusa idle-gated wake opt-in (MED-2K9P v2 T2). The inert branch renders no
+  // `#settingsMedusaWake` element, so an engine with no measured idle signature
+  // attaches no value and cannot post a stale checkbox — the pattern
+  // `renderSilentPrimeToggle` establishes (#1255).
   const medusaWakeEl = document.getElementById('settingsMedusaWake');
   if (medusaWakeEl) {
     body.medusaWake = medusaWakeEl.checked;

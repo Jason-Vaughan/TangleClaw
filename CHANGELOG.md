@@ -142,6 +142,62 @@ All notable changes to TangleClaw are documented in this file.
   different words from the ones its settings modal renders — and a synthesized stub answers
   correctly only until a disposition row reads something other than the id.
 
+- **An engine's wake signature is now declared in its own profile, and the modal says where a
+  session cannot be nudged (#1255).** `ENGINE_WAKE_PROFILES` was a literal in `lib/medusa-wake.js`
+  hardcoding `claude` and `antigravity`, so adding a sixth engine to TangleClaw meant editing a
+  `lib/` module — the construction `prime-delivery-direction.md` § Direction §1 already forbids one
+  layer up. Each engine now declares a `capabilities.wake` block (`busyMarker`, `promptPattern`,
+  `promptGlyph`, `promptPad`, `placeholderSgr`, `idleMarker`, and the optional
+  `pasteRejectedMarker`) and the table is derived from it; every consumer in `lib/sessions.js` and
+  the tests that read `ENGINE_WAKE_PROFILES.claude` keep their spelling. The one form that had to
+  change is a destructuring import in `test/prime-readiness-gate.test.js`: reading the export at
+  require time is exactly the eager read the design forbids.
+
+  **The migration is what makes the honesty affordable.** The one operator-facing string about the
+  feature was a settings hint reading "Claude sessions only for now", which had been wrong since
+  antigravity was profiled (#560) — and the engines that genuinely cannot be nudged got no warning
+  at all. Fixing that with the wake data in `lib/` would have meant a second hardcoded engine list
+  in `public/`, because the browser cannot `require()` it. With the data in the profile,
+  `GET /api/engines` already ships it, so the `medusaWake` row in `ENGINE_CONDITIONAL_SETTINGS` and
+  its browser half in `public/api-helper.js` compute the same answer from the same bytes, and
+  `renderMedusaWakeToggle` renders an inert control with the reason on codex, aider and openclaw.
+  The inert branch carries no `#settingsMedusaWake` element, so `doSaveSettings` attaches no value
+  and cannot post a stale checkbox — the pattern `renderSilentPrimeToggle` established. ADR 0013
+  asks that a row be checked for partial application before an `applies` gate is written for it
+  (#1252): checked, and recorded at the row — an unprofiled engine is skipped before every other
+  gate, so there is no half that runs.
+
+  **Provenance is carried per FIELD**, as a sibling `evidence` map keyed by field name rather than
+  one claim for the block. Antigravity's `busyMarker` was measured on a live pane (#560) and its
+  `promptPad` never has been; flattening those into one `verifiedOn` would turn the gap into an
+  assurance. `verifiedOn: null` is the honest form for a value nobody has measured, and is a
+  different claim from Claude's `idleMarker`, which is `null` and carries a date because the
+  *absence* is what got measured (#1114). A guard holds the map and the declared fields to each
+  other in both directions.
+
+  **Derived lazily, and that is load-bearing.** The runtime reads profiles from
+  `~/.tangleclaw/engines/`, which `store.init()` canonical-source-overwrites from the bundle on
+  every boot (#251) — that sync is what carries the new block to an existing install with no
+  migration step. But `server.js` requires every module *before* calling `store.init()`, so a table
+  built at module load would read that directory pre-sync: empty on a fresh install, and stale on
+  any other. `ENGINE_WAKE_PROFILES` is therefore a getter that derives on first use and memoises,
+  and an empty directory is treated as "not initialised yet" rather than as an answer. A guard runs
+  the ordering in a child process, because it is a property of a fresh module registry.
+
+  **A malformed block is refused at the read**, not only over the bundled files: an operator profile
+  in `~/.tangleclaw/engines/` never passes through this suite, and a `promptPattern` that will not
+  compile or a field the schema does not know would otherwise reach the gate that decides whether to
+  type into a live pane. Such an engine is logged and left unprofiled — the existing honest skip —
+  and the refusal is per engine, so one bad profile cannot take the feature down for the machine.
+  The set of nudgeable engines is unchanged by the migration, and `detectAtPrompt`'s #1180 bounded
+  exception is not widened.
+
+  Pane fixtures moved to `test/_wake-fixtures.js` so the profile guard and the monitor suite cannot
+  drift on the exact bytes — a hand-retyped prompt padded with an ordinary space is how the #1109
+  gap survived. `test/_engine-store.js` points the four suites that read the table at a throwaway
+  store, closing the host-dependence that `test/engine-config-managed-block.test.js` had already
+  recorded once for `writeEngineConfig`.
+
 ### Fixed
 - **An engine with no config file says what it cannot carry (#1251).** On an OpenClaw project the
   whole generated config is skipped — `writeEngineConfig` returns `{skipped: true}` when the

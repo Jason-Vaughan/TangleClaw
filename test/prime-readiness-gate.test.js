@@ -21,11 +21,21 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { setLevel } = require('../lib/logger');
+const { useThrowawayStore } = require('./_engine-store');
 
 setLevel('error');
 
+// The wake table is derived from the engine profiles the store holds (#1255),
+// so it must be pointed at a throwaway one before anything reads it.
+const _wakeStore = useThrowawayStore('prime-readiness');
+after(() => _wakeStore.cleanup());
+
 const sessions = require('../lib/sessions');
-const { ENGINE_WAKE_PROFILES } = require('../lib/medusa-wake');
+// Namespace import, NOT `const { ENGINE_WAKE_PROFILES } = ...`: the export is a
+// getter that derives the table from the store on first read, so destructuring
+// it here would capture whatever the answer was at require time and never see
+// the store again.
+const medusaWake = require('../lib/medusa-wake');
 
 /**
  * Build the injected seams for one `_awaitPaneReady` run: a scripted capture
@@ -71,7 +81,7 @@ describe('_awaitPaneReady (#999) — two signals, honest degradation', () => {
   });
 
   it('is not gated for an engine whose idleMarker is null (Claude — #1106 measured, not assumed)', async () => {
-    assert.equal(ENGINE_WAKE_PROFILES.claude.idleMarker, null,
+    assert.equal(medusaWake.ENGINE_WAKE_PROFILES.claude.idleMarker, null,
       'precondition: Claude still has no positive at-rest marker');
     const res = await sessions._awaitPaneReady('t', 'claude');
     assert.equal(res.gated, false);

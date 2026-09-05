@@ -1,13 +1,13 @@
 'use strict';
 
-const { test, describe, before, after } = require('node:test');
+const { test, describe, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
 const engines = require('../lib/engines');
-const store = require('../lib/store');
+const { useThrowawayStore } = require('./_engine-store');
 
 // A real store on a THROWAWAY base path, file-scoped. Without this, the
 // writeEngineConfig fixtures below silently leaned on whatever ~/.tangleclaw
@@ -15,16 +15,11 @@ const store = require('../lib/store');
 // red on CI where generateConfig came back empty and every "reached the
 // write path" precondition fired — a test whose verdict depends on host
 // state, the exact class this repo has already recorded three times.
-let _storeTmp;
-before(() => {
-  _storeTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-managed-block-store-'));
-  store._setBasePath(_storeTmp);
-  store.init();
-});
-after(() => {
-  store.close();
-  fs.rmSync(_storeTmp, { recursive: true, force: true });
-});
+//
+// Established at file load rather than in a `before()` hook: the wake-profile
+// read below runs while this file is being evaluated, long before any hook.
+const _store = useThrowawayStore('managed-block');
+after(() => _store.cleanup());
 
 const BEGIN = '<!-- BEGIN:tangleclaw -->';
 const END = '<!-- END:tangleclaw -->';

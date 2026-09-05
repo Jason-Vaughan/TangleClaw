@@ -153,7 +153,10 @@ const PROBES = {
     // ships false, which is why storing `true` is the customized case and
     // storing `false` is the stock one.
     wrap: (value) => ({ rules: { extensions: { independentCritic: value } } })
-  }
+  },
+  // Off is what ships — a wake spends a real turn — so a stored `true` is the
+  // operator's choice, and it cannot apply on an engine declaring no signature.
+  medusaWake: { shipped: false, chosen: true, inapplicable: true, extras: [] }
 };
 
 // The silent-prime states every case is crossed with. A caveat row's answer
@@ -1077,6 +1080,154 @@ describe('an engine with no config file says what it cannot carry (#1251)', () =
     // Re-rendered against the dropdown, not only the saved engine: the operator
     // needs to read it while choosing, not after a launch that dropped the lot.
     assert.match(UI, /renderGeneratedConfigNotice\(e\.target\.value/);
+  });
+});
+
+describe('the wake nudge says where it cannot reach (#1255)', () => {
+  const ctx = loadApiHelperGlobals();
+  const vm = require('node:vm');
+  const { makeDocument } = require('./_mini-dom');
+  const UI = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+  const API = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
+
+  /**
+   * A bundled profile as the browser receives it.
+   * @param {string} id - Engine id.
+   * @returns {object}
+   */
+  const client = (id) => engines.engineClientPayload(
+    bundledProfiles().find((p) => p.id === id), { available: true });
+
+  it('applies on exactly the engines whose profile declares a wake signature', () => {
+    // Both directions, over the bundled roster: a gate keyed on the wrong field
+    // would either kill the setting on the two engines where it works or offer
+    // it on the three where a nudge would be typed against a guessed signature.
+    const nudgeable = [];
+    for (const profile of bundledProfiles()) {
+      const d = engines.settingDisposition('medusaWake', { medusaWake: true }, profile);
+      if (d.applies) {
+        nudgeable.push(profile.id);
+        assert.equal(d.reason, null, `${profile.id} has nothing to tell the operator`);
+        assert.equal(d.caveat, null, `${profile.id}: the row is all-or-nothing by design`);
+      } else {
+        assert.match(d.reason, /has no measured idle signature/, `${profile.id} owes a reason`);
+        assert.equal(d.evidence, 'capabilities.wake is not declared');
+      }
+    }
+    assert.deepEqual(nudgeable.sort(), ['antigravity', 'claude'],
+      'the modal must agree with the monitor about which engines can be nudged');
+  });
+
+  it('answers from the profile the engines API already ships', () => {
+    // The whole reason the wake data moved into the profiles: the browser can
+    // only compute this if the projection carries it. A predicate reading a
+    // field production never sends answers "no signature" for every engine —
+    // indistinguishable from a correct answer, and the defect D2a shipped once.
+    for (const profile of bundledProfiles()) {
+      const projected = engines.engineClientPayload(profile, { available: true });
+      const server = engines.settingDisposition('medusaWake', { medusaWake: true }, profile);
+      const browser = ctx.tcSettingDisposition('medusaWake', { medusaWake: true }, projected);
+      assert.equal(browser.applies, server.applies, `${profile.id}: applies`);
+      assert.equal(browser.reason, server.reason, `${profile.id}: reason`);
+    }
+    assert.ok(client('claude').capabilities.wake,
+      'the browser must receive the wake block, or its predicate is answering about nothing');
+    assert.equal(client('codex').capabilities.wake, undefined);
+  });
+
+  it('losing a wake the operator switched on warns; losing the default records', () => {
+    const codex = bundledProfiles().find((p) => p.id === 'codex');
+    const chosen = engines.settingDisposition('medusaWake', { medusaWake: true }, codex);
+    assert.equal(chosen.chosen, true);
+    assert.equal(chosen.level, 'warn');
+    // A project that never set the key is on the shipped default — off — and
+    // was never promised anything, so it records rather than alarms.
+    const untouched = engines.settingDisposition('medusaWake', {}, codex);
+    assert.equal(untouched.chosen, false);
+    assert.equal(untouched.value, false);
+    assert.equal(untouched.level, 'info');
+  });
+
+  it('the row is all-or-nothing, and the check that says so is recorded', () => {
+    // ADR 0013 asks that a row be checked for PARTIAL application before an
+    // `applies` gate is written (#1252's lesson). An unprofiled engine is
+    // skipped by the monitor before every other gate, so there is no half that
+    // runs — and the next reader's cheapest wrong move is assuming a caveat.
+    const spec = engines.ENGINE_CONDITIONAL_SETTINGS.medusaWake;
+    assert.equal(typeof spec.applies, 'function');
+    assert.equal(spec.caveat, undefined);
+    const src = declarationSource(fs.readFileSync(path.join(__dirname, '..', 'lib', 'engines.js'), 'utf8'),
+      'const ENGINE_CONDITIONAL_SETTINGS');
+    assert.match(src, /#1252/, 'the partial-application check is recorded at the table');
+  });
+
+  describe('the modal control', () => {
+    /**
+     * Run the shipped renderer against a mini-DOM and return the container's
+     * HTML — the real function, lifted from source, not a copy.
+     * @param {object} opts - `engineId`, `projectEngine`, `checked`, `engines`.
+     * @returns {string}
+     */
+    function render(opts) {
+      const { doc } = makeDocument(['settingsMedusaWakeContainer']);
+      const vmCtx = {
+        document: doc,
+        state: { engines: opts.engines || [] },
+        esc: (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+      };
+      vm.createContext(vmCtx);
+      const tables = API.match(/const TC_SETTING_\w+ = \{[\s\S]*?\n {2}\};/g) || [];
+      assert.ok(tables.length >= 3, `expected the setting tables to lift, found ${tables.length}`);
+      for (const table of tables) vm.runInContext(table, vmCtx);
+      vm.runInContext(declarationSource(API, 'function tcHonoredLaunchModes'), vmCtx);
+      vm.runInContext(declarationSource(API, 'function tcEngineDisplayName'), vmCtx);
+      vm.runInContext(declarationSource(API, 'function tcSettingDisposition'), vmCtx);
+      vm.runInContext(declarationSource(API, 'function tcResolveEngineProfile'), vmCtx);
+      vm.runInContext(declarationSource(UI, 'function renderMedusaWakeToggle'), vmCtx);
+      vmCtx.renderMedusaWakeToggle(opts.engineId, opts.checked === true, opts.projectEngine || null);
+      return doc.getElementById('settingsMedusaWakeContainer').innerHTML;
+    }
+
+    it('stops claiming "Claude sessions only", which antigravity disproved in #560', () => {
+      const agy = client('antigravity');
+      const html = render({ engineId: 'antigravity', projectEngine: agy, engines: [agy], checked: true });
+      assert.doesNotMatch(html, /Claude sessions only/);
+      assert.match(html, /id="settingsMedusaWake"/, 'the control is live on a profiled engine');
+      assert.match(html, /checked/, 'and carries the operator\'s state across an engine switch');
+      // Nothing anywhere still says it. The string was the only operator-facing
+      // sentence about this feature and it had been wrong since #560.
+      assert.ok(!UI.includes('Claude sessions only'), 'ui.js still carries the stale claim');
+      assert.ok(!API.includes('Claude sessions only'));
+    });
+
+    it('renders the reason, and no checkbox, on an engine with no signature', () => {
+      const codex = client('codex');
+      const html = render({ engineId: 'codex', projectEngine: codex, engines: [codex], checked: true });
+      assert.match(html, /has no measured idle signature/);
+      // The pin the plan asks for: no `#settingsMedusaWake` element at all, so
+      // `doSaveSettings` attaches no value and cannot post a stale checkbox.
+      assert.doesNotMatch(html, /id="settingsMedusaWake"/);
+      assert.match(html, /id="settingsMedusaWakeNotApplicable"/);
+      assert.match(html, /disabled/);
+    });
+
+    it('the save path reads only the live control', () => {
+      const save = declarationSource(UI, 'async function doSaveSettings');
+      assert.match(save, /getElementById\('settingsMedusaWake'\)/);
+      assert.match(save, /if \(medusaWakeEl\)/,
+        'the inert branch renders no such element, and the save must depend on that');
+    });
+
+    it('re-renders against the dropdown, not only the saved engine', () => {
+      // Switching to an engine that cannot be nudged costs the setting; the
+      // operator must read that while deciding, not after a save.
+      assert.match(UI, /renderMedusaWakeToggle\(e\.target\.value/);
+      const src = declarationSource(UI, 'function renderMedusaWakeToggle');
+      assert.match(src, /tcSettingDisposition\('medusaWake'/);
+      assert.match(src, /esc\(disposition\.reason\)/, 'the rendered words are the predicate\'s');
+      assert.doesNotMatch(src, /capabilities\.wake/, 'no second wake gate in the modal');
+    });
   });
 });
 

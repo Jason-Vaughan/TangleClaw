@@ -3693,7 +3693,8 @@
     evalAuditMode: false,
     featureIndexEnabled: false,
     projectMapEnabled: false,
-    generatedConfig: false
+    generatedConfig: false,
+    medusaWake: false
   };
 
   /**
@@ -3851,6 +3852,18 @@
           + 'guides it would carry never reach a session here.'
           + (declared ? ' ' + declared : '');
         evidence = 'configFormat.filename is null';
+      }
+    } else if (setting === 'medusaWake') {
+      // The engine's own live-probed pane signature, read off the profile the
+      // engines API already ships — a second engine list in `public/` is the
+      // drift ADR 0013 spends a consequence section on, and the reason this
+      // migration happened at all. Mirrors the server.
+      applies = Boolean(engine && engine.capabilities && engine.capabilities.wake);
+      if (!applies) {
+        reason = name + ' has no measured idle signature, so TangleClaw cannot tell a busy pane '
+          + 'from a resting one here and will never nudge this project\'s sessions. Typing into a '
+          + 'pane on a guessed signature is the one thing the wake monitor refuses to do.';
+        evidence = 'capabilities.wake is not declared';
       }
     } else {
       // Unknown key: the server throws rather than answering "it applies",

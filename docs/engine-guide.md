@@ -189,6 +189,7 @@ cache, so an engine you have just installed is never refused.
 | `supportsModes` | declared only | The connection modes an engine offers |
 | `startupInjection.maxChars` | **read** | How many characters this engine's startup channel can carry before *it* truncates — see below |
 | `readOnlyModeMarker` | **read** | How this engine's TUI says the session is in a read-only mode, so a wrap refuses instead of timing out — see below |
+| `wake` | **read** | The live-probed pane signature that lets TangleClaw tell a busy pane from a resting one on this engine — see below |
 | `awareness` | declared only | OpenClaw only. Its own `reason` text records why no context carrier can be placed on the remote side — a documented gap rather than an oversight |
 
 **"Declared only" means the flag describes the engine accurately and TangleClaw does nothing with
@@ -290,6 +291,58 @@ the check existed, and the step record says which engine declared no marker rath
 clean pane. A field that is present but missing `marker` or `modeLine` is a profile defect: it is
 treated as absent and logged at warn.
 
+#### `wake`
+
+Optional, and the gate on everything TangleClaw does by *reading* an engine's pane: the idle-gated
+Medusa wake nudge, the session chime, and the prime-paste readiness gate. An engine that has been
+captured live declares its signature:
+
+```json
+"wake": {
+  "busyMarker": "esc to interrupt",
+  "promptPattern": "^\\s*❯[\\u00a0 ]?$",
+  "promptGlyph": "❯",
+  "promptPad": "\\u00a0",
+  "placeholderSgr": [2],
+  "idleMarker": null,
+  "pasteRejectedMarker": "…",
+  "evidence": {
+    "busyMarker": { "verifiedOn": "YYYY-MM-DD", "source": "…" }
+  }
+}
+```
+
+| Field | What it is |
+|-------|------------|
+| `busyMarker` | Substring present iff a turn is in flight; its presence blocks a nudge |
+| `promptPattern` | Regex **source** for a BARE prompt line — compiled once when the profile is read |
+| `promptGlyph` | The composer's glyph, used to *locate* the composer line |
+| `promptPad` | The separator the prompt itself draws before the first input column, or `null` when it has never been measured |
+| `placeholderSgr` | SGR attributes this engine renders text the operator did **not** type in |
+| `idleMarker` | A POSITIVE at-rest signal, or `null` when nothing was found that is present at rest and absent mid-turn |
+| `pasteRejectedMarker` | Optional — see below |
+
+Every field except `pasteRejectedMarker` is **required**, `null` included. An author who has not
+measured a value writes `null` and says so in `evidence`, which is a recorded gap; an omitted field
+would be the same gap with nobody able to tell it from an oversight.
+
+**`evidence` is keyed by field, and must cover the declared fields in both directions.** Provenance
+per key rather than per block is what keeps antigravity's measured `busyMarker` and its
+deliberately-unmeasured `promptPad` from flattening into one claim. A field with no entry, or an
+entry for a field that no longer exists, is a profile defect. `verifiedOn` is an ISO date, or `null`
+for a value nobody has measured — which is a different thing from a value measured and found absent
+(Claude's `idleMarker` carries a date, because the absence itself was measured).
+
+**Omit the whole block and the engine is simply never nudged** — skipped and logged once per
+session, never woken against a guessed idle signature. A block that is present but malformed is
+refused *at the read* and logged, leaving the engine unprofiled rather than half-loaded into the
+gate that decides whether to type into a live pane. The refusal happens at the read and not only in
+this repo's tests because an operator profile in `~/.tangleclaw/engines/` never passes through them.
+
+The settings modal's **Auto-wake on inbound messages** control is gated on this block (ADR 0013):
+an engine that declares none renders the control inert with the reason, rather than offering a
+switch that does nothing.
+
 #### The ambient-awareness floor (`tc` on PATH)
 
 Independent of any config file or prime, every tmux session TangleClaw launches gets the `tc` CLI
@@ -305,8 +358,8 @@ Engine-profile `launch.env` overrides any of these keys on collision.
 #### Prime paste readiness
 
 When a project runs with `silentPrime` off (or the engine has no silent channel), the prime is
-pasted into the TUI. That paste is **readiness-gated** for engines with a positive at-rest marker
-in `medusa-wake`'s `ENGINE_WAKE_PROFILES` (antigravity: `? for shortcuts`): the paste waits until
+pasted into the TUI. That paste is **readiness-gated** for engines whose `capabilities.wake` block
+declares a positive at-rest `idleMarker` (antigravity: `? for shortcuts`): the paste waits until
 the marker renders over a transcript that has stopped moving, instead of firing on a fixed timer —
 a fixed delay racing an engine boot is how a 41-second antigravity boot swallowed the prime for 12
 days with a clean ledger.
@@ -316,10 +369,11 @@ Engines without a positive marker cannot be gated and **must declare an explicit
 paste is recorded in the delivery ledger as `unverified`, never `delivered` — `delivered` is
 reserved for a paste whose pane was observed ready.
 
-#### `pasteRejectedMarker`
+#### `wake.pasteRejectedMarker`
 
 Optional, and since #1134 the pane being observed ready is **no longer the last word**. An engine
-that has been measured *discarding* a submission declares the text it prints when it does:
+that has been measured *discarding* a submission declares the text it prints when it does, inside
+its `wake` block:
 
 ```json
 "pasteRejectedMarker": "Please try again shortly"

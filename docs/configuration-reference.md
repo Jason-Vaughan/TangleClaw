@@ -323,7 +323,7 @@ Engine profiles define how TangleClaw interacts with an AI engine. See the [Engi
     "shellCommand": "string",
     "args": ["array of string"],
     "env": { "ENV_VAR": "value" },
-    "startupDelay": "number|null — ms to wait before the blind prime paste. Required for a paste-path engine (supportsPrimePrompt, no supportsSilentPrime) with no positive at-rest marker in medusa-wake's ENGINE_WAKE_PROFILES; engines WITH a marker are readiness-gated instead and ignore this. See docs/engine-guide.md → Prime paste readiness."
+    "startupDelay": "number|null — ms to wait before the blind prime paste. Required for a paste-path engine (supportsPrimePrompt, no supportsSilentPrime) whose capabilities.wake block declares no positive at-rest idleMarker; engines WITH one are readiness-gated instead and ignore this. See docs/engine-guide.md → Prime paste readiness."
   },
   "persistent": "object|null — persistent engine config",
   "capabilities": {
@@ -348,6 +348,21 @@ Engine profiles define how TangleClaw interacts with an AI engine. See the [Engi
         "verifiedOn": "string — ISO date the marker was measured against the live engine",
         "source": "string — how it was measured"
       }
+    },
+    "wake": {
+      "busyMarker": "string — substring present iff a turn is in flight. Required.",
+      "promptPattern": "string — regex SOURCE matching a bare prompt line; compiled when the profile is read. Required.",
+      "promptGlyph": "string — the composer's glyph, used to locate the composer line. Required.",
+      "promptPad": "string|null — the separator the prompt draws before the first input column; null when never measured. Required (null counts).",
+      "placeholderSgr": "array of number — SGR attributes this engine renders text the operator did NOT type in. Required.",
+      "idleMarker": "string|null — a positive at-rest signal; null when nothing was found that is present at rest and absent mid-turn. Required (null counts).",
+      "pasteRejectedMarker": "string — the engine's own words when it discards a submission. Optional; declared only where that was observed.",
+      "evidence": {
+        "<field>": {
+          "verifiedOn": "string|null — ISO date this field was measured, or null for a value nobody has measured",
+          "source": "string — where and how it was measured"
+        }
+      }
     }
   }
 }
@@ -356,6 +371,10 @@ Engine profiles define how TangleClaw interacts with an AI engine. See the [Engi
 Omit `readOnlyModeMarker` and the wrap's read-only pre-check does nothing for that engine (the
 honest default — the step behaves as it did before the check existed). See
 `docs/engine-guide.md` → Capabilities for why locating and deciding are separate fields.
+
+Omit `wake` and the engine is never idle-judged or nudged (skipped and logged, never woken against
+a guessed signature). Its `evidence` map must cover the declared fields in both directions, and a
+malformed block is refused when the profile is read — see `docs/engine-guide.md` → `wake`.
 
 ## SQLite Database
 

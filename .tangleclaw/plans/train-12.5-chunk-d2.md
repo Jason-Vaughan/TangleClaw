@@ -264,11 +264,11 @@ commentary: a field that loses "this was measured" becomes an assumption the nex
 - [x] D2a — settings modal renders it; launch path stops discarding `skipReason`
 - [x] D2a — tests written, every new test mutation-verified red
 - [x] D2a — chunk Critic, findings addressed
-- [ ] D2b — `wake` block declared in both profiles with per-field `evidence` (#1255)
-- [ ] D2b — `ENGINE_WAKE_PROFILES` derived from the profiles, consumers untouched
-- [ ] D2b — `medusaWake` disposition row; modal copy corrected
-- [ ] D2b — tests written, every new test mutation-verified red
-- [ ] D2 — suite green, evidence recorded
-- [ ] D2 — CHANGELOG entry
+- [x] D2b — `wake` block declared in both profiles with per-field `evidence` (#1255)
+- [x] D2b — `ENGINE_WAKE_PROFILES` derived from the profiles, consumers untouched
+- [x] D2b — `medusaWake` disposition row; modal copy corrected
+- [x] D2b — tests written, every new test mutation-verified red
+- [x] D2 — suite green, evidence recorded
+- [x] D2 — CHANGELOG entry
 - [ ] D2 — cumulative Critic + verify-resolutions, final round clean
 - [ ] D2 — PR with `Fixes #1251` and `Fixes #1255`
