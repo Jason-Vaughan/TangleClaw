@@ -408,6 +408,12 @@ describe('declaring badly and declaring nothing are one answer', () => {
       .tcSettingDisposition('medusaWake', { medusaWake: true }, projected);
     assert.equal(browser.applies, false);
     assert.match(browser.reason, /has no measured idle signature/);
+    // The profile fact the log carries must cover BOTH halves of what the gate
+    // refuses. One naming only the absent case would be false for exactly the
+    // profile the read guard exists for.
+    const server = engines.settingDisposition('medusaWake', { medusaWake: true }, profile);
+    assert.match(server.evidence, /declared malformed/);
+    assert.equal(browser.evidence, server.evidence);
   });
 
   it('a valid block still crosses whole, provenance included', () => {

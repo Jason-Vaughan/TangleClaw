@@ -1111,7 +1111,7 @@ describe('the wake nudge says where it cannot reach (#1255)', () => {
         assert.equal(d.caveat, null, `${profile.id}: the row is all-or-nothing by design`);
       } else {
         assert.match(d.reason, /has no measured idle signature/, `${profile.id} owes a reason`);
-        assert.equal(d.evidence, 'capabilities.wake is not declared');
+        assert.equal(d.evidence, 'capabilities.wake is not declared, or is declared malformed');
       }
     }
     assert.deepEqual(nudgeable.sort(), ['antigravity', 'claude'],

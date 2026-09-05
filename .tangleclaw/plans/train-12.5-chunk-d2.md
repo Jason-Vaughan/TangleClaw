@@ -270,5 +270,5 @@ commentary: a field that loses "this was measured" becomes an assumption the nex
 - [x] D2b — tests written, every new test mutation-verified red
 - [x] D2 — suite green, evidence recorded
 - [x] D2 — CHANGELOG entry
-- [ ] D2 — cumulative Critic + verify-resolutions, final round clean
+- [x] D2 — cumulative Critic + verify-resolutions, final round clean
 - [ ] D2 — PR with `Fixes #1251` and `Fixes #1255`

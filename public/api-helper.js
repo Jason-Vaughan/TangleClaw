@@ -3868,7 +3868,7 @@
         reason = name + ' has no measured idle signature, so TangleClaw cannot tell a busy pane '
           + 'from a resting one here and will never nudge this project\'s sessions. Typing into a '
           + 'pane on a guessed signature is the one thing the wake monitor refuses to do.';
-        evidence = 'capabilities.wake is not declared';
+        evidence = 'capabilities.wake is not declared, or is declared malformed';
       }
     } else {
       // Unknown key: the server throws rather than answering "it applies",
