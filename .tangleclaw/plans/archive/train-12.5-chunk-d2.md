@@ -8,6 +8,12 @@ governed_by:
   - .prawduct/artifacts/project-preferences.md
 ---
 
+> **Archived 2026-09-05 — complete.** Both chunks built, reviewed and shipping in PR #1270
+> (`Fixes #1251`, `Fixes #1255`). Archived on the branch so it lands atomically with the merge:
+> if that PR is abandoned, so is this move. Kept rather than deleted — the rationale here is why
+> `awareness.reason` was not reused for the carrier sentence, and why provenance is a sibling
+> `evidence` map rather than a per-field wrapper.
+
 # Train 12.5 — Chunk D2: the two audit defects that needed a design first
 
 **Cars:** #1251, #1255 · **Base:** `fd72598` · **Critic mode:** chunk (D2a), cumulative-final (D2b)
@@ -271,4 +277,4 @@ commentary: a field that loses "this was measured" becomes an assumption the nex
 - [x] D2 — suite green, evidence recorded
 - [x] D2 — CHANGELOG entry
 - [x] D2 — cumulative Critic + verify-resolutions, final round clean
-- [ ] D2 — PR with `Fixes #1251` and `Fixes #1255`
+- [x] D2 — PR with `Fixes #1251` and `Fixes #1255` — PR #1270
