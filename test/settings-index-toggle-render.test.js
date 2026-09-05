@@ -98,6 +98,35 @@ function render(row, { roster = [], engineId = 'claude', checked = true, silentP
   return doc.getElementById(row.container).innerHTML;
 }
 
+describe('both inputs the caveat turns on re-render it (#1252)', () => {
+  // Structural, unlike everything below: `openSettings` reaches `state`,
+  // `apiMutate`, the rules loader and half the page, so it cannot be lifted
+  // into a sandbox the way a single render can. What is pinned is the pair —
+  // the caveat depends on the engine AND on the project's own silent-prime
+  // switch, and wiring one while forgetting the other leaves the modal
+  // truthful about half the condition. The live check is queued in
+  // `.prawduct/operator-verification.md`.
+  const open = UI_SRC.slice(UI_SRC.indexOf('function openSettings'));
+  const body = open.slice(0, open.indexOf('\n}\n'));
+
+  it('re-renders them when the engine dropdown changes', () => {
+    const handler = body.slice(body.indexOf("getElementById('settingsEngine').addEventListener"));
+    assert.match(handler.slice(0, 1200), /renderIndexToggles\(e\.target\.value/);
+  });
+
+  it('re-renders them when silent prime is switched, without waiting for a save', () => {
+    // Delegated to the container, which survives every re-render, rather than
+    // bound to the checkbox, which `renderSilentPrimeToggle` replaces on each
+    // engine change — a listener bound to the element would stop firing after
+    // the first engine switch.
+    const host = body.slice(body.indexOf("getElementById('settingsSilentPrimeContainer')"));
+    assert.match(host.slice(0, 800), /addEventListener\('change'/);
+    assert.match(host.slice(0, 800), /e\.target\.id !== 'settingsSilentPrime'/,
+      'the delegate must ignore every other control inside the container');
+    assert.match(host.slice(0, 800), /renderIndexToggles\(/);
+  });
+});
+
 describe('the index toggles say which half of them does not run here (#1252, ADR 0013)', () => {
   for (const row of ROWS) {
     describe(row.fn, () => {
