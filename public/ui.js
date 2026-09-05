@@ -1247,8 +1247,16 @@ function renderSilentPrimeToggle(engineId, preserveChecked) {
   const container = document.getElementById('settingsSilentPrimeContainer');
   if (!container) return;
   const profile = (state.engines || []).find(e => e.id === engineId);
-  const supportsSilent = !!(profile && profile.capabilities && profile.capabilities.supportsSilentPrime);
-  if (!supportsSilent) {
+  // One owner for "does this setting apply here, and what do we say when it
+  // does not" (ADR 0013) — `tcSettingDisposition`, the browser half of the
+  // server's `engines.settingDisposition`. The reason is rendered rather than
+  // written here, so the modal cannot tell the operator something the launch
+  // path does not believe.
+  // An engine absent from `state.engines` still has a name worth printing, so
+  // the reason names it rather than falling back to "this engine".
+  const disposition = tcSettingDisposition('silentPrime', { silentPrime: preserveChecked },
+    profile || (engineId ? { id: engineId } : null));
+  if (!disposition.applies) {
     // Said in words rather than hidden (#741): a toggle that vanishes reads
     // as "this engine has no such setting", and the operator who set it on
     // another engine is never told it means nothing here. No
@@ -1261,7 +1269,7 @@ function renderSilentPrimeToggle(engineId, preserveChecked) {
         <input type="checkbox" id="settingsSilentPrimeNotApplicable" disabled>
         <span class="toggle-switch"></span>
       </label>
-      <div class="form-hint">Not available on ${esc(engineId || 'this engine')}. A silent-prime setting saved under another engine does not apply here.</div>
+      <div class="form-hint">${esc(disposition.reason)}</div>
     </div>`;
     return;
   }
@@ -2449,9 +2457,15 @@ function renderCreateStep() {
         </div>`;
     }
 
-    let silentPrimeHtml = '';
-    if (profile && profile.capabilities && profile.capabilities.supportsSilentPrime) {
-      silentPrimeHtml = `
+    // Same owner as the settings modal's toggle (ADR 0013): the wizard used to
+    // drop the control on an engine that cannot honor it, which reads as "this
+    // engine has no such setting" to an operator who set it on another project.
+    // No `#createSilentPrime` on the inert branch, so `createNext` attaches no
+    // value and the new project keeps the shipped default.
+    const silentPrimeFit = tcSettingDisposition('silentPrime', { silentPrime: createData.silentPrime },
+      profile || (createData.engine ? { id: createData.engine } : null));
+    const silentPrimeHtml = silentPrimeFit.applies
+      ? `
         <div class="form-group">
           <label class="gs-toggle-label">
             <span>Silent Prime</span>
@@ -2459,8 +2473,16 @@ function renderCreateStep() {
             <span class="toggle-switch"></span>
           </label>
           <div class="form-hint">Skip the initial context prime prompt.</div>
+        </div>`
+      : `
+        <div class="form-group">
+          <label class="gs-toggle-label gs-toggle-label--disabled">
+            <span>Silent Prime</span>
+            <input type="checkbox" id="createSilentPrimeNotApplicable" disabled>
+            <span class="toggle-switch"></span>
+          </label>
+          <div class="form-hint">${esc(silentPrimeFit.reason)}</div>
         </div>`;
-    }
 
     body.innerHTML = `
       ${launchModeHtml}

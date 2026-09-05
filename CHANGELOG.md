@@ -38,6 +38,35 @@ All notable changes to TangleClaw are documented in this file.
   the modal's row is gone, because two controls for one setting is how they drift. The install-wide
   mute still outranks it, gated where it always was, inside `playChime`.
 
+### Changed
+- **One mechanism answers whether a setting applies on a project's engine, and says why it does
+  not (ADR 0013).** `lib/engines.js` carried two capability predicates written in the same shape
+  with separate implementations — `honorsLaunchMode` and `silentPrimeDisposition` — and each
+  surface that offered one of those settings composed its own explanation, or offered none.
+  `engines.settingDisposition(setting, projConfig, engineProfile)` is now the single answer:
+  whether the setting applies, an operator-readable reason when it does not, the profile fact
+  behind that reason for the log, and whether the stored value was a real operator choice. It is
+  not a rename of the two — `honorsLaunchMode` still owns "will this engine run that mode",
+  because the launch picker asks that about a mode nobody has stored, and the disposition table is
+  expressed in terms of it; `silentPrimeDisposition` keeps its tri-state answer and now asks the
+  mechanism for the gate. A setting with no declared gate throws rather than answering "it
+  applies", because a silent yes is the no-op the norm exists to end.
+  **The log level is derived from provenance, not attached to the setting**, which is the part
+  most likely to be flattened by a later cleanup: a stored value that differs from what the
+  product ships is real intent being dropped and warns, while one indistinguishable from the
+  shipped default was set by nobody and records at info. That makes `silentPrime` no longer "the
+  info one" — a stored `false` is a choice and now warns where it previously recorded. Deriving it
+  is why the mechanism takes the shipped default as an input; a signature without it leaves every
+  call site picking a level by hand.
+  The browser cannot `require()` `lib/`, so `public/api-helper.js` carries the restated copy
+  (`tcSettingDisposition`) and `test/setting-disposition.test.js` asserts the two agree field for
+  field — **reason text included** — over every bundled profile plus a declared-but-disabled mode
+  and a profile declaring nothing. A reason that drifts tells the operator something the server
+  does not believe. The settings modal and the create wizard now render that reason rather than
+  their own words, and the wizard no longer drops the Silent Prime control on an engine that
+  cannot honor it: an absent control answers no question, so it renders inert with the reason
+  beside it.
+
 ### Fixed
 - **A regenerated `CLAUDE.md` no longer strands the self-updater (#1241).** TangleClaw manages its
   own clone, so it splices its `BEGIN/END:tangleclaw` region into `CLAUDE.md` on every launch — and

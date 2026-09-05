@@ -70,13 +70,14 @@ describe('#741 a silentPrime that does not apply on this engine says so', () => 
    * @param {string} name - Project name.
    * @param {string} engine - Engine id.
    * @param {boolean} silentPrime - The project's configured preference.
+   * @param {object} [extraConfig] - Further project-config keys to store.
    * @returns {string[]} Captured log lines that mention silentPrime.
    */
-  function launchAndCaptureWarnings(name, engine, silentPrime) {
+  function launchAndCaptureWarnings(name, engine, silentPrime, extraConfig) {
     const dir = path.join(projectsDir, name);
     fs.mkdirSync(dir, { recursive: true });
     store.projects.create({ name, path: dir, engine });
-    store.projectConfig.save(dir, { engine, silentPrime });
+    store.projectConfig.save(dir, { engine, silentPrime, ...(extraConfig || {}) });
     const lines = [];
     setConsoleStream({ write: (s) => lines.push(String(s)) });
     setLevel('info');
@@ -89,8 +90,13 @@ describe('#741 a silentPrime that does not apply on this engine says so', () => 
     }
     assert.ok(result.session, `launch must succeed: ${result.error}`);
     store.sessions.kill(result.session.id, 'test cleanup');
+    lastLaunchLines = lines;
     return lines.filter((l) => /silentPrime/.test(l));
   }
+
+  // Every line the last launch logged, for assertions about a setting other
+  // than silentPrime.
+  let lastLaunchLines = [];
 
   it('records, naming the engine and the setting, that silentPrime does not apply on codex', () => {
     const lines = launchAndCaptureWarnings('spd-codex-on', 'codex', true);
@@ -111,6 +117,34 @@ describe('#741 a silentPrime that does not apply on this engine says so', () => 
   it('says nothing on an engine that honors the setting', () => {
     const lines = launchAndCaptureWarnings('spd-claude-on', 'claude', true);
     assert.deepEqual(lines.filter((l) => /does not apply/.test(l)), []);
+  });
+
+  describe('the level the launch path records at is the disposition\'s, not the call site\'s (ADR 0013)', () => {
+    it('warns when the dropped defaultLaunchMode is one the operator chose', () => {
+      // 'plan' is a claude mode codex does not define, and it differs from the
+      // shipped 'default' — real intent, dropped, so it is an alarm.
+      launchAndCaptureWarnings('spd-mode-warn', 'codex', false, { defaultLaunchMode: 'plan' });
+      const hit = lastLaunchLines.filter((l) => /defaultLaunchMode is not usable/.test(l));
+      assert.equal(hit.length, 1, `exactly one line, got:\n${lastLaunchLines.join('')}`);
+      assert.match(hit[0], /WARN/);
+      assert.match(hit[0], /does not offer the launch mode/, 'the operator-readable reason');
+      assert.match(hit[0], /engine does not define this mode/, 'and the profile fact behind it');
+    });
+
+    it('says nothing about a defaultLaunchMode the engine runs', () => {
+      launchAndCaptureWarnings('spd-mode-ok', 'codex', false, { defaultLaunchMode: 'fullAuto' });
+      assert.deepEqual(lastLaunchLines.filter((l) => /defaultLaunchMode is not usable/.test(l)), []);
+    });
+
+    it('warns rather than records when the dropped silentPrime was a real choice', () => {
+      // The mirror of the info case above, and the reason the level is derived
+      // from provenance rather than attached to the setting: `silentPrime` is
+      // not "the info one" — a stored `false` differs from the shipped `true`.
+      const lines = launchAndCaptureWarnings('spd-codex-chosen-off', 'codex', false);
+      const hit = lines.filter((l) => /does not apply on this engine/.test(l));
+      assert.equal(hit.length, 1);
+      assert.match(hit[0], /WARN/);
+    });
   });
 
   describe('silentPrimeDisposition is the one owner of the answer', () => {

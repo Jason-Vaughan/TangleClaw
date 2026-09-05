@@ -184,6 +184,20 @@ cache, so an engine you have just installed is never refused.
 | `startupInjection.maxChars` | How many characters this engine's startup channel can carry before *it* truncates — see below |
 | `readOnlyModeMarker` | How this engine's TUI says the session is in a read-only mode, so a wrap refuses instead of timing out — see below |
 
+#### A capability that gates a per-project setting owes a disposition
+
+When a capability decides whether a setting TangleClaw *offers* has any effect, declaring the flag
+is only half the work. ADR 0013 binds: the surface that offers the setting must say — in words, at
+the moment it is offered — that it does not apply here and why. Hiding the control is not
+compliance, and neither is a log line.
+
+Add a row to `ENGINE_CONDITIONAL_SETTINGS` in `lib/engines.js` giving the gate, the sentence the
+operator reads, and the profile fact behind it; `engines.settingDisposition` then answers for every
+call site, and derives the log level from whether the stored value was a real choice rather than
+leaving each site to pick one. Restate the row in `tcSettingDisposition`
+(`public/api-helper.js`) — `public/` runs in a browser and cannot require `lib/` —
+and `test/setting-disposition.test.js` will hold the two to the same answer, reason text included.
+
 #### `startupInjection.maxChars`
 
 An object, not a boolean: `"startupInjection": { "maxChars": 10000 }`.

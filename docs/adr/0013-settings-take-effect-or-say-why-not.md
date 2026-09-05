@@ -95,6 +95,13 @@ value** — see below for why that fourth input is not optional. Then a control 
 *with* that reason, and a log line at a level the predicate derives rather than each call site
 choosing.
 
+**Built:** `engines.settingDisposition` (`lib/engines.js`), with the browser's restated half
+`tcSettingDisposition` (`public/api-helper.js`) and their agreement — reason text included — pinned
+by `test/setting-disposition.test.js`. `honorsLaunchMode` remains the owner of "will this engine
+run that mode": the launch picker asks that about a mode nobody has stored, which is not the
+question the disposition answers, so the table is expressed in terms of it rather than replacing
+it. A setting with no declared gate throws.
+
 **The log level is a function of whether the stored value was a real choice, not of the setting's
 importance.** This is deliberate, non-obvious, and the thing most likely to be "cleaned up" by a
 later refactor:
@@ -143,9 +150,12 @@ said.
 - Every new setting whose effect is engine-conditional owes a disposition and a rendered reason
   before it ships. This is a real cost per setting, accepted because the alternative is the
   four-issue pattern above.
-- A generic disposition mechanism is what makes the cost small; until it exists, each instance is
-  hand-built, which is how two parallel predicates accumulated with a third setting class already
-  waiting. Its enforcement check is tracked as item (h) on #1070.
+- A generic disposition mechanism is what makes the cost small; each instance was hand-built until
+  it existed, which is how two parallel predicates accumulated with a third setting class already
+  waiting. It now exists (see above), so a new engine-conditional setting adds a row to
+  `ENGINE_CONDITIONAL_SETTINGS` and its two reason strings rather than a fresh predicate. Its
+  enforcement check — a gate that refuses a setting offered with no declared disposition — is
+  tracked as item (h) on #1070 and is not built.
 - Where an engine genuinely has no carrier for a concern — OpenClaw has no config file at all — the
   correct outcome is still a stated reason, not a silent skip. The silence in
   `writeEngineConfig` (#1251) was locally reasonable and globally wrong.

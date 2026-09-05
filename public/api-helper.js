@@ -3640,7 +3640,109 @@
     return Object.entries(modes).filter(([, mode]) => mode && mode.disabled !== true);
   }
 
+  /**
+   * The shipped defaults the disposition compares a stored value against.
+   *
+   * Restated from `lib/project-config.js` (`DEFAULT_PROJECT_CONFIG`) for the
+   * same reason the predicate below is restated: `public/` runs in a browser
+   * and this project has no build step. `test/setting-disposition.test.js`
+   * asserts each entry equals the shipped default it names, so a changed
+   * default fails rather than silently making the browser call a real choice a
+   * default (or the reverse).
+   */
+  const TC_SETTING_DEFAULTS = {
+    silentPrime: true,
+    defaultLaunchMode: 'default'
+  };
+
+  /**
+   * Whether an engine-conditional setting applies to a project, and what to
+   * say when it does not (ADR 0013).
+   *
+   * The browser half of `engines.settingDisposition` (`lib/engines.js`). Every
+   * surface that offers one of these settings needs the same two answers — is
+   * this control live here, and what does the operator read when it is not —
+   * and a surface that answers differently tells the operator something the
+   * server does not believe. The reason text is as much of that boundary as
+   * the boolean: `test/setting-disposition.test.js` asserts the two agree,
+   * field for field, over every bundled profile.
+   *
+   * @param {string} setting - `silentPrime` or `defaultLaunchMode`.
+   * @param {object|null} projConfig - Project config or record carrying the value.
+   * @param {object|null} engine - Engine object or profile.
+   * @returns {{setting: string, value: *, applies: boolean, chosen: boolean,
+   *   reason: string|null, evidence: string|null, level: string|null}}
+   */
+  function tcSettingDisposition(setting, projConfig, engine) {
+    const name = tcEngineDisplayName(engine);
+    const has = projConfig && Object.prototype.hasOwnProperty.call(projConfig, setting);
+    const stored = has ? projConfig[setting] : undefined;
+    const shipped = TC_SETTING_DEFAULTS[setting];
+    const chosen = stored !== undefined && stored !== shipped;
+    const value = stored === undefined ? shipped : stored;
+    let applies;
+    let reason = null;
+    let evidence = null;
+
+    if (setting === 'silentPrime') {
+      applies = Boolean(engine && engine.capabilities
+        && engine.capabilities.supportsSilentPrime === true);
+      if (!applies) {
+        reason = name + ' does not deliver a hidden prime, so this setting has no effect on this project.';
+        evidence = 'capabilities.supportsSilentPrime is not true';
+      }
+    } else if (setting === 'defaultLaunchMode') {
+      applies = tcHonoredLaunchModes(engine).some(([key]) => key === value);
+      if (!applies) {
+        const modes = engine && engine.launchModes;
+        const declared = Boolean(modes && typeof value === 'string'
+          && Object.prototype.hasOwnProperty.call(modes, value));
+        const label = typeof value === 'string' && value ? '"' + value + '"' : 'that launch mode';
+        reason = declared
+          ? name + ' has disabled the launch mode ' + label + ', so this project launches in its engine default instead.'
+          : name + ' does not offer the launch mode ' + label + ', so this project launches in its engine default instead.';
+        evidence = declared ? 'mode is disabled' : 'engine does not define this mode';
+      }
+    } else {
+      // Unknown key: the server throws rather than answering "it applies",
+      // because a silent yes is the no-op this mechanism exists to end. The
+      // browser cannot afford to break a render, so it fails closed the other
+      // way — the control is inert and says it could not be judged.
+      return {
+        setting, value: stored, applies: false, chosen: false,
+        reason: 'TangleClaw could not determine whether this setting applies to ' + name + '.',
+        evidence: 'no engine gate declared for "' + setting + '"',
+        level: 'info'
+      };
+    }
+
+    return {
+      setting,
+      value,
+      applies,
+      chosen,
+      reason,
+      evidence,
+      level: applies ? null : (chosen ? 'warn' : 'info')
+    };
+  }
+
+  /**
+   * How an engine is named to the operator — the profile's own `name` where it
+   * has one, so a reason reads "Codex" rather than "codex". Restated from
+   * `engines.engineDisplayName`.
+   * @param {object|null} engine - Engine object or profile.
+   * @returns {string}
+   */
+  function tcEngineDisplayName(engine) {
+    if (!engine) return 'This engine';
+    return engine.name || engine.id || 'This engine';
+  }
+
   global.tcHonoredLaunchModes = tcHonoredLaunchModes;
+  global.tcSettingDisposition = tcSettingDisposition;
+  global.tcEngineDisplayName = tcEngineDisplayName;
+  global.tcSettingDefaults = TC_SETTING_DEFAULTS;
   global.tcMedusaIds = tcMedusaIds;
   global.tcMedusaControlMarkup = tcMedusaControlMarkup;
   global.tcEscapeHtml = tcEscapeHtml;
