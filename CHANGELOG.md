@@ -423,6 +423,34 @@ All notable changes to TangleClaw are documented in this file.
   title so the meaning does not rest on colour.
 
 ### Internal
+- **An engine's display name is normalised once, where profile data becomes client data (#736).**
+  Only `id` is validated when an engine profile is saved, and `engines.get()` JSON-parses whatever
+  is on disk, so a hand-added or hand-edited profile can carry no `name` — or a truthy non-string,
+  which `esc` renders as `''`. #707 fixed that at the two surfaces it touched by guarding at the
+  render site, which left the same predicate duplicated across `public/api-helper.js` and
+  `public/setup.js` (twice), mirrored in two test fixtures, and **still absent** at
+  `public/ui.js`'s two `project.engine.name` reads. Guarding per site is the wrong shape: every new
+  surface showing an engine name has to remember, nothing fails when one does not, and the failure
+  is a blank unidentifiable control rather than an error.
+
+  `engineClientPayload` now guarantees `name` is a non-empty string, falling back to the id, and the
+  three per-site guards are gone. That boundary is the whole fix only because #1251 made it the
+  single projection through which both the engine roster and the per-project engine reach the
+  browser — before that there were two hand-built shapes and no one place to establish the
+  invariant. Normalised **after** the overrides, so a connection-backed engine's
+  operator-authored `"<conn> (OpenClaw)"` label is covered rather than bypassing the rule.
+
+  **Not validated at the write, deliberately** — the issue left that open. `store.engines.save` is
+  unused outside tests: an operator profile arrives as a hand-dropped file in
+  `~/.tangleclaw/engines/`, so save-time validation would guard the path the exposure does not take.
+  Establishing it at the read is the same reasoning the wake block's read guard already follows
+  (#1255).
+
+  The two tests that pinned the retired guards now drive `engineClientPayload` instead of raw
+  fixtures — they were asserting against a shape production never sends the browser, which is the
+  fixture trap that let a browser predicate gate on an unprojected field and answer for every engine
+  (#1251). A third guard fails if any file under `public/` re-establishes the fallback privately,
+  since a re-added copy changes no behaviour and is otherwise invisible.
 - **Ratified the norm that a setting TangleClaw offers must take effect, or say why it does not
   (`docs/adr/0013-settings-take-effect-or-say-why-not.md`).** The design pass classified the
   per-project and global settings it audited against the engine roster and found that "universal but unevenly

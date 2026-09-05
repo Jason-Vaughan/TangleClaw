@@ -1195,13 +1195,13 @@
       // in use is exempt: disabling it would make the control display a value
       // it refuses to keep.
       const unavailable = e.available === false && e.id !== selectedId;
-      // `typeof` rather than `||`: a truthy non-string passes `||` and is then
-      // dropped by `esc`, leaving a blank, unidentifiable option. Only `id` is
-      // validated when a profile is saved.
-      const label = typeof e.name === 'string' && e.name ? e.name : e.id;
+      // `e.name` is read straight: `engines.engineClientPayload` guarantees a
+      // non-empty string for every engine that reaches a client, so the guard
+      // that used to sit here is gone (#736). Nothing in `public/` sees a raw
+      // profile — both the roster and the per-project engine are projected.
       return `<option value="${esc(e.id)}" ${e.id === selectedId ? 'selected' : ''}`
         + `${unavailable ? ' disabled' : ''}>`
-        + `${esc(label)}${e.available === false ? ' (not installed)' : ''}</option>`;
+        + `${esc(e.name)}${e.available === false ? ' (not installed)' : ''}</option>`;
     }).join('');
 
     if (selectedId && !list.some((e) => e.id === selectedId)) {

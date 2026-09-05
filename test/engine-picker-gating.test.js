@@ -124,21 +124,48 @@ describe('engine picker gating (#707)', () => {
       assert.doesNotMatch(codexOpt, /disabled/);
     });
 
-    it('falls back to the id when a profile has no name', () => {
-      // Only `id` is validated when an engine profile is saved, so a
-      // hand-added profile can lack `name`. Without the fallback the option
-      // renders blank — unselectable-looking, everywhere it is shared.
-      const html = buildEngineOptions([{ id: 'homegrown', available: true }], '');
-      assert.match(html, />homegrown</);
+    // The fallback these two pin MOVED, it was not dropped (#736). It used to
+    // live in `tcBuildEngineOptions`, re-established at every render site; it
+    // is now established once in `engines.engineClientPayload`, the single
+    // projection through which both the roster and the per-project engine
+    // reach the browser.
+    //
+    // So they now drive the real producer. Feeding this function a RAW profile
+    // asserted against a shape production never sends it — the same fixture
+    // trap that let a browser predicate gate on an unprojected field and answer
+    // for every engine (#1251). If the projection stops normalising, these go
+    // red; if a render site re-adds a private guard, the parity check below
+    // catches that instead.
+    const engines = require('../lib/engines');
+
+    it('labels an unnamed profile with its id, through the projection', () => {
+      // Only `id` is validated when a profile is saved, and `get()` JSON-parses
+      // whatever is on disk, so a hand-added profile can lack `name` entirely.
+      const projected = engines.engineClientPayload({ id: 'homegrown' }, { available: true });
+      assert.equal(projected.name, 'homegrown', 'the projection owns the fallback now');
+      assert.match(buildEngineOptions([projected], ''), />homegrown</);
     });
 
-    it('falls back for a non-string name too, which esc drops', () => {
-      // `e.name || e.id` alone is not enough: a truthy non-string takes the
-      // left branch and production `esc` returns '' for it, so the option is
-      // blank anyway. Profile save validates only `id`, and `get()` JSON-parses
-      // whatever is on disk, so the shape is reachable.
-      const html = buildEngineOptions([{ id: 'homegrown', name: 42, available: true }], '');
-      assert.match(html, />homegrown</);
+    it('does the same for a truthy non-string name, which esc would drop', () => {
+      // `name || id` alone is not enough: a truthy non-string takes the left
+      // branch and production `esc` returns '' for it, so the option is blank
+      // anyway. That is why the projection tests the type, not truthiness.
+      const projected = engines.engineClientPayload({ id: 'homegrown', name: 42 }, { available: true });
+      assert.equal(projected.name, 'homegrown');
+      assert.match(buildEngineOptions([projected], ''), />homegrown</);
+    });
+
+    it('no render site keeps a private copy of the fallback', () => {
+      // The point of moving it: one owner, not one per surface. A re-added
+      // guard is not a bug in itself — it is the drift that made the count of
+      // sites needing to remember grow without anything failing.
+      const fs = require('node:fs');
+      const path = require('node:path');
+      for (const rel of [['public', 'api-helper.js'], ['public', 'setup.js'], ['public', 'ui.js']]) {
+        const src = fs.readFileSync(path.join(__dirname, '..', ...rel), 'utf8');
+        assert.doesNotMatch(src, /typeof\s+\w+\.name\s*===\s*'string'/,
+          `${rel.join('/')} re-establishes the engine-name fallback the projection already guarantees`);
+      }
     });
 
     it('never disables the engine currently in use', () => {

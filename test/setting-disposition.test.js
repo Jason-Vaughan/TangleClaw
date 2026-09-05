@@ -1275,6 +1275,29 @@ describe('what the browser is sent is what its predicates may read (#1251)', () 
     assert.equal(claude.configFormat.filename, 'CLAUDE.md');
   });
 
+  it('every engine the browser receives carries a usable name (#736)', () => {
+    // The invariant that lets every render site read `engine.name` straight.
+    // Only `id` is validated when a profile is saved and `get()` JSON-parses
+    // whatever is on disk, so the unusable shapes below are reachable — and
+    // `esc` renders a non-string as '', which is a blank, unidentifiable
+    // control that nothing turns red for.
+    for (const profile of bundledProfiles()) {
+      const client = engines.engineClientPayload(profile, { available: true });
+      assert.equal(typeof client.name, 'string');
+      assert.ok(client.name.length > 0, `${profile.id} must reach the browser with a name`);
+    }
+    for (const bad of [undefined, '', 42, {}, null]) {
+      const client = engines.engineClientPayload({ id: 'homegrown', name: bad }, { available: true });
+      assert.equal(client.name, 'homegrown',
+        `a ${JSON.stringify(bad)} name must fall back to the id, not reach a render site`);
+    }
+    // Normalised AFTER the overrides, so a connection-backed engine's
+    // operator-authored label is covered too rather than bypassing the rule.
+    const conn = engines.engineClientPayload({ id: 'openclaw', name: 'OpenClaw' },
+      { id: 'openclaw:c1', name: 7, available: true });
+    assert.equal(conn.name, 'openclaw:c1', 'the override is normalised, not trusted');
+  });
+
   it('both realms answer the same for a client-shaped engine', () => {
     // The parity loop below runs over projected profiles now, but state this
     // directly too: it is the assertion whose absence let the bug ship.
