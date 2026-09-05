@@ -1219,6 +1219,25 @@ describe('the wake nudge says where it cannot reach (#1255)', () => {
         'the inert branch renders no such element, and the save must depend on that');
     });
 
+    it('remembers the operator\'s tick across an engine that cannot be nudged', () => {
+      // Same trap `silentPrimeNow` already closed one control over: the inert
+      // branch renders `#settingsMedusaWakeNotApplicable`, so recovering the
+      // state from the DOM loses it on the way through codex —
+      // claude -> codex -> claude would drop a tick the operator had just made
+      // and save the old value back. Pinned at the source because the carry
+      // lives in `openSettings`'s closure, which cannot be lifted into a
+      // sandbox the way a single render can; the live check is queued in
+      // `.prawduct/operator-verification.md`.
+      const open = UI.slice(UI.indexOf('function openSettings'));
+      const body = open.slice(0, open.indexOf('\n}\n'));
+      assert.match(body, /let medusaWakeNow = initialMedusaWakeChecked;/,
+        'the state is held outside the DOM the inert branch replaces');
+      assert.match(body, /if \(wakeEl\) medusaWakeNow = wakeEl\.checked;/,
+        'a live control updates it; an inert one cannot have changed it');
+      assert.doesNotMatch(body, /wakeEl \? wakeEl\.checked : initialMedusaWakeChecked/,
+        'the initial value must not be the fallback — that is the drop');
+    });
+
     it('re-renders against the dropdown, not only the saved engine', () => {
       // Switching to an engine that cannot be nudged costs the setting; the
       // operator must read that while deciding, not after a save.

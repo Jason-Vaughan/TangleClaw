@@ -1156,6 +1156,13 @@ function openSettings(name) {
   // Medusa idle-gated wake nudge (MED-2K9P v2 T2) — engine-gated on the
   // engine's declared idle signature; default OFF (a wake spends a real turn).
   const initialMedusaWakeChecked = !!project.medusaWake;
+  // What the operator has the wake set to RIGHT NOW, across engine switches.
+  // Same reason `silentPrimeNow` exists: the inert branch renders
+  // `#settingsMedusaWakeNotApplicable`, not `#settingsMedusaWake`, so
+  // recovering the state from the DOM loses it the moment the dropdown passes
+  // through an engine with no idle signature — claude -> codex -> claude would
+  // silently drop a tick the operator had just made.
+  let medusaWakeNow = initialMedusaWakeChecked;
   document.getElementById('settingsBody').innerHTML = `
     <div class="form-group">
       <label class="form-label" for="settingsName">Name</label>
@@ -1273,10 +1280,11 @@ function openSettings(name) {
     // The wake nudge is typed into the engine's own pane, so switching to an
     // engine with no measured idle signature costs the setting entirely. Same
     // reason as above: read it while deciding, not after a save.
+    // The live control when there is one; otherwise the remembered state, which
+    // an inert engine cannot have changed.
     const wakeEl = document.getElementById('settingsMedusaWake');
-    renderMedusaWakeToggle(e.target.value,
-      wakeEl ? wakeEl.checked : initialMedusaWakeChecked,
-      project.engine || null);
+    if (wakeEl) medusaWakeNow = wakeEl.checked;
+    renderMedusaWakeToggle(e.target.value, medusaWakeNow, project.engine || null);
     const auditEl = document.getElementById('settingsEvalAudit');
     renderEvalAuditToggle(e.target.value,
       auditEl ? auditEl.checked : initialEvalAuditChecked,
