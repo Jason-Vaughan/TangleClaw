@@ -130,6 +130,8 @@ The `configFormat` above is set to `null` because config file generation require
 
 **A carrier-less engine owes one more field: `configFormat.absentReason`.** With no config file, the project's rule settings and TangleClaw's PortHub, shared-docs and session-memory guides reach no session on that engine — and ADR 0013 (`docs/adr/0013-settings-take-effect-or-say-why-not.md`) requires the surface offering a setting to say when it will not take effect. TangleClaw supplies the first half of that sentence itself ("*Foo* has no config file, so the project rule settings and TangleClaw guides it would carry never reach a session here."); `absentReason` is the engine's own second half, saying *why* there is no carrier. It is rendered verbatim in the settings modal under the Engine dropdown, so write it as one plain sentence addressed to an operator — see `openclaw.json` for the shipped example. Omit it and the notice still appears, just without the explanation; there is no code to change either way.
 
+It is deliberately a separate field from `capabilities.awareness.reason`, which reads similarly and is the obvious candidate to reuse. That one records, for a developer, why an engine has no *awareness* path at all — prime included — while this one is operator-facing and scoped to the *config carrier*. They can also diverge: an engine could gain a context channel while still having no config file. Rendering the awareness note in the settings modal would put a developer's gap record in front of an operator and would tie two facts that are free to move apart.
+
 ### Engine Profile Fields
 
 | Field | Type | Required | Description |

@@ -23,6 +23,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const engines = require('../lib/engines');
@@ -1015,6 +1016,40 @@ describe('an engine with no config file says what it cannot carry (#1251)', () =
       assert.deepEqual(lines, []);
     });
 
+    it('a real writeEngineConfig on a carrier-less engine emits the line', () => {
+      // The guard below is structural — it reads source. This one runs the
+      // writer, because "the report is wired into the skip branch" and "the
+      // skip branch emits" are different claims, and only the second is the one
+      // an operator depends on.
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-carrier-'));
+      try {
+        const lines = captureLog(() => {
+          const result = engines.writeEngineConfig('openclaw', dir, {}, openclaw());
+          assert.equal(result.skipped, true, 'the fixture must reach the skip branch');
+        });
+        assert.equal(lines.length, 1, 'the writer emits exactly one line for the missing carrier');
+        assert.match(lines[0], /OpenClaw has no config file/);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('a writeEngineConfig that succeeds emits no such line', () => {
+      // The other half: `claude` has a carrier, so the same call must stay
+      // quiet. Without this the test above passes on a writer that reports
+      // unconditionally.
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-carrier-ok-'));
+      try {
+        const claude = bundledProfiles().find((p) => p.id === 'claude');
+        const lines = captureLog(() => {
+          engines.writeEngineConfig('claude', dir, DEFAULT_PROJECT_CONFIG, claude);
+        });
+        assert.deepEqual(lines.filter((l) => l.includes('has no config file')), []);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     it('the writer reports its own skip, so no call site has to remember', () => {
       // The first version of this paired a report with each call site and
       // checked the pairing over a hardcoded two-file list — which holds until
@@ -1035,9 +1070,7 @@ describe('an engine with no config file says what it cannot carry (#1251)', () =
 
   it('the settings modal renders the reason where the engine is chosen', () => {
     const UI = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
-    const start = UI.indexOf('function renderGeneratedConfigNotice');
-    assert.ok(start >= 0, 'the notice must have a renderer');
-    const src = UI.slice(start, start + 1600);
+    const src = declarationSource(UI, 'function renderGeneratedConfigNotice');
     assert.match(src, /tcSettingDisposition\('generatedConfig'/);
     assert.match(src, /esc\(disposition\.reason\)/, 'the rendered words are the predicate\'s');
     assert.doesNotMatch(src, /configFormat/, 'no second carrier gate in the modal');
@@ -1090,9 +1123,14 @@ describe('what the browser is sent is what its predicates may read (#1251)', () 
     // per-project payload. Two hand-built shapes is how one of them stayed
     // thinner than the other without anybody noticing.
     const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'projects.js'), 'utf8');
-    assert.doesNotMatch(src, /engine = \{/,
-      'lib/projects.js must not hand-build a client engine beside engineClientPayload');
-    assert.equal((src.match(/engines\.engineClientPayload\(/g) || []).length, 2,
+    // Scoped to the function that builds the payload, so an unrelated local
+    // named `engine` elsewhere in the module does not fire this, and so a third
+    // legitimate projection does not either — what must not come back is a
+    // hand-built literal assigned to the engine this function returns.
+    const enrich = declarationSource(src, 'async function enrichProject');
+    assert.doesNotMatch(enrich, /engine = \{/,
+      'enrichProject must not hand-build a client engine beside engineClientPayload');
+    assert.ok((enrich.match(/engines\.engineClientPayload\(/g) || []).length >= 2,
       'both enrichProject branches project through the shared definition');
     // Sliced rather than brace-matched: this declaration's first brace is its
     // `options = {}` default, so the brace matcher closes on the parameter list.
