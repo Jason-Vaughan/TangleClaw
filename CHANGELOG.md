@@ -78,7 +78,17 @@ All notable changes to TangleClaw are documented in this file.
   `defaultLaunchMode` against the engine, which an edit has always done — the route that
   establishes a project's posture was the one route that did not check it — and it refuses in the
   disposition's own words. A refusal happens before the directory is created, so it leaves nothing
-  on disk.
+  on disk. `silentPrime` gets the same treatment for the same reason — creation stored it raw while
+  a `PATCH` refused both a non-boolean and an engine that cannot honor it, and every reader tests
+  `=== true`, so a stored `"true"` ran with silent prime off against a shipped default of on. The
+  guard itself is one function both routes call rather than a refusal sentence written twice with
+  its inputs derived differently, and the wizard's confirmation is keyed to the engine and mode
+  actually confirmed: a failed create leaves the drawer open, and a latched boolean would have
+  waved a *different* warned mode through without showing its warning. The drawer's POST body is
+  built by `tcCreateProjectBody`, which re-asks the disposition against the engine finally chosen —
+  toggling silent prime on Claude, going Back and switching to an engine that cannot honor it left
+  the value set with no control on screen, and the server now refuses it, so the operator would
+  have read a rejection for a setting they could no longer see.
 
 ### Changed
 - **One mechanism answers whether a setting applies on a project's engine, and says why it does

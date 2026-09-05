@@ -290,7 +290,7 @@ carries a real guard: hiding the picker while the resolved default carries a war
 - [x] Chunk C2 — tests written, every new test mutation-verified red
 - [x] Chunk C2 — suite green, evidence from `prawduct-hook test-status`
 - [x] Chunk C2 — CHANGELOG entry
-- [ ] Chunk C2 — cumulative Critic + verify-resolutions, final round clean
+- [x] Chunk C2 — cumulative Critic + verify-resolutions, final round clean
 - [ ] Chunk C2 — PR with `Fixes` for each car it closes
 
 ## Open for the operator
