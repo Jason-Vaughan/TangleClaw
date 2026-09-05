@@ -3684,6 +3684,21 @@
     let reason = null;
     let evidence = null;
 
+    // No profile is not evidence that a capability is absent. Mirrors the
+    // server: an engine TangleClaw holds no profile for gets "cannot say",
+    // never a stated fact about a flag nobody read.
+    if (!engine) {
+      return {
+        setting,
+        value,
+        applies: false,
+        chosen,
+        reason: 'TangleClaw has no profile for this engine, so it cannot say whether this setting applies here.',
+        evidence: 'no engine profile',
+        level: chosen ? 'warn' : 'info'
+      };
+    }
+
     if (setting === 'silentPrime') {
       applies = Boolean(engine && engine.capabilities
         && engine.capabilities.supportsSilentPrime === true);
@@ -3692,7 +3707,11 @@
         evidence = 'capabilities.supportsSilentPrime is not true';
       }
     } else if (setting === 'defaultLaunchMode') {
-      applies = tcHonoredLaunchModes(engine).some(([key]) => key === value);
+      // `'default'` is the absence of a mode, not one an engine must declare —
+      // mirrors the server, where asking the honored-modes predicate about it
+      // produced a reason that contradicted itself.
+      applies = value === 'default'
+        || tcHonoredLaunchModes(engine).some(([key]) => key === value);
       if (!applies) {
         // Declared AND switched off. A key holding nothing usable was never
         // offered, so calling it "disabled" would send the operator looking
@@ -3745,7 +3764,6 @@
 
   global.tcHonoredLaunchModes = tcHonoredLaunchModes;
   global.tcSettingDisposition = tcSettingDisposition;
-  global.tcEngineDisplayName = tcEngineDisplayName;
   global.tcSettingDefaults = TC_SETTING_DEFAULTS;
   global.tcMedusaIds = tcMedusaIds;
   global.tcMedusaControlMarkup = tcMedusaControlMarkup;

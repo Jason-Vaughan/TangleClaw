@@ -66,6 +66,17 @@ All notable changes to TangleClaw are documented in this file.
   their own words, and the wizard no longer drops the Silent Prime control on an engine that
   cannot honor it: an absent control answers no question, so it renders inert with the reason
   beside it.
+  Three consequences of having one owner, each of which was a separate small wrong answer before:
+  the five remaining sites that spelled the silent-prime gate by hand — the baseline-hooks builder,
+  the rules-channel choice, the two prime pointers and the `PATCH` validation — now ask it, and a
+  guard counts every capability read across `lib/` and `public/` so a sixth cannot appear quietly;
+  **an engine TangleClaw holds no profile for is told apart from one whose profile says no**, and
+  reads "TangleClaw has no profile for this engine, so it cannot say whether this setting applies
+  here" rather than a stated fact about a flag nobody read; and `'default'` is treated as the
+  absence of a launch mode rather than one an engine must declare, matching `reconcileLaunchMode`,
+  so a profile declaring no modes stops producing *"does not offer the launch mode "default", so
+  this project launches in its engine default instead"* on every launch of a project that
+  configured nothing.
 
 ### Fixed
 - **A regenerated `CLAUDE.md` no longer strands the self-updater (#1241).** TangleClaw manages its

@@ -106,18 +106,25 @@ it. A setting with no declared gate throws.
 importance.** This is deliberate, non-obvious, and the thing most likely to be "cleaned up" by a
 later refactor:
 
-- `defaultLaunchMode` **warns** when dropped — a stored non-default mode was chosen deliberately,
-  so failing to honor it loses real operator intent.
-- `silentPrime` records at **info** — it defaults to `true` on every engine, so a stored `true`
-  cannot be distinguished from "never touched." Warning there would fire on every non-Claude launch
-  about a preference nobody set, and an alarm that always fires is an alarm nobody reads.
+- A stored `defaultLaunchMode` other than `'default'` **warns** when dropped — it was chosen
+  deliberately, so failing to honor it loses real operator intent.
+- A stored `silentPrime` of `true` records at **info** — it is what the product ships on every
+  engine, so it cannot be distinguished from "never touched." Warning there would fire on every
+  non-Claude launch about a preference nobody set, and an alarm that always fires is an alarm
+  nobody reads.
 
 Both are correct. Collapsing them to one level breaks one of the two.
 
+**Read those as statements about the VALUES, not about the two settings.** The first draft of this
+section said "`silentPrime` records at info," and that phrasing is the failure it warns against: it
+reads as a per-setting level, which is what the mechanism replaces. A stored `silentPrime` of
+`false` differs from what ships, so it is a choice and it warns — the same rule, the same setting,
+the other value. Anyone implementing #1251–#1255 should take the rule, not the example.
+
 **This is why the predicate takes the shipped default as an input.** "Was this a real choice?" is
 answerable only by comparing the stored value against what the product ships — which is exactly
-what `silentPrimeDisposition`'s own docblock reasons about ("indistinguishable from the shipped
-default (`DEFAULT_PROJECT_CONFIG.silentPrime` is true)"). A signature that omits it cannot derive
+what `silentPrimeDisposition`'s own docblock reasons about (a stored `true` is
+`DEFAULT_PROJECT_CONFIG.silentPrime` and cannot be reported as a preference anyone set). A signature that omits it cannot derive
 the level, so every call site picks one by hand, and the asymmetry above survives only as long as
 each author remembers it. A rule that depends on memory is the one this ADR exists to replace.
 

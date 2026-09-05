@@ -1231,14 +1231,18 @@ function openSettings(name) {
 }
 
 /**
- * Render (or clear) the silent-prime toggle inside #settingsSilentPrimeContainer
- * based on the engine selected in the dropdown. Capability is read from the
- * engine profile in `state.engines` (same source the dropdown is built from).
+ * Render the silent-prime toggle inside #settingsSilentPrimeContainer for the
+ * engine selected in the dropdown — live where the engine honors the setting,
+ * inert with the reason where it does not. The engine comes from
+ * `state.engines`, the same source the dropdown is built from; whether the
+ * setting applies, and what the operator reads when it does not, come from
+ * `tcSettingDisposition`.
  *
  * Preserves the checkbox's `checked` value across engine switches: if the user
  * toggles silent prime on, then clicks a different engine and back, their
- * intent is remembered. When the new engine doesn't support the capability the
- * markup is wiped (so doSaveSettings can't pick up a stale checkbox).
+ * intent is remembered. The inert branch carries no `#settingsSilentPrime`
+ * element, so `doSaveSettings` attaches no value and cannot pick up a stale
+ * checkbox.
  *
  * @param {string} engineId - Engine id from the dropdown's current value
  * @param {boolean} preserveChecked - The checkbox state to carry over (or initial)
@@ -1252,10 +1256,10 @@ function renderSilentPrimeToggle(engineId, preserveChecked) {
   // server's `engines.settingDisposition`. The reason is rendered rather than
   // written here, so the modal cannot tell the operator something the launch
   // path does not believe.
-  // An engine absent from `state.engines` still has a name worth printing, so
-  // the reason names it rather than falling back to "this engine".
+  // A missing profile is passed through as missing: synthesising `{ id }` here
+  // made the hint state a capability fact about an engine nothing was read for.
   const disposition = tcSettingDisposition('silentPrime', { silentPrime: preserveChecked },
-    profile || (engineId ? { id: engineId } : null));
+    profile || null);
   if (!disposition.applies) {
     // Said in words rather than hidden (#741): a toggle that vanishes reads
     // as "this engine has no such setting", and the operator who set it on
@@ -2463,7 +2467,7 @@ function renderCreateStep() {
     // No `#createSilentPrime` on the inert branch, so `createNext` attaches no
     // value and the new project keeps the shipped default.
     const silentPrimeFit = tcSettingDisposition('silentPrime', { silentPrime: createData.silentPrime },
-      profile || (createData.engine ? { id: createData.engine } : null));
+      profile || null);
     const silentPrimeHtml = silentPrimeFit.applies
       ? `
         <div class="form-group">
@@ -2487,7 +2491,7 @@ function renderCreateStep() {
     body.innerHTML = `
       ${launchModeHtml}
       ${silentPrimeHtml}
-      ${!launchModeHtml && !silentPrimeHtml ? '<div class="form-hint">No first-session settings for this engine.</div><br>' : ''}
+      ${!launchModeHtml ? '<div class="form-hint">This engine offers no launch postures to choose from.</div><br>' : ''}
       <div style="display:flex;gap:8px">
         <button class="btn" style="flex:1" onclick="createBack()">Back</button>
         <button class="btn btn-primary" style="flex:1" onclick="createNext()">Next</button>

@@ -38,6 +38,73 @@ function bundledProfiles() {
     .map((f) => JSON.parse(fs.readFileSync(path.join(ENGINES_DIR, f), 'utf8')));
 }
 
+/**
+ * Every file under `dir` carrying a CODE read of a capability flag.
+ *
+ * Comment lines are excluded deliberately: prose naming the flag is a pointer,
+ * not a second implementation, and a guard that counted prose would push the
+ * next author to delete the explanation instead of the duplicate.
+ *
+ * @param {string} dir - Directory to walk (one level, `.js` files).
+ * @param {string} flag - Capability flag name.
+ * @returns {string[]} Sorted repo-relative paths.
+ */
+function capabilityReads(dir, flag) {
+  const root = path.join(__dirname, '..');
+  const out = [];
+  for (const name of fs.readdirSync(dir)) {
+    if (!name.endsWith('.js')) continue;
+    const full = path.join(dir, name);
+    if (codeLinesMentioning(fs.readFileSync(full, 'utf8'), flag).length > 0) {
+      out.push(path.relative(root, full));
+    }
+  }
+  return out.sort();
+}
+
+/**
+ * The non-comment lines of `src` that mention `needle`, trimmed.
+ * @param {string} src - Source text.
+ * @param {string} needle - Substring to look for.
+ * @returns {string[]}
+ */
+function codeLinesMentioning(src, needle) {
+  return src.split('\n')
+    .map((line) => line.trim())
+    .filter((t) => t.includes(needle) && !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*'));
+}
+
+/**
+ * The source of a brace-delimited declaration, declaration through closing brace.
+ * @param {string} src - Source text.
+ * @param {string} decl - Text that opens the declaration.
+ * @returns {string}
+ */
+function declarationSource(src, decl) {
+  const start = src.indexOf(decl);
+  assert.ok(start >= 0, `${decl} must exist`);
+  let depth = 0;
+  for (let i = src.indexOf('{', start); i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+  }
+  assert.fail(`${decl} must close`);
+  return '';
+}
+
+// Probe values per setting: what the product ships, and a value that is a real
+// operator choice AND cannot apply on an engine declaring nothing. Checked
+// against the server's roster wherever it is used, so a setting added there
+// without probes fails rather than going untested.
+const PROBES = {
+  silentPrime: { shipped: true, chosen: false, inapplicable: true, extras: [] },
+  defaultLaunchMode: {
+    shipped: 'default', chosen: 'plan', inapplicable: 'plan',
+    // A mode claude declares and codex does not, and one no profile declares.
+    extras: ['bypassPermissions', 'nosuchmode']
+  }
+};
+
 const supporting = { id: 'claude', name: 'Claude Code', capabilities: { supportsSilentPrime: true } };
 const notSupporting = { id: 'codex', name: 'Codex', capabilities: { supportsSilentPrime: false } };
 
@@ -115,6 +182,50 @@ describe('settingDisposition — the one answer to "does this setting apply here
     });
   });
 
+  describe('an engine with no profile is a thing TangleClaw cannot answer, not a missing capability', () => {
+    it('says it cannot say, rather than stating a fact about a flag nobody read', () => {
+      // Reachable for a connection-backed id and for an engine retired out of
+      // the roster. "Codex does not deliver a hidden prime" for an engine with
+      // no profile is the same dishonesty this mechanism exists to end, aimed
+      // at the engine instead of the setting.
+      const d = engines.settingDisposition('silentPrime', { silentPrime: true }, null);
+      assert.equal(d.applies, false);
+      assert.match(d.reason, /no profile for this engine/);
+      assert.doesNotMatch(d.reason, /hidden prime/, 'it must not claim the capability is absent');
+      assert.equal(d.evidence, 'no engine profile');
+    });
+
+    it('the browser says the same', () => {
+      const ctx2 = loadApiHelperGlobals();
+      const d = ctx2.tcSettingDisposition('silentPrime', { silentPrime: true }, null);
+      assert.equal(d.applies, false);
+      assert.match(d.reason, /no profile for this engine/);
+      assert.equal(d.evidence, 'no engine profile');
+    });
+  });
+
+  describe("'default' is the absence of a mode, not one the engine must declare", () => {
+    it('applies on a profile that declares no launch modes at all', () => {
+      // `reconcileLaunchMode` short-circuits `'default'`, and it adds no CLI
+      // args downstream. Asking the honored-modes predicate about it produced
+      // "does not offer the launch mode \"default\", so this project launches in
+      // its engine default instead" — a sentence that contradicts itself, shown
+      // to the operator on every launch of a project that configured nothing.
+      const modeless = { id: 'x', name: 'Modeless', launchModes: {} };
+      const d = engines.settingDisposition('defaultLaunchMode', { defaultLaunchMode: 'default' }, modeless);
+      assert.equal(d.applies, true);
+      assert.equal(d.reason, null);
+      assert.equal(engines.reconcileLaunchMode('default', modeless), 'default',
+        'and it agrees with the reconciler, which is where the disagreement was');
+    });
+
+    it('a real mode the engine does not declare still does not apply', () => {
+      const modeless = { id: 'x', name: 'Modeless', launchModes: {} };
+      const d = engines.settingDisposition('defaultLaunchMode', { defaultLaunchMode: 'plan' }, modeless);
+      assert.equal(d.applies, false);
+    });
+  });
+
   describe('launch modes: the reason distinguishes "disabled here" from "never offered here"', () => {
     const withDisabled = {
       id: 'claude',
@@ -172,15 +283,7 @@ describe('settingDisposition — the one answer to "does this setting apply here
      * @returns {string} The function's source, declaration through closing brace.
      */
     function body(name) {
-      const start = SRC.indexOf(`function ${name}(`);
-      assert.ok(start >= 0, `${name} must exist`);
-      let depth = 0;
-      for (let i = SRC.indexOf('{', start); i < SRC.length; i++) {
-        if (SRC[i] === '{') depth++;
-        else if (SRC[i] === '}' && --depth === 0) return SRC.slice(start, i + 1);
-      }
-      assert.fail(`${name} body must close`);
-      return '';
+      return declarationSource(SRC, `function ${name}(`);
     }
 
     it('silentPrimeDisposition asks the mechanism rather than restating the capability check', () => {
@@ -188,6 +291,34 @@ describe('settingDisposition — the one answer to "does this setting apply here
       assert.match(src, /settingDisposition\('silentPrime'/);
       assert.doesNotMatch(src, /supportsSilentPrime/,
         'the capability gate has one owner');
+    });
+
+    it('no file in lib/ reads the silent-prime capability outside the table', () => {
+      // An assertion scoped to one function body while its message claims a
+      // file-wide property is how the class survives its own guard: the gate
+      // was spelled out at five more sites in `lib/` — the hooks builder, the
+      // rules-channel choice, two prime pointers and the PATCH validation —
+      // each of them `silentPrimeDisposition(...) === 'on'` written by hand,
+      // and every one would have kept the old rule the day the table grew a
+      // second condition. Counted across the tree, the way the launch-mode
+      // guard already counts `disabled !== true`.
+      assert.deepEqual(capabilityReads(path.join(__dirname, '..', 'lib'), 'supportsSilentPrime'),
+        ['lib/engines.js'], 'one file may read it');
+      const table = declarationSource(SRC, 'const ENGINE_CONDITIONAL_SETTINGS = {');
+      for (const line of codeLinesMentioning(SRC, 'supportsSilentPrime')) {
+        assert.ok(table.includes(line),
+          `a read outside ENGINE_CONDITIONAL_SETTINGS is a second implementation: ${line}`);
+      }
+    });
+
+    it('no browser file reads it outside the restated table', () => {
+      assert.deepEqual(capabilityReads(path.join(__dirname, '..', 'public'), 'supportsSilentPrime'),
+        ['public/api-helper.js'], 'the modal and the wizard ask the owner, they do not read the flag');
+      const helperSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
+      const fn = declarationSource(helperSrc, 'function tcSettingDisposition(');
+      for (const line of codeLinesMentioning(helperSrc, 'supportsSilentPrime')) {
+        assert.ok(fn.includes(line), `a read outside tcSettingDisposition: ${line}`);
+      }
     });
 
     it('reconcileLaunchMode still delegates to honorsLaunchMode', () => {
@@ -237,7 +368,8 @@ describe('settingDisposition — the one answer to "does this setting apply here
       assert.deepEqual(Object.keys(ctx.tcSettingDefaults).sort(), declared.slice().sort(),
         'the browser must carry a shipped default for every setting the server gates');
       for (const setting of declared) {
-        const d = ctx.tcSettingDisposition(setting, {}, { id: 'barebones', name: 'Barebones', capabilities: {}, launchModes: {} });
+        const d = ctx.tcSettingDisposition(setting, { [setting]: PROBES[setting].inapplicable },
+          { id: 'barebones', name: 'Barebones', capabilities: {}, launchModes: {} });
         assert.doesNotMatch(String(d.reason), /could not determine/,
           `the browser has no branch for "${setting}"`);
       }
@@ -248,8 +380,11 @@ describe('settingDisposition — the one answer to "does this setting apply here
       // renders a disabled control explaining nothing, which is the shape
       // ADR 0013 forbids.
       const barebones = { id: 'barebones', name: 'Barebones', capabilities: {}, launchModes: {} };
+      assert.deepEqual(Object.keys(PROBES).sort(),
+        Object.keys(engines.ENGINE_CONDITIONAL_SETTINGS).sort(),
+        'every gated setting needs a value that cannot apply, or it goes untested here');
       for (const setting of Object.keys(engines.ENGINE_CONDITIONAL_SETTINGS)) {
-        const d = engines.settingDisposition(setting, {}, barebones);
+        const d = engines.settingDisposition(setting, { [setting]: PROBES[setting].inapplicable }, barebones);
         assert.equal(d.applies, false, `${setting} must not apply on a profile declaring nothing`);
         assert.ok(d.reason && d.reason.length > 0, `${setting} owes the operator a reason`);
         assert.match(d.reason, /Barebones/, `${setting}'s reason must name the engine`);
@@ -277,17 +412,15 @@ describe('settingDisposition — the one answer to "does this setting apply here
       // Probe values per setting, checked against the server's roster so a
       // setting added there without probes fails here rather than going
       // uncompared.
-      const probes = {
-        silentPrime: [true, false],
-        defaultLaunchMode: ['default', 'plan', 'bypassPermissions']
-      };
-      assert.deepEqual(Object.keys(probes).sort(),
+      assert.deepEqual(Object.keys(PROBES).sort(),
         Object.keys(engines.ENGINE_CONDITIONAL_SETTINGS).sort(),
         'every gated setting needs probe values, or the parity loop skips it');
 
       const cases = [];
-      for (const [setting, values] of Object.entries(probes)) {
-        for (const value of values) cases.push([setting, { [setting]: value }]);
+      for (const [setting, values] of Object.entries(PROBES)) {
+        for (const value of new Set([values.shipped, values.chosen, values.inapplicable, ...values.extras])) {
+          cases.push([setting, { [setting]: value }]);
+        }
         cases.push([setting, {}]);  // absent: the shipped-default path
       }
 
