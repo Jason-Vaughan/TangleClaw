@@ -24,6 +24,7 @@ const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 setLevel('error');
 const store = require('../lib/store');
+const loadApiHelperGlobals = require('./_api-helper-globals');
 
 const PUB = path.join(__dirname, '..', 'public');
 const UI_SRC = fs.readFileSync(path.join(PUB, 'ui.js'), 'utf8');
@@ -162,11 +163,55 @@ describe('#626 launch posture is settable at creation, and the guard runs there'
       assert.match(step.slice(0, 3000), /id="createShowLaunchPicker"/);
     });
 
-    it('collects it in createNext and posts it in submitCreate', () => {
+    it('collects it in createNext', () => {
       const next = UI_SRC.slice(UI_SRC.indexOf('function createNext'));
       assert.match(next.slice(0, 1200), /createShowLaunchPicker[\s\S]*?createData\.showLaunchModePicker/);
-      const submit = UI_SRC.slice(UI_SRC.indexOf('async function submitCreate'));
-      assert.match(submit.slice(0, 2500), /showLaunchModePicker: createData\.showLaunchModePicker/);
+    });
+
+    describe('the POST body is built by a function a test can run', () => {
+      const helpers = loadApiHelperGlobals();
+      const claude = { id: 'claude', name: 'Claude Code', capabilities: { supportsSilentPrime: true }, launchModes: {} };
+      const codex = { id: 'codex', name: 'Codex', capabilities: { supportsSilentPrime: false }, launchModes: {} };
+
+      it('sends the launch posture the wizard collected', () => {
+        const body = helpers.tcCreateProjectBody({
+          name: 'p', engine: 'claude', defaultLaunchMode: 'plan',
+          showLaunchModePicker: false, silentPrime: true, tags: 'a, b'
+        }, [claude]);
+        assert.equal(body.showLaunchModePicker, false);
+        assert.equal(body.defaultLaunchMode, 'plan');
+        // `Array.from`: the helper runs in a vm realm, so its array has that
+        // realm's prototype and deepStrictEqual calls two identical lists unequal.
+        assert.deepEqual(Array.from(body.tags), ['a', 'b']);
+      });
+
+      it('omits silentPrime for an engine that cannot honor it, whatever the wizard is holding', () => {
+        // Toggle it on Claude, go Back, switch to Codex: the control is gone
+        // from the screen but `createData` still holds `true`, and the server
+        // now REFUSES that value — so posting it shows the operator a rejection
+        // for a setting they cannot see.
+        const body = helpers.tcCreateProjectBody({
+          name: 'p', engine: 'codex', silentPrime: true, tags: ''
+        }, [codex]);
+        assert.equal('silentPrime' in body, false,
+          'omitted, so the new project keeps the shipped default');
+      });
+
+      it('sends it where the engine does honor it', () => {
+        const body = helpers.tcCreateProjectBody({
+          name: 'p', engine: 'claude', silentPrime: false, tags: ''
+        }, [claude]);
+        assert.equal(body.silentPrime, false);
+      });
+
+      it('attaches the eyes-open confirmation only once one was actually given', () => {
+        const without = helpers.tcCreateProjectBody({ name: 'p', engine: 'claude', tags: '' }, [claude]);
+        assert.equal('confirmBypassHidden' in without, false);
+        const withIt = helpers.tcCreateProjectBody({
+          name: 'p', engine: 'claude', tags: '', confirmBypassHiddenFor: 'claude:bypassPermissions'
+        }, [claude]);
+        assert.equal(withIt.confirmBypassHidden, true);
+      });
     });
 
     it('routes a warned hidden-picker creation through the same confirm the edit path uses', () => {

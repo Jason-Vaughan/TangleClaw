@@ -1354,7 +1354,7 @@ function renderEvalAuditToggle(engineId, preserveChecked, projectEngine, audit) 
     <div class="form-group">
       <label class="gs-toggle-label">
         <span>Eval Audit</span>
-        <input type="checkbox" id="settingsEvalAudit" checked>
+        <input type="checkbox" id="settingsEvalAudit" ${preserveChecked ? 'checked' : ''}>
         <span class="toggle-switch"></span>
       </label>
       <div class="form-hint"><strong>Stored on, doing nothing.</strong> ${esc(disposition.reason)} Switch it off to clear it.</div>
@@ -2589,8 +2589,10 @@ function renderCreateStep() {
     // Same owner as the settings modal's toggle (ADR 0013): the wizard used to
     // drop the control on an engine that cannot honor it, which reads as "this
     // engine has no such setting" to an operator who set it on another project.
-    // No `#createSilentPrime` on the inert branch, so `createNext` attaches no
-    // value and the new project keeps the shipped default.
+    // The inert branch carries no `#createSilentPrime`, so `createNext` reads
+    // nothing there — but `createData` keeps whatever was toggled on a PREVIOUS
+    // engine, which is why `submitCreate` re-asks the disposition before it
+    // posts rather than trusting the absence of an element.
     const silentPrimeFit = tcSettingDisposition('silentPrime', { silentPrime: createData.silentPrime },
       profile || null);
     const silentPrimeHtml = silentPrimeFit.applies
@@ -2705,19 +2707,11 @@ async function submitCreate() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>';
 
-  const tags = createData.tags.split(',').map(t => t.trim()).filter(Boolean);
-  const result = await apiMutate('/api/projects', 'POST', {
-    name: createData.name,
-    engine: createData.engine,
-    defaultLaunchMode: createData.defaultLaunchMode,
-    showLaunchModePicker: createData.showLaunchModePicker,
-    silentPrime: createData.silentPrime,
-    tags,
-    // The eyes-open guard runs on the create path now, and a hidden picker over
-    // a warned default is refused unless the operator has actually seen the
-    // warning. The confirm callback above records which engine+mode they saw.
-    ...(createData.confirmBypassHiddenFor ? { confirmBypassHidden: true } : {})
-  });
+  // Built by `tcCreateProjectBody` (api-helper.js) so the three conditionals in
+  // it — which settings are sent, whether the confirmation rides along, how
+  // tags split — can be run by a test rather than matched as source text.
+  const result = await apiMutate('/api/projects', 'POST',
+    tcCreateProjectBody(createData, state.engines));
 
   if (!result) {
     const errEl = document.getElementById('createError');

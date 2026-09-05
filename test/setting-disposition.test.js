@@ -377,6 +377,33 @@ describe('settingDisposition — the one answer to "does this setting apply here
       }
     });
 
+    it('no file reads the Eval Audit flag to decide whether the feature is live', () => {
+      // The same class, for the second gated setting. `evalAuditMode.enabled`
+      // is read in plenty of places to configure scoring; what must not recur
+      // is a reader deciding the feature is LIVE from the bare flag, because a
+      // project can hold a stored `true` on an engine no exchange can reach.
+      // The readers that answer that question are named here, and a new one has
+      // to be added deliberately.
+      const root = path.join(__dirname, '..');
+      const liveReaders = [
+        ['lib/projects.js', /auditFits && auditCfg\.enabled === true/],
+        ['lib/sessions.js', /settingDisposition\('evalAuditMode', projConfig, engineProfile\)\.applies/]
+      ];
+      for (const [file, pattern] of liveReaders) {
+        assert.match(fs.readFileSync(path.join(root, file), 'utf8'), pattern,
+          `${file} must ask the gate, not the bare flag`);
+      }
+      // And the browser must not re-derive it: every surface reads the value
+      // `enrichProject` already gated.
+      for (const file of ['public/ui.js', 'public/landing.js']) {
+        const bare = codeLinesMentioning(fs.readFileSync(path.join(root, file), 'utf8'), 'evalAuditMode');
+        for (const line of bare) {
+          assert.ok(/tcSettingDisposition|body\.evalAuditMode/.test(line),
+            `${file} decides liveness from the stored flag: ${line}`);
+        }
+      }
+    });
+
     it('no browser file reads it outside the restated table', () => {
       assert.deepEqual(capabilityReads(path.join(__dirname, '..', 'public'), 'supportsSilentPrime'),
         ['public/api-helper.js'], 'the modal and the wizard ask the owner, they do not read the flag');

@@ -213,7 +213,10 @@ does not wait for anything.** (Its *home* survived the build; its **classificati
 the correction in §5. It is engine-conditional, not universal.) #1236 deferred its home to #764 on the reasoning that the modal was
 about to be restructured into per-engine tabs and Eval Audit is OpenClaw-fed. Neither half survives:
 the modal is not getting tabs, and audit ingestion is server-side (`POST /api/audit/ingest`,
-`server.js, the POST /api/audit/ingest route`) — it is not an engine capability at all, so it is universal by §5.
+`server.js, the POST /api/audit/ingest route`). **The second half of that reasoning is wrong and is
+struck:** the route being server-side says nothing about who can authenticate to it, and only an
+OpenClaw connection can — see the CORRECTION in §5. Eval Audit is engine-conditional. Its *home* is
+unaffected: the project settings modal, no shell, no waiting.
 
 Three things C2 must get right, all from #1236's own text:
 - The empty state must name what Eval Audit does and how to enable it. Today it reads *"No projects

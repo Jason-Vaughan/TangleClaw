@@ -316,7 +316,9 @@ dead.
 
 **It is offered only where it can work.** Scored exchanges arrive over `POST /api/audit/ingest`,
 which authenticates against an OpenClaw connection's `auditSecret` and attributes the exchange to
-the project bound to that connection. On a project running any other engine the control renders
+the project bound to that connection. (When no project is bound to the connection, the route falls
+back to a project name the payload supplies — that fallback is a defect, tracked as #1261, and the
+control below deliberately does not follow it.) On a project running any other engine the control renders
 disabled with that reason rather than storing a value nothing can follow (ADR 0013). A project
 hand-edited to `enabled: true` on such an engine is reported as off everywhere it would otherwise
 be acted on — the dashboard, the incident badge, the session prime — and the settings modal offers

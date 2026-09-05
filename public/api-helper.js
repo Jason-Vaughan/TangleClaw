@@ -3771,6 +3771,41 @@
   }
 
   /**
+   * The POST body for creating a project, from what the wizard collected.
+   *
+   * A function rather than an object literal inside `submitCreate` because it
+   * makes three conditionals testable: which settings are sent at all, whether
+   * the eyes-open confirmation is attached, and how tags are split. The one
+   * that bites is `silentPrime` — the wizard hides its control on an engine
+   * that cannot honor it, but `createData` keeps whatever was toggled on a
+   * PREVIOUS engine, and the server refuses that value. Posting it would show
+   * the operator a rejection for a setting no longer on screen. Omitted rather
+   * than forced to false: the shipped default is what such a project keeps.
+   *
+   * @param {object} createData - The wizard's collected state.
+   * @param {Array<object>} engineRoster - `state.engines`.
+   * @returns {object} The body for `POST /api/projects`.
+   */
+  function tcCreateProjectBody(createData, engineRoster) {
+    const data = createData || {};
+    const engine = (engineRoster || []).find((e) => e.id === data.engine) || null;
+    const body = {
+      name: data.name,
+      engine: data.engine,
+      defaultLaunchMode: data.defaultLaunchMode,
+      showLaunchModePicker: data.showLaunchModePicker,
+      tags: String(data.tags || '').split(',').map((t) => t.trim()).filter(Boolean)
+    };
+    if (tcSettingDisposition('silentPrime', data, engine).applies) {
+      body.silentPrime = data.silentPrime;
+    }
+    // The confirm callback records which engine+mode the operator actually saw
+    // warned; a bare boolean would carry across a Back-and-change.
+    if (data.confirmBypassHiddenFor) body.confirmBypassHidden = true;
+    return body;
+  }
+
+  /**
    * How an engine is named to the operator — the profile's own `name` where it
    * has one, so a reason reads "Codex" rather than "codex". Restated from the
    * server's own display-name helper in `lib/engines.js`, which is internal to
@@ -3785,6 +3820,7 @@
 
   global.tcHonoredLaunchModes = tcHonoredLaunchModes;
   global.tcSettingDisposition = tcSettingDisposition;
+  global.tcCreateProjectBody = tcCreateProjectBody;
   global.tcSettingDefaults = TC_SETTING_DEFAULTS;
   global.tcMedusaIds = tcMedusaIds;
   global.tcMedusaControlMarkup = tcMedusaControlMarkup;
