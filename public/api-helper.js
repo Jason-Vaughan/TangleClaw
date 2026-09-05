@@ -3652,7 +3652,18 @@
    */
   const TC_SETTING_DEFAULTS = {
     silentPrime: true,
-    defaultLaunchMode: 'default'
+    defaultLaunchMode: 'default',
+    evalAuditMode: false
+  };
+
+  /**
+   * How a setting's value is read out of a project config, where it is not
+   * simply `config[setting]`. `evalAuditMode` holds its flag inside an object
+   * of tunables, and provenance is a scalar comparison — an object is never
+   * `!==`-equal to its own default. Mirrors the server table's `read`.
+   */
+  const TC_SETTING_READERS = {
+    evalAuditMode: (cfg) => (cfg && cfg.evalAuditMode ? cfg.evalAuditMode.enabled : undefined)
   };
 
   /**
@@ -3675,8 +3686,9 @@
    */
   function tcSettingDisposition(setting, projConfig, engine) {
     const name = tcEngineDisplayName(engine);
+    const reader = TC_SETTING_READERS[setting];
     const has = projConfig && Object.prototype.hasOwnProperty.call(projConfig, setting);
-    const stored = has ? projConfig[setting] : undefined;
+    const stored = reader ? reader(projConfig) : (has ? projConfig[setting] : undefined);
     const shipped = TC_SETTING_DEFAULTS[setting];
     const chosen = stored !== undefined && stored !== shipped;
     const value = stored === undefined ? shipped : stored;
@@ -3705,6 +3717,14 @@
       if (!applies) {
         reason = name + ' does not deliver a hidden prime, so this setting has no effect on this project.';
         evidence = 'capabilities.supportsSilentPrime is not true';
+      }
+    } else if (setting === 'evalAuditMode') {
+      // Scored exchanges arrive over an OpenClaw connection bound to this
+      // project — the only write path there is. Mirrors the server.
+      applies = Boolean(engine && typeof engine.id === 'string' && engine.id.indexOf('openclaw:') === 0);
+      if (!applies) {
+        reason = name + ' does not feed Eval Audit — scored exchanges arrive over an OpenClaw connection bound to this project, so nothing would be scored here.';
+        evidence = 'audit ingestion authenticates an OpenClaw connection and resolves the project by openclaw:<connectionId>';
       }
     } else if (setting === 'defaultLaunchMode') {
       // `'default'` is the absence of a mode, not one an engine must declare —

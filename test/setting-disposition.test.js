@@ -106,12 +106,32 @@ function declarationSource(src, decl) {
 // without probes fails rather than going untested.
 const PROBES = {
   silentPrime: { shipped: true, chosen: false, inapplicable: true, extras: [] },
+  evalAuditMode: {
+    shipped: false, chosen: true, inapplicable: true, extras: [],
+    // The flag lives inside an object of tunables. Without this the fixture
+    // would hand both realms `{ evalAuditMode: true }`, whose `.enabled` is
+    // undefined on either side — the two would agree perfectly about a shape
+    // the product never stores, and the case would assert nothing.
+    wrap: (value) => ({ evalAuditMode: { enabled: value } })
+  },
   defaultLaunchMode: {
     shipped: 'default', chosen: 'plan', inapplicable: 'plan',
     // A mode claude declares and codex does not, and one no profile declares.
     extras: ['bypassPermissions', 'nosuchmode']
   }
 };
+
+/**
+ * The project config that stores `value` for `setting`, in the shape the
+ * product actually writes.
+ * @param {string} setting - Setting key.
+ * @param {*} value - Value to store.
+ * @returns {object}
+ */
+function configWith(setting, value) {
+  const spec = PROBES[setting];
+  return spec && spec.wrap ? spec.wrap(value) : { [setting]: value };
+}
 
 const supporting = { id: 'claude', name: 'Claude Code', capabilities: { supportsSilentPrime: true } };
 const notSupporting = { id: 'codex', name: 'Codex', capabilities: { supportsSilentPrime: false } };
@@ -359,7 +379,11 @@ describe('settingDisposition — the one answer to "does this setting apply here
       // changes on one side and not the other silently reclassifies a real
       // choice as a default, which is the input the log level is derived from.
       for (const [key, value] of Object.entries(ctx.tcSettingDefaults)) {
-        assert.equal(value, DEFAULT_PROJECT_CONFIG[key],
+        // Against the ROW's own `shippedDefault()`, not `DEFAULT_PROJECT_CONFIG[key]`:
+        // a row may gate on a scalar nested inside an object of tunables, and
+        // comparing the object would compare the wrong thing (and always pass,
+        // since neither side is the other).
+        assert.equal(value, engines.ENGINE_CONDITIONAL_SETTINGS[key].shippedDefault(),
           `the browser's shipped default for ${key} must be the one the product ships`);
       }
       assert.ok(Object.keys(ctx.tcSettingDefaults).length > 0, 'an empty table compares nothing');
@@ -376,7 +400,7 @@ describe('settingDisposition — the one answer to "does this setting apply here
       assert.deepEqual(Object.keys(ctx.tcSettingDefaults).sort(), declared.slice().sort(),
         'the browser must carry a shipped default for every setting the server gates');
       for (const setting of declared) {
-        const d = ctx.tcSettingDisposition(setting, { [setting]: PROBES[setting].inapplicable },
+        const d = ctx.tcSettingDisposition(setting, configWith(setting, PROBES[setting].inapplicable),
           { id: 'barebones', name: 'Barebones', capabilities: {}, launchModes: {} });
         assert.doesNotMatch(String(d.reason), /could not determine/,
           `the browser has no branch for "${setting}"`);
@@ -392,7 +416,7 @@ describe('settingDisposition — the one answer to "does this setting apply here
         Object.keys(engines.ENGINE_CONDITIONAL_SETTINGS).sort(),
         'every gated setting needs a value that cannot apply, or it goes untested here');
       for (const setting of Object.keys(engines.ENGINE_CONDITIONAL_SETTINGS)) {
-        const d = engines.settingDisposition(setting, { [setting]: PROBES[setting].inapplicable }, barebones);
+        const d = engines.settingDisposition(setting, configWith(setting, PROBES[setting].inapplicable), barebones);
         assert.equal(d.applies, false, `${setting} must not apply on a profile declaring nothing`);
         assert.ok(d.reason && d.reason.length > 0, `${setting} owes the operator a reason`);
         assert.match(d.reason, /Barebones/, `${setting}'s reason must name the engine`);
@@ -414,7 +438,12 @@ describe('settingDisposition — the one answer to "does this setting apply here
           launchModes: { default: { label: 'Interactive' }, plan: { label: 'Plan', disabled: true } }
         },
         { id: 'barebones', name: 'Barebones', capabilities: {}, launchModes: {} },
-        { id: 'hollow', name: 'Hollow', capabilities: {}, launchModes: { default: { label: 'Interactive' }, plan: null } }
+        { id: 'hollow', name: 'Hollow', capabilities: {}, launchModes: { default: { label: 'Interactive' }, plan: null } },
+        // A connection-backed OpenClaw id. `state.engines` never carries one
+        // and no bundled profile has one, so without this fixture the whole
+        // evalAuditMode row would only ever be compared on `applies: false` —
+        // the two realms agreeing about the case that needs no gate.
+        { id: 'openclaw:conn-1', name: 'Studio (OpenClaw)', capabilities: {}, launchModes: {} }
       ]);
 
       // Probe values per setting, checked against the server's roster so a
@@ -427,7 +456,7 @@ describe('settingDisposition — the one answer to "does this setting apply here
       const cases = [];
       for (const [setting, values] of Object.entries(PROBES)) {
         for (const value of new Set([values.shipped, values.chosen, values.inapplicable, ...values.extras])) {
-          cases.push([setting, { [setting]: value }]);
+          cases.push([setting, configWith(setting, value)]);
         }
         cases.push([setting, {}]);  // absent: the shipped-default path
       }
@@ -450,6 +479,19 @@ describe('settingDisposition — the one answer to "does this setting apply here
         }
       }
       assert.ok(compared >= fixtures.length * cases.length, 'the loop must have run');
+      // Every gated setting must have been compared on BOTH verdicts. A loop
+      // where one row only ever answers `false` proves the two realms agree
+      // about the case that needs no gate.
+      for (const setting of Object.keys(engines.ENGINE_CONDITIONAL_SETTINGS)) {
+        const verdicts = new Set();
+        for (const profile of fixtures) {
+          for (const [s2, cfg] of cases) {
+            if (s2 === setting) verdicts.add(engines.settingDisposition(s2, cfg, profile).applies);
+          }
+        }
+        assert.deepEqual([...verdicts].sort(), [false, true],
+          `${setting} was only ever compared on one verdict — the fixtures cannot reach the other`);
+      }
     });
 
     it('the browser fails closed on an unknown setting instead of rendering a live control', () => {

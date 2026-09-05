@@ -1129,6 +1129,9 @@ function openSettings(name) {
   const initialSilentChecked = !!project.silentPrime;
   // Feature Index toggle (#207, chunk 1) — engine-agnostic, so always rendered.
   const initialFeatureIndexChecked = !!project.featureIndexEnabled;
+  // `enrichProject` reports `evalAudit` for every project now, enabled or not —
+  // a modal cannot render a toggle whose current value it cannot read.
+  const initialEvalAuditChecked = !!(project.evalAudit && project.evalAudit.enabled);
   // Project Map toggle (PIDX #360, #356) — engine-agnostic, so always rendered.
   const initialProjectMapChecked = !!project.projectMapEnabled;
   // Auto version-bump opt-out (#318) — engine-agnostic; default on (only an
@@ -1163,6 +1166,7 @@ function openSettings(name) {
       <div id="settingsSilentPrimeContainer"></div>
       <div id="settingsFeatureIndexContainer"></div>
       <div id="settingsProjectMapContainer"></div>
+      <div id="settingsEvalAuditContainer"></div>
       <div class="form-group">
         <label class="gs-toggle-label">
           <span>Auto version bump</span>
@@ -1198,6 +1202,8 @@ function openSettings(name) {
   // Initial render — based on the project's current engine
   renderSilentPrimeToggle(project.engine ? project.engine.id : '', initialSilentChecked,
     project.engine || null);
+  renderEvalAuditToggle(project.engine ? project.engine.id : '', initialEvalAuditChecked,
+    project.engine || null, project.evalAudit || null);
   renderFeatureIndexToggle(initialFeatureIndexChecked);
   renderProjectMapToggle(initialProjectMapChecked);
   renderLaunchModeSettings(
@@ -1219,6 +1225,10 @@ function openSettings(name) {
     const checkbox = document.getElementById('settingsSilentPrime');
     const checkedNow = checkbox ? checkbox.checked : initialSilentChecked;
     renderSilentPrimeToggle(e.target.value, checkedNow, project.engine || null);
+    const auditEl = document.getElementById('settingsEvalAudit');
+    renderEvalAuditToggle(e.target.value,
+      auditEl ? auditEl.checked : initialEvalAuditChecked,
+      project.engine || null, project.evalAudit || null);
     const modeEl = document.getElementById('settingsDefaultLaunchMode');
     const showEl = document.getElementById('settingsShowLaunchPicker');
     renderLaunchModeSettings(
@@ -1296,6 +1306,62 @@ function renderSilentPrimeToggle(engineId, preserveChecked, projectEngine) {
         <span class="toggle-switch"></span>
       </label>
       <div class="form-hint">Deliver the session prime via Claude Code's SessionStart hook instead of typing it into the terminal — clean scrollback, prime stays in model context. Takes effect on next session launch.</div>
+    </div>`;
+}
+
+/**
+ * Render the Eval Audit toggle (#1236) — live where scored exchanges can
+ * actually reach this project, inert with the reason where they cannot.
+ *
+ * Eval Audit had no write path at all before this: the only way to switch it on
+ * was hand-editing `project.json`, so the dashboard panel was empty on every
+ * install and the feature read as dead — #1227 was filed to delete it.
+ *
+ * The hint names the cost before the switch, not after. Enabling starts
+ * LLM-judge passes that spend real money, and #1236 asks for that to be visible
+ * rather than a free-looking checkbox; the numbers come from the project's own
+ * stored config, so an operator who has edited them reads their values and not
+ * a hardcoded pair.
+ *
+ * @param {string} engineId - Engine id from the dropdown's current value
+ * @param {boolean} preserveChecked - The checkbox state to carry over (or initial)
+ * @param {object|null} [projectEngine] - The project's own enriched engine —
+ *   `state.engines` omits connection-backed ids, which are the only ids this
+ *   setting applies to, so without it the control is inert on every project
+ *   that can use it.
+ * @param {object|null} [audit] - The project's enriched `evalAudit`, whose
+ *   `judgeModel` and `costCapPerSession` carry this project's real numbers.
+ */
+function renderEvalAuditToggle(engineId, preserveChecked, projectEngine, audit) {
+  const container = document.getElementById('settingsEvalAuditContainer');
+  if (!container) return;
+  const roster = (state.engines || []).find(e => e.id === engineId);
+  const profile = roster
+    || (projectEngine && projectEngine.id === engineId ? projectEngine : null);
+  const disposition = tcSettingDisposition('evalAuditMode', { evalAuditMode: { enabled: preserveChecked } }, profile);
+  if (!disposition.applies) {
+    container.innerHTML = `
+    <div class="form-group">
+      <label class="gs-toggle-label gs-toggle-label--disabled">
+        <span>Eval Audit</span>
+        <input type="checkbox" id="settingsEvalAuditNotApplicable" disabled>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint">${esc(disposition.reason)}</div>
+    </div>`;
+    return;
+  }
+  const cfg = audit || {};
+  const judge = cfg.judgeModel || 'the configured judge model';
+  const cap = typeof cfg.costCapPerSession === 'number' ? `$${cfg.costCapPerSession.toFixed(2)}` : 'the configured cap';
+  container.innerHTML = `
+    <div class="form-group">
+      <label class="gs-toggle-label">
+        <span>Eval Audit</span>
+        <input type="checkbox" id="settingsEvalAudit" ${preserveChecked ? 'checked' : ''}>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint"><strong>Costs money while on.</strong> Scores this project's session exchanges for quality and raises an incident when it drops. The structural pass is free; the deeper passes send exchanges to an LLM judge (${esc(judge)}), capped at ${esc(cap)} per session. Scoring tunables are edited in <code>project.json</code>.</div>
     </div>`;
 }
 
@@ -1833,6 +1899,14 @@ async function doSaveSettings() {
     body.silentPrime = silentPrimeEl.checked;
   }
   // Feature Index (#207, chunk 1) — always present (engine-agnostic)
+  // Only `enabled` is sent, and it is sent as a one-key object the server
+  // MERGES: `evalAuditMode` holds the scoring tunables too, and posting the
+  // whole object back would let a stale modal overwrite a hand-edited cost cap.
+  const evalAuditEl = document.getElementById('settingsEvalAudit');
+  if (evalAuditEl) {
+    body.evalAuditMode = { enabled: evalAuditEl.checked };
+  }
+
   const featureIndexEl = document.getElementById('settingsFeatureIndex');
   if (featureIndexEl) {
     body.featureIndexEnabled = featureIndexEl.checked;
@@ -3746,7 +3820,18 @@ function renderAuditPanel() {
   const auditProjects = state.projects.filter(p => p.evalAudit && p.evalAudit.enabled);
 
   if (auditProjects.length === 0) {
-    panel.innerHTML = '<div class="audit-empty">No projects have Eval Audit enabled.</div>';
+    // "No projects have Eval Audit enabled" was true and actionable by nobody:
+    // it named a state without naming the feature, where to switch it on, or
+    // why most projects cannot. #1227 read this panel, concluded the button was
+    // a dead placeholder, and filed to delete a complete working feature.
+    panel.innerHTML = '<div class="audit-empty">'
+      + '<strong>Eval Audit scores your sessions.</strong> It grades each exchange for quality and '
+      + 'raises an incident when it drops \u2014 a free structural pass, then optional LLM-judge passes '
+      + 'that spend real money.'
+      + '<br><br>Turn it on per project in <strong>Settings \u2192 Eval Audit</strong>. It is available on '
+      + 'projects running through an OpenClaw connection, which is how scored exchanges reach '
+      + 'TangleClaw; on any other engine the setting says so rather than sitting there doing nothing.'
+      + '</div>';
     return;
   }
 

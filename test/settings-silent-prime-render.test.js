@@ -72,12 +72,15 @@ function render({ roster = [], engineId = 'claude', preserveChecked = true, proj
   vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcSettingDisposition'), ctx);
   vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcEngineDisplayName'), ctx);
   vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
-  // `tcSettingDisposition` closes over the shipped-default table, which is a
-  // `const` outside any function — lift it by name rather than restating it,
-  // or the sandbox reads a copy that cannot drift with the file.
-  const defaults = /const TC_SETTING_DEFAULTS = \{[\s\S]*?\};/.exec(API_HELPER_SRC);
-  assert.ok(defaults, 'TC_SETTING_DEFAULTS must exist to be lifted');
-  vm.runInContext(defaults[0], ctx);
+  // `tcSettingDisposition` closes over module-level `TC_SETTING_*` tables.
+  // Lifted by PATTERN rather than by name: naming them one at a time means the
+  // next table added is missing here, and the failure is a ReferenceError from
+  // inside the lifted function — which is what this file exists to catch, so it
+  // should not be the thing that breaks it.
+  const tables = API_HELPER_SRC.match(/const TC_SETTING_\w+ = \{[\s\S]*?\n {2}\};/g) || [];
+  assert.ok(tables.length >= 2,
+    `expected the shipped-default and reader tables to lift, found ${tables.length}`);
+  for (const table of tables) vm.runInContext(table, ctx);
   vm.runInContext(liftFunction(UI_SRC, 'function renderSilentPrimeToggle'), ctx);
 
   ctx.renderSilentPrimeToggle(engineId, preserveChecked, projectEngine);

@@ -285,7 +285,7 @@ carries a real guard: hiding the picker while the resolved default carries a war
 - [x] Chunk C1 — operator rulings surfaced and answered (R1 project-half, R2 ratify-migrate, R3 file)
 - [x] Chunk C1 — C2 build plan written
 - [x] Chunk C2a — one disposition mechanism
-- [ ] Chunk C2b — Eval Audit reachable (#1236)
+- [x] Chunk C2b — Eval Audit reachable (#1236)
 - [ ] Chunk C2c — showLaunchModePicker at creation, close #626
 - [ ] Chunk C2 — tests written, every new test mutation-verified red
 - [ ] Chunk C2 — suite green, evidence from `prawduct-hook test-status`
