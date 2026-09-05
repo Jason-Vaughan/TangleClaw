@@ -143,6 +143,34 @@ All notable changes to TangleClaw are documented in this file.
   correctly only until a disposition row reads something other than the id.
 
 ### Fixed
+- **An engine with no config file says what it cannot carry (#1251).** On an OpenClaw project the
+  whole generated config is skipped — `writeEngineConfig` returns `{skipped: true}` when the
+  profile declares no `configFormat.filename` — and with it go all five `rules.core` flags, all
+  six `rules.extensions` flags, the Global Rules document, and the PortHub, shared-docs and
+  session-memory guides. The skip is right on the write path (#240 asked for it so a launch does
+  not shout about an engine that simply has no file); what was wrong is that nothing anywhere told
+  the operator, which is the failure ADR 0013 names by number. The unit that applies or does not
+  is the **carrier**, not each rule — one file is absent, so everything riding it is absent — so
+  the new `generatedConfig` row in `ENGINE_CONDITIONAL_SETTINGS` gates on `configFormat.filename`
+  and the settings modal renders its reason where the engine is chosen, re-rendered on every
+  dropdown change so it is read while deciding rather than after a launch that dropped the lot.
+  It is keyed and labelled after the file the operator can go and look at, not after its contents:
+  the modal already has a "Project Rules" section, which is the free-text `session_rules` feature
+  and a different thing with the same word. **The engine-specific half of the sentence is declared
+  in the profile** (`configFormat.absentReason`) rather than written in `lib/`, so both realms read
+  the same bytes and cross-realm parity is structural instead of a hand-copied string — a test
+  asserts neither `lib/engines.js`, `public/api-helper.js` nor `public/ui.js` contains a copy of
+  it, and a sixth engine with no carrier states its own case in its own file with no code change.
+  All four writers (launch, create, engine PATCH, boot sync) discarded the skip, so it also reaches
+  the log now through one reporter whose **level the disposition derives**: a project that turned
+  `independentCritic` on and gets nothing has lost real intent and warns, while one running the
+  stock rules never expressed a preference and records at info. The provenance input is derived,
+  because a rules block has no single stored scalar to compare — `rules.core` is deliberately not
+  consulted, since `updateProject` refuses to disable a core rule and counting it would report
+  every project as customized. A guard pins the four call sites against the four writes, and a test
+  pins that the four engines which *do* have a config file are unaffected — a gate keyed on the
+  wrong field would ship a "your rules are not delivered" notice on all of them to fix the one
+  where they genuinely are not.
 - **Warning text is readable in the Light theme (#1252, found reviewing it).** `--warning` was
   spelled at five sites across `public/style.css` and `public/session.css` and declared in no
   palette, so every one of them silently took its `#ffb300` fallback — 1.79:1 against the Light

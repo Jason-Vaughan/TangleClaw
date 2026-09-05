@@ -21,14 +21,21 @@ is the buildable form.
 
 Neither issue needed the invention it asked for. Both answers were already in the repo, unread.
 
-**#1251 — the reason text is already declared, in the profile, and nothing renders it.**
+**#1251 — a reason for this engine is already declared in the profile, and nothing renders it.**
 `data/engines/openclaw.json` carries `capabilities.awareness`, whose `reason` field is a paragraph
-saying exactly why this engine cannot receive a TangleClaw-authored context carrier: *"the remote
-host owns its own context files, so TangleClaw can neither place a carrier there nor paste a prime.
-Recorded gap, not an oversight."* D1c's ruling kept that key precisely because its text records a
-gap; D2a is where it acquires a reader. The consequence is that the operator-facing sentence is
+saying why this engine cannot receive a TangleClaw-authored context carrier: *"the remote host owns
+its own context files, so TangleClaw can neither place a carrier there nor paste a prime. Recorded
+gap, not an oversight."* D1c's ruling kept that key precisely because its text records a gap. It is
+the precedent, not the field to render: it is developer-facing and scoped to the awareness path,
+where what the operator needs is a sentence about the **config carrier**. So D2a declares
+`configFormat.absentReason` beside the `filename` it explains, and `awareness.reason` stays what it
+is. The consequence is the same either way and is the point: the operator-facing sentence is
 **declared per engine and read identically by both realms**, so the cross-realm parity this ADR
-demands is structural rather than a hand-copied string that can drift.
+demands is structural rather than a hand-copied string that can drift — a test asserts neither
+realm contains a copy of it.
+
+*(Built as described. Recorded here rather than silently rewritten because "reuse
+`awareness.reason`" is the cheaper-looking move a later reader will propose again.)*
 
 **#1255 — the provenance schema already exists in the profiles.**
 `capabilities.startupInjection` and `capabilities.readOnlyModeMarker` each carry an `evidence`
@@ -248,9 +255,9 @@ commentary: a field that loses "this was measured" becomes an assumption the nex
 
 ## Status
 
-- [ ] D2a — `generatedConfig` disposition row, reason declared in the profile (#1251)
-- [ ] D2a — settings modal renders it; launch path stops discarding `skipReason`
-- [ ] D2a — tests written, every new test mutation-verified red
+- [x] D2a — `generatedConfig` disposition row, reason declared in the profile (#1251)
+- [x] D2a — settings modal renders it; launch path stops discarding `skipReason`
+- [x] D2a — tests written, every new test mutation-verified red
 - [ ] D2a — chunk Critic, findings addressed
 - [ ] D2b — `wake` block declared in both profiles with per-field `evidence` (#1255)
 - [ ] D2b — `ENGINE_WAKE_PROFILES` derived from the profiles, consumers untouched

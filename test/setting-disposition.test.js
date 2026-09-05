@@ -123,7 +123,16 @@ const PROBES = {
   // conditionality is a caveat, and the fixtures that reach both of ITS
   // outcomes are the silent-prime states crossed in below.
   featureIndexEnabled: { shipped: false, chosen: true, extras: [] },
-  projectMapEnabled: { shipped: false, chosen: true, extras: [] }
+  projectMapEnabled: { shipped: false, chosen: true, extras: [] },
+  generatedConfig: {
+    shipped: false, chosen: true, inapplicable: true, extras: [],
+    // The row's value is DERIVED — whether the operator moved any extension
+    // rule off what ships — so the fixture has to store a rules block rather
+    // than a `generatedConfig` key the product never writes. `independentCritic`
+    // ships false, which is why storing `true` is the customized case and
+    // storing `false` is the stock one.
+    wrap: (value) => ({ rules: { extensions: { independentCritic: value } } })
+  }
 };
 
 // The silent-prime states every case is crossed with. A caveat row's answer
@@ -810,5 +819,202 @@ describe('the settings surfaces render the disposition rather than their own wor
     // exists, so the inert branch must not carry that id.
     const inert = src.slice(src.indexOf('createSilentPrimeNotApplicable'));
     assert.doesNotMatch(inert, /id="createSilentPrime"/);
+  });
+});
+
+describe('an engine with no config file says what it cannot carry (#1251)', () => {
+  const ctx = loadApiHelperGlobals();
+  const logger = require('../lib/logger');
+
+  /** @returns {object} The bundled OpenClaw profile — the one engine with no carrier. */
+  function openclaw() {
+    return bundledProfiles().find((p) => p.id === 'openclaw');
+  }
+
+  it('does not apply on the one bundled engine that has no config file', () => {
+    const d = engines.settingDisposition('generatedConfig', {}, openclaw());
+    assert.equal(d.applies, false);
+    assert.equal(d.evidence, 'configFormat.filename is null');
+    assert.match(d.reason, /OpenClaw has no config file/);
+    assert.match(d.reason, /rules and TangleClaw's operational guides/,
+      'the sentence must name what is lost, not just that something is');
+  });
+
+  it('applies on every bundled engine that does have one', () => {
+    // The failure this catches is the opposite of the defect: a gate keyed on
+    // the wrong field would ship a "your rules are not delivered" notice on the
+    // four engines where they are, to fix the one where they are not.
+    const withCarrier = bundledProfiles()
+      .filter((p) => p.configFormat && p.configFormat.filename);
+    assert.ok(withCarrier.length >= 3, 'the bundled set must contain engines with a carrier');
+    for (const profile of withCarrier) {
+      const d = engines.settingDisposition('generatedConfig', {}, profile);
+      assert.equal(d.applies, true, `${profile.id} carries ${profile.configFormat.filename}`);
+      assert.equal(d.reason, null, `${profile.id} has nothing to tell the operator`);
+      assert.equal(d.caveat, null);
+    }
+  });
+
+  it('reads the engine-specific half of the sentence off the profile', () => {
+    // The whole point of declaring it there: a sixth engine with no config file
+    // states its own case in its own file. A profile that declares nothing
+    // still gets a complete sentence naming the engine — the fallback must not
+    // be a dangling clause.
+    const declared = engines.settingDisposition('generatedConfig', {}, openclaw());
+    assert.ok(openclaw().configFormat.absentReason,
+      'the fixture engine must declare the reason this test says is read');
+    assert.ok(declared.reason.endsWith(openclaw().configFormat.absentReason),
+      'the declared sentence must reach the operator verbatim');
+
+    const bare = engines.settingDisposition('generatedConfig', {},
+      { id: 'bare', name: 'Bare', configFormat: { filename: null } });
+    assert.match(bare.reason, /^Bare has no config file/);
+    assert.ok(bare.reason.endsWith('.'), 'a profile declaring no reason still ends its sentence');
+  });
+
+  it('neither realm carries a copy of the declared sentence', () => {
+    // This is what makes cross-realm parity structural rather than a promise:
+    // the words exist once, in the profile, and both realms read them. A copy
+    // pasted into either file would pass the parity loop and drift the moment
+    // the profile changed.
+    const declared = openclaw().configFormat.absentReason;
+    // Asserted, not assumed: an absent field would make every `includes` below
+    // search for the string "undefined" and fail for a reason that has nothing
+    // to do with a pasted copy.
+    assert.equal(typeof declared, 'string', 'the fixture engine must declare a sentence');
+    for (const rel of [['lib', 'engines.js'], ['public', 'api-helper.js'], ['public', 'ui.js']]) {
+      const src = fs.readFileSync(path.join(__dirname, '..', ...rel), 'utf8');
+      assert.ok(!src.includes(declared),
+        `${rel.join('/')} restates the profile's own sentence instead of rendering it`);
+    }
+  });
+
+  describe('provenance — losing rules the operator chose is not losing the stock set', () => {
+    it('a customized rules block warns', () => {
+      const d = engines.settingDisposition('generatedConfig',
+        { rules: { extensions: { ...DEFAULT_PROJECT_CONFIG.rules.extensions, independentCritic: true } } },
+        openclaw());
+      assert.equal(d.chosen, true);
+      assert.equal(d.level, 'warn');
+    });
+
+    it('the stock rules block records at info', () => {
+      assert.equal(DEFAULT_PROJECT_CONFIG.rules.extensions.independentCritic, false,
+        'if the shipped default changes, this case is no longer the one described');
+      const d = engines.settingDisposition('generatedConfig',
+        { rules: { extensions: { ...DEFAULT_PROJECT_CONFIG.rules.extensions } } }, openclaw());
+      assert.equal(d.chosen, false);
+      assert.equal(d.level, 'info');
+    });
+
+    it('core rules are not consulted — they cannot be a choice', () => {
+      // `updateProject` refuses to disable a core rule, so counting core would
+      // report a project as customized for a value nobody could have set.
+      const d = engines.settingDisposition('generatedConfig',
+        { rules: { core: { changelogPerChange: false }, extensions: {} } }, openclaw());
+      assert.equal(d.chosen, false);
+    });
+
+    it('a rule key the product does not ship counts as customized', () => {
+      const d = engines.settingDisposition('generatedConfig',
+        { rules: { extensions: { somethingOnlyAnOperatorWrote: true } } }, openclaw());
+      assert.equal(d.chosen, true);
+    });
+
+    it('the browser restates the shipped extension rules it compares against', () => {
+      // The browser cannot require `lib/project-config.js`. A default that
+      // changes on one side only reclassifies a real choice as a default.
+      assert.deepEqual({ ...ctx.tcRuleExtensionDefaults },
+        { ...DEFAULT_PROJECT_CONFIG.rules.extensions });
+    });
+  });
+
+  describe('the skip reaches the log at the level the disposition derives', () => {
+    /**
+     * Run `fn` with the logger capturing info-and-above into an array.
+     * @param {() => void} fn - Work to run while capturing.
+     * @returns {string[]} Captured lines.
+     */
+    function captureLog(fn) {
+      const lines = [];
+      const level = logger.getLevel();
+      logger.setLevel('info');
+      logger.setConsoleStream({ write: (s) => lines.push(s) });
+      try {
+        fn();
+      } finally {
+        logger.setConsoleStream(null);
+        logger.setLevel(level);
+      }
+      return lines;
+    }
+
+    const skipped = {
+      written: false,
+      skipped: true,
+      skipReason: 'engine has no config file (configFormat.filename is null)'
+    };
+
+    it('records the missing carrier, naming what was lost', () => {
+      const lines = captureLog(() => {
+        engines.reportMissingConfigCarrier(skipped, {}, openclaw(), { at: 'launch' });
+      });
+      assert.equal(lines.length, 1, 'exactly one line per skipped write');
+      assert.match(lines[0], /OpenClaw has no config file/);
+      assert.match(lines[0], /configFormat\.filename is null/, 'the profile fact goes to the log');
+    });
+
+    it('warns for a project whose rules were a real choice, records for one whose were not', () => {
+      const chosen = { rules: { extensions: { independentCritic: true } } };
+      const warned = captureLog(() => {
+        engines.reportMissingConfigCarrier(skipped, chosen, openclaw(), {});
+      });
+      const noted = captureLog(() => {
+        engines.reportMissingConfigCarrier(skipped, {}, openclaw(), {});
+      });
+      assert.match(warned[0], /WARN/i);
+      assert.doesNotMatch(noted[0], /WARN/i);
+    });
+
+    it('says nothing about a write that succeeded, or a skip for another reason', () => {
+      const lines = captureLog(() => {
+        assert.equal(engines.reportMissingConfigCarrier(
+          { written: true, skipped: false, skipReason: null }, {}, openclaw(), {}), false);
+        // A governed project deferring to its plugin skips on an engine that
+        // HAS a carrier. Reporting that as a missing carrier would be a false
+        // statement about the engine.
+        assert.equal(engines.reportMissingConfigCarrier(
+          { written: false, skipped: true, skipReason: 'project governed by the Prawduct V2 plugin' },
+          {}, bundledProfiles().find((p) => p.id === 'claude'), {}), false);
+      });
+      assert.deepEqual(lines, []);
+    });
+
+    it('every writeEngineConfig call site routes its skip through the one reporter', () => {
+      // One call site is not the family: the skip was discarded at all four
+      // writers, and a fifth added later would discard it again unless the
+      // pairing is checked rather than remembered.
+      for (const rel of [['lib', 'sessions.js'], ['lib', 'projects.js']]) {
+        const src = fs.readFileSync(path.join(__dirname, '..', ...rel), 'utf8');
+        const writes = (src.match(/engines\.writeEngineConfig\(/g) || []).length;
+        const reports = (src.match(/engines\.reportMissingConfigCarrier\(/g) || []).length;
+        assert.equal(reports, writes,
+          `${rel.join('/')} writes an engine config ${writes} time(s) but reports a missing `
+          + `carrier ${reports} time(s) — a skip nobody reports is the defect #1251 filed`);
+      }
+    });
+  });
+
+  it('the settings modal renders the reason where the engine is chosen', () => {
+    const UI = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+    const start = UI.indexOf('function renderGeneratedConfigNotice');
+    assert.ok(start >= 0, 'the notice must have a renderer');
+    const src = UI.slice(start, start + 1600);
+    assert.match(src, /tcSettingDisposition\('generatedConfig'/);
+    assert.match(src, /esc\(disposition\.reason\)/, 'the rendered words are the predicate\'s');
+    assert.doesNotMatch(src, /configFormat/, 'no second carrier gate in the modal');
+    // Re-rendered against the dropdown, not only the saved engine: the operator
+    // needs to read it while choosing, not after a launch that dropped the lot.
+    assert.match(UI, /renderGeneratedConfigNotice\(e\.target\.value/);
   });
 });

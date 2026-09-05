@@ -1168,6 +1168,7 @@ function openSettings(name) {
       <label class="form-label" for="settingsEngine">Engine</label>
       <select class="form-select" id="settingsEngine">${engineOpts}</select>
       <div class="form-hint">Takes effect on next session launch</div>
+      <div id="settingsGeneratedConfigContainer"></div>
     </div>
     <div class="form-group">
       <label class="form-label" for="settingsTags">Tags (comma-separated)</label>
@@ -1241,6 +1242,7 @@ function openSettings(name) {
   renderEvalAuditToggle(project.engine ? project.engine.id : '', initialEvalAuditChecked,
     project.engine || null, project.evalAudit || null);
   renderIndexToggles(project.engine ? project.engine.id : '', initialSilentChecked);
+  renderGeneratedConfigNotice(project.engine ? project.engine.id : '', project.engine || null);
   renderLaunchModeSettings(
     project.engine ? project.engine.id : '',
     project.defaultLaunchMode || 'default',
@@ -1268,6 +1270,11 @@ function openSettings(name) {
     // session it is there. Re-rendered here so the operator reads that before
     // saving, not after a launch that quietly does half the job.
     renderIndexToggles(e.target.value, checkedNow);
+    // The engine the operator just picked may carry no config file at all, and
+    // then the project's rules and TangleClaw's guides reach no session on it.
+    // Rendered against the dropdown rather than the saved engine so they read
+    // it while deciding, not after a launch that silently dropped the lot.
+    renderGeneratedConfigNotice(e.target.value, project.engine || null);
     const auditEl = document.getElementById('settingsEvalAudit');
     renderEvalAuditToggle(e.target.value,
       auditEl ? auditEl.checked : initialEvalAuditChecked,
@@ -1295,6 +1302,40 @@ function openSettings(name) {
   }
 
   modal.classList.add('open');
+}
+
+/**
+ * Say, next to the engine dropdown, when the engine selected there carries no
+ * config file — and so delivers none of the project's rules block, the Global
+ * Rules document, or the PortHub, shared-docs and session-memory guides
+ * (#1251, ADR 0013).
+ *
+ * There is no control to disable here: `rules.core` / `rules.extensions` have
+ * no UI, and the modal's "Project Rules" section is the free-text
+ * `session_rules` feature, a different thing with the same word. What the
+ * operator is owed is the statement, and it belongs where the engine is chosen
+ * because choosing the engine is what costs them the carrier.
+ *
+ * The sentence is rendered, never composed here — `tcSettingDisposition` is the
+ * one owner of what the operator reads, and its engine-specific half comes off
+ * the profile itself. Nothing is rendered when the engine has a config file,
+ * because then the whole setting works and there is nothing to say.
+ *
+ * @param {string} engineId - Engine id from the dropdown's current value
+ * @param {object|null} [projectEngine] - The project's own enriched engine, for
+ *   the connection-backed ids `state.engines` omits.
+ */
+function renderGeneratedConfigNotice(engineId, projectEngine) {
+  const container = document.getElementById('settingsGeneratedConfigContainer');
+  if (!container) return;
+  const profile = tcResolveEngineProfile(state.engines, engineId, projectEngine);
+  // The enriched project carries no `rules`, so the disposition's `chosen` and
+  // `level` are the shipped-default answer here. Neither reaches the operator:
+  // this renders `reason`, which turns on the engine alone.
+  const disposition = tcSettingDisposition('generatedConfig', null, profile);
+  container.innerHTML = disposition.applies
+    ? ''
+    : `<div class="form-hint form-hint--caveat">${esc(disposition.reason)}</div>`;
 }
 
 /**
