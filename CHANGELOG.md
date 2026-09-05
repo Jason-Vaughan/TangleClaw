@@ -143,6 +143,24 @@ All notable changes to TangleClaw are documented in this file.
   correctly only until a disposition row reads something other than the id.
 
 ### Fixed
+- **Warning text is readable in the Light theme (#1252, found reviewing it).** `--warning` was
+  spelled at five sites across `public/style.css` and `public/session.css` and declared in no
+  palette, so every one of them silently took its `#ffb300` fallback — 1.79:1 against the Light
+  theme's white card, against the 4.5:1 floor `nonfunctional-requirements.md` § Direction binds.
+  The fifth site was the new caveat line, which made the failure exactly the one the caveat exists
+  to remove: the operator reads nothing. The token is now declared per theme, so the dark and
+  high-contrast themes render byte-identically and Light gets a value that clears the floor on
+  every surface it can land on. Nothing enforced that floor, which is why this shipped five times;
+  `test/theme-contrast.test.js` now measures every semantic text token against the surfaces its own
+  theme declares. It found six further pairs below the floor in the v2 palette — recorded with
+  their exact measured ratios, so a regression fails while the status quo passes, and filed rather
+  than dropped from the guard, because changing what `--danger` looks like product-wide is not a
+  side effect this chunk gets to have.
+- **An unchecked silent prime survives browsing the engine dropdown (#1252, found reviewing it).**
+  The modal recovered that checkbox's state from an element the inert branch does not render, so
+  claude → codex → claude re-checked a box the operator had unchecked and saved it back on. The
+  state is held outside the DOM now. Pre-existing, but the index toggles' new caveat rides the same
+  value and would have disappeared at the same moment, for the same wrong reason.
 - **The Feature Index and Project Map toggles say which half of them does not run here (#1252).**
   Both settings have two halves and only one is engine-agnostic: the wrap seeds and maintains
   `FEATURES.md` / `PROJECT-MAP.md` on every engine, while the SessionStart pointer that tells the
