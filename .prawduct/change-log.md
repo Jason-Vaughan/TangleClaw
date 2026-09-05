@@ -26,6 +26,51 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-05 — #1252/#1253/#1254: a setting that half-applies says which half
+
+<!-- prawduct: type=bugfix | scope=audit-defects-1252 | chunks=D1 -->
+
+ADR 0013 binds a setting TangleClaw offers to take effect, or to say — where it is offered, in
+words the operator reads — that it does not. Its retroactivity is *migrate*, so the five instances
+the C1 audit found became defects on ratification rather than grandfathered exceptions. Three of
+them share the disposition mechanism and are this chunk; #1251 and #1255 need surfaces and schema
+decisions that do not exist yet, and are D2.
+
+**The mechanism grew a third answer, because two of them were both false.** The Feature Index and
+Project Map toggles have two halves: the wrap seeds and maintains `FEATURES.md` / `PROJECT-MAP.md`
+on every engine, while the SessionStart pointer that tells a session the file exists rides the
+hidden prime, which four of five engines cannot deliver. Reporting the setting as not applying
+calls a running feature dead; reporting it as applying, in silence, is the gap the norm closes. So
+a row in `ENGINE_CONDITIONAL_SETTINGS` may declare a `caveat` instead of an `applies` gate, and
+`settingDisposition` answers `applies: true` with the sentence naming the half that does not run.
+One or the other, never both — the browser mirror answers on table membership before any gate could
+run, so a both-row is unrepresentable there, and the guard fails one at the table.
+
+The caveat asks `silentPrimeDisposition`, the same predicate the pointer itself is gated on, so it
+cannot report a loss the launch path does not have; a test drives both over every bundled profile.
+The gate is a triple, and the operator's own leg is named too: turning silent prime off on Claude
+costs the pointer, which was true and undocumented.
+
+**A rule that carries a value now reaches the config.** `_getRulesContent` filtered `v === true`,
+so `loggingLevel` — the only non-boolean rule the product ships — could never reach the prose path,
+and the setting did nothing on three of five generators while two read it directly. Repaired rather
+than removed: removal was available (no project sets a non-default level) but would have changed
+every codex and aider config to buy nothing, and left the filter unable to render any
+value-carrying rule ever added.
+
+**Read capabilities are distinguishable from declared ones.** Four flags are declared across the
+bundled profiles and drive nothing, and the data did not say so — a capability panel would render
+`supportsCoAuthor: true` on aider as a promise the product does not keep. `READ_CAPABILITIES`
+records what the product acts on, guarded both ways so it cannot decay into a description of what
+somebody once believed. Nothing was deleted from the profiles.
+
+Four review rounds. What they caught that the suite could not: `--warning` was spelled at five
+sites and declared in no palette, so every one took its `#ffb300` fallback — 1.79:1 on the Light
+theme's white card, against a floor `nonfunctional-requirements.md` § Direction binds, and the
+fifth site was the new caveat. Nothing enforced that floor; `test/theme-contrast.test.js` now does,
+and found six more pairs in the v2 palette (#1265). Also filed: the launch-mode section an OpenClaw
+project never gets (#1264), and Prawduct's plan discovery not seeing `.tangleclaw/plans/` (#1263).
+
 ## 2026-09-03 — #854: the wrap asks prawduct for its verdict before it writes anything
 
 <!-- prawduct: type=feature | scope=wrap-preflight-854 -->
