@@ -1127,6 +1127,15 @@ function openSettings(name) {
   // touching the rest of the modal. The container is always in the DOM; it just
   // becomes empty for engines that don't advertise supportsSilentPrime.
   const initialSilentChecked = !!project.silentPrime;
+  // What the operator has silent prime set to RIGHT NOW, across engine
+  // switches. The inert branch renders `#settingsSilentPrimeNotApplicable`,
+  // not `#settingsSilentPrime`, so recovering the state from the DOM loses it
+  // the moment the dropdown passes through an engine that cannot honor it:
+  // claude -> codex -> claude silently re-checked a box the operator had
+  // unchecked, and saved it back on. The index caveat now rides the same
+  // value, so it would vanish at the same moment and for the same wrong
+  // reason.
+  let silentPrimeNow = initialSilentChecked;
   // Feature Index toggle (#207, chunk 1) — always rendered; what varies by
   // engine is how much of it takes effect, which the disposition says.
   const initialFeatureIndexChecked = !!project.featureIndexEnabled;
@@ -1249,7 +1258,10 @@ function openSettings(name) {
   // stale selection would be rejected by the PATCH validation.
   document.getElementById('settingsEngine').addEventListener('change', (e) => {
     const checkbox = document.getElementById('settingsSilentPrime');
-    const checkedNow = checkbox ? checkbox.checked : initialSilentChecked;
+    // The live control when there is one; otherwise the remembered state, which
+    // an inert engine cannot have changed.
+    if (checkbox) silentPrimeNow = checkbox.checked;
+    const checkedNow = silentPrimeNow;
     renderSilentPrimeToggle(e.target.value, checkedNow, project.engine || null);
     // The index toggles stay live on every engine, but what they say does not:
     // an engine that delivers no hidden prime maintains the file and tells no
@@ -1277,7 +1289,8 @@ function openSettings(name) {
   if (silentPrimeHost) {
     silentPrimeHost.addEventListener('change', (e) => {
       if (!e.target || e.target.id !== 'settingsSilentPrime') return;
-      renderIndexToggles(document.getElementById('settingsEngine').value, e.target.checked);
+      silentPrimeNow = e.target.checked;
+      renderIndexToggles(document.getElementById('settingsEngine').value, silentPrimeNow);
     });
   }
 

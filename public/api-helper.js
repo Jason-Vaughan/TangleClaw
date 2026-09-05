@@ -3654,7 +3654,16 @@
    * One owner because this is the input that decides whether a control prints
    * "TangleClaw has no profile for this engine" — the false sentence the whole
    * disposition exists to prevent. Written out at each surface, the next engine
-   * family whose ids the roster omits has to be remembered in three places.
+   * family whose ids the roster omits has to be remembered separately at each.
+   *
+   * **It owns the surfaces that feed a disposition, which is not every profile
+   * lookup in the settings modal.** `renderLaunchModeSettings` and
+   * `doSaveSettings`'s bypass-hidden guard still read `state.engines` directly
+   * and are not handed the project's own engine at all — so a connection-backed
+   * OpenClaw project resolves to nothing there and loses its launch-mode
+   * section entirely. That is a real defect and a separate one: routing it
+   * through here changes what those surfaces render, which is a behavior change
+   * owing its own verification rather than a side effect of this extraction.
    *
    * @param {Array<object>|null} roster - `state.engines`.
    * @param {string} engineId - The engine dropdown's current value.

@@ -121,7 +121,11 @@ describe('read capabilities are distinguishable from declared ones (#1254)', () 
     // nothing answers "unread" for everything — the whole file would pass
     // while proving the opposite of what it claims. Pinned against a flag read
     // in a file the walk must cross, and against one the walk must find bare.
-    assert.deepEqual(readersOf('supportsConfigFile'), ['lib/engines.js']);
+    // `includes`, not an exact list: a legitimate second reader of this flag
+    // would otherwise turn red with a message about the SEARCH rather than
+    // about the change. The two probes below already bound the search from
+    // both sides, so the exact list bought nothing it needs.
+    assert.ok(readersOf('supportsConfigFile').includes('lib/engines.js'));
     assert.ok(plainReadersOf('settingDisposition').length > 0,
       'the bare search reaches no code — every "no readers" verdict below is vacuous');
     assert.deepEqual(readersOf('__noSuchCapability__'), [], 'and it does not match everything');

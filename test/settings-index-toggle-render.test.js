@@ -115,6 +115,19 @@ describe('both inputs the caveat turns on re-render it (#1252)', () => {
     assert.match(handler.slice(0, 1200), /renderIndexToggles\(e\.target\.value/);
   });
 
+  it('remembers the silent-prime state across an engine that cannot honor it', () => {
+    // The inert branch renders `#settingsSilentPrimeNotApplicable`, so
+    // recovering the state from the DOM loses it on the way through codex:
+    // claude -> codex -> claude re-checked a box the operator had unchecked,
+    // and the caveat riding that value disappeared with it.
+    assert.match(body, /let silentPrimeNow = initialSilentChecked;/,
+      'the state is held outside the DOM the inert branch replaces');
+    assert.match(body, /if \(checkbox\) silentPrimeNow = checkbox\.checked;/,
+      'a live control updates it; an inert one cannot have changed it');
+    assert.doesNotMatch(body, /checkbox \? checkbox\.checked : initialSilentChecked/,
+      'the initial value is no longer the fallback — that is the drop');
+  });
+
   it('re-renders them when silent prime is switched, without waiting for a save', () => {
     // Delegated to the container, which survives every re-render, rather than
     // bound to the checkbox, which `renderSilentPrimeToggle` replaces on each
