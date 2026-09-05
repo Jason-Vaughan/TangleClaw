@@ -199,9 +199,15 @@ describe('settingDisposition — the one answer to "does this setting apply here
     // #1251 and #1255), so this is checked over the table rather than trusted
     // to the docblock that states it.
     for (const [setting, spec] of Object.entries(engines.ENGINE_CONDITIONAL_SETTINGS)) {
-      assert.ok(typeof spec.applies === 'function' || typeof spec.caveat === 'function',
-        `${setting} declares neither an applies gate nor a caveat — it is not `
-        + 'engine-conditional, or a key is misspelled');
+      const declared = ['applies', 'caveat'].filter((k) => typeof spec[k] === 'function');
+      // Exactly one, matching what both the docblock and the engine guide say.
+      // Neither is the silence above. BOTH is a row the browser mirror cannot
+      // represent — membership in `TC_SETTING_CAVEAT_FILES` answers before any
+      // gate runs — so the server would gate it and the browser would not.
+      assert.deepEqual(declared.length, 1,
+        `${setting} declares ${JSON.stringify(declared)} — a row declares an applies gate `
+        + 'OR a caveat: neither is a control that says nothing, and both is a shape the '
+        + 'browser mirror cannot answer until TC_SETTING_CAVEAT_FILES carries caveat functions');
       if (typeof spec.applies === 'function') {
         assert.equal(typeof spec.reason, 'function', `${setting} gates without a reason to render`);
         assert.equal(typeof spec.evidence, 'function', `${setting} gates without a profile fact`);

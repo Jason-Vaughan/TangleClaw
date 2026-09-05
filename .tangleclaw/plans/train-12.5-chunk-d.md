@@ -149,5 +149,5 @@ the prose path. `_generateCodexYaml` and `_generateAiderConf` read it directly a
 - [x] D1 — tests written, every new test mutation-verified red
 - [x] D1 — suite green, evidence recorded
 - [x] D1 — CHANGELOG entry
-- [ ] D1 — cumulative Critic + verify-resolutions, final round clean
+- [x] D1 — cumulative Critic + verify-resolutions, final round clean
 - [ ] D1 — PR with `Fixes` for each car it closes
