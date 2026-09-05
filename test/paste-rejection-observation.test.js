@@ -24,11 +24,17 @@
  * nothing here can manufacture a retry on a healthy launch.
  */
 
-const { describe, it } = require('node:test');
+const { describe, it, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { setLevel } = require('../lib/logger');
+const { useThrowawayStore } = require('./_engine-store');
 
 setLevel('error');
+
+// The wake table is derived from the engine profiles the store holds (#1255),
+// so it must be pointed at a throwaway one before the read below.
+const _store = useThrowawayStore('paste-rejection');
+after(() => _store.cleanup());
 
 const sessions = require('../lib/sessions');
 const medusaWake = require('../lib/medusa-wake');

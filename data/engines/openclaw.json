@@ -4,7 +4,12 @@
   "pickerHidden": true,
   "command": "ssh",
   "interactionModel": "session",
-  "configFormat": { "filename": null, "syntax": null, "generator": null },
+  "configFormat": {
+    "filename": null,
+    "syntax": null,
+    "generator": null,
+    "absentReason": "The engine runs on a remote host that owns its own context files, so there is nothing here for TangleClaw to write into."
+  },
   "coAuthorFormat": null,
   "commands": [],
   "detection": null,

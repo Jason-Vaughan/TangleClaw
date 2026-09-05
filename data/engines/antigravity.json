@@ -40,7 +40,46 @@
     "supportsSlashCommands": false,
     "supportsPrimePrompt": true,
     "supportsConfigFile": true,
-    "supportsCoAuthor": false
+    "supportsCoAuthor": false,
+    "wake": {
+      "busyMarker": "esc to cancel",
+      "promptPattern": "^\\s*>\\s*$",
+      "promptGlyph": ">",
+      "promptPad": null,
+      "placeholderSgr": [90],
+      "idleMarker": "? for shortcuts",
+      "pasteRejectedMarker": "Please try again shortly",
+      "evidence": {
+        "busyMarker": {
+          "verifiedOn": "2026-07-14",
+          "source": "#560 live spike, Medusa builder pane: the status row flips from `? for shortcuts` to `esc to cancel` while a spinner shows 'Generating…'."
+        },
+        "promptPattern": {
+          "verifiedOn": "2026-07-14",
+          "source": "#560 live spike: the bare `>` input line is STILL rendered mid-turn on this engine, which is why the pattern alone cannot gate a nudge here and `idleMarker` is required alongside it."
+        },
+        "promptGlyph": {
+          "verifiedOn": "2026-07-14",
+          "source": "#560 live spike: `>` is the composer glyph."
+        },
+        "promptPad": {
+          "verifiedOn": null,
+          "source": "Never captured from a live pane. `null` keeps the older, laxer composer reading rather than inheriting Claude Code's measured NBSP — an unmeasured engine gets the honest laxer gate, never a borrowed fact (#1109)."
+        },
+        "placeholderSgr": {
+          "verifiedOn": "2026-08-21",
+          "source": "Live captures of both engines (#1105): antigravity greys its mode banner ('Accept-edits mode: …') with SGR 90 (bright black) rather than dimming it — a different attribute for the same idea, which is why this is declared per engine and not shared."
+        },
+        "idleMarker": {
+          "verifiedOn": "2026-07-14",
+          "source": "#560 live spike: `? for shortcuts` is present at rest and absent during both generation and any dialog/menu. Required here because the bare prompt persists mid-turn, so the busy marker is never the only thing between a nudge and a busy pane; it also makes the permission-dialog case fail-safe by construction, since a dialog drops the hint."
+        },
+        "pasteRejectedMarker": {
+          "verifiedOn": "2026-09-01",
+          "source": "agy 1.1.22, sessions 899/900/901 (#1134): the CLI's own words when it discards a submission during account verification — the complete at-rest UI rendered while the account was still verifying and everything submitted was dropped. NOT re-confirmed on 1.1.24, whose verify window could not be reproduced here (this account is already verified), so the marker may be a no-op on newer builds. Safe in the direction that matters: an absent marker leaves the pre-existing verdict untouched and never invents a retry."
+        }
+      }
+    }
   },
   "statusPage": {
     "adapter": "google-incidents",

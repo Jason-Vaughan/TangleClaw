@@ -23,6 +23,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const engines = require('../lib/engines');
@@ -36,6 +37,26 @@ function bundledProfiles() {
   return fs.readdirSync(ENGINES_DIR)
     .filter((f) => f.endsWith('.json'))
     .map((f) => JSON.parse(fs.readFileSync(path.join(ENGINES_DIR, f), 'utf8')));
+}
+
+/**
+ * Every bundled profile as the BROWSER receives it.
+ *
+ * The server reads whole profiles off disk; `public/` only ever sees what
+ * `engineClientPayload` projects, and a predicate reading a field the
+ * projection drops answers for every engine as though the capability were
+ * absent — silently, and identically to a correct answer about an engine that
+ * genuinely lacks it. Comparing the two realms over raw profiles cannot see
+ * that: both sides get a field production never sends, and agree.
+ *
+ * So the browser side is driven through the real producer. A field added to a
+ * predicate in `public/` and not to the projection fails here rather than in
+ * the modal.
+ *
+ * @returns {object[]}
+ */
+function clientProfiles() {
+  return bundledProfiles().map((p) => engines.engineClientPayload(p, { available: true }));
 }
 
 /**
@@ -123,7 +144,19 @@ const PROBES = {
   // conditionality is a caveat, and the fixtures that reach both of ITS
   // outcomes are the silent-prime states crossed in below.
   featureIndexEnabled: { shipped: false, chosen: true, extras: [] },
-  projectMapEnabled: { shipped: false, chosen: true, extras: [] }
+  projectMapEnabled: { shipped: false, chosen: true, extras: [] },
+  generatedConfig: {
+    shipped: false, chosen: true, inapplicable: true, extras: [],
+    // The row's value is DERIVED — whether the operator moved any extension
+    // rule off what ships — so the fixture has to store a rules block rather
+    // than a `generatedConfig` key the product never writes. `independentCritic`
+    // ships false, which is why storing `true` is the customized case and
+    // storing `false` is the stock one.
+    wrap: (value) => ({ rules: { extensions: { independentCritic: value } } })
+  },
+  // Off is what ships — a wake spends a real turn — so a stored `true` is the
+  // operator's choice, and it cannot apply on an engine declaring no signature.
+  medusaWake: { shipped: false, chosen: true, inapplicable: true, extras: [] }
 };
 
 // The silent-prime states every case is crossed with. A caveat row's answer
@@ -678,7 +711,11 @@ describe('settingDisposition — the one answer to "does this setting apply here
     });
 
     it('agrees field for field over every bundled profile and every gated setting', () => {
-      const profiles = bundledProfiles();
+      // Projected, not raw: this loop is the one place the two realms are held
+      // to the same sentence, and feeding the browser a profile richer than
+      // production ever sends it is how a row keyed on an unprojected field
+      // passes here and answers for every engine in the modal.
+      const profiles = clientProfiles();
       assert.ok(profiles.length > 0, 'no bundled profiles found — this would assert nothing');
 
       // Fixtures the bundled set does not contain, so the loop compares more
@@ -810,5 +847,527 @@ describe('the settings surfaces render the disposition rather than their own wor
     // exists, so the inert branch must not carry that id.
     const inert = src.slice(src.indexOf('createSilentPrimeNotApplicable'));
     assert.doesNotMatch(inert, /id="createSilentPrime"/);
+  });
+});
+
+describe('an engine with no config file says what it cannot carry (#1251)', () => {
+  const ctx = loadApiHelperGlobals();
+  const logger = require('../lib/logger');
+
+  /** @returns {object} The bundled OpenClaw profile — the one engine with no carrier. */
+  function openclaw() {
+    return bundledProfiles().find((p) => p.id === 'openclaw');
+  }
+
+  it('does not apply on the one bundled engine that has no config file', () => {
+    const d = engines.settingDisposition('generatedConfig', {}, openclaw());
+    assert.equal(d.applies, false);
+    assert.equal(d.evidence, 'configFormat.filename is null');
+    assert.match(d.reason, /OpenClaw has no config file/);
+    assert.match(d.reason, /rule settings and TangleClaw guides it would carry/,
+      'the sentence must name what is lost, and scope it to what that file carries — '
+      + 'the modal has a separate Project Rules section this row has not checked');
+  });
+
+  it('applies on every bundled engine that does have one', () => {
+    // The failure this catches is the opposite of the defect: a gate keyed on
+    // the wrong field would ship a "your rules are not delivered" notice on the
+    // four engines where they are, to fix the one where they are not.
+    const withCarrier = bundledProfiles()
+      .filter((p) => p.configFormat && p.configFormat.filename);
+    assert.ok(withCarrier.length >= 3, 'the bundled set must contain engines with a carrier');
+    for (const profile of withCarrier) {
+      const d = engines.settingDisposition('generatedConfig', {}, profile);
+      assert.equal(d.applies, true, `${profile.id} carries ${profile.configFormat.filename}`);
+      assert.equal(d.reason, null, `${profile.id} has nothing to tell the operator`);
+      assert.equal(d.caveat, null);
+    }
+  });
+
+  it('reads the engine-specific half of the sentence off the profile', () => {
+    // The whole point of declaring it there: a sixth engine with no config file
+    // states its own case in its own file. A profile that declares nothing
+    // still gets a complete sentence naming the engine — the fallback must not
+    // be a dangling clause.
+    const declared = engines.settingDisposition('generatedConfig', {}, openclaw());
+    assert.ok(openclaw().configFormat.absentReason,
+      'the fixture engine must declare the reason this test says is read');
+    assert.ok(declared.reason.endsWith(openclaw().configFormat.absentReason),
+      'the declared sentence must reach the operator verbatim');
+
+    const bare = engines.settingDisposition('generatedConfig', {},
+      { id: 'bare', name: 'Bare', configFormat: { filename: null } });
+    assert.match(bare.reason, /^Bare has no config file/);
+    assert.ok(bare.reason.endsWith('.'), 'a profile declaring no reason still ends its sentence');
+  });
+
+  it('neither realm carries a copy of the declared sentence', () => {
+    // This is what makes cross-realm parity structural rather than a promise:
+    // the words exist once, in the profile, and both realms read them. A copy
+    // pasted into either file would pass the parity loop and drift the moment
+    // the profile changed.
+    const declared = openclaw().configFormat.absentReason;
+    // Asserted, not assumed: an absent field would make every `includes` below
+    // search for the string "undefined" and fail for a reason that has nothing
+    // to do with a pasted copy.
+    assert.equal(typeof declared, 'string', 'the fixture engine must declare a sentence');
+    for (const rel of [['lib', 'engines.js'], ['public', 'api-helper.js'], ['public', 'ui.js']]) {
+      const src = fs.readFileSync(path.join(__dirname, '..', ...rel), 'utf8');
+      assert.ok(!src.includes(declared),
+        `${rel.join('/')} restates the profile's own sentence instead of rendering it`);
+    }
+  });
+
+  describe('provenance — losing rules the operator chose is not losing the stock set', () => {
+    it('a customized rules block warns', () => {
+      const d = engines.settingDisposition('generatedConfig',
+        { rules: { extensions: { ...DEFAULT_PROJECT_CONFIG.rules.extensions, independentCritic: true } } },
+        openclaw());
+      assert.equal(d.chosen, true);
+      assert.equal(d.level, 'warn');
+    });
+
+    it('the stock rules block records at info', () => {
+      assert.equal(DEFAULT_PROJECT_CONFIG.rules.extensions.independentCritic, false,
+        'if the shipped default changes, this case is no longer the one described');
+      const d = engines.settingDisposition('generatedConfig',
+        { rules: { extensions: { ...DEFAULT_PROJECT_CONFIG.rules.extensions } } }, openclaw());
+      assert.equal(d.chosen, false);
+      assert.equal(d.level, 'info');
+    });
+
+    it('core rules are not consulted — they cannot be a choice', () => {
+      // `updateProject` refuses to disable a core rule, so counting core would
+      // report a project as customized for a value nobody could have set.
+      const d = engines.settingDisposition('generatedConfig',
+        { rules: { core: { changelogPerChange: false }, extensions: {} } }, openclaw());
+      assert.equal(d.chosen, false);
+    });
+
+    it('a rule key the product does not ship counts as customized', () => {
+      const d = engines.settingDisposition('generatedConfig',
+        { rules: { extensions: { somethingOnlyAnOperatorWrote: true } } }, openclaw());
+      assert.equal(d.chosen, true);
+    });
+
+    it('the browser restates the shipped extension rules it compares against', () => {
+      // The browser cannot require `lib/project-config.js`. A default that
+      // changes on one side only reclassifies a real choice as a default.
+      assert.deepEqual({ ...ctx.tcSettingRuleDefaults },
+        { ...DEFAULT_PROJECT_CONFIG.rules.extensions });
+    });
+  });
+
+  describe('the skip reaches the log at the level the disposition derives', () => {
+    /**
+     * Run `fn` with the logger capturing info-and-above into an array.
+     * @param {() => void} fn - Work to run while capturing.
+     * @returns {string[]} Captured lines.
+     */
+    function captureLog(fn) {
+      const lines = [];
+      const level = logger.getLevel();
+      logger.setLevel('info');
+      logger.setConsoleStream({ write: (s) => lines.push(s) });
+      try {
+        fn();
+      } finally {
+        logger.setConsoleStream(null);
+        logger.setLevel(level);
+      }
+      return lines;
+    }
+
+    const skipped = {
+      written: false,
+      skipped: true,
+      skipReason: 'engine has no config file (configFormat.filename is null)'
+    };
+
+    it('records the missing carrier, naming what was lost', () => {
+      const lines = captureLog(() => {
+        engines.reportMissingConfigCarrier(skipped, {}, openclaw(), { at: 'launch' });
+      });
+      assert.equal(lines.length, 1, 'exactly one line per skipped write');
+      assert.match(lines[0], /OpenClaw has no config file/);
+      assert.match(lines[0], /configFormat\.filename is null/, 'the profile fact goes to the log');
+    });
+
+    it('warns for a project whose rules were a real choice, records for one whose were not', () => {
+      const chosen = { rules: { extensions: { independentCritic: true } } };
+      const warned = captureLog(() => {
+        engines.reportMissingConfigCarrier(skipped, chosen, openclaw(), {});
+      });
+      const noted = captureLog(() => {
+        engines.reportMissingConfigCarrier(skipped, {}, openclaw(), {});
+      });
+      assert.match(warned[0], /WARN/i);
+      assert.doesNotMatch(noted[0], /WARN/i);
+    });
+
+    it('says nothing about a write that succeeded, or a skip for another reason', () => {
+      const lines = captureLog(() => {
+        assert.equal(engines.reportMissingConfigCarrier(
+          { written: true, skipped: false, skipReason: null }, {}, openclaw(), {}), false);
+        // A governed project deferring to its plugin skips on an engine that
+        // HAS a carrier. Reporting that as a missing carrier would be a false
+        // statement about the engine.
+        assert.equal(engines.reportMissingConfigCarrier(
+          { written: false, skipped: true, skipReason: 'project governed by the Prawduct V2 plugin' },
+          {}, bundledProfiles().find((p) => p.id === 'claude'), {}), false);
+      });
+      assert.deepEqual(lines, []);
+    });
+
+    it('a real writeEngineConfig on a carrier-less engine emits the line', () => {
+      // The guard below is structural — it reads source. This one runs the
+      // writer, because "the report is wired into the skip branch" and "the
+      // skip branch emits" are different claims, and only the second is the one
+      // an operator depends on.
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-carrier-'));
+      try {
+        const lines = captureLog(() => {
+          const result = engines.writeEngineConfig('openclaw', dir, {}, openclaw());
+          assert.equal(result.skipped, true, 'the fixture must reach the skip branch');
+        });
+        assert.equal(lines.length, 1, 'the writer emits exactly one line for the missing carrier');
+        assert.match(lines[0], /OpenClaw has no config file/);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('a writeEngineConfig that succeeds emits no such line', () => {
+      // The other half: `claude` has a carrier, so the same call must stay
+      // quiet. Without this the test above passes on a writer that reports
+      // unconditionally.
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-carrier-ok-'));
+      try {
+        const claude = bundledProfiles().find((p) => p.id === 'claude');
+        const lines = captureLog(() => {
+          engines.writeEngineConfig('claude', dir, DEFAULT_PROJECT_CONFIG, claude);
+        });
+        assert.deepEqual(lines.filter((l) => l.includes('has no config file')), []);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('the writer reports its own skip, so no call site has to remember', () => {
+      // The first version of this paired a report with each call site and
+      // checked the pairing over a hardcoded two-file list — which holds until
+      // a fifth writer appears somewhere the list does not look, and then
+      // reintroduces #1251 with the guard green. The obligation is discharged
+      // inside `writeEngineConfig` instead, so there is nothing left to pair.
+      const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'engines.js'), 'utf8');
+      assert.match(declarationSource(src, 'function writeEngineConfig'),
+        /reportMissingConfigCarrier\(/,
+        'the writer must report the missing carrier itself');
+      // And nothing outside that module calls it, which would double the line
+      // and put the obligation back on the caller.
+      const callers = capabilityReads(path.join(__dirname, '..', 'lib'), 'reportMissingConfigCarrier');
+      assert.deepEqual(callers, ['lib/engines.js'],
+        'only the writer reports; a caller doing it too is the pattern this replaced');
+    });
+  });
+
+  it('the settings modal renders the reason where the engine is chosen', () => {
+    const UI = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+    const src = declarationSource(UI, 'function renderGeneratedConfigNotice');
+    assert.match(src, /tcSettingDisposition\('generatedConfig'/);
+    assert.match(src, /esc\(disposition\.reason\)/, 'the rendered words are the predicate\'s');
+    assert.doesNotMatch(src, /configFormat/, 'no second carrier gate in the modal');
+    // Re-rendered against the dropdown, not only the saved engine: the operator
+    // needs to read it while choosing, not after a launch that dropped the lot.
+    assert.match(UI, /renderGeneratedConfigNotice\(e\.target\.value/);
+  });
+});
+
+describe('the wake nudge says where it cannot reach (#1255)', () => {
+  const ctx = loadApiHelperGlobals();
+  const vm = require('node:vm');
+  const { makeDocument } = require('./_mini-dom');
+  const UI = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+  const API = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
+
+  /**
+   * A bundled profile as the browser receives it.
+   * @param {string} id - Engine id.
+   * @returns {object}
+   */
+  const client = (id) => engines.engineClientPayload(
+    bundledProfiles().find((p) => p.id === id), { available: true });
+
+  it('applies on exactly the engines whose profile declares a wake signature', () => {
+    // Both directions, over the bundled roster: a gate keyed on the wrong field
+    // would either kill the setting on the two engines where it works or offer
+    // it on the three where a nudge would be typed against a guessed signature.
+    const nudgeable = [];
+    for (const profile of bundledProfiles()) {
+      const d = engines.settingDisposition('medusaWake', { medusaWake: true }, profile);
+      if (d.applies) {
+        nudgeable.push(profile.id);
+        assert.equal(d.reason, null, `${profile.id} has nothing to tell the operator`);
+        assert.equal(d.caveat, null, `${profile.id}: the row is all-or-nothing by design`);
+      } else {
+        assert.match(d.reason, /has no measured idle signature/, `${profile.id} owes a reason`);
+        assert.equal(d.evidence, 'capabilities.wake is not declared, or is declared malformed');
+      }
+    }
+    assert.deepEqual(nudgeable.sort(), ['antigravity', 'claude'],
+      'the modal must agree with the monitor about which engines can be nudged');
+  });
+
+  it('answers from the profile the engines API already ships', () => {
+    // The whole reason the wake data moved into the profiles: the browser can
+    // only compute this if the projection carries it. A predicate reading a
+    // field production never sends answers "no signature" for every engine —
+    // indistinguishable from a correct answer about an engine that lacks it.
+    for (const profile of bundledProfiles()) {
+      const projected = engines.engineClientPayload(profile, { available: true });
+      const server = engines.settingDisposition('medusaWake', { medusaWake: true }, profile);
+      const browser = ctx.tcSettingDisposition('medusaWake', { medusaWake: true }, projected);
+      assert.equal(browser.applies, server.applies, `${profile.id}: applies`);
+      assert.equal(browser.reason, server.reason, `${profile.id}: reason`);
+    }
+    assert.ok(client('claude').capabilities.wake,
+      'the browser must receive the wake block, or its predicate is answering about nothing');
+    assert.equal(client('codex').capabilities.wake, undefined);
+  });
+
+  it('losing a wake the operator switched on warns; losing the default records', () => {
+    const codex = bundledProfiles().find((p) => p.id === 'codex');
+    const chosen = engines.settingDisposition('medusaWake', { medusaWake: true }, codex);
+    assert.equal(chosen.chosen, true);
+    assert.equal(chosen.level, 'warn');
+    // A project that never set the key is on the shipped default — off — and
+    // was never promised anything, so it records rather than alarms.
+    const untouched = engines.settingDisposition('medusaWake', {}, codex);
+    assert.equal(untouched.chosen, false);
+    assert.equal(untouched.value, false);
+    assert.equal(untouched.level, 'info');
+  });
+
+  it('the row is all-or-nothing, and the check that says so is recorded', () => {
+    // ADR 0013 asks that a row be checked for PARTIAL application before an
+    // `applies` gate is written (#1252's lesson). An unprofiled engine is
+    // skipped by the monitor before every other gate, so there is no half that
+    // runs — and the next reader's cheapest wrong move is assuming a caveat.
+    const spec = engines.ENGINE_CONDITIONAL_SETTINGS.medusaWake;
+    assert.equal(typeof spec.applies, 'function');
+    assert.equal(spec.caveat, undefined);
+    const src = declarationSource(fs.readFileSync(path.join(__dirname, '..', 'lib', 'engines.js'), 'utf8'),
+      'const ENGINE_CONDITIONAL_SETTINGS');
+    assert.match(src, /#1252/, 'the partial-application check is recorded at the table');
+  });
+
+  describe('the modal control', () => {
+    /**
+     * Run the shipped renderer against a mini-DOM and return the container's
+     * HTML — the real function, lifted from source, not a copy.
+     * @param {object} opts - `engineId`, `projectEngine`, `checked`, `engines`.
+     * @returns {string}
+     */
+    function render(opts) {
+      const { doc } = makeDocument(['settingsMedusaWakeContainer']);
+      const vmCtx = {
+        document: doc,
+        state: { engines: opts.engines || [] },
+        esc: (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+      };
+      vm.createContext(vmCtx);
+      const tables = API.match(/const TC_SETTING_\w+ = \{[\s\S]*?\n {2}\};/g) || [];
+      assert.ok(tables.length >= 3, `expected the setting tables to lift, found ${tables.length}`);
+      for (const table of tables) vm.runInContext(table, vmCtx);
+      vm.runInContext(declarationSource(API, 'function tcHonoredLaunchModes'), vmCtx);
+      vm.runInContext(declarationSource(API, 'function tcEngineDisplayName'), vmCtx);
+      vm.runInContext(declarationSource(API, 'function tcSettingDisposition'), vmCtx);
+      vm.runInContext(declarationSource(API, 'function tcResolveEngineProfile'), vmCtx);
+      vm.runInContext(declarationSource(UI, 'function renderMedusaWakeToggle'), vmCtx);
+      vmCtx.renderMedusaWakeToggle(opts.engineId, opts.checked === true, opts.projectEngine || null);
+      return doc.getElementById('settingsMedusaWakeContainer').innerHTML;
+    }
+
+    it('stops claiming "Claude sessions only", which antigravity disproved in #560', () => {
+      const agy = client('antigravity');
+      const html = render({ engineId: 'antigravity', projectEngine: agy, engines: [agy], checked: true });
+      assert.doesNotMatch(html, /Claude sessions only/);
+      assert.match(html, /id="settingsMedusaWake"/, 'the control is live on a profiled engine');
+      assert.match(html, /checked/, 'and carries the operator\'s state across an engine switch');
+      // Nothing anywhere still says it. The string was the only operator-facing
+      // sentence about this feature and it had been wrong since #560.
+      assert.ok(!UI.includes('Claude sessions only'), 'ui.js still carries the stale claim');
+      assert.ok(!API.includes('Claude sessions only'));
+    });
+
+    it('renders the reason, and no checkbox, on an engine with no signature', () => {
+      const codex = client('codex');
+      const html = render({ engineId: 'codex', projectEngine: codex, engines: [codex], checked: true });
+      assert.match(html, /has no measured idle signature/);
+      // The pin the plan asks for: no `#settingsMedusaWake` element at all, so
+      // `doSaveSettings` attaches no value and cannot post a stale checkbox.
+      assert.doesNotMatch(html, /id="settingsMedusaWake"/);
+      assert.match(html, /id="settingsMedusaWakeNotApplicable"/);
+      assert.match(html, /disabled/);
+    });
+
+    it('the save path reads only the live control', () => {
+      const save = declarationSource(UI, 'async function doSaveSettings');
+      assert.match(save, /getElementById\('settingsMedusaWake'\)/);
+      assert.match(save, /if \(medusaWakeEl\)/,
+        'the inert branch renders no such element, and the save must depend on that');
+    });
+
+    it('remembers the operator\'s tick across an engine that cannot be nudged', () => {
+      // Same trap `silentPrimeNow` already closed one control over: the inert
+      // branch renders `#settingsMedusaWakeNotApplicable`, so recovering the
+      // state from the DOM loses it on the way through codex —
+      // claude -> codex -> claude would drop a tick the operator had just made
+      // and save the old value back. Pinned at the source because the carry
+      // lives in `openSettings`'s closure, which cannot be lifted into a
+      // sandbox the way a single render can; the live check is queued in
+      // `.prawduct/operator-verification.md`.
+      const open = UI.slice(UI.indexOf('function openSettings'));
+      const body = open.slice(0, open.indexOf('\n}\n'));
+      assert.match(body, /let medusaWakeNow = initialMedusaWakeChecked;/,
+        'the state is held outside the DOM the inert branch replaces');
+      assert.match(body, /if \(wakeEl\) medusaWakeNow = wakeEl\.checked;/,
+        'a live control updates it; an inert one cannot have changed it');
+      assert.doesNotMatch(body, /wakeEl \? wakeEl\.checked : initialMedusaWakeChecked/,
+        'the initial value must not be the fallback — that is the drop');
+    });
+
+    it('re-renders against the dropdown, not only the saved engine', () => {
+      // Switching to an engine that cannot be nudged costs the setting; the
+      // operator must read that while deciding, not after a save.
+      assert.match(UI, /renderMedusaWakeToggle\(e\.target\.value/);
+      const src = declarationSource(UI, 'function renderMedusaWakeToggle');
+      assert.match(src, /tcSettingDisposition\('medusaWake'/);
+      assert.match(src, /esc\(disposition\.reason\)/, 'the rendered words are the predicate\'s');
+      assert.doesNotMatch(src, /capabilities\.wake/, 'no second wake gate in the modal');
+    });
+  });
+});
+
+describe('what the browser is sent is what its predicates may read (#1251)', () => {
+  const helpers = loadApiHelperGlobals();
+  const vm = require('node:vm');
+  const { makeDocument } = require('./_mini-dom');
+  const UI_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+  const API_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
+
+  it('the carrier the gate reads survives the projection', () => {
+    // The defect this closes: the browser gated on `configFormat.filename`, no
+    // payload carried `configFormat`, and so the row answered "no config file"
+    // for every engine — the notice firing on claude, codex, aider and
+    // antigravity, and the declared sentence never appearing on the one engine
+    // it was written for.
+    const openclaw = engines.engineClientPayload(
+      bundledProfiles().find((p) => p.id === 'openclaw'), { available: true });
+    assert.ok(openclaw.configFormat, 'the browser must receive the carrier declaration');
+    assert.equal(openclaw.configFormat.filename, null);
+    assert.equal(typeof openclaw.configFormat.absentReason, 'string',
+      'and the sentence declared beside it, which is the whole point of declaring it there');
+
+    const claude = engines.engineClientPayload(
+      bundledProfiles().find((p) => p.id === 'claude'), { available: true });
+    assert.equal(claude.configFormat.filename, 'CLAUDE.md');
+  });
+
+  it('both realms answer the same for a client-shaped engine', () => {
+    // The parity loop below runs over projected profiles now, but state this
+    // directly too: it is the assertion whose absence let the bug ship.
+    for (const profile of bundledProfiles()) {
+      const client = engines.engineClientPayload(profile, { available: true });
+      const server = engines.settingDisposition('generatedConfig', {}, profile);
+      const browser = helpers.tcSettingDisposition('generatedConfig', {}, client);
+      assert.equal(browser.applies, server.applies, `${profile.id}: applies`);
+      assert.equal(browser.reason, server.reason, `${profile.id}: reason`);
+    }
+  });
+
+  it('every engine the client receives comes from the one projection', () => {
+    // `listWithAvailability` drops `pickerHidden` profiles, so OpenClaw — the
+    // engine this row exists for — reaches the modal ONLY through the
+    // per-project payload. Two hand-built shapes is how one of them stayed
+    // thinner than the other without anybody noticing.
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'projects.js'), 'utf8');
+    // Scoped to the function that builds the payload, so an unrelated local
+    // named `engine` elsewhere in the module does not fire this, and so a third
+    // legitimate projection does not either — what must not come back is a
+    // hand-built literal assigned to the engine this function returns.
+    const enrich = declarationSource(src, 'async function enrichProject');
+    assert.doesNotMatch(enrich, /engine = \{/,
+      'enrichProject must not hand-build a client engine beside engineClientPayload');
+    assert.ok((enrich.match(/engines\.engineClientPayload\(/g) || []).length >= 2,
+      'both enrichProject branches project through the shared definition');
+    // Sliced rather than brace-matched: this declaration's first brace is its
+    // `options = {}` default, so the brace matcher closes on the parameter list.
+    const enginesSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'engines.js'), 'utf8');
+    const at = enginesSrc.indexOf('function listWithAvailability');
+    assert.ok(at >= 0, 'the engine roster builder must exist');
+    assert.match(enginesSrc.slice(at, at + 800), /engineClientPayload\(/,
+      'so does the engine roster');
+  });
+
+  describe('the notice renders in a real document', () => {
+    /**
+     * Run the shipped renderer against a mini-DOM and return the container's
+     * HTML — the real function, lifted from source, not a copy.
+     * @param {object} opts - `engineId`, `projectEngine`, `engines` (roster).
+     * @returns {string}
+     */
+    function render(opts) {
+      const { doc } = makeDocument(['settingsGeneratedConfigContainer']);
+      const ctx = {
+        document: doc,
+        state: { engines: opts.engines || [] },
+        esc: (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+      };
+      vm.createContext(ctx);
+      // By pattern, so a table added later and not named here fails as a
+      // ReferenceError from inside the lifted function rather than silently.
+      const tables = API_SRC.match(/const TC_SETTING_\w+ = \{[\s\S]*?\n {2}\};/g) || [];
+      assert.ok(tables.length >= 3, `expected the setting tables to lift, found ${tables.length}`);
+      for (const table of tables) vm.runInContext(table, ctx);
+      vm.runInContext(declarationSource(API_SRC, 'function tcHonoredLaunchModes'), ctx);
+      vm.runInContext(declarationSource(API_SRC, 'function tcEngineDisplayName'), ctx);
+      vm.runInContext(declarationSource(API_SRC, 'function tcSettingDisposition'), ctx);
+      vm.runInContext(declarationSource(API_SRC, 'function tcResolveEngineProfile'), ctx);
+      vm.runInContext(declarationSource(UI_SRC, 'function renderGeneratedConfigNotice'), ctx);
+      ctx.renderGeneratedConfigNotice(opts.engineId, opts.projectEngine || null);
+      return doc.getElementById('settingsGeneratedConfigContainer').innerHTML;
+    }
+
+    const client = (id) => engines.engineClientPayload(
+      bundledProfiles().find((p) => p.id === id), { available: true });
+
+    it('says what OpenClaw cannot carry, in the profile\'s own words', () => {
+      const projectEngine = client('openclaw');
+      const html = render({ engineId: 'openclaw', projectEngine });
+      assert.match(html, /OpenClaw has no config file/);
+      assert.ok(html.includes(projectEngine.configFormat.absentReason),
+        'the declared sentence reaches the rendered markup');
+    });
+
+    it('renders nothing at all on an engine that has a config file', () => {
+      const claude = client('claude');
+      assert.equal(render({ engineId: 'claude', projectEngine: claude, engines: [claude] }), '',
+        'a notice here would be a false statement about four engines to fix one');
+    });
+
+    it('escapes the declared sentence rather than trusting it', () => {
+      // `absentReason` is profile data, and an operator profile in
+      // ~/.tangleclaw/engines/ is a file a human edits.
+      const hostile = {
+        id: 'evil', name: 'Evil', capabilities: {}, launchModes: {},
+        configFormat: { filename: null, absentReason: '<img src=x onerror=alert(1)>' }
+      };
+      const html = render({ engineId: 'evil', projectEngine: hostile, engines: [hostile] });
+      assert.doesNotMatch(html, /<img/);
+      assert.match(html, /&lt;img/);
+    });
   });
 });

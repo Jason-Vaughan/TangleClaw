@@ -3692,7 +3692,27 @@
     defaultLaunchMode: 'default',
     evalAuditMode: false,
     featureIndexEnabled: false,
-    projectMapEnabled: false
+    projectMapEnabled: false,
+    generatedConfig: false,
+    medusaWake: false
+  };
+
+  /**
+   * The `rules.extensions` values the product ships, restated from
+   * `lib/project-config.js` for the same reason `TC_SETTING_DEFAULTS` is. The
+   * generated-config row derives its provenance by comparing the project's
+   * rules against these, so a default that changes on one side only would
+   * reclassify a real choice as a default in the browser and not the server.
+   * `test/setting-disposition.test.js` asserts this equals what ships.
+   */
+  const TC_SETTING_RULE_DEFAULTS = {
+    identitySentry: false,
+    docsParity: false,
+    decisionFramework: false,
+    loggingLevel: 'info',
+    zeroDebtProtocol: false,
+    independentCritic: false,
+    adversarialTesting: false
   };
 
   /**
@@ -3712,7 +3732,16 @@
    * `!==`-equal to its own default. Mirrors the server table's `read`.
    */
   const TC_SETTING_READERS = {
-    evalAuditMode: (cfg) => (cfg && cfg.evalAuditMode ? cfg.evalAuditMode.enabled : undefined)
+    evalAuditMode: (cfg) => (cfg && cfg.evalAuditMode ? cfg.evalAuditMode.enabled : undefined),
+    // A rules block has no single stored scalar, so the generated-config row
+    // compares per key against what ships. Mirrors the server's
+    // `_rulesCustomized`; `rules.core` is not consulted there either, because a
+    // core rule cannot be disabled and so can never be a choice.
+    generatedConfig: (cfg) => {
+      const stored = cfg && cfg.rules && cfg.rules.extensions;
+      if (!stored || typeof stored !== 'object') return false;
+      return Object.keys(stored).some((rule) => stored[rule] !== TC_SETTING_RULE_DEFAULTS[rule]);
+    }
   };
 
   /**
@@ -3811,6 +3840,35 @@
           ? name + ' has disabled the launch mode ' + label + ', so this project launches in its engine default instead.'
           : name + ' does not offer the launch mode ' + label + ', so this project launches in its engine default instead.';
         evidence = declared ? 'mode is disabled' : 'engine does not define this mode';
+      }
+    } else if (setting === 'generatedConfig') {
+      // The engine-specific half of the sentence is read off the profile the
+      // engines API already ships, not restated here — so a sixth engine with
+      // no config file needs no edit in this file at all. Mirrors the server.
+      applies = Boolean(engine && engine.configFormat && engine.configFormat.filename);
+      if (!applies) {
+        const declared = engine && engine.configFormat && engine.configFormat.absentReason;
+        reason = name + ' has no config file, so the project rule settings and TangleClaw '
+          + 'guides it would carry never reach a session here.'
+          + (declared ? ' ' + declared : '');
+        evidence = 'configFormat.filename is null';
+      }
+    } else if (setting === 'medusaWake') {
+      // The engine's own live-probed pane signature, read off the profile the
+      // engines API already ships — a second engine list in `public/` is the
+      // drift ADR 0013 spends a consequence section on, and the reason this
+      // migration happened at all. Mirrors the server.
+      //
+      // Presence is the right test HERE only because the server projects the
+      // key at all only when the block is valid (`_clientCapabilities`): a
+      // malformed one is refused by the monitor, and a browser that read the
+      // raw declaration would offer a control for a session never nudged.
+      applies = Boolean(engine && engine.capabilities && engine.capabilities.wake);
+      if (!applies) {
+        reason = name + ' has no measured idle signature, so TangleClaw cannot tell a busy pane '
+          + 'from a resting one here and will never nudge this project\'s sessions. Typing into a '
+          + 'pane on a guessed signature is the one thing the wake monitor refuses to do.';
+        evidence = 'capabilities.wake is not declared, or is declared malformed';
       }
     } else {
       // Unknown key: the server throws rather than answering "it applies",
@@ -3924,6 +3982,7 @@
   global.tcSettingDisposition = tcSettingDisposition;
   global.tcCreateProjectBody = tcCreateProjectBody;
   global.tcSettingDefaults = TC_SETTING_DEFAULTS;
+  global.tcSettingRuleDefaults = TC_SETTING_RULE_DEFAULTS;
   global.tcMedusaIds = tcMedusaIds;
   global.tcMedusaControlMarkup = tcMedusaControlMarkup;
   global.tcEscapeHtml = tcEscapeHtml;

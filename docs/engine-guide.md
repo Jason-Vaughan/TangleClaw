@@ -128,6 +128,10 @@ Create a JSON file at `~/.tangleclaw/engines/<engine-id>.json`:
 
 The `configFormat` above is set to `null` because config file generation requires a built-in generator. The available generators are `claude-md`, `codex-yaml`, `aider-conf`, `gemini-md` (generic markdown; kept for custom profiles after the Gemini engine's retirement), and `antigravity-md`. If your engine doesn't use a TangleClaw-generated config file, set `filename`, `syntax` and `generator` to `null`. To add a new generator, you'd need to add a handler in `lib/engines.js`.
 
+**A carrier-less engine owes one more field: `configFormat.absentReason`.** With no config file, the project's rule settings and TangleClaw's PortHub, shared-docs and session-memory guides reach no session on that engine — and ADR 0013 (`docs/adr/0013-settings-take-effect-or-say-why-not.md`) requires the surface offering a setting to say when it will not take effect. TangleClaw supplies the first half of that sentence itself ("*Foo* has no config file, so the project rule settings and TangleClaw guides it would carry never reach a session here."); `absentReason` is the engine's own second half, saying *why* there is no carrier. It is rendered verbatim in the settings modal under the Engine dropdown, so write it as one plain sentence addressed to an operator — see `openclaw.json` for the shipped example. Omit it and the notice still appears, just without the explanation; there is no code to change either way.
+
+It is deliberately a separate field from `capabilities.awareness.reason`, which reads similarly and is the obvious candidate to reuse. That one records, for a developer, why an engine has no *awareness* path at all — prime included — while this one is operator-facing and scoped to the *config carrier*. They can also diverge: an engine could gain a context channel while still having no config file. Rendering the awareness note in the settings modal would put a developer's gap record in front of an operator and would tie two facts that are free to move apart.
+
 ### Engine Profile Fields
 
 | Field | Type | Required | Description |
@@ -136,7 +140,7 @@ The `configFormat` above is set to `null` because config file generation require
 | `name` | string | yes | Display name |
 | `command` | string\|null | yes | CLI command to launch (null for persistent engines) |
 | `interactionModel` | string | yes | `"session"` or `"persistent"` |
-| `configFormat` | object | yes | Engine-specific config file details |
+| `configFormat` | object | yes | Engine-specific config file details: `filename`, `syntax`, `generator`, plus `absentReason` where all three are `null` (see above) |
 | `coAuthorFormat` | string\|null | yes | Git co-author pattern (null if unsupported) |
 | `commands` | array | yes | Slash commands (shown as pills in command bar) |
 | `detection` | object | yes | How to detect if installed |
@@ -185,6 +189,7 @@ cache, so an engine you have just installed is never refused.
 | `supportsModes` | declared only | The connection modes an engine offers |
 | `startupInjection.maxChars` | **read** | How many characters this engine's startup channel can carry before *it* truncates — see below |
 | `readOnlyModeMarker` | **read** | How this engine's TUI says the session is in a read-only mode, so a wrap refuses instead of timing out — see below |
+| `wake` | **read** | The live-probed pane signature that lets TangleClaw tell a busy pane from a resting one on this engine — see below |
 | `awareness` | declared only | OpenClaw only. Its own `reason` text records why no context carrier can be placed on the remote side — a documented gap rather than an oversight |
 
 **"Declared only" means the flag describes the engine accurately and TangleClaw does nothing with
@@ -286,6 +291,82 @@ the check existed, and the step record says which engine declared no marker rath
 clean pane. A field that is present but missing `marker` or `modeLine` is a profile defect: it is
 treated as absent and logged at warn.
 
+#### `wake`
+
+Optional, and the gate on everything TangleClaw does by *reading* an engine's pane: the idle-gated
+Medusa wake nudge, the session chime, and the prime-paste readiness gate. An engine that has been
+captured live declares its signature:
+
+```json
+"wake": {
+  "busyMarker": "esc to interrupt",
+  "promptPattern": "^\\s*❯[\\u00a0 ]?$",
+  "promptGlyph": "❯",
+  "promptPad": "\u00a0",
+  "placeholderSgr": [2],
+  "idleMarker": null,
+  "evidence": {
+    "busyMarker": { "verifiedOn": "YYYY-MM-DD", "source": "…" },
+    "promptPattern": { "verifiedOn": "YYYY-MM-DD", "source": "…" },
+    "promptGlyph": { "verifiedOn": "YYYY-MM-DD", "source": "…" },
+    "promptPad": { "verifiedOn": "YYYY-MM-DD", "source": "…" },
+    "placeholderSgr": { "verifiedOn": "YYYY-MM-DD", "source": "…" },
+    "idleMarker": { "verifiedOn": "YYYY-MM-DD", "source": "…" }
+  }
+}
+```
+
+Copy that block as it stands: its `evidence` map covers exactly the fields it declares, which is
+what the read guard requires, and `promptPad` is the JSON escape for the NBSP a real profile
+carries — one character, not the six characters a pasted `\u00a0` would give you. Add
+`pasteRejectedMarker` (and its `evidence` entry) only if you have measured this engine discarding
+a submission.
+
+| Field | What it is |
+|-------|------------|
+| `busyMarker` | Substring present iff a turn is in flight; its presence blocks a nudge |
+| `promptPattern` | Regex **source** for a BARE prompt line — compiled once when the profile is read |
+| `promptGlyph` | The composer's glyph, used to *locate* the composer line |
+| `promptPad` | The separator the prompt itself draws before the first input column, or `null` when it has never been measured |
+| `placeholderSgr` | SGR attributes this engine renders text the operator did **not** type in |
+| `idleMarker` | A POSITIVE at-rest signal, or `null` when nothing was found that is present at rest and absent mid-turn |
+| `pasteRejectedMarker` | Optional — see below |
+
+Every field except `pasteRejectedMarker` is **required**, `null` included. An author who has not
+measured a value writes `null` and says so in `evidence`, which is a recorded gap; an omitted field
+would be the same gap with nobody able to tell it from an oversight.
+
+**`evidence` is keyed by field, and must cover the declared fields in both directions.** Provenance
+per key rather than per block is what keeps antigravity's measured `busyMarker` and its
+deliberately-unmeasured `promptPad` from flattening into one claim. A per-field wrapper
+(`"busyMarker": { "value": "…", "evidence": {…} }`) would make omission structurally impossible,
+and was rejected for it: every value would stop being plain, so every reader in `lib/sessions.js`
+and every test would be rewritten to unwrap one — and it would diverge from the `evidence` sibling
+`startupInjection` and `readOnlyModeMarker` already use. The both-directions check buys the same
+guarantee at the cost of a guard rather than a schema. A field with no entry, or an
+entry for a field that no longer exists, is a profile defect. `verifiedOn` is an ISO date, or `null`
+for a value nobody has measured — which is a different thing from a value measured and found absent
+(Claude's `idleMarker` carries a date, because the absence itself was measured).
+
+**Omit the whole block and the engine is simply never nudged** — skipped and logged once per
+session, never woken against a guessed idle signature. A block that is present but malformed is
+**the same answer**: refused at the read, logged, and the engine stays unprofiled rather than
+half-loaded into the gate that decides whether to type into a live pane. Declaring badly and
+declaring nothing deliberately agree, so the settings control below can never offer a switch the
+monitor will refuse. The refusal happens at the read and not only in this repo's tests because an
+operator profile in `~/.tangleclaw/engines/` never passes through them.
+
+**A hand-added `wake` block takes effect at the next restart.** Most of a profile is re-read on
+every request, but the wake table is built once per process and memoised — it compiles a regex per
+engine and is consulted on every monitor tick and every dashboard poll. So a profile you drop in
+while TangleClaw is running shows up in the engine list immediately and is not nudged until you
+restart. The bundled profiles are unaffected: `store.init()` syncs them before anything reads the
+table.
+
+The settings modal's **Auto-wake on inbound messages** control is gated on this block (ADR 0013):
+an engine that declares none renders the control inert with the reason, rather than offering a
+switch that does nothing.
+
 #### The ambient-awareness floor (`tc` on PATH)
 
 Independent of any config file or prime, every tmux session TangleClaw launches gets the `tc` CLI
@@ -301,8 +382,8 @@ Engine-profile `launch.env` overrides any of these keys on collision.
 #### Prime paste readiness
 
 When a project runs with `silentPrime` off (or the engine has no silent channel), the prime is
-pasted into the TUI. That paste is **readiness-gated** for engines with a positive at-rest marker
-in `medusa-wake`'s `ENGINE_WAKE_PROFILES` (antigravity: `? for shortcuts`): the paste waits until
+pasted into the TUI. That paste is **readiness-gated** for engines whose `capabilities.wake` block
+declares a positive at-rest `idleMarker` (antigravity: `? for shortcuts`): the paste waits until
 the marker renders over a transcript that has stopped moving, instead of firing on a fixed timer —
 a fixed delay racing an engine boot is how a 41-second antigravity boot swallowed the prime for 12
 days with a clean ledger.
@@ -312,10 +393,11 @@ Engines without a positive marker cannot be gated and **must declare an explicit
 paste is recorded in the delivery ledger as `unverified`, never `delivered` — `delivered` is
 reserved for a paste whose pane was observed ready.
 
-#### `pasteRejectedMarker`
+#### `wake.pasteRejectedMarker`
 
 Optional, and since #1134 the pane being observed ready is **no longer the last word**. An engine
-that has been measured *discarding* a submission declares the text it prints when it does:
+that has been measured *discarding* a submission declares the text it prints when it does, inside
+its `wake` block:
 
 ```json
 "pasteRejectedMarker": "Please try again shortly"

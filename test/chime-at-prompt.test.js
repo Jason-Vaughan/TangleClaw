@@ -19,10 +19,16 @@
  * test noticed. That is pinned here too.
  */
 
-const { describe, it } = require('node:test');
+const { describe, it, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { useThrowawayStore } = require('./_engine-store');
+
+// The wake table is derived from the engine profiles the store holds (#1255),
+// so it must be pointed at a throwaway one before the read below.
+const _store = useThrowawayStore('chime-at-prompt');
+after(() => _store.cleanup());
 
 const medusaWake = require('../lib/medusa-wake');
 

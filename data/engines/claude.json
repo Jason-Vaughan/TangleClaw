@@ -104,6 +104,40 @@
         "verifiedOn": "2026-09-03",
         "source": "Claude Code 2.1.259, probed on a live pane: `claude --permission-mode plan` renders `⏸ plan mode on (shift+tab to cycle)` beneath the input box. `modeLine` is the signature EVERY permission mode draws — the same line reads `bypass permissions on (shift+tab to cycle)` under --dangerously-skip-permissions — so it locates the mode line; `marker` is what makes that line read-only. Locating and deciding are separate fields because a pane with subagents running draws `⏺ main` and one row per agent BELOW the mode line (live captures in test/medusa-wake.test.js, #783/#1101), so the mode line is not the last line and cannot be found by position."
       }
+    },
+    "wake": {
+      "busyMarker": "esc to interrupt",
+      "promptPattern": "^\\s*❯[\\u00a0 ]?$",
+      "promptGlyph": "❯",
+      "promptPad": "\u00a0",
+      "placeholderSgr": [2],
+      "idleMarker": null,
+      "evidence": {
+        "busyMarker": {
+          "verifiedOn": "2026-08-24",
+          "source": "First captured 2026-07-11 over four live sessions (#560 T2 spike). Re-measured on Claude Code 2.1.241 (#1114, throwaway session): `esc to interrupt` survives only inside a `low_priority_waiting` retry branch and is absent from an ordinary turn, so it is NOT sufficient on its own. Kept because that retry state is real and worth catching; the transcript-movement check carries an ordinary turn."
+        },
+        "promptPattern": {
+          "verifiedOn": "2026-08-24",
+          "source": "Live pane (#1109): an empty composer is the glyph plus a single NBSP, so the class accepts NBSP or one ordinary space and nothing else. The earlier `^\\s*❯\\s*$` accepted trailing whitespace, which let a half-typed space read as a bare prompt."
+        },
+        "promptGlyph": {
+          "verifiedOn": "2026-08-24",
+          "source": "Live pane (#1109): `❯` is the composer glyph, and the composer is located by it rather than by position — a pane with a running subagent fleet draws rows below the input box."
+        },
+        "promptPad": {
+          "verifiedOn": "2026-08-24",
+          "source": "Live pane (#1109): the separator the prompt itself draws between the glyph and the first input column is NBSP, with the cursor at column 2. Measured, not assumed — everything past exactly one separator cell is the operator's, a typed space included."
+        },
+        "placeholderSgr": {
+          "verifiedOn": "2026-08-21",
+          "source": "Live captures of both engines (#1105): Claude Code dims its inline suggestion with SGR 2 (faint), and genuinely typed input carries no styling at all. That second capture is what makes treating the attribute as 'not the operator's text' safe rather than reckless."
+        },
+        "idleMarker": {
+          "verifiedOn": "2026-08-24",
+          "source": "Measured and found ABSENT (#1114; #1106 left open). Across at rest, at rest with a faint suggestion, thinking, streaming and a backgrounded shell, no string is present at rest and absent mid-turn — the status and hint rows are byte-identical in both, and the bare prompt is drawn throughout. `null` records that measured gap, not an unattempted field."
+        }
+      }
     }
   },
   "statusPage": {

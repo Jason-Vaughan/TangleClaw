@@ -142,7 +142,118 @@ All notable changes to TangleClaw are documented in this file.
   different words from the ones its settings modal renders — and a synthesized stub answers
   correctly only until a disposition row reads something other than the id.
 
+- **An engine's wake signature is now declared in its own profile, and the modal says where a
+  session cannot be nudged (#1255).** `ENGINE_WAKE_PROFILES` was a literal in `lib/medusa-wake.js`
+  hardcoding `claude` and `antigravity`, so adding a sixth engine to TangleClaw meant editing a
+  `lib/` module — the construction `prime-delivery-direction.md` § Direction §1 already forbids one
+  layer up. Each engine now declares a `capabilities.wake` block (`busyMarker`, `promptPattern`,
+  `promptGlyph`, `promptPad`, `placeholderSgr`, `idleMarker`, and the optional
+  `pasteRejectedMarker`) and the table is derived from it; every consumer in `lib/sessions.js` and
+  the tests that read `ENGINE_WAKE_PROFILES.claude` keep their spelling. The one form that had to
+  change is a destructuring import in `test/prime-readiness-gate.test.js`: reading the export at
+  require time is exactly the eager read the design forbids.
+
+  **The migration is what makes the honesty affordable.** The one operator-facing string about the
+  feature was a settings hint reading "Claude sessions only for now", which had been wrong since
+  antigravity was profiled (#560) — and the engines that genuinely cannot be nudged got no warning
+  at all. Fixing that with the wake data in `lib/` would have meant a second hardcoded engine list
+  in `public/`, because the browser cannot `require()` it. With the data in the profile,
+  `GET /api/engines` already ships it, so the `medusaWake` row in `ENGINE_CONDITIONAL_SETTINGS` and
+  its browser half in `public/api-helper.js` compute the same answer from the same bytes, and
+  `renderMedusaWakeToggle` renders an inert control with the reason on codex, aider and openclaw.
+  The inert branch carries no `#settingsMedusaWake` element, so `doSaveSettings` attaches no value
+  and cannot post a stale checkbox — the pattern `renderSilentPrimeToggle` established. ADR 0013
+  asks that a row be checked for partial application before an `applies` gate is written for it
+  (#1252): checked, and recorded at the row — an unprofiled engine is skipped before every other
+  gate, so there is no half that runs.
+
+  **Provenance is carried per FIELD**, as a sibling `evidence` map keyed by field name rather than
+  one claim for the block. Antigravity's `busyMarker` was measured on a live pane (#560) and its
+  `promptPad` never has been; flattening those into one `verifiedOn` would turn the gap into an
+  assurance. `verifiedOn: null` is the honest form for a value nobody has measured, and is a
+  different claim from Claude's `idleMarker`, which is `null` and carries a date because the
+  *absence* is what got measured (#1114). A guard holds the map and the declared fields to each
+  other in both directions.
+
+  **Derived lazily, and that is load-bearing.** The runtime reads profiles from
+  `~/.tangleclaw/engines/`, which `store.init()` canonical-source-overwrites from the bundle on
+  every boot (#251) — that sync is what carries the new block to an existing install with no
+  migration step. But `server.js` requires every module *before* calling `store.init()`, so a table
+  built at module load would read that directory pre-sync: empty on a fresh install, and stale on
+  any other. `ENGINE_WAKE_PROFILES` is therefore a getter that derives on first use and memoises,
+  and an empty directory is treated as "not initialised yet" rather than as an answer. A guard runs
+  the ordering in a child process, because it is a property of a fresh module registry.
+
+  **A malformed block is refused at the read**, not only over the bundled files: an operator profile
+  in `~/.tangleclaw/engines/` never passes through this suite, and a `promptPattern` that will not
+  compile, a field the schema does not know, or a `promptGlyph`/`promptPad` wider than the single
+  terminal cell it is compared against would otherwise reach the gate that decides whether to type
+  into a live pane. Such an engine is logged and left unprofiled — the existing honest skip — and
+  the refusal is per *block*, so one engine's bad declaration does not disturb the others. (One
+  unparsable *file* is a different matter: the store parses the directory in a single pass, so it
+  answers for all of them; that is reported once per process, names every gate that went dark, and
+  clears without a restart once the file is fixed.)
+
+  **Declaring badly and declaring nothing are one answer**, decided once in
+  `medusaWake.wakeSignature` and read by the monitor's table, by the browser projection, and by the
+  disposition row. Gating the settings control on the raw key being present would have offered a
+  live Auto-wake checkbox for a profile the monitor then refuses to nudge — this row's own silence,
+  produced by the guard built to end it.
+
+  The set of nudgeable engines is unchanged by the migration, and `detectAtPrompt`'s #1180 bounded
+  exception is not widened.
+
+  Pane fixtures moved to `test/_wake-fixtures.js` so the profile guard and the monitor suite cannot
+  drift on the exact bytes — a hand-retyped prompt padded with an ordinary space is how the #1109
+  gap survived. `test/_engine-store.js` points the four suites that read the table at a throwaway
+  store, closing the host-dependence that `test/engine-config-managed-block.test.js` had already
+  recorded once for `writeEngineConfig`.
+
 ### Fixed
+- **An engine with no config file says what it cannot carry (#1251).** On an OpenClaw project the
+  whole generated config is skipped — `writeEngineConfig` returns `{skipped: true}` when the
+  profile declares no `configFormat.filename` — and with it go all five `rules.core` flags, all
+  six `rules.extensions` flags, the Global Rules document, and the PortHub, shared-docs and
+  session-memory guides. The skip is right on the write path (#240 asked for it so a launch does
+  not shout about an engine that simply has no file); what was wrong is that nothing anywhere told
+  the operator, which is the failure ADR 0013 names by number. The unit that applies or does not
+  is the **carrier**, not each rule — one file is absent, so everything riding it is absent — so
+  the new `generatedConfig` row in `ENGINE_CONDITIONAL_SETTINGS` gates on `configFormat.filename`
+  and the settings modal renders its reason where the engine is chosen, re-rendered on every
+  dropdown change so it is read while deciding rather than after a launch that dropped the lot.
+  It is keyed after the file the operator can go and look at, not after its contents, and the
+  sentence says "the project rule settings and TangleClaw guides *it would carry*" for the same
+  reason: the modal has a separate "Project Rules" section a few groups down — free-text
+  `session_rules` riding a different channel — and this row has not checked that one (filed as
+  #1269, along with #1268 for `writeEngineConfig`'s second silent skip). **The engine-specific half
+  of the sentence is declared in the profile** (`configFormat.absentReason`, documented in
+  `docs/engine-guide.md`) rather than written in `lib/`, so both realms read the same bytes and
+  cross-realm parity is structural instead of a hand-copied string — a test asserts neither
+  `lib/engines.js`, `public/api-helper.js` nor `public/ui.js` contains a copy of it, and a sixth
+  engine with no carrier states its own case in its own file with no code change.
+  All four writers (launch, create, engine PATCH, boot sync) discarded the skip, so it also reaches
+  the log now — reported by `writeEngineConfig` **itself** rather than by each caller, because a
+  guard pairing a report with every call site holds only until a fifth writer appears where the
+  guard does not look. Its **level the disposition derives**: a project that turned
+  `independentCritic` on and gets nothing has lost real intent and warns, while one running the
+  stock rules never expressed a preference and records at info. The provenance input is derived,
+  because a rules block has no single stored scalar to compare — `rules.core` is deliberately not
+  consulted, since `updateProject` refuses to disable a core rule and counting it would report
+  every project as customized. A test pins that the four engines which *do* have a config file are
+  unaffected — a gate keyed on the wrong field would ship a "your rules are not delivered" notice
+  on all of them to fix the one where they genuinely are not.
+- **The engine the browser receives has one definition (#1251, found reviewing it).** The row above
+  gates on `configFormat`, and no engine payload carried it: `listWithAvailability` and
+  `enrichProject` each hand-built their own projection of a profile, and neither projected that
+  field. So the browser answered "no config file" for *every* engine — the notice firing on claude,
+  codex, aider and antigravity, contradicting the server, and the declared sentence never appearing
+  on the one engine it was written for. Both now project through `engines.engineClientPayload`,
+  and the cross-realm parity test drives its browser side through that same function rather than
+  through raw bundled profiles: a predicate reading a field the projection drops is
+  indistinguishable from one reading a field about an engine that genuinely lacks it, and a fixture
+  richer than production hides exactly that. The two shapes mattered unequally and invisibly —
+  `listWithAvailability` drops `pickerHidden` profiles, so OpenClaw, the engine the row exists for,
+  reaches the modal *only* through the per-project payload, which was the thinner of the two.
 - **Warning text is readable in the Light theme (#1252, found reviewing it).** `--warning` was
   spelled at five sites across `public/style.css` and `public/session.css` and declared in no
   palette, so every one of them silently took its `#ffb300` fallback — 1.79:1 against the Light
