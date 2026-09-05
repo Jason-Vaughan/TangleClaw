@@ -452,8 +452,8 @@ All notable changes to TangleClaw are documented in this file.
   (#1251).
 
   Three guards came out of the review round. One walks **every** `.js` under `public/` — the first
-  cut listed three by hand, which answered "clean" about eleven files it never opened and passed
-  with a live private copy sitting inside one it did — and fails if any of them re-establishes the
+  cut listed three by hand, which answered "clean" about every file it never opened and passed with
+  a live private copy sitting inside one it did — and fails if any of them re-establishes the
   fallback, since a re-added copy changes no behaviour and is otherwise invisible. One pins that no
   browser code fetches `GET /api/engines/:id`: that endpoint returns the **raw** profile by design
   (it carries `detection`, `errorPatterns` and `statusPage`, which the projection drops), so it is

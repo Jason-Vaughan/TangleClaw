@@ -190,17 +190,18 @@ describe('engine picker gating (#707)', () => {
         let src = fs.readFileSync(file, 'utf8');
         if (owner.test(src)) { sawOwner = true; src = src.replace(owner, ''); }
         const rel = path.relative(path.join(__dirname, '..'), file);
-        // Both spellings the deleted guards used, so a re-add cannot dodge the
-        // scan by switching operators.
-        assert.doesNotMatch(src, /typeof\s+\w+\.name\s*===\s*'string'/,
-          `${rel} re-establishes the engine-name fallback the projection already guarantees`);
-        // The `||` form is scoped to lines that also name an engine. Unscoped,
-        // it matches any `x.name || x.id` — `public/session.js` builds a Medusa
-        // WORKSPACE label that way, a different domain with no projection
-        // behind it, and failing on that would be the same error as the
-        // too-narrow first cut, pointed the other way.
+        // BOTH spellings are scoped to lines that also name an engine, because
+        // neither pattern belongs to this domain on its own. Unscoped, the `||`
+        // form matches any `x.name || x.id` — `public/session.js` builds a
+        // Medusa WORKSPACE label that way, a different domain with no
+        // projection behind it — and the `typeof` form would fail unrelated
+        // code with a message about engine names. Scoping one and not the other
+        // is the same error as the too-narrow first cut, pointed the other way.
         for (const line of src.split('\n')) {
           if (!/engine/i.test(line)) continue;
+          assert.doesNotMatch(line, /typeof\s+\w+\.name\s*===\s*'string'/,
+            `${rel} re-establishes the engine-name fallback the projection already `
+            + `guarantees: ${line.trim()}`);
           assert.doesNotMatch(line, /\w+\.name\s*\|\|\s*\w+\.id/,
             `${rel} re-establishes the engine-name fallback with the || form: ${line.trim()}`);
         }
