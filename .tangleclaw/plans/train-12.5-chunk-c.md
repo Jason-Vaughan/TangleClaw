@@ -178,9 +178,12 @@ or stay as named wrappers over it — a rename is not the goal, one definition i
   are expressed in terms of it, and `reconcileLaunchMode` — already a caller, not an
   implementation — keeps delegating rather than growing one. No new parallel implementation
   exists at the end of the chunk.
-- The warn/info asymmetry survives: a dropped value the operator actually chose warns
-  (`defaultLaunchMode`); one indistinguishable from the shipped default records at info
-  (`silentPrime`). A test pins both, because collapsing them is the obvious "cleanup".
+- The warn/info asymmetry survives, and it belongs to the VALUE rather than the setting: a
+  dropped value the operator actually chose warns; one indistinguishable from what the product
+  ships records at info. So a stored `defaultLaunchMode` of `'plan'` warns and a stored
+  `silentPrime` of `true` records — but a stored `silentPrime` of `false` warns too, same setting,
+  other value. A test pins both directions, because collapsing them is the obvious "cleanup" and
+  naming a setting as "the info one" is how the per-setting rule creeps back.
 - The browser predicate stays in parity with the server's — `public/` cannot `require()` `lib/`,
   so the existing restated-copy-plus-parity-test arrangement continues rather than being invented
   differently. **The reason *text* is part of that surface**, not just the boolean: a reason that

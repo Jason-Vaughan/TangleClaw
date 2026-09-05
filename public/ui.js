@@ -1196,7 +1196,8 @@ function openSettings(name) {
     ${renderProjectRulesSection(project)}`;
 
   // Initial render — based on the project's current engine
-  renderSilentPrimeToggle(project.engine ? project.engine.id : '', initialSilentChecked);
+  renderSilentPrimeToggle(project.engine ? project.engine.id : '', initialSilentChecked,
+    project.engine || null);
   renderFeatureIndexToggle(initialFeatureIndexChecked);
   renderProjectMapToggle(initialProjectMapChecked);
   renderLaunchModeSettings(
@@ -1217,7 +1218,7 @@ function openSettings(name) {
   document.getElementById('settingsEngine').addEventListener('change', (e) => {
     const checkbox = document.getElementById('settingsSilentPrime');
     const checkedNow = checkbox ? checkbox.checked : initialSilentChecked;
-    renderSilentPrimeToggle(e.target.value, checkedNow);
+    renderSilentPrimeToggle(e.target.value, checkedNow, project.engine || null);
     const modeEl = document.getElementById('settingsDefaultLaunchMode');
     const showEl = document.getElementById('settingsShowLaunchPicker');
     renderLaunchModeSettings(
@@ -1246,20 +1247,30 @@ function openSettings(name) {
  *
  * @param {string} engineId - Engine id from the dropdown's current value
  * @param {boolean} preserveChecked - The checkbox state to carry over (or initial)
+ * @param {object|null} [projectEngine] - The project's own enriched engine, used
+ *   only while the dropdown still names it — `state.engines` omits
+ *   connection-backed ids, and this is where their capabilities come from.
  */
-function renderSilentPrimeToggle(engineId, preserveChecked) {
+function renderSilentPrimeToggle(engineId, preserveChecked, projectEngine) {
   const container = document.getElementById('settingsSilentPrimeContainer');
   if (!container) return;
-  const profile = (state.engines || []).find(e => e.id === engineId);
+  // `state.engines` is the picker roster and drops connection-backed ids
+  // (`openclaw:<connId>`), so an OpenClaw project finds nothing there — while
+  // the server resolves the base profile and answers from its capabilities.
+  // The project's own enriched engine carries those capabilities, so use it
+  // rather than report "no profile" for an engine TangleClaw knows.
+  const roster = (state.engines || []).find(e => e.id === engineId);
+  const profile = roster
+    || (projectEngine && projectEngine.id === engineId ? projectEngine : null);
   // One owner for "does this setting apply here, and what do we say when it
   // does not" (ADR 0013) — `tcSettingDisposition`, the browser half of the
   // server's `engines.settingDisposition`. The reason is rendered rather than
   // written here, so the modal cannot tell the operator something the launch
-  // path does not believe.
-  // A missing profile is passed through as missing: synthesising `{ id }` here
-  // made the hint state a capability fact about an engine nothing was read for.
+  // path does not believe. A profile that genuinely cannot be found stays
+  // missing: synthesising `{ id }` made the hint state a capability fact about
+  // an engine nothing was read for.
   const disposition = tcSettingDisposition('silentPrime', { silentPrime: preserveChecked },
-    profile || null);
+    profile);
   if (!disposition.applies) {
     // Said in words rather than hidden (#741): a toggle that vanishes reads
     // as "this engine has no such setting", and the operator who set it on

@@ -77,6 +77,12 @@ All notable changes to TangleClaw are documented in this file.
   so a profile declaring no modes stops producing *"does not offer the launch mode "default", so
   this project launches in its engine default instead"* on every launch of a project that
   configured nothing.
+  An **OpenClaw project's settings modal reads its capabilities from the project rather than the
+  picker roster**, which drops connection-backed ids — the row was reporting that TangleClaw has
+  no profile for an engine it does know. And `renderSilentPrimeToggle` is now *executed* by a test
+  against a mini-DOM (#1037) instead of matched as source: it depends on a global published by
+  another file, and a regex cannot tell whether that identifier resolves — the failure mode is a
+  `ReferenceError` on every open of the modal, which has shipped to the live install once before.
 
 ### Fixed
 - **A regenerated `CLAUDE.md` no longer strands the self-updater (#1241).** TangleClaw manages its

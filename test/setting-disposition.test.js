@@ -45,16 +45,24 @@ function bundledProfiles() {
  * not a second implementation, and a guard that counted prose would push the
  * next author to delete the explanation instead of the duplicate.
  *
- * @param {string} dir - Directory to walk (one level, `.js` files).
+ * Walks the tree, not one level: `lib/wrap-steps/`, `lib/actions/` and their
+ * siblings are where a sixth copy would most plausibly appear, and a flat
+ * `readdirSync` cannot see one.
+ *
+ * @param {string} dir - Directory to walk recursively for `.js` files.
  * @param {string} flag - Capability flag name.
  * @returns {string[]} Sorted repo-relative paths.
  */
 function capabilityReads(dir, flag) {
   const root = path.join(__dirname, '..');
   const out = [];
-  for (const name of fs.readdirSync(dir)) {
-    if (!name.endsWith('.js')) continue;
-    const full = path.join(dir, name);
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...capabilityReads(full, flag));
+      continue;
+    }
+    if (!entry.name.endsWith('.js')) continue;
     if (codeLinesMentioning(fs.readFileSync(full, 'utf8'), flag).length > 0) {
       out.push(path.relative(root, full));
     }
