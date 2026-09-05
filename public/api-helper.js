@@ -1196,9 +1196,11 @@
       // it refuses to keep.
       const unavailable = e.available === false && e.id !== selectedId;
       // `e.name` is read straight: `engines.engineClientPayload` guarantees a
-      // non-empty string for every engine that reaches a client, so the guard
-      // that used to sit here is gone (#736). Nothing in `public/` sees a raw
-      // profile — both the roster and the per-project engine are projected.
+      // non-empty string, so the guard that used to sit here is gone (#736).
+      // The two sources that feed this — the `/api/engines` roster and the
+      // per-project engine from `enrichProject` — both go through it. The
+      // single-engine endpoint does NOT, which is why a test pins that no file
+      // under `public/` fetches it.
       return `<option value="${esc(e.id)}" ${e.id === selectedId ? 'selected' : ''}`
         + `${unavailable ? ' disabled' : ''}>`
         + `${esc(e.name)}${e.available === false ? ' (not installed)' : ''}</option>`;
@@ -3974,7 +3976,14 @@
    */
   function tcEngineDisplayName(engine) {
     if (!engine) return 'This engine';
-    return engine.name || engine.id || 'This engine';
+    // `typeof`, not `||`, mirroring `engines._displayName`. Everything reaching
+    // this function IS projected today, so the test is redundant here — but the
+    // server's twin takes RAW profiles, where it is not, and a `||` on this side
+    // would make the two realms narrate the same profile differently. The
+    // cross-realm parity test compares the words, so they share the predicate.
+    if (typeof engine.name === 'string' && engine.name) return engine.name;
+    if (typeof engine.id === 'string' && engine.id) return engine.id;
+    return 'This engine';
   }
 
   global.tcHonoredLaunchModes = tcHonoredLaunchModes;

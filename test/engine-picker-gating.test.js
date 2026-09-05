@@ -159,12 +159,86 @@ describe('engine picker gating (#707)', () => {
       // The point of moving it: one owner, not one per surface. A re-added
       // guard is not a bug in itself — it is the drift that made the count of
       // sites needing to remember grow without anything failing.
+      //
+      // Walks EVERY `.js` under `public/`, not a hand-listed three. A guard
+      // that enumerates today's files answers "clean" about the eleven it never
+      // opened, which is this repo's own recorded lesson about set claims — and
+      // the first cut of this test made exactly that mistake.
       const fs = require('node:fs');
       const path = require('node:path');
-      for (const rel of [['public', 'api-helper.js'], ['public', 'setup.js'], ['public', 'ui.js']]) {
-        const src = fs.readFileSync(path.join(__dirname, '..', ...rel), 'utf8');
+      const root = path.join(__dirname, '..', 'public');
+
+      /** @param {string} dir - Directory to walk. @returns {string[]} */
+      const jsFiles = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) return jsFiles(full);
+        return e.name.endsWith('.js') ? [full] : [];
+      });
+
+      const files = jsFiles(root);
+      assert.ok(files.length >= 10, `the walk found only ${files.length} files — it is not reaching public/`);
+
+      // `tcEngineDisplayName` is the one legitimate holder: it is the browser
+      // half of `engines.engineDisplayName`, whose server callers pass raw
+      // profiles, and the parity test holds the two to the same words. Its body
+      // is excised so the scan cannot pass by finding it — the exact way the
+      // first cut of this guard stayed green with a live copy inside a file it
+      // was already reading.
+      const owner = /function tcEngineDisplayName\(engine\) \{[\s\S]*?\n {2}\}/;
+      let sawOwner = false;
+      for (const file of files) {
+        let src = fs.readFileSync(file, 'utf8');
+        if (owner.test(src)) { sawOwner = true; src = src.replace(owner, ''); }
+        const rel = path.relative(path.join(__dirname, '..'), file);
+        // Both spellings the deleted guards used, so a re-add cannot dodge the
+        // scan by switching operators.
         assert.doesNotMatch(src, /typeof\s+\w+\.name\s*===\s*'string'/,
-          `${rel.join('/')} re-establishes the engine-name fallback the projection already guarantees`);
+          `${rel} re-establishes the engine-name fallback the projection already guarantees`);
+        // The `||` form is scoped to lines that also name an engine. Unscoped,
+        // it matches any `x.name || x.id` — `public/session.js` builds a Medusa
+        // WORKSPACE label that way, a different domain with no projection
+        // behind it, and failing on that would be the same error as the
+        // too-narrow first cut, pointed the other way.
+        for (const line of src.split('\n')) {
+          if (!/engine/i.test(line)) continue;
+          assert.doesNotMatch(line, /\w+\.name\s*\|\|\s*\w+\.id/,
+            `${rel} re-establishes the engine-name fallback with the || form: ${line.trim()}`);
+        }
+      }
+      assert.ok(sawOwner, 'tcEngineDisplayName was not found — the exclusion is stale, not satisfied');
+    });
+
+    it('no browser code reads the one engine response that is not projected', () => {
+      // `GET /api/engines/:id` returns the RAW profile on purpose — it is the
+      // introspection endpoint and carries fields the projection drops
+      // (`detection`, `errorPatterns`, `statusPage`). So it is the single
+      // engine response without #736's usable-`name` guarantee, and the render
+      // sites that now read `engine.name` straight are safe only while nothing
+      // in `public/` fetches it.
+      //
+      // Pinned rather than trusted: "no caller today" is what made the old
+      // per-site guards look redundant, and a future fetch here would reopen
+      // the blank-label hole with nothing turning red.
+      const fs = require('node:fs');
+      const path = require('node:path');
+      const root = path.join(__dirname, '..', 'public');
+      /** @param {string} dir - Directory to walk. @returns {string[]} */
+      const jsFiles = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) return jsFiles(full);
+        return e.name.endsWith('.js') ? [full] : [];
+      });
+      for (const file of jsFiles(root)) {
+        const src = fs.readFileSync(file, 'utf8');
+        const rel = path.relative(path.join(__dirname, '..'), file);
+        // The trailing slash is the discriminator: the roster is
+        // `'/api/engines'` and is projected. Deliberately NOT requiring a
+        // character after it — the realistic caller writes
+        // `'/api/engines/' + id`, where the next character is the closing
+        // quote, and a pattern demanding a literal id matched none of them.
+        assert.doesNotMatch(src, /['"`]\/api\/engines\//,
+          `${rel} fetches the unprojected single-engine endpoint — route it through the roster, `
+          + 'or project that response first (#736)');
       }
     });
 

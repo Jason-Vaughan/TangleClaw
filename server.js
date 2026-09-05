@@ -3469,6 +3469,13 @@ route('GET', '/api/engines/:id', (_req, res, params) => {
   if (!profile) {
     return errorResponse(res, 404, `Engine "${params.id}" not found`, 'NOT_FOUND');
   }
+  // The RAW profile, deliberately — this is the introspection endpoint, and it
+  // carries fields the client projection drops on purpose (`detection`,
+  // `errorPatterns`, `statusPage`). It is therefore the one engine response
+  // that does NOT carry #736's usable-`name` guarantee, which is safe only
+  // while no browser code calls it; `test/engine-picker-gating.test.js` pins
+  // that no file under `public/` does. A future browser caller must route
+  // through `engineClientPayload` rather than reading this shape.
   jsonResponse(res, 200, profile);
 });
 

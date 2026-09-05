@@ -449,8 +449,23 @@ All notable changes to TangleClaw are documented in this file.
   The two tests that pinned the retired guards now drive `engineClientPayload` instead of raw
   fixtures — they were asserting against a shape production never sends the browser, which is the
   fixture trap that let a browser predicate gate on an unprojected field and answer for every engine
-  (#1251). A third guard fails if any file under `public/` re-establishes the fallback privately,
-  since a re-added copy changes no behaviour and is otherwise invisible.
+  (#1251).
+
+  Three guards came out of the review round. One walks **every** `.js` under `public/` — the first
+  cut listed three by hand, which answered "clean" about eleven files it never opened and passed
+  with a live private copy sitting inside one it did — and fails if any of them re-establishes the
+  fallback, since a re-added copy changes no behaviour and is otherwise invisible. One pins that no
+  browser code fetches `GET /api/engines/:id`: that endpoint returns the **raw** profile by design
+  (it carries `detection`, `errorPatterns` and `statusPage`, which the projection drops), so it is
+  the single engine response without the guarantee, and it is safe only while nothing in `public/`
+  reads it. The third asserts the guarantee is **total** — the id gets the same type test as the
+  name, because falling back to an id that is itself a number just moves the blank label one level
+  down.
+
+  `engineDisplayName` now shares the predicate instead of keeping its own `||`. Its callers pass raw
+  profiles, so a `name: 42` would otherwise have the two realms narrating the same engine
+  differently — and the cross-realm parity loop could not have caught it while every fixture it
+  iterated carried a good name. Two unusable-name profiles now go through that loop.
 - **Ratified the norm that a setting TangleClaw offers must take effect, or say why it does not
   (`docs/adr/0013-settings-take-effect-or-say-why-not.md`).** The design pass classified the
   per-project and global settings it audited against the engine roster and found that "universal but unevenly
