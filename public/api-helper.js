@@ -3858,6 +3858,11 @@
       // engines API already ships — a second engine list in `public/` is the
       // drift ADR 0013 spends a consequence section on, and the reason this
       // migration happened at all. Mirrors the server.
+      //
+      // Presence is the right test HERE only because the server projects the
+      // key at all only when the block is valid (`_clientCapabilities`): a
+      // malformed one is refused by the monitor, and a browser that read the
+      // raw declaration would offer a control for a session never nudged.
       applies = Boolean(engine && engine.capabilities && engine.capabilities.wake);
       if (!applies) {
         reason = name + ' has no measured idle signature, so TangleClaw cannot tell a busy pane '

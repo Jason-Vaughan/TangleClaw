@@ -302,15 +302,25 @@ captured live declares its signature:
   "busyMarker": "esc to interrupt",
   "promptPattern": "^\\s*❯[\\u00a0 ]?$",
   "promptGlyph": "❯",
-  "promptPad": "\\u00a0",
+  "promptPad": "\u00a0",
   "placeholderSgr": [2],
   "idleMarker": null,
-  "pasteRejectedMarker": "…",
   "evidence": {
-    "busyMarker": { "verifiedOn": "YYYY-MM-DD", "source": "…" }
+    "busyMarker": { "verifiedOn": "YYYY-MM-DD", "source": "…" },
+    "promptPattern": { "verifiedOn": "YYYY-MM-DD", "source": "…" },
+    "promptGlyph": { "verifiedOn": "YYYY-MM-DD", "source": "…" },
+    "promptPad": { "verifiedOn": "YYYY-MM-DD", "source": "…" },
+    "placeholderSgr": { "verifiedOn": "YYYY-MM-DD", "source": "…" },
+    "idleMarker": { "verifiedOn": "YYYY-MM-DD", "source": "…" }
   }
 }
 ```
+
+Copy that block as it stands: its `evidence` map covers exactly the fields it declares, which is
+what the read guard requires, and `promptPad` is the JSON escape for the NBSP a real profile
+carries — one character, not the six characters a pasted `\u00a0` would give you. Add
+`pasteRejectedMarker` (and its `evidence` entry) only if you have measured this engine discarding
+a submission.
 
 | Field | What it is |
 |-------|------------|
@@ -328,16 +338,30 @@ would be the same gap with nobody able to tell it from an oversight.
 
 **`evidence` is keyed by field, and must cover the declared fields in both directions.** Provenance
 per key rather than per block is what keeps antigravity's measured `busyMarker` and its
-deliberately-unmeasured `promptPad` from flattening into one claim. A field with no entry, or an
+deliberately-unmeasured `promptPad` from flattening into one claim. A per-field wrapper
+(`"busyMarker": { "value": "…", "evidence": {…} }`) would make omission structurally impossible,
+and was rejected for it: every value would stop being plain, so every reader in `lib/sessions.js`
+and every test would be rewritten to unwrap one — and it would diverge from the `evidence` sibling
+`startupInjection` and `readOnlyModeMarker` already use. The both-directions check buys the same
+guarantee at the cost of a guard rather than a schema. A field with no entry, or an
 entry for a field that no longer exists, is a profile defect. `verifiedOn` is an ISO date, or `null`
 for a value nobody has measured — which is a different thing from a value measured and found absent
 (Claude's `idleMarker` carries a date, because the absence itself was measured).
 
 **Omit the whole block and the engine is simply never nudged** — skipped and logged once per
 session, never woken against a guessed idle signature. A block that is present but malformed is
-refused *at the read* and logged, leaving the engine unprofiled rather than half-loaded into the
-gate that decides whether to type into a live pane. The refusal happens at the read and not only in
-this repo's tests because an operator profile in `~/.tangleclaw/engines/` never passes through them.
+**the same answer**: refused at the read, logged, and the engine stays unprofiled rather than
+half-loaded into the gate that decides whether to type into a live pane. Declaring badly and
+declaring nothing deliberately agree, so the settings control below can never offer a switch the
+monitor will refuse. The refusal happens at the read and not only in this repo's tests because an
+operator profile in `~/.tangleclaw/engines/` never passes through them.
+
+**A hand-added `wake` block takes effect at the next restart.** Most of a profile is re-read on
+every request, but the wake table is built once per process and memoised — it compiles a regex per
+engine and is consulted on every monitor tick and every dashboard poll. So a profile you drop in
+while TangleClaw is running shows up in the engine list immediately and is not nudged until you
+restart. The bundled profiles are unaffected: `store.init()` syncs them before anything reads the
+table.
 
 The settings modal's **Auto-wake on inbound messages** control is gated on this block (ADR 0013):
 an engine that declares none renders the control inert with the reason, rather than offering a

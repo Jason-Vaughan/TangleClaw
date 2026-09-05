@@ -302,6 +302,7 @@ Engine profiles define how TangleClaw interacts with an AI engine. See the [Engi
   "interactionModel": "string — 'session' or 'persistent'",
   "configFormat": {
     "filename": "string|null — config file name",
+    "absentReason": "string — one operator-facing sentence saying WHY this engine has no config file, rendered in the settings modal beside the engine picker when filename is null. Declared here so a sixth carrier-less engine states its own case without a code change in either realm; omit it on an engine that has a config file. See docs/engine-guide.md → Capabilities.",
     "syntax": "string|null — 'markdown', 'yaml', 'toml', or null",
     "generator": "string|null — config generator id",
     "mergeStrategy": "string|null — 'whole-file' (default) or 'managed-block'",

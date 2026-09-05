@@ -1122,7 +1122,7 @@ describe('the wake nudge says where it cannot reach (#1255)', () => {
     // The whole reason the wake data moved into the profiles: the browser can
     // only compute this if the projection carries it. A predicate reading a
     // field production never sends answers "no signature" for every engine —
-    // indistinguishable from a correct answer, and the defect D2a shipped once.
+    // indistinguishable from a correct answer about an engine that lacks it.
     for (const profile of bundledProfiles()) {
       const projected = engines.engineClientPayload(profile, { available: true });
       const server = engines.settingDisposition('medusaWake', { medusaWake: true }, profile);

@@ -345,6 +345,80 @@ describe('a malformed wake block is refused at the read, never half-loaded', () 
     assert.deepEqual(wake._buildWakeProfiles([{ id: 'codex', capabilities: {} }]), {});
     assert.deepEqual(wake._buildWakeProfiles([{ id: 'codex' }]), {});
   });
+
+  it('refuses a glyph or pad wider than the cell it is compared against', () => {
+    // `_composerEmpty` compares both against ONE terminal cell, so a
+    // multi-character value is not lenient — it can never match, and the
+    // composer then reads non-empty on every capture: the engine is never
+    // idle, never nudged, never chimed, with nothing logged. The realistic way
+    // to author one is copying an NBSP out of a document as the six literal
+    // characters ` `, so that exact value is the fixture.
+    const pasted = '\\u00a0';
+    assert.equal(pasted.length, 6, 'the fixture must be the pasted escape, not a real NBSP');
+
+    const pad = wellFormed();
+    pad.promptPad = pasted;
+    assert.match(wake._wakeBlockErrors(pad).join(' '), /promptPad must be exactly one character/);
+    assert.equal(derive(pad).probe, undefined);
+
+    const glyph = wellFormed();
+    glyph.promptGlyph = '>>';
+    assert.match(wake._wakeBlockErrors(glyph).join(' '), /promptGlyph must be exactly one character/);
+
+    // One code POINT, not one UTF-16 unit: an astral glyph is a single cell.
+    const astral = wellFormed();
+    astral.promptGlyph = '𝄞';
+    assert.deepEqual(wake._wakeBlockErrors(astral), []);
+  });
+});
+
+describe('declaring badly and declaring nothing are one answer', () => {
+  // The divergence this closes: the monitor gated on VALIDITY while the
+  // settings row gated on the raw key being PRESENT. An operator profile with
+  // a malformed block would then render a live Auto-wake checkbox for a
+  // session the monitor refuses to nudge — the ADR 0013 silence, produced by
+  // the guard built to end it.
+  const engines = require('../lib/engines');
+  const loadApiHelperGlobals = require('./_api-helper-globals');
+
+  /** @returns {object} A profile whose wake block is present but malformed. */
+  function malformed() {
+    const b = wellFormed();
+    b.promptPattern = '^\\s*(unclosed';
+    return { id: 'homebrew', name: 'Homebrew', capabilities: { wake: b }, launchModes: {} };
+  }
+
+  it('wakeSignature is the one decision', () => {
+    assert.equal(wake.wakeSignature(malformed()), null);
+    assert.equal(wake.wakeSignature({ id: 'codex', capabilities: {} }), null);
+    assert.ok(wake.wakeSignature({ id: 'ok', capabilities: { wake: wellFormed() } }));
+  });
+
+  it('all three readers answer the same for a malformed block', () => {
+    const profile = malformed();
+    // 1. the monitor
+    assert.equal(wake._buildWakeProfiles([profile]).homebrew, undefined);
+    // 2. the settings row
+    assert.equal(engines.settingDisposition('medusaWake', { medusaWake: true }, profile).applies, false);
+    // 3. the browser, through the projection it actually receives
+    const projected = engines.engineClientPayload(profile, { available: true });
+    assert.equal(projected.capabilities.wake, undefined,
+      'a block the monitor refuses must not cross to the browser at all');
+    const browser = loadApiHelperGlobals()
+      .tcSettingDisposition('medusaWake', { medusaWake: true }, projected);
+    assert.equal(browser.applies, false);
+    assert.match(browser.reason, /has no measured idle signature/);
+  });
+
+  it('a valid block still crosses whole, provenance included', () => {
+    // Trimming `evidence` here would make the projected shape one
+    // `wakeSignature` itself refuses, so the server and the browser would
+    // disagree the moment either was handed a projected profile.
+    const profile = { id: 'ok', name: 'OK', capabilities: { wake: wellFormed() }, launchModes: {} };
+    const projected = engines.engineClientPayload(profile, { available: true });
+    assert.ok(projected.capabilities.wake.evidence);
+    assert.ok(wake.wakeSignature(projected), 'the projected block must still validate');
+  });
 });
 
 describe('the table is derived when it is READ, not when the module is required', () => {
@@ -381,16 +455,64 @@ describe('the table is derived when it is READ, not when the module is required'
       'the table must be built from the store the sync populated, not from the pre-sync directory');
   });
 
-  it('an empty directory is a pre-init state, not a cached answer', () => {
-    // The memoisation must not freeze the empty read. This is the half a
-    // `let cached = build()` on first call gets wrong.
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-wake-empty-'));
-    try {
-      assert.deepEqual(fs.readdirSync(dir), [], 'the fixture directory must start empty');
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-    // And the in-process table, built from a populated store, still resolves.
-    assert.ok(wake.ENGINE_WAKE_PROFILES.claude);
+  it('a populated read IS memoised, so the pattern is compiled once', () => {
+    // The other half of the contract the child process above pins: the empty
+    // read must not cache, and the populated one must. Rebuilding per access
+    // would recompile every engine's `promptRe` on every monitor tick and
+    // every dashboard poll.
+    assert.equal(wake.ENGINE_WAKE_PROFILES, wake.ENGINE_WAKE_PROFILES);
+    assert.equal(wake.ENGINE_WAKE_PROFILES.claude, wake.ENGINE_WAKE_PROFILES.claude);
+  });
+
+  it('an unreadable engines directory is reported ONCE, and recovers', () => {
+    // A different case from the empty one: `store.engines.list()` returns `[]`
+    // for a missing directory but THROWS on a file that will not parse — and
+    // it parses every file in one pass, so one bad operator profile answers
+    // for all of them. The read is retried on every access so the table
+    // recovers with no restart, which is exactly why the warning has to latch:
+    // otherwise it fires per session per five-second tick, plus every
+    // dashboard poll, and buries the line that names what broke.
+    // Reported through a file rather than stdout: the warning itself is what
+    // is being counted, so a channel it also writes to cannot carry the count.
+    const answer = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-wake-answer-')), 'r.json');
+    const script = `
+      const fs = require('node:fs');
+      const os = require('node:os');
+      const path = require('node:path');
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-wake-bad-'));
+      fs.mkdirSync(path.join(tmp, 'engines'));
+      fs.writeFileSync(path.join(tmp, 'engines', 'broken.json'), '{ not json');
+      const store = require(${JSON.stringify(path.join(ROOT, 'lib', 'store.js'))});
+      store._setBasePath(tmp);
+      require(${JSON.stringify(path.join(ROOT, 'lib', 'logger.js'))}).setLevel('warn');
+      let warns = 0;
+      const err = process.stderr.write.bind(process.stderr);
+      const out = process.stdout.write.bind(process.stdout);
+      const count = (chunk) => {
+        if (String(chunk).includes('engine profiles unreadable')) warns++;
+        return true;
+      };
+      process.stderr.write = (c) => count(c);
+      process.stdout.write = (c) => count(c);
+      const wake = require(${JSON.stringify(path.join(ROOT, 'lib', 'medusa-wake.js'))});
+      for (let i = 0; i < 5; i++) Object.keys(wake.ENGINE_WAKE_PROFILES);
+      const whileBroken = Object.keys(wake.ENGINE_WAKE_PROFILES);
+      // Fix the file the way an operator would, with the process still up.
+      fs.rmSync(path.join(tmp, 'engines', 'broken.json'));
+      store.init();
+      const afterFix = Object.keys(wake.ENGINE_WAKE_PROFILES).sort();
+      process.stderr.write = err;
+      process.stdout.write = out;
+      store.close();
+      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.writeFileSync(${JSON.stringify(answer)}, JSON.stringify({ warns, whileBroken, afterFix }));
+    `;
+    execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' });
+    const out = JSON.parse(fs.readFileSync(answer, 'utf8'));
+    fs.rmSync(path.dirname(answer), { recursive: true, force: true });
+    assert.deepEqual(out.whileBroken, [], 'one unparsable file answers for the whole directory');
+    assert.equal(out.warns, 1, 'reported once per process, not once per read');
+    assert.deepEqual(out.afterFix, ['antigravity', 'claude'],
+      'and the table recovers once the file is fixed, with no restart');
   });
 });

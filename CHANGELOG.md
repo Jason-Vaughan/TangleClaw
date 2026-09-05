@@ -186,9 +186,20 @@ All notable changes to TangleClaw are documented in this file.
 
   **A malformed block is refused at the read**, not only over the bundled files: an operator profile
   in `~/.tangleclaw/engines/` never passes through this suite, and a `promptPattern` that will not
-  compile or a field the schema does not know would otherwise reach the gate that decides whether to
-  type into a live pane. Such an engine is logged and left unprofiled — the existing honest skip —
-  and the refusal is per engine, so one bad profile cannot take the feature down for the machine.
+  compile, a field the schema does not know, or a `promptGlyph`/`promptPad` wider than the single
+  terminal cell it is compared against would otherwise reach the gate that decides whether to type
+  into a live pane. Such an engine is logged and left unprofiled — the existing honest skip — and
+  the refusal is per *block*, so one engine's bad declaration does not disturb the others. (One
+  unparsable *file* is a different matter: the store parses the directory in a single pass, so it
+  answers for all of them; that is reported once per process, names every gate that went dark, and
+  clears without a restart once the file is fixed.)
+
+  **Declaring badly and declaring nothing are one answer**, decided once in
+  `medusaWake.wakeSignature` and read by the monitor's table, by the browser projection, and by the
+  disposition row. Gating the settings control on the raw key being present would have offered a
+  live Auto-wake checkbox for a profile the monitor then refuses to nudge — this row's own silence,
+  produced by the guard built to end it.
+
   The set of nudgeable engines is unchanged by the migration, and `detectAtPrompt`'s #1180 bounded
   exception is not widened.
 
