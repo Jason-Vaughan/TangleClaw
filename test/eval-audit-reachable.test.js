@@ -55,6 +55,11 @@ describe('#1236 Eval Audit is reachable, and honest about where it works', () =>
   let tmpDir;
   let projectsDir;
   let projects;
+  // A REAL connection, not a made-up `openclaw:<id>` string. The gate resolves
+  // the engine through `engines.resolveProfile`, which answers null for a
+  // connection nothing claims — a fixture inventing an id would test the
+  // refusal path while claiming to test the allow path.
+  let fedEngineId;
 
   before(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-eval-audit-reach-'));
@@ -66,6 +71,12 @@ describe('#1236 Eval Audit is reachable, and honest about where it works', () =>
     config.projectsDir = projectsDir;
     store.config.save(config);
     projects = require('../lib/projects');
+    const conn = store.openclawConnections.create({
+      name: 'Studio', host: 'studio.local', sshUser: 'tc', sshKeyPath: '/dev/null',
+      auditSecret: 'secret-for-ingest'
+    });
+    fedEngineId = `openclaw:${conn.id}`;
+    assert.ok(engines.resolveProfile(fedEngineId), 'the fixture connection must resolve to a profile');
   });
 
   after(() => {
@@ -91,9 +102,31 @@ describe('#1236 Eval Audit is reachable, and honest about where it works', () =>
     return row;
   }
 
+  describe('the engine a gate asks about is resolved, never fabricated', () => {
+    it('resolves a connection-backed id to a profile carrying the connection\'s display name', () => {
+      // `store.engines.get` answers null for this id and a `{ id }` stub has no
+      // name, so the API said "claude does not feed Eval Audit" where the modal
+      // says "Claude Code does not feed" — and for an OpenClaw project the
+      // refusal claimed TangleClaw had no profile for an engine it knows.
+      const profile = engines.resolveProfile(fedEngineId);
+      assert.ok(profile, 'a real connection must resolve');
+      assert.equal(profile.name, 'Studio (OpenClaw)',
+        'the connection\'s display name, which is what every reason prints');
+      assert.equal(profile.connectionId, fedEngineId.slice('openclaw:'.length));
+      assert.ok(profile.capabilities, 'and the base profile\'s capabilities came with it');
+    });
+
+    it('a reason about that engine names it the way the rest of the product does', () => {
+      const d = engines.settingDisposition('silentPrime', { silentPrime: true },
+        engines.resolveProfile(fedEngineId));
+      assert.match(d.reason, /Studio \(OpenClaw\)/);
+      assert.doesNotMatch(d.reason, /openclaw:/, 'not the raw id');
+    });
+  });
+
   describe('the write path (updateProject)', () => {
     it('enables Eval Audit on a project fed by an OpenClaw connection', async () => {
-      const p = makeProject('ea-openclaw', 'openclaw:conn-1');
+      const p = makeProject('ea-openclaw', fedEngineId);
       const result = await projects.updateProject(p.name, { evalAuditMode: { enabled: true } });
       assert.deepEqual(result.errors || [], []);
       const cfg = store.projectConfig.load(path.join(projectsDir, 'ea-openclaw'));
@@ -105,7 +138,12 @@ describe('#1236 Eval Audit is reachable, and honest about where it works', () =>
       const result = await projects.updateProject(p.name, { evalAuditMode: { enabled: true } });
       assert.equal(result.project, null, 'the PATCH is refused, not silently stored');
       assert.match(result.errors[0], /Eval Audit/, 'the error names what it refused');
-      const disposition = engines.settingDisposition('evalAuditMode', {}, { id: 'claude' });
+      // Resolved the way the product resolves it, not from a stub built here —
+      // an expectation computed from the same fabrication as the code under
+      // test agrees with it no matter what either says.
+      const disposition = engines.settingDisposition('evalAuditMode', {}, engines.resolveProfile('claude'));
+      assert.match(disposition.reason, /Claude Code/,
+        'the resolved profile carries a display name, which a synthesized stub does not');
       assert.ok(result.errors[0].includes(disposition.reason),
         `the refusal carries the disposition's own sentence.\ngot: ${result.errors[0]}`);
       const cfg = store.projectConfig.load(path.join(projectsDir, 'ea-claude'));
@@ -125,7 +163,7 @@ describe('#1236 Eval Audit is reachable, and honest about where it works', () =>
     it('MERGES rather than replaces, so a configured cost cap survives a toggle', async () => {
       // The object carries fifteen scoring tunables beside `enabled`. Assigning
       // over it would make a settings save quietly destroy settings.
-      const p = makeProject('ea-merge', 'openclaw:conn-2', { costCapPerSession: 5.5, judgeModel: 'custom-judge' });
+      const p = makeProject('ea-merge', fedEngineId, { costCapPerSession: 5.5, judgeModel: 'custom-judge' });
       await projects.updateProject(p.name, { evalAuditMode: { enabled: true } });
       const cfg = store.projectConfig.load(path.join(projectsDir, 'ea-merge'));
       assert.equal(cfg.evalAuditMode.enabled, true);
@@ -137,7 +175,7 @@ describe('#1236 Eval Audit is reachable, and honest about where it works', () =>
     it('refuses an unknown key rather than dropping it', async () => {
       // Silently ignoring input that does nothing is the exact defect ADR 0013
       // exists to end; committing it inside the fix for it would be a poor joke.
-      const p = makeProject('ea-unknown', 'openclaw:conn-3');
+      const p = makeProject('ea-unknown', fedEngineId);
       const result = await projects.updateProject(p.name, {
         evalAuditMode: { enabled: true, costCapPerSession: 99 }
       });
@@ -147,7 +185,7 @@ describe('#1236 Eval Audit is reachable, and honest about where it works', () =>
     });
 
     it('rejects a non-object and a non-boolean enabled', async () => {
-      const p = makeProject('ea-types', 'openclaw:conn-4');
+      const p = makeProject('ea-types', fedEngineId);
       for (const bad of ['yes', 42, [], true]) {
         const r = await projects.updateProject(p.name, { evalAuditMode: bad });
         assert.equal(r.project, null, `${JSON.stringify(bad)} must be refused`);
@@ -163,7 +201,7 @@ describe('#1236 Eval Audit is reachable, and honest about where it works', () =>
     it('reports the setting for a project that has it off, so the modal can render the control', async () => {
       // `null` for "off" made the setting invisible to the one surface that
       // could turn it on — the whole reason it was hand-edit-only.
-      makeProject('ea-read-off', 'openclaw:conn-5');
+      makeProject('ea-read-off', fedEngineId);
       const list = await projects.listProjects();
       const row = list.find(p => p.name === 'ea-read-off');
       assert.ok(row.evalAudit, 'evalAudit must be present even when disabled');
@@ -172,7 +210,7 @@ describe('#1236 Eval Audit is reachable, and honest about where it works', () =>
     });
 
     it('carries this project\'s own judge model and cost cap, for the control to state', async () => {
-      makeProject('ea-read-cost', 'openclaw:conn-6', { enabled: true, costCapPerSession: 2.5, judgeModel: 'my-judge' });
+      makeProject('ea-read-cost', fedEngineId, { enabled: true, costCapPerSession: 2.5, judgeModel: 'my-judge' });
       const list = await projects.listProjects();
       const row = list.find(p => p.name === 'ea-read-cost');
       assert.equal(row.evalAudit.enabled, true);
@@ -237,6 +275,79 @@ describe('#1236 Eval Audit is reachable, and honest about where it works', () =>
       const server = engines.settingDisposition('evalAuditMode', {}, { id: 'claude', name: 'Claude Code' });
       assert.ok(html.includes(server.reason),
         `the rendered reason must be the server's.\nserver: ${server.reason}\nhtml: ${html}`);
+    });
+  });
+
+  describe('one project, one answer — every reader respects the gate', () => {
+    it('reports a stranded project as off, while keeping the stored value for the repair surface', async () => {
+      // Hand-edited to `true` on an engine no exchange can reach. Settings, the
+      // dashboard and the prime used to give three different answers about it.
+      makeProject('ea-strand-read', 'claude', { enabled: true });
+      const list = await projects.listProjects();
+      const row = list.find(p => p.name === 'ea-strand-read');
+      assert.equal(row.evalAudit.enabled, false,
+        'the dashboard filter and the incident badge read this — it is on in storage and inert in fact');
+      assert.equal(row.evalAudit.storedEnabled, true,
+        'the settings modal reads this, because it is what turns the stranded flag off');
+      assert.equal(row.evalAudit.openIncidents, 0);
+    });
+
+    it('the prime does not tell an agent it is being scored when nothing can score it', () => {
+      // The prime is the one surface the agent believes; "Exchanges are being
+      // scored" is a false statement about its own session.
+      const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'sessions.js'), 'utf8');
+      const idx = src.indexOf('Eval Audit Mode — runtime flag');
+      assert.ok(idx > 0, 'the prime block must exist');
+      const block = src.slice(idx, src.indexOf('Eval Audit Mode: Active', idx));
+      assert.ok(block.length > 0, 'the block must reach its own heading');
+      assert.match(block, /settingDisposition\('evalAuditMode'/,
+        'the prime asks the gate, not the bare flag');
+    });
+
+    it('the stranded project can be switched off from the modal', () => {
+      const { doc } = makeDocument(['settingsEvalAuditContainer']);
+      const ctx = {
+        document: doc,
+        state: { engines: [] },
+        esc: (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+      };
+      vm.createContext(ctx);
+      const tables = API_HELPER_SRC.match(/const TC_SETTING_\w+ = \{[\s\S]*?\n {2}\};/g) || [];
+      for (const table of tables) vm.runInContext(table, ctx);
+      vm.runInContext(lift(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
+      vm.runInContext(lift(API_HELPER_SRC, 'function tcEngineDisplayName'), ctx);
+      vm.runInContext(lift(API_HELPER_SRC, 'function tcSettingDisposition'), ctx);
+      vm.runInContext(lift(UI_SRC, 'function renderEvalAuditToggle'), ctx);
+      ctx.renderEvalAuditToggle('claude', true,
+        { id: 'claude', name: 'Claude Code', capabilities: {} }, { storedEnabled: true });
+      const html = doc.getElementById('settingsEvalAuditContainer').innerHTML;
+      // A permanently disabled control would leave the only surface that can
+      // clear the flag unable to.
+      assert.match(html, /id="settingsEvalAudit"/, 'saveable, so doSaveSettings sends the disable');
+      assert.match(html, /checked/, 'reflecting what is actually stored');
+      assert.match(html, /Stored on, doing nothing/, 'and saying so');
+    });
+
+    it('a project that never had it on still gets the plain inert row', () => {
+      const { doc } = makeDocument(['settingsEvalAuditContainer']);
+      const ctx = {
+        document: doc,
+        state: { engines: [] },
+        esc: (v) => String(v)
+      };
+      vm.createContext(ctx);
+      const tables = API_HELPER_SRC.match(/const TC_SETTING_\w+ = \{[\s\S]*?\n {2}\};/g) || [];
+      for (const table of tables) vm.runInContext(table, ctx);
+      vm.runInContext(lift(API_HELPER_SRC, 'function tcHonoredLaunchModes'), ctx);
+      vm.runInContext(lift(API_HELPER_SRC, 'function tcEngineDisplayName'), ctx);
+      vm.runInContext(lift(API_HELPER_SRC, 'function tcSettingDisposition'), ctx);
+      vm.runInContext(lift(UI_SRC, 'function renderEvalAuditToggle'), ctx);
+      ctx.renderEvalAuditToggle('claude', false,
+        { id: 'claude', name: 'Claude Code', capabilities: {} }, { storedEnabled: false });
+      const html = doc.getElementById('settingsEvalAuditContainer').innerHTML;
+      assert.match(html, /settingsEvalAuditNotApplicable/);
+      assert.doesNotMatch(html, /id="settingsEvalAudit"/, 'nothing to save, so nothing saveable');
     });
   });
 

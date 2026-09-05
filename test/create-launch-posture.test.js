@@ -125,6 +125,29 @@ describe('#626 launch posture is settable at creation, and the guard runs there'
       'and it is the disposition\'s sentence, not a second wording of it');
   });
 
+  it('refuses a silentPrime the engine cannot honor, and a non-boolean one', () => {
+    // The create path stored this raw while PATCH refused both. Every reader
+    // tests `=== true`, so a stored `"true"` runs with silent prime OFF against
+    // a shipped default of on — a project born quietly wrong. Same class as the
+    // launch-mode gap above: create-time validation lagging PATCH-time.
+    const bad = projects.createProject({ name: 'cp-sp-type', engine: 'claude', silentPrime: 'yes' });
+    assert.equal(bad.project, null);
+    assert.match(bad.errors[0], /silentPrime must be a boolean/);
+
+    const unsupported = projects.createProject({ name: 'cp-sp-engine', engine: 'codex', silentPrime: true });
+    assert.equal(unsupported.project, null);
+    assert.match(unsupported.errors[0], /silentPrime/, 'names the field it refused');
+    assert.match(unsupported.errors[0], /does not deliver a hidden prime/,
+      'and carries the disposition\'s sentence, the one the modal greys the row with');
+    assert.equal(fs.existsSync(path.join(projectsDir, 'cp-sp-engine')), false,
+      'refused before the directory is created');
+
+    // `false` is not a request to do anything, so it is stored anywhere.
+    const off = projects.createProject({ name: 'cp-sp-off', engine: 'codex', silentPrime: false });
+    assert.ok(off.project, `create must succeed: ${off.errors}`);
+    assert.equal(cfgOf('cp-sp-off').silentPrime, false);
+  });
+
   it('rejects a non-boolean showLaunchModePicker', () => {
     const result = projects.createProject({
       name: 'cp-type', engine: 'claude', showLaunchModePicker: 'no'
@@ -153,7 +176,11 @@ describe('#626 launch posture is settable at creation, and the guard runs there'
       const head = submit.slice(0, 2500);
       assert.match(head, /openBypassHiddenModal\(/, 'the create path opens the shared confirm');
       assert.match(head, /modeConfig\.warning/, 'and only when the mode actually warns');
-      assert.match(head, /confirmBypassHidden = true/, 'the confirm re-submits with the flag');
+      assert.match(head, /confirmBypassHiddenFor = confirmedFor/,
+        'the confirm records WHICH engine+mode was seen, not a sticky boolean');
+      assert.match(head, /confirmedFor = `\$\{createData\.engine\}:\$\{mode\}`/,
+        'keyed to the pair the warning belongs to — a failed create leaves the '
+        + 'drawer open, and a latched boolean would wave a different warned mode through');
       // The confirm must be able to send something other than the settings
       // PATCH, or a create routed into it would silently PATCH a project.
       const confirm = UI_SRC.slice(UI_SRC.indexOf('async function confirmBypassHidden'));

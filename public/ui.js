@@ -1131,7 +1131,10 @@ function openSettings(name) {
   const initialFeatureIndexChecked = !!project.featureIndexEnabled;
   // `enrichProject` reports `evalAudit` for every project now, enabled or not —
   // a modal cannot render a toggle whose current value it cannot read.
-  const initialEvalAuditChecked = !!(project.evalAudit && project.evalAudit.enabled);
+  // `storedEnabled`, not `enabled`: the modal is the surface that repairs a
+  // project stored on where the setting cannot apply, so it is the one place
+  // that must see the raw value rather than the effective one.
+  const initialEvalAuditChecked = !!(project.evalAudit && project.evalAudit.storedEnabled);
   // Project Map toggle (PIDX #360, #356) — engine-agnostic, so always rendered.
   const initialProjectMapChecked = !!project.projectMapEnabled;
   // Auto version-bump opt-out (#318) — engine-agnostic; default on (only an
@@ -1340,7 +1343,23 @@ function renderEvalAuditToggle(engineId, preserveChecked, projectEngine, audit) 
     || (projectEngine && projectEngine.id === engineId ? projectEngine : null);
   const disposition = tcSettingDisposition('evalAuditMode', { evalAuditMode: { enabled: preserveChecked } }, profile);
   if (!disposition.applies) {
-    container.innerHTML = `
+    // Inert, but repairable. A project can hold a stored `true` from a
+    // hand-edit made before this gate existed; rendering a permanently disabled
+    // checkbox would leave the only surface that can clear it unable to. So a
+    // STRANDED project gets a live control that can only go one way — the
+    // server refuses enabling here and allows disabling, and this matches it.
+    const stranded = !!(audit && audit.storedEnabled);
+    container.innerHTML = stranded
+      ? `
+    <div class="form-group">
+      <label class="gs-toggle-label">
+        <span>Eval Audit</span>
+        <input type="checkbox" id="settingsEvalAudit" checked>
+        <span class="toggle-switch"></span>
+      </label>
+      <div class="form-hint"><strong>Stored on, doing nothing.</strong> ${esc(disposition.reason)} Switch it off to clear it.</div>
+    </div>`
+      : `
     <div class="form-group">
       <label class="gs-toggle-label gs-toggle-label--disabled">
         <span>Eval Audit</span>
@@ -2662,13 +2681,21 @@ async function submitCreate() {
   // outright; asking here is what lets the operator SEE the warning they are
   // switching off, which is the entire point of the guard. Creation is where
   // the posture is established, so it is the last place it should be implicit.
-  if (!createData.confirmBypassHidden && createData.showLaunchModePicker === false) {
+  if (createData.showLaunchModePicker === false) {
     const profile = (state.engines || []).find(e => e.id === createData.engine);
     const mode = createData.defaultLaunchMode || 'default';
     const modeConfig = profile && profile.launchModes && profile.launchModes[mode];
-    if (modeConfig && modeConfig.warning) {
+    // Keyed to what was actually confirmed, not a sticky boolean. A failed
+    // create leaves the drawer open with the flag latched, so Back → pick a
+    // DIFFERENT warned mode → Create would resend a confirmation for a warning
+    // the operator never saw. They did see a warning; just not this one, which
+    // is the whole content of the guard.
+    const confirmedFor = `${createData.engine}:${mode}`;
+    if (modeConfig && modeConfig.warning && createData.confirmBypassHiddenFor !== confirmedFor) {
+      // The parked body is unused on this path: the create resends through its
+      // own closure over `createData`, not by mutating a PATCH body.
       openBypassHiddenModal({}, mode, modeConfig, createData.name || 'this project', async () => {
-        createData.confirmBypassHidden = true;
+        createData.confirmBypassHiddenFor = confirmedFor;
         await submitCreate();
       });
       return;
@@ -2688,8 +2715,8 @@ async function submitCreate() {
     tags,
     // The eyes-open guard runs on the create path now, and a hidden picker over
     // a warned default is refused unless the operator has actually seen the
-    // warning. `confirmCreateBypassHidden` sets this after they do.
-    ...(createData.confirmBypassHidden ? { confirmBypassHidden: true } : {})
+    // warning. The confirm callback above records which engine+mode they saw.
+    ...(createData.confirmBypassHiddenFor ? { confirmBypassHidden: true } : {})
   });
 
   if (!result) {

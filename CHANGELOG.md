@@ -125,6 +125,12 @@ All notable changes to TangleClaw are documented in this file.
   against a mini-DOM (#1037) instead of matched as source: it depends on a global published by
   another file, and a regex cannot tell whether that identifier resolves — the failure mode is a
   `ReferenceError` on every open of the modal, which has shipped to the live install once before.
+  **The engine a gate asks about is resolved, never fabricated.** `engines.resolveProfile` is the
+  one answer to "which profile is this id", including the connection-backed `openclaw:<id>` form
+  that `store.engines.get` returns null for; `getWithAvailability` layers detection on top of it.
+  Three call sites had resolved it three ways, so the same project could be refused by the API in
+  different words from the ones its settings modal renders — and a synthesized stub answers
+  correctly only until a disposition row reads something other than the id.
 
 ### Fixed
 - **A regenerated `CLAUDE.md` no longer strands the self-updater (#1241).** TangleClaw manages its

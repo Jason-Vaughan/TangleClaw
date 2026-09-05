@@ -232,6 +232,37 @@ describe('settingDisposition — the one answer to "does this setting apply here
     });
   });
 
+  describe('resolveProfile is how a caller gets the engine it is asking about', () => {
+    it('answers for a connection-backed id, which store.engines.get does not', () => {
+      // Three sites resolved engines three ways — `store.engines.get` (null for
+      // a connection-backed project), a synthesized `{ id }` stub (no name, no
+      // capabilities), and this. The same project was then refused by the API
+      // in different words from the ones the modal renders.
+      // No store needed for these: a non-id can never name a profile, and the
+      // point is that the answer is null rather than a fabricated stub.
+      assert.equal(engines.resolveProfile(''), null);
+      assert.equal(engines.resolveProfile(null), null);
+      assert.equal(engines.resolveProfile(undefined), null);
+      assert.equal(engines.resolveProfile(42), null);
+    });
+
+    it('carries the connection\'s display name into the sentence the operator reads', () => {
+      // A synthesized `{ id }` has no `name`, so the API said "claude does not
+      // feed Eval Audit" where the modal says "Claude Code does not feed".
+      const named = { id: 'openclaw:c1', name: 'Studio (OpenClaw)', capabilities: {} };
+      const d = engines.settingDisposition('silentPrime', { silentPrime: true }, named);
+      assert.match(d.reason, /Studio \(OpenClaw\)/,
+        'the reason names the engine the way every other surface names it');
+      assert.doesNotMatch(d.reason, /openclaw:c1/, 'not the raw id');
+    });
+
+    it('a plain profile keeps its own display name', () => {
+      const d = engines.settingDisposition('evalAuditMode', {}, engines.resolveProfile('claude'));
+      assert.match(d.reason, /Claude Code/, 'the profile name, not the id');
+      assert.doesNotMatch(d.reason, /^claude /);
+    });
+  });
+
   describe("'default' is the absence of a mode, not one the engine must declare", () => {
     it('applies on a profile that declares no launch modes at all', () => {
       // `reconcileLaunchMode` short-circuits `'default'`, and it adds no CLI
@@ -330,7 +361,14 @@ describe('settingDisposition — the one answer to "does this setting apply here
       // and every one would have kept the old rule the day the table grew a
       // second condition. Counted across the tree, the way the launch-mode
       // guard already counts `disabled !== true`.
-      assert.deepEqual(capabilityReads(path.join(__dirname, '..', 'lib'), 'supportsSilentPrime'),
+      // `server.js` sits at the repo root, outside both trees the walk covers,
+      // and it is a plausible home for a sixth gate — so it is named rather
+      // than left to a directory walk that would never reach it.
+      const root = path.join(__dirname, '..');
+      const serverReads = codeLinesMentioning(
+        fs.readFileSync(path.join(root, 'server.js'), 'utf8'), 'supportsSilentPrime');
+      assert.deepEqual(serverReads, [], 'the route layer asks the owner, it does not read the flag');
+      assert.deepEqual(capabilityReads(path.join(root, 'lib'), 'supportsSilentPrime'),
         ['lib/engines.js'], 'one file may read it');
       const table = declarationSource(SRC, 'const ENGINE_CONDITIONAL_SETTINGS = {');
       for (const line of codeLinesMentioning(SRC, 'supportsSilentPrime')) {

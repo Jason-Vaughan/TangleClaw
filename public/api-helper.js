@@ -3772,8 +3772,9 @@
 
   /**
    * How an engine is named to the operator — the profile's own `name` where it
-   * has one, so a reason reads "Codex" rather than "codex". Restated from
-   * `engines.engineDisplayName`.
+   * has one, so a reason reads "Codex" rather than "codex". Restated from the
+   * server's own display-name helper in `lib/engines.js`, which is internal to
+   * that module.
    * @param {object|null} engine - Engine object or profile.
    * @returns {string}
    */
