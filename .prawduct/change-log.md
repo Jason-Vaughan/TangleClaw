@@ -26,6 +26,115 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-05 — #1251/#1255: the two audit defects that needed a design before code
+
+<!-- prawduct: type=bugfix | scope=audit-defects-1251 | chunks=D2a,D2b -->
+
+The last two instances the C1 audit found. D1 shipped the three that share the disposition
+mechanism; these each needed a decision first, and the D2 plan opened at design rather than at
+code. Neither issue needed the invention it asked for — both answers were already in the repo,
+unread.
+
+**#1251 — the carrier says what it cannot deliver.** On an OpenClaw project `writeEngineConfig`
+returns `{skipped: true}` because the profile declares no `configFormat.filename`, and the whole
+generated config goes with it: five core rules, six extension rules, the Global Rules document, and
+the PortHub, shared-docs and session-memory guides. The skip is right on the write path (#240 asked
+for it so a launch does not shout) and the call site then discarded `skipReason`. The unit of loss
+is the **carrier**, not each rule — one file is absent, so everything riding it is absent — so the
+`generatedConfig` row is keyed on the carrier and named after the file the operator can go and look
+at, sidestepping the modal's existing "Project Rules" section, which is the free-text
+`session_rules` feature and a different thing with the same word.
+
+The engine-specific half of that sentence is **declared in the profile**
+(`configFormat.absentReason`), not composed in `lib/`: a sixth engine with no config file states its
+own case in its own file, both realms read the same field, and a test asserts neither realm carries
+a copy of the words. The row's provenance input is derived — whether any `rules.extensions` value
+was moved off what ships — because a rules block has no stored scalar to compare, and that decides
+whether losing it warns or merely records. `rules.core` is deliberately not consulted: a core rule
+cannot be disabled, so counting it would report every project as customized.
+
+**The review caught the row answering for the wrong engines.** The browser gated on
+`configFormat`, and no engine payload the browser receives carried it — `GET /api/engines` and the
+per-project engine object each projected their own subset — so the row answered "no config file"
+for *every* engine: the notice would have fired on claude, codex, aider and antigravity while the
+one engine it was written for got a generic sentence. Both payloads now go through one projection
+(`engineClientPayload`), and the cross-realm test drives its browser side through that same
+function rather than raw profile JSON. A parity test fed a shape production never sends proves
+nothing.
+
+**#1255 — the wake signature becomes a declared property of the engine.** `ENGINE_WAKE_PROFILES`
+hardcoded `claude` and `antigravity` in `lib/medusa-wake.js`, so adding a sixth engine meant editing
+a `lib/` module — the construction `prime-delivery-direction.md` § Direction §1 forbids one layer
+up. Each engine now declares a `capabilities.wake` block (`busyMarker`, `promptPattern`,
+`promptGlyph`, `promptPad`, `placeholderSgr`, `idleMarker`, optional `pasteRejectedMarker`) and the
+table is derived from it.
+
+**The migration is what makes the honesty affordable**, which is why the issue's two halves are one
+chunk. The single operator-facing string about the feature read "Claude sessions only for now",
+wrong since antigravity was profiled (#560), while the engines that genuinely cannot be nudged got
+no warning at all. Fixing that with the data in `lib/` would have needed a second hardcoded engine
+list in `public/` — the drift ADR 0013 spends a consequence section on. With the data in the
+profile, the engines API already ships it, so the `medusaWake` row and its browser half compute the
+same answer from the same bytes.
+
+**Provenance is per FIELD.** A sibling `evidence` map keyed by field name, not one claim for the
+block: antigravity's `busyMarker` was measured on a live pane and its `promptPad` never has been,
+and flattening those into one `verifiedOn` turns a gap into an assurance. `verifiedOn: null` is the
+form for a value nobody measured, and is a different claim from Claude's `idleMarker` — `null`
+carrying a date, because the *absence* is what got measured (#1114). A guard holds the map and the
+declared fields to each other in both directions. The per-field wrapper `{value, evidence}` was
+rejected: it makes omission impossible but rewrites every reader and every test, and diverges from
+the `evidence` sibling `startupInjection` and `readOnlyModeMarker` already use.
+
+**Derived lazily, and that is load-bearing.** The runtime reads profiles from
+`~/.tangleclaw/engines/`, which `store.init()` canonical-source-overwrites from the bundle on every
+boot (#251) — that sync is what carries the new block to an existing install with no migration step.
+But `server.js` requires every module *before* calling `store.init()`, so a table built at module
+load reads that directory pre-sync: empty on a fresh install, stale on any other. Zero wake
+profiles, silently, is the failure this work exists to end, introduced by its own fix. A getter
+derives on first use and memoises; an empty directory is treated as not-initialised rather than as
+an answer. Pinned in a child process, because the ordering is a property of a fresh module registry.
+
+**A malformed block is refused at the read**, not only over the bundled files — an operator profile
+never passes through this suite, and a `promptPattern` that will not compile would otherwise reach
+the gate that decides whether to type into a live pane. The refusal is per *block*; one unparsable
+*file* is the opposite case, since the store parses the directory in a single pass, and that is
+reported once per process naming every gate that goes dark.
+
+**The review's finding, and it is the same shape as #1251's.** The disposition row gated on the wake
+key being *present* while the monitor gates on it being *valid*, so an operator profile with a
+malformed block would render a live Auto-wake checkbox for a session never nudged — this row's own
+silence, produced by the guard built to end it. The partial-application check ADR 0013 asks for
+(#1252's lesson) had been run against the declared-*nothing* case and generalised to the
+declared-*badly* one. `medusaWake.wakeSignature` is now the single decision, read by the monitor's
+table, the browser projection and the row. A recorded check names the case it examined, or a later
+reader takes it as covering the case it did not.
+
+Also from the review: `promptGlyph` and `promptPad` are compared against a single terminal cell, so
+a multi-character value can never match and makes the composer read non-empty forever — both now
+require exactly one code point, which refuses the six-character pasted escape the engine guide's own
+example had been shipping.
+
+**Filed rather than absorbed:** `writeEngineConfig`'s second silent skip on a plugin-governed
+project (needs per-*project* governance the disposition's signature does not carry) and the Project
+Rules editor being live on OpenClaw where the startup-rules channel never runs. A real
+`rules.core` / `rules.extensions` editor is a feature, not this work — and it inherits #1251's row
+for free when it is built. No wake profiles for codex, aider or openclaw: a profile requires a live
+pane capture, and declaring an unmeasured signature to make the modal read better is the exact
+dishonesty this work ends.
+
+**Tests:** `test/engine-wake-profiles.test.js` (new — declaration, per-field provenance both ways,
+the read-time refusals, the three readers agreeing on a malformed block, lazy ordering and the
+unreadable-store latch, both in child processes); new cases in `test/setting-disposition.test.js`
+for both rows and both modal controls; pane fixtures shared via `test/_wake-fixtures.js` and a
+throwaway store via `test/_engine-store.js`, which closes the host-dependence
+`test/engine-config-managed-block.test.js` had already recorded once. Every new guard was
+mutation-verified red. Full suite 0-fail.
+
+**Critic:** cumulative (0 blocking, 10 warnings, 15 notes) — all 25 dispositioned, six warnings
+fixed rather than accepted; two `verify-resolutions` rounds since, both 0 findings.
+**VRF queued:** the Auto-wake toggle across claude → antigravity → codex → claude.
+
 ## 2026-09-05 — #1252/#1253/#1254: a setting that half-applies says which half
 
 <!-- prawduct: type=bugfix | scope=audit-defects-1252 | chunks=D1 -->
