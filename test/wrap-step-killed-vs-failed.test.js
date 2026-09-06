@@ -623,8 +623,8 @@ describe('every operator-facing timeout branch in the swept steps (#897)', () =>
             if (cmd.startsWith('git diff --name-status')) return argvKill;
             return ok();
           };
-          const delta = await continuityStep._mapDelta(os.tmpdir());
-          assert.deepEqual(delta, { touched: [], deleted: [] },
+          const delta = await continuityStep._sessionDelta(os.tmpdir());
+          assert.deepEqual(delta, { touched: [], deleted: [], kind: null },
             'the safe degrade is unchanged — the Map is left alone');
         } finally {
           continuityStep._internal.exec = saved;
@@ -640,8 +640,8 @@ describe('every operator-facing timeout branch in the swept steps (#897)', () =>
         const saved = continuityStep._internal.exec;
         try {
           continuityStep._internal.exec = async () => argvKill;
-          const base = await continuityStep._resolveBase(os.tmpdir());
-          assert.equal(base, null);
+          const delta = await continuityStep._sessionDelta(os.tmpdir());
+          assert.equal(delta.kind, null, 'no range resolves, so nothing is measured');
         } finally {
           continuityStep._internal.exec = saved;
         }
@@ -650,12 +650,33 @@ describe('every operator-facing timeout branch in the swept steps (#897)', () =>
       assert.ok(lines.some((l) => /git probe was stopped/.test(l)));
     });
 
+    it('logs when the ancestry probe on a recorded boundary was stopped', async () => {
+      // The costliest probe to answer wrongly: a kill read as "not an ancestor"
+      // silently swaps the session's range for the branch's, and this step is
+      // best-effort, so nothing else would ever say so.
+      const lines = await captureWarnings(async () => {
+        const saved = continuityStep._internal.exec;
+        try {
+          continuityStep._internal.exec = async (file, args) => {
+            const cmd = `${file} ${args.join(' ')}`;
+            if (cmd.includes('--is-ancestor')) return argvKill;
+            return ok('abc\n');
+          };
+          await continuityStep._sessionDelta(os.tmpdir(), { previousWrapSha: 'abc1234' });
+        } finally {
+          continuityStep._internal.exec = saved;
+        }
+      });
+
+      assert.ok(lines.some((l) => /git probe was stopped/.test(l) && /is-ancestor/.test(l)));
+    });
+
     it('does NOT log when a probe genuinely answers no', async () => {
       const lines = await captureWarnings(async () => {
         const saved = continuityStep._internal.exec;
         try {
           continuityStep._internal.exec = async () => refused(1);
-          await continuityStep._resolveBase(os.tmpdir());
+          await continuityStep._sessionDelta(os.tmpdir());
         } finally {
           continuityStep._internal.exec = saved;
         }

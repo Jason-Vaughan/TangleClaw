@@ -89,13 +89,13 @@ describe('_git-range — session range resolution', () => {
   });
 });
 
-describe('_git-range — isAncestorOfHead (#664)', () => {
+describe('_git-range — isAncestorOf (#664)', () => {
   it('true when git merge-base --is-ancestor exits zero', () => {
-    assert.equal(gitRange.isAncestorOfHead('/p', 'c1f94ac', fakeExec()), true);
+    assert.equal(gitRange.isAncestorOf('/p', 'c1f94ac', 'HEAD', fakeExec()), true);
   });
 
   it('false when it exits non-zero — the orphaned or off-history ref', () => {
-    assert.equal(gitRange.isAncestorOfHead('/p', 'c1f94ac', fakeExec(/is-ancestor/)), false);
+    assert.equal(gitRange.isAncestorOf('/p', 'c1f94ac', 'HEAD', fakeExec(/is-ancestor/)), false);
   });
 });
 
@@ -139,5 +139,89 @@ describe('_git-range — both callers agree', () => {
       featuresToc._internal.execSync = savedF;
       coverage._internal.execSync = savedC;
     }
+  });
+});
+
+describe('_git-range — the tip is a parameter (#797)', () => {
+  it('measures to the given tip on both the session and the fallback path', () => {
+    const session = gitRange.resolveSessionRange('/p', 'c1f94ac', { tip: 'deadbee', exec: fakeExec() });
+    assert.equal(session.range, 'c1f94ac..deadbee');
+    const branch = gitRange.resolveSessionRange('/p', null, { tip: 'deadbee', exec: fakeExec() });
+    assert.equal(branch.range, 'main...deadbee');
+  });
+
+  it('asks the ancestry question about the tip, not about HEAD', () => {
+    // A step running after the wrap commit measures to that commit. Probing HEAD
+    // instead answers a different question than the range being built, and #467's
+    // close-loop is exactly when the two diverge.
+    const asked = [];
+    const exec = (cmd) => { asked.push(cmd); return ''; };
+    gitRange.resolveSessionRange('/p', 'c1f94ac', { tip: 'deadbee', exec });
+    assert.ok(asked.some((c) => c === 'git merge-base --is-ancestor c1f94ac deadbee'),
+      `ancestry was probed against the wrong end: ${asked.join(' | ')}`);
+  });
+
+  it('defaults the tip to HEAD', () => {
+    assert.equal(gitRange.resolveSessionRange('/p', 'c1f94ac', { exec: fakeExec() }).range, 'c1f94ac..HEAD');
+  });
+});
+
+describe('_git-range — the sync and async resolvers agree', () => {
+  /**
+   * An argv-style async runner that refuses commands matching `failing`.
+   *
+   * @param {RegExp|null} failing - Commands to refuse, or null to accept all.
+   * @returns {Function}
+   */
+  function fakeExecAsync(failing = null) {
+    return async (file, args) => {
+      const cmd = `${file} ${args.join(' ')}`;
+      if (failing && failing.test(cmd)) return { exitCode: 1, stdout: '', stderr: '', error: null, timedOut: false };
+      return { exitCode: 0, stdout: '', stderr: '', error: null, timedOut: false };
+    };
+  }
+
+  // The two forms exist because the wrap's steps do not share one git seam. They
+  // are allowed to differ in HOW they probe and in nothing else, so every input
+  // that changes the decision is run through both.
+  const CASES = [
+    ['recorded SHA resolves', 'c1f94ac', null, {}],
+    ['no SHA recorded', null, null, {}],
+    ['SHA orphaned by squash-merge', 'c1f94ac', /is-ancestor/, {}],
+    ['SHA no longer resolves', 'c1f94ac', /rev-parse --verify --quiet c1f94ac/, {}],
+    ['non-hex SHA never reaches the range', 'zzzzzzz', null, {}],
+    ['main absent, master present', null, /--quiet main/, {}],
+    ['no trunk at all', null, /rev-parse/, {}],
+    ['two-dot fallback', null, null, { dots: 'two' }],
+    ['a tip that is not HEAD', 'c1f94ac', null, { tip: 'deadbee' }],
+    ['a tip that is not HEAD, on the fallback', null, null, { tip: 'deadbee' }]
+  ];
+
+  for (const [name, sha, failing, options] of CASES) {
+    it(`agrees on: ${name}`, async () => {
+      const sync = gitRange.resolveSessionRange('/p', sha, { ...options, exec: fakeExec(failing) });
+      const async_ = await gitRange.resolveSessionRangeAsync('/p', sha, { ...options, exec: fakeExecAsync(failing) });
+      assert.deepEqual(async_, sync);
+    });
+  }
+
+  it('the async probes report a kill instead of calling it a negative answer', async () => {
+    const stopped = [];
+    const killed = async () => ({ exitCode: 124, stdout: '', stderr: '', error: 'timed out', timedOut: true });
+    const out = await gitRange.resolveSessionRangeAsync('/p', 'c1f94ac', {
+      exec: killed, onStopped: (c) => stopped.push(c)
+    });
+    assert.equal(out, null, 'nothing resolved, so there is no range');
+    // The null is exactly the shape a killed probe manufactures, and it carries
+    // no field to say so — `onStopped` is the only way a caller can tell.
+    assert.ok(stopped.some((c) => c.includes('rev-parse --verify --quiet c1f94ac')));
+    assert.ok(stopped.some((c) => c.includes('--quiet main')));
+  });
+
+  it('the async runner throwing is a negative answer, not a crash', async () => {
+    const out = await gitRange.resolveSessionRangeAsync('/p', 'c1f94ac', {
+      exec: async () => { throw new Error('spawn ENOENT'); }
+    });
+    assert.equal(out, null);
   });
 });

@@ -392,11 +392,22 @@ describe('continuity-write wrap step (CC-1)', () => {
     assert.doesNotMatch(parsed.map, /node_modules|dist/);
   });
 
-  it('_mapDelta classifies A/M/D/R via --name-status', async () => {
+  it('_sessionDelta classifies A/M/D/R via --name-status', async () => {
     step._internal.exec = gitStubWithDiff('A\tlib/added.js\nM\tlib/mod.js\nD\tlib/del.js\nR100\tlib/old.js\tlib/renamed.js\n');
-    const delta = await step._mapDelta(project.path);
+    const delta = await step._sessionDelta(project.path);
     assert.deepEqual(delta.touched.sort(), ['lib/added.js', 'lib/mod.js', 'lib/renamed.js'].sort());
     assert.deepEqual(delta.deleted.sort(), ['lib/del.js', 'lib/old.js'].sort());
+    assert.equal(delta.kind, 'branch', 'no recorded boundary → the trunk fallback');
+  });
+
+  it('_sessionDelta returns the raw paths; the allowlist is the Map\'s, not the record\'s', async () => {
+    // #797's second half: every `.tangleclaw/` path a wrap commits falls outside
+    // the Feature Index allowlist, so filtering here emptied the provenance
+    // stamp of the commit it was describing.
+    step._internal.exec = gitStubWithDiff('M\t.tangleclaw/project.json\nM\tnode_modules/pkg/index.js\nM\tlib/real.js\n');
+    const delta = await step._sessionDelta(project.path);
+    assert.deepEqual(delta.touched.sort(),
+      ['.tangleclaw/project.json', 'lib/real.js', 'node_modules/pkg/index.js'].sort());
   });
 
   // ── #467: anchor git facts + Map delta to the wrap commit, not HEAD ──
