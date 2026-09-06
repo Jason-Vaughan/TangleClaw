@@ -228,16 +228,17 @@ describe('store.sessions (write methods)', () => {
       const killed = store.sessions.kill(session.id, 'first');
       assert.equal(killed.status, 'killed');
 
-      const again = store.sessions.kill(session.id, 'second');
-      assert.equal(again.status, 'killed');
-      assert.equal(again.endedAt, killed.endedAt, 'ended_at must not be rewritten');
+      // `null` is the whole point: a caller cannot tell a refused `wrap` from a
+      // successful one by reading `.status` back — both say `wrapped` — so the
+      // outcome has to travel in the return value.
+      assert.equal(store.sessions.kill(session.id, 'second'), null);
+      assert.equal(store.sessions.wrap(session.id, 'should not land'), null);
+      assert.equal(store.sessions.markCrashed(session.id, 'should not land'), null);
 
-      const wrapAttempt = store.sessions.wrap(session.id, 'should not land');
-      assert.equal(wrapAttempt.status, 'killed');
-      assert.equal(wrapAttempt.wrapSummary, null);
-
-      const crashAttempt = store.sessions.markCrashed(session.id, 'should not land');
-      assert.equal(crashAttempt.status, 'killed');
+      const after = store.sessions.get(session.id);
+      assert.equal(after.status, 'killed');
+      assert.equal(after.endedAt, killed.endedAt, 'ended_at must not be rewritten');
+      assert.equal(after.wrapSummary, null);
     });
 
     it('refuses a target no modelled status can reach', () => {
@@ -253,6 +254,7 @@ describe('store.sessions (write methods)', () => {
       const result = store._transitionSession(session.id, 'not-a-status', "ended_at = datetime('now')", []);
       assert.equal(result.changed, false);
       assert.equal(result.session.status, 'active', 'the row is untouched');
+      assert.equal(store.sessions.get(session.id).status, 'active');
       store.sessions.kill(session.id, 'test cleanup');
     });
 
@@ -278,12 +280,27 @@ describe('store.sessions (write methods)', () => {
       // `started_at` is second-resolution. This lookup is what a wrap and a
       // kill resolve their target through, so a tie must not be settled by
       // whatever order SQLite happens to scan in — it settled on the OLDER row.
+      // Earlier tests in this file leave active rows behind; clear them so the
+      // pair below is unambiguously what `getActive` is choosing between.
+      for (let a = store.sessions.getActive(projectId); a; a = store.sessions.getActive(projectId)) {
+        store.sessions.kill(a.id, 'test setup');
+      }
       const older = store.sessions.start({
         projectId, engineId: 'claude', tmuxSession: 'tie-older'
       });
       const newer = store.sessions.start({
         projectId, engineId: 'claude', tmuxSession: 'tie-newer'
       });
+      // Force the tie rather than hoping the two inserts land in the same
+      // second. Without this the assertions below pass on any run that straddles
+      // a second boundary — including with the `id DESC` tiebreak removed, which
+      // makes the guard for this chunk's own defect unfalsifiable most of the time.
+      store.getDb().prepare(
+        'UPDATE sessions SET started_at = (SELECT MAX(started_at) FROM sessions) WHERE id IN (?, ?)'
+      ).run(older.id, newer.id);
+      assert.equal(store.sessions.get(older.id).startedAt, store.sessions.get(newer.id).startedAt,
+        'the precondition this guard needs: the two rows share a started_at');
+
       assert.equal(store.sessions.getActive(projectId).id, newer.id);
       assert.equal(store.sessions.getLatest(projectId).id, newer.id);
       // `list` orders the same way and then applies a LIMIT, so the tie decides

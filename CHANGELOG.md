@@ -15,8 +15,24 @@ All notable changes to TangleClaw are documented in this file.
   terminal statuses genuinely terminal; previously a second `kill` on an ended session rewrote
   `ended_at` and `duration_seconds` and appended a duplicate `session.killed` row to the activity
   log — corrupting the only durable record of what the lifecycle actually did. A refused
-  transition is a logged no-op that returns the row untouched, because roughly sixty callers use
-  these as "end it if it is still live" and a throw would buy nothing there.
+  transition is a logged no-op rather than a throw, because roughly sixty callers use these as
+  "end it if it is still live"; it returns **`null`**, which is how a caller learns it was not the
+  one that ended the session. Reading the row back cannot answer that — a refused `wrap` on an
+  already-`wrapped` row reads exactly like a successful one.
+- **A wrap that finishes after its session was killed no longer reports success.** The pipeline
+  runs for minutes and the operator can press Kill inside that window, so the row a wrap started
+  against can end before it completes. `POST /wrap/complete` now answers an explicit error instead
+  of 200 for a finalize that wrote nothing, and does not tear down the listener or commit the
+  repository on behalf of a wrap that was never recorded; `triggerWrap` returns
+  `lifecycleCompleted` **derived from** the write rather than asserted beside it, so its log and
+  its result no longer claim a completed lifecycle over a `killed` row with no summary. The wrap
+  POST's HTTP response shape is unchanged — `lifecycleCompleted` is deliberately not forwarded.
+- **The wake monitor will not type into a pane a wrap is driving.** Its `status !== 'active'` gate
+  used to refuse a wrapping session; with that status gone the gate can only mean "already ended",
+  so the mid-wrap protection went with it. It now asks `lib/wrap-run-registry` — the thing that
+  actually knows a pipeline is running — and holds the nudge (never sends it) when that read
+  throws. A wrap pauses between steps, and a pane at rest there is exactly the shape the monitor
+  acts on.
 - **`GET /api/sessions/:project/status` no longer reports `wrapping` or `wrapFinished`.** Both were
   sourced from the retired DB state; a session mid-wrap now answers as the ordinary active session
   it is. `public/session.js` still branches on those fields — a tolerated dead branch that costs

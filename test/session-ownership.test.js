@@ -301,7 +301,7 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
     afterEach(() => { ownership._internal.bridgeStatus = origBridgeStatus; });
 
     /** Create a remote openclaw connection (with a bridge) + a webui session on it. */
-    function makeRemoteSession(name, { bridgePort = 3201, bridgeToken = 'tok', status = 'active' } = {}) {
+    function makeRemoteSession(name, { bridgePort = 3201, bridgeToken = 'tok' } = {}) {
       const conn = store.openclawConnections.create({
         name: `${name}-conn`, host: `${name}.ts.net`, sshUser: 'j', sshKeyPath: '/tmp/k',
         bridgePort, bridgeToken
@@ -552,8 +552,9 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
       const sibling = store.projects.create({ name: 'sg-sibling', path: '/tmp/sg-sibling' });
       // Belt-and-suspenders: a prior same-project session lingering mid-wrap must
       // still be dropped (the current session's row does not exist at prime-gen).
+      // It holds `active` — a wrap does not give a session a status of its own.
       t.mock.method(store.sessions, 'listLiveAll', () => [
-        { id: 9101, projectId: self.id, engineId: 'claude', sessionMode: 'tmux', status: 'wrapping', startedAt: 'x' },
+        { id: 9101, projectId: self.id, engineId: 'claude', sessionMode: 'tmux', status: 'active', startedAt: 'x' },
         { id: 9102, projectId: sibling.id, engineId: 'claude', sessionMode: 'tmux', status: 'active', startedAt: 'x' }
       ]);
 

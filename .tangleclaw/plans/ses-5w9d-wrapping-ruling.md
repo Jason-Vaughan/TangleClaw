@@ -204,12 +204,16 @@ the product worse at the thing the state was for.
      it, but 166 rows carry a real value and dropping a column is the same table rebuild as (3).
      Documented in `data-model.md` as written by no current code path.
 
-  **Deferred, and filed rather than dropped (issue #1302):** `public/session.js`'s status-poll branches on
+  **Deferred, and filed rather than dropped (issue #1302 — filed 2026-09-06; a Critic pass read a
+  backlog cache snapshotted before it and reported it unresolved):** `public/session.js`'s status-poll branches on
   `data.wrapping` / `data.wrapFinished` / `data.wrapCompleted` become unreachable when this route
   stops sending those fields. They are not removed here — they hang off the wrap-idle modal
   (#98's history) and `finalizeFinishedWrap`, an operator-visible frontend surface that deserves
   its own chunk rather than a rider on a store deletion. The session page's own wrapping UI is
   already driven by the wrap POST and its stream, so nothing regresses in the meantime.
+  `test/session-wrap-finalize.test.js` guards those same branches and is deferred with them —
+  retiring the test first would leave shipped code unguarded, so it carries a note saying what it
+  is waiting on.
 
   **One name in the table above is wrong:** the fleet-wide reader is `store.sessions.listLiveAll`,
   not `getActiveAll`. Same site, same collapse.
@@ -224,6 +228,13 @@ the product worse at the thing the state was for.
   production: the cache has been empty since 2026-05-21 for the same reason the status has.
   `_deriveV2WrapSummary` — which reads the pipeline's structured output rather than pane text — is
   the live summary producer and is untouched.
+
+  **The `lib/projects.js` row above is wrong too.** It says the dashboard wrapping branch is
+  "not deleted — re-sourced in Chunk 02", and it is deleted here. It had to be: the branch's only
+  entry point was `store.sessions.getWrapping`, which the row two above deletes, so the two rows
+  contradicted each other and only one could be acted on. The re-sourcing is still Chunk 02's, and
+  `lib/projects.js` carries a comment at the site saying so — but see the Chunk 02 note below,
+  because the branch was never rendering anything in the first place.
 
   **One defect found, not inherited.** `store.sessions.getActive` ordered by `started_at DESC`
   with no tiebreak. The column is second-resolution, so two rows created in the same second tie

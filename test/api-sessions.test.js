@@ -556,7 +556,7 @@ describe('api-sessions', () => {
       }
     });
 
-    it('returns 200 with sessionId when killSession kills a wrapping row (#105)', async () => {
+    it('returns 200 with sessionId when killSession kills a session stuck mid-wrap (#105)', async () => {
       const sessionsLifecycle = require('../lib/sessions');
       const original = sessionsLifecycle.killSession;
       sessionsLifecycle.killSession = () => ({

@@ -2039,6 +2039,43 @@ describe('sessions', () => {
       }
     });
 
+    it('refuses to finalize a session that ended first, and commits nothing', () => {
+      // The interleaving the transition map introduced a way to get wrong: the
+      // row ends between the lookup and the write. `completeWrap` resolves its
+      // target, and only then wraps — so a refusal here must not be reported as
+      // a completed finalize, and must not run the teardown a completed one
+      // runs. The commit trap is armed as REACHABLE and counted, so "no commit"
+      // is measured rather than assumed.
+      const session = startWrapping('tc-wedge-wrap-raced');
+      const realWrap = store.sessions.wrap;
+      const realCommit = git.commit;
+      const realIsRepo = git.isGitRepo;
+      let committed = 0;
+      git.isGitRepo = () => true;
+      git.commit = () => { committed++; return { committed: true }; };
+      // Kill it at the moment `completeWrap` has its target and is about to
+      // write — the window an operator pressing Kill mid-wrap actually lands in.
+      store.sessions.wrap = (id, summary) => {
+        store.sessions.kill(id, 'killed mid-wrap');
+        return realWrap.call(store.sessions, id, summary);
+      };
+      try {
+        const result = sessions.completeWrap('wedge-wrap');
+        assert.equal(result.session, null);
+        assert.match(result.error, /ended before this finalize/);
+        assert.equal(store.sessions.get(session.id).status, 'killed');
+        assert.equal(store.sessions.get(session.id).wrapSummary, null,
+          'a refused wrap records no summary');
+        assert.equal(committed, 0,
+          'and it does not commit the repository on behalf of a wrap that did not happen');
+      } finally {
+        store.sessions.wrap = realWrap;
+        git.commit = realCommit;
+        git.isGitRepo = realIsRepo;
+        cleanup(session.id);
+      }
+    });
+
     it('accepts a finalize that names the current session, and one that names none', () => {
       // The identity check must not become a new way to fail: naming the right
       // session works, and omitting it keeps the pre-existing behaviour exactly.
@@ -3124,6 +3161,54 @@ describe('sessions', () => {
         assert.equal(wrapped.wrapSummary, 'wrapped via V2');
         assert.deepEqual(killCalls, ['wrap-v2-lifecycle-ok'], 'tmux session killed');
         assert.deepEqual(releaseCalls, [session.id], 'doc locks released for this session');
+        assert.equal(result.lifecycleCompleted, true, 'and it says the record was written');
+      });
+
+      it('ok + commitSha but the session was killed mid-wrap → reports no lifecycle', async () => {
+        // The pipeline runs for minutes and the operator can press Kill inside
+        // that window, so the row it started against can end before it finishes.
+        // The transition map then refuses the wrap and NOTHING is written — so
+        // `lifecycleCompleted` must be derived from that write rather than
+        // asserted beside it, or the only record of the wrap says the opposite
+        // of what happened.
+        const project = store.projects.getByName('prime-test');
+        const session = store.sessions.start({
+          projectId: project.id,
+          engineId: 'claude',
+          tmuxSession: 'wrap-v2-lifecycle-raced'
+        });
+
+        stubPipeline({
+          ok: true,
+          blockedAt: null,
+          results: [
+            { stepId: 'memory-update', kind: 'ai-content', status: 'done',
+              output: { parsedFields: { summary: 'wrapped via V2' } }, blockers: [] }
+          ],
+          commitSha: 'abc123',
+          summary: null,
+          error: null
+        });
+        // Kill it while the pipeline is "running" — the real window.
+        wrapPipelineMod.runWrapPipeline = async () => {
+          store.sessions.kill(session.id, 'operator pressed Kill mid-wrap');
+          return {
+            ok: true, blockedAt: null, commitSha: 'abc123', summary: null, error: null,
+            results: [
+              { stepId: 'memory-update', kind: 'ai-content', status: 'done',
+                output: { parsedFields: { summary: 'wrapped via V2' } }, blockers: [] }
+            ]
+          };
+        };
+
+        const result = await sessions.triggerWrap('prime-test');
+        assert.equal(result.ok, true, 'the PIPELINE succeeded — that part is true');
+        assert.equal(result.lifecycleCompleted, false,
+          'but no session record was written, and the result must say so');
+
+        const row = store.sessions.get(session.id);
+        assert.equal(row.status, 'killed');
+        assert.equal(row.wrapSummary, null, 'a refused wrap records no summary');
       });
 
       it('ok + null commitSha (clean session) → session stays active', async () => {
