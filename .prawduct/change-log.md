@@ -34,6 +34,59 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-06 — #1132: one managed-block policy, decided by the marker counts
+
+<!-- prawduct: type=fix | scope=train-13 -->
+
+Train 13 Chunk 06.
+
+**What shipped.** TangleClaw splices a managed block into a file it co-owns with another writer in
+two places, and they disagreed about what a broken marker set means: the engine-config merge
+refused and left the file byte-identical, while the wrap pipeline's priming roll read a misordered
+pair as "no block here" and appended a fresh one. That append is not idempotent, so the next wrap
+saw the same misordered pair and appended again — one block per wrap forever, every appended block
+stale the moment the next landed. The splice now lives in `lib/managed-block.js`, a leaf module
+with no imports (which is what lets a `lib/wrap-steps/` handler require it at module top without
+closing the `projects → sessions → wrap-pipeline → wrap-steps` cycle), and both callers go through
+it. The policy is decided by the marker **counts**: none of either appends; exactly one of each is
+our region, spliced in place in order and repaired into one well-formed block out of order with the
+text that was between them kept below it; every other count refuses with the counts named. A
+repaired file holds one well-formed pair, so the next pass is byte-identical and the file stops
+growing. Because a repair moves bytes outside the managed region it is never silent — the splice
+returns `repaired`, all three call sites log it, and the wrap step puts it on its own output row.
+Shipped as PR #1292; the quick win #1231 followed as PR #1293.
+
+**The lesson worth carrying: an extract-and-unify is not a behavior-preserving refactor.** I read
+the chunk as "unify two implementations" and, in the act of unifying, invented a THIRD policy
+broader than either input — any begin-then-end became our region, later pairs were dropped as
+"stale copies of our own output", stray markers were stripped. It felt like a generalization; it
+was a new silent-data-loss path. An operator documenting this mechanism inside the very file it
+edits writes both marker literals in their own prose (this repo's own CLAUDE.md header once did,
+which is why `test/repo-governance-reference.test.js` exists), and my version deleted their
+explanation, relocated the block into their header, and dropped the real block below it. The Critic
+blocked it. When two implementations disagree, the merged policy is NEW CODE — it is not either
+input — and it needs the scrutiny new code gets, not the lighter touch a refactor gets. The tell
+was in my own prose before the review: I wrote "nothing outside a complete pair is deleted" in four
+places and never asked what makes a complete pair OURS.
+
+**Two more worth keeping.** The reviewer's recommended fix was also too wide — it still relocated
+on a second reviewer's own case — so taking a Critic recommendation verbatim can ship a narrower
+version of the same bug; the fix has to be derived from the hazard, not from the suggestion. And
+"one call site is not the family" recurred INSIDE the unification meant to end it, for the third
+recorded time: #1132 named two splicers, I unified both, and `retireInactiveEngineConfig` kept a
+third marker predicate written under the refusal policy, with passing tests. All three reviewers
+found it independently, and its consequence was worse than an inconsistency — a shared carrier
+with one unmatched marker was whole-file-replaced, destroying the operator's content. My roster
+sweep did grep for splicers and found exactly two; it never asked who else decides whether a file
+is ours. **The roster was of the wrong noun.**
+
+**Filed rather than absorbed.** #1291 — the managed-block write and the retire path use a bare
+`fs.writeFileSync` on files holding another writer's content. The obvious tmp+rename fix reds
+`test/engine-switch-retires-config.test.js:139`, correctly: a rename needs directory permission, so
+it would silently override a config an operator made read-only, where today that is an honest
+reported failure. A decision about operator intent, not a passenger on a marker-policy chunk.
+
+
 ## 2026-09-06 — #1033/#929: validate every field before writing any, in the real run and the rehearsal
 
 <!-- prawduct: type=fix | scope=train-13 -->
