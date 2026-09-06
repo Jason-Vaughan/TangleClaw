@@ -427,6 +427,12 @@ describe('wrap-step ai-content — CC-7 B1 gateway capture (webui)', () => {
     // No wrap rules by default so prompt assertions stay exact (the real
     // listWrapRules would hit an uninitialized store and degrade anyway).
     aic._internal.listWrapRules = () => [];
+    // Armed by default — 404, "there was nothing to clear" — so tests about the
+    // LATER stages are not blocked by the arm. Unstubbed, the real bridge client
+    // would run and return `status: 0`, which correctly blocks (#840); the arm's
+    // own behaviour is exercised by the tests that stub this deliberately.
+    aic._internal.bridgeClearCaptureFile = async () => (
+      { ok: false, content: null, bytes: null, consumed: false, path: null, status: 404, error: 'not found' });
   });
   afterEach(() => { Object.assign(aic._internal, saved); });
 
@@ -454,7 +460,11 @@ describe('wrap-step ai-content — CC-7 B1 gateway capture (webui)', () => {
     const order = [];
     aic._internal.bridgeClearCaptureFile = async (a) => {
       order.push(`clear:${a.path}:${a.consume}`);
-      return { ok: true, content: '## Summary\nsomeone else\'s session\n', consumed: true };
+      // The real `clawbridge.getFile` shape for a successful consuming read.
+      return {
+        ok: true, content: '## Summary\nsomeone else\'s session\n', bytes: 34,
+        consumed: true, path: a.path, status: 200, error: null
+      };
     };
     aic._internal.bridgeSend = async () => { order.push('send'); return { ok: true, accepted: true, state: 'running' }; };
     aic._internal.bridgeGetStatus = async () => ({ ok: true, inputReady: true, state: 'running' });
@@ -469,17 +479,51 @@ describe('wrap-step ai-content — CC-7 B1 gateway capture (webui)', () => {
       "and the discarded stale content must never reach the parsed fields");
   });
 
-  it('REFUSES when the arming read cannot answer, rather than capturing into an unknown state', async () => {
+  it('REFUSES every answer that leaves the file unarmed, in the shapes getFile really returns', async () => {
+    // Built from `clawbridge.getFile`'s own return values, not from an invented
+    // one. That client RESOLVES for every outcome — `{ok:false, status}` for any
+    // non-2xx, `status: 0` for a network failure or timeout — so a guard written
+    // against a thrown error refuses nothing and lets an unarmed run proceed,
+    // which is #840's exact end state on this runner.
+    const unarmed = [
+      ['bridge down / timeout', { ok: false, content: null, bytes: null, consumed: false, path: null, status: 0, error: 'ClawBridge unreachable' }],
+      ['forbidden', { ok: false, content: null, bytes: null, consumed: false, path: null, status: 403, error: 'forbidden' }],
+      ['waiting for permission', { ok: false, content: null, bytes: null, consumed: false, path: null, status: 409, error: 'busy' }],
+      ['server error', { ok: false, content: null, bytes: null, consumed: false, path: null, status: 500, error: 'boom' }],
+      // Answered, but the file is STILL THERE — read, not removed. As unarmed as
+      // a failed read, and the shape a guard keyed only on `ok` would wave past.
+      ['read but not consumed', { ok: true, content: 'stale', bytes: 5, consumed: false, path: 'p', status: 200, error: null }]
+    ];
+
+    for (const [label, reply] of unarmed) {
+      let sent = false;
+      aic._internal.bridgeClearCaptureFile = async () => reply;
+      aic._internal.bridgeSend = async () => { sent = true; return { ok: true, accepted: true, state: 'running' }; };
+
+      const res = await aic._runGatewayCapture(ctx(structuredStep));
+
+      assert.equal(res.ok, false, label);
+      assert.equal(res.status, 'blocked', label);
+      assert.match(res.blockers[0], /stale captureFile/, label);
+      assert.equal(sent, false, `${label}: the prompt is not sent — there is nothing safe to capture into`);
+    }
+  });
+
+  it('treats a 404 as armed — there was nothing to clear', async () => {
+    // The ordinary case, and the one a blanket "any non-ok blocks" rule would
+    // break: no previous run left a file. Mirrors the tmux path, which refuses
+    // only when the file EXISTS and the unlink does not take.
     let sent = false;
-    aic._internal.bridgeClearCaptureFile = async () => { throw new Error('bridge unreachable'); };
+    aic._internal.bridgeClearCaptureFile = async () => (
+      { ok: false, content: null, bytes: null, consumed: false, path: null, status: 404, error: 'not found' });
     aic._internal.bridgeSend = async () => { sent = true; return { ok: true, accepted: true, state: 'running' }; };
+    aic._internal.bridgeGetStatus = async () => ({ ok: true, inputReady: true, state: 'running' });
+    aic._internal.bridgeGetFile = async () => ({ ok: true, content: RAW_BLOCK, consumed: true });
 
     const res = await aic._runGatewayCapture(ctx(structuredStep));
 
-    assert.equal(res.ok, false);
-    assert.equal(res.status, 'blocked');
-    assert.match(res.blockers[0], /stale captureFile/);
-    assert.equal(sent, false, 'the prompt is not sent — there is nothing safe to capture into');
+    assert.equal(res.ok, true);
+    assert.equal(sent, true, 'a clean slate must not block the step');
   });
 
   it('happy path: sends prompt, waits for inputReady, reads + parses the captureFile, stages fields', async () => {
@@ -768,6 +812,10 @@ describe('wrap-step ai-content — wrap-rules bridge (gateway path + ordering)',
     aic._internal.now = () => 0;
     aic._internal.getBridgeContext = () => ({ localPort: 4567, token: 'tok', project: 'proj' });
     aic._internal.listWrapRules = () => [{ content: 'Close every open loop' }];
+    // Armed: nothing to clear. This test is about the prompt's content, and an
+    // unstubbed arm reaches the real bridge client and correctly blocks (#840).
+    aic._internal.bridgeClearCaptureFile = async () => (
+      { ok: false, consumed: false, status: 404, error: 'not found' });
     let sentMessage = null;
     aic._internal.bridgeSend = async (a) => { sentMessage = a.message; return { ok: true }; };
     aic._internal.bridgeGetStatus = async () => ({ ok: true, inputReady: true });

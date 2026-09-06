@@ -23,7 +23,13 @@ All notable changes to TangleClaw are documented in this file.
   the failure rather than retrying in a loop. `completeWrap` gained the pane-summary parse that
   used to live inside the status branch, because relocating the finalize without it would have
   recorded an empty summary — and that summary becomes the wrap commit subject, so the blast
-  radius is the permanent record. A caller that passes its own summary still overrides it.
+  radius is the permanent record. **Both of this route's callers post an empty body today**, so
+  the cache is what decides and the `summary` parameter is there for a caller that does not yet
+  exist. That changes the wrap-idle modal too: where it previously recorded `null`, it now
+  records the pane summary when one is cached. With nothing cached it still records `null`,
+  deliberately — `parseWrapSummary` falls back to the last 50 raw pane lines when it finds no
+  headings, and that text is injected into the next session's prime, so a wrong summary is worse
+  than an absent one.
 - **A wrap no longer reads a `.wrap-summary.md` that belongs to no current run (#840).** The
   file is the hand-off between the `memory-update` step and `lib/wrap-steps/ai-content.js`, at
   a well-known path, with nothing binding it to the run that should have produced it. On the

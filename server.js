@@ -4201,11 +4201,6 @@ route('DELETE', '/api/sessions/:project', (_req, res, params, body) => {
     if (result.error.includes('not found') || result.error.includes('No active')) {
       return errorResponse(res, 404, result.error, 'NOT_FOUND');
     }
-    // The session moved on between the client's observation and this request —
-    // the caller's view is stale, not the server's state broken.
-    if (result.error.includes('no longer the current session')) {
-      return errorResponse(res, 409, result.error, 'SESSION_CHANGED');
-    }
     return errorResponse(res, 500, result.error, 'INTERNAL_ERROR');
   }
 
@@ -4933,6 +4928,12 @@ route('POST', '/api/sessions/:project/wrap/complete', (_req, res, params, body) 
   if (result.error) {
     if (result.error.includes('not found') || result.error.includes('No active')) {
       return errorResponse(res, 404, result.error, 'NOT_FOUND');
+    }
+    // The session moved on between the client's observation and this request.
+    // The caller's view is stale, not the server's state broken — a 500 here
+    // reaches the page as a server fault, and its finalizer latches on that.
+    if (result.error.includes('no longer the current session')) {
+      return errorResponse(res, 409, result.error, 'SESSION_CHANGED');
     }
     return errorResponse(res, 500, result.error, 'INTERNAL_ERROR');
   }
