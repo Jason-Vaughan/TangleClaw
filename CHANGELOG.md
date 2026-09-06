@@ -4,6 +4,19 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **The boot orphan sweep no longer records its deletions as if the owner made them (#692).**
+  `_cleanupOrphanLeases` runs unattended on every boot and releases every port lease whose project
+  it classifies as gone. Those releases were written to the activity log as `port.released` — the
+  same event an operator's own release produces — so nothing in the trail distinguished "this
+  project gave the port back" from "an automated classifier decided this project no longer exists",
+  and the row omitted the host that is half a lease's primary key. If the classifier is wrong (a
+  rename in flight, a misread `projectsDir`, a connection registered after the sweep ran), the
+  service is still listening and the next claimant collides with it. A swept lease is now recorded
+  as `port.orphan_swept` with its host, port, project and service, and warned per lease, following
+  the same shape a forced takeover has had since it was given `port.takeover`. Ordinary
+  project-deletion releases are unchanged.
+
 ## [5.21.0] - 2026-09-06
 
 ### Added

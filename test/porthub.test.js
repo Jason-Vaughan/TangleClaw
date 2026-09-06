@@ -267,6 +267,42 @@ describe('porthub (store-backed)', () => {
       const orphanLease = store.portLeases.get(13301);
       assert.equal(orphanLease, null, 'orphan lease should be cleaned up');
     });
+
+    it('records every lease the boot sweep displaced, and records it as a sweep', () => {
+      porthub.registerPort(13401, 'deleted-project', 'dev-server');
+      porthub.registerPort(13402, 'deleted-project', 'api');
+      porthub.registerPort(13403, 'also-gone', 'dev-server');
+
+      const config = store.config.load();
+      config.projectsDir = tmpDir;
+      store.config.save(config);
+
+      porthub.bootstrap({ ttydPort: 3100, serverPort: 3101 });
+
+      const swept = store.activity.query({ eventType: 'port.orphan_swept' });
+      assert.deepEqual(
+        swept.map(r => `${r.detail.project}:${r.detail.port}:${r.detail.service}`).sort(),
+        ['also-gone:13403:dev-server', 'deleted-project:13401:dev-server', 'deleted-project:13402:api'],
+        'the sweep deletes per lease, so it must report per lease'
+      );
+      assert.ok(swept.every(r => r.detail.host === 'localhost'));
+      // Host and port are the lease's primary key; without both, the record
+      // cannot identify what was displaced.
+      assert.equal(
+        store.activity.query({ eventType: 'port.released' }).length, 0,
+        'a sweep must not leave rows claiming the owner released these ports'
+      );
+    });
+
+    it('writes nothing when the sweep displaces nothing', () => {
+      const config = store.config.load();
+      config.projectsDir = tmpDir;
+      store.config.save(config);
+
+      porthub.bootstrap({ ttydPort: 3100, serverPort: 3101 });
+
+      assert.equal(store.activity.query({ eventType: 'port.orphan_swept' }).length, 0);
+    });
   });
 
   describe('nextFreePort (#352)', () => {

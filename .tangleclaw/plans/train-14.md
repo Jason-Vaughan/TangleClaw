@@ -44,15 +44,22 @@ re-verified against this repo's code before the plan was written rather than tak
 issue text ([[feedback_issue_diagnosis_is_a_hypothesis]]). Four verifications changed the
 plan's shape:
 
-- **#692 — the issue's headline is wrong in one respect, and the correction narrows the fix.**
-  It states the deletion is silent, "no activity-log entry, no `log.warn` naming what was
-  removed". There IS a log line today: `lib/porthub.js#_cleanupOrphanLeases` ends with
-  `log.info('Cleaned up orphan port leases', { project, count: released })`. What is missing is
-  narrower and worth stating precisely: the line is emitted **per orphan project, not per
-  lease**, it names no port, service or host, it is `info` rather than `warn`, and no
-  `activity_log` row is written — so the very table that records `port.leased`, `port.released`,
-  `port.expired` and `port.takeover` (`lib/store.js:4534/4574/4636/4755`) has no record of the
-  one deletion path that runs unattended on every boot.
+- **#692 — the issue's headline is wrong in two respects, and the second one changes the fix
+  entirely.** It states the deletion is silent, "no activity-log entry, no `log.warn` naming what
+  was removed". Neither half holds. `lib/porthub.js#_cleanupOrphanLeases` ends with
+  `log.info('Cleaned up orphan port leases', { project, count: released })` — per orphan
+  *project*, naming no port, service or host, at `info` rather than `warn`. And the deletion it
+  delegates to, `store.portLeases.releaseByProject` (`lib/store.js:4647`), **already writes one
+  `port.released` activity row per lease**, carrying port, project and service.
+
+  So the audit trail is not absent — it is **wrong**, which is worse and is what the fix must
+  address. Every lease the boot sweep displaces is recorded with the same `port.released` event
+  type an operator's own release produces, so nothing in the table distinguishes "the owner gave
+  this port back" from "an automated classifier decided this project no longer exists". #613 gave
+  a forced takeover its own `port.takeover` type for exactly this reason; a sweep-initiated
+  release is the same class of displacement and is currently the only one wearing another
+  path's label. The row is also missing `host`, which `release()` (`:4636`) carries and which is
+  half the table's primary key.
 - **#869 — measured on this install rather than estimated.** `activity_log` holds **5,891 rows
   spanning 2026-03-14 → 2026-09-06** (~176 days, ~33 rows/day). The distribution is what decides
   the policy: `port.leased` alone is 2,147 rows (36%), `session.started` 930, `port.released`
@@ -147,27 +154,39 @@ retrofitting its audit line second.
   `lib/store.js` activity API) that the next chunk works in.
 - **Artifacts consumed:** `observability-strategy.md` (both Direction entries),
   `data-model.md` (what the activity table is for)
-- **Deliverables:** `lib/porthub.js#_cleanupOrphanLeases` enumerates a project's leases before
-  calling `releaseByProject`, so the audit is of what was actually held rather than of a count
-  returned afterwards. Each displaced lease gets a `log.warn` (matching #656's treatment of the
-  interactive release path — the sweep is the *automated* instance of the same class, so the same
-  level) and a `port.orphan_swept` activity row alongside the existing `port.takeover` /
-  `port.released` / `port.expired` emitters in `lib/store.js`. The per-project `log.info` summary
-  stays: it answers a different question (how many projects the classifier rejected) and dropping
-  it would trade one gap for another.
+- **Deliverables:** `store.portLeases.releaseByProject` takes an options argument naming *why*
+  the release is happening, and emits `port.orphan_swept` — with `host` — instead of
+  `port.released` when the caller is the boot sweep, paired with a `log.warn` per lease. The pair
+  lands in `lib/store.js` beside `port.takeover`'s, deliberately: that emitter is the precedent
+  being followed (a displacement announces itself at the point it happens), and splitting the warn
+  into `lib/porthub.js` while the row stays in the store would put one fact in two places that can
+  drift. `lib/porthub.js#_cleanupOrphanLeases` passes the reason and keeps its per-project
+  `log.info` summary, which answers a different question (how many projects the classifier
+  rejected) and would be a new gap if dropped.
+
+  **One row per deletion, not two.** Emitting `port.orphan_swept` *in addition to*
+  `port.released` would leave the misleading row in place and add a second — the table would
+  then say a lease was both returned by its owner and swept. The event type is a discriminator,
+  so it has to be the one thing that changes.
+
+  **The default path must not move.** `releaseByProject`'s two other callers
+  (`lib/projects.js:3333`, `server.js:3907`) are genuine owner-initiated releases on project
+  deletion; they keep emitting `port.released`, and a test pins that so the discriminator cannot
+  quietly become "every bulk release is a sweep".
 
   **The correction to the issue is carried in the code's own words.** #692 says the deletion is
-  silent; it is not, it is under-specified. Whatever comment lands here says what is actually
-  missing — port, service, host, and a durable row — so the next reader is not told a falsehood
-  the file itself refutes.
-- **Tests:** unit — a swept lease produces one audit record per lease, naming port and service,
-  and the row is queryable through `activity.query({ eventType: 'port.orphan_swept' })`; a sweep
-  that displaces nothing writes nothing; a project holding three leases produces three rows, not
-  one (the mutation that proves the granularity changed, since the pre-change code could pass a
-  one-row assertion).
+  silent. It is not: it is *mislabeled*. Whatever comment lands here says that, so the next reader
+  is not told a falsehood the file itself refutes.
+- **Tests:** unit — a swept lease produces a `port.orphan_swept` row naming host, port and
+  service, queryable through `activity.query({ eventType: 'port.orphan_swept' })`, and produces
+  **no** `port.released` row for the same deletion; an owner-initiated `releaseByProject` still
+  produces `port.released` and no `port.orphan_swept`; a project holding three leases produces
+  three swept rows; a sweep that displaces nothing writes nothing. The mutation that must go red:
+  drop the reason at the sweep's call site and the first two assertions fail together.
 - **Acceptance criteria:** after a boot that sweeps at least one orphan, `activity_log` holds a
-  `port.orphan_swept` row for every released lease naming its port, service and host, and the log
-  carries the same at `warn`. No change in which leases are deleted.
+  `port.orphan_swept` row for every displaced lease naming its host, port and service, and no
+  `port.released` row for those same deletions; the log carries the same at `warn`. An
+  owner-initiated release is unchanged in both. No change in which leases are deleted.
 - **Done when:**
   1. Acceptance criteria met and tests pass
   2. `/prawduct:critic` run and blocking findings resolved
