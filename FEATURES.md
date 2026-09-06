@@ -374,10 +374,13 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 
 ## TODO (auto-stubbed 2026-09-06)
 
-- **TBD** — touched in this session: `lib/tangleclaw-home.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/project-update-two-phase.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/session-wrap-finalize.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/tangleclaw-home.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-continuity-session-provenance.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-step-git-range-killed.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-step-killed-vs-failed.test.js`. <!-- describe -->
+<!-- Six further entries the stubber wrote here were removed by hand: it named
+     files this branch never touched (lib/tangleclaw-home.js and the #828/#1052
+     wrap-step tests, which merged before this branch was cut), so it measured a
+     span wider than the session. Tracked as an auto-stubber bug; the one real
+     entry is kept below. -->
+
+- **Session wrap finalize** — `test/session-wrap-finalize.test.js` guards the session
+  page's `wrapping` / `wrapFinished` / `wrapCompleted` poll branches. Those branches are
+  dead once the status vocabulary retires `wrapping` (#1034), but `public/session.js` still
+  carries them; the test retires **with** them under #1302, never before.

@@ -74,7 +74,8 @@ members. All three Critic reviewers found what that missed. The enumeration was 
 correct against the wrong noun, which is the failure mode a careful sweep does not catch: the
 sweep's rigor is spent inside a boundary chosen before the sweep began.
 
-**Verification.** Suite green (8209 tests, 0 fail). Live-install checks on the restarted server
+**Verification.** Suite green, no failures — the evidence store holds the per-tree counts, so
+they are deliberately not restated here. Live-install checks on the restarted server
 covered the status route, the 166 historical activity rows, `tc sessions`, and the dashboard
 payload. The second check — a real wrap end to end — rode a real session wrap on this branch's
 code: session 930 ended `wrapped` with a 491-character summary and `lifecycleCompleted=true` over

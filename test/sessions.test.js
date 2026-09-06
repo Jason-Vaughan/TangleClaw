@@ -2029,6 +2029,11 @@ describe('sessions', () => {
         const result = sessions.completeWrap('wedge-wrap', undefined, session.id + 999);
         assert.equal(result.session, null);
         assert.match(result.error, /no longer the current session/);
+        // The code is what the route maps to 409; the prose is not. Asserted at
+        // the PRODUCER, because the route test for this mapping is the only
+        // other reader and it would pass against a producer that stopped
+        // emitting the field.
+        assert.equal(result.code, 'SESSION_CHANGED');
         assert.equal(store.sessions.get(session.id).status, 'active',
           'the session it did NOT name is left alone');
         assert.equal(committed, 0, 'and the repository is not committed');
@@ -2063,6 +2068,10 @@ describe('sessions', () => {
         const result = sessions.completeWrap('wedge-wrap');
         assert.equal(result.session, null);
         assert.match(result.error, /ended before this finalize/);
+        // Same reason as the identity refusal above: without this, deleting the
+        // `code` from this branch leaves every test green and silently restores
+        // the 500 that latches the session page's finalizer.
+        assert.equal(result.code, 'SESSION_CHANGED');
         assert.equal(store.sessions.get(session.id).status, 'killed');
         assert.equal(store.sessions.get(session.id).wrapSummary, null,
           'a refused wrap records no summary');

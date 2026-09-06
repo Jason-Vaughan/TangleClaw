@@ -491,10 +491,13 @@ describe('api-sessions', () => {
     });
 
     it('returns 409, not 500, when the session ends mid-finalize', async () => {
-      // Asserted at the ROUTE that PRODUCES it. The library's refusal is a stale
-      // client view, not a server fault, and a 500 reaches the page as one — its
-      // finalizer latches permanently on that. Same class as the identity-check
-      // 409 above, one race later.
+      // This pins the ROUTE's half of the contract only: given the code, it
+      // answers 409. The producer is stubbed here, so it cannot vouch that
+      // `completeWrap` still emits the field — `test/sessions.test.js` asserts
+      // that at the producer, and both halves are needed. The library's refusal
+      // is a stale client view, not a server fault, and a 500 reaches the page
+      // as one — its finalizer latches permanently on that. Same class as the
+      // identity-check 409 above, one race later.
       const sessionsLifecycle = require('../lib/sessions');
       const original = sessionsLifecycle.completeWrap;
       sessionsLifecycle.completeWrap = () => ({
