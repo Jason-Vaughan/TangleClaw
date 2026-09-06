@@ -158,14 +158,22 @@ branch's code, measured rather than assumed):
 | `GET /api/tc/sessions` | 11 live sessions, all `active` — the collapsed `listLiveAll` |
 | `GET /api/projects` | 57 projects, 10 session cards, all `status: active` — `enrichProject` with the wrapping branch removed. ScrapeGoat is in the roster but has no card: a live row whose pane tmux confirms is gone, correctly dropped rather than reported as a phantom |
 
-**The Verification Strategy's second check is outstanding: a real wrap end to end.** The operator
-ruled 2026-09-06 that it rides THIS session's own wrap, which is what the strategy describes — this
-clone is the live install, so wrapping this session exercises the edited path, and it does so while
-the branch is still unmerged. It counts as passed when the wrap leaves this session's row
-`wrapped` with a non-null `wrap_summary`, `lifecycleCompleted: true` in the pipeline log, and no
-`Refused a session status transition` warning against that session id. A wrap that finished while
-the row shows `killed`/`crashed`, or `lifecycleCompleted: false`, is the failure this check exists
-to catch — Chunk 01 does not merge on it.
+**The Verification Strategy's second check PASSED: a real wrap, end to end.** The operator ruled
+2026-09-06 that it rides the previous session's own wrap — this clone is the live install, so
+wrapping a session here exercises the edited path while the branch is still unmerged. Session
+**930** (TangleClaw, started 2026-09-06 04:53:27) wrapped at 2026-09-06 22:42:36Z on this
+branch's code. All three criteria met, measured rather than assumed:
+
+| Criterion | Evidence |
+|---|---|
+| Row ends `wrapped`, not `killed`/`crashed` | `sessions` row 930: `status=wrapped`, `ended_at=2026-09-06 22:42:36` |
+| Non-null `wrap_summary` | 491 characters |
+| `lifecycleCompleted: true` in the pipeline log | `[sessions] Wrap pipeline ran project=TangleClaw session=930 ok=true blockedAt=null stepCount=15 commitSha=16bfef9 lifecycleCompleted=true` |
+| No `Refused a session status transition` warning | zero occurrences in `~/.tangleclaw/logs/tangleclaw.log`; the string is live at `lib/store.js:2607`, so the absence is a measurement and not a missing emitter |
+
+The two suspects the check was aimed at — `_completeV2Wrap`'s derived `lifecycleCompleted` and
+`store.sessions.wrap`'s new precondition — both behaved. Chunk 01's verification is complete and
+the merge is unblocked.
 
 No PR is open; none was asked for.
 
