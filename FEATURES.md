@@ -371,3 +371,13 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - **TBD** — touched in this session: `test/settings-index-toggle-render.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/settings-silent-prime-render.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/theme-contrast.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-09-06)
+
+- **TBD** — touched in this session: `lib/tangleclaw-home.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/project-update-two-phase.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/session-wrap-finalize.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/tangleclaw-home.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-continuity-session-provenance.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-step-git-range-killed.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-step-killed-vs-failed.test.js`. <!-- describe -->

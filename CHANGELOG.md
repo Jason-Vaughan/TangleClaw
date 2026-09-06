@@ -32,6 +32,13 @@ All notable changes to TangleClaw are documented in this file.
   one and latches its finalizer permanently). Both refusals are now classified by a code the
   library returns rather than by matching the message, so improving a sentence cannot change a
   status code.
+- **`DELETE /api/sessions/:project` reports how the session actually ended.** When a wrap finishes
+  between the route resolving the session and the kill landing, the transition map refuses the
+  second ending — the pane and the Medusa listener still go, but the row says `wrapped`, and the
+  response now says so too. It previously answered `reconciled: true`, borrowing a flag whose
+  meaning is "there was no session row at all"; that branch replies without a `sessionId`, so a
+  caller that *did* have a session lost the handle to it. The reason for the disagreement is in
+  the server log, not the payload.
 - **The wake monitor will not type into a pane a wrap is driving.** Its `status !== 'active'` gate
   used to refuse a wrapping session; with that status gone the gate can only mean "already ended",
   so the mid-wrap protection went with it. It now asks `lib/wrap-run-registry` — the thing that
@@ -104,6 +111,20 @@ All notable changes to TangleClaw are documented in this file.
   an audit trail that named the ports and looked correct. The read failure is now reported and the
   sweep declines to run: a classifier that lost an input cannot tell an orphan from a live lease,
   and leaving leases in place for one boot is recoverable where deleting them is not.
+
+### Internal
+- **Two fixtures that constructed a session status the product cannot hold.** Both passed, which is
+  what made them worth finding: a test that builds an impossible state exercises a guard with an
+  input no caller can produce, then reads as coverage of a contract nothing enforces. The
+  `medusa-wake` one was load-bearing — it pinned the ended-session skip with a `wrapping` row and
+  then flipped that same row back to `active`, a sequence that was never a real transition. It now
+  enumerates all three terminal statuses.
+- **The card payload's `status` parameter, and a guard keyed to a parse error that does not happen.**
+  `_liveSession`/`_unknownSession` took a status to report because the caller had two to choose
+  between; with the wrapping branch gone both sites pass `row.status`, so the parameter offered a
+  choice that no longer exists. Separately, `_transitionSession` briefly carried a guard against
+  `status IN ()` being a SQLite syntax error — it is not one, SQLite reads it as the empty set, so
+  the guard mutated green and was replaced by a comment recording what was actually verified.
 
 ## [5.21.0] - 2026-09-06
 
