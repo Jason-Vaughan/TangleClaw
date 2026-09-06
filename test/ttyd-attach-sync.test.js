@@ -13,16 +13,16 @@ const os = require('node:os');
 const ttydAttach = require('../lib/ttyd-attach');
 
 describe('lib/ttyd-attach', () => {
-  let tmp, repoDir, home, srcPath, destPath;
+  let tmp, repoDir, baseDir, srcPath, destPath;
 
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ttyd-attach-'));
     repoDir = path.join(tmp, 'repo');
-    home = path.join(tmp, 'home');
+    baseDir = path.join(tmp, 'home', '.tangleclaw');
     fs.mkdirSync(path.join(repoDir, 'deploy'), { recursive: true });
-    fs.mkdirSync(home, { recursive: true });
+    fs.mkdirSync(baseDir, { recursive: true });
     srcPath = path.join(repoDir, 'deploy', 'ttyd-attach.sh');
-    destPath = ttydAttach.attachScriptPath(home);
+    destPath = ttydAttach.attachScriptPath(baseDir);
     fs.writeFileSync(srcPath, '#!/usr/bin/env bash\necho v1\n');
   });
 
@@ -32,8 +32,8 @@ describe('lib/ttyd-attach', () => {
 
   describe('attachScriptPath', () => {
     it('resolves under ~/.tangleclaw/deploy (a non-TCC location), never the repo', () => {
-      const p = ttydAttach.attachScriptPath(home);
-      assert.equal(p, path.join(home, '.tangleclaw', 'deploy', 'ttyd-attach.sh'));
+      const p = ttydAttach.attachScriptPath(baseDir);
+      assert.equal(p, path.join(baseDir, 'deploy', 'ttyd-attach.sh'));
       assert.ok(!p.includes(path.join('repo', 'deploy')), 'must not point back into the repo');
     });
   });
@@ -41,7 +41,7 @@ describe('lib/ttyd-attach', () => {
   describe('syncAttachScript', () => {
     it('copies the script (0755) when the destination is missing, creating the dir', () => {
       assert.equal(fs.existsSync(path.dirname(destPath)), false);
-      const r = ttydAttach.syncAttachScript({ repoDir, home });
+      const r = ttydAttach.syncAttachScript({ repoDir, baseDir });
       assert.equal(r.synced, true);
       assert.equal(r.reason, 'copied');
       assert.equal(r.path, destPath);
@@ -50,32 +50,32 @@ describe('lib/ttyd-attach', () => {
     });
 
     it('is a no-op when the copy already matches (idempotent boot)', () => {
-      ttydAttach.syncAttachScript({ repoDir, home });
-      const r = ttydAttach.syncAttachScript({ repoDir, home });
+      ttydAttach.syncAttachScript({ repoDir, baseDir });
+      const r = ttydAttach.syncAttachScript({ repoDir, baseDir });
       assert.equal(r.synced, false);
       assert.equal(r.reason, 'up-to-date');
     });
 
     it('refreshes the copy when the repo script changes (drift after an update)', () => {
-      ttydAttach.syncAttachScript({ repoDir, home });
+      ttydAttach.syncAttachScript({ repoDir, baseDir });
       fs.writeFileSync(srcPath, '#!/usr/bin/env bash\necho v2-updated\n');
-      const r = ttydAttach.syncAttachScript({ repoDir, home });
+      const r = ttydAttach.syncAttachScript({ repoDir, baseDir });
       assert.equal(r.synced, true);
       assert.equal(r.reason, 'refreshed');
       assert.equal(fs.readFileSync(destPath, 'utf8'), '#!/usr/bin/env bash\necho v2-updated\n');
     });
 
     it('re-asserts the exec bit even when the bytes already match', () => {
-      ttydAttach.syncAttachScript({ repoDir, home });
+      ttydAttach.syncAttachScript({ repoDir, baseDir });
       fs.chmodSync(destPath, 0o644); // simulate a copy that lost +x
-      const r = ttydAttach.syncAttachScript({ repoDir, home });
+      const r = ttydAttach.syncAttachScript({ repoDir, baseDir });
       assert.equal(r.reason, 'up-to-date');
       assert.equal(fs.statSync(destPath).mode & 0o777, 0o755, 'up-to-date path must still fix perms');
     });
 
     it('reports no-source (never throws) when the repo script is absent', () => {
       fs.rmSync(srcPath);
-      const r = ttydAttach.syncAttachScript({ repoDir, home });
+      const r = ttydAttach.syncAttachScript({ repoDir, baseDir });
       assert.equal(r.synced, false);
       assert.equal(r.reason, 'no-source');
       assert.equal(fs.existsSync(destPath), false);
@@ -84,10 +84,9 @@ describe('lib/ttyd-attach', () => {
     it('returns an error reason instead of throwing when the dest dir cannot be created (boot must not crash)', () => {
       // Place a FILE where the ~/.tangleclaw/deploy directory needs to be, so
       // mkdirSync throws ENOTDIR — the boot/cutover callers must survive it.
-      fs.mkdirSync(path.join(home, '.tangleclaw'), { recursive: true });
-      fs.writeFileSync(path.join(home, '.tangleclaw', 'deploy'), 'not a directory');
+      fs.writeFileSync(path.join(baseDir, 'deploy'), 'not a directory');
       let r;
-      assert.doesNotThrow(() => { r = ttydAttach.syncAttachScript({ repoDir, home }); });
+      assert.doesNotThrow(() => { r = ttydAttach.syncAttachScript({ repoDir, baseDir }); });
       assert.equal(r.synced, false);
       assert.match(r.reason, /^error:/);
     });
@@ -96,7 +95,7 @@ describe('lib/ttyd-attach', () => {
       // Guards against the install path and the sync source drifting apart:
       // syncing from the actual repo yields byte-identical content.
       const realRepo = path.join(__dirname, '..');
-      const r = ttydAttach.syncAttachScript({ repoDir: realRepo, home });
+      const r = ttydAttach.syncAttachScript({ repoDir: realRepo, baseDir });
       assert.equal(r.synced, true);
       assert.equal(
         fs.readFileSync(destPath, 'utf8'),

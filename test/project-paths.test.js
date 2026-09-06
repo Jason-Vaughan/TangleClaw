@@ -14,7 +14,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 
-const { resolveWithinProject, normalizeConfiguredPath, resolveConfiguredFile } = require('../lib/project-paths');
+const { resolveWithinProject, isInsideProject, checkContainment, normalizeConfiguredPath, resolveConfiguredFile } = require('../lib/project-paths');
 
 const ROOT = '/tmp/proj';
 
@@ -171,5 +171,168 @@ describe('resolveWithinProject follows symlinks', () => {
     // target must not read as an escape.
     assert.equal(resolveWithinProject(root, 'not-created-yet.json').ok, true);
     assert.equal(resolveWithinProject(root, 'deep/not/made/yet.json').ok, true);
+  });
+});
+
+// #1052 — the two containment predicates in this repo disagreed about the root
+// case, and the second one (in the wrap pipeline) was hand-rolled precisely
+// because it meant something different. They now share one rule and express the
+// difference as an option, so the difference has to be asserted in BOTH
+// directions: a default that quietly started allowing the root would make the
+// version-bump validator accept a directory it can never write.
+describe('containment policy is explicit in both directions', () => {
+  let base, root;
+
+  beforeEach(() => {
+    base = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-contain-'));
+    root = path.join(base, 'proj');
+    fs.mkdirSync(path.join(root, 'real'), { recursive: true });
+    fs.mkdirSync(path.join(base, 'outside'), { recursive: true });
+    fs.symlinkSync(path.join(base, 'outside'), path.join(root, 'linkdir'));
+  });
+  afterEach(() => fs.rmSync(base, { recursive: true, force: true }));
+
+  describe('the root case is one rule, with its own reason', () => {
+    it('the root is not a file inside itself', () => {
+      assert.equal(resolveWithinProject(root, '.').ok, false);
+      assert.equal(isInsideProject(root, root), false);
+    });
+
+    it('says so, rather than reporting an escape that did not happen', () => {
+      // The fragment is what a caller composes after its field name. Telling an
+      // operator their path "resolves outside the project root" when it resolved
+      // TO the root sends them hunting for an escape that is not there.
+      assert.match(resolveWithinProject(root, '.').reason, /resolves to the project root itself/);
+      assert.match(checkContainment(root, root).reason, /resolves to the project root itself/);
+    });
+
+    it('holds after symlink resolution too, not only lexically', () => {
+      // The root is reachable as a symlink target, not only as `.`, so a check
+      // applying the rule to just the lexical pass would disagree with itself.
+      fs.symlinkSync(root, path.join(root, 'real', 'self'));
+      assert.equal(isInsideProject(root, path.join(root, 'real', 'self')), false);
+    });
+  });
+
+  describe('followSymlinks', () => {
+    it('on by default: an escaping symlink is refused', () => {
+      assert.equal(isInsideProject(root, path.join(root, 'linkdir', 'VERSION.json')), false);
+      assert.equal(resolveWithinProject(root, 'linkdir/VERSION.json').ok, false);
+    });
+
+    it('resolves the FINAL component, not just its directory', () => {
+      // A file that is itself a symlink out of the project is the write the
+      // predicate exists to stop; resolving only the dirname left it uncovered.
+      fs.symlinkSync(path.join(base, 'outside', 'target.json'), path.join(root, 'real', 'linkfile.json'));
+      assert.equal(isInsideProject(root, path.join(root, 'real', 'linkfile.json')), false);
+      assert.equal(resolveWithinProject(root, 'real/linkfile.json').ok, false);
+    });
+
+    it('a chain past the hop bound is REFUSED, not reported as inside', () => {
+      // Linux follows up to 40 nested links. A budget that fell back to the
+      // lexical answer would hand hops 33-40 to the caller as contained while
+      // the kernel still followed them at the write, so exhausting it has to
+      // deny. Also makes the bound observable without timing anything: without
+      // a bound this chain resolves all the way out and is refused for the
+      // other reason, so the REASON is what distinguishes them.
+      const chain = path.join(root, 'real');
+      for (let i = 0; i < 40; i += 1) {
+        const next = i === 39 ? path.join(base, 'outside', 'end.json') : path.join(chain, `hop${i + 1}`);
+        fs.symlinkSync(next, path.join(chain, `hop${i}`));
+      }
+      assert.equal(isInsideProject(root, path.join(chain, 'hop0')), false);
+      assert.match(checkContainment(root, path.join(chain, 'hop0')).reason, /cannot be resolved/);
+    });
+
+    it('a cycle terminates and is refused, rather than hanging or passing', () => {
+      // A cycle makes every `realpathSync` throw, so without a hop bound the
+      // hand-rolled dangling-link walk would follow it forever. Nothing can be
+      // written through a cycle, so refusing is also the right answer.
+      fs.symlinkSync(path.join(root, 'real', 'b'), path.join(root, 'real', 'a'));
+      fs.symlinkSync(path.join(root, 'real', 'a'), path.join(root, 'real', 'b'));
+      assert.equal(isInsideProject(root, path.join(root, 'real', 'a')), false);
+    });
+
+    it('an unreadable component is refused, not walked over', () => {
+      // The walk-up exists for a path that does not exist yet. A component that
+      // DOES exist and cannot be resolved is a different answer: stepping past
+      // it would report containment about a location nobody established.
+      const locked = path.join(root, 'locked');
+      fs.mkdirSync(locked);
+      fs.writeFileSync(path.join(locked, 'v.json'), '{}');
+      fs.chmodSync(locked, 0o000);
+      try {
+        const got = checkContainment(root, path.join(locked, 'v.json'));
+        // Root can traverse a 0000 directory, so skip rather than assert a
+        // permission the test process may not lack.
+        if (process.getuid && process.getuid() !== 0) {
+          assert.equal(got.inside, false);
+          assert.match(got.reason, /cannot be resolved/);
+        }
+      } finally {
+        fs.chmodSync(locked, 0o755);
+      }
+    });
+
+    it('off: the check stays lexical, which is what a plan pointer needs', () => {
+      // Governance state is symlinked back to a primary checkout when work
+      // happens in a git worktree, so `.prawduct/artifacts/build-plan.md` inside
+      // a worktree is a symlink pointing out of it. Following it would refuse
+      // every worktree session's plan pointer as an escape.
+      assert.equal(isInsideProject(root, path.join(root, 'linkdir', 'VERSION.json'), { followSymlinks: false }), true);
+      assert.equal(resolveWithinProject(root, 'linkdir/VERSION.json', { followSymlinks: false }).ok, true);
+    });
+
+    it('off does not disable the lexical escape check', () => {
+      assert.equal(isInsideProject(root, path.join(base, 'outside', 'x'), { followSymlinks: false }), false);
+      assert.equal(resolveWithinProject(root, '../escape.json', { followSymlinks: false }).ok, false);
+    });
+  });
+
+  describe('the two predicates cannot disagree', () => {
+    for (const [label, rel, options] of [
+      ['a plain file', 'VERSION.json', {}],
+      ['the root', '.', {}],
+      ['an escape', '../out.json', {}],
+      ['an escaping symlink', 'linkdir/VERSION.json', {}],
+      ['an escaping symlink, lexical only', 'linkdir/VERSION.json', { followSymlinks: false }]
+    ]) {
+      it(`agrees on ${label}`, () => {
+        const viaResolve = resolveWithinProject(root, rel, options).ok;
+        const viaIsInside = isInsideProject(root, path.resolve(root, rel), options);
+        assert.equal(viaResolve, viaIsInside,
+          `resolveWithinProject said ${viaResolve} and isInsideProject said ${viaIsInside}`);
+      });
+    }
+  });
+
+  describe('the consumer whose question is WHERE IT IS REGISTERED, not where it lands', () => {
+    // server.js's shared-doc broadcast asks which project OWNS a changed file,
+    // so it can avoid notifying that project about its own write (#818 car 3).
+    // Every other consumer asks where a write would LAND and must resolve; this
+    // one must not, and whole-path resolution regressed it until the call site
+    // opted out. Pinned here because the two answers differ only for a
+    // symlinked doc, which no other case in this file produces.
+    it('a doc symlinked into a shared directory still belongs to the project holding it', () => {
+      const shared = path.join(base, 'group-shared');
+      fs.mkdirSync(shared, { recursive: true });
+      fs.writeFileSync(path.join(shared, 'NETWORK.md'), '# shared');
+      const registered = path.join(root, 'NETWORK.md');
+      fs.symlinkSync(path.join(shared, 'NETWORK.md'), registered);
+
+      assert.equal(isInsideProject(root, registered, { followSymlinks: false }), true,
+        'the ownership consumer must see the project that holds the symlink');
+      assert.equal(isInsideProject(root, registered), false,
+        'and the write-site consumers must still see where the bytes land');
+    });
+  });
+
+  describe('isInsideProject never fails open on bad input', () => {
+    for (const bad of [null, undefined, 42, '', '   ']) {
+      it(`refuses ${JSON.stringify(bad)}`, () => {
+        assert.equal(isInsideProject(root, bad), false);
+        assert.equal(isInsideProject(bad, path.join(root, 'a.json')), false);
+      });
+    }
   });
 });

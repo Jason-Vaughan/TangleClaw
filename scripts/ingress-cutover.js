@@ -37,6 +37,7 @@ const REPO_DIR = path.resolve(__dirname, '..');
 const caddy = require(path.join(REPO_DIR, 'lib', 'caddy'));
 const ttydAttach = require(path.join(REPO_DIR, 'lib', 'ttyd-attach'));
 const store = require(path.join(REPO_DIR, 'lib', 'store'));
+const tangleclawHome = require('../lib/tangleclaw-home');
 
 const DEPLOY_DIR = path.join(REPO_DIR, 'deploy');
 const SERVER_LABEL = 'com.tangleclaw.server';
@@ -96,7 +97,7 @@ function fillTemplate(tpl, subs) {
  * @param {'caddy'|'direct'} target
  * @param {object} ctx
  * @param {object} ctx.config - loaded TC config.
- * @param {object} ctx.env - { caddyPath, ttydPath, home, repoDir, launchdPath, launchAgentsDir, uid }
+ * @param {object} ctx.env - { caddyPath, ttydPath, home, baseDir, repoDir, launchdPath, launchAgentsDir, uid }
  * @param {number} ctx.upstreamPort - TC's actual listen port (Caddy upstream / direct health port).
  * @param {string} ctx.certPath - mkcert cert for the local Caddy site (caddy target only).
  * @param {string} ctx.keyPath - mkcert key (caddy target only).
@@ -166,7 +167,7 @@ function planCutover(target, ctx) {
       TTYD_PATH: env.ttydPath, HOME: env.home,
       // #500: the attach script lives outside the repo (non-TCC); main() syncs
       // the copy before applying the plan.
-      TTYD_ATTACH: ttydAttach.attachScriptPath(env.home),
+      TTYD_ATTACH: ttydAttach.attachScriptPath(env.baseDir),
       LAUNCHD_PATH: env.launchdPath,
       TTYD_BIND_KEY: '--interface', TTYD_BIND_VAL: ctx.socketPath,
       // Ignored by ttyd when the interface is a unix socket (verified: no TCP
@@ -216,7 +217,7 @@ function planCutover(target, ctx) {
   const ttydPlist = fillTemplate(ctx.ttydTemplate, {
     TTYD_PATH: env.ttydPath, HOME: env.home,
     // #500: attach script installed outside the repo (non-TCC).
-    TTYD_ATTACH: ttydAttach.attachScriptPath(env.home),
+    TTYD_ATTACH: ttydAttach.attachScriptPath(env.baseDir),
     LAUNCHD_PATH: env.launchdPath,
     TTYD_BIND_KEY: '--interface', TTYD_BIND_VAL: ttydBindAddress,
     TTYD_PORT: String(config.ttydPort || 3100),
@@ -285,6 +286,7 @@ const CUTOVER_CODES = Object.freeze({
   HAND_EDITED: 'hand-edited',
   UNGATE_REFUSED: 'ungate-refused',
   VALIDATE_FAILED: 'validate-failed',
+  RELOCATED_BASE: 'relocated-base',
   FAILED: 'failed'
 });
 
@@ -426,8 +428,32 @@ function main() {
 
   store.init();
   const config = store.config.load();
-  const home = require('node:os').homedir();
+  // `home` is the passwd/`$HOME` home, used ONLY for `~/Library/LaunchAgents`,
+  // which launchd reads from a fixed per-user location and no override can move.
+  // Everything TangleClaw itself owns hangs off `baseDir` instead.
+  const home = tangleclawHome.userHome();
+  const baseDir = store._getBasePath();
   const launchAgentsDir = path.join(home, 'Library', 'LaunchAgents');
+
+  // A relocated base and a machine-global launchd are incompatible HERE
+  // specifically, because this is the writer that bakes one into the other: it
+  // embeds `TTYD_ATTACH` and the log paths into the plists it installs into the
+  // one `~/Library/LaunchAgents` every install shares. Run under a relocated
+  // base, it would repoint the LIVE ttyd job at a scratch directory — and when
+  // that directory goes away, every ttyd connection loses its attach script,
+  // which is the #500 black-screen family with no obvious cause.
+  //
+  // Refuse rather than silently derive from the un-overridden default: a
+  // rehearsal that quietly rewrote the real ingress is the half-relocated
+  // install `lib/tangleclaw-home.js` exists to prevent, and the operator asked
+  // for isolation by setting the variable at all.
+  if ((process.env[tangleclawHome.HOME_ENV] || '').trim() !== '') {
+    finish(CUTOVER_CODES.RELOCATED_BASE,
+      `refusing to run with ${tangleclawHome.HOME_ENV} set (${process.env[tangleclawHome.HOME_ENV]}): `
+      + 'the ingress cutover writes launchd jobs under ~/Library/LaunchAgents, which no base-directory '
+      + 'override can relocate, so it would point the live ttyd job at the relocated base. '
+      + `Unset ${tangleclawHome.HOME_ENV} to cut over the real install.`);
+  }
 
   // Build the launchd PATH the same way install.sh does (user PATH + system dirs).
   let launchdPath = process.env.PATH || '';
@@ -439,6 +465,7 @@ function main() {
     caddyPath: which('caddy'),
     ttydPath: which('ttyd'),
     home,
+    baseDir,
     repoDir: REPO_DIR,
     launchdPath,
     launchAgentsDir,
@@ -676,7 +703,7 @@ function main() {
   }
 
   // 1. Caddyfile first, then VALIDATE before touching launchd (fail-closed).
-  fs.mkdirSync(path.join(home, '.tangleclaw', 'logs'), { recursive: true });
+  fs.mkdirSync(path.join(baseDir, 'logs'), { recursive: true });
   if (plan.caddyfile) {
     fs.mkdirSync(path.dirname(plan.caddyfile.path), { recursive: true });
     // #397 bug 3: never silently clobber a hand-edited Caddyfile (it may carry
@@ -742,7 +769,7 @@ function main() {
   //     (#500) before reloading ttyd — otherwise a first-ever cutover would
   //     rebind ttyd onto a path that doesn't exist yet. Idempotent; boot does
   //     this too, but the cutover reloads ttyd immediately so it can't wait.
-  ttydAttach.syncAttachScript({ repoDir: REPO_DIR, home: env.home });
+  ttydAttach.syncAttachScript({ repoDir: REPO_DIR, baseDir: env.baseDir });
 
   // 2. Ensure the ttyd socket dir exists, and clear any leftover socket file so
   //    the rebinding ttyd doesn't fail on a stale inode (KeepAlive would then
@@ -781,7 +808,7 @@ function main() {
   pollHealth(plan.healthUrl, 6, (err) => { healthError = err.message; }).then((ok) => {
     process.stdout.write(ok
       ? '  ✓ health check passed\n'
-      : `  ⚠ health check not green yet${healthError ? `: ${healthError}` : ' — check logs (~/.tangleclaw/logs/)'}\n`);
+      : `  ⚠ health check not green yet${healthError ? `: ${healthError}` : ` — check logs (${path.join(baseDir, 'logs')})`}\n`);
     // The cutover itself succeeded either way — the plan was applied. healthOk
     // carries whether it came up, which is a separate fact a caller may want to
     // act on (retry, surface a warning) without being told the run failed.

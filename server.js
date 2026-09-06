@@ -66,9 +66,18 @@ async function broadcastSharedDocUpdate(docId) {
     // Ownership by containment rather than by "who wrote it": `fs.watch` reports
     // no actor, so the writer is genuinely unknown. The project whose directory
     // holds the file is the one that cannot learn anything from being told.
+    //
+    // Symlinks are deliberately NOT followed here, unlike every other consumer
+    // of this predicate. Those ask "where would a write LAND", so they must
+    // resolve; this asks "whose directory holds this file", and the answer is
+    // about where it is registered. A project that keeps `<project>/DOC.md` as a
+    // symlink into the group's shared directory still wrote the file when it
+    // edits through that path — resolving would put the doc outside the project
+    // and notify its own author, which is the loop this filter exists to stop.
     const owningProjectIds = new Set(
       projectsInGroup
-        .filter(p => p.path && doc.filePath && isInsideProject(p.path, doc.filePath))
+        .filter(p => p.path && doc.filePath
+          && isInsideProject(p.path, doc.filePath, { followSymlinks: false }))
         .map(p => p.id)
     );
 
@@ -7460,7 +7469,7 @@ if (require.main === module) {
   // ttyd in open() (all sessions black-screen after a ttyd restart). Running at
   // every boot means an update that bumps the repo script refreshes the copy on
   // the ensuing restart. Idempotent + non-throwing.
-  ttydAttach.syncAttachScript({ repoDir: __dirname, home: os.homedir() });
+  ttydAttach.syncAttachScript({ repoDir: __dirname, baseDir: store._getBasePath() });
 
   // Re-stamp the version into the status bar of sessions that already exist
   // (#745). A session sets its bar once, at creation, so every session that

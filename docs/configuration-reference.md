@@ -12,6 +12,52 @@ TangleClaw uses a layered configuration system: global config for system-wide se
 | `~/.tangleclaw/tangleclaw.db` | SQLite database (runtime state) |
 | `<project>/.tangleclaw/project.json` | Per-project configuration |
 
+### Relocating the base directory (`TANGLECLAW_HOME`)
+
+Everything in the table above that begins `~/.tangleclaw/` hangs off one base
+directory, derived in one place (`lib/tangleclaw-home.js`). Set `TANGLECLAW_HOME`
+to move all of it at once — the database, `config.json`, engine and orchestration
+profiles, logs, the PID file, master state, the git template, and the ttyd attach
+script:
+
+```bash
+TANGLECLAW_HOME=/tmp/tc-rehearsal node server.js
+```
+
+The variable names the **base directory itself**, not a home directory: with the
+value above the database is at `/tmp/tc-rehearsal/tangleclaw.db`, with no
+`.tangleclaw` segment appended. A blank value is ignored rather than treated as
+the current directory. Unset, the base directory is `~/.tangleclaw`.
+
+**What it does not move.** The variable is read by the Node process and by
+nothing else, so two families stay put:
+
+*The ingress, which is machine-global by construction* — the launchd jobs under
+`~/Library/LaunchAgents` (launchd reads a fixed per-user location, and the job
+labels are constants), the Caddy site label, and the ingress ports, which default
+to 8443/8080.
+
+*State derived outside the Node process* — `deploy/install.sh` hardcodes
+`$HOME/.tangleclaw` when it reads `config.json`, creates `logs/`, and installs
+the ttyd attach script; the launchd plists hardcode `__HOME__/.tangleclaw` for
+their stderr logs and Caddy's data directory. These are **state**, not ingress,
+and that is why they are called out separately: applying the variable to an
+installed service would put `tangleclaw.log` under the new base and
+`server.err.log` under the old one.
+
+**So use it for a scratch process, not for a second install.** Running
+`node server.js` or the test suite under an override is what it is for. Running
+`deploy/install.sh`, or the ingress cutover, is not: the cutover **refuses** to
+run while the variable is set, because it bakes paths into launchd jobs that no
+override can relocate, and a rehearsal that repointed the live ttyd job at a
+scratch directory would take every terminal down when that directory was
+removed. Issue #1283 carries what it would take to make a genuine second install
+possible.
+
+Overriding `HOME` instead is not supported and never was: it moves anything
+derived from the home directory, TangleClaw's and the operating system's alike,
+and an attempt to sandbox that way migrated the live database on 2026-07-20.
+
 ## Global Configuration (`config.json`)
 
 Auto-created on first run with defaults. Editable directly or via `PATCH /api/config`.

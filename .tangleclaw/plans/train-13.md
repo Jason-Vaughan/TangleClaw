@@ -84,7 +84,7 @@ than unknowns, and both are surfaced at the chunk that would act on them.
 - [x] Chunk 01: The machine-local hook moves out of the shareable file (#1022, #1242, #1275)
 - [x] Chunk 02: A read does not finalize, and a payload proves whose run wrote it (#910, #840)
 - [x] Chunk 03: The provenance record says what the session did, and corruption is detected (#797, #882)
-- [ ] Chunk 04: One derivation of the base directory, one containment predicate (#828, #1052)
+- [x] Chunk 04: One derivation of the base directory, one containment predicate (#828, #1052)
 - [ ] Chunk 05: Validate every field before writing any, in the real run and the rehearsal (#1033, #929)
 - [ ] Chunk 06: One managed-block policy for a malformed marker pair (#1132)
 
@@ -190,10 +190,51 @@ forever.
 and 02 — Chunk 03 wrote its own. Decide at the train's close whether to backfill; only a session
 with their context can write them honestly.
 
-Next: Chunk 04 (#828, #1052) — one derivation of the base directory, one containment predicate.
-Its "whose machine makes this true, and does it travel?" precondition had a good answer in Chunk
-03 worth reusing: the conflict scan's reach is the TRACKED working tree, which is a property of
-the repository rather than of a machine.
+**Chunk 04 is done** — branch `fix/828-one-base-directory-one-containment`, Critic
+`rev-20260906T051457Z-fc828818` (three reviewers, tier `escalate`: 1 blocking, 13 warnings, 14
+notes — 19 fixed, 9 accepted), then `rev-20260906T054227Z-e33411e8` clean at 0/0/0 with all 14
+gating findings verified against the tree. Filed rather than absorbed: **#1283** (the ingress
+half — launchd labels, Caddy label and ports stay machine-global, so `TANGLECLAW_HOME` separates
+an install's state and not its ingress; this discharges Done-when #2) and **#1284** (operator `~`
+paths are expanded five ways, two of which disagree when HOME is unset — the same drift one rung
+out from #828, deliberately not folded in).
+
+**Both issues' filed diagnoses were wrong, and checking changed the fix.** #828 blamed macOS
+`os.homedir()` for ignoring `$HOME`; it PREFERS it, so that direction does not reproduce. The
+divergence is with HOME UNSET, and the symptom is worse than the filed one: `path.join('', …)`
+drops the empty segment, so the store opened its database at a CWD-RELATIVE `.tangleclaw` —
+inside the operator's own checkout for the launchd job — rather than at an implausible
+`/.tangleclaw` anyone would notice. #1052 recorded priming-roll's root-permissive check as
+intentional ("it validates directories"); no site there validates a directory, so the predicates
+converge and `allowRoot` is descoped. [[feedback_issue_diagnosis_is_a_hypothesis]] twice in one
+chunk — and note that BOTH premises had been copied into this plan, so re-deriving them is what
+kept the plan honest rather than the plan keeping the build honest.
+
+**The chunk's own lesson, and it is the session's third instance of one shape.** Twenty-one
+mutations were run after the Critic fixes; three came back GREEN and two were real defects: the
+shared-doc consumer's `followSymlinks: false` and the ingress cutover's refusal each had NO test.
+Both times I had asserted the MECHANISM — the predicate answers both ways — and not the CALL
+SITE's choice of it. Chunk 02 earned "a guard covering half its family"; this is that one level
+in: **a call site's policy argument is code, and a test of the function it calls does not cover
+it.** Ask of every options object passed at a call site: what would go red if someone flipped it?
+
+**Two fail-open corrections worth carrying to Chunk 05.** The Critic found containment composing
+a lexical answer whenever resolution could not finish and reporting it as INSIDE — and the
+rationale I had WRITTEN DOWN for that was false on its own terms. The repo's other containment
+guard already denied on the identical question. Then the first fix probed with `lstat`, which
+cannot tell "not there" from "cannot look", so it still walked over the component that blocked
+it; the errno tells them apart. **When you accept a fail-open, check whether a sibling guard in
+the same repo already answers that question the other way — a disagreement between two guards is
+a finding even when each looks defensible alone.**
+
+Also proven here and reusable: a fix can be reverted by a TEST rather than by review. Deriving
+the cutover's displayed log path from the live base broke `setup-provisioning`'s contract that
+the unauthenticated status route never emits an absolute path. The stronger contract won.
+
+Next: Chunk 05 (#1033, #929) — validate every field before writing any, in the real run and the
+rehearsal. Its "whose machine makes this true, and does it travel?" precondition has a good
+answer available from Chunk 03: the conflict scan's reach is the TRACKED working tree, a property
+of the repository rather than of a machine.
 
 ## Scaffolding
 
@@ -429,35 +470,51 @@ than a single cumulative pass over the whole train.
 - **Description:** Two instances of one rule implemented twice and disagreeing. The
   TangleClaw base directory is computed from `process.env.HOME` in `lib/store.js` and from
   `os.homedir()` in `lib/master.js`, `lib/git-template.js`, `lib/server-info.js` and roughly
-  eight more sites; on macOS `os.homedir()` reads the passwd entry and ignores `$HOME`. They
-  agree today, so nothing looks wrong — until someone sets `HOME` to attempt an isolated
-  install, and gets a half-sandbox where the database relocates while master state, git
-  templates and the plist keep writing to the operator's live `~/.tangleclaw`. That is worse
+  eight more sites. *Measured during the build and corrected here:* `os.homedir()` PREFERS
+  `$HOME` on Node 22, so setting HOME relocates both and the reported half-sandbox does not
+  reproduce. The divergence is real and runs the other way — with HOME UNSET (`sudo`, a launchd
+  job whose plist omits it) `os.homedir()` falls back to the passwd entry while
+  `process.env.HOME || ''` yields the empty string, and `path.join('', ...)` then drops the
+  segment, so the store opened its database under the process's working directory while master
+  state and git templates kept writing to the operator's real home directory. That is worse
   than no sandbox, because it looks isolated. Alongside it: `resolveWithinProject` in
   `lib/project-paths.js` resolves symlinks and excludes the project root, while
   `lib/wrap-steps/priming-roll.js:474` hand-rolls a purely lexical check that counts the root
-  as inside. That difference is intentional today and is not a bug — it is the drift shape a
-  prior chunk spent two Critic rounds eliminating in the version-bump classifier.
+  as inside. *Also corrected during the build:* that difference was recorded as intentional
+  ("priming-roll validates directories"), but no site there validates a directory — all three
+  resolve a plan FILE — so the two converge on the root case rather than preserving it, and the
+  `allowRoot` option this chunk was to add is descoped as speculative surface with no caller.
+  What remains is the drift shape a prior chunk spent two Critic rounds eliminating in the
+  version-bump classifier.
 - **Closes:** #828, #1052
 - **Depends on:** Chunk 03
 - **Artifacts consumed:** `architecture.md`, `security-model.md` (containment is a boundary
   predicate)
-- **Deliverables:** one base-directory derivation in `lib/store.js`, consumed by every site
-  that currently calls `os.homedir()` for this purpose, with a documented override so a test
-  install on the same machine is possible without inventing one
+- **Deliverables:** one base-directory derivation consumed by every site that currently calls
+  `os.homedir()` for this purpose, with a documented override so a test install on the same
+  machine is possible without inventing one
   ([[feedback_verify_env_override_before_sandboxed_launch]] records that inventing one is
-  exactly what happened before). `lib/project-paths.js` grows an explicit root policy —
-  `allowRoot` — and `lib/wrap-steps/priming-roll.js` migrates its three call sites onto it;
-  the scope caveat in `project-paths.js`'s module docstring narrows to match what is then
-  true.
-- **Tests:** unit — with `HOME` overridden, every derivation site resolves to the same base;
-  the containment helper's root case is asserted both ways (`allowRoot` on and off) and
-  priming-roll's directory validation keeps its current semantics. Per
-  [[feedback_verify_mechanism_uniformity]] and [[feedback_enumerate_the_guards_family]], the
-  chunk enumerates the full call-site family by grep before changing any of them, and the
-  tests that still PASS after the default changes are treated as the suspects.
-- **Acceptance criteria:** no site derives the base directory independently; `HOME` set to a
-  scratch path relocates all of it or none of it, never half.
+  exactly what happened before). `lib/project-paths.js` gets an explicit root policy, and
+  `lib/wrap-steps/priming-roll.js` migrates its three call sites onto it; the scope caveat in
+  `project-paths.js`'s module docstring narrows to match what is then true.
+  *Two departures, both argued at the close rather than assumed:* the derivation lives in a
+  new leaf module (`lib/tangleclaw-home.js`) rather than in `lib/store.js`, so `pidfile` and
+  `wrap-steps/*` can read it without entering a require cycle; and the root policy ships as
+  ONE unconditional rule rather than the `allowRoot` option this bullet first named — no
+  caller wanted the option, and shipping a permissive switch nothing selects in the codebase's
+  containment boundary is worse than not having it.
+- **Tests:** unit — with the base-directory override set, every derivation site resolves to
+  the same base; the containment helper's root case is asserted with its own reason (not
+  collapsed into the escape one) and priming-roll's plan-pointer semantics are preserved
+  except where the chunk argues otherwise. Per [[feedback_verify_mechanism_uniformity]] and
+  [[feedback_enumerate_the_guards_family]], the chunk enumerates the full call-site family by
+  grep before changing any of them, and the tests that still PASS after the default changes
+  are treated as the suspects.
+- **Acceptance criteria:** no site derives the base directory independently; the documented
+  override relocates all of the base directory's state or none of it, never half — and what it
+  cannot relocate (the installer, the plists, the ingress) is stated where an operator reads
+  it, not left to be discovered. `HOME` is explicitly NOT the mechanism: it was the assumed one
+  and it is what took the dashboard down.
 - **Done when:**
   1. Acceptance criteria met and tests pass
   2. The ingress half is filed rather than silently descoped: `CADDY_LABEL` is a constant and

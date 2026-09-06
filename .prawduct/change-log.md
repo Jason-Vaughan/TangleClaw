@@ -26,6 +26,123 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-06 — #828/#1052: one derivation of the base directory, one containment predicate
+
+<!-- prawduct: type=fix | scope=train-13 -->
+
+Train 13 Chunk 04. Two instances of one rule implemented twice and disagreeing — and in both
+cases the filed diagnosis of *how* they disagreed did not survive being checked.
+
+**#828 — the base directory.** Six sites answered "where is `~/.tangleclaw`" for themselves,
+half from `process.env.HOME` and half from `os.homedir()`. The issue attributed the divergence to
+macOS `os.homedir()` reading the passwd entry and ignoring `$HOME`. Measured on the Node this
+runs (v22.22.3, darwin), it does the opposite: `os.homedir()` *prefers* `$HOME`, so setting HOME
+relocates both derivations and the reported half-sandbox does not reproduce. The divergence is
+real but runs the other way — with HOME **unset** (`sudo`, a launchd job whose plist omits it)
+`os.homedir()` falls back to passwd while `process.env.HOME || ''` yields `''`, so the store
+writes its database to `/.tangleclaw/` while master state and git templates keep writing to the
+operator's real home. Worse than the reported direction, because it is data landing somewhere
+nobody looks rather than state merely leaking.
+
+`lib/tangleclaw-home.js` now owns the derivation; the store, PID file, master state, git
+template, ttyd attach script and the ingress cutover script all read it. With it comes the
+override the issue asked for: `TANGLECLAW_HOME`, naming the base directory outright rather than a
+home to append `.tangleclaw` to. That spelling is deliberate — a prior session assumed exactly
+this variable, found it unread, fell back to overriding `HOME`, and migrated the live database.
+What the override does not move (launchd jobs, the Caddy site label, the ingress ports) is stated
+in `docs/configuration-reference.md` and filed as **#1283**, because a partial sandbox presented
+as a whole one is the failure this chunk exists to prevent.
+
+**#1052 — the containment predicate.** `lib/project-paths.js` implemented its rule twice
+internally (`resolveWithinProject` and `isInsideProject` each hand-rolled the realpath/relative
+dance), and `priming-roll` hand-rolled a third, lexical, root-permissive copy. One internal
+predicate now serves all of them, with the departures expressed as options.
+
+The issue recorded the root-case difference as intentional — priming-roll "validates directories,
+not a target file". Reading the code, no site there validates a directory: all three resolve a
+plan FILE which they then read, and the plans *directory* is resolved elsewhere with no
+containment check at all. A pointer resolving to the root was never valid; it just failed later
+and worse, on a read of a directory. So the two converge on the root case rather than preserving
+a difference neither caller needed, and `allowRoot` ships with no production caller passing it.
+
+The one real difference stays and is now named at the call site: plan pointers do **not** follow
+symlinks. Verified rather than assumed — `.prawduct/artifacts/*.md` inside this repo's own git
+worktrees are symlinks to the primary checkout, so a symlink-following check would refuse every
+worktree session's `active_build_plan` as an escape.
+
+**Two pre-existing holes surfaced by asserting the shared rule in both directions**, both fixed
+here. Containment resolved only a path's *dirname* and appended the final component unresolved,
+so a `VERSION.json` that is itself a symlink to `/etc/passwd` passed the check written to stop
+that write; and a *dangling* symlink was discarded by the walk-up, though `fs.writeFileSync`
+follows one and creates its target. Resolution is now whole-path, follows dangling links by hand,
+and bounds the walk so a cycle terminates. The bound fails open past 32 hops, which is written
+down as a fail-open rather than left to be found.
+
+**Method note.** Twenty-one mutations, each run against the suites that should catch it. Three
+came back GREEN on the first pass and every one was a finding: priming-roll's `allowRoot` and
+`followSymlinks` policy had no test at all — mutating it left all 99 existing cases green — and
+the hop bound was "caught" only by the suite hanging, which is indistinguishable from a machine
+problem in CI. The bound now has a non-timing assertion (a chain longer than the budget resolves
+*inside*, so removing the bound flips it), and priming-roll's policy has three cases driving the
+real `run()`. Same lesson as Chunk 02's, one layer in: a policy constant is code, and a constant
+nothing asserts is a comment.
+
+One more, found by a test rather than by review: my own new `allowRoot`-after-symlink-resolution
+branch was unreachable until the final-component fix landed, because nothing resolved a basename
+onto the root. A branch that cannot be entered is not a policy.
+
+**Critic round, and what it changed** (`rev-20260906T051457Z-fc828818`, three reviewers: 1
+blocking, 13 warnings, 14 notes — 19 fixed, 9 accepted). Four of the fixes are corrections to
+this entry's own claims, which is why they are recorded here rather than only in the diff.
+
+*The fail-open was wrong, and I had argued for it.* `_realpathOrSelf` fell back to the lexical
+path whenever resolution could not finish, and `_containsPath` then answered INSIDE. My recorded
+rationale — "anyone able to plant a 32-deep chain could plant that instead" — is false precisely
+because the one-hop link IS caught, and Linux follows 40 nested links, so hops 33-40 defeated the
+check while the kernel still followed them at the write. The reviewer pointed at this repo's own
+Project Master write guard, which bounds at 16 and DENIES on exhaustion: two containment guards
+disagreeing on fail direction, inside the commit whose purpose was ending that disagreement.
+Resolution now returns a third state and containment refuses on it. An unreadable component is
+refused too, and the errno tells absence from opacity — a first attempt probed with `lstat`,
+which cannot distinguish them, and the new test caught it.
+
+*`allowRoot` is descoped.* Two reviewers independently called it speculative: no production
+caller, and the premise it was added for (priming-roll validates directories) had been disproven
+in this same commit. Deleted. The plan named it as a deliverable, so this is an explicit descope,
+not a drop — the root policy is now one unconditional rule, which is what "explicit root policy"
+was asking for.
+
+*The module docstring overshot.* "Every containment check in the repo now lands on the one
+predicate" is false — `lib/projects.js`'s `$HOME` guard and `lib/master.js`'s generated hook
+script are both outside it, and the second cannot require any module. A universal that is wrong
+tells the next maintainer to stop looking, which is the failure this module exists to fix,
+re-created in the sentence describing the fix. Bounded to what the module can govern.
+
+*The override's blast radius was understated.* The doc listed "three things" that stay
+machine-global, all ingress-shaped. But `deploy/install.sh` hardcodes `$HOME/.tangleclaw` at five
+sites and the plists at four more — those are STATE, not ingress, so an operator following the
+doc's own rehearsal recipe would have had install.sh read the live config while the server wrote
+to the scratch base. Worse, the ingress cutover now filled `TTYD_ATTACH` from the overridable base
+while writing into the shared `~/Library/LaunchAgents`: a rehearsal would have repointed the LIVE
+ttyd job at a scratch directory, and losing that directory takes every terminal down (#500). The
+cutover refuses while the variable is set, and the doc says what it does not move.
+
+**And the round's own lesson, which is the session's third instance of one shape.** Twenty-one
+mutations after the fixes; three came back GREEN, and two were real: the shared-doc consumer's
+`followSymlinks: false` and the cutover's refusal each had *no* test, because I had asserted the
+MECHANISM (the predicate answers both ways) and not the CALL SITE's choice of it. That is the
+same defect as Chunk 02's "a guard covering half its family", one level in: **a call site's policy
+argument is code, and a test of the function it calls does not cover it.** Both now drive the real
+route — the shared-doc case through `POST /api/shared-docs/:id/notify`, the cutover through a
+spawned run of the actual script.
+
+One fix was reverted by a test rather than by review. Deriving the cutover's displayed log path
+from the live base broke `test/setup-provisioning.test.js`, which pins a stronger contract: that
+unauthenticated route must never emit an absolute path, and a derived form only stays relative
+while the base sits under `$HOME`. The literal stayed, and what actually closes the finding is the
+refusal above — a base the literal could misname is a base no cutover ever logs into.
+
+
 ## 2026-09-06 — #797/#882: the provenance record says what the session did, and corruption is detected
 
 <!-- prawduct: type=fix | scope=train-13 -->

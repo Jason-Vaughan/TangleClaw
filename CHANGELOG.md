@@ -4,7 +4,72 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **`TANGLECLAW_HOME` relocates an install's entire machine-local state (#828).** Set it and the
+  database, `config.json`, engine and orchestration profiles, logs, the PID file, master state,
+  the git template and the ttyd attach script all move together; leave it unset and the base
+  directory is `~/.tangleclaw` as before. It names the base directory outright, so
+  `TANGLECLAW_HOME=/tmp/tc-rehearsal` puts the database at `/tmp/tc-rehearsal/tangleclaw.db`
+  with no `.tangleclaw` segment appended, and a blank value is ignored rather than treated as
+  the current directory. This is the supported way to rehearse setup or run against a scratch
+  directory — overriding `HOME` never was, and once migrated the live database. It does **not**
+  move the launchd jobs, the Caddy site label, or the ingress ports, so it separates an
+  install's state and not its ingress; `docs/configuration-reference.md` says so and #1283
+  carries the remainder.
+
 ### Fixed
+- **One derivation of TangleClaw's base directory, and one containment predicate (#828, #1052).**
+  Where `~/.tangleclaw` *is* was answered independently at six sites, half from
+  `process.env.HOME` and half from `os.homedir()`. #828 diagnosed the divergence as macOS
+  `os.homedir()` ignoring `$HOME`; measured on Node 22 it does the opposite — `os.homedir()`
+  prefers `$HOME` and falls back to the passwd entry only when it is unset, which is where the
+  two actually disagree. So the half-relocation is real but runs the other way: a process
+  launched WITHOUT `HOME` (a `sudo` invocation, a launchd job whose plist does not set it)
+  resolved the passwd home at one site and the empty string at another, putting the database at
+  `/.tangleclaw/` while master state and git templates kept writing to the operator's real home.
+  An install that looks isolated and is not is worse than one that never moved.
+
+  `lib/tangleclaw-home.js` now owns the derivation and every site reads it: the store, the PID
+  file, master state, the git template, the ttyd attach script, and the ingress cutover script.
+  With it comes the documented override #828 asked for — **`TANGLECLAW_HOME`** (see Added above),
+  which names the base directory outright and moves all of that state or none of it. A session
+  once assumed this variable existed, found it unread, fell back to overriding `HOME`, and
+  migrated the live database; it exists now.
+
+  Alongside it, `lib/project-paths.js` gained one internal containment rule that both
+  `resolveWithinProject` and `isInsideProject` reach — they had been implementing it twice — and
+  `lib/wrap-steps/priming-roll.js` migrated its three hand-rolled plan-pointer checks onto it.
+  #1052 recorded the difference between them as intentional (priming-roll "validates
+  directories, not a target file"); reading the code, no site there validates a directory — all
+  three resolve a plan FILE, and the plans *directory* is resolved elsewhere with no containment
+  check at all. So they converge on the root case rather than preserving a difference neither
+  caller needed. The one real difference stays and is now named: plan pointers do not follow
+  symlinks, because worktree governance state is symlinked back to the primary checkout and
+  following it would refuse every worktree session's plan pointer as an escape.
+
+  Three holes surfaced while asserting the shared rule in both directions, all pre-existing and
+  all fixed. Containment resolved only a path's *directory* and appended the final component
+  unresolved, so `VERSION.json` as a symlink to `/etc/passwd` passed the check that exists to
+  stop that write. A *dangling* symlink was discarded entirely by the walk-up, though
+  `fs.writeFileSync` follows one and creates its target. And resolution that could not be
+  completed — a symlink budget spent, or a component that exists and cannot be read — composed
+  a lexical answer and reported it as **inside**; Linux follows up to 40 nested links, so that
+  handed hops 33-40 to a caller as contained while the kernel still followed them at the write.
+  Resolution is now whole-path, follows dangling links by hand, bounds the walk so a cycle
+  terminates, and **refuses** when it cannot finish — the same fail-closed answer this repo's
+  Project Master write guard already gives to the identical question.
+
+  One consumer wanted the old answer and now says so. `server.js`'s shared-doc broadcast asks
+  which project *owns* a changed file so it can avoid waking that file's own author (#818);
+  that question is about where the doc is **registered**, not where its bytes live, so a doc
+  kept as a symlink into a group's shared directory still belongs to the project holding it.
+  Every other consumer asks where a write would land and resolves. `docs/configuration-reference.md`
+  also gained the half of `TANGLECLAW_HOME`'s blast radius that was missing: `deploy/install.sh`
+  and the launchd plists derive the same **state** paths independently in shell, so the override
+  isolates a scratch process rather than a second install — and the ingress cutover now refuses
+  outright while the variable is set, because it bakes paths into launchd jobs that no override
+  can relocate.
+
 - **The wrap's `files:` record is the session's own changed set, not the branch's (#797).**
   `lib/wrap-steps/continuity-write.js` diffed `<trunk>...<tip>` — every commit on the branch,
   across every session that built it — and then filtered the result through the Feature Index's
