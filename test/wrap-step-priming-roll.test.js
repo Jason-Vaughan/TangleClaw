@@ -195,9 +195,22 @@ describe('wrap-step priming-roll — pure helpers (#139 Chunk 6)', () => {
     const begin = primingRoll.BEGIN_MARKER;
     const end = primingRoll.END_MARKER;
 
+    /**
+     * Splice and assert the call was allowed, so a refusal can never read as a
+     * passing assertion about content.
+     * @param {string} prior - Existing priming-file body
+     * @param {string} body - Rendered body for the managed block
+     * @returns {string} The merged file content
+     */
+    function splice(prior, body) {
+      const { merged, error } = primingRoll._replaceManagedBlock(prior, body);
+      assert.equal(error, null, `splice refused: ${error}`);
+      return merged;
+    }
+
     it('replaces an existing managed block in place, preserving surrounding text', () => {
       const prior = `Header content\n${begin}\nold body\n${end}\nFooter content`;
-      const out = primingRoll._replaceManagedBlock(prior, '\nnew body\n');
+      const out = splice(prior, '\nnew body\n');
       assert.match(out, /^Header content\n/);
       assert.match(out, /Footer content$/);
       assert.match(out, /new body/);
@@ -206,49 +219,77 @@ describe('wrap-step priming-roll — pure helpers (#139 Chunk 6)', () => {
 
     it('appends a fresh managed block when none exists, with a blank line separator', () => {
       const prior = 'Some user prose.\n';
-      const out = primingRoll._replaceManagedBlock(prior, '\nfresh body\n');
+      const out = splice(prior, '\nfresh body\n');
       assert.match(out, /^Some user prose\.\n/);
       assert.ok(out.includes(begin) && out.includes(end));
       assert.match(out, /fresh body/);
     });
 
     it('appends without leading separator when prior is empty', () => {
-      const out = primingRoll._replaceManagedBlock('', '\nbody\n');
+      const out = splice('', '\nbody\n');
       assert.ok(out.startsWith(begin), 'empty prior → block at top with no leading whitespace');
     });
 
-    it('treats out-of-order markers as "no managed block" and appends', () => {
-      // If END appears before BEGIN, slice math would corrupt the file —
-      // the implementation defensively treats it as a fresh-append case.
-      // Any user prose between the misordered markers MUST survive.
+    it('repairs out-of-order markers into one block, keeping the prose between them', () => {
+      // This case used to append a second pair, on the reasoning that slice
+      // math over misordered markers would corrupt the file. The goal it was
+      // protecting — any user prose between the misordered markers MUST
+      // survive — is asserted here and still holds; what changed is that the
+      // append was not idempotent, so the next wrap appended AGAIN, one stale
+      // block per wrap forever (#1132). The counts below are 1, not 2,
+      // deliberately: the repair leaves nothing for a later wrap to duplicate.
       const prior = `${end}\nuser-prose-between\n${begin}\n`;
-      const out = primingRoll._replaceManagedBlock(prior, '\nbody\n');
-      // Original BEGIN/END count: 1 each. After append: 2 each.
-      const beginCount = out.split(begin).length - 1;
-      const endCount = out.split(end).length - 1;
-      assert.equal(beginCount, 2);
-      assert.equal(endCount, 2);
+      const out = splice(prior, '\nbody\n');
+      assert.equal(out.split(begin).length - 1, 1);
+      assert.equal(out.split(end).length - 1, 1);
       assert.match(out, /user-prose-between/,
-        'defensive append must not destroy user content sitting between misordered markers');
+        'content between misordered markers is the user\'s and must survive the repair');
+      assert.match(out, /body/);
     });
 
-    it('with multiple BEGIN/END pairs, edits only the first pair (leaves orphans untouched)', () => {
-      // Documented behavior: indexOf finds the first marker of each
-      // kind. A duplicated managed block (e.g. user copy-pasted) leaves
-      // the orphan second pair as inert content rather than corrupting
-      // anything. Worth pinning so a future "find all markers" refactor
-      // is intentional, not accidental.
+    it('a repaired priming file is byte-identical on the next wrap', () => {
+      // The acceptance criterion #1132 was filed for: repeated wraps against a
+      // malformed priming file produce a file of constant size. Mutation this
+      // catches: a repair that leaves the file still malformed, which would
+      // restore the unbounded append one wrap later.
+      const prior = `${end}\nuser-prose-between\n${begin}\n`;
+      const once = splice(prior, '\nbody\n');
+      const twice = splice(once, '\nbody\n');
+      assert.equal(twice, once);
+      const thrice = splice(twice, '\nbody\n');
+      assert.equal(thrice, once, 'stability holds past the first re-run, not just at it');
+    });
+
+    it('with multiple BEGIN/END pairs, collapses to one and keeps the prose between them', () => {
+      // Previously this pinned that the orphan second pair stayed as inert
+      // content, explicitly so that a later "find all markers" pass would be
+      // intentional rather than accidental. This is that intent: an orphan pair
+      // is a stale copy of our own output, and content between our own markers
+      // is regenerated every wrap. `middle` was never ours, so it stays.
       const prior =
         `${begin}\nfirst\n${end}\n` +
         `middle\n` +
         `${begin}\nsecond\n${end}\n`;
-      const out = primingRoll._replaceManagedBlock(prior, '\nrolled\n');
+      const out = splice(prior, '\nrolled\n');
       assert.match(out, /rolled/);
-      assert.ok(!out.includes('first'),
-        'first managed-block body must be replaced');
-      assert.match(out, /second/,
-        'orphan second block remains as inert content (pin for intentionality)');
+      assert.ok(!out.includes('first'), 'first managed-block body must be replaced');
+      assert.ok(!out.includes('second'), 'the orphan pair is a stale copy of our own output');
       assert.match(out, /middle/, 'prose between pairs survives');
+      assert.equal(out.split(begin).length - 1, 1);
+    });
+
+    it('refuses a body carrying a marker literal rather than writing a boundary the operator never authored', () => {
+      // The body embeds chunk titles read out of the operator's plan, so a
+      // heading containing a marker would land in the priming file as a real
+      // region boundary — and the next wrap would read their prose as ours and
+      // delete it. Repair cannot undo that, because the file would LOOK well
+      // formed.
+      const { merged, error } = primingRoll._replaceManagedBlock(
+        'user prose\n', `\n**Active:** Chunk 1 — ${end} in a heading\n`
+      );
+      assert.equal(merged, null, 'nothing is spliced');
+      assert.match(error, /marker literal/);
+      assert.match(error, /plan/, 'the refusal names where the literal came from');
     });
   });
 

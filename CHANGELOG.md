@@ -18,6 +18,27 @@ All notable changes to TangleClaw are documented in this file.
   carries the remainder.
 
 ### Fixed
+- **A malformed marker pair no longer grows the priming file by one stale block per wrap, or
+  freezes an engine config until someone notices (#1132).** TangleClaw splices a managed block
+  into a file it co-owns with another writer in two places, and they disagreed about what a
+  broken marker set means: the engine-config merge refused and left the file byte-identical,
+  while the wrap pipeline's priming roll treated a misordered pair as "no block here" and
+  appended a fresh one — which is not idempotent, so the next wrap saw the same misordered pair
+  and appended again, forever, every appended block stale the moment the next landed. Both now
+  splice through one shared implementation (`lib/managed-block.js`) whose policy is **repair**: a
+  marker set that is not one begin followed by one end is rewritten into exactly one well-formed
+  block. The first complete region carries the new body; a later one is a stale copy of
+  TangleClaw's own output and is dropped; an unmatched marker has its marker text removed while
+  the content on either side of it — someone else's — survives byte for byte. Nothing is guessed,
+  so nothing outside a complete pair is deleted, and the result always holds one well-formed
+  pair, which makes the next pass byte-identical. The prose sitting between misordered markers
+  still survives, which is what the old append existed to protect. **Behavior change for engine
+  configs:** a shared carrier (`AGENTS.md`, `GEMINI.md`, `CONVENTIONS.md`, `CLAUDE.md`) whose
+  markers were broken used to be refused with an error and left alone; it is now repaired and
+  the region resumes updating. One input is still refused: generated content carrying a marker
+  literal, because that writes a boundary the operator never authored and repair cannot undo it
+  — the file would look well formed. The priming roll reports that as a blocked step naming the
+  plan, rather than writing.
 - **A rejected project PATCH no longer leaves the project half-changed (#1033).** `updateProject`
   validated most fields before writing anything and three of them inside the blocks that write,
   so `PATCH { name, engine }` with an unknown engine renamed the directory on disk and *then*

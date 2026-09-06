@@ -100,39 +100,64 @@ describe('managed-block merge — preserves what TangleClaw does not own', () =>
   });
 });
 
-describe('managed-block merge — refuses rather than guessing', () => {
-  test('a begin marker with no end is refused and nothing is merged', () => {
+// These four cases used to be REFUSALS here, and an append in the priming roll
+// (#1132). Repair replaces both. It is not a weakened contract: every guarantee
+// the refusal made — no guessing, nothing of the operator's deleted, no text
+// stranded inside a region we then claim — still holds below, and repair adds
+// the one the refusal could not, that the region keeps updating. What the
+// refusal bought was that the file stayed byte-identical; that is worth less
+// than it reads, because the operator only learned of it by reading a log.
+describe('managed-block merge — repairs a broken marker set rather than guessing', () => {
+  test('a begin marker with no end is closed, and the text after it stays the operator\'s', () => {
     const broken = `head\n${BEGIN}\norphaned`;
     const { merged, error } = engines._mergeManagedBlock(broken, 'body', 'markdown');
-    // Mutation this catches: treating "no valid pair" as "no block" and
-    // appending, which would leave two begins and strand the operator's text
-    // inside a region we then claim to own.
-    assert.equal(merged, null, 'no merged output is produced');
-    assert.match(error, /malformed/);
+    // Mutation this catches: treating "no complete pair" as "no block" and
+    // appending, which would leave two begins and strand `orphaned` inside a
+    // region we then claim to own.
+    assert.equal(error, null);
+    assert.equal(merged, `head\n${BEGIN}\nbody\n${END}\norphaned`);
   });
 
-  test('an end marker before its begin is refused', () => {
-    const inverted = `${END}\nbody\n${BEGIN}`;
+  test('an end marker before its begin is repaired, keeping the prose between them', () => {
+    const inverted = `${END}\nkeep me\n${BEGIN}`;
     const { merged, error } = engines._mergeManagedBlock(inverted, 'body', 'markdown');
-    assert.equal(merged, null);
-    assert.match(error, /precedes/);
+    assert.equal(error, null);
+    assert.match(merged, /keep me/, 'prose between misordered markers is not ours to delete');
+    assert.equal(merged.split(BEGIN).length - 1, 1, 'exactly one begin survives');
+    assert.equal(merged.split(END).length - 1, 1, 'exactly one end survives');
   });
 
-  test('duplicated markers are refused rather than partially spliced', () => {
-    const doubled = `${BEGIN}\na\n${END}\n${BEGIN}\nb\n${END}`;
-    const { merged, error } = engines._mergeManagedBlock(doubled, 'body', 'markdown');
-    assert.equal(merged, null);
-    assert.match(error, /2 begin/);
+  test('a repaired file is byte-identical on the next pass', () => {
+    // The property the old append lacked and the old refusal never reached.
+    // Mutation this catches: repairing to something that is still malformed,
+    // or appending a second block on the pass after the repair.
+    const inverted = `${END}\nkeep me\n${BEGIN}`;
+    const once = engines._mergeManagedBlock(inverted, 'body', 'markdown').merged;
+    const twice = engines._mergeManagedBlock(once, 'body', 'markdown').merged;
+    assert.equal(twice, once);
+  });
+
+  test('duplicated blocks collapse to one; only their own bodies are dropped', () => {
+    const doubled = `${BEGIN}\na\n${END}\nmiddle\n${BEGIN}\nb\n${END}`;
+    const { merged, error } = engines._mergeManagedBlock(doubled, 'fresh', 'markdown');
+    assert.equal(error, null);
+    assert.equal(merged, `${BEGIN}\nfresh\n${END}\nmiddle\n`);
+    // `a` and `b` sat between our own markers, which every caller documents as
+    // regenerated each run. `middle` did not, so it survives.
+    assert.ok(!merged.includes('\na\n') && !merged.includes('\nb\n'), 'stale copies of our own output go');
   });
 
   test('a marker literal in the generated body is refused at the door', () => {
     // The body is not ours alone: the generator embeds global-rules.md and whole
     // shared-document bodies verbatim, so an operator's document can contain a
-    // marker. Splicing it writes a 2-begin file, which the malformed check then
-    // refuses FOREVER — one bad shared doc permanently bricking the config.
+    // marker. Splicing it writes a real boundary the operator never authored,
+    // and the next run reads their surrounding prose as our region and deletes
+    // it. Repair cannot undo that — the damage is that the file now LOOKS well
+    // formed — so this one stays a refusal, and it names where to look.
     const { merged, error } = engines._mergeManagedBlock(FOREIGN_FILE, `## Rules\nnever write ${END} in a shared doc`, 'markdown');
     assert.equal(merged, null, 'nothing is spliced');
     assert.match(error, /marker literal/);
+    assert.match(error, /global-rules\.md/, 'the refusal names the engine-side sources a literal arrives from');
   });
 
   test('a poisoned body cannot brick a file that is still writable afterwards', () => {
@@ -205,16 +230,28 @@ describe('writeEngineConfig honors mergeStrategy', () => {
     assert.ok(after.includes(BEGIN), 'our block was added');
   });
 
-  test('a malformed marker pair leaves the file untouched and reports an error', (t) => {
-    const seed = `${BEGIN}\nno end marker here`;
+  test('a malformed marker pair is repaired through a real write, keeping foreign content', (t) => {
+    const seed = `${FOREIGN_FILE}\n${BEGIN}\nno end marker here`;
     const { dir, file } = makeProject(seed);
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
     const result = engines.writeEngineConfig('antigravity', dir, {}, profile);
     assert.equal(result.skipped, false, `fixture did not reach the write path: ${result.skipReason}`);
-    assert.equal(result.written, false, 'nothing was written');
-    assert.match(result.error, /managed-block merge refused/);
-    assert.equal(fs.readFileSync(file, 'utf8'), seed, 'the operator file is byte-identical after a refusal');
+    assert.equal(result.error, null);
+    assert.equal(result.written, true, 'the region resumes updating instead of freezing');
+
+    const after = fs.readFileSync(file, 'utf8');
+    assert.ok(after.includes('BEGIN:nextjs-agent-rules'), 'next dev block preserved through the repair');
+    assert.ok(after.includes('**CRITICAL RULE:**'), 'operator rules preserved through the repair');
+    assert.ok(after.includes('no end marker here'), 'text after an unclosed marker is not ours to delete');
+    assert.equal(after.split(BEGIN).length - 1, 1, 'exactly one begin after the repair');
+    assert.equal(after.split(END).length - 1, 1, 'exactly one end after the repair');
+
+    // The acceptance criterion #1132 was filed for: a second run does not grow
+    // the file. Run the real write path twice, not just the pure helper.
+    const second = engines.writeEngineConfig('antigravity', dir, {}, profile);
+    assert.equal(second.error, null);
+    assert.equal(fs.readFileSync(file, 'utf8'), after, 'a repaired carrier is stable across runs');
   });
 });
 

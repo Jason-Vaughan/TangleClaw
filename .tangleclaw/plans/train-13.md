@@ -259,6 +259,36 @@ what the WRITE phase reads immediately found a third gap (`activePlan` missing f
 so the partial-update tests had been one field smaller than they looked). When a guard enumerates,
 ask what produces the roster and whether that producer can see everything the code can.
 
+**Chunk 06 is built** — branch `fix/1132-one-managed-block-policy`. The splice now lives in
+`lib/managed-block.js`, a leaf module with no imports, and both splicers go through it: the
+engine-config merge adds the syntax comment form and H1 demotion, the priming roll passes its own
+literal marker pair. The plan named `lib/engines.js` as the home; extracting instead is a
+[DECISION], and the reason is a rule this repo already learned — a `lib/wrap-steps/` handler
+requiring `lib/engines` at module top closes the `projects → sessions → wrap-pipeline →
+wrap-steps` cycle, and `lib/wrap-steps/ai-content.js` carries a comment explaining that it reads
+profiles through `store.engines` for exactly that reason. `lib/update-applier.js` lazy-requires
+`lib/engines` mid-function on the same grounds. Engines keeps ownership of the engine-config
+policy; only the mechanism moved.
+
+**The shared policy is repair, and it flips the engine side too.** The plan's assumption held —
+option 2 is the only one satisfying both existing contracts — but its blast radius was wider than
+the chunk described: five tests pinned the engine layer's *refusal*, so unifying rewrote those
+contracts, not just the priming roll's. Argued rather than weakened: every guarantee the refusal
+made still holds (nothing guessed, nothing of the operator's deleted, no text stranded inside a
+region we then claim), and repair adds the one refusal could not reach — the region keeps
+updating. The pinned "orphan pair remains as inert content" test said in its own comment that it
+existed so a future find-all-markers pass would be intentional; this is that intent.
+
+**Answering the question Chunk 05's handoff left: what does a throw halfway leave?** The priming
+roll never writes — it stages, and `commit` flushes — so nothing there changed. `writeEngineConfig`
+does write, with a bare `fs.writeFileSync`, and repair newly points that write at carriers the
+layer previously refused entirely. The fix looked like a drop-in of the tmp+rename pattern already
+used three times in this repo (including 20 lines away in `engines.js`), and it turned
+`test/engine-switch-retires-config.test.js:139` red — correctly: a rename needs write permission
+on the *directory*, so it would silently override a config file an operator made read-only, where
+today that is an honest reported failure. Atomicity there is a decision about operator intent, not
+a mechanical change, so it is **#1291** rather than a passenger on a marker-policy chunk.
+
 ## Scaffolding
 
 No new scaffolding: every chunk edits existing modules in an established repo. Two standing
