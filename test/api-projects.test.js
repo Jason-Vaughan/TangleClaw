@@ -212,6 +212,30 @@ describe('api-projects', () => {
       assert.equal(status, 404);
     });
 
+    // The route picks its status by SEARCHING the first error for `not found`
+    // (server.js), so the code a client sees is decided by prose the validator
+    // happened to write. These record what that produces today rather than
+    // endorsing it: an engine typo answers 404 on a route whose 404 otherwise
+    // means the PROJECT is gone, so a client branching on status reports
+    // "project not found" for a misspelled engine. #1288 carries the fix; the
+    // pin exists because the contract artifact described this wrong until a
+    // review checked it against the route, and only a route-level test can.
+    it('answers 400 for a field the validator refuses on shape', async () => {
+      const { status, data } = await request('PATCH', '/api/projects/api-test-project', {
+        featureIndexEnabled: 'not-a-boolean'
+      });
+      assert.equal(status, 400);
+      assert.ok(data.error.includes('featureIndexEnabled'));
+    });
+
+    it('answers 404 — not 400 — for an unknown engine, because the message says "not found"', async () => {
+      const { status, data } = await request('PATCH', '/api/projects/api-test-project', {
+        engine: 'no-such-engine'
+      });
+      assert.equal(status, 404, 'today\'s behavior, tracked as wrong in #1288');
+      assert.ok(data.error.includes('Engine "no-such-engine" not found'));
+    });
+
     // #1148 — a rename's after-the-fact warning (a LaunchAgent still naming
     // the old path) must reach the wire on the same `warnings` field the
     // dashboard already reads for partial failures, with the rename still 200.

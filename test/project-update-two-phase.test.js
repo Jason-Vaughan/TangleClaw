@@ -49,6 +49,21 @@ function snapshot(name) {
   };
 }
 
+/**
+ * Give a project the plan file `VALID_SETTINGS_PATCH.activePlan` names.
+ *
+ * `activePlan` is validated against the plans directory the wrap step resolves,
+ * so a fixture without the file exercises the REJECTION path and never the
+ * write — which would quietly make the batch one field smaller than it looks.
+ *
+ * @param {string} name - Project name.
+ */
+function seedPlan(name) {
+  const dir = path.join(store.projects.getByName(name).path, '.tangleclaw', 'plans');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, VALID_SETTINGS_PATCH.activePlan), '# a plan\n');
+}
+
 describe('updateProject validates every field before writing any (#1033)', () => {
   let tmpDir;
   let projectsDir;
@@ -106,6 +121,37 @@ describe('updateProject validates every field before writing any (#1033)', () =>
       'the engine switch must not have written anything before the rules refusal');
   });
 
+  it('a throw after the rename still leaves the row naming a directory that exists', async () => {
+    // The write phase's own half of the same defect. Validation is all-or-
+    // nothing, but a rename is two writes to two stores, and everything after
+    // it can throw: `store.projectConfig.save` is a bare `mkdirSync`/
+    // `writeFileSync`. With the row flushed at the END of the function, an
+    // EACCES/ENOSPC anywhere in between propagated out with the directory moved
+    // and the row naming the old path — #1033's unopenable project, reached by
+    // an exception instead of a verdict. Nothing can make two stores atomic;
+    // what is pinned is that the row moves WITH the directory rather than
+    // fifteen writes later.
+    projects.createProject({ name: 'two-phase-throw' });
+    const saved = store.projectConfig.save;
+    store.projectConfig.save = () => { throw new Error('EACCES: permission denied'); };
+    try {
+      await assert.rejects(
+        () => projects.updateProject('two-phase-throw', {
+          name: 'two-phase-thrown', medusaEnabled: true
+        }),
+        /EACCES/);
+    } finally {
+      store.projectConfig.save = saved;
+    }
+
+    const row = store.projects.getByName('two-phase-thrown');
+    assert.ok(row, 'the row must have moved with the directory');
+    assert.equal(fs.existsSync(row.path), true,
+      'the row must not name a path the rename left behind');
+    assert.equal(store.projects.getByName('two-phase-throw'), null,
+      'and the old name must not still resolve');
+  });
+
   it('a full settings save with one bad field writes none of the good ones', async () => {
     // The fields come from what the settings modal actually PATCHes (see the
     // producer-derived roster below), so this grows with the modal rather than
@@ -113,6 +159,7 @@ describe('updateProject validates every field before writing any (#1033)', () =>
     // something — project.json keys, a seeded FEATURES.md, a directory rename —
     // and none of it may survive one rejected field.
     projects.createProject({ name: 'two-phase-batch', engine: 'claude' });
+    seedPlan('two-phase-batch');
     const before = snapshot('two-phase-batch');
 
     const result = await projects.updateProject('two-phase-batch', {
@@ -131,6 +178,7 @@ describe('updateProject validates every field before writing any (#1033)', () =>
     // Without this the test above passes on a PATCH that was never going to
     // write anything — the fixture would be measuring its own inertness.
     projects.createProject({ name: 'two-phase-control', engine: 'claude' });
+    seedPlan('two-phase-control');
     const before = snapshot('two-phase-control');
 
     const result = await projects.updateProject('two-phase-control', VALID_SETTINGS_PATCH);
@@ -151,6 +199,7 @@ describe('updateProject validates every field before writing any (#1033)', () =>
  */
 const VALID_SETTINGS_PATCH = {
   name: 'two-phase-saved',
+  activePlan: 'a-plan.md',
   engine: 'claude',
   tags: ['alpha'],
   silentPrime: true,
@@ -176,24 +225,57 @@ describe('the fixture tracks the settings modal, not a remembered list', () => {
   const ui = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
   const start = ui.indexOf('async function doSaveSettings()');
   const body = ui.slice(start, ui.indexOf('\nasync function _submitSettings', start));
+  // The session page is the OTHER producer: its engine picker and its wrap-drawer
+  // plan picker each PATCH this endpoint with a body the modal never sends. Both
+  // are single-key today, which is exactly why reading only the modal looked
+  // sufficient — a second key added to either would have been invisible.
+  const sessionJs = fs.readFileSync(path.join(__dirname, '..', 'public', 'session.js'), 'utf8');
 
-  /** @returns {string[]} Every field `doSaveSettings` puts in the PATCH body. */
+  /** @returns {string[]} Every field the browser puts in a projects PATCH body. */
   function modalFields() {
     const keys = new Set();
-    // The two ways a field gets in: the initial object literal, and `body.x =`.
+    // The two ways a field gets into the settings body: the initial object
+    // literal, and `body.x =`.
     const literal = body.slice(body.indexOf('const body = {'), body.indexOf('};'));
     for (const m of literal.matchAll(/^\s{4}([A-Za-z][A-Za-z0-9]*):/gm)) keys.add(m[1]);
     for (const m of body.matchAll(/\bbody\.([A-Za-z][A-Za-z0-9]*)\s*=/g)) keys.add(m[1]);
+    // session.js writes its bodies inline at the `apiMutate` call, so the keys
+    // are read from the object literal that follows each projects PATCH.
+    for (const m of sessionJs.matchAll(
+      /apiMutate\(\s*`\/api\/projects\/[^`]*`,\s*\n?\s*'PATCH',\s*\n?\s*\{([^}]*)\}/g)) {
+      for (const k of m[1].matchAll(/([A-Za-z][A-Za-z0-9]*)\s*[:,}]/g)) keys.add(k[1]);
+    }
     return [...keys];
   }
 
-  it('finds the modal\'s fields at all', () => {
-    // Guards every assertion below from passing on an empty set — the slice is
-    // anchored on two function names, and either one moving would otherwise
-    // make this whole describe vacuously green.
+  /**
+   * Every field the WRITE phase acts on — the widest roster there is, because a
+   * field can only be persisted by being read here. The modal's roster cannot
+   * see a field no browser sends (`quickCommands`, `rules`), which is how one
+   * reached `project.json` with no verdict and nothing red.
+   *
+   * @returns {string[]} Field names read from `updates` in `_applyProjectUpdates`.
+   */
+  function writtenFields() {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'projects.js'), 'utf8');
+    const at = src.indexOf('async function _applyProjectUpdates(');
+    const apply = src.slice(at, src.indexOf('\n}\n', at));
+    return [...new Set([...apply.matchAll(/\bupdates\.([A-Za-z][A-Za-z0-9]*)/g)].map((m) => m[1]))];
+  }
+
+  it('finds both rosters at all', () => {
+    // Guards every assertion below from passing on an empty set — each slice is
+    // anchored on a name, and any of them moving would otherwise make this whole
+    // describe vacuously green.
     const fields = modalFields();
     assert.ok(fields.length >= 10, `only found ${fields.length}: ${fields.join(', ')}`);
     assert.ok(fields.includes('engine') && fields.includes('tags'));
+    assert.ok(fields.includes('activePlan'),
+      'the session page\'s plan picker is a PATCH producer too');
+    const written = writtenFields();
+    assert.ok(written.length >= 15, `only found ${written.length}: ${written.join(', ')}`);
+    assert.ok(written.includes('quickCommands') && written.includes('rules'),
+      'the write phase acts on fields no browser sends');
   });
 
   it('every field the modal sends has a valid value in the fixture', () => {
@@ -204,18 +286,22 @@ describe('the fixture tracks the settings modal, not a remembered list', () => {
     }
   });
 
-  it('every field the modal sends is known to the validator table', () => {
-    // `tags` is the one exception and it is declared, not overlooked: nothing
-    // validates it today, so a non-array is stringified into the column and read
-    // back as a string where every reader expects `string[]` (#1287, which also
+  it('every field that reaches the write phase is known to the validator table', () => {
+    // Both rosters, because neither contains the other: the browser can send a
+    // field the write phase ignores, and the write phase acts on fields
+    // (`rules`, `quickCommands`) no browser sends.
+    //
+    // The two exceptions are declared, not overlooked. Nothing validates `tags`
+    // or `quickCommands` today, so a non-array is stringified into storage and
+    // read back as a string where every reader expects an array (#1287, which
     // empties this set). A field that is validated nowhere and declared nowhere
-    // fails here.
-    const unvalidated = new Set(['tags']);
+    // fails here — which is how `quickCommands` was found.
+    const unvalidated = new Set(['tags', 'quickCommands']);
     const known = new Set(projects._PROJECT_UPDATE_VALIDATORS
       .flatMap((v) => [...v.keys, ...(v.reads || [])]));
-    for (const field of modalFields()) {
+    for (const field of [...modalFields(), ...writtenFields()]) {
       assert.ok(known.has(field) || unvalidated.has(field),
-        `the settings modal sends "${field}" and no validator names it — `
+        `"${field}" reaches updateProject and no validator names it — `
         + 'give it a table entry, or add it to the declared-unvalidated set');
     }
   });
@@ -228,19 +314,30 @@ describe('the apply phase cannot refuse a field', () => {
   // is named rather than papered over.
   const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'projects.js'), 'utf8');
   const start = src.indexOf('async function _applyProjectUpdates(');
-  const apply = src.slice(start, src.indexOf('\n}\n', start));
+  const end = src.indexOf('\n}\n', start);
+  const apply = src.slice(start, end);
 
-  it('the slice actually covers the apply phase', () => {
+  it('the slice actually covers the apply phase, end included', () => {
+    // A length floor alone is satisfied by any long enough PREFIX, so the slice
+    // is pinned at both ends: it must reach the function's terminal statement.
+    // Everything below counts occurrences, and a count over a truncated region
+    // is green for the wrong reason.
     assert.ok(start > -1, '_applyProjectUpdates must exist');
-    assert.ok(apply.length > 2000, `slice looks wrong (${apply.length} chars)`);
+    assert.ok(end > start, 'the function\'s closing brace must be findable');
+    assert.match(apply, /return \{ project: updated, errors, warnings \};\s*$/,
+      'the slice must end at the function\'s own last statement');
   });
 
   it('returns a null project for exactly one reason, and it is not a verdict', () => {
-    const nulls = [...apply.matchAll(/return \{ project: null/g)].length;
+    // Matched by SHAPE, not by one spelling: `return { errors: [...], project:
+    // null }` refuses a field just as well as `return { project: null, ... }`,
+    // and pinning the literal would let the second form reintroduce #1033 with
+    // the count still reading 1.
+    const nulls = [...apply.matchAll(/return \{[^;]*\bproject: null/g)].length;
     assert.equal(nulls, 1,
       'a second null-project return in the write phase is a field being refused '
       + 'after earlier fields were written — put its verdict in PROJECT_UPDATE_VALIDATORS');
-    assert.match(apply, /return \{ project: null, errors: \[`Failed to rename directory/,
+    assert.match(apply, /return \{[^;]*\bproject: null[^;]*Failed to rename directory/,
       'and the one that remains is the rename failing as I/O, not as a judgement');
   });
 });

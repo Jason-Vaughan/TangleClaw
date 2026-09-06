@@ -299,6 +299,31 @@ describe('the rehearsal refuses what the run refuses (#929)', () => {
     assert.equal(r.caddyfile, GATED_CADDYFILE);
   });
 
+  it('answers the password before the gate, because that is the order the run asks in', () => {
+    // `--create-gate` refuses on a non-caddy install, and the real run reaches
+    // that refusal only AFTER `acquirePassword` — `createGate` asks
+    // `canCreateGate` from inside itself. A preview that asked the gate first
+    // would report a different reason from the run for the same command, and
+    // exit 0 where the run exits 1. The fixture's store is fresh, so
+    // `ingressMode` is `direct` and the gate verdict is a refusal waiting to be
+    // reported if the ordering slips.
+    const rehearsal = run(['--create-gate', '--user', 'newadmin', '--password-stdin', '--dry-run'], 'short123\n');
+    const real = run(['--create-gate', '--user', 'newadmin', '--password-stdin'], 'short123\n');
+
+    assert.equal(real.status, 1);
+    assert.equal(rehearsal.status, real.status);
+    assert.match(rehearsal.stderr, /Password must be at least/,
+      'the password is judged first, as the run judges it');
+    assert.doesNotMatch(rehearsal.stdout, /would REFUSE/,
+      'the gate refusal must not be the reason reported for a bad password');
+
+    // And with an acceptable password the gate refusal is still reached — the
+    // ordering must not have swallowed it.
+    const gated = run(['--create-gate', '--user', 'newadmin', '--password-stdin', '--dry-run'],
+      'a-perfectly-fine-passphrase\n');
+    assert.match(gated.stdout, /would REFUSE: this install is not in caddy ingress mode/);
+  });
+
   it('still describes a prompt — and reads no password — without --password-stdin', () => {
     // The fix must not turn every dry run into a stdin read. With no flag there
     // is no password to judge, and a preview that prompted would be a dry run
