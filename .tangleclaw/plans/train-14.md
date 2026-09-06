@@ -44,15 +44,21 @@ re-verified against this repo's code before the plan was written rather than tak
 issue text ([[feedback_issue_diagnosis_is_a_hypothesis]]). Four verifications changed the
 plan's shape:
 
-- **#692 — the issue's headline is wrong in one respect, and the correction narrows the fix.**
-  It states the deletion is silent, "no activity-log entry, no `log.warn` naming what was
-  removed". There IS a log line today: `lib/porthub.js#_cleanupOrphanLeases` ends with
-  `log.info('Cleaned up orphan port leases', { project, count: released })`. What is missing is
-  narrower and worth stating precisely: the line is emitted **per orphan project, not per
-  lease**, it names no port, service or host, it is `info` rather than `warn`, and no
-  `activity_log` row is written — so the very table that records `port.leased`, `port.released`,
-  `port.expired` and `port.takeover` (`lib/store.js:4534/4574/4636/4755`) has no record of the
-  one deletion path that runs unattended on every boot.
+- **#692 — the issue's headline is wrong in two respects, and the second one changes the fix
+  entirely.** It states the deletion is silent, "no activity-log entry, no `log.warn` naming what
+  was removed". Neither half holds. `lib/porthub.js#_cleanupOrphanLeases` ends with
+  `log.info('Cleaned up orphan port leases', { project, count: released })` — per orphan
+  *project*, naming no port, service or host, at `info` rather than `warn`. And the deletion it
+  delegates to, `store.portLeases.releaseByProject`, **already writes one
+  `port.released` activity row per lease**, carrying port, project and service.
+
+  So the audit trail is not absent — it is **wrong**, which is worse and is what the fix must
+  address. Every lease the boot sweep displaces is recorded with the same `port.released` event
+  type an operator's own release produces, so nothing in the table distinguishes "the owner gave
+  this port back" from "an automated classifier decided this project no longer exists". #613 gave
+  a forced takeover its own `port.takeover` type for exactly this reason; a sweep-initiated
+  release is the same class of displacement wearing another path's label. The row is also missing
+  `host`, which `release()` carries and which is half the table's primary key.
 - **#869 — measured on this install rather than estimated.** `activity_log` holds **5,891 rows
   spanning 2026-03-14 → 2026-09-06** (~176 days, ~33 rows/day). The distribution is what decides
   the policy: `port.leased` alone is 2,147 rows (36%), `session.started` 930, `port.released`
@@ -114,12 +120,29 @@ decisions surfaced at the chunk that acts on them, not unknowns.
 
 ## Status
 
-- [ ] Chunk 01: The boot sweep says what it displaced (#692)
+- [x] Chunk 01: The boot sweep says what it displaced (#692)
 - [ ] Chunk 02: The activity log is bounded without losing the rare row (#869)
 - [ ] Chunk 03: A durable failure is logged when it changes, not when it repeats (#956)
 - [ ] Chunk 04: One broadcast per reader per quiet period, and a drain for what nobody reads (#1108)
 - [ ] Chunk 05: The cache-bump guard fires on the next miss, not the last one (#625)
 - [ ] Chunk 06: The uploads module reads a project directory the way the scanner does (#889, uploads half)
+
+**Chunk 01 is done** — branch `fix/692-orphan-sweep-audit`, Critic `rev-20260906T203735Z-565f2547`
+(1 blocking, 8 warning, 10 note across three reviewers; 11 fixed in one pass, 8 accepted), then
+`rev-20260906T205118Z-54a31b64` verifying 9 of 9 resolved with none new.
+
+**TRAIN PAUSED AFTER THIS CHUNK.** The roadmap coordinator objected that the board's
+`Currently Executing` block holds Discovery Spike #1034, and the operator ruled for the Spike on
+2026-09-06. Chunks 02-06 resume after it. Nothing in this train is technically blocked by the
+Spike — checked per car, none touches session status — so the pause is about context cost, not a
+dependency.
+
+**The lesson Chunk 01 paid for, and Chunk 02 inherits.** Its own commit message claimed the
+family sweep was complete because `release()` "already warns" on a forced cross-project release.
+Warning is not labelling: that path still wrote `port.released` naming the *displaced* project.
+The roster that finds it is not "who deletes a lease" (three `DELETE FROM port_leases` sites) but
+"who displaces a lease someone else holds" (four). Chunk 02 enumerates deleters over a table with
+many more writers — ask which noun the roster is of before trusting it.
 
 Context: Plan written 2026-09-06 against the roadmap's blessed Train 14 roster
 (`MASTER_ROADMAP.md`, "Train 14: Bounded, Not Infinite" — #869, #889, #692, #956, #625, #1108).
@@ -147,27 +170,67 @@ retrofitting its audit line second.
   `lib/store.js` activity API) that the next chunk works in.
 - **Artifacts consumed:** `observability-strategy.md` (both Direction entries),
   `data-model.md` (what the activity table is for)
-- **Deliverables:** `lib/porthub.js#_cleanupOrphanLeases` enumerates a project's leases before
-  calling `releaseByProject`, so the audit is of what was actually held rather than of a count
-  returned afterwards. Each displaced lease gets a `log.warn` (matching #656's treatment of the
-  interactive release path — the sweep is the *automated* instance of the same class, so the same
-  level) and a `port.orphan_swept` activity row alongside the existing `port.takeover` /
-  `port.released` / `port.expired` emitters in `lib/store.js`. The per-project `log.info` summary
-  stays: it answers a different question (how many projects the classifier rejected) and dropping
-  it would trade one gap for another.
+- **Deliverables:** `store.portLeases.releaseByProject` takes an options argument naming *why*
+  the release is happening, and emits `port.orphan_swept` — with `host` — instead of
+  `port.released` when the caller is the boot sweep, paired with a `log.warn` per lease. The pair
+  lands in `lib/store.js` beside `port.takeover`'s, deliberately: that emitter is the precedent
+  being followed (a displacement announces itself at the point it happens), and splitting the warn
+  into `lib/porthub.js` while the row stays in the store would put one fact in two places that can
+  drift. `lib/porthub.js#_cleanupOrphanLeases` passes the reason and keeps its per-project
+  `log.info` summary, which answers a different question (how many projects the classifier
+  rejected) and would be a new gap if dropped.
+
+  **One row per deletion, not two.** Emitting `port.orphan_swept` *in addition to*
+  `port.released` would leave the misleading row in place and add a second — the table would
+  then say a lease was both returned by its owner and swept. The event type is a discriminator,
+  so it has to be the one thing that changes.
+
+  **The default path's LABEL must not move; its payload does.** `releaseByProject`'s two other
+  callers (`lib/projects.js`, `server.js`, both on project deletion) are genuine owner-initiated
+  releases and keep emitting `port.released`, pinned by a test so the discriminator cannot quietly
+  become "every bulk release is a sweep". Their `detail` gains `host`, deliberately: `release()`
+  has always carried it, so one event type had two payload shapes depending on which emitter
+  wrote it, and the retention work in Chunk 02 reads that surface.
 
   **The correction to the issue is carried in the code's own words.** #692 says the deletion is
-  silent; it is not, it is under-specified. Whatever comment lands here says what is actually
-  missing — port, service, host, and a durable row — so the next reader is not told a falsehood
-  the file itself refutes.
-- **Tests:** unit — a swept lease produces one audit record per lease, naming port and service,
-  and the row is queryable through `activity.query({ eventType: 'port.orphan_swept' })`; a sweep
-  that displaces nothing writes nothing; a project holding three leases produces three rows, not
-  one (the mutation that proves the granularity changed, since the pre-change code could pass a
-  one-row assertion).
+  silent. It is not: it is *mislabeled*. Whatever comment lands here says that, so the next reader
+  is not told a falsehood the file itself refutes.
+
+  **The family is four emitters, not three — found at review, and the miss is instructive.** The
+  first cut enumerated the three `DELETE FROM port_leases` sites and concluded `releaseByProject`
+  was the only gap, because `release()` already *warns* on a forced cross-project release. Warning
+  is not labelling: that path still wrote `port.released` naming the **displaced** project, so the
+  row said the victim gave the port back. Grepping for the deletion missed it; the roster that
+  finds it is *every path that displaces a lease someone else holds*. `port.force_released` closes
+  it, mirroring `port.takeover` on the lease path.
+
+  **The classifier's inputs are part of the deliverable.** `_cleanupOrphanLeases` decides "not an
+  orphan" from three inputs, one of which — the OpenClaw connection list — was read inside a bare
+  `catch` that treated every failure as "an older schema has no table". Any other failure emptied
+  that input and every live tunnel lease classified as an orphan, which this chunk's own audit
+  trail would then have recorded as a correct-looking result. A classifier that lost an input
+  cannot tell an orphan from a live lease, so the sweep names the failure and declines to run.
+  [DECISION: the sweep's deletion behavior DOES change in this one case, against the chunk's
+  "no change in which leases are deleted" | leaving leases in place for one boot is recoverable
+  and deleting a live service's lease is not, and shipping the audit trail while leaving the
+  input failure silent would make the trail's worst output look like its best | user can override]
+- **Tests:** unit — a swept lease produces a `port.orphan_swept` row naming host, port and
+  service, queryable through `activity.query({ eventType: 'port.orphan_swept' })`, and produces
+  **no** `port.released` row for the same deletion; an owner-initiated `releaseByProject` still
+  produces `port.released` and no `port.orphan_swept`; a project holding three leases produces
+  three swept rows; a sweep that displaces nothing writes nothing. Added at review close, because
+  each names a behavior nothing else pinned: the per-lease `log.warn` (captured through the
+  logger's console seam at `warn`, since the suite runs at `error` and the block was deletable
+  with the suite green); a forced cross-project `release()` emitting `port.force_released` with
+  both sides named; and a throwing OpenClaw connection read leaving every lease in place. Three
+  mutations must go red — drop the reason at the sweep's call site, drop the forced label, restore
+  the silent catch.
 - **Acceptance criteria:** after a boot that sweeps at least one orphan, `activity_log` holds a
-  `port.orphan_swept` row for every released lease naming its port, service and host, and the log
-  carries the same at `warn`. No change in which leases are deleted.
+  `port.orphan_swept` row for every displaced lease naming its host, port and service, and no
+  `port.released` row for those same deletions; the log carries the same at `warn`. An
+  owner-initiated release keeps its event type. Which leases are deleted is unchanged **except**
+  when the classifier's OpenClaw input fails, where the sweep now declines entirely — the
+  departure recorded as a DECISION above.
 - **Done when:**
   1. Acceptance criteria met and tests pass
   2. `/prawduct:critic` run and blocking findings resolved
@@ -192,6 +255,13 @@ retrofitting its audit line second.
   prune that runs on insert so no sweeper is needed. Keyed on `event_type` — never on
   `project_id`, which would leave the Project Master's NULL-project rows unbounded, the exact
   case `_pruneSessionRuleDeliveries` documents itself as not covering.
+
+  **Carried in from Chunk 01's review: the event-type registry is hand-written and incomplete.**
+  `data-model.md`'s Event Types table lists a subset of what `activityApi.log` emits, and was
+  wrong about the port family's payloads before Chunk 01 corrected those rows. This chunk keys a
+  retention policy on `event_type`, so it needs the real inventory: derive the list from the emit
+  sites — including the ternary form Chunk 01 introduced, which a literal grep for a quoted type
+  does not match — rather than reading the table or hand-writing a second list.
 
   **The forensic exemption is the design, not a caveat.** `wrap.auto_pr` exists so a stale record
   survives long enough to explain a branch nobody looked at for five days; at 36 rows since

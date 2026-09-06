@@ -4,6 +4,36 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **The boot orphan sweep no longer records its deletions as if the owner made them (#692).**
+  `_cleanupOrphanLeases` runs unattended on every boot and releases every port lease whose project
+  it classifies as gone. Those releases were written to the activity log as `port.released` — the
+  same event an operator's own release produces — so nothing in the trail distinguished "this
+  project gave the port back" from "an automated classifier decided this project no longer exists",
+  and the row omitted the host that is half a lease's primary key. If the classifier is wrong (a
+  rename in flight, a misread `projectsDir`, a connection registered after the sweep ran), the
+  service is still listening and the next claimant collides with it. A swept lease is now recorded
+  as `port.orphan_swept` with its host, port, project and service, and warned per lease, following
+  the same shape a forced takeover has had since it was given `port.takeover`. Ordinary
+  project-deletion releases keep the `port.released` event type; their payload now carries `host`
+  too, ending a state where one event type had two payload shapes depending on which emitter wrote
+  it.
+- **A forced cross-project port release named the displaced project as the releaser (#692).**
+  `release(port, host, { project, force: true })` takes a lease another project still holds, and
+  recorded it as `port.released` naming that project — the same row the owner's own release
+  produces, so the trail read as though the displaced project had given the port back. It is now
+  `port.force_released`, carrying the displaced owner and the caller who took it, mirroring
+  `port.takeover` on the lease path. Found by the Critic as the fourth member of the family the
+  orphan-sweep fix above enumerated three of.
+- **The orphan sweep no longer deletes every tunnel lease when it loses one of its inputs (#692).**
+  `_cleanupOrphanLeases` resolves `oc-direct-<id>` identifiers from the OpenClaw connection list
+  to decide which leases are NOT orphans, and swallowed every error from that read as "an older
+  schema". Any other failure — a locked database, a corrupt row — silently emptied that input, so
+  every live tunnel lease classified as an orphan and the sweep took them all in one boot, leaving
+  an audit trail that named the ports and looked correct. The read failure is now reported and the
+  sweep declines to run: a classifier that lost an input cannot tell an orphan from a live lease,
+  and leaving leases in place for one boot is recoverable where deleting them is not.
+
 ## [5.21.0] - 2026-09-06
 
 ### Added
