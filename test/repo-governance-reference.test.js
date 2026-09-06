@@ -22,13 +22,15 @@
  * someone else's first clone — never on the machine that broke it.
  */
 
-const { describe, it } = require('node:test');
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 const engines = require('../lib/engines');
+const store = require('../lib/store');
 
 const REPO_ROOT = path.join(__dirname, '..');
 
@@ -64,10 +66,13 @@ function isIgnored(relPath) {
 /**
  * A file's contents as COMMITTED at HEAD.
  *
- * The working tree is not the artifact for anything a clone receives: every
- * TangleClaw launch rewrites machine-local state back into these files, so a
- * disk read reds on the machine that develops the repo and passes only where
- * nothing has launched.
+ * The working tree is not the artifact for anything a clone receives. This used
+ * to be doubly true — every launch rewrote machine-local hooks back into
+ * `.claude/settings.json`, so a disk read reds on the machine that develops the
+ * repo and passed only where nothing had launched. Since #1022 those hooks go to
+ * `settings.local.json` and the tracked file stays clean, but the principle is
+ * unchanged: what a clone receives is what is committed, and a guard that reads
+ * the working tree cannot tell the two apart in CI, where they are identical.
  *
  * @param {string} relPath - Repo-relative path.
  * @returns {string} File contents at HEAD.
@@ -102,6 +107,20 @@ function gitAnswer(args) {
 }
 
 describe("this repo's plugin install reference is committed (#833)", () => {
+  // `syncEngineHooks` reads the store (project config, registered engines), so the
+  // sync test below needs one — pointed at a temp home so it can never read or
+  // write the operator's live database.
+  let storeHome;
+  before(() => {
+    storeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-govref-home-'));
+    store._setBasePath(storeHome);
+    store.init();
+  });
+  after(() => {
+    store.close();
+    fs.rmSync(storeHome, { recursive: true, force: true });
+  });
+
   it('tracks .claude/settings.json', () => {
     assert.ok(isTracked('.claude/settings.json'),
       '.claude/settings.json must be tracked — a clone without it reads as ungoverned, '
@@ -156,20 +175,48 @@ describe("this repo's plugin install reference is committed (#833)", () => {
       'the hooks block is machine-local — it belongs in settings.local.json');
   });
 
-  it('is not rewritten by a launch, so the tracked file is not permanently dirty', () => {
-    // The working tree used to be EXPECTED to differ here: `syncEngineHooks` wrote
-    // its absolute-path hooks straight into this tracked file on every launch,
-    // create, attach, PATCH and boot-sync. That permanent modification is what the
-    // wrap's `git add -A` swept into a commit the assertion above then rejected,
-    // stranding the wrap PR with auto-merge armed while the wrap reported success
-    // (#1275). The hooks now go to `.claude/settings.local.json` (#1022), so the
-    // two halves must agree — and asserting only the committed blob can no longer
-    // tell the difference between "fixed" and "dirty again".
-    const onDisk = fs.readFileSync(path.join(REPO_ROOT, '.claude/settings.json'), 'utf8');
-    assert.doesNotMatch(onDisk, /"?\/(Users|home)\//,
-      'the WORKING-TREE settings must carry no machine-absolute path either');
-    assert.equal(JSON.parse(onDisk).hooks, undefined,
-      'nothing may write a hooks block back into the tracked file');
+  it('survives a real hook sync of THIS repo\'s committed settings, unchanged', () => {
+    // The working tree used to be EXPECTED to differ from the committed blob:
+    // `syncEngineHooks` wrote its absolute-path hooks straight into this tracked
+    // file on every launch, create, attach, PATCH and boot-sync. That permanent
+    // modification is what the wrap's `git add -A` swept into a commit the
+    // assertion above then rejected, stranding the wrap PR with auto-merge armed
+    // while the wrap reported success (#1275).
+    //
+    // Reading the working tree would NOT prove that. In CI nothing ever launches
+    // a session, so the working tree IS the committed blob and the read would
+    // restate the test above while passing straight through a regression that
+    // reinstated the old write target. So run the sync — against a COPY of this
+    // repo's committed `.claude` tree, in a temp project, so the assertion is
+    // about this repo's real settings content without touching the repo itself.
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-govref-sync-'));
+    try {
+      fs.mkdirSync(path.join(tmp, '.claude'), { recursive: true });
+      const settingsFile = path.join(tmp, '.claude', engines.SHARED_SETTINGS_BASENAME);
+      const committedSettings = committed('.claude/settings.json');
+      fs.writeFileSync(settingsFile, committedSettings);
+      fs.mkdirSync(path.join(tmp, '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(path.join(tmp, '.tangleclaw', 'project.json'),
+        JSON.stringify({ engine: 'claude', silentPrime: true }));
+
+      engines.syncEngineHooks(tmp, 'claude');
+
+      const after = fs.readFileSync(settingsFile, 'utf8');
+      assert.equal(after, committedSettings,
+        'a hook sync must leave this repo\'s tracked settings BYTE-identical — '
+        + 'anything else is the permanently-dirty file that stranded the wrap PR (#1242, #1275)');
+      assert.doesNotMatch(after, /"?\/(Users|home)\//,
+        'and in particular must not put a machine-absolute path back into it');
+
+      // The other half: the hooks did get written, somewhere ignorable. Without
+      // this the test passes just as well against a sync that does nothing at all.
+      const localFile = path.join(tmp, '.claude', engines.LOCAL_SETTINGS_BASENAME);
+      assert.ok(fs.existsSync(localFile), 'the hooks must actually have been emitted');
+      assert.ok(JSON.parse(fs.readFileSync(localFile, 'utf8')).hooks.SessionStart,
+        'and they belong in the machine-local file');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it('reads as plugin-governed, which is the property that protects CLAUDE.md', () => {

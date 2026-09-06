@@ -423,6 +423,20 @@ describe('repairOrphanHooks (#145, chunk 2)', () => {
     assert.ok(result.skipped.some((s) => s.name === 'bare-repair' && /settings\.json/.test(s.reason)));
   });
 
+  it('reports a malformed file as an error and NOT also as a skip', () => {
+    // Reading two files made this reachable: a parse failure in one leaves the
+    // other looking merely empty, so the same project would appear in `errors`
+    // AND in `skipped` with a reason that contradicts it.
+    const p = registerProject('malformed-repair');
+    fs.mkdirSync(path.join(p, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(p, '.claude', 'settings.json'), '{ this is not json');
+
+    const result = projects.repairOrphanHooks('malformed-repair');
+    assert.equal(result.errors.length, 1);
+    assert.equal(result.skipped.filter((x) => x.name === 'malformed-repair').length, 0,
+      'an errored project must not also be reported as skipped');
+  });
+
   it('repairs an orphan in settings.local.json without touching the tracked file (#1022)', () => {
     // Both halves at once. The repair must reach the file TangleClaw's own hooks
     // live in, AND must not bump the mtime of the tracked, committable file it

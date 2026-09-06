@@ -1236,6 +1236,48 @@ describe('projects', () => {
   });
 
   describe('syncAllProjects', () => {
+    it('retires a legacy hook from the tracked settings of an ARCHIVED project (#1022)', () => {
+      // The relocation retires from the old file on each sync — but a sync only
+      // happens on launch, create, attach, PATCH, or a governed project's boot.
+      // A project that is archived, or simply never opened again, would otherwise
+      // keep an entry naming an absolute path to one install in a file its clones
+      // are meant to commit, forever. `scanForOrphanHooks` cannot backstop it:
+      // on this machine the path still resolves, so it is not an orphan by that
+      // predicate, and that scan filters archived projects out anyway.
+      //
+      // This repo already ruled the same way once, under #247 — filtering on
+      // `{archived: false}` would leave orphan hooks on archived projects.
+      const projPath = path.join(projectsDir, 'archived-legacy-hook');
+      fs.mkdirSync(path.join(projPath, '.claude'), { recursive: true });
+      const settingsFile = path.join(projPath, '.claude', 'settings.json');
+      const operatorHook = { matcher: 'Bash', hooks: [{ type: 'command', command: 'npm run lint' }] };
+      fs.writeFileSync(settingsFile, JSON.stringify({
+        enabledPlugins: { 'prawduct@prawduct': true },
+        hooks: {
+          SessionStart: [{
+            matcher: 'startup',
+            hooks: [{ type: 'command', command: '"/Users/someone/TangleClaw/data/hooks/sessionstart-prime-claude.sh"' }]
+          }],
+          PreToolUse: [operatorHook]
+        }
+      }, null, 2) + '\n');
+
+      const created = store.projects.create({
+        name: 'archived-legacy-hook', path: projPath, engineId: 'claude'
+      });
+      store.projects.archive(created.id);
+
+      projects.syncAllProjects();
+
+      const after = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+      assert.equal(after.hooks.SessionStart, undefined,
+        'the absolute-path entry must be retired even though the project is archived');
+      assert.deepEqual(after.hooks.PreToolUse, [operatorHook],
+        'and the operator\'s own hook must survive it');
+      assert.deepEqual(after.enabledPlugins, { 'prawduct@prawduct': true },
+        'as must the plugin install reference');
+    });
+
     it('regenerates engine config for registered project', async () => {
       // new-project was created earlier in the test suite
       const projPath = path.join(projectsDir, 'new-project');

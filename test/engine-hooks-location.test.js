@@ -25,6 +25,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const { execFileSync, spawnSync } = require('node:child_process');
+const { initRepo } = require('./_temp-repo');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const engines = require('../lib/engines');
@@ -175,6 +177,51 @@ describe('syncEngineHooks writes hooks to the machine-local file only', () => {
     assert.equal(fs.readFileSync(sharedFile, 'utf8'), before, 'content must be identical');
     assert.equal(fs.statSync(sharedFile).mtimeMs, mtimeBefore,
       'and the file must not have been written at all');
+  });
+
+  it('leaves a DIFFERENTLY FORMATTED tracked file byte-identical when it holds nothing of ours', () => {
+    // The predicate must be "did the hooks change", not "would we serialize this
+    // file the same way". Byte-comparing our own re-serialization conflates the
+    // two, so a project whose committed settings.json uses four-space indent — or
+    // tabs, or no trailing newline — has its tracked governance file rewritten by
+    // a sync that retired nothing. That is the permanently-dirty tracked file this
+    // whole change exists to end (#1242), one layer up, and it re-arms every time
+    // the project's own formatter puts the file back.
+    for (const raw of [
+      JSON.stringify(INSTALL_REFERENCE, null, 4) + '\n',
+      JSON.stringify(INSTALL_REFERENCE, null, '\t') + '\n',
+      JSON.stringify(INSTALL_REFERENCE),
+      JSON.stringify(INSTALL_REFERENCE, null, 2)
+    ]) {
+      const proj = fs.mkdtempSync(path.join(tmpDir, 'fmt-'));
+      fs.mkdirSync(path.join(proj, '.claude'), { recursive: true });
+      const shared = path.join(proj, '.claude', engines.SHARED_SETTINGS_BASENAME);
+      fs.writeFileSync(shared, raw);
+      store.projectConfig.save(proj, { ...store.DEFAULT_PROJECT_CONFIG, engine: 'claude', silentPrime: true });
+
+      engines.syncEngineHooks(proj, 'claude');
+
+      assert.equal(fs.readFileSync(shared, 'utf8'), raw,
+        `a sync with nothing to retire reformatted the tracked file: ${JSON.stringify(raw.slice(0, 40))}`);
+    }
+  });
+
+  it('DOES rewrite a differently formatted tracked file when it really holds ours', () => {
+    // The other side of the same predicate — proving the test above pins "nothing
+    // changed" rather than "never writes". Reformatting is an acceptable cost when
+    // there is a real retirement to make; it is not acceptable as the whole reason.
+    const proj = fs.mkdtempSync(path.join(tmpDir, 'fmt-real-'));
+    fs.mkdirSync(path.join(proj, '.claude'), { recursive: true });
+    const shared = path.join(proj, '.claude', engines.SHARED_SETTINGS_BASENAME);
+    fs.writeFileSync(shared, JSON.stringify(
+      { ...INSTALL_REFERENCE, hooks: { SessionStart: [tcEntry()] } }, null, 4) + '\n');
+    store.projectConfig.save(proj, { ...store.DEFAULT_PROJECT_CONFIG, engine: 'claude', silentPrime: true });
+
+    engines.syncEngineHooks(proj, 'claude');
+
+    const after = JSON.parse(fs.readFileSync(shared, 'utf8'));
+    assert.equal('hooks' in after, false, 'the stale entry must still be retired');
+    assert.deepEqual(after.enabledPlugins, INSTALL_REFERENCE.enabledPlugins);
   });
 
   it('is idempotent on the local file across repeated syncs', () => {
@@ -344,5 +391,119 @@ describe('_retireHooksIn', () => {
     assert.equal(result.preservedForeign, 1);
     const after = JSON.parse(fs.readFileSync(file, 'utf8'));
     assert.deepEqual(after.hooks.SessionStart, [operatorEntry('echo hi')]);
+  });
+});
+
+describe('the machine-local settings file is kept out of the project\'s commits', () => {
+  // The relocation only helps if the destination is untracked. On this operator's
+  // machine every managed project already ignores it — but `git check-ignore -v`
+  // attributes that to their USER-GLOBAL ignore file, which travels with a home
+  // directory rather than a repository. On a contributor's clone, a second machine
+  // or CI, those same projects do NOT ignore it, and TangleClaw would be the first
+  // thing to create a committable file holding an absolute path to one install:
+  // #1022's exact shape, moved to a file the project had no reason to expect.
+  let tmpDir;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-hookignore-'));
+    store._setBasePath(path.join(tmpDir, 'home'));
+    store.init();
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /**
+   * A real git repo with no ignore rules of its own, so `check-ignore` answers
+   * from the repo rather than from whatever the host machine happens to ignore.
+   * @returns {string} Absolute path to the new project.
+   */
+  function mkRepo() {
+    const proj = fs.mkdtempSync(path.join(tmpDir, 'repo-'));
+    // Through the helper, not a bare `git init`: a bare one inherits this
+    // machine's `init.templateDir`, which TangleClaw itself rewrites while the
+    // server runs, and the suite has exactly one way to make a repo (#831).
+    initRepo(proj);
+    // A repo-local core.excludesFile pointing at an empty file, so the operator's
+    // real user-global ignore cannot make this test pass for the wrong reason —
+    // which is precisely the mistake this whole guard exists to correct.
+    const emptyExcludes = path.join(proj, '.git', 'empty-excludes');
+    fs.writeFileSync(emptyExcludes, '');
+    execFileSync('git', ['config', 'core.excludesFile', emptyExcludes], { cwd: proj });
+    store.projectConfig.save(proj, { ...store.DEFAULT_PROJECT_CONFIG, engine: 'claude', silentPrime: true });
+    return proj;
+  }
+
+  /**
+   * Whether git ignores the local settings file in `proj`.
+   * @param {string} proj - Absolute path to the project.
+   * @returns {boolean}
+   */
+  function ignoresLocal(proj) {
+    const r = spawnSync('git', ['check-ignore', '-q', '--', `.claude/${engines.LOCAL_SETTINGS_BASENAME}`], { cwd: proj });
+    return r.status === 0;
+  }
+
+  it('ignores the file it just created, in a repo that did not already', () => {
+    const proj = mkRepo();
+    assert.equal(ignoresLocal(proj), false, 'baseline: the repo ignores nothing');
+
+    engines.syncEngineHooks(proj, 'claude');
+
+    assert.ok(fs.existsSync(path.join(proj, '.claude', engines.LOCAL_SETTINGS_BASENAME)),
+      'the hooks file must have been written');
+    assert.equal(ignoresLocal(proj), true,
+      'and git must now ignore it, or a wrap\'s `git add -A` commits an absolute path');
+  });
+
+  it('writes the rule into .claude/.gitignore, not the project root\'s', () => {
+    // Editing the operator's root ignore file to suit ourselves is the same
+    // unasked-for write this change is about. `.claude/` is a directory
+    // TangleClaw already owns, and a nested .gitignore is ordinary git.
+    const proj = mkRepo();
+    fs.writeFileSync(path.join(proj, '.gitignore'), 'node_modules/\n');
+
+    engines.syncEngineHooks(proj, 'claude');
+
+    assert.equal(fs.readFileSync(path.join(proj, '.gitignore'), 'utf8'), 'node_modules/\n',
+      'the project\'s own .gitignore must be untouched');
+    assert.match(fs.readFileSync(path.join(proj, '.claude', '.gitignore'), 'utf8'),
+      /^settings\.local\.json$/m);
+  });
+
+  it('leaves an existing ignore rule alone rather than duplicating it', () => {
+    const proj = mkRepo();
+    fs.writeFileSync(path.join(proj, '.gitignore'), '.claude/settings.local.json\n');
+    assert.equal(ignoresLocal(proj), true, 'baseline: already ignored');
+
+    engines.syncEngineHooks(proj, 'claude');
+
+    assert.equal(fs.existsSync(path.join(proj, '.claude', '.gitignore')), false,
+      'a project that already ignores the file gets no second rule from us');
+  });
+
+  it('is idempotent — a second sync adds no second line', () => {
+    const proj = mkRepo();
+    engines.syncEngineHooks(proj, 'claude');
+    const first = fs.readFileSync(path.join(proj, '.claude', '.gitignore'), 'utf8');
+
+    for (let i = 0; i < 3; i += 1) engines.syncEngineHooks(proj, 'claude');
+
+    assert.equal(fs.readFileSync(path.join(proj, '.claude', '.gitignore'), 'utf8'), first);
+  });
+
+  it('does not touch a project that is not a git repository', () => {
+    // `check-ignore` exits 128 outside a repo. Treating that as "not ignored"
+    // would scatter .gitignore files into directories git knows nothing about.
+    const proj = fs.mkdtempSync(path.join(tmpDir, 'notrepo-'));
+    store.projectConfig.save(proj, { ...store.DEFAULT_PROJECT_CONFIG, engine: 'claude', silentPrime: true });
+
+    engines.syncEngineHooks(proj, 'claude');
+
+    assert.ok(fs.existsSync(path.join(proj, '.claude', engines.LOCAL_SETTINGS_BASENAME)),
+      'the hooks still install — a missing git is no reason to skip them');
+    assert.equal(fs.existsSync(path.join(proj, '.claude', '.gitignore')), false);
   });
 });

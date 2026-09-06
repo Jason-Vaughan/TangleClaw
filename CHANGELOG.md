@@ -44,6 +44,32 @@ All notable changes to TangleClaw are documented in this file.
   TC's guide) and a note on #868 (any red check still strands a wrap PR silently — the half that
   survives this fix).
 
+  **The Critic found the relocation's precondition was assumed rather than owned.** The claim
+  that `settings.local.json` is already ignored everywhere is true on this machine and proves the
+  wrong thing: `git check-ignore -v` attributes the rule to the operator's **user-global** ignore
+  file for most managed projects, and that travels with a home directory rather than a repository.
+  On a contributor's clone, a second machine or CI, TangleClaw would have been the first thing to
+  create a committable file holding an absolute install path — #1022's own shape, relocated. So the
+  sync now establishes the precondition: when git says the target is not ignored, the rule is
+  written to `.claude/.gitignore` — the directory TangleClaw already owns, never the operator's
+  root ignore file — and a project that ignores it by any existing rule is left alone.
+
+  Three more, same review. The "write only when something changed" test was **byte-equality against
+  TangleClaw's own re-serialization**, which conflates *we changed something* with *we would format
+  this differently*: a project whose committed file uses four-space indent, tabs, or no trailing
+  newline had its tracked governance file rewritten by a sync that retired nothing — the
+  permanently-dirty file this change exists to end, one layer up, re-arming every time the project's
+  formatter put it back. The predicate now compares the hooks block before and after, and the
+  fixtures are written in formats TangleClaw would not choose. The retirement reached only projects
+  that sync again, so an **archived** or never-reopened project kept its absolute-path entry forever
+  and `scanForOrphanHooks` could not backstop it (the path still resolves locally, and that scan
+  filters archived projects out) — it is now its own pass over every project, archived included,
+  which is the ruling this repo already made under #247. And the orphan scan and its repair had each
+  grown their own copy of the two-file walk; one `_classifyHookFiles` now owns which files hold
+  hooks and what an orphan is, so the pair cannot disagree — the failure #145 exists to prevent is a
+  scan reporting an orphan the repair declines to remove.
+
+
 ## [5.20.0] - 2026-09-05
 
 ### Added
