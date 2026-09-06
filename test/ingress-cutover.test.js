@@ -672,3 +672,48 @@ describe('ingress-cutover', () => {
     });
   });
 });
+
+// #828 chunk 04 — the cutover is the one writer that bakes the (relocatable)
+// base directory into launchd jobs, which live in the one `~/Library/LaunchAgents`
+// every install shares. Run under `TANGLECLAW_HOME` it would repoint the LIVE
+// ttyd job at a scratch directory, and when that directory went away every ttyd
+// connection would lose its attach script — the #500 black-screen family.
+//
+// The refusal lives inside `main()`, which only runs under `require.main`, so
+// this drives the real script in a child rather than asserting on its source.
+// Safe to run for real precisely because the variable it refuses on is also the
+// one that keeps it off the operator's install.
+describe('ingress-cutover refuses to run against a relocated base (#828)', () => {
+  const { spawnSync } = require('node:child_process');
+  const REPO_ROOT = path.join(__dirname, '..');
+  let scratch;
+
+  before(() => { scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-cutover-base-')); });
+  after(() => { fs.rmSync(scratch, { recursive: true, force: true }); });
+
+  it('writes a `relocated-base` outcome and touches no launchd job', () => {
+    const resultFile = path.join(scratch, 'result.json');
+    const run = spawnSync(process.execPath, [
+      path.join('scripts', 'ingress-cutover.js'), '--to', 'caddy', '--result-file', resultFile
+    ], { cwd: REPO_ROOT, env: { ...process.env, TANGLECLAW_HOME: scratch }, encoding: 'utf8' });
+
+    assert.equal(run.status, 1,
+      'a refusal is a failed run — a caller polling the exit code must not read it as a cutover');
+
+    const result = JSON.parse(fs.readFileSync(resultFile, 'utf8'));
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'relocated-base',
+      'a caller branching on the code must be able to tell this from a real cutover failure');
+    assert.match(result.error, /TANGLECLAW_HOME/,
+      'the operator has to be told which variable to unset');
+
+    // The proof that matters: it stopped BEFORE the launchd half. A plist
+    // written into the shared LaunchAgents directory is what this refusal exists
+    // to prevent, and the scratch base is where a run that got further would
+    // have staged one.
+    assert.equal(fs.existsSync(path.join(scratch, 'Caddyfile')), false,
+      'the cutover got as far as writing a Caddyfile');
+    assert.equal(fs.existsSync(path.join(scratch, 'deploy')), false,
+      'the cutover got as far as syncing the ttyd attach script');
+  });
+});

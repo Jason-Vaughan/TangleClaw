@@ -91,6 +91,57 @@ One more, found by a test rather than by review: my own new `allowRoot`-after-sy
 branch was unreachable until the final-component fix landed, because nothing resolved a basename
 onto the root. A branch that cannot be entered is not a policy.
 
+**Critic round, and what it changed** (`rev-20260906T051457Z-fc828818`, three reviewers: 1
+blocking, 13 warnings, 14 notes — 19 fixed, 9 accepted). Four of the fixes are corrections to
+this entry's own claims, which is why they are recorded here rather than only in the diff.
+
+*The fail-open was wrong, and I had argued for it.* `_realpathOrSelf` fell back to the lexical
+path whenever resolution could not finish, and `_containsPath` then answered INSIDE. My recorded
+rationale — "anyone able to plant a 32-deep chain could plant that instead" — is false precisely
+because the one-hop link IS caught, and Linux follows 40 nested links, so hops 33-40 defeated the
+check while the kernel still followed them at the write. The reviewer pointed at this repo's own
+Project Master write guard, which bounds at 16 and DENIES on exhaustion: two containment guards
+disagreeing on fail direction, inside the commit whose purpose was ending that disagreement.
+Resolution now returns a third state and containment refuses on it. An unreadable component is
+refused too, and the errno tells absence from opacity — a first attempt probed with `lstat`,
+which cannot distinguish them, and the new test caught it.
+
+*`allowRoot` is descoped.* Two reviewers independently called it speculative: no production
+caller, and the premise it was added for (priming-roll validates directories) had been disproven
+in this same commit. Deleted. The plan named it as a deliverable, so this is an explicit descope,
+not a drop — the root policy is now one unconditional rule, which is what "explicit root policy"
+was asking for.
+
+*The module docstring overshot.* "Every containment check in the repo now lands on the one
+predicate" is false — `lib/projects.js`'s `$HOME` guard and `lib/master.js`'s generated hook
+script are both outside it, and the second cannot require any module. A universal that is wrong
+tells the next maintainer to stop looking, which is the failure this module exists to fix,
+re-created in the sentence describing the fix. Bounded to what the module can govern.
+
+*The override's blast radius was understated.* The doc listed "three things" that stay
+machine-global, all ingress-shaped. But `deploy/install.sh` hardcodes `$HOME/.tangleclaw` at five
+sites and the plists at four more — those are STATE, not ingress, so an operator following the
+doc's own rehearsal recipe would have had install.sh read the live config while the server wrote
+to the scratch base. Worse, the ingress cutover now filled `TTYD_ATTACH` from the overridable base
+while writing into the shared `~/Library/LaunchAgents`: a rehearsal would have repointed the LIVE
+ttyd job at a scratch directory, and losing that directory takes every terminal down (#500). The
+cutover refuses while the variable is set, and the doc says what it does not move.
+
+**And the round's own lesson, which is the session's third instance of one shape.** Twenty-one
+mutations after the fixes; three came back GREEN, and two were real: the shared-doc consumer's
+`followSymlinks: false` and the cutover's refusal each had *no* test, because I had asserted the
+MECHANISM (the predicate answers both ways) and not the CALL SITE's choice of it. That is the
+same defect as Chunk 02's "a guard covering half its family", one level in: **a call site's policy
+argument is code, and a test of the function it calls does not cover it.** Both now drive the real
+route — the shared-doc case through `POST /api/shared-docs/:id/notify`, the cutover through a
+spawned run of the actual script.
+
+One fix was reverted by a test rather than by review. Deriving the cutover's displayed log path
+from the live base broke `test/setup-provisioning.test.js`, which pins a stronger contract: that
+unauthenticated route must never emit an absolute path, and a derived form only stays relative
+while the base sits under `$HOME`. The literal stayed, and what actually closes the finding is the
+refusal above — a base the literal could misname is a base no cutover ever logs into.
+
 
 ## 2026-09-06 — #797/#882: the provenance record says what the session did, and corruption is detected
 

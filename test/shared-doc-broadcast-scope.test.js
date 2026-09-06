@@ -173,6 +173,31 @@ describe('shared-doc broadcasts stay inside the doc\'s group (#1222)', () => {
       'a project must not be woken about a file in its own directory');
   });
 
+  it('a doc that is a SYMLINK out of the owner still belongs to the owner (#828 chunk 04)', async () => {
+    // Ownership asks where the file is REGISTERED, not where its bytes live: a
+    // project keeping `<project>/DOC.md` as a symlink into a shared directory
+    // still wrote the file when it edits through that path. The containment
+    // predicate resolves symlinks for every OTHER consumer, because those ask
+    // where a write would land — so this call site opts out, and nothing but
+    // this case can tell whether it still does.
+    const outside = path.join(tmpDir, 'group-shared');
+    fs.mkdirSync(outside, { recursive: true });
+    fs.writeFileSync(path.join(outside, 'LINKED.md'), '# linked\n');
+    const linkPath = path.join(owner.path, 'LINKED.md');
+    if (!fs.existsSync(linkPath)) fs.symlinkSync(path.join(outside, 'LINKED.md'), linkPath);
+    const linked = store.sharedDocs.create({
+      groupId: store.sharedDocs.get(docId).groupId, name: 'LINKED', filePath: linkPath
+    });
+
+    await post(server, `/api/shared-docs/${linked.id}/notify`);
+
+    const recipients = sent.map((m) => m.to);
+    assert.ok(!recipients.includes(wsFor(owner)),
+      'resolving the symlink put the doc outside its own project and woke its author');
+    assert.ok(recipients.includes(wsFor(inGroup)),
+      'and the real member must still be notified — the exclusion must not have swallowed everyone');
+  });
+
   it('notifies exactly the group, and the count it reports is the count it sent', async () => {
     const res = await post(server, `/api/shared-docs/${docId}/notify`);
 

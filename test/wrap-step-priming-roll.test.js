@@ -1433,14 +1433,18 @@ describe('wrap-step priming-roll — plan-pointer containment policy (#1052)', (
     assert.match(result.blockers[0], /resolves outside the project root/);
   });
 
-  it('refuses a pointer that resolves to the project root, with a named reason', async () => {
+  it('refuses a pointer that resolves to the project root, and says THAT', async () => {
     // A plan pointer names a file, and the root is never one. The hand-rolled
     // check counted it as inside, so this reached a read of a directory instead
-    // of a blocker that says what is wrong.
+    // of a blocker that says what is wrong. The message matters as much as the
+    // refusal: telling an operator their path "resolves outside the project
+    // root" when it resolved TO the root sends them hunting for an escape that
+    // is not there.
     fs.writeFileSync(path.join(projectPath, '.tangleclaw', 'project.json'),
       JSON.stringify({ activePlan: 'plans/..' }));
     const result = await primingRoll.run(ctx({ id: 'next-session-prime' }));
     assert.equal(result.ok, false);
-    assert.match(result.blockers[0], /resolves outside the project root/);
+    assert.match(result.blockers[0], /resolves to the project root itself/);
+    assert.doesNotMatch(result.blockers[0], /resolves outside/);
   });
 });

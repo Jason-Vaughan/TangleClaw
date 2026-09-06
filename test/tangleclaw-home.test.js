@@ -73,6 +73,32 @@ describe('lib/tangleclaw-home', () => {
     });
   });
 
+  describe('an unresolvable home is named, not papered over', () => {
+    it('throws instead of composing a cwd-relative base directory', () => {
+      // `path.join('', '.tangleclaw')` drops the empty segment and yields the
+      // RELATIVE `.tangleclaw`, so the store would seed a config and open an
+      // empty database under the process's working directory and report a
+      // healthy boot. Driven through a child with both home sources removed,
+      // because `os.homedir()` cannot be stubbed in-process.
+      const childEnv = { ...process.env };
+      delete childEnv.HOME;
+      delete childEnv[tangleclawHome.HOME_ENV];
+      childEnv.USERPROFILE = '';
+      const r = require('node:child_process').spawnSync(process.execPath, [
+        '-e',
+        // Force the failure the way the real one arrives: no home resolves.
+        'const m = require("./lib/tangleclaw-home");'
+        + 'const os = require("node:os"); os.homedir = () => "";'
+        + 'delete process.env.HOME;'
+        + 'try { process.stdout.write("RETURNED:" + m.baseDir()); }'
+        + 'catch (e) { process.stdout.write("THREW:" + e.message); }'
+      ], { cwd: REPO_ROOT, env: childEnv, encoding: 'utf8' });
+      assert.match(r.stdout, /^THREW:/, `expected a named error, got ${r.stdout}`);
+      assert.match(r.stdout, new RegExp(tangleclawHome.HOME_ENV),
+        'the error must name the override that fixes it');
+    });
+  });
+
   describe('userHome', () => {
     it('answers even with HOME unset — the case the two old derivations disagreed on', () => {
       // The env-read derivation returned `''` here and put the database at

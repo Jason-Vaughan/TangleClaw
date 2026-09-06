@@ -47,12 +47,28 @@ All notable changes to TangleClaw are documented in this file.
   symlinks, because worktree governance state is symlinked back to the primary checkout and
   following it would refuse every worktree session's plan pointer as an escape.
 
-  Two holes surfaced while asserting the shared rule in both directions, both pre-existing and
-  both fixed: containment resolved only a path's *directory* and appended the final component
+  Three holes surfaced while asserting the shared rule in both directions, all pre-existing and
+  all fixed. Containment resolved only a path's *directory* and appended the final component
   unresolved, so `VERSION.json` as a symlink to `/etc/passwd` passed the check that exists to
-  stop that write; and a *dangling* symlink was discarded entirely by the walk-up, though
-  `fs.writeFileSync` follows one and creates its target. Resolution is now whole-path, follows
-  dangling links by hand, and bounds the walk so a cycle terminates.
+  stop that write. A *dangling* symlink was discarded entirely by the walk-up, though
+  `fs.writeFileSync` follows one and creates its target. And resolution that could not be
+  completed — a symlink budget spent, or a component that exists and cannot be read — composed
+  a lexical answer and reported it as **inside**; Linux follows up to 40 nested links, so that
+  handed hops 33-40 to a caller as contained while the kernel still followed them at the write.
+  Resolution is now whole-path, follows dangling links by hand, bounds the walk so a cycle
+  terminates, and **refuses** when it cannot finish — the same fail-closed answer this repo's
+  Project Master write guard already gives to the identical question.
+
+  One consumer wanted the old answer and now says so. `server.js`'s shared-doc broadcast asks
+  which project *owns* a changed file so it can avoid waking that file's own author (#818);
+  that question is about where the doc is **registered**, not where its bytes live, so a doc
+  kept as a symlink into a group's shared directory still belongs to the project holding it.
+  Every other consumer asks where a write would land and resolves. `docs/configuration-reference.md`
+  also gained the half of `TANGLECLAW_HOME`'s blast radius that was missing: `deploy/install.sh`
+  and the launchd plists derive the same **state** paths independently in shell, so the override
+  isolates a scratch process rather than a second install — and the ingress cutover now refuses
+  outright while the variable is set, because it bakes paths into launchd jobs that no override
+  can relocate.
 
 - **The wrap's `files:` record is the session's own changed set, not the branch's (#797).**
   `lib/wrap-steps/continuity-write.js` diffed `<trunk>...<tip>` — every commit on the branch,

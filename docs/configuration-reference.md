@@ -29,18 +29,30 @@ value above the database is at `/tmp/tc-rehearsal/tangleclaw.db`, with no
 `.tangleclaw` segment appended. A blank value is ignored rather than treated as
 the current directory. Unset, the base directory is `~/.tangleclaw`.
 
-**What it does not move, and why a second concurrent install is still unsafe.**
-Three things stay machine-global no matter what this is set to:
+**What it does not move.** The variable is read by the Node process and by
+nothing else, so two families stay put:
 
-- the launchd jobs under `~/Library/LaunchAgents` — launchd reads a fixed
-  per-user location, and the job labels are constants;
-- the Caddy site label, likewise a constant;
-- the ingress ports, which default to 8443/8080.
+*The ingress, which is machine-global by construction* — the launchd jobs under
+`~/Library/LaunchAgents` (launchd reads a fixed per-user location, and the job
+labels are constants), the Caddy site label, and the ingress ports, which default
+to 8443/8080.
 
-So this makes an install's **state** separable, not its **ingress**. It is the
-supported way to rehearse setup or run tests against a scratch directory; it is
-not a way to run two live installs side by side. See issue #1283 for the ingress
-half.
+*State derived outside the Node process* — `deploy/install.sh` hardcodes
+`$HOME/.tangleclaw` when it reads `config.json`, creates `logs/`, and installs
+the ttyd attach script; the launchd plists hardcode `__HOME__/.tangleclaw` for
+their stderr logs and Caddy's data directory. These are **state**, not ingress,
+and that is why they are called out separately: applying the variable to an
+installed service would put `tangleclaw.log` under the new base and
+`server.err.log` under the old one.
+
+**So use it for a scratch process, not for a second install.** Running
+`node server.js` or the test suite under an override is what it is for. Running
+`deploy/install.sh`, or the ingress cutover, is not: the cutover **refuses** to
+run while the variable is set, because it bakes paths into launchd jobs that no
+override can relocate, and a rehearsal that repointed the live ttyd job at a
+scratch directory would take every terminal down when that directory was
+removed. Issue #1283 carries what it would take to make a genuine second install
+possible.
 
 Overriding `HOME` instead is not supported and never was: it moves anything
 derived from the home directory, TangleClaw's and the operating system's alike,

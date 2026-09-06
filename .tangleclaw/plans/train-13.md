@@ -429,15 +429,22 @@ than a single cumulative pass over the whole train.
 - **Description:** Two instances of one rule implemented twice and disagreeing. The
   TangleClaw base directory is computed from `process.env.HOME` in `lib/store.js` and from
   `os.homedir()` in `lib/master.js`, `lib/git-template.js`, `lib/server-info.js` and roughly
-  eight more sites; on macOS `os.homedir()` reads the passwd entry and ignores `$HOME`. They
-  agree today, so nothing looks wrong — until someone sets `HOME` to attempt an isolated
-  install, and gets a half-sandbox where the database relocates while master state, git
-  templates and the plist keep writing to the operator's live `~/.tangleclaw`. That is worse
+  eight more sites. *Measured during the build and corrected here:* `os.homedir()` PREFERS
+  `$HOME` on Node 22, so setting HOME relocates both and the reported half-sandbox does not
+  reproduce. The divergence is real and runs the other way — with HOME UNSET (`sudo`, a launchd
+  job whose plist omits it) `os.homedir()` falls back to the passwd entry while
+  `process.env.HOME || ''` yields the empty string, and `path.join('', ...)` then drops the
+  segment, so the store opened its database under the process's working directory while master
+  state and git templates kept writing to the operator's real home directory. That is worse
   than no sandbox, because it looks isolated. Alongside it: `resolveWithinProject` in
   `lib/project-paths.js` resolves symlinks and excludes the project root, while
   `lib/wrap-steps/priming-roll.js:474` hand-rolls a purely lexical check that counts the root
-  as inside. That difference is intentional today and is not a bug — it is the drift shape a
-  prior chunk spent two Critic rounds eliminating in the version-bump classifier.
+  as inside. *Also corrected during the build:* that difference was recorded as intentional
+  ("priming-roll validates directories"), but no site there validates a directory — all three
+  resolve a plan FILE — so the two converge on the root case rather than preserving it, and the
+  `allowRoot` option this chunk was to add is descoped as speculative surface with no caller.
+  What remains is the drift shape a prior chunk spent two Critic rounds eliminating in the
+  version-bump classifier.
 - **Closes:** #828, #1052
 - **Depends on:** Chunk 03
 - **Artifacts consumed:** `architecture.md`, `security-model.md` (containment is a boundary

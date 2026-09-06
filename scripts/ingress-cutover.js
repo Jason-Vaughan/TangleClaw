@@ -286,6 +286,7 @@ const CUTOVER_CODES = Object.freeze({
   HAND_EDITED: 'hand-edited',
   UNGATE_REFUSED: 'ungate-refused',
   VALIDATE_FAILED: 'validate-failed',
+  RELOCATED_BASE: 'relocated-base',
   FAILED: 'failed'
 });
 
@@ -433,6 +434,26 @@ function main() {
   const home = tangleclawHome.userHome();
   const baseDir = store._getBasePath();
   const launchAgentsDir = path.join(home, 'Library', 'LaunchAgents');
+
+  // A relocated base and a machine-global launchd are incompatible HERE
+  // specifically, because this is the writer that bakes one into the other: it
+  // embeds `TTYD_ATTACH` and the log paths into the plists it installs into the
+  // one `~/Library/LaunchAgents` every install shares. Run under a relocated
+  // base, it would repoint the LIVE ttyd job at a scratch directory — and when
+  // that directory goes away, every ttyd connection loses its attach script,
+  // which is the #500 black-screen family with no obvious cause.
+  //
+  // Refuse rather than silently derive from the un-overridden default: a
+  // rehearsal that quietly rewrote the real ingress is the half-relocated
+  // install `lib/tangleclaw-home.js` exists to prevent, and the operator asked
+  // for isolation by setting the variable at all.
+  if ((process.env[tangleclawHome.HOME_ENV] || '').trim() !== '') {
+    finish(CUTOVER_CODES.RELOCATED_BASE,
+      `refusing to run with ${tangleclawHome.HOME_ENV} set (${process.env[tangleclawHome.HOME_ENV]}): `
+      + 'the ingress cutover writes launchd jobs under ~/Library/LaunchAgents, which no base-directory '
+      + 'override can relocate, so it would point the live ttyd job at the relocated base. '
+      + `Unset ${tangleclawHome.HOME_ENV} to cut over the real install.`);
+  }
 
   // Build the launchd PATH the same way install.sh does (user PATH + system dirs).
   let launchdPath = process.env.PATH || '';
@@ -787,7 +808,7 @@ function main() {
   pollHealth(plan.healthUrl, 6, (err) => { healthError = err.message; }).then((ok) => {
     process.stdout.write(ok
       ? '  ✓ health check passed\n'
-      : `  ⚠ health check not green yet${healthError ? `: ${healthError}` : ' — check logs (~/.tangleclaw/logs/)'}\n`);
+      : `  ⚠ health check not green yet${healthError ? `: ${healthError}` : ` — check logs (${path.join(baseDir, 'logs')})`}\n`);
     // The cutover itself succeeded either way — the plan was applied. healthOk
     // carries whether it came up, which is a separate fact a caller may want to
     // act on (retry, surface a warning) without being told the run failed.
