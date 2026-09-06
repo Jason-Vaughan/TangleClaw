@@ -334,9 +334,14 @@ than a single cumulative pass over the whole train.
   `featuresToc._isIndexableCandidate`, which is why every `.tangleclaw/` path the wrap
   actually committed is missing from its own record. It is bookkeeping, but authoritative-
   looking bookkeeping: it already mis-tiered a `/prawduct:critic` run in a consuming project
-  by putting `skills/` paths into a changed-file set the session never touched. Paired with
-  it: raw conflict markers sat on `main` in a tracked governance file across three sessions
-  and nothing noticed — a detector that is one `git grep` and runs in under a second.
+  by putting critic-skill paths into a changed-file set the session never touched. Paired
+  with it: raw conflict markers sat on `main` in a tracked governance file across three
+  sessions and nothing noticed — a detector that is one `git grep` and runs in under a
+  second. That detector is proposed HARD, and it meets commitment 3's bright line rather
+  than merely resembling it: a corrupt tracked record reaches `main` invisibly, and it is
+  the release flow's own input, so no project preference should be allowed to choose it.
+  (The gate sits in CI rather than in the wrap, so commitment 3 governs it by analogy —
+  the wrap-direction Instances entry says so in its own words.)
 - **Closes:** #797, #882
 - **Depends on:** Chunk 02 (which settles what the wrap's payload is allowed to be trusted for)
 - **Artifacts consumed:** `wrap-direction.md` commitments 1 and 3

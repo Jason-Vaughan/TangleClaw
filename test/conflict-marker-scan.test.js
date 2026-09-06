@@ -26,6 +26,8 @@ const scanner = require('../scripts/conflict-marker-scan');
 const OPEN = `${'<'.repeat(7)} HEAD`;
 const SEPARATOR = '='.repeat(7);
 const CLOSE = `${'>'.repeat(7)} origin/main`;
+/** The fourth form: `diff3`/`zdiff3` opens the base section with this. */
+const BASE = `${'|'.repeat(7)} merged common ancestors`;
 
 describe('conflict-marker-scan (#882)', () => {
   let root;
@@ -74,7 +76,7 @@ describe('conflict-marker-scan (#882)', () => {
   // Each marker form on its own: a partially hand-resolved conflict can leave
   // any one of the three behind, so matching only the full triple would miss the
   // case where an entry was buried rather than bracketed.
-  for (const [name, marker] of [['opening', OPEN], ['separator', SEPARATOR], ['closing', CLOSE]]) {
+  for (const [name, marker] of [['opening', OPEN], ['base', BASE], ['separator', SEPARATOR], ['closing', CLOSE]]) {
     it(`fails on a lone ${name} marker`, () => {
       const dir = repoWith({ 'docs/notes.md': `before\n${marker}\nafter\n` });
       const res = scanner.scan(dir);
@@ -88,16 +90,16 @@ describe('conflict-marker-scan (#882)', () => {
   it('reports every hit across a whole committed conflict, with file and line', () => {
     const dir = repoWith({
       '.prawduct/change-log.md': [
-        '# Change Log', '', OPEN, '- entry from this side', SEPARATOR,
-        '- entry from the other side', CLOSE, ''
+        '# Change Log', '', OPEN, '- entry from this side', BASE,
+        '- the common ancestor', SEPARATOR, '- entry from the other side', CLOSE, ''
       ].join('\n')
     });
     const res = scanner.scan(dir);
     assert.equal(res.ok, false);
-    assert.equal(res.hits.length, 3, 'all three marker lines are reported, not just the first');
+    assert.equal(res.hits.length, 4, 'every marker line is reported, not just the first');
     assert.deepEqual(
       res.hits.map((h) => h.split(':')[1]),
-      ['3', '5', '7'],
+      ['3', '5', '7', '9'],
       'line numbers locate each marker'
     );
   });
@@ -143,6 +145,11 @@ describe('conflict-marker-scan (#882)', () => {
     assert.equal(scanner.main([dirty], { log: () => {}, error: (s) => errors.push(s) }), 1);
     assert.ok(errors.some((line) => line.includes('docs/notes.md')),
       'the operator is told which file to fix, not just that something is wrong');
+    // The separator branch matches a seven-`=` setext underline. Naming it in the
+    // failure is the whole remedy: a doc author who trips this otherwise reads
+    // "resolve the merge properly" and goes looking for a merge that never was.
+    assert.ok(errors.some((line) => /setext/.test(line)),
+      'the one known false positive is named where someone hitting it will read it');
   });
 
   it('this repository is clean', () => {

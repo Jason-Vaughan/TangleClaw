@@ -141,7 +141,8 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
     const res = await step.run(ctx({
       commitSha: sha.session2Wrap,
       branch: 'feat/long-lived',
-      previousWrapSha: sha.session1Work
+      previousWrapSha: sha.session1Work,
+      previousWrapShaRead: 'recorded'
     }));
     assert.equal(res.ok, true);
 
@@ -155,7 +156,8 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
     await step.run(ctx({
       commitSha: sha.session2Wrap,
       branch: 'feat/long-lived',
-      previousWrapSha: sha.session1Work
+      previousWrapSha: sha.session1Work,
+      previousWrapShaRead: 'recorded'
     }));
     const files = recordedFiles();
 
@@ -171,7 +173,8 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
     await step.run(ctx({
       commitSha: sha.session2Wrap,
       branch: 'feat/long-lived',
-      previousWrapSha: sha.session1Work
+      previousWrapSha: sha.session1Work,
+      previousWrapShaRead: 'recorded'
     }));
     const files = recordedFiles();
 
@@ -190,7 +193,8 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
     await step.run(ctx({
       commitSha: sha.session2Wrap,
       branch: 'feat/long-lived',
-      previousWrapSha: sha.session1Work
+      previousWrapSha: sha.session1Work,
+      previousWrapShaRead: 'recorded'
     }));
     assert.ok(recordedFiles().includes('.tangleclaw/memories/MEMORY.md'));
   });
@@ -199,7 +203,8 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
     await step.run(ctx({
       commitSha: sha.session2Wrap,
       branch: 'feat/long-lived',
-      previousWrapSha: sha.session1Work
+      previousWrapSha: sha.session1Work,
+      previousWrapShaRead: 'recorded'
     }));
     const map = continuity.parseIndex(fs.readFileSync(continuity.indexPath(repo), 'utf8')).map;
     assert.match(map, /lib\/two\.js/, 'the Map stubs source files');
@@ -215,7 +220,8 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
     await step.run(ctx({
       commitSha: sha.session2Wrap,
       branch: 'feat/long-lived',
-      previousWrapSha: sha.session1Work
+      previousWrapSha: sha.session1Work,
+      previousWrapShaRead: 'recorded'
     }));
     assert.ok(recordedFiles().includes('lib/two.js'),
       'the range ends at the wrap commit the step was handed');
@@ -227,7 +233,8 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
     await step.run(ctx({
       commitSha: sha.session2Wrap,
       branch: 'feat/long-lived',
-      previousWrapSha: null
+      previousWrapSha: null,
+      previousWrapShaRead: 'absent'
     }));
     const expected = git('diff', '--name-only', `main...${sha.session2Wrap}`)
       .split('\n').filter(Boolean);
@@ -242,7 +249,8 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
     const res = await step.run(ctx({
       commitSha: sha.session2Wrap,
       branch: 'feat/long-lived',
-      previousWrapSha: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'
+      previousWrapSha: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+      previousWrapShaRead: 'recorded'
     }));
     assert.equal(res.ok, true, 'an unestablished read never halts a wrap');
     assert.deepEqual(recordedFiles(), []);
@@ -264,7 +272,8 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
       await step.run(ctx({
         commitSha: sha.session2Wrap,
         branch: 'feat/long-lived',
-        previousWrapSha: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'
+        previousWrapSha: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+        previousWrapShaRead: 'recorded'
       }));
     } finally {
       setConsoleStream(null);
@@ -285,7 +294,8 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
       await step.run(ctx({
         commitSha: sha.session2Wrap,
         branch: 'feat/long-lived',
-        previousWrapSha: sha.session1Work
+        previousWrapSha: sha.session1Work,
+        previousWrapShaRead: 'recorded'
       }));
     } finally {
       setConsoleStream(null);
@@ -302,30 +312,91 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
     await step.run(ctx({
       commitSha: sha.session2Wrap,
       branch: 'feat/long-lived',
-      previousWrapSha: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'
+      previousWrapSha: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+      previousWrapShaRead: 'recorded'
     }));
     const map = continuity.parseIndex(fs.readFileSync(continuity.indexPath(repo), 'utf8')).map;
     assert.match(map, /lib\/two\.js/);
   });
 
   it('records nothing for a clean session, whose commit step skipped', async () => {
+    // The boundary is the PARENT of the previous wrap commit — what
+    // `_stampLastWrapSha` actually writes (#664) — not the wrap commit itself.
+    // With the wrap commit as the base this passes for the wrong reason: the
+    // range is empty either way. With the real base the range spans the previous
+    // wrap's own commit, so only the skip check keeps the record honest.
     const res = await step.run(ctx({
       reason: 'no changes to commit',
       flushed: [],
       commitSha: null,
-      previousWrapSha: sha.session2Wrap
+      previousWrapSha: sha.session2Work,
+      previousWrapShaRead: 'recorded'
     }, 3));
     assert.equal(res.ok, true);
     assert.deepEqual(recordedFiles(3), [],
       'nothing was committed, so the session changed nothing');
+
+    const changelog = fs.readFileSync(continuity.changelogPath(repo), 'utf8');
+    assert.doesNotMatch(changelog, /files:/,
+      'and no line claiming the previous wrap\'s paths as this session\'s');
   });
 
-  it('_rangeIsSessionScoped only trusts a session range, or a branch range with no boundary', () => {
-    assert.equal(step._rangeIsSessionScoped('session', 'abc1234'), true);
-    assert.equal(step._rangeIsSessionScoped('session', null), true);
-    assert.equal(step._rangeIsSessionScoped('branch', null), true, 'first wrap');
-    assert.equal(step._rangeIsSessionScoped('branch', 'abc1234'), false, 'orphaned boundary');
-    assert.equal(step._rangeIsSessionScoped(null, null), false, 'no range resolved at all');
+  it('withholds the stamp when the config could not be read', async () => {
+    // `store.projectConfig.load` returns defaults for a malformed config rather
+    // than throwing, so a null boundary there is not "never wrapped" — a real
+    // boundary is probably on disk, unread, while the branch behind this wrap
+    // carries earlier sessions.
+    await step.run(ctx({
+      commitSha: sha.session2Wrap,
+      branch: 'feat/long-lived',
+      previousWrapSha: null,
+      previousWrapShaRead: 'unreadable'
+    }));
+    assert.deepEqual(recordedFiles(), []);
+  });
+
+  it('withholds the stamp when no commit step reported at all', async () => {
+    // `blocker` is operator-overridable, so a BLOCKED commit can reach this step,
+    // and its output carries no `commitSha` key. The absence of a report is not
+    // the absence of a boundary — reading it as one republishes the whole branch.
+    const res = await step.run({
+      project: { id: 1, name: 'demo', path: repo },
+      session: { id: 7, engineId: 'claude' },
+      step: {},
+      staged: {},
+      options: {},
+      previousResults: [
+        { stepId: 'memory-update', status: 'done', output: { parsedFields: { summary: 's', nextSteps: 'n' } } },
+        { stepId: 'commit', status: 'blocked', output: { remediation: 'nothing was committed' } }
+      ]
+    });
+    assert.equal(res.ok, true);
+    assert.deepEqual(recordedFiles(7), []);
+  });
+
+  it('_stampDecision publishes only on an established range, and names every refusal', () => {
+    const d = (kind, boundaryRead, commitStepReported = true) =>
+      step._stampDecision({ kind, commitStepReported, boundaryRead });
+
+    assert.equal(d('session', 'recorded').publish, true);
+    assert.equal(d('branch', 'absent').publish, true, 'no wrap has ever stamped — the branch IS all there is');
+
+    // The three nulls that are not interchangeable, plus a range that resolved to
+    // nothing. Each refuses, and each says something different about why.
+    const refusals = [
+      d('branch', 'recorded'),
+      d('branch', 'unreadable'),
+      d('session', 'unreadable'),
+      d('branch', null, false),
+      d(null, 'recorded')
+    ];
+    for (const r of refusals) {
+      assert.equal(r.publish, false);
+      assert.ok(r.why && r.why.length > 0, 'a refusal that cannot say why is not a refusal');
+    }
+    assert.equal(new Set(refusals.map((r) => r.why)).size, 4,
+      'the distinct causes get distinct explanations');
+    assert.equal(d('session', 'recorded').why, null, 'nothing to explain when it publishes');
   });
 
   it('_resolveCommitOutput finds the skip path\'s output, where the anchor is null', () => {

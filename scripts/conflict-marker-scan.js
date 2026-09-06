@@ -28,13 +28,23 @@
 const { spawnSync } = require('node:child_process');
 
 /**
- * The three lines `git merge` writes into a conflicted file. Anchored at the
- * start of the line and closed by a space or the line end, which is the shape
- * git emits: the opening and closing markers carry a label, the separator stands
- * alone. Prose about conflicts does not start a line this way, and a marker
- * cannot be indented, so this needs no exclusion list.
+ * Every line `git merge` writes into a conflicted file. Four forms, not three:
+ * the default `merge.conflictStyle` writes the opening, separator and closing
+ * markers, and `diff3`/`zdiff3` (git >= 2.35, a common operator setting) adds
+ * `||||||| <label>` to open the base section. Each is matched ALONE, because the
+ * case worth catching is a half-resolved file — a resolution that deleted the
+ * bracketing lines and left the base marker is corrupt in the way that buries an
+ * entry rather than brackets two.
+ *
+ * Anchored at the start of the line and closed by a space or the line end, which
+ * is the shape git emits: the labelled markers carry a label, the separator and
+ * base markers stand alone. A marker cannot be indented and prose does not start
+ * a line this way, so this needs no exclusion list — with one known collision,
+ * named in the failure output: a markdown setext underline of exactly seven `=`
+ * matches the separator branch. Deliberately not fixed by requiring the full set;
+ * the lone separator is exactly what #882 was.
  */
-const MARKER_PATTERN = '^(<{7}|={7}|>{7})( |$)';
+const MARKER_PATTERN = '^(<{7}|\\|{7}|={7}|>{7})( |$)';
 
 /** How long the scan may take before it is treated as unanswered. */
 const SCAN_TIMEOUT_MS = 60 * 1000;
@@ -104,6 +114,10 @@ function main(argv, out = console) {
   out.error('');
   out.error('Resolve the merge properly and commit the result — keeping both sides where');
   out.error('the conflict was two distinct additions rather than a real disagreement.');
+  out.error('');
+  out.error('One known false positive: a markdown setext underline of exactly seven "="');
+  out.error('under a seven-character heading. If that is what this is, change the underline');
+  out.error('length or use a "#" heading — the separator match is deliberate and stays.');
   return 1;
 }
 

@@ -490,9 +490,16 @@ describe('continuity-write wrap step (CC-1)', () => {
 
   it('writes [type] + files: into the changelog and frontmatter from branch + diff', async () => {
     step._internal.exec = gitStubWithDiff('M\tlib/auth.js\nM\tserver.js\n'); // branch feat/cc-3
+    // The commit step's result is part of the fixture, not decoration: the
+    // `files:` stamp is published only on a boundary the commit step positively
+    // established, and `absent` is the shape it reports on a project's first wrap
+    // — which is what the trunk-range diff above represents (#797).
     const res = await step.run(ctxWithSession(
       { id: 55, engineId: 'claude' },
-      [{ stepId: 'memory-update', status: 'done', output: { parsedFields: { summary: 'CC-5 search', nextSteps: 'n' } } }]
+      [
+        { stepId: 'memory-update', status: 'done', output: { parsedFields: { summary: 'CC-5 search', nextSteps: 'n' } } },
+        { stepId: 'commit', status: 'done', output: { commitSha: '', branch: 'feat/cc-3', previousWrapSha: null, previousWrapShaRead: 'absent' } }
+      ]
     ));
     assert.equal(res.ok, true);
 

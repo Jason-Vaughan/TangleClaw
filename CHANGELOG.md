@@ -31,6 +31,21 @@ All notable changes to TangleClaw are documented in this file.
   rather than the branch's wider set, because publishing that under this name is the defect.
   The Map still accretes from the wider range, since re-stubbing is idempotent and starving it
   would lose real entries.
+
+  Three shapes of null are kept apart, because the wrap **acts** on the difference. `commit`
+  reports `previousWrapShaRead` — `recorded`, `absent`, or `unreadable` — alongside the value,
+  and the stamp is published only on a boundary positively established: a session range, or a
+  branch range on a project no wrap has ever stamped. A boundary that would not load, a
+  boundary the commit step never reported (a blocked commit can reach this step, because
+  `blocker` is operator-overridable), and a range that resolved to nothing each withhold the
+  stamp and log which one it was. Reading all three as "no earlier session" is `architecture.md`'s
+  rule backwards, and it is #797's own shape — a plausible default published as an established
+  fact. A wrap that committed nothing records the empty set rather than a range running back
+  through the previous wrap's commit.
+- **A caller's `onError` survives `store.projectConfig.load` (#797).** The wrapper took one
+  argument and dropped the reader options, so a caller that needed to know a config was
+  malformed — rather than absent, which returns the same defaults — had a guard that could
+  never fire. The callback now runs alongside this module's own warning.
 - **CI fails a run when a tracked file carries raw git conflict markers (#882).** All three
   marker lines were once committed into `.prawduct/change-log.md` and merged to `main`, where
   they sat across three sessions with nothing — no test, no gate, no wrap step — noticing. That
@@ -39,7 +54,11 @@ All notable changes to TangleClaw are documented in this file.
   `scripts/conflict-marker-scan.js` is one `git grep` over the tracked working tree, running as
   the first step of the Tests workflow. Tracked-tree scope is a property of the repository
   rather than of a machine, so a green here means the same thing on a contributor's laptop and
-  on a shallow CI checkout.
+  on a shallow CI checkout. It matches all four of git's marker forms — including the
+  `|||||||` base marker `diff3`/`zdiff3` writes — and each one alone, because a half-resolved
+  file that kept only the separator is what buried the entry in the first place. Its one known
+  false positive, a seven-`=` markdown setext underline, is named in the failure output rather
+  than excluded: the lone-separator match is the point.
 - **A status poll no longer finalizes wraps or commits the operator's repository (#910).**
   `getSessionStatus` is a read, and the session page polls it every two seconds throughout a
   wrap. On its dead-tmux branch it called `autoCompleteWrap`, which writes the wrap complete,
