@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.21.0] - 2026-09-06
+
 ### Added
 - **`TANGLECLAW_HOME` relocates an install's entire machine-local state (#828).** Set it and the
   database, `config.json`, engine and orchestration profiles, logs, the PID file, master state,
@@ -336,7 +338,6 @@ All notable changes to TangleClaw are documented in this file.
   grown their own copy of the two-file walk; one `_classifyHookFiles` now owns which files hold
   hooks and what an orphan is, so the pair cannot disagree — the failure #145 exists to prevent is a
   scan reporting an orphan the repair declines to remove.
-
 ## [5.20.0] - 2026-09-05
 
 ### Added
