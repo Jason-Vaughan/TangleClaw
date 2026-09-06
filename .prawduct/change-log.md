@@ -26,6 +26,89 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-06 — #1033/#929: validate every field before writing any, in the real run and the rehearsal
+
+<!-- prawduct: type=fix | scope=train-13 -->
+
+Train 13 Chunk 05.
+
+**What shipped.** Two shapes of one defect: a mechanism that refuses input it has already acted
+on. `updateProject` decided most verdicts before writing and three of them inside the blocks that
+write, so `PATCH { name, engine: "<unknown>" }` renamed the project directory and *then* refused —
+leaving the `projects` row pointing at a path that no longer existed, which does not half-update a
+project so much as make it unopenable. Reproduced before the fix (`dbPathExists=false`), and a
+disabled core rule was refused only after the whole engine switch had run. Every verdict now lives
+in `PROJECT_UPDATE_VALIDATORS`, run to completion before `_applyProjectUpdates` touches disk or
+row; accepted values are byte-for-byte unchanged, including that the engine check still fires only
+on a real switch, so the modal re-sending the current engine does not start refusing saves for a
+project whose profile has gone missing. The same divergence one level up: `reset-admin
+--password-stdin --dry-run` never read the piped password — it printed a plan claiming it "would
+prompt", exited 0, and blessed what the real run refuses with exit 1. It now runs that password
+through the same `acquirePassword`, in the same order the real run asks it (before the gate
+verdict, which is where `createGate` asks it), so both invocations agree on the code and the
+reason.
+
+**The lesson worth carrying.** The write phase had the same defect the validators now prevent, and
+I did not see it because I had scoped the chunk to *refusals*. Three reviewers found it
+independently by asking what happens on a **throw** rather than a verdict: the rename landed on
+disk immediately while the row naming it waited ~15 statements for the batched write, past a dozen
+unguarded `store.projectConfig.save` calls (a bare mkdir+write). Fixing a defect class by its
+stated mechanism leaves the same state reachable by every other mechanism — ask what else reaches
+it. Second lesson, same review: a completeness guard is only as wide as its roster. Mine read the
+settings modal, so it could not see `quickCommands`, persisted with no verdict, nor a second key
+added to either `session.js` PATCH body. Widening it to what the WRITE phase reads immediately
+found `activePlan` missing from the fixture — the partial-update tests had been one field smaller
+than they looked.
+
+**Critic rounds.** Cumulative `rev-20260906T061154Z-2ca67c88` (three reviewers over
+`09bde58…797f87a`): 0 blocking, 6 warnings, 13 notes. Fixed in one batch (`e4702f1`); four
+mutations confirm each goes red (deferring the row write, a new unvalidated field reaching the
+write phase, a late rejection in the other key order, a producer field dropped from the fixture).
+Verified by `rev-20260906T063010Z-a50eac2f` — 0 blocking, 0 new, every resolution settled by
+reading the tree rather than the commit message — which demoted six observations; three rode the
+close commit (`86ae5d9`): a JSDoc that claimed phase two reports I/O failures in `errors` when a
+`store.projectConfig.save` throw escapes instead, `project.name` left stale beside the row that had
+just moved, and one apply-phase source slice read by two checks with only one of them end-anchored.
+`rev-20260906T064050Z-d0083784` then covered that commit's own delta clean at 0/0/0.
+Filed rather than absorbed: **#1286** (a predicted password refusal now exits 1 while a predicted
+gate refusal still exits 0 — an incoherence this fix creates, with a real two-sided design
+question), **#1287** (`tags` and — found by the widened guard — `quickCommands` are
+validated nowhere; both carried in a *declared* allowlist rather than a silent gap), **#1288** (the route picks 404 vs 400 by searching the error
+prose, so an engine typo reports "project not found"), **#1289** (an unreadable `project.json` is
+silently rewritten from defaults — older than this chunk, and the fix needs a policy decision a
+bugfix cannot make).
+
+Disposition table:
+
+**rev-20260906T061154Z-2ca67c88** — chunk 05
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | fixed | Fixed in e4702f1. |
+| R-2 | warning | fixed | Fixed in e4702f1. |
+| R-3 | note | fixed | Fixed in e4702f1. |
+| R-4 | note | accepted | Disclosed assumption, not a defect: the reviewer resolved chunk 05 from the repo's active plan pointer and confirmed by reading it that the deliverables, tests and both acceptance criteria match this diff. No action wanted. |
+| R-5 | note | accepted | Priors acknowledgment. |
+| R-6 | warning | fixed | Fixed in e4702f1. |
+| R-7 | warning | fixed | Fixed in e4702f1. |
+| R-8 | note | fixed | Fixed in e4702f1. |
+| R-9 | note | fixed | Fixed in e4702f1. |
+| R-10 | note | fixed | Committed in e4702f1 rather than dropped — it is the only test holding the ordering claim the CHANGELOG and the in-code comment both make, and a mutation moving acquirePassword below the gate verdict turns it red. |
+| R-11 | note | accepted | Priors acknowledgment (duplicate of R-5). |
+| R-12 | warning | fixed | Fixed in e4702f1. |
+| R-13 | warning | fixed | Fixed in e4702f1. |
+| R-14 | note | accepted | Scope trace clean; its one inert item, the _validateProjectUpdates export, is fixed under R-9 in the same batch. |
+| R-15 | note | waived | `1289` |
+| R-16 | note | accepted | Learnings cross-check, no action asked. The one engaged rule (a status mapping needs a route-level test) is discharged under R-12. |
+| R-17 | note | accepted | The commit carries 'Fixes #1033' and 'Fixes #929', so GitHub closes both on merge — the backlog backend here IS Issues, so a separate status=shipped write would duplicate the close rather than record it. |
+| R-18 | note | accepted | C-B3 assessed: #1046 (project-version-cache write diagnostics) and #1049 (stranded-config guard misses .gemini) are untouched by this diff and still accurate as written, so neither warrants a status change. C-B2's dedup pass was run before filing — the tags gap is #1287, searched against the open set first. |
+| R-19 | note | accepted | Priors acknowledgment (duplicate of R-5). |
+
+**19 findings** (6 warning, 13 note) — accepted: 8, fixed: 10, waived: 1.
+**11 answered twice** — recorded as both resolved and dispositioned; check which answer is current.
+
+**Classification:** bugfix
+
 ## 2026-09-06 — #828/#1052: one derivation of the base directory, one containment predicate
 
 <!-- prawduct: type=fix | scope=train-13 -->
@@ -5716,46 +5799,3 @@ bare-catch family grep returns empty). Disposition table:
 | R-9, R-10, R-12 | note | accepted | clean checks (learnings cross-check, backlog reconciliation, Goal 5/6 verdict) |
 
 **Classification:** feature
-
-## 2026-09-06: validate every field before writing any, in the real run and the rehearsal (train-13 chunk 05)
-<!-- prawduct: type=bugfix | scope=train-13 | chunks=05 -->
-
-**What shipped.** Two shapes of one defect: a mechanism that refuses input it has already acted
-on. `updateProject` decided most verdicts before writing and three of them inside the blocks that
-write, so `PATCH { name, engine: "<unknown>" }` renamed the project directory and *then* refused —
-leaving the `projects` row pointing at a path that no longer existed, which does not half-update a
-project so much as make it unopenable. Reproduced before the fix (`dbPathExists=false`), and a
-disabled core rule was refused only after the whole engine switch had run. Every verdict now lives
-in `PROJECT_UPDATE_VALIDATORS`, run to completion before `_applyProjectUpdates` touches disk or
-row; accepted values are byte-for-byte unchanged, including that the engine check still fires only
-on a real switch, so the modal re-sending the current engine does not start refusing saves for a
-project whose profile has gone missing. The same divergence one level up: `reset-admin
---password-stdin --dry-run` never read the piped password — it printed a plan claiming it "would
-prompt", exited 0, and blessed what the real run refuses with exit 1. It now runs that password
-through the same `acquirePassword`, in the same order the real run asks it (before the gate
-verdict, which is where `createGate` asks it), so both invocations agree on the code and the
-reason.
-
-**The lesson worth carrying.** The write phase had the same defect the validators now prevent, and
-I did not see it because I had scoped the chunk to *refusals*. Three reviewers found it
-independently by asking what happens on a **throw** rather than a verdict: the rename landed on
-disk immediately while the row naming it waited ~15 statements for the batched write, past a dozen
-unguarded `store.projectConfig.save` calls (a bare mkdir+write). Fixing a defect class by its
-stated mechanism leaves the same state reachable by every other mechanism — ask what else reaches
-it. Second lesson, same review: a completeness guard is only as wide as its roster. Mine read the
-settings modal, so it could not see `quickCommands`, persisted with no verdict, nor a second key
-added to either `session.js` PATCH body. Widening it to what the WRITE phase reads immediately
-found `activePlan` missing from the fixture — the partial-update tests had been one field smaller
-than they looked.
-
-**Critic rounds.** Cumulative `rev-20260906T061154Z-2ca67c88` (three reviewers over
-`09bde58…797f87a`): 0 blocking, 6 warnings, 13 notes. Fixed in one batch (`e4702f1`); four
-mutations confirm each goes red (deferring the row write, a new unvalidated field reaching the
-write phase, a late rejection in the other key order, a producer field dropped from the fixture).
-Filed rather than absorbed: **#1286** (a predicted password refusal now exits 1 while a predicted
-gate refusal still exits 0 — an incoherence this fix creates, with a real two-sided design
-question), **#1287** (`tags` is the one PATCH field nothing validates; carried in a *declared*
-allowlist rather than a silent gap), **#1288** (the route picks 404 vs 400 by searching the error
-prose, so an engine typo reports "project not found"), **#1289** (an unreadable `project.json` is
-silently rewritten from defaults — older than this chunk, and the fix needs a policy decision a
-bugfix cannot make).
