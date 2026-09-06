@@ -206,8 +206,10 @@ describe('the fixture tracks the settings modal, not a remembered list', () => {
 
   it('every field the modal sends is known to the validator table', () => {
     // `tags` is the one exception and it is declared, not overlooked: nothing
-    // validates it today (any value is written to the row as-is). A field that
-    // is validated nowhere and declared nowhere fails here.
+    // validates it today, so a non-array is stringified into the column and read
+    // back as a string where every reader expects `string[]` (#1287, which also
+    // empties this set). A field that is validated nowhere and declared nowhere
+    // fails here.
     const unvalidated = new Set(['tags']);
     const known = new Set(projects._PROJECT_UPDATE_VALIDATORS
       .flatMap((v) => [...v.keys, ...(v.reads || [])]));
