@@ -145,12 +145,29 @@ enforce. Train 14 is paused after its Chunk 01 and resumes when this closes.
 
 Chunk 01 built 2026-09-06 on `feat/1034-session-status-vocabulary`. Reviewed twice: a cumulative
 pass (0 blocking, 9 warnings, 6 notes — all dispositioned) and a `verify-resolutions` pass that
-re-derived every warning from the tree and closed all nine. **Its Done-when 1 is not fully met and
-that is deliberate:** the Verification Strategy's real-wrap check has not run, because the server
-on this install booted before the branch and is still serving the old `lib/`. The wrap path this
-chunk edits is the one that wraps this very session, so that verification is the operator's own
-session wrap after a restart onto the branch — it cannot be performed from inside the session that
-is about to be its subject. No PR is open; none was asked for.
+re-derived every warning from the tree and closed all nine.
+
+**Live verification, on the restarted server** (listener pid 58339, cwd this repo, booted
+15:10:58 — after `lib/store.js` at 14:39 and `lib/sessions.js` at 14:51, so it is running this
+branch's code, measured rather than assumed):
+
+| Surface | Result |
+|---|---|
+| `GET /api/sessions/TangleClaw/status` | `active: true`, no `wrapping` / `wrapFinished` keys, `incomplete: []`, `cause: null` |
+| `GET /api/activity?type=session.wrapping` | **166 rows**, 2026-03-18 → 2026-05-21 — the retired emitter's history is still readable, which was the Verification Strategy's first check |
+| `GET /api/tc/sessions` | 11 live sessions, all `active` — the collapsed `listLiveAll` |
+| `GET /api/projects` | 57 projects, 10 session cards, all `status: active` — `enrichProject` with the wrapping branch removed. ScrapeGoat is in the roster but has no card: a live row whose pane tmux confirms is gone, correctly dropped rather than reported as a phantom |
+
+**The Verification Strategy's second check is outstanding: a real wrap end to end.** The operator
+ruled 2026-09-06 that it rides THIS session's own wrap, which is what the strategy describes — this
+clone is the live install, so wrapping this session exercises the edited path, and it does so while
+the branch is still unmerged. It counts as passed when the wrap leaves this session's row
+`wrapped` with a non-null `wrap_summary`, `lifecycleCompleted: true` in the pipeline log, and no
+`Refused a session status transition` warning against that session id. A wrap that finished while
+the row shows `killed`/`crashed`, or `lifecycleCompleted: false`, is the failure this check exists
+to catch — Chunk 01 does not merge on it.
+
+No PR is open; none was asked for.
 
 Chunk order is deliberate and the first chunk is NOT the deletion. Chunk 01 lands the enum and the
 transition map — the thing #1034 actually asks for — with `wrapping` absent from it, which makes
