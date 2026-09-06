@@ -5716,3 +5716,46 @@ bare-catch family grep returns empty). Disposition table:
 | R-9, R-10, R-12 | note | accepted | clean checks (learnings cross-check, backlog reconciliation, Goal 5/6 verdict) |
 
 **Classification:** feature
+
+## 2026-09-06: validate every field before writing any, in the real run and the rehearsal (train-13 chunk 05)
+<!-- prawduct: type=bugfix | scope=train-13 | chunks=05 -->
+
+**What shipped.** Two shapes of one defect: a mechanism that refuses input it has already acted
+on. `updateProject` decided most verdicts before writing and three of them inside the blocks that
+write, so `PATCH { name, engine: "<unknown>" }` renamed the project directory and *then* refused —
+leaving the `projects` row pointing at a path that no longer existed, which does not half-update a
+project so much as make it unopenable. Reproduced before the fix (`dbPathExists=false`), and a
+disabled core rule was refused only after the whole engine switch had run. Every verdict now lives
+in `PROJECT_UPDATE_VALIDATORS`, run to completion before `_applyProjectUpdates` touches disk or
+row; accepted values are byte-for-byte unchanged, including that the engine check still fires only
+on a real switch, so the modal re-sending the current engine does not start refusing saves for a
+project whose profile has gone missing. The same divergence one level up: `reset-admin
+--password-stdin --dry-run` never read the piped password — it printed a plan claiming it "would
+prompt", exited 0, and blessed what the real run refuses with exit 1. It now runs that password
+through the same `acquirePassword`, in the same order the real run asks it (before the gate
+verdict, which is where `createGate` asks it), so both invocations agree on the code and the
+reason.
+
+**The lesson worth carrying.** The write phase had the same defect the validators now prevent, and
+I did not see it because I had scoped the chunk to *refusals*. Three reviewers found it
+independently by asking what happens on a **throw** rather than a verdict: the rename landed on
+disk immediately while the row naming it waited ~15 statements for the batched write, past a dozen
+unguarded `store.projectConfig.save` calls (a bare mkdir+write). Fixing a defect class by its
+stated mechanism leaves the same state reachable by every other mechanism — ask what else reaches
+it. Second lesson, same review: a completeness guard is only as wide as its roster. Mine read the
+settings modal, so it could not see `quickCommands`, persisted with no verdict, nor a second key
+added to either `session.js` PATCH body. Widening it to what the WRITE phase reads immediately
+found `activePlan` missing from the fixture — the partial-update tests had been one field smaller
+than they looked.
+
+**Critic rounds.** Cumulative `rev-20260906T061154Z-2ca67c88` (three reviewers over
+`09bde58…797f87a`): 0 blocking, 6 warnings, 13 notes. Fixed in one batch (`e4702f1`); four
+mutations confirm each goes red (deferring the row write, a new unvalidated field reaching the
+write phase, a late rejection in the other key order, a producer field dropped from the fixture).
+Filed rather than absorbed: **#1286** (a predicted password refusal now exits 1 while a predicted
+gate refusal still exits 0 — an incoherence this fix creates, with a real two-sided design
+question), **#1287** (`tags` is the one PATCH field nothing validates; carried in a *declared*
+allowlist rather than a silent gap), **#1288** (the route picks 404 vs 400 by searching the error
+prose, so an engine typo reports "project not found"), **#1289** (an unreadable `project.json` is
+silently rewritten from defaults — older than this chunk, and the fix needs a policy decision a
+bugfix cannot make).

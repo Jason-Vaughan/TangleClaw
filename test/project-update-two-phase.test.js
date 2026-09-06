@@ -50,6 +50,25 @@ function snapshot(name) {
 }
 
 /**
+ * `_applyProjectUpdates`'s source, sliced at both ends.
+ *
+ * Shared because two checks read it: the roster of fields the write phase acts
+ * on, and the guard that no verdict survives in it. Two copies of the slice is
+ * two chances for one of them to silently read a truncated prefix and measure a
+ * smaller function than it names; the end anchor is asserted once, below.
+ *
+ * @returns {string} The function's source, from its declaration to its closing brace.
+ */
+function applyPhaseSource() {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'projects.js'), 'utf8');
+  const start = src.indexOf('async function _applyProjectUpdates(');
+  if (start < 0) throw new Error('_applyProjectUpdates not found in lib/projects.js');
+  const end = src.indexOf('\n}\n', start);
+  if (end < start) throw new Error('_applyProjectUpdates has no findable closing brace');
+  return src.slice(start, end);
+}
+
+/**
  * Give a project the plan file `VALID_SETTINGS_PATCH.activePlan` names.
  *
  * `activePlan` is validated against the plans directory the wrap step resolves,
@@ -257,10 +276,8 @@ describe('the fixture tracks the settings modal, not a remembered list', () => {
    * @returns {string[]} Field names read from `updates` in `_applyProjectUpdates`.
    */
   function writtenFields() {
-    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'projects.js'), 'utf8');
-    const at = src.indexOf('async function _applyProjectUpdates(');
-    const apply = src.slice(at, src.indexOf('\n}\n', at));
-    return [...new Set([...apply.matchAll(/\bupdates\.([A-Za-z][A-Za-z0-9]*)/g)].map((m) => m[1]))];
+    return [...new Set([...applyPhaseSource().matchAll(/\bupdates\.([A-Za-z][A-Za-z0-9]*)/g)]
+      .map((m) => m[1]))];
   }
 
   it('finds both rosters at all', () => {
@@ -312,18 +329,15 @@ describe('the apply phase cannot refuse a field', () => {
   // if a later field's rejection can be written into the write phase again, so
   // can #1033. A source read, so it sees a `return`, not a `throw` — the limit
   // is named rather than papered over.
-  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'projects.js'), 'utf8');
-  const start = src.indexOf('async function _applyProjectUpdates(');
-  const end = src.indexOf('\n}\n', start);
-  const apply = src.slice(start, end);
+  const apply = applyPhaseSource();
 
   it('the slice actually covers the apply phase, end included', () => {
     // A length floor alone is satisfied by any long enough PREFIX, so the slice
     // is pinned at both ends: it must reach the function's terminal statement.
     // Everything below counts occurrences, and a count over a truncated region
     // is green for the wrong reason.
-    assert.ok(start > -1, '_applyProjectUpdates must exist');
-    assert.ok(end > start, 'the function\'s closing brace must be findable');
+    assert.match(apply, /^async function _applyProjectUpdates\(/,
+      'the slice must start at the function');
     assert.match(apply, /return \{ project: updated, errors, warnings \};\s*$/,
       'the slice must end at the function\'s own last statement');
   });
