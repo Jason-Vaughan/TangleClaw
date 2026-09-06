@@ -86,7 +86,7 @@ than unknowns, and both are surfaced at the chunk that would act on them.
 - [x] Chunk 03: The provenance record says what the session did, and corruption is detected (#797, #882)
 - [x] Chunk 04: One derivation of the base directory, one containment predicate (#828, #1052)
 - [x] Chunk 05: Validate every field before writing any, in the real run and the rehearsal (#1033, #929)
-- [ ] Chunk 06: One managed-block policy for a malformed marker pair (#1132)
+- [x] Chunk 06: One managed-block policy for a malformed marker pair (#1132)
 
 Context: Plan written 2026-09-06 against the roadmap's blessed Train 13 roster and order
 (`ROADMAP_STATE.md`, "Train 13: Nothing Mutates Behind Your Back"). The roadmap leads with
@@ -315,6 +315,21 @@ used three times in this repo (including 20 lines away in `engines.js`), and it 
 on the *directory*, so it would silently override a config file an operator made read-only, where
 today that is an honest reported failure. Atomicity there is a decision about operator intent, not
 a mechanical change, so it is **#1291** rather than a passenger on a marker-policy chunk.
+
+**Train 13's quick win: #1231** — the three hand-transcribed `realKinds` stub rosters in
+`test/wrap-pipeline.test.js`, derived from `STEP_DISPATCH` instead. Picked on adjacency to the
+lesson this chunk just paid for rather than to its files: it is the same shape as #1132 (one truth,
+several hand-kept copies) and as the standing rule that a roster is only as wide as whatever
+produces it — a kind missing from a stub roster means that step's REAL handler runs inside a unit
+test, which for `preflight` means spawning `prawduct-hook`. Checked before calling it quick: it is
+**test-only**, touches no `deploy/`, no launchd plist and nothing TCC-gated, and the producer it
+should read (`STEP_DISPATCH`) already exists. The issue's own caveat carries into the work — check
+each of the three sites first, since one or two may be deliberately narrow.
+
+Runner-up **#1246** (the managed-carrier containment proof compares against HEAD while the discard
+restores from the index) is closer in mechanism and its option 3 is a couple of characters, but it
+sits in the self-update path that repairs a broken install, so it is not a quick win by this
+ritual's own test even though the change would be fail-closed.
 
 ## Scaffolding
 
