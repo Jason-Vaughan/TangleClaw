@@ -134,6 +134,23 @@ describe('conflict-marker-scan (#882)', () => {
     assert.match(res.error, /not a git repository/);
   });
 
+  it('bounds the scan it runs — both caps pinned, so a refactor cannot drop one', () => {
+    // Neither bound has a behavioural symptom the other cases can see: the
+    // timeout only fires on a wedged repo, and the output cap only on a tree
+    // with megabytes of markers. Left unpinned, `maxBuffer` reverts green and
+    // the one case the scan exists for — many hits — comes back as an ENOBUFS
+    // the operator reads as a broken scan rather than as the finding it is.
+    let options = null;
+    scanner.scan('/somewhere', (file, args, opts) => {
+      options = opts;
+      return { status: 1, stdout: '', stderr: '' };
+    });
+    assert.equal(options.maxBuffer, scanner.MAX_OUTPUT_BYTES,
+      'the output cap must be raised past the default, or many hits report as a failed scan');
+    assert.equal(options.timeout, scanner.SCAN_TIMEOUT_MS,
+      'and the scan must be bounded at all, or a wedged repo hangs the whole job');
+  });
+
   it('main() exits 0 on a clean tree and 1 on a hit, naming the file', () => {
     const clean = repoWith({ 'lib/thing.js': "'use strict';\n" });
     const dirty = repoWith({ 'docs/notes.md': `${SEPARATOR}\n` });
