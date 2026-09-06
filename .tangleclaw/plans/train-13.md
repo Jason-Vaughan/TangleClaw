@@ -23,7 +23,7 @@ governed_by:
       - "a project's configuration travels with the project — <project>/.tangleclaw/project.json is the source of truth, the projects table holds only a queryable summary → conforms, and it constrains Chunk 05's shape: the two-phase apply must order the disk write and the DB summary so a rejected field leaves NEITHER written, rather than treating the table as the thing to keep consistent."
   - artifact: observability-strategy
     dispositions:
-      - "logs carry names, never payloads → conforms. Chunk 02's refusal names the run-id mismatch and the path; it does not log the stale summary's contents, which are a managed project's prose."
+      - "logs carry names, never payloads → conforms. Chunk 02's refusal names the capture file and the step; it does not log the stale summary's contents, which are a managed project's prose. (Amended at Chunk 02's close: the disposition originally said 'names the run-id mismatch', describing the stamp-and-verify design the chunk superseded with arm-and-refuse — see that chunk's DECISION.)"
       - "every logged error says what failed, why, and what the operator can do → conforms; called out explicitly in Chunk 02, whose whole value is that a refusal is visible."
 last_validated: 2026-09-06
 ---
@@ -82,7 +82,7 @@ than unknowns, and both are surfaced at the chunk that would act on them.
 ## Status
 
 - [x] Chunk 01: The machine-local hook moves out of the shareable file (#1022, #1242, #1275)
-- [ ] Chunk 02: A read does not finalize, and a payload proves whose run wrote it (#910, #840)
+- [x] Chunk 02: A read does not finalize, and a payload proves whose run wrote it (#910, #840)
 - [ ] Chunk 03: The provenance record says what the session did, and corruption is detected (#797, #882)
 - [ ] Chunk 04: One derivation of the base directory, one containment predicate (#828, #1052)
 - [ ] Chunk 05: Validate every field before writing any, in the real run and the rehearsal (#1033, #929)
@@ -109,7 +109,35 @@ per-path check on one machine cannot establish a property of every clone. Chunks
 have preconditions of this shape (a CI detector's reach; a base directory that must relocate as a
 whole), so ask of each: *whose machine makes this true, and does it travel?*
 
-Next: Chunk 02 (#910, #840).
+**Chunk 02 is done** — branch `fix/910-status-read-does-not-finalize`, Critic
+`rev-20260906T015315Z-195d6467` (26 findings: 19 fixed, 6 accepted, 1 filed), then
+`rev-20260906T021737Z-2a76956f` which found **two blocking** in the fix pass itself, then
+`rev-20260906T022846Z-6672d002` clean at 0/0/0.
+
+**The session's strongest lesson, and it repeated: a guard shipped covering half its family,
+twice, inside fixes for that very shape.** Chunk 01's orphan scanner change was unguarded until a
+mutation came back green. Chunk 02's #840 arm covered the tmux runner and not the gateway one —
+found independently by all three reviewers — and then the *fix* for that shipped a refusal that
+could never fire, because `clawbridge.getFile` resolves for every outcome and the guard was
+written around a `catch`. Its test looked like a guard while stubbing a shape the producer cannot
+emit. Two rules earned: **when a guard is about a FILE, enumerate every runner that touches the
+file, not every caller of the function you are editing**; and **build the fixture from the
+producer's real return values before writing the assertion** — a `throw` nobody throws passes
+forever.
+
+The same round misplaced the 409: the edit matched the first similar error handler in
+`server.js`, which was a route that cannot produce the error. Route-level tests are what catch
+that; library-level ones cannot see it.
+
+**#1278 filed, and it outranks the rest of this train's wrap work.** `setWrapping` has no
+non-test caller, and the live database holds **zero `wrapping` rows across 875 sessions since
+March** — so this whole pathway (#105, #900, #908, #910, `autoCompleteWrap`, the launch path's
+stale recovery) serves a state nothing produces. The open question is whether the transition was
+lost when `9c67b2c` stripped the V1 wrap path, in which case wrap-recovery has been silently
+disabled for months and the code is not dead but starved. Chunk 02 shipped anyway: a read that
+commits the operator's repository should not, reachable or not.
+
+Next: Chunk 03 (#797, #882) — whose `wrap-direction.md` Instances entry is already registered.
 
 ## Scaffolding
 
@@ -117,12 +145,22 @@ No new scaffolding: every chunk edits existing modules in an established repo. T
 constraints govern where the work happens.
 
 **This clone is the running install** ([[project_repo_is_the_live_install]]) — the server
-serves `public/` straight off the working tree, so an edit there is deployed the instant it
-hits disk. No chunk in this train touches `public/`; the roster is `lib/`, `scripts/`,
-`.github/workflows/` and `test/`, which the running process holds in its `require` cache
-until it is restarted. That bounds the hazard rather than removing it: after a chunk merges,
-the live install is behind until it is pulled and restarted, and saying so is part of each
-chunk's close.
+serves `public/` straight off the working tree, so an edit there is deployed to the operator's
+open dashboard the instant it hits disk, with no restart in between.
+
+*Corrected at Chunk 01's close.* This section originally claimed no chunk touches `public/`.
+That was wrong twice over: Chunk 01 edited `public/landing.js` (the orphan-hooks details view
+had to name which settings file an orphan is in), and Chunk 02 must edit `public/session.js`,
+because moving wrap finalization out of the status poll changes what the session page does with
+the poll's answer. So the hazard is live, not bounded away: an edit to `public/session.js`
+reaches a page the operator may have open mid-wrap. Each such edit lands as one whole-file write
+rather than a sequence of partial ones, so there is no interval in which the page is half
+updated.
+
+`lib/`, `scripts/` and `.github/workflows/` are the safer half — the running process holds those
+in its `require` cache until restarted. That bounds when a change takes effect rather than
+whether: after a chunk merges the live install is behind until pulled and restarted, and saying
+so is part of each chunk's close.
 
 **Merge strategy is squash**, per `project-preferences.md`, which overrides the plugin's
 merge-commit default. Squash-merged branches are therefore single-use — never reuse one, or a
@@ -250,19 +288,30 @@ than a single cumulative pass over the whole train.
 - **Deliverables:** `lib/sessions.js` — `getSessionStatus` reports that a wrapping session
   appears finished and finalizes nothing; finalization moves to a path that is an action:
   the launch path already handles stale wrapping rows (#105), and that is the natural home.
-  `lib/wrap-steps/ai-content.js` and the `memory-update` step — the arming step unlinks any
-  existing `.wrap-summary.md` before writing, AND the payload carries the run's identity,
-  which the consumer verifies. Both, per the issue: the delete handles the ordinary case,
-  the stamp catches the case where the delete did not happen.
+  `lib/wrap-steps/ai-content.js` — the step clears any existing `.wrap-summary.md` before the
+  AI is asked to write one, on BOTH capture paths: the tmux path unlinks it, and
+  `_runGatewayCapture` arms with the consuming read that is the only primitive the bridge has,
+  because the file it must clear lives on a remote filesystem a local unlink cannot reach.
+  [DECISION: arm-and-refuse replaces the issue's stamp-and-verify | #840 proposes writing the
+  run id into the payload and having the consumer verify it. That makes provenance depend on
+  the AI reliably emitting a stamp, and `wrap-direction.md` commitment 2 forbids a step needing
+  a capability only some engines have — the mechanical layer must produce identical results on
+  every engine. Clearing the file BEFORE the prompt gets the same property mechanically: the
+  file's later existence IS the proof this run wrote it, with no model cooperation. The issue's
+  own reason for wanting both — "the stamp catches the case where the delete did not happen" —
+  is met by refusing when the delete does not take, which is strictly safer than parsing a
+  payload whose stamp merely failed to match. | user can override and require the stamp]
 - **Tests:** unit — a status poll against a dead-tmux wrapping session leaves the wrap row,
   the listener, and the repository untouched, and the #105 guarantee holds (a wrapping row
-  never becomes unrecoverable); a `.wrap-summary.md` stamped with another run is refused
-  loudly rather than parsed, and an unstamped legacy file is refused rather than trusted.
-  Integration — a full wrap still detects its own completion through whatever surface
-  replaces the poll's side effect, because the session page depends on that timing.
+  never becomes unrecoverable); a `.wrap-summary.md` left by another run is cleared BEFORE the
+  prompt on both capture paths, and a clear that does not take refuses rather than parsing.
+  Client — `finalizeFinishedWrap` and the `wrapFinished` branch are the replacement for a
+  server-side action this chunk deletes, so they are exercised directly (lifted from
+  `public/session.js` into a sandbox, the harness `test/session-update-poll.test.js` already
+  uses) rather than left to the server tests, which can no longer see them.
 - **Acceptance criteria:** polling status through a wrap never writes to the operator's git
-  history; a planted stale `.wrap-summary.md` produces a hard refusal with a reason naming
-  the mismatch, not a skip and not a parse.
+  history; a planted stale `.wrap-summary.md` is cleared before the AI is prompted, and a clear
+  that cannot be completed produces a hard refusal naming why, not a skip and not a parse.
 - **Critic mode:** final
   <!-- Override: inference picks `chunk` mid-plan. This chunk re-times when a wrap
        finalizes, and the session page depends on that timing — #910 says so and is

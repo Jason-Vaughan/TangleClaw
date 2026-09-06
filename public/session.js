@@ -1846,9 +1846,19 @@ async function pollStatus() {
     showWrappingState();
   }
 
-  // Handle wrap completed (tmux died during wrapping)
+  // Handle wrap finished — tmux died during wrapping.
+  //
+  // The status poll reports `wrapFinished` and finalizes nothing, so asking for
+  // the finalize is this page's job (#910) — the same explicit POST the wrap-idle
+  // modal's "Return to Projects" uses. `wrapCompleted` is honoured alongside it
+  // because a server not yet restarted onto that change still sends it; both mean
+  // the same thing here, and only who finalizes differs.
   if (data.wrapCompleted && !sessionState.ended) {
-    handleWrapCompleted(data);
+    handleWrapCompleted();
+    return;
+  }
+  if (data.wrapFinished && !sessionState.ended && !sessionState.wrapCompleting) {
+    finalizeFinishedWrap(data.sessionId);
     return;
   }
 
@@ -5049,17 +5059,57 @@ async function confirmReturnFromWrapIdle() {
     return;
   }
 
-  handleWrapCompleted(data);
+  handleWrapCompleted();
   // After finalizing, the user explicitly asked to return — navigate now.
   window.location.href = '/';
 }
 
 /**
+ * Finalize a wrap whose pane the server reports as gone.
+ *
+ * The status endpoint is a read and no longer completes wraps on its own (#910),
+ * so the page turns that observation into the action. Unlike
+ * `confirmReturnFromWrapIdle` there is no navigation and no operator decision
+ * involved — the session is already over; this only records it.
+ *
+ * A failure is not retried in a loop: `wrapCompleting` stays set so the next poll
+ * does not fire a second POST, and the operator is told. Nothing is lost by
+ * waiting — the launch path claims a stale wrapping row on its own (#105), so the
+ * row cannot become unrecoverable because this call did not land.
+ * @returns {Promise<void>}
+ */
+async function finalizeFinishedWrap(sessionId) {
+  sessionState.wrapCompleting = true;
+  // Name the session that was observed finished. The route resolves its target
+  // by project and then kills tmux and commits the repository, so a relaunch
+  // between the poll and this POST could otherwise receive both.
+  const data = await apiMutate(
+    `/api/sessions/${encodeURIComponent(projectName)}/wrap/complete`,
+    'POST',
+    sessionId === undefined || sessionId === null ? {} : { sessionId }
+  );
+  if (!data) {
+    const toast = document.getElementById('toast');
+    if (toast) {
+      toast.textContent = api.lastError
+        || 'The session finished wrapping, but recording it failed. It will be recovered at the next launch.';
+      toast.className = 'toast toast-warn visible';
+      setTimeout(() => { toast.classList.remove('visible'); }, 5000);
+    }
+    return;
+  }
+  handleWrapCompleted();
+}
+
+/**
  * Handle wrap completion — tmux is gone. Show ended bar with no auto-redirect;
  * user must click "Back to Projects" or "Stay" themselves.
- * @param {object} data - Status data with wrapCompleted flag
+ *
+ * Takes no argument: its callers hold different shapes (a status payload, and the
+ * body of `POST /wrap/complete`) and this reads neither — it paints a fixed
+ * terminal state.
  */
-function handleWrapCompleted(data) {
+function handleWrapCompleted() {
   sessionState.ended = true;
   sessionState.wrapping = false;
   sessionState.wrapCompleting = false;

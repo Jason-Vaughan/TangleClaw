@@ -120,6 +120,57 @@ describe('wrap-step ai-content — #287 captureFile parsing', () => {
       assert.equal(removeCalled, false, 'do not attempt removal when the read itself failed');
     });
 
+    it('clears a captureFile left by a PREVIOUS run before asking the AI to write one (#840)', async () => {
+      // The file is a hand-off between the memory-update step and this one, at a
+      // well-known path, with nothing binding it to the run that should have
+      // produced it. On the 2026-08-01 wrap it was already present carrying the
+      // previous session's content — three well-formed blocks, correct markdown,
+      // real issue numbers — so no validation could catch it, and `## Summary`
+      // becomes the wrap commit subject.
+      //
+      // Removing it BEFORE the prompt is what makes its later existence proof
+      // that THIS run wrote it, without asking the AI to stamp anything (which
+      // `wrap-direction.md` commitment 2 forbids: no step may need a capability
+      // only some engines have).
+      let existsCalls = 0;
+      const removedAt = [];
+      aic._internal.captureFileExists = () => { existsCalls += 1; return existsCalls === 1; };
+      aic._internal.removeCaptureFile = (_p, rel) => { removedAt.push(rel); };
+      aic._internal.readCaptureFile = () => RAW_BLOCK;
+      let sentAfter = null;
+      aic._internal.sendKeys = () => { sentAfter = removedAt.length; };
+
+      const res = await aic.run(baseCtx());
+
+      assert.equal(res.ok, true);
+      assert.equal(removedAt[0], '.tangleclaw/.wrap-summary.md');
+      assert.equal(sentAfter, 1,
+        'the stale file must be gone BEFORE the prompt — clearing it afterwards proves nothing');
+    });
+
+    it('REFUSES rather than parsing when a stale captureFile cannot be removed (#840)', async () => {
+      // The case the delete does not cover. A capture step that proceeds on a
+      // payload it cannot attribute is the same defect one level up, so this is a
+      // hard refusal: `wrap-direction.md` commitment 3 reserves blocking for a
+      // failure that is silent or destructive regardless of preference, and a
+      // wrap reporting success while attributing another session's work to this
+      // one is exactly that.
+      let readCalled = false;
+      aic._internal.captureFileExists = () => true;   // never goes away
+      aic._internal.removeCaptureFile = () => { throw new Error('EACCES'); };
+      aic._internal.readCaptureFile = () => { readCalled = true; return RAW_BLOCK; };
+      let sent = false;
+      aic._internal.sendKeys = () => { sent = true; };
+
+      const res = await aic.run(baseCtx());
+
+      assert.equal(res.ok, false);
+      assert.equal(res.status, 'blocked');
+      assert.match(res.blockers[0], /belongs to no current run/);
+      assert.equal(sent, false, 'the prompt is not even sent — there is nothing safe to capture into');
+      assert.equal(readCalled, false, 'and the stale content is never parsed');
+    });
+
     it('backward-compat: captureFields WITHOUT captureFile still parses the pane', async () => {
       // An engine that emits raw markdown into the pane (hashes intact).
       aic._internal.capturePane = () => ({ lines: RAW_BLOCK.split('\n') });
@@ -376,6 +427,12 @@ describe('wrap-step ai-content — CC-7 B1 gateway capture (webui)', () => {
     // No wrap rules by default so prompt assertions stay exact (the real
     // listWrapRules would hit an uninitialized store and degrade anyway).
     aic._internal.listWrapRules = () => [];
+    // Armed by default — 404, "there was nothing to clear" — so tests about the
+    // LATER stages are not blocked by the arm. Unstubbed, the real bridge client
+    // would run and return `status: 0`, which correctly blocks (#840); the arm's
+    // own behaviour is exercised by the tests that stub this deliberately.
+    aic._internal.bridgeClearCaptureFile = async () => (
+      { ok: false, content: null, bytes: null, consumed: false, path: null, status: 404, error: 'not found' });
   });
   afterEach(() => { Object.assign(aic._internal, saved); });
 
@@ -393,6 +450,81 @@ describe('wrap-step ai-content — CC-7 B1 gateway capture (webui)', () => {
     captureFields: ['Summary', 'NextSteps', 'Learnings'],
     captureFile: '.tangleclaw/.wrap-summary.md'
   };
+
+  it('arms the capture over the bridge BEFORE sending the prompt (#840, the other half of the family)', async () => {
+    // The tmux path unlinks the captureFile before the prompt so its later
+    // existence proves this run wrote it. That reasoning is about the FILE, so
+    // it holds here identically — and this file lives on a remote filesystem a
+    // local unlink cannot reach, which is precisely why guarding only the tmux
+    // side would have left half the family uncovered.
+    const order = [];
+    aic._internal.bridgeClearCaptureFile = async (a) => {
+      order.push(`clear:${a.path}:${a.consume}`);
+      // The real `clawbridge.getFile` shape for a successful consuming read.
+      return {
+        ok: true, content: '## Summary\nsomeone else\'s session\n', bytes: 34,
+        consumed: true, path: a.path, status: 200, error: null
+      };
+    };
+    aic._internal.bridgeSend = async () => { order.push('send'); return { ok: true, accepted: true, state: 'running' }; };
+    aic._internal.bridgeGetStatus = async () => ({ ok: true, inputReady: true, state: 'running' });
+    aic._internal.bridgeGetFile = async () => { order.push('read'); return { ok: true, content: RAW_BLOCK, consumed: true }; };
+
+    const res = await aic._runGatewayCapture(ctx(structuredStep));
+
+    assert.equal(res.ok, true);
+    assert.deepEqual(order, ['clear:.tangleclaw/.wrap-summary.md:true', 'send', 'read'],
+      'the stale file must be consumed BEFORE the prompt — clearing it afterwards proves nothing');
+    assert.equal(res.output.parsedFields.Summary, 'Tidy wrap cycle; no code changes.',
+      "and the discarded stale content must never reach the parsed fields");
+  });
+
+  it('REFUSES every answer that leaves the file unarmed, in the shapes getFile really returns', async () => {
+    // Built from `clawbridge.getFile`'s own return values, not from an invented
+    // one. That client RESOLVES for every outcome — `{ok:false, status}` for any
+    // non-2xx, `status: 0` for a network failure or timeout — so a guard written
+    // against a thrown error refuses nothing and lets an unarmed run proceed,
+    // which is #840's exact end state on this runner.
+    const unarmed = [
+      ['bridge down / timeout', { ok: false, content: null, bytes: null, consumed: false, path: null, status: 0, error: 'ClawBridge unreachable' }],
+      ['forbidden', { ok: false, content: null, bytes: null, consumed: false, path: null, status: 403, error: 'forbidden' }],
+      ['waiting for permission', { ok: false, content: null, bytes: null, consumed: false, path: null, status: 409, error: 'busy' }],
+      ['server error', { ok: false, content: null, bytes: null, consumed: false, path: null, status: 500, error: 'boom' }],
+      // Answered, but the file is STILL THERE — read, not removed. As unarmed as
+      // a failed read, and the shape a guard keyed only on `ok` would wave past.
+      ['read but not consumed', { ok: true, content: 'stale', bytes: 5, consumed: false, path: 'p', status: 200, error: null }]
+    ];
+
+    for (const [label, reply] of unarmed) {
+      let sent = false;
+      aic._internal.bridgeClearCaptureFile = async () => reply;
+      aic._internal.bridgeSend = async () => { sent = true; return { ok: true, accepted: true, state: 'running' }; };
+
+      const res = await aic._runGatewayCapture(ctx(structuredStep));
+
+      assert.equal(res.ok, false, label);
+      assert.equal(res.status, 'blocked', label);
+      assert.match(res.blockers[0], /stale captureFile/, label);
+      assert.equal(sent, false, `${label}: the prompt is not sent — there is nothing safe to capture into`);
+    }
+  });
+
+  it('treats a 404 as armed — there was nothing to clear', async () => {
+    // The ordinary case, and the one a blanket "any non-ok blocks" rule would
+    // break: no previous run left a file. Mirrors the tmux path, which refuses
+    // only when the file EXISTS and the unlink does not take.
+    let sent = false;
+    aic._internal.bridgeClearCaptureFile = async () => (
+      { ok: false, content: null, bytes: null, consumed: false, path: null, status: 404, error: 'not found' });
+    aic._internal.bridgeSend = async () => { sent = true; return { ok: true, accepted: true, state: 'running' }; };
+    aic._internal.bridgeGetStatus = async () => ({ ok: true, inputReady: true, state: 'running' });
+    aic._internal.bridgeGetFile = async () => ({ ok: true, content: RAW_BLOCK, consumed: true });
+
+    const res = await aic._runGatewayCapture(ctx(structuredStep));
+
+    assert.equal(res.ok, true);
+    assert.equal(sent, true, 'a clean slate must not block the step');
+  });
 
   it('happy path: sends prompt, waits for inputReady, reads + parses the captureFile, stages fields', async () => {
     const calls = { sent: null, fileArgs: null };
@@ -680,6 +812,10 @@ describe('wrap-step ai-content — wrap-rules bridge (gateway path + ordering)',
     aic._internal.now = () => 0;
     aic._internal.getBridgeContext = () => ({ localPort: 4567, token: 'tok', project: 'proj' });
     aic._internal.listWrapRules = () => [{ content: 'Close every open loop' }];
+    // Armed: nothing to clear. This test is about the prompt's content, and an
+    // unstubbed arm reaches the real bridge client and correctly blocks (#840).
+    aic._internal.bridgeClearCaptureFile = async () => (
+      { ok: false, consumed: false, status: 404, error: 'not found' });
     let sentMessage = null;
     aic._internal.bridgeSend = async (a) => { sentMessage = a.message; return { ok: true }; };
     aic._internal.bridgeGetStatus = async () => ({ ok: true, inputReady: true });

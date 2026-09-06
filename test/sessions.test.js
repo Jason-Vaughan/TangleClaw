@@ -2019,30 +2019,144 @@ describe('sessions', () => {
       }
     });
 
-    it('still completes the wrap when tmux ANSWERED that the pane is gone', () => {
-      // The other half. Without this the fix is a blanket "never auto-complete",
-      // which would strand every genuinely finished wrap.
+    it('REPORTS a finished wrap when tmux answered the pane is gone, and finalizes nothing', () => {
+      // The contract this test pins CHANGED, deliberately (#910). It used to
+      // assert that an observed-dead pane made `getSessionStatus` write the wrap
+      // complete, tear down the listener, and run a real `git commit` in the
+      // operator's repository. #908 had already made the TRIGGER honest — only a
+      // probe that answered may act — and that was correct; what it left was a
+      // read path that still mutates on the answered branch, correct only for as
+      // long as the predicate stays correct.
+      //
+      // So the assertion is not weakened, it is relocated: the same finalizing
+      // must still happen, and the test below proves it does, through
+      // `completeWrap` — an action, asked for. What must NOT happen is any of it
+      // as a side effect of a poll.
       const wrapping = startWrapping('tc-wedge-wrap-dead');
       const realProbe = tmux.probeSession;
       const realCommit = git.commit;
       const realIsRepo = git.isGitRepo;
       let committed = 0;
       tmux.probeSession = () => ({ live: false, answered: true, cause: null });
+      // The commit is stubbed as REACHABLE and counted, so "no commit" is a
+      // measurement rather than an absence — the same trap the old test armed.
       git.isGitRepo = () => true;
       git.commit = () => { committed++; return { committed: true }; };
       try {
         const status = sessions.getSessionStatus('wedge-wrap');
-        assert.equal(status.wrapCompleted, true);
-        assert.equal(store.sessions.get(wrapping.id).status, 'wrapped');
-        // This assertion is what PROVES the traps in the other tests are armed:
-        // it shows the commit really is reachable from this path under the same
-        // stubs, so a guard that expects NO commit is measuring something.
-        assert.equal(committed, 1, 'an observed-dead wrap still runs its auto-commit');
+        assert.equal(status.wrapFinished, true, 'the observation is reported');
+        assert.equal(status.wrapping, true,
+          'the row still says wrapping, because nothing has finalized it');
+        assert.notEqual(status.wrapCompleted, true,
+          'a read must not report a completion it did not perform');
+        assert.equal(store.sessions.get(wrapping.id).status, 'wrapping',
+          'the session row is untouched by a read');
+        assert.equal(committed, 0,
+          'reading a status must not commit the operator\'s repository');
+        assert.equal(status.idle, null, 'no pane, so no idle signal to report');
       } finally {
         tmux.probeSession = realProbe;
         git.commit = realCommit;
         git.isGitRepo = realIsRepo;
         cleanup(wrapping.id);
+      }
+    });
+
+    it('completeWrap finalizes what the read only reported — the relocated half (#910)', () => {
+      // The other side of the contract change above. Moving finalization out of
+      // the read is only correct if an action still performs it, in full: the row
+      // wrapped, the listener gone, the repository committed. A fix that just
+      // stopped auto-completing would strand every finished wrap.
+      const wrapping = startWrapping('tc-wedge-wrap-finalize');
+      const realCommit = git.commit;
+      const realIsRepo = git.isGitRepo;
+      let committed = 0;
+      git.isGitRepo = () => true;
+      git.commit = () => { committed++; return { committed: true }; };
+      try {
+        const result = sessions.completeWrap('wedge-wrap');
+        assert.equal(result.error, null);
+        assert.equal(store.sessions.get(wrapping.id).status, 'wrapped');
+        assert.equal(committed, 1, 'the auto-commit moved with the finalizing, it did not vanish');
+      } finally {
+        git.commit = realCommit;
+        git.isGitRepo = realIsRepo;
+        cleanup(wrapping.id);
+      }
+    });
+
+    it('completeWrap recovers the pane summary the read used to parse', () => {
+      // The parse lived inside `autoCompleteWrap`, which the status poll called.
+      // Relocating the finalize had to bring it along, or the same wrap records
+      // an empty summary and the wrap commit subject — the permanent record —
+      // goes blank. A caller that DOES pass a summary still overrides it.
+      const wrapping = startWrapping('tc-wedge-wrap-summary');
+      const realCommit = git.commit;
+      const realIsRepo = git.isGitRepo;
+      git.isGitRepo = () => false;
+      git.commit = () => ({ committed: false });
+      try {
+        sessions._wrapPaneCache.set(wrapping.id, '## Summary\nDid the thing.\n');
+
+        const result = sessions.completeWrap('wedge-wrap');
+        assert.equal(result.error, null);
+        const stored = store.sessions.get(wrapping.id);
+        assert.ok(stored.wrapSummary && stored.wrapSummary.length > 0,
+          'a finalize with no summary argument must still record what the pane said');
+        assert.match(stored.wrapSummary, /Did the thing/);
+      } finally {
+        git.commit = realCommit;
+        git.isGitRepo = realIsRepo;
+        sessions._wrapPaneCache.delete(wrapping.id);
+        cleanup(wrapping.id);
+      }
+    });
+
+    it('refuses a finalize that names a session which is no longer current', () => {
+      // This route kills tmux and commits the project repository, and it
+      // resolves its target by PROJECT. Between the poll that observed a
+      // finished wrap and the POST that finalizes it, a relaunch can put a
+      // different session under the same name and receive both.
+      const wrapping = startWrapping('tc-wedge-wrap-identity');
+      const realCommit = git.commit;
+      const realIsRepo = git.isGitRepo;
+      let committed = 0;
+      git.isGitRepo = () => true;
+      git.commit = () => { committed++; return { committed: true }; };
+      try {
+        const result = sessions.completeWrap('wedge-wrap', undefined, wrapping.id + 999);
+        assert.equal(result.session, null);
+        assert.match(result.error, /no longer the current session/);
+        assert.equal(store.sessions.get(wrapping.id).status, 'wrapping',
+          'the session it did NOT name is left alone');
+        assert.equal(committed, 0, 'and the repository is not committed');
+      } finally {
+        git.commit = realCommit;
+        git.isGitRepo = realIsRepo;
+        cleanup(wrapping.id);
+      }
+    });
+
+    it('accepts a finalize that names the current session, and one that names none', () => {
+      // The identity check must not become a new way to fail: naming the right
+      // session works, and omitting it keeps the pre-existing behaviour exactly.
+      for (const name of ['tc-wedge-id-match', 'tc-wedge-id-absent']) {
+        const wrapping = startWrapping(name);
+        const realCommit = git.commit;
+        const realIsRepo = git.isGitRepo;
+        git.isGitRepo = () => false;
+        git.commit = () => ({ committed: false });
+        try {
+          const result = name.endsWith('match')
+            ? sessions.completeWrap('wedge-wrap', undefined, wrapping.id)
+            : sessions.completeWrap('wedge-wrap');
+          assert.equal(result.error, null, name);
+          assert.equal(store.sessions.get(wrapping.id).status, 'wrapped', name);
+        } finally {
+          git.commit = realCommit;
+          git.isGitRepo = realIsRepo;
+          cleanup(wrapping.id);
+        }
       }
     });
 

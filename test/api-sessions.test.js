@@ -473,6 +473,51 @@ describe('api-sessions', () => {
       assert.equal(res.body.session.status, 'wrapped');
       assert.equal(res.body.session.wrapSummary, 'Manual wrap summary');
     });
+
+    it('returns 409 SESSION_CHANGED when the named session is no longer current', async () => {
+      // At the ROUTE, not just the library. The identity check's whole purpose is
+      // that a stale client view reads as a stale view — a 500 reaches the page as
+      // a server fault, and its finalizer latches permanently on that. This test
+      // is also what pins the mapping to the route that PRODUCES the error: the
+      // first version of it landed on DELETE /:project, which calls `killSession`
+      // and can never emit this message.
+      const project = store.projects.getByName('api-sess-test');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'wrap-complete-stale'
+      });
+      store.sessions.setWrapping(session.id);
+      try {
+        const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap/complete', {
+          sessionId: session.id + 999
+        });
+        assert.equal(res.status, 409);
+        assert.equal(res.body.code, 'SESSION_CHANGED');
+        assert.equal(store.sessions.get(session.id).status, 'wrapping',
+          'the session it did not name is untouched');
+      } finally {
+        const still = store.sessions.get(session.id);
+        if (still && still.status !== 'wrapped') store.sessions.kill(session.id, 'cleanup');
+      }
+    });
+
+    it('accepts a request naming the current session', async () => {
+      const project = store.projects.getByName('api-sess-test');
+      const session = store.sessions.start({
+        projectId: project.id,
+        engineId: 'claude',
+        tmuxSession: 'wrap-complete-match'
+      });
+      store.sessions.setWrapping(session.id);
+
+      const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap/complete', {
+        sessionId: session.id,
+        summary: 'Named wrap summary'
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.session.status, 'wrapped');
+    });
   });
 
   describe('GET /api/sessions/:project/peek', () => {
