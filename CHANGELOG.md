@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.20.0] - 2026-09-05
+
 ### Added
 - **A settings save says when the running session will not see it (#758).** A setting the
   session resolves at launch — engine, silent prime, default launch mode, show-launch-mode-picker
