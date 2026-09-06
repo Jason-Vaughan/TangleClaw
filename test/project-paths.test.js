@@ -14,7 +14,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 
-const { resolveWithinProject, normalizeConfiguredPath, resolveConfiguredFile } = require('../lib/project-paths');
+const { resolveWithinProject, isInsideProject, normalizeConfiguredPath, resolveConfiguredFile } = require('../lib/project-paths');
 
 const ROOT = '/tmp/proj';
 
@@ -171,5 +171,127 @@ describe('resolveWithinProject follows symlinks', () => {
     // target must not read as an escape.
     assert.equal(resolveWithinProject(root, 'not-created-yet.json').ok, true);
     assert.equal(resolveWithinProject(root, 'deep/not/made/yet.json').ok, true);
+  });
+});
+
+// #1052 — the two containment predicates in this repo disagreed about the root
+// case, and the second one (in the wrap pipeline) was hand-rolled precisely
+// because it meant something different. They now share one rule and express the
+// difference as an option, so the difference has to be asserted in BOTH
+// directions: a default that quietly started allowing the root would make the
+// version-bump validator accept a directory it can never write.
+describe('containment policy is explicit in both directions', () => {
+  let base, root;
+
+  beforeEach(() => {
+    base = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-contain-'));
+    root = path.join(base, 'proj');
+    fs.mkdirSync(path.join(root, 'real'), { recursive: true });
+    fs.mkdirSync(path.join(base, 'outside'), { recursive: true });
+    fs.symlinkSync(path.join(base, 'outside'), path.join(root, 'linkdir'));
+  });
+  afterEach(() => fs.rmSync(base, { recursive: true, force: true }));
+
+  describe('allowRoot', () => {
+    it('off by default: the root is not a file inside itself', () => {
+      assert.equal(resolveWithinProject(root, '.').ok, false);
+      assert.equal(isInsideProject(root, root), false);
+    });
+
+    it('on: the root is inside, for callers validating a directory', () => {
+      assert.equal(resolveWithinProject(root, '.', { allowRoot: true }).ok, true);
+      assert.equal(isInsideProject(root, root, { allowRoot: true }), true);
+    });
+
+    it('never widens the escape case — allowRoot is about the root, not about outside', () => {
+      assert.equal(resolveWithinProject(root, '../escape.json', { allowRoot: true }).ok, false);
+      assert.equal(isInsideProject(root, path.join(base, 'outside', 'x'), { allowRoot: true }), false);
+    });
+
+    it('a symlink resolving ONTO the root is refused by default and allowed with allowRoot', () => {
+      // The root is reachable as a symlink target, not only as `.`, so the
+      // policy has to hold after resolution too — a check that applied it only
+      // to the lexical pass would disagree with itself.
+      fs.symlinkSync(root, path.join(root, 'real', 'self'));
+      assert.equal(isInsideProject(root, path.join(root, 'real', 'self')), false);
+      assert.equal(isInsideProject(root, path.join(root, 'real', 'self'), { allowRoot: true }), true);
+    });
+  });
+
+  describe('followSymlinks', () => {
+    it('on by default: an escaping symlink is refused', () => {
+      assert.equal(isInsideProject(root, path.join(root, 'linkdir', 'VERSION.json')), false);
+      assert.equal(resolveWithinProject(root, 'linkdir/VERSION.json').ok, false);
+    });
+
+    it('resolves the FINAL component, not just its directory', () => {
+      // A file that is itself a symlink out of the project is the write the
+      // predicate exists to stop; resolving only the dirname left it uncovered.
+      fs.symlinkSync(path.join(base, 'outside', 'target.json'), path.join(root, 'real', 'linkfile.json'));
+      assert.equal(isInsideProject(root, path.join(root, 'real', 'linkfile.json')), false);
+      assert.equal(resolveWithinProject(root, 'real/linkfile.json').ok, false);
+    });
+
+    it('gives up past the hop bound and reports the lexical answer', () => {
+      // Makes the bound observable without timing anything: a chain longer than
+      // the budget resolves outside the project, so a build WITHOUT the bound
+      // answers `false` here while the bounded one gives up and answers `true`.
+      // The give-up is fail-open by design — see MAX_DANGLING_LINK_HOPS.
+      const chain = path.join(root, 'real');
+      for (let i = 0; i < 40; i += 1) {
+        const next = i === 39 ? path.join(base, 'outside', 'end.json') : path.join(chain, `hop${i + 1}`);
+        fs.symlinkSync(next, path.join(chain, `hop${i}`));
+      }
+      assert.equal(isInsideProject(root, path.join(chain, 'hop0')), true);
+    });
+
+    it('resolves a symlink chain, and a cycle terminates instead of hanging', () => {
+      // A cycle makes every `realpathSync` throw, so without a hop bound the
+      // hand-rolled dangling-link walk would follow it forever.
+      fs.symlinkSync(path.join(root, 'real', 'b'), path.join(root, 'real', 'a'));
+      fs.symlinkSync(path.join(root, 'real', 'a'), path.join(root, 'real', 'b'));
+      assert.equal(isInsideProject(root, path.join(root, 'real', 'a')), true);
+    });
+
+    it('off: the check stays lexical, which is what a plan pointer needs', () => {
+      // Governance state is symlinked back to a primary checkout when work
+      // happens in a git worktree, so `.prawduct/artifacts/build-plan.md` inside
+      // a worktree is a symlink pointing out of it. Following it would refuse
+      // every worktree session's plan pointer as an escape.
+      assert.equal(isInsideProject(root, path.join(root, 'linkdir', 'VERSION.json'), { followSymlinks: false }), true);
+      assert.equal(resolveWithinProject(root, 'linkdir/VERSION.json', { followSymlinks: false }).ok, true);
+    });
+
+    it('off does not disable the lexical escape check', () => {
+      assert.equal(isInsideProject(root, path.join(base, 'outside', 'x'), { followSymlinks: false }), false);
+      assert.equal(resolveWithinProject(root, '../escape.json', { followSymlinks: false }).ok, false);
+    });
+  });
+
+  describe('the two predicates cannot disagree', () => {
+    for (const [label, rel, options] of [
+      ['a plain file', 'VERSION.json', {}],
+      ['the root', '.', {}],
+      ['the root, allowed', '.', { allowRoot: true }],
+      ['an escape', '../out.json', {}],
+      ['an escaping symlink', 'linkdir/VERSION.json', {}],
+      ['an escaping symlink, lexical only', 'linkdir/VERSION.json', { followSymlinks: false }]
+    ]) {
+      it(`agrees on ${label}`, () => {
+        const viaResolve = resolveWithinProject(root, rel, options).ok;
+        const viaIsInside = isInsideProject(root, path.resolve(root, rel), options);
+        assert.equal(viaResolve, viaIsInside,
+          `resolveWithinProject said ${viaResolve} and isInsideProject said ${viaIsInside}`);
+      });
+    }
+  });
+
+  describe('isInsideProject never fails open on bad input', () => {
+    for (const bad of [null, undefined, 42, '', '   ']) {
+      it(`refuses ${JSON.stringify(bad)}`, () => {
+        assert.equal(isInsideProject(root, bad), false);
+        assert.equal(isInsideProject(bad, path.join(root, 'a.json')), false);
+      });
+    }
   });
 });

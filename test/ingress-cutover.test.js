@@ -32,7 +32,7 @@ function makeCtx(overrides = {}) {
     },
     env: {
       caddyPath: '/opt/homebrew/bin/caddy', ttydPath: '/opt/homebrew/bin/ttyd',
-      home: '/Users/test', repoDir: '/repo',
+      home: '/Users/test', baseDir: '/Users/test/.tangleclaw', repoDir: '/repo',
       launchdPath: '/usr/bin:/bin', launchAgentsDir: '/Users/test/Library/LaunchAgents',
       uid: 501,
       ...(overrides.env || {})

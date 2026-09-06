@@ -37,6 +37,7 @@ const REPO_DIR = path.resolve(__dirname, '..');
 const caddy = require(path.join(REPO_DIR, 'lib', 'caddy'));
 const ttydAttach = require(path.join(REPO_DIR, 'lib', 'ttyd-attach'));
 const store = require(path.join(REPO_DIR, 'lib', 'store'));
+const tangleclawHome = require('../lib/tangleclaw-home');
 
 const DEPLOY_DIR = path.join(REPO_DIR, 'deploy');
 const SERVER_LABEL = 'com.tangleclaw.server';
@@ -96,7 +97,7 @@ function fillTemplate(tpl, subs) {
  * @param {'caddy'|'direct'} target
  * @param {object} ctx
  * @param {object} ctx.config - loaded TC config.
- * @param {object} ctx.env - { caddyPath, ttydPath, home, repoDir, launchdPath, launchAgentsDir, uid }
+ * @param {object} ctx.env - { caddyPath, ttydPath, home, baseDir, repoDir, launchdPath, launchAgentsDir, uid }
  * @param {number} ctx.upstreamPort - TC's actual listen port (Caddy upstream / direct health port).
  * @param {string} ctx.certPath - mkcert cert for the local Caddy site (caddy target only).
  * @param {string} ctx.keyPath - mkcert key (caddy target only).
@@ -166,7 +167,7 @@ function planCutover(target, ctx) {
       TTYD_PATH: env.ttydPath, HOME: env.home,
       // #500: the attach script lives outside the repo (non-TCC); main() syncs
       // the copy before applying the plan.
-      TTYD_ATTACH: ttydAttach.attachScriptPath(env.home),
+      TTYD_ATTACH: ttydAttach.attachScriptPath(env.baseDir),
       LAUNCHD_PATH: env.launchdPath,
       TTYD_BIND_KEY: '--interface', TTYD_BIND_VAL: ctx.socketPath,
       // Ignored by ttyd when the interface is a unix socket (verified: no TCP
@@ -216,7 +217,7 @@ function planCutover(target, ctx) {
   const ttydPlist = fillTemplate(ctx.ttydTemplate, {
     TTYD_PATH: env.ttydPath, HOME: env.home,
     // #500: attach script installed outside the repo (non-TCC).
-    TTYD_ATTACH: ttydAttach.attachScriptPath(env.home),
+    TTYD_ATTACH: ttydAttach.attachScriptPath(env.baseDir),
     LAUNCHD_PATH: env.launchdPath,
     TTYD_BIND_KEY: '--interface', TTYD_BIND_VAL: ttydBindAddress,
     TTYD_PORT: String(config.ttydPort || 3100),
@@ -426,7 +427,11 @@ function main() {
 
   store.init();
   const config = store.config.load();
-  const home = require('node:os').homedir();
+  // `home` is the passwd/`$HOME` home, used ONLY for `~/Library/LaunchAgents`,
+  // which launchd reads from a fixed per-user location and no override can move.
+  // Everything TangleClaw itself owns hangs off `baseDir` instead.
+  const home = tangleclawHome.userHome();
+  const baseDir = store._getBasePath();
   const launchAgentsDir = path.join(home, 'Library', 'LaunchAgents');
 
   // Build the launchd PATH the same way install.sh does (user PATH + system dirs).
@@ -439,6 +444,7 @@ function main() {
     caddyPath: which('caddy'),
     ttydPath: which('ttyd'),
     home,
+    baseDir,
     repoDir: REPO_DIR,
     launchdPath,
     launchAgentsDir,
@@ -676,7 +682,7 @@ function main() {
   }
 
   // 1. Caddyfile first, then VALIDATE before touching launchd (fail-closed).
-  fs.mkdirSync(path.join(home, '.tangleclaw', 'logs'), { recursive: true });
+  fs.mkdirSync(path.join(baseDir, 'logs'), { recursive: true });
   if (plan.caddyfile) {
     fs.mkdirSync(path.dirname(plan.caddyfile.path), { recursive: true });
     // #397 bug 3: never silently clobber a hand-edited Caddyfile (it may carry
@@ -742,7 +748,7 @@ function main() {
   //     (#500) before reloading ttyd — otherwise a first-ever cutover would
   //     rebind ttyd onto a path that doesn't exist yet. Idempotent; boot does
   //     this too, but the cutover reloads ttyd immediately so it can't wait.
-  ttydAttach.syncAttachScript({ repoDir: REPO_DIR, home: env.home });
+  ttydAttach.syncAttachScript({ repoDir: REPO_DIR, baseDir: env.baseDir });
 
   // 2. Ensure the ttyd socket dir exists, and clear any leftover socket file so
   //    the rebinding ttyd doesn't fail on a stale inode (KeepAlive would then

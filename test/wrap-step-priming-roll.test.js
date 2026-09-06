@@ -1379,3 +1379,68 @@ describe('wrap-step priming-roll — engine-agnostic path resolution (#612 widen
     );
   });
 });
+
+// #1052 — the three plan pointers this step resolves used to hand-roll their
+// containment check. They now share `lib/project-paths`' one predicate, and the
+// one place they differ from its default (symlinks are not followed) is a
+// deliberate policy that nothing else asserted — mutating it left every existing
+// case in this file green.
+describe('wrap-step priming-roll — plan-pointer containment policy (#1052)', () => {
+  const primingRoll = require('../lib/wrap-steps/priming-roll');
+  const PLAN_BODY = ['### Chunk 1: Done ✅', '### Chunk 2: Active'].join('\n');
+
+  let tmpDir, projectPath, outsideDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-priming-contain-'));
+    projectPath = path.join(tmpDir, 'proj');
+    outsideDir = path.join(tmpDir, 'primary');
+    fs.mkdirSync(path.join(projectPath, '.prawduct', 'artifacts'), { recursive: true });
+    fs.mkdirSync(path.join(projectPath, '.tangleclaw', 'priming'), { recursive: true });
+    fs.mkdirSync(outsideDir, { recursive: true });
+  });
+
+  afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+
+  /**
+   * @param {object} step - Step spec
+   * @returns {object} A wrap-step context for `projectPath`
+   */
+  function ctx(step) {
+    return { project: { name: 'contain', path: projectPath, id: 1 }, session: null, step, previousResults: [], staged: {}, options: {} };
+  }
+
+  it('accepts a plan reached through a symlink that leaves the project', async () => {
+    // The worktree case, and the reason this policy exists: a session working in
+    // `git worktree add` symlinks its governance state back to the primary
+    // checkout, so `.prawduct/artifacts/build-plan.md` IS a symlink pointing out
+    // of the worktree. Following symlinks would refuse every such session's
+    // plan pointer as an escape.
+    const realPlan = path.join(outsideDir, 'build-plan.md');
+    fs.writeFileSync(realPlan, PLAN_BODY);
+    fs.symlinkSync(realPlan, path.join(projectPath, '.prawduct', 'artifacts', 'build-plan.md'));
+    fs.writeFileSync(path.join(projectPath, '.prawduct', 'project-state.yaml'),
+      'active_build_plan: artifacts/build-plan.md\n');
+
+    const result = await primingRoll.run(ctx({ id: 'next-session-prime' }));
+    assert.equal(result.ok, true, `expected the symlinked plan to resolve, got: ${JSON.stringify(result.blockers || result)}`);
+  });
+
+  it('still refuses a lexical escape, symlinks or not', async () => {
+    fs.writeFileSync(path.join(outsideDir, 'escaped.md'), PLAN_BODY);
+    const result = await primingRoll.run(ctx({ id: 'next-session-prime', planPath: '../primary/escaped.md' }));
+    assert.equal(result.ok, false);
+    assert.match(result.blockers[0], /resolves outside the project root/);
+  });
+
+  it('refuses a pointer that resolves to the project root, with a named reason', async () => {
+    // A plan pointer names a file, and the root is never one. The hand-rolled
+    // check counted it as inside, so this reached a read of a directory instead
+    // of a blocker that says what is wrong.
+    fs.writeFileSync(path.join(projectPath, '.tangleclaw', 'project.json'),
+      JSON.stringify({ activePlan: 'plans/..' }));
+    const result = await primingRoll.run(ctx({ id: 'next-session-prime' }));
+    assert.equal(result.ok, false);
+    assert.match(result.blockers[0], /resolves outside the project root/);
+  });
+});

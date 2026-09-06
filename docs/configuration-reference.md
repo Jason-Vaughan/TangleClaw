@@ -12,6 +12,40 @@ TangleClaw uses a layered configuration system: global config for system-wide se
 | `~/.tangleclaw/tangleclaw.db` | SQLite database (runtime state) |
 | `<project>/.tangleclaw/project.json` | Per-project configuration |
 
+### Relocating the base directory (`TANGLECLAW_HOME`)
+
+Everything in the table above that begins `~/.tangleclaw/` hangs off one base
+directory, derived in one place (`lib/tangleclaw-home.js`). Set `TANGLECLAW_HOME`
+to move all of it at once — the database, `config.json`, engine and orchestration
+profiles, logs, the PID file, master state, the git template, and the ttyd attach
+script:
+
+```bash
+TANGLECLAW_HOME=/tmp/tc-rehearsal node server.js
+```
+
+The variable names the **base directory itself**, not a home directory: with the
+value above the database is at `/tmp/tc-rehearsal/tangleclaw.db`, with no
+`.tangleclaw` segment appended. A blank value is ignored rather than treated as
+the current directory. Unset, the base directory is `~/.tangleclaw`.
+
+**What it does not move, and why a second concurrent install is still unsafe.**
+Three things stay machine-global no matter what this is set to:
+
+- the launchd jobs under `~/Library/LaunchAgents` — launchd reads a fixed
+  per-user location, and the job labels are constants;
+- the Caddy site label, likewise a constant;
+- the ingress ports, which default to 8443/8080.
+
+So this makes an install's **state** separable, not its **ingress**. It is the
+supported way to rehearse setup or run tests against a scratch directory; it is
+not a way to run two live installs side by side. See issue #1283 for the ingress
+half.
+
+Overriding `HOME` instead is not supported and never was: it moves anything
+derived from the home directory, TangleClaw's and the operating system's alike,
+and an attempt to sandbox that way migrated the live database on 2026-07-20.
+
 ## Global Configuration (`config.json`)
 
 Auto-created on first run with defaults. Editable directly or via `PATCH /api/config`.

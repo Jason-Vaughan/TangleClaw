@@ -7460,7 +7460,7 @@ if (require.main === module) {
   // ttyd in open() (all sessions black-screen after a ttyd restart). Running at
   // every boot means an update that bumps the repo script refreshes the copy on
   // the ensuing restart. Idempotent + non-throwing.
-  ttydAttach.syncAttachScript({ repoDir: __dirname, home: os.homedir() });
+  ttydAttach.syncAttachScript({ repoDir: __dirname, baseDir: store._getBasePath() });
 
   // Re-stamp the version into the status bar of sessions that already exist
   // (#745). A session sets its bar once, at creation, so every session that
