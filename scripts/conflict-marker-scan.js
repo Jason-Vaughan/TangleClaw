@@ -40,6 +40,13 @@ const MARKER_PATTERN = '^(<{7}|={7}|>{7})( |$)';
 const SCAN_TIMEOUT_MS = 60 * 1000;
 
 /**
+ * Output cap for the scan. Well above any plausible number of marker lines, and
+ * raised past the default so a tree with many hits reports THE HITS rather than
+ * an `ENOBUFS` the operator would read as a broken scan.
+ */
+const MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
+
+/**
  * Scan a repository's tracked working tree for conflict markers.
  *
  * @param {string} cwd - Absolute path to the repository to scan.
@@ -53,7 +60,8 @@ function scan(cwd, spawn = spawnSync) {
   const res = spawn('git', ['grep', '-nE', MARKER_PATTERN], {
     cwd,
     encoding: 'utf8',
-    timeout: SCAN_TIMEOUT_MS
+    timeout: SCAN_TIMEOUT_MS,
+    maxBuffer: MAX_OUTPUT_BYTES
   });
 
   if (res.error) return { ok: false, hits: [], error: res.error.message };
@@ -103,4 +111,4 @@ if (require.main === module) {
   process.exit(main(process.argv.slice(2)));
 }
 
-module.exports = { scan, main, MARKER_PATTERN, SCAN_TIMEOUT_MS };
+module.exports = { scan, main, MARKER_PATTERN, SCAN_TIMEOUT_MS, MAX_OUTPUT_BYTES };
