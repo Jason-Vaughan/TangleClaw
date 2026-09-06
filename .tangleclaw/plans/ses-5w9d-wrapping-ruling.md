@@ -268,6 +268,17 @@ the product worse at the thing the state was for.
   **Verify the process boundary before designing the read** — see the open assumption above. If
   `enrichProject`'s relevant branch runs in the killable scanner child, the registry cannot be
   required there and its state has to be passed in.
+
+  **The card this chunk means to restore does not exist in the frontend, found while building
+  Chunk 01.** `_liveSession(row, 'wrapping')` set a `status` field on the card payload, and
+  nothing renders it: `public/ui.js` reads `session.active`, `session.sessionMode`,
+  `session.lastEngineError` and the unknown-read state, and never `session.status` (grep it — the
+  only `.status` hits in `public/` are on session RULES). So even before the row stopped existing,
+  a wrapping project's card looked identical to a running one. Pointing the server branch at
+  `wrapRunRegistry` therefore changes nothing an operator can see; this chunk needs a frontend
+  half — a field the card actually reads, and a dot or pill that reads it. That is also why its
+  acceptance criterion is "verified by running a real wrap" rather than by tests: a test on the
+  payload would have passed against a card that renders nothing.
 - **Tests:** a project with a running wrap renders as wrapping; one with no run renders active and
   reports the answer as established rather than unknown; a finished run does not leave the card
   stuck.
