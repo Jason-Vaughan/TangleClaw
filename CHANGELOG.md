@@ -15,8 +15,12 @@ All notable changes to TangleClaw are documented in this file.
   than an absent one — this one already mis-tiered a `/prawduct:critic` run in a consuming
   project, which escalated on `skills/` paths its session never touched.
 
-  The field is now measured over the session's own commit range and left unfiltered; the
-  allowlist applies to the Map, which is what it was written for. The range base is the boundary
+  The field is now measured over the range since the previous wrap's recorded boundary — the
+  same session range every other wrap step already measures — and left unfiltered; the
+  allowlist applies to the Map, which is what it was written for. That boundary's reach is
+  `lastWrapSha`'s and not this step's: it records the wrap commit's parent so a squash-merge
+  cannot orphan it (#664), so what the record calls "this session" is what the rest of the wrap
+  calls it. The range base is the boundary
   the *previous* wrap recorded, so `lib/wrap-steps/commit.js` reports it as
   `output.previousWrapSha` — that step overwrites the on-disk value, and by the time
   `continuity-write` runs the replaced one is gone. Resolution goes through the shared

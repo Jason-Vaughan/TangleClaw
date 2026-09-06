@@ -338,3 +338,112 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
     assert.equal(step._resolveCommitOutput(null), null);
   });
 });
+
+describe('commit → continuity-write — the two steps agree on the boundary (#797)', () => {
+  // The cases above hand-write the commit step's output, which proves what
+  // `continuity-write` does with a shape but not that the shape is the one
+  // `commit` produces. This drives the real producer into the real consumer:
+  // rename the field on either side and this goes red where the others stay
+  // green.
+  let root;
+  let repo;
+  let origToday;
+  let origClaudeHome;
+
+  before(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-prov2-'));
+  });
+
+  after(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    repo = fs.mkdtempSync(path.join(root, 'repo-'));
+    initRepo(repo, ['-b', 'main']);
+    const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+    git('config', 'user.email', 'test@example.invalid');
+    git('config', 'user.name', 'Test');
+    fs.writeFileSync(path.join(repo, 'README.md'), 'root\n');
+    git('add', '-A');
+    git('commit', '-qm', 'trunk');
+
+    origToday = step._internal.today;
+    origClaudeHome = transcript._internal.claudeHome;
+    step._internal.today = () => '2026-06-15';
+    transcript._internal.claudeHome = () => path.join(root, 'no-claude-home');
+  });
+
+  afterEach(() => {
+    step._internal.today = origToday;
+    transcript._internal.claudeHome = origClaudeHome;
+  });
+
+  it('a second session records its own files, not the first session\'s', async () => {
+    const commitStep = require('../lib/wrap-steps/commit');
+    const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+    const project = { id: 1, name: 'demo', path: repo };
+
+    /**
+     * Run the commit step, then feed its real result to continuity-write.
+     * @param {number} sid - Session id.
+     * @returns {Promise<object>} The commit step's result.
+     */
+    async function wrap(sid) {
+      const commitRes = await commitStep.run({
+        project, session: { id: sid, engineId: 'claude' }, step: {}, staged: {}, options: {}
+      });
+      await step.run({
+        project,
+        session: { id: sid, engineId: 'claude' },
+        step: {},
+        staged: {},
+        options: {},
+        previousResults: [
+          { stepId: 'memory-update', status: 'done', output: { parsedFields: { summary: `s${sid}`, nextSteps: 'n' } } },
+          { stepId: 'commit', status: commitRes.status, output: commitRes.output }
+        ]
+      });
+      return commitRes;
+    }
+
+    // `commit` runs `git add -A` on whatever the working tree holds, and
+    // auto-branches off a protected branch, so the sessions run on a branch.
+    git('checkout', '-q', '-b', 'feat/two-sessions');
+
+    fs.writeFileSync(path.join(repo, 'first.js'), 'one\n');
+    const first = await wrap(1);
+    assert.equal(first.ok, true);
+    assert.ok(first.output.commitSha, 'session 1 committed');
+    const stampedBySession1 = require('../lib/store').projectConfig.load(repo).lastWrapSha;
+    assert.ok(stampedBySession1, 'session 1 left a boundary behind');
+
+    fs.writeFileSync(path.join(repo, 'second.js'), 'two\n');
+    const second = await wrap(2);
+    assert.equal(second.ok, true);
+    assert.equal(second.output.previousWrapSha, stampedBySession1,
+      'the boundary session 2 reports is the one session 1 stamped — the handoff itself');
+
+    const files2 = continuity.readWrapSummary(repo, 2).meta.files.split(',').map((f) => f.trim());
+    assert.ok(files2.includes('second.js'), 'session 2 records its own work');
+
+    // The record is the boundary handoff's range, verbatim — asserted against
+    // git rather than against a list, so it stays true as the boundary's own
+    // semantics evolve.
+    const expected = execFileSync('git',
+      ['diff', '--name-only', `${stampedBySession1}..${second.output.commitSha}`],
+      { cwd: repo, encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+    assert.deepEqual(files2.sort(), expected.sort());
+
+    // And the boundary's reach, named rather than assumed: `lastWrapSha` records
+    // the wrap commit's PARENT so it survives squash-merge (#664), so a session
+    // whose only commit IS its wrap commit leaves a boundary that precedes its
+    // own work. Session 1 is that shape here, so `first.js` is in range. The
+    // field means "changed since the previous wrap's recorded boundary" — the
+    // same range every other wrap step measures — not "changed by exactly this
+    // session's commits", and #797 is fixed by making it the former instead of
+    // the whole branch.
+    assert.ok(files2.includes('first.js'),
+      'the boundary precedes session 1\'s wrap commit, so its work is in range');
+  });
+});
