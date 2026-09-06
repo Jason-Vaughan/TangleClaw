@@ -377,11 +377,11 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 <!-- Six further entries the stubber wrote here were removed by hand: it named
      files this branch never touched (lib/tangleclaw-home.js and the #828/#1052
      wrap-step tests, which merged before this branch was cut), so it measured a
-     span wider than the session: it measures `<lastWrapSha>..HEAD`, and this
-     clone's lastWrapSha sits several sessions back. NOT yet filed as an issue
-     — do not read this note as a tracking reference. #1280 predicts exactly
-     this in its Notes but is scoped to continuity-write.js alone. The one real
-     entry is kept below. -->
+     span wider than the session: it measures `<lastWrapSha>..HEAD`, so it sweeps
+     up everything merged since the previous wrap. Filed as #1309, which covers
+     all three of _git-range's consumers; #1280 predicts the same defect in its
+     Notes but is scoped to continuity-write.js alone. The one real entry is
+     kept below. -->
 
 - **Session wrap finalize** — `test/session-wrap-finalize.test.js` guards the session
   page's `wrapping` / `wrapFinished` / `wrapCompleted` poll branches. Those branches are
