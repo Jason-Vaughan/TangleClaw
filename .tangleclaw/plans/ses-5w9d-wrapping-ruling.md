@@ -1,0 +1,271 @@
+---
+artifact: build-plan
+version: 2
+scope: ses-5w9d
+depends_on:
+  - artifact: data-model
+  - artifact: architecture
+  - artifact: api-contract
+governed_by:
+  - artifact: data-model
+    dispositions:
+      - "Governance state is derived from disk, never stored → the norm's *shape* is the ruling's whole argument, applied one table over. A session's wrap-in-progress state is derived from the process that is running the wrap; persisting it creates a second source of truth that can contradict the first, which is exactly what a `wrapping` row surviving a restart does."
+      - "A project's configuration travels with the project → inapplicable. Session status is TangleClaw's own runtime record, not project configuration, and nothing here changes what lives in `<project>/.tangleclaw/`."
+      - "The Project Master has no sessions or projects footprint → conforms and is untouched; `tangleclaw-master` has no session row to hold any status."
+  - artifact: architecture
+    dispositions:
+      - "A read that could not be established reports null and names itself, never a plausible default → ENGAGED, and it is the constraint on the replacement. `getSessionStatus`'s wrapping branch is one of the most careful implementations of this norm in the codebase (#908's `incomplete`/`cause` vocabulary). Re-sourcing wrap state from the run registry must carry that vocabulary forward, not lose it: the registry can say 'no run', and 'no run' after a restart is an ESTABLISHED answer, which is precisely why it is the better source."
+      - "A dependency's failure degrades TangleClaw, never crashes it → conforms; nothing here adds a dependency."
+  - artifact: api-contract
+    dispositions:
+      - "The wrap POST's `status: \"wrapping\"` is a contract this ruling does NOT break — it is already sourced from the run registry, not the sessions table. The `GET /api/sessions/:project/status` responses documented at `api-contract.md` §769-840 ARE sourced from the dead DB state, and they are the contract this ruling changes. Recorded as two separate surfaces because conflating them is how a reader concludes the whole `wrapping` vocabulary is being retired."
+last_validated: 2026-09-06
+---
+
+## The Ruling
+
+**`wrapping` does not survive as a persisted session status. The concept survives, sourced from
+`lib/wrap-run-registry.js`.**
+
+Ruled by the operator 2026-09-06, on the evidence below. #1034 warned that the likeliest way to
+get this wrong is to phrase it as "remove the unreachable pathway" and thereby authorise the
+smaller branch by accident. It was not phrased that way: both branches were priced, and the
+argument that decided it is a positive one about where the truth lives, not an appeal to the code
+being dead.
+
+## Requirements Confidence
+
+**Level:** High
+
+**Why:** The ruling rests on evidence gathered from the live database, the git history and the
+code, and two of #1034's own load-bearing claims did not survive that check. Both corrections are
+recorded here because the issue will outlive this plan and its text is what a later reader finds.
+
+**Correction 1 — the state was live, and was used 166 times.** #1034 states: "The operator's live
+database holds **zero `wrapping` rows across 875 sessions** back to 2026-03-14 … Not 'none right
+now': none in the table's entire history." That inference does not follow from its evidence.
+`sessions.status` is a single column that `store.sessions.wrap` **overwrites** on transition, so a
+completed wrap leaves no trace of ever having been `wrapping`. A snapshot of that column can only
+ever say what is true now. The history is in `activity_log`, and it says:
+
+| | |
+|---|---|
+| `session.wrapping` rows | **166**, from 2026-03-18 to **2026-05-21** |
+| by month | 2026-03: 70 · 2026-04: 69 · 2026-05: 27 · nothing after |
+| `session.wrapped` by month | 03: 70 · 04: 62 · 05: 31 · 06: 18 · 07: 128 · 08: 73 · 09: 14 |
+
+`setWrapping` writes that row only when its `UPDATE … WHERE id = ? AND status = 'active'` changed
+something, so each of the 166 is a real transition. The read side had rows to serve; they were
+transient by design and every one of them moved on.
+
+**Correction 2 — it died in May, not July, and the cause named in the issue is the wrong commit.**
+The July note attributes the loss to Chunk 05 of prawduct-v2-sunset (`9c67b2c`, 2026-07-18)
+stripping the legacy NL-prompt wrap, "the LAST production caller of `store.sessions.setWrapping`".
+The transitions had already stopped eight weeks earlier. `bdbb343` (2026-05-19) introduced
+`_completeV2Wrap`, which calls `store.sessions.wrap(active.id, summary)` directly on the **active**
+session — `active` → `wrapped` in one step, with no intermediate — and the last `session.wrapping`
+row is dated two days later. The July strip removed a caller that was already dormant. This matters
+beyond bookkeeping: it means the state was not lost by accident during a cleanup, it was designed
+out by the V2 pipeline, which is a different fact about intent.
+
+**Correction 3 — the vocabulary is five values, not seven.** #1034 lists the status literals as
+`'active'`/`'wrapping'`/`'wrapped'`/`'killed'`/`'crashed'`/`'degraded'`/`'ended'`. Grepping every
+`status = '...'` write across `lib/` and `server.js` returns exactly five: `active`, `wrapping`,
+`wrapped`, `killed`, `crashed` — matching the live table, which holds only four of them (nothing
+is `wrapping`). `degraded` and `ended` are real strings in this codebase but belong to other
+domains entirely: `lib/model-status.js` maps provider-incident severities to `degraded`,
+`server.js`'s health check computes a `degraded` service status, and `ended` is one of
+`ai-content.js`'s `GATEWAY_TERMINAL_STATES`. None is a session status. An enum built from the
+issue's list would have modelled two states the product does not have — which is worse than
+modelling none, because a transition map that admits an unreachable state licenses code to handle
+it.
+
+**What follows from the corrections.** Since 2026-05-21, **233+ wraps have completed** with the
+session sitting `active` for the duration. A V2 wrap takes minutes. So "nothing in the database
+distinguishes an agent working from an agent wrapping" is not a hypothetical the ruling might
+introduce — it has been the shipped behavior for three and a half months, and it is the real gap
+this work should close.
+
+**Open assumptions / unknowns:**
+
+- [ASSUMPTION: the dashboard's wrap indicator can read the run registry from the process that
+  serves the request | MED impact | verified at Chunk 02, and it changes that chunk's shape if
+  false]. `lib/projects.js#enrichProject` moved most of its filesystem reads into the killable
+  scanner child (#884); the registry is process-local module state in the server, so the branch
+  that would consume it must run in the parent. If it turns out to run in the child, the
+  registry's state has to reach it as an argument rather than as a require.
+
+**What would raise confidence:** N/A at High.
+
+## Why the registry, and not the row
+
+The two candidates are not "a live mechanism and a dead one". They are two places to keep the same
+fact, and one of them cannot keep it truthfully.
+
+`lib/wrap-run-registry.js` was built for #583 after the 2026-07-16 incident proved a client-side
+single-flight guard cannot span tabs, devices or reloads. Its header states its own storage
+decision:
+
+> Process-local BY DESIGN: a pipeline cannot survive a server restart, so an empty registry after
+> boot is the truth — a post-restart `begin` legitimately starts fresh. No persistence wanted.
+
+That sentence decides this ruling. The only thing a persisted `wrapping` row offers over the
+registry is **durability across a restart** — and the thing it would durably record is that a wrap
+is in progress, which after a restart is **false**, because the pipeline died with the process. A
+`wrapping` row that survives a reboot is not resilience; it is a lie with a one-hour shelf life.
+
+And the machinery that cleans up that lie is substantial: `STALE_WRAPPING_THRESHOLD_MS`, the age
+branch, the probe branch, `autoCompleteWrap`, `_wrapPaneCache` population on the wrapping path —
+built across #105, #908 and #910, and **none of it has ever executed in production**, because
+nothing has entered the state since May. Restoring the transition (the alternative branch) would
+put all of it into production for the first time, against a path with no field history, in exchange
+for a durability whose content is false by construction.
+
+The registry, meanwhile, already answers the question, already survives the case that matters (it
+says "no run", which after a restart is correct and *established* rather than unknown), and is
+already the source the API reports from: `server.js#_wrapResultPayload` returns
+`status: 'wrapping'` to every client today with no database row behind it.
+
+**The honest cost of this ruling, stated rather than buried:** wrap state becomes
+non-queryable and non-historical. Nothing will be able to ask "was this session wrapping at 04:12
+yesterday", and a second server process (there is none today) would not see the first's runs. If
+either becomes a requirement, the answer is to persist the *registry*, not to resurrect a status
+column — the registry knows which run, which step, and what happened, where the column knew only
+that something was happening.
+
+## Status
+
+- [ ] Chunk 01: The status vocabulary is explicit, and `wrapping` is not in it (#1034)
+- [ ] Chunk 02: The dashboard says a session is wrapping again, sourced from the run registry (#1034)
+- [ ] Chunk 03: The vestigial `V2` designators are retired (#1034)
+
+Context: Ruling made 2026-09-06 by the operator, as a gate between Train 13 and Train 14 — the
+sequencing #1034's own comment sets, and the sequencing the roadmap coordinator halted Train 14 to
+enforce. Train 14 is paused after its Chunk 01 and resumes when this closes.
+
+Chunk order is deliberate and the first chunk is NOT the deletion. Chunk 01 lands the enum and the
+transition map — the thing #1034 actually asks for — with `wrapping` absent from it, which makes
+the deletion a consequence of a modelled decision rather than a cleanup that happens to remove a
+state. Chunk 02 then closes the gap the ruling exposes, because a ruling that only deletes leaves
+the product worse at the thing the state was for.
+
+### Chunk 01: The status vocabulary is explicit, and `wrapping` is not in it
+
+- **Description:** Session status lives as scattered SQL string literals across `lib/store.js`'s
+  `sessionsApi` and `lib/sessions.js` with no enum and no allowed-transition map — the modelling
+  #1034 asks for. Introduce `SESSION_STATUS` and the transition table, mirroring the existing
+  `SESSION_RULE_KINDS` pattern, over the four statuses that remain after the ruling — `active`,
+  `wrapped`, `killed`, `crashed` — and no others (see Correction 3: `degraded` and `ended` are not
+  session statuses). Retire the pathway that produced
+  it and the recovery machinery built to clean up after it.
+- **Closes:** part of #1034
+- **Depends on:** none.
+- **Artifacts consumed:** `data-model.md`, `architecture.md`, `api-contract.md`
+- **Deliverables:** the enum plus the allowed-transition map, and the removal of the `wrapping`
+  ecosystem. The consumers, enumerated from the code rather than inherited from the issue:
+
+  | Site | What happens |
+  |---|---|
+  | `store.sessions.setWrapping` | deleted — no production caller since 2026-05-19 |
+  | `store.sessions.getWrapping` | deleted, with its five call sites |
+  | `lib/sessions.js` launch-time stale-wrapping recovery | deleted with `STALE_WRAPPING_THRESHOLD_MS` and `_parseSqliteUtcMs`'s use there |
+  | `autoCompleteWrap` | deleted — its only caller is that recovery |
+  | `getSessionStatus`'s wrapping branch + `_wrappingStatus` | deleted; the `active` branch already covers a wrapping session, since that is the status it now holds |
+  | `completeWrap`'s `getWrapping() \|\| getActive()` | collapses to `getActive()` — the arm that runs today |
+  | `session-ownership.js` `status === 'active' \|\| 'wrapping'` | collapses to `active` |
+  | `store.sessions.getActiveAll`'s `IN ('active','wrapping')` | collapses to `active` |
+  | `lib/projects.js`'s dashboard wrapping branch | **not deleted — re-sourced in Chunk 02** |
+  | `_wrapPaneCache` | **kept.** It is populated on the wrapping path but read by `completeWrap` and the active path too; only the wrapping-branch population goes. |
+  | `session.wrapping` activity event | kept as a type nothing emits any more, since the 166 historical rows must stay readable |
+  | `api-contract.md` §769-840 | the `GET /status` wrapping responses are retired |
+  | `api-contract.md` §1005 | **unchanged** — the wrap POST's `status: 'wrapping'` comes from the run registry, not the table |
+
+  **The one thing that must not be conflated.** The wrap POST already reports
+  `status: 'wrapping'` with no DB row behind it. Retiring the persisted state does not retire that
+  contract, and a chunk that treats "remove `wrapping`" as a vocabulary-wide sweep would break a
+  live API response for no reason.
+- **Tests:** the transition map rejects a transition that is not in it, and the suite's existing
+  `setWrapping` fixtures (six files) are rewritten to the states that actually occur rather than
+  deleted wholesale — a test that constructs an impossible state was testing the machinery, and its
+  real subject (a wrap completing, a launch finding a live session) still exists. The mutation that
+  must go red: re-add `wrapping` to the enum and the map's exhaustiveness assertion fails.
+- **Acceptance criteria:** no code path can write `wrapping`; `SESSION_STATUS` and its transition
+  map are the single source for the vocabulary; the 166 historical `session.wrapping` activity
+  rows remain readable; the wrap POST's response shape is byte-identical.
+- **Done when:**
+  1. Acceptance criteria met and tests pass
+  2. `/prawduct:critic` run and blocking findings resolved
+  3. `data-model.md` and `api-contract.md` updated in the same commit
+  4. Committed, PR merged, chunk marked `[x]` in Status
+
+### Chunk 02: The dashboard says a session is wrapping again, sourced from the run registry
+
+- **Description:** The gap the ruling exposes and the reason it is not a pure deletion: for three
+  and a half months a wrap taking minutes has shown as an ordinary active session. `lib/projects.js`
+  has a branch that renders a wrapping card (`_liveSession(wrappingSession, 'wrapping')`) which has
+  been unreachable since May. Point it at `wrapRunRegistry` instead of `store.sessions.getWrapping`,
+  so the card returns — this time reading the mechanism that actually knows.
+- **Closes:** part of #1034 — the operator-facing half
+- **Depends on:** Chunk 01.
+- **Artifacts consumed:** `architecture.md` (Direction: a read that could not be established
+  reports null and names itself)
+- **Deliverables:** the dashboard's wrap indicator sourced from `wrapRunRegistry.anyRunning` /
+  `get`, carrying the registry's richer answer (which step, how long) as far as the card usefully
+  can. The `incomplete`/`cause` vocabulary #908 established is preserved: the registry's "no run"
+  is an **established** answer and must be reported as one, never as an unknown.
+
+  **Verify the process boundary before designing the read** — see the open assumption above. If
+  `enrichProject`'s relevant branch runs in the killable scanner child, the registry cannot be
+  required there and its state has to be passed in.
+- **Tests:** a project with a running wrap renders as wrapping; one with no run renders active and
+  reports the answer as established rather than unknown; a finished run does not leave the card
+  stuck.
+- **Acceptance criteria:** starting a wrap changes what the dashboard says within one poll, and
+  finishing it changes it back — verified by running a real wrap, not only by tests.
+- **Done when:**
+  1. Acceptance criteria met and tests pass
+  2. Verified against a real wrap on this install
+  3. `/prawduct:critic` run and blocking findings resolved
+  4. Committed, PR merged, chunk marked `[x]` in Status
+
+### Chunk 03: The vestigial `V2` designators are retired
+
+- **Description:** `_triggerWrapV2`, `_completeV2Wrap`, the "V2 lifecycle" log strings and the
+  wrap-run-registry header's V2 references all distinguish a V2 from a V1 that no longer exists.
+  #1034 bundles this rename with the ruling because it is the same reading pass.
+- **Closes:** the remainder of #1034
+- **Depends on:** Chunks 01 and 02 — renaming symbols that are about to be deleted or re-sourced
+  would make both diffs harder to review.
+- **Artifacts consumed:** none beyond the code.
+- **Deliverables:** the rename, and nothing else. **`Type: trivial` is NOT claimed** — a rename
+  that touches log strings changes operator-visible output, and the wrap pipeline is the product's
+  most consequential path.
+- **Tests:** existing suite green; any test asserting on a renamed log string moves with it.
+- **Acceptance criteria:** no `V2` designator survives in `lib/` or `server.js` except where it
+  names a genuine version of something that still has a V1; suite green.
+- **Done when:**
+  1. Acceptance criteria met and tests pass
+  2. `/prawduct:critic` run and blocking findings resolved
+  3. Committed, PR merged, chunk marked `[x]` in Status — Train 14 resumes at its Chunk 02
+
+## Verification Strategy
+
+Chunk 01 is a deletion, and the risk of a deletion is not that it breaks a test — it is that it
+removes a path something still needed. Two checks beyond the suite:
+
+- **The 166 historical rows stay readable.** `GET /api/activity?type=session.wrapping` returns
+  them after the change. A retired event type must not become an unreadable one.
+- **A real wrap runs end to end on this install** before Chunk 01 merges — this clone IS the live
+  install, so the wrap path being edited is the one that wraps this very session.
+
+Chunk 02 carries `**Visual change:** yes` and an operator-verification entry: whether a wrapping
+card reads correctly on a phone is not something a test can speak to.
+
+## Governance Checkpoints
+
+- **After Chunk 01** — the deletion is the irreversible half. Review the trajectory: did anything
+  the ruling assumed was dead turn out to have a live caller, and does the transition map cover
+  exactly the four statuses that remain (`active`, `wrapped`, `killed`, `crashed`) with no fifth
+  admitted from the issue's list?
+- **After Chunk 03** — the cumulative review, and the point at which #1034 is closed and Train 14
+  resumes.
