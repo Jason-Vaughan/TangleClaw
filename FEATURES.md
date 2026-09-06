@@ -357,3 +357,16 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - **TBD** — touched in this session: `test/chime-control.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/repo-governance-reference.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/settings-launch-mode-render.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-09-05)
+
+- **TBD** — touched in this session: `docs/adr/0013-settings-take-effect-or-say-why-not.md`. <!-- describe -->
+- **TBD** — touched in this session: `test/_engine-store.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/create-launch-posture.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/engine-capability-reads.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/eval-audit-reachable.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/extension-rule-values.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/setting-disposition.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/settings-index-toggle-render.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/settings-silent-prime-render.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/theme-contrast.test.js`. <!-- describe -->
