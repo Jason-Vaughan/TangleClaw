@@ -18,6 +18,37 @@ All notable changes to TangleClaw are documented in this file.
   carries the remainder.
 
 ### Fixed
+- **A misordered marker pair no longer grows the priming file by one stale block per wrap
+  (#1132).** TangleClaw splices a managed block into a file it co-owns with another writer in two
+  places, and they disagreed about what a broken marker set means: the engine-config merge refused
+  and left the file byte-identical, while the wrap pipeline's priming roll treated a misordered
+  pair as "no block here" and appended a fresh one — which is not idempotent, so the next wrap saw
+  the same misordered pair and appended again, forever, every appended block stale the moment the
+  next landed. Both now splice through one shared implementation (`lib/managed-block.js`), and the
+  shared policy is decided by the **marker counts**, because they are the only thing that can
+  decide it: a marker literal is not proof the marker is TangleClaw's. An operator documenting this
+  mechanism inside the very file it edits writes both literals in their own prose, and nothing in
+  the text distinguishes those from a real region. So exactly one begin and one end is our region —
+  spliced in place when they are in order, and **repaired** into one well-formed block when they
+  are not, with the text that was between them kept below it and the result stable on every
+  later pass. No markers at all appends a fresh block. Every other count is refused, the file left
+  byte-identical, with the counts named. **Behavior changes:** the priming roll no longer appends
+  around a broken pair (that is the bug) and no longer edits the first of several pairs; the
+  engine-config merge now repairs a misordered pair instead of refusing it. A repair moves bytes
+  outside the managed region, so it is never silent — it is logged with the file and what to check,
+  and the wrap step reports it on its own row. Generated content carrying a marker literal is still
+  refused: it would write a boundary the operator never authored, and repair cannot undo that
+  because the file would look well formed. The priming roll reports that as a blocked step naming
+  the plan and what to fix.
+- **An engine switch no longer whole-file-replaces a shared carrier that has one unmatched marker
+  (#1132).** `retireInactiveEngineConfig` asked whether a file was TangleClaw's by testing for
+  *both* markers, so a carrier holding a single unmatched one answered no. A `GEMINI.md` or
+  `AGENTS.md` whose generator header was present then had its entire contents replaced by the
+  inactive notice, destroying the operator's sections and any other tool's block — the exact loss
+  the managed block exists to prevent — while one without that header was skipped with the reason
+  "no managed markers", which was untrue of the file and left the superseded config reading as live
+  canon. Ownership is now one question asked in one place, so a file with any marker goes to the
+  merge, which repairs what it can read and refuses what it cannot.
 - **A rejected project PATCH no longer leaves the project half-changed (#1033).** `updateProject`
   validated most fields before writing anything and three of them inside the blocks that write,
   so `PATCH { name, engine }` with an unknown engine renamed the directory on disk and *then*

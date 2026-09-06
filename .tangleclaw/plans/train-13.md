@@ -86,7 +86,7 @@ than unknowns, and both are surfaced at the chunk that would act on them.
 - [x] Chunk 03: The provenance record says what the session did, and corruption is detected (#797, #882)
 - [x] Chunk 04: One derivation of the base directory, one containment predicate (#828, #1052)
 - [x] Chunk 05: Validate every field before writing any, in the real run and the rehearsal (#1033, #929)
-- [ ] Chunk 06: One managed-block policy for a malformed marker pair (#1132)
+- [x] Chunk 06: One managed-block policy for a malformed marker pair (#1132)
 
 Context: Plan written 2026-09-06 against the roadmap's blessed Train 13 roster and order
 (`ROADMAP_STATE.md`, "Train 13: Nothing Mutates Behind Your Back"). The roadmap leads with
@@ -258,6 +258,78 @@ modal and therefore could not see `quickCommands`, persisted with no verdict at 
 what the WRITE phase reads immediately found a third gap (`activePlan` missing from the fixture,
 so the partial-update tests had been one field smaller than they looked). When a guard enumerates,
 ask what produces the roster and whether that producer can see everything the code can.
+
+**Chunk 06 is built** — branch `fix/1132-one-managed-block-policy`. The splice now lives in
+`lib/managed-block.js`, a leaf module with no imports, and both splicers go through it: the
+engine-config merge adds the syntax comment form and H1 demotion, the priming roll passes its own
+literal marker pair. The plan named `lib/engines.js` as the home; extracting instead is a
+[DECISION], and the reason is a rule this repo already learned — a `lib/wrap-steps/` handler
+requiring `lib/engines` at module top closes the `projects → sessions → wrap-pipeline →
+wrap-steps` cycle, and `lib/wrap-steps/ai-content.js` carries a comment explaining that it reads
+profiles through `store.engines` for exactly that reason. `lib/update-applier.js` lazy-requires
+`lib/engines` mid-function on the same grounds. Engines keeps ownership of the engine-config
+policy; only the mechanism moved.
+
+**The plan's assumption held, but only for the shape the issue names — and my first build of it
+was wrong.** Option 2 (repair) is right for a MISORDERED pair, which is what #1132 is about. I
+generalised it to every broken marker set: any begin-then-end became "our region", later pairs were
+dropped as "stale copies of our own output", and stray markers were stripped. The Critic blocked it,
+correctly. **A marker literal is not proof the marker is ours.** An operator documenting this
+mechanism inside the very file it edits writes both literals in their own prose — the reason
+`test/repo-governance-reference.test.js` exists is that this repo's own CLAUDE.md header once did —
+and nothing in the text separates that from a real region. My version deleted their explanation,
+relocated the block into their header, and dropped the real block below it. That is a new
+silent-data-loss path in the exact files the mechanism exists to protect, and I had written
+"nothing of the operator's deleted" in four places while the code did the opposite.
+
+The reviewer's own narrow fix (repair strays, refuse more-than-one-complete-pair) was still too
+wide: a second reviewer's case — ONE stray marker in prose plus the real block — has one complete
+pair and would still have relocated. **The safe line is the counts, and only the counts.** Exactly
+one begin and one end is our region (spliced in order, repaired out of order); none of either
+appends; every other count is refused with the counts named. That restores every guarantee the old
+engine-side refusal made, adds the order repair #1132 asked for, and takes back nothing else.
+
+**The lesson, and it is the one Chunk 05's handoff predicted in different words.** I unified two
+implementations and, in the act of unifying, invented a THIRD policy neither had — broader than
+both — while the commit message claimed it was strictly stronger. Extract-and-unify is not a
+behavior-preserving refactor: whatever the merged policy is, it is new, and it needs the same
+scrutiny as new code. The tell was available before the review: I wrote "nothing outside a complete
+pair is deleted" and never asked what makes a complete pair OURS.
+
+**Three call sites, not two.** #1132 named two splicers and I unified both — and
+`retireInactiveEngineConfig` kept a third, older judgement of marker state (`includes(begin) &&
+includes(end)`) written under the refusal policy, whose tests still passed. Three reviewers found it
+independently. Its consequence was worse than an inconsistency: a shared carrier with ONE unmatched
+marker answered "not ours", and control fell through to a whole-file write of the inactive notice,
+destroying the operator's sections and the other tool's block. That path predates this chunk.
+Ownership is now one question in one place (`hasManagedMarkers`), so no call site can hold a private
+idea of what a marker set means. This is "one call site is not the family" recurring INSIDE the fix
+that was supposed to end it — the third recorded instance of that shape.
+
+**Answering the question Chunk 05's handoff left: what does a throw halfway leave?** The priming
+roll never writes — it stages, and `commit` flushes — so nothing there changed. `writeEngineConfig`
+does write, with a bare `fs.writeFileSync`, and repair newly points that write at carriers the
+layer previously refused entirely. The fix looked like a drop-in of the tmp+rename pattern already
+used three times in this repo (including 20 lines away in `engines.js`), and it turned
+`test/engine-switch-retires-config.test.js:139` red — correctly: a rename needs write permission
+on the *directory*, so it would silently override a config file an operator made read-only, where
+today that is an honest reported failure. Atomicity there is a decision about operator intent, not
+a mechanical change, so it is **#1291** rather than a passenger on a marker-policy chunk.
+
+**Train 13's quick win: #1231** — the three hand-transcribed `realKinds` stub rosters in
+`test/wrap-pipeline.test.js`, derived from `STEP_DISPATCH` instead. Picked on adjacency to the
+lesson this chunk just paid for rather than to its files: it is the same shape as #1132 (one truth,
+several hand-kept copies) and as the standing rule that a roster is only as wide as whatever
+produces it — a kind missing from a stub roster means that step's REAL handler runs inside a unit
+test, which for `preflight` means spawning `prawduct-hook`. Checked before calling it quick: it is
+**test-only**, touches no `deploy/`, no launchd plist and nothing TCC-gated, and the producer it
+should read (`STEP_DISPATCH`) already exists. The issue's own caveat carries into the work — check
+each of the three sites first, since one or two may be deliberately narrow.
+
+Runner-up **#1246** (the managed-carrier containment proof compares against HEAD while the discard
+restores from the index) is closer in mechanism and its option 3 is a couple of characters, but it
+sits in the self-update path that repairs a broken install, so it is not a quick win by this
+ritual's own test even though the change would be fail-closed.
 
 ## Scaffolding
 
