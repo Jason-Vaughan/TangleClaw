@@ -1889,11 +1889,11 @@ describe('sessions', () => {
     });
   });
 
-  // The same defect one state along: a WRAPPING row. `autoCompleteWrap` writes
-  // the wrap complete, tears down the Medusa listener, and commits the
-  // operator's repository — so a tmux server too wedged to answer could end a
-  // wrap that was still running and commit a working tree, on a fact nobody
-  // established. Nothing recovered when tmux came back (#908).
+  // The same defect on the finalize path. `completeWrap` writes the wrap
+  // complete, tears down the Medusa listener, and commits the operator's
+  // repository — so a tmux server too wedged to answer could end a wrap that
+  // was still running and commit a working tree, on a fact nobody established
+  // (#908).
   //
   // Every test here booby-traps `git.commit`. The failure mode of these guards
   // is not a wrong assertion — it is a REAL commit in a repository, so a
