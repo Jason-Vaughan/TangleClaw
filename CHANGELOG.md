@@ -41,6 +41,23 @@ All notable changes to TangleClaw are documented in this file.
   step proceeding on a payload it cannot attribute is the same defect one level up, and it
   meets commitment 3's bright-line: the wrap would otherwise report success while attributing
   another session's work to this one, which no project preference should be allowed to choose.
+
+  **The guard covers both capture runners, not one.** `_runGatewayCapture` reads the same
+  `step.captureFile` over ClawBridge, on a remote filesystem a local unlink cannot reach, so a
+  tmux-only arm would have left half the family uncovered while the comment claimed the file's
+  existence was proof. It arms with the consuming read that is the only primitive the bridge
+  has, and refuses the same way when that read cannot answer. The arm has its own `_internal`
+  seam rather than sharing `bridgeGetFile`, because clearing a file that belongs to no current
+  run and reading this run's result are different acts — sharing one would collapse "the step
+  never read the result" and "the step never touched the file" into a single assertion, and only
+  the first is what the gateway's tests pin.
+
+  The finalize also carries the session it observed. The route resolves its target by project
+  and then kills tmux and commits the repository, so a relaunch between the poll and the POST
+  could otherwise receive both; naming the session closes that for the caller that can, and a
+  request that names none behaves exactly as before. And the three branches that report a
+  wrapping session now build their answer from one helper: they had already drifted to three
+  encodings of "there is no idle reading", which a consumer cannot tell apart.
 - **TangleClaw's hooks moved out of the file projects are supposed to commit (#1022, #1242,
   #1275).** `syncEngineHooks` wrote a `SessionStart` hook naming an **absolute path to one
   machine's install** into `.claude/settings.json` — the shared, committable file the Claude

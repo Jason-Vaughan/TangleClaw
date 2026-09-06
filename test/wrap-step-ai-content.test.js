@@ -445,6 +445,43 @@ describe('wrap-step ai-content — CC-7 B1 gateway capture (webui)', () => {
     captureFile: '.tangleclaw/.wrap-summary.md'
   };
 
+  it('arms the capture over the bridge BEFORE sending the prompt (#840, the other half of the family)', async () => {
+    // The tmux path unlinks the captureFile before the prompt so its later
+    // existence proves this run wrote it. That reasoning is about the FILE, so
+    // it holds here identically — and this file lives on a remote filesystem a
+    // local unlink cannot reach, which is precisely why guarding only the tmux
+    // side would have left half the family uncovered.
+    const order = [];
+    aic._internal.bridgeClearCaptureFile = async (a) => {
+      order.push(`clear:${a.path}:${a.consume}`);
+      return { ok: true, content: '## Summary\nsomeone else\'s session\n', consumed: true };
+    };
+    aic._internal.bridgeSend = async () => { order.push('send'); return { ok: true, accepted: true, state: 'running' }; };
+    aic._internal.bridgeGetStatus = async () => ({ ok: true, inputReady: true, state: 'running' });
+    aic._internal.bridgeGetFile = async () => { order.push('read'); return { ok: true, content: RAW_BLOCK, consumed: true }; };
+
+    const res = await aic._runGatewayCapture(ctx(structuredStep));
+
+    assert.equal(res.ok, true);
+    assert.deepEqual(order, ['clear:.tangleclaw/.wrap-summary.md:true', 'send', 'read'],
+      'the stale file must be consumed BEFORE the prompt — clearing it afterwards proves nothing');
+    assert.equal(res.output.parsedFields.Summary, 'Tidy wrap cycle; no code changes.',
+      "and the discarded stale content must never reach the parsed fields");
+  });
+
+  it('REFUSES when the arming read cannot answer, rather than capturing into an unknown state', async () => {
+    let sent = false;
+    aic._internal.bridgeClearCaptureFile = async () => { throw new Error('bridge unreachable'); };
+    aic._internal.bridgeSend = async () => { sent = true; return { ok: true, accepted: true, state: 'running' }; };
+
+    const res = await aic._runGatewayCapture(ctx(structuredStep));
+
+    assert.equal(res.ok, false);
+    assert.equal(res.status, 'blocked');
+    assert.match(res.blockers[0], /stale captureFile/);
+    assert.equal(sent, false, 'the prompt is not sent — there is nothing safe to capture into');
+  });
+
   it('happy path: sends prompt, waits for inputReady, reads + parses the captureFile, stages fields', async () => {
     const calls = { sent: null, fileArgs: null };
     aic._internal.bridgeSend = async (a) => { calls.sent = a; return { ok: true, accepted: true, state: 'running' }; };

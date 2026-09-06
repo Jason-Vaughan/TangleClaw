@@ -2112,6 +2112,54 @@ describe('sessions', () => {
       }
     });
 
+    it('refuses a finalize that names a session which is no longer current', () => {
+      // This route kills tmux and commits the project repository, and it
+      // resolves its target by PROJECT. Between the poll that observed a
+      // finished wrap and the POST that finalizes it, a relaunch can put a
+      // different session under the same name and receive both.
+      const wrapping = startWrapping('tc-wedge-wrap-identity');
+      const realCommit = git.commit;
+      const realIsRepo = git.isGitRepo;
+      let committed = 0;
+      git.isGitRepo = () => true;
+      git.commit = () => { committed++; return { committed: true }; };
+      try {
+        const result = sessions.completeWrap('wedge-wrap', undefined, wrapping.id + 999);
+        assert.equal(result.session, null);
+        assert.match(result.error, /no longer the current session/);
+        assert.equal(store.sessions.get(wrapping.id).status, 'wrapping',
+          'the session it did NOT name is left alone');
+        assert.equal(committed, 0, 'and the repository is not committed');
+      } finally {
+        git.commit = realCommit;
+        git.isGitRepo = realIsRepo;
+        cleanup(wrapping.id);
+      }
+    });
+
+    it('accepts a finalize that names the current session, and one that names none', () => {
+      // The identity check must not become a new way to fail: naming the right
+      // session works, and omitting it keeps the pre-existing behaviour exactly.
+      for (const name of ['tc-wedge-id-match', 'tc-wedge-id-absent']) {
+        const wrapping = startWrapping(name);
+        const realCommit = git.commit;
+        const realIsRepo = git.isGitRepo;
+        git.isGitRepo = () => false;
+        git.commit = () => ({ committed: false });
+        try {
+          const result = name.endsWith('match')
+            ? sessions.completeWrap('wedge-wrap', undefined, wrapping.id)
+            : sessions.completeWrap('wedge-wrap');
+          assert.equal(result.error, null, name);
+          assert.equal(store.sessions.get(wrapping.id).status, 'wrapped', name);
+        } finally {
+          git.commit = realCommit;
+          git.isGitRepo = realIsRepo;
+          cleanup(wrapping.id);
+        }
+      }
+    });
+
     it('launchSession still completes a young wrap tmux ANSWERED was dead, and proceeds', () => {
       // The launch-path counterpart of the test above, and it exists because a
       // mutation proved it was missing: widening the refusal from

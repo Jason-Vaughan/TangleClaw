@@ -23,7 +23,7 @@ governed_by:
       - "a project's configuration travels with the project — <project>/.tangleclaw/project.json is the source of truth, the projects table holds only a queryable summary → conforms, and it constrains Chunk 05's shape: the two-phase apply must order the disk write and the DB summary so a rejected field leaves NEITHER written, rather than treating the table as the thing to keep consistent."
   - artifact: observability-strategy
     dispositions:
-      - "logs carry names, never payloads → conforms. Chunk 02's refusal names the run-id mismatch and the path; it does not log the stale summary's contents, which are a managed project's prose."
+      - "logs carry names, never payloads → conforms. Chunk 02's refusal names the capture file and the step; it does not log the stale summary's contents, which are a managed project's prose. (Amended at Chunk 02's close: the disposition originally said 'names the run-id mismatch', describing the stamp-and-verify design the chunk superseded with arm-and-refuse — see that chunk's DECISION.)"
       - "every logged error says what failed, why, and what the operator can do → conforms; called out explicitly in Chunk 02, whose whole value is that a refusal is visible."
 last_validated: 2026-09-06
 ---
@@ -260,19 +260,30 @@ than a single cumulative pass over the whole train.
 - **Deliverables:** `lib/sessions.js` — `getSessionStatus` reports that a wrapping session
   appears finished and finalizes nothing; finalization moves to a path that is an action:
   the launch path already handles stale wrapping rows (#105), and that is the natural home.
-  `lib/wrap-steps/ai-content.js` and the `memory-update` step — the arming step unlinks any
-  existing `.wrap-summary.md` before writing, AND the payload carries the run's identity,
-  which the consumer verifies. Both, per the issue: the delete handles the ordinary case,
-  the stamp catches the case where the delete did not happen.
+  `lib/wrap-steps/ai-content.js` — the step clears any existing `.wrap-summary.md` before the
+  AI is asked to write one, on BOTH capture paths: the tmux path unlinks it, and
+  `_runGatewayCapture` arms with the consuming read that is the only primitive the bridge has,
+  because the file it must clear lives on a remote filesystem a local unlink cannot reach.
+  [DECISION: arm-and-refuse replaces the issue's stamp-and-verify | #840 proposes writing the
+  run id into the payload and having the consumer verify it. That makes provenance depend on
+  the AI reliably emitting a stamp, and `wrap-direction.md` commitment 2 forbids a step needing
+  a capability only some engines have — the mechanical layer must produce identical results on
+  every engine. Clearing the file BEFORE the prompt gets the same property mechanically: the
+  file's later existence IS the proof this run wrote it, with no model cooperation. The issue's
+  own reason for wanting both — "the stamp catches the case where the delete did not happen" —
+  is met by refusing when the delete does not take, which is strictly safer than parsing a
+  payload whose stamp merely failed to match. | user can override and require the stamp]
 - **Tests:** unit — a status poll against a dead-tmux wrapping session leaves the wrap row,
   the listener, and the repository untouched, and the #105 guarantee holds (a wrapping row
-  never becomes unrecoverable); a `.wrap-summary.md` stamped with another run is refused
-  loudly rather than parsed, and an unstamped legacy file is refused rather than trusted.
-  Integration — a full wrap still detects its own completion through whatever surface
-  replaces the poll's side effect, because the session page depends on that timing.
+  never becomes unrecoverable); a `.wrap-summary.md` left by another run is cleared BEFORE the
+  prompt on both capture paths, and a clear that does not take refuses rather than parsing.
+  Client — `finalizeFinishedWrap` and the `wrapFinished` branch are the replacement for a
+  server-side action this chunk deletes, so they are exercised directly (lifted from
+  `public/session.js` into a sandbox, the harness `test/session-update-poll.test.js` already
+  uses) rather than left to the server tests, which can no longer see them.
 - **Acceptance criteria:** polling status through a wrap never writes to the operator's git
-  history; a planted stale `.wrap-summary.md` produces a hard refusal with a reason naming
-  the mismatch, not a skip and not a parse.
+  history; a planted stale `.wrap-summary.md` is cleared before the AI is prompted, and a clear
+  that cannot be completed produces a hard refusal naming why, not a skip and not a parse.
 - **Critic mode:** final
   <!-- Override: inference picks `chunk` mid-plan. This chunk re-times when a wrap
        finalizes, and the session page depends on that timing — #910 says so and is
