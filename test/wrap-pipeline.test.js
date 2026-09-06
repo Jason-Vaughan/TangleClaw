@@ -2428,6 +2428,70 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
       'stamping the wrap commit is the #664 bug — squash-merge orphans it, ballooning the next range');
   });
 
+  it('reports the range base it replaced, for the steps that run after it (#797)', async () => {
+    const storeMod = require('../lib/store');
+    // The boundary the PREVIOUS wrap left. `continuity-write` runs after this
+    // step and measures the session's changed set from it — and by then the
+    // stamp below has overwritten it on disk, so this step has to hand it on.
+    const priorBase = execSync('git rev-parse HEAD', { cwd: projectPath }).toString().trim();
+    const cfg0 = storeMod.projectConfig.load(projectPath);
+    cfg0.lastWrapSha = priorBase;
+    storeMod.projectConfig.save(projectPath, cfg0);
+    // A commit of the session's own, so the wrap commit's parent is NOT the
+    // recorded base — otherwise the stamp lands on the same value and the test
+    // could not tell a reported base from a re-read of the current one.
+    execSync('git add -A && git commit -qm "session work"', { cwd: projectPath, shell: '/bin/sh' });
+
+    fs.writeFileSync(path.join(projectPath, 'changed.txt'), 'hi\n');
+    const result = await commitStep.run(buildContext({}));
+    assert.equal(result.ok, true);
+    assert.equal(result.output.previousWrapSha, priorBase);
+    assert.equal(result.output.previousWrapShaRead, 'recorded');
+    assert.notEqual(storeMod.projectConfig.load(projectPath).lastWrapSha, priorBase,
+      'the on-disk value has moved — the reported one is the only surviving copy');
+  });
+
+  it('reports a null range base on a project that has never wrapped (#797)', async () => {
+    fs.writeFileSync(path.join(projectPath, 'changed.txt'), 'hi\n');
+    const result = await commitStep.run(buildContext({}));
+    assert.equal(result.output.previousWrapSha, null);
+    assert.equal(result.output.previousWrapShaRead, 'absent',
+      'positively established as absent — which is what lets a consumer act on it');
+  });
+
+  it('reports a boundary it could not READ as unreadable, not as absent (#797)', async () => {
+    // `store.projectConfig.load` returns its documented defaults for a malformed
+    // config rather than throwing, so the VALUE is null either way. A consumer
+    // acts on the difference — on `absent` it may publish the branch range as the
+    // session's work, on `unreadable` it must not, because a boundary is probably
+    // sitting on disk unread — so the outcome has to be reported, not inferred.
+    fs.mkdirSync(path.join(projectPath, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(path.join(projectPath, '.tangleclaw', 'project.json'), '{ not json');
+    fs.writeFileSync(path.join(projectPath, 'changed.txt'), 'hi\n');
+    const result = await commitStep.run(buildContext({}));
+    assert.equal(result.ok, true, 'an unreadable config never blocks the commit');
+    assert.equal(result.output.previousWrapSha, null);
+    assert.equal(result.output.previousWrapShaRead, 'unreadable');
+  });
+
+  it('reports the range base on the skip path too, where no stamp moves (#797)', async () => {
+    const storeMod = require('../lib/store');
+    const cfg0 = storeMod.projectConfig.load(projectPath);
+    cfg0.lastWrapSha = execSync('git rev-parse HEAD', { cwd: projectPath }).toString().trim();
+    storeMod.projectConfig.save(projectPath, cfg0);
+    // Commit the config write itself, or the tree is dirty and nothing skips.
+    execSync('git add -A && git commit -qm "record a boundary"', { cwd: projectPath, shell: '/bin/sh' });
+    const priorBase = cfg0.lastWrapSha;
+
+    // Nothing to commit: a clean session still writes a continuity record, and
+    // that record must be able to say the session changed nothing.
+    const result = await commitStep.run(buildContext({}));
+    assert.equal(result.status, 'skipped');
+    assert.equal(result.output.commitSha, null);
+    assert.equal(result.output.previousWrapSha, priorBase);
+    assert.equal(result.output.previousWrapShaRead, 'recorded');
+  });
+
   it('falls back to the wrap commit itself when it is a parentless root commit (#664)', async () => {
     const storeMod = require('../lib/store');
     // A repo whose very first commit is the wrap commit — HEAD~1 does not resolve,

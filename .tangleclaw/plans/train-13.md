@@ -83,7 +83,7 @@ than unknowns, and both are surfaced at the chunk that would act on them.
 
 - [x] Chunk 01: The machine-local hook moves out of the shareable file (#1022, #1242, #1275)
 - [x] Chunk 02: A read does not finalize, and a payload proves whose run wrote it (#910, #840)
-- [ ] Chunk 03: The provenance record says what the session did, and corruption is detected (#797, #882)
+- [x] Chunk 03: The provenance record says what the session did, and corruption is detected (#797, #882)
 - [ ] Chunk 04: One derivation of the base directory, one containment predicate (#828, #1052)
 - [ ] Chunk 05: Validate every field before writing any, in the real run and the rehearsal (#1033, #929)
 - [ ] Chunk 06: One managed-block policy for a malformed marker pair (#1132)
@@ -137,7 +137,63 @@ lost when `9c67b2c` stripped the V1 wrap path, in which case wrap-recovery has b
 disabled for months and the code is not dead but starved. Chunk 02 shipped anyway: a read that
 commits the operator's repository should not, reachable or not.
 
-Next: Chunk 03 (#797, #882) — whose `wrap-direction.md` Instances entry is already registered.
+**Chunk 03 is done** — branch `fix/797-session-provenance-and-conflict-markers`, Critic
+`rev-20260906T034652Z-c2bc464e` (three reviewers, tier `escalate`: 1 blocking, 10 warnings, 11
+notes — 13 fixed, 7 accepted, 2 filed as **#1280** and **#1281**), then
+`rev-20260906T040926Z-c74243ed`, which verified 9 of 10 resolved and found **one new blocking** in
+the fix pass itself, then a third round clean at 0/0/0, then a cumulative
+`rev-20260906T042122Z-46274408` over the whole span — 0 blocking, but 7 warnings acted on because
+two reviewers converged independently on the same pair. Five rounds; the change-log carries every
+disposition. Both `## Instances` entries are registered: #797's was already there
+and now records how it resolved, and #882 gained one — it is a CI gate rather than a wrap gate, so
+commitment 3 reaches it by analogy, and the entry says so rather than implying direct reach.
+
+**The reviewers found the fix reintroducing its own defect, and that is the lesson.** The stamp
+was published whenever the recorded boundary was falsy, on the reasoning that "no boundary means
+no earlier session". The producer never established that: `store.projectConfig.load` returns
+defaults for a malformed config, a failed stamp leaves null, and `blocker` is operator-overridable
+so a BLOCKED commit reaches the step reporting nothing at all. Three different conditions, one
+value, and the consumer took an ACTION on it — which is `architecture.md`'s Direction read
+backwards and #797's own shape one level up. **When a fix turns on a value that can be absent, ask
+what else produces that absence before deciding what absence means.**
+
+**A fix for one finding introduced the next.** Closing the first round's "a clean session records
+the previous wrap's paths" produced a short-circuit keyed on a null `commitSha` — which the
+COMMITTED path also emits, when `git rev-parse HEAD` fails after the commit lands. And the premise
+underneath it was wrong anyway: a wrap that commits nothing is not a session that changed nothing,
+because the commit step skips on a clean tree and a session that committed by hand reaches that with
+real work behind it. The short-circuit is gone; one function owns the decision. **The general rule:
+a remedy that adds a special case to a decision function is the shape to distrust — ask whether the
+condition it excepts is really the condition you were told about.**
+
+**The second round found a third guard that was not there at all.** The `maxBuffer` raise on the
+conflict scanner shipped as an exported constant nobody read — deleting the line left every case
+green. Both spawn bounds are now asserted against the injected `spawn`'s options, since neither has
+a symptom the behavioural cases can see. Same rule as below, one level further in: **a finding-fix
+is new code, and a GREEN mutation is the finding.**
+
+**And the guard for the falsy boundary was vacuous on the first try.** `store.projectConfig.load` takes one
+argument and silently dropped the `onError` the new code passed, so the `unreadable` branch could
+never fire. The mutation came back GREEN, which is the only reason it was found — second time this
+session a guard read as caution while doing nothing. **A wrapper that narrows another module's
+signature is where a caller's new requirement goes to die; check the wrapper, not the module it
+delegates to.**
+
+**One method note worth carrying into Chunk 04.** The defect that mattered most was found by a
+cross-step test — the real `commit` output driven into the real `continuity-write` — and what it
+first corrected was the *prose*, not the code: `lastWrapSha` records the wrap commit's PARENT
+(#664), so the range cannot mean "this session's commits", and three artifacts were claiming it
+did. Every other case in the file hand-wrote the producer's shape and would have carried the claim
+forever.
+
+**Carried into the train, not dropped:** `.prawduct/change-log.md` has no entries for Chunks 01
+and 02 — Chunk 03 wrote its own. Decide at the train's close whether to backfill; only a session
+with their context can write them honestly.
+
+Next: Chunk 04 (#828, #1052) — one derivation of the base directory, one containment predicate.
+Its "whose machine makes this true, and does it travel?" precondition had a good answer in Chunk
+03 worth reusing: the conflict scan's reach is the TRACKED working tree, which is a property of
+the repository rather than of a machine.
 
 ## Scaffolding
 
@@ -334,9 +390,14 @@ than a single cumulative pass over the whole train.
   `featuresToc._isIndexableCandidate`, which is why every `.tangleclaw/` path the wrap
   actually committed is missing from its own record. It is bookkeeping, but authoritative-
   looking bookkeeping: it already mis-tiered a `/prawduct:critic` run in a consuming project
-  by putting `skills/` paths into a changed-file set the session never touched. Paired with
-  it: raw conflict markers sat on `main` in a tracked governance file across three sessions
-  and nothing noticed — a detector that is one `git grep` and runs in under a second.
+  by putting critic-skill paths into a changed-file set the session never touched. Paired
+  with it: raw conflict markers sat on `main` in a tracked governance file across three
+  sessions and nothing noticed — a detector that is one `git grep` and runs in under a
+  second. That detector is proposed HARD, and it meets commitment 3's bright line rather
+  than merely resembling it: a corrupt tracked record reaches `main` invisibly, and it is
+  the release flow's own input, so no project preference should be allowed to choose it.
+  (The gate sits in CI rather than in the wrap, so commitment 3 governs it by analogy —
+  the wrap-direction Instances entry says so in its own words.)
 - **Closes:** #797, #882
 - **Depends on:** Chunk 02 (which settles what the wrap's payload is allowed to be trusted for)
 - **Artifacts consumed:** `wrap-direction.md` commitments 1 and 3

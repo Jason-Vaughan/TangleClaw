@@ -82,6 +82,18 @@ describe('CI workflow (.github/workflows/test.yml)', () => {
     assert.ok(src.indexOf('scripts/test-skip-audit.js') > src.indexOf("'test/*.test.js'"));
   });
 
+  it('scans for conflict markers, and does it first (#882)', () => {
+    // Markers reached main in a tracked governance file and sat there across
+    // three sessions. The scan is the cheapest question CI can ask, so it runs
+    // before the suite: a tree that is syntactically corrupt makes every later
+    // answer suspect, and a fast red is a clearer signal than a slow one.
+    const src = workflowSource();
+    assert.match(src, /node scripts\/conflict-marker-scan\.js/,
+      'the conflict-marker scan must run in CI, or the detection gap is still open');
+    assert.ok(src.indexOf('scripts/conflict-marker-scan.js') < src.indexOf("'test/*.test.js'"),
+      'the scan runs before the suite');
+  });
+
   it('pins Node 22 (node:sqlite floor / production runtime)', () => {
     assert.match(workflowSource(), /node-version: 22/);
   });

@@ -80,9 +80,9 @@ describe('_git-range reports a stopped probe instead of a negative answer (#897)
   const killed = () => { throw realTimeoutError(); };
   const succeeds = () => Buffer.from('');
 
-  it('isAncestorOfHead still answers false, but names the probe as stopped', () => {
+  it('isAncestorOf still answers false, but names the probe as stopped', () => {
     const stopped = [];
-    const answer = gitRange.isAncestorOfHead('/tmp', 'abc1234', killed, (c) => stopped.push(c));
+    const answer = gitRange.isAncestorOf('/tmp', 'abc1234', 'HEAD', killed, (c) => stopped.push(c));
 
     assert.equal(answer, false, 'falling back on an unknown answer is still the safe move');
     assert.equal(stopped.length, 1, 'but the caller must be able to tell unknown from negative');
@@ -114,7 +114,7 @@ describe('_git-range reports a stopped probe instead of a negative answer (#897)
       err.status = 1;
       throw err;
     };
-    const answer = gitRange.isAncestorOfHead('/tmp', 'abc1234', refuses, (c) => stopped.push(c));
+    const answer = gitRange.isAncestorOf('/tmp', 'abc1234', 'HEAD', refuses, (c) => stopped.push(c));
 
     assert.equal(answer, false);
     assert.deepEqual(stopped, [], 'a real negative answer is not a stopped probe');

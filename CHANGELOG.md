@@ -5,6 +5,77 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **The wrap's `files:` record is the session's own changed set, not the branch's (#797).**
+  `lib/wrap-steps/continuity-write.js` diffed `<trunk>...<tip>` — every commit on the branch,
+  across every session that built it — and then filtered the result through the Feature Index's
+  source-file allowlist. Two errors landing on one field, and they compound: on a long-lived
+  branch the recorded set was *disjoint* from the wrap's own commit, because the branch-wide
+  half carried forward paths from sessions ago while the allowlist dropped every `.tangleclaw/`
+  path the commit actually contained. A provenance stamp that is confidently wrong is worse
+  than an absent one — this one already mis-tiered a `/prawduct:critic` run in a consuming
+  project, which escalated on `skills/` paths its session never touched.
+
+  The field is now measured over the range since the previous wrap's recorded boundary — the
+  same session range every other wrap step already measures — and left unfiltered; the
+  allowlist applies to the Map, which is what it was written for. That boundary's reach is
+  `lastWrapSha`'s and not this step's: it records the wrap commit's parent so a squash-merge
+  cannot orphan it (#664), so what the record calls "this session" is what the rest of the wrap
+  calls it. The range base is the boundary
+  the *previous* wrap recorded, so `lib/wrap-steps/commit.js` reports it as
+  `output.previousWrapSha` — that step overwrites the on-disk value, and by the time
+  `continuity-write` runs the replaced one is gone. Resolution goes through the shared
+  `_git-range` resolver rather than a fourth private copy, which is also where the tip stopped
+  being hardcoded to HEAD: a step running after the wrap commit measures to that commit, and
+  #467's close-loop may already have moved HEAD off the branch. When the recorded boundary no
+  longer resolves — rebased away, or a fresh clone — the wrap records no `files:` line at all
+  rather than the branch's wider set, because publishing that under this name is the defect.
+  The Map still accretes from the wider range, since re-stubbing is idempotent and starving it
+  would lose real entries.
+
+  Three shapes of null are kept apart, because the wrap **acts** on the difference. `commit`
+  reports `previousWrapShaRead` — `recorded`, `absent`, or `unreadable` — alongside the value,
+  and the stamp is published only on a boundary positively established: a session range, or a
+  branch range on a project no wrap has ever stamped. A boundary that would not load, a
+  boundary the commit step never reported (a blocked commit can reach this step, because
+  `blocker` is operator-overridable), and a range that resolved to nothing each withhold the
+  stamp and log which one it was. Reading all three as "no earlier session" is `architecture.md`'s
+  rule backwards, and it is #797's own shape — a plausible default published as an established
+  fact. A wrap that committed *nothing* is not a session that changed nothing, so it takes the same
+  path as every other: the commit step skips on a clean tree, which a session that committed by hand
+  reaches with real work behind it, and `commitSha` is null on the *committed* path too when
+  `git rev-parse HEAD` fails after the commit lands. Dropping paths from a provenance record is
+  #797's own second half, so the range answers and over-reports by the previous wrap's commit
+  (#1280) rather than under-reporting real work.
+
+  A refusal says what it actually knows. A `git diff` that would not answer is reported as that
+  rather than as "this is not a repository", which sent an operator hunting a trunk branch that was
+  sitting right there; a probe stopped at its own timeout is named, because a killed
+  `merge-base --is-ancestor` is indistinguishable from a real negative to every predicate
+  downstream, and both sibling range callers already say so; and the two paths that previously
+  logged at `debug` — which a default install never prints — now log at `warn`, since each is a
+  reason no provenance stamp was written.
+- **The wrap's range resolver refuses an endpoint it would have to trust (#797).** `resolveSessionRange`
+  interpolates its range into a shell string on the `execSync` seam, and its far end became a
+  parameter in this change precisely so a step could measure to a computed commit. Both resolvers now
+  accept only `HEAD` or an object name, before running any git — the invariant the code's own comment
+  asserted, enforced rather than described.
+- **A caller's `onError` survives `store.projectConfig.load` (#797).** The wrapper took one
+  argument and dropped the reader options, so a caller that needed to know a config was
+  malformed — rather than absent, which returns the same defaults — had a guard that could
+  never fire. The callback now runs alongside this module's own warning.
+- **CI fails a run when a tracked file carries raw git conflict markers (#882).** All three
+  marker lines were once committed into `.prawduct/change-log.md` and merged to `main`, where
+  they sat across three sessions with nothing — no test, no gate, no wrap step — noticing. That
+  file is the release flow's input: entries that do not parse are entries the release cannot
+  see, and the same mistake in a busier week would bury an entry rather than bracket two.
+  `scripts/conflict-marker-scan.js` is one `git grep` over the tracked working tree, running as
+  the first step of the Tests workflow. Tracked-tree scope is a property of the repository
+  rather than of a machine, so a green here means the same thing on a contributor's laptop and
+  on a shallow CI checkout. It matches all four of git's marker forms — including the
+  `|||||||` base marker `diff3`/`zdiff3` writes — and each one alone, because a half-resolved
+  file that kept only the separator is what buried the entry in the first place. Its one known
+  false positive, a seven-`=` markdown setext underline, is named in the failure output rather
+  than excluded: the lone-separator match is the point.
 - **A status poll no longer finalizes wraps or commits the operator's repository (#910).**
   `getSessionStatus` is a read, and the session page polls it every two seconds throughout a
   wrap. On its dead-tmux branch it called `autoCompleteWrap`, which writes the wrap complete,
