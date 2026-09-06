@@ -52,7 +52,13 @@ All notable changes to TangleClaw are documented in this file.
   `step.captureFile` over ClawBridge, on a remote filesystem a local unlink cannot reach, so a
   tmux-only arm would have left half the family uncovered while the comment claimed the file's
   existence was proof. It arms with the consuming read that is the only primitive the bridge
-  has, and refuses the same way when that read cannot answer. The arm has its own `_internal`
+  has, and **branches on the answer rather than on a thrown error** — `clawbridge.getFile`
+  resolves for every outcome, returning `{ok: false, status}` for any non-2xx and `status: 0` for
+  a network failure, so a guard written around a `catch` would have refused nothing and let an
+  unarmed run proceed. Two distinctions decide it: a **404 is armed**, because there was nothing
+  to clear (mirroring the tmux path, which refuses only when the file exists and the unlink does
+  not take), and **`ok` without `consumed` is unarmed**, because the bridge answered but left the
+  file in place. Everything else blocks before the prompt is sent. The arm has its own `_internal`
   seam rather than sharing `bridgeGetFile`, because clearing a file that belongs to no current
   run and reading this run's result are different acts — sharing one would collapse "the step
   never read the result" and "the step never touched the file" into a single assertion, and only
@@ -64,6 +70,11 @@ All notable changes to TangleClaw are documented in this file.
   request that names none behaves exactly as before. And the three branches that report a
   wrapping session now build their answer from one helper: they had already drifted to three
   encodings of "there is no idle reading", which a consumer cannot tell apart.
+
+  `POST /api/sessions/:project/wrap/complete` accordingly accepts an optional `sessionId` and
+  answers **409 `SESSION_CHANGED`** when it names a session that is no longer current — a stale
+  caller view, with nothing changed, rather than the 500 a benign race previously produced. A
+  request naming no session behaves exactly as before.
 - **TangleClaw's hooks moved out of the file projects are supposed to commit (#1022, #1242,
   #1275).** `syncEngineHooks` wrote a `SessionStart` hook naming an **absolute path to one
   machine's install** into `.claude/settings.json` — the shared, committable file the Claude

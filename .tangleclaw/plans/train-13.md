@@ -82,7 +82,7 @@ than unknowns, and both are surfaced at the chunk that would act on them.
 ## Status
 
 - [x] Chunk 01: The machine-local hook moves out of the shareable file (#1022, #1242, #1275)
-- [ ] Chunk 02: A read does not finalize, and a payload proves whose run wrote it (#910, #840)
+- [x] Chunk 02: A read does not finalize, and a payload proves whose run wrote it (#910, #840)
 - [ ] Chunk 03: The provenance record says what the session did, and corruption is detected (#797, #882)
 - [ ] Chunk 04: One derivation of the base directory, one containment predicate (#828, #1052)
 - [ ] Chunk 05: Validate every field before writing any, in the real run and the rehearsal (#1033, #929)
@@ -109,7 +109,35 @@ per-path check on one machine cannot establish a property of every clone. Chunks
 have preconditions of this shape (a CI detector's reach; a base directory that must relocate as a
 whole), so ask of each: *whose machine makes this true, and does it travel?*
 
-Next: Chunk 02 (#910, #840).
+**Chunk 02 is done** — branch `fix/910-status-read-does-not-finalize`, Critic
+`rev-20260906T015315Z-195d6467` (26 findings: 19 fixed, 6 accepted, 1 filed), then
+`rev-20260906T021737Z-2a76956f` which found **two blocking** in the fix pass itself, then
+`rev-20260906T022846Z-6672d002` clean at 0/0/0.
+
+**The session's strongest lesson, and it repeated: a guard shipped covering half its family,
+twice, inside fixes for that very shape.** Chunk 01's orphan scanner change was unguarded until a
+mutation came back green. Chunk 02's #840 arm covered the tmux runner and not the gateway one —
+found independently by all three reviewers — and then the *fix* for that shipped a refusal that
+could never fire, because `clawbridge.getFile` resolves for every outcome and the guard was
+written around a `catch`. Its test looked like a guard while stubbing a shape the producer cannot
+emit. Two rules earned: **when a guard is about a FILE, enumerate every runner that touches the
+file, not every caller of the function you are editing**; and **build the fixture from the
+producer's real return values before writing the assertion** — a `throw` nobody throws passes
+forever.
+
+The same round misplaced the 409: the edit matched the first similar error handler in
+`server.js`, which was a route that cannot produce the error. Route-level tests are what catch
+that; library-level ones cannot see it.
+
+**#1278 filed, and it outranks the rest of this train's wrap work.** `setWrapping` has no
+non-test caller, and the live database holds **zero `wrapping` rows across 875 sessions since
+March** — so this whole pathway (#105, #900, #908, #910, `autoCompleteWrap`, the launch path's
+stale recovery) serves a state nothing produces. The open question is whether the transition was
+lost when `9c67b2c` stripped the V1 wrap path, in which case wrap-recovery has been silently
+disabled for months and the code is not dead but starved. Chunk 02 shipped anyway: a read that
+commits the operator's repository should not, reachable or not.
+
+Next: Chunk 03 (#797, #882) — whose `wrap-direction.md` Instances entry is already registered.
 
 ## Scaffolding
 
