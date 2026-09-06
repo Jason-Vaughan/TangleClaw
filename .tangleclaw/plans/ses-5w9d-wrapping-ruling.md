@@ -214,6 +214,19 @@ the product worse at the thing the state was for.
   | `api-contract.md` §769-840 | the `GET /status` wrapping responses are retired |
   | `api-contract.md` §1005 | **unchanged** — the wrap POST's `status: 'wrapping'` comes from the run registry, not the table |
 
+  **Four behaviors the bundle ships that this table did not list.** Recorded here because
+  Chunk 02 is planned against the registry read and Chunk 03 against `_completeV2Wrap`, and a
+  reader who finds four hand-written corrections below reasonably treats the table as complete.
+  All four are in `CHANGELOG.md`, so the release narrative was never wrong — the gap was
+  traceability in the artifact the later chunks are designed from.
+
+  | Site | What happens |
+  |---|---|
+  | `lib/medusa-wake.js` wrap gate | **new.** Reads `lib/wrap-run-registry.js` via the `_internal.wrapRunning` seam, so a wake cannot land mid-wrap. This makes Chunk 01 the registry's FIRST consumer, ahead of the plan's assignment of the registry to Chunk 02. Caveat as built: the Project Master gets no gate. |
+  | `POST /wrap/complete` | answers **409 `SESSION_CHANGED`** for a finalize whose row ended mid-flight, where it answered 200; and no longer tears down the listener or commits the repo for a wrap that wrote nothing |
+  | `DELETE /api/sessions/:project` | reports the row's real ending (`wrapped`) instead of borrowing `reconciled: true`, whose meaning is "there was no session row at all" — a branch that replies without a `sessionId` |
+  | `_completeV2Wrap` | returns a boolean, surfaced on `triggerWrap`'s result as `lifecycleCompleted` **derived from** the write rather than asserted beside it. Deliberately NOT forwarded to the HTTP payload — see decision 4. |
+
   **Four decisions the plan did not settle, taken at build time.**
 
   1. **The transition map is ENFORCED, not merely declared.** It generates a SQL precondition on
