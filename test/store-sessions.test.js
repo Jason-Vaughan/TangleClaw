@@ -176,81 +176,141 @@ describe('store.sessions (write methods)', () => {
     });
   });
 
-  describe('setWrapping', () => {
-    it('transitions active session to wrapping', () => {
-      const session = store.sessions.start({
-        projectId,
-        engineId: 'claude',
-        tmuxSession: 'wrapping-test'
-      });
-
-      const wrapping = store.sessions.setWrapping(session.id);
-      assert.ok(wrapping);
-      assert.equal(wrapping.status, 'wrapping');
+  describe('the status vocabulary', () => {
+    it('models exactly the statuses a session can hold', () => {
+      assert.deepEqual([...store.SESSION_STATUSES].sort(),
+        ['active', 'crashed', 'killed', 'wrapped']);
     });
 
-    it('returns null for non-active session', () => {
-      const session = store.sessions.start({
-        projectId,
-        engineId: 'claude',
-        tmuxSession: 'wrapping-killed-test'
-      });
-      store.sessions.kill(session.id, 'test');
-
-      const result = store.sessions.setWrapping(session.id);
-      assert.equal(result, null);
+    it('gives every status a transition entry, and admits no status outside the enum', () => {
+      // Exhaustive in BOTH directions on purpose. One direction alone lets a
+      // status exist with no modelled transitions, or a transition be modelled
+      // for a status the product does not have — and the second is worse,
+      // because a map that admits an unreachable state licenses code to handle
+      // it. Adding `wrapping` back to either side reds this.
+      const modelled = Object.keys(store.SESSION_STATUS_TRANSITIONS).sort();
+      assert.deepEqual(modelled, [...store.SESSION_STATUSES].sort());
+      for (const [from, targets] of Object.entries(store.SESSION_STATUS_TRANSITIONS)) {
+        for (const to of targets) {
+          assert.ok(store.SESSION_STATUSES.includes(to),
+            `${from} -> ${to} names a status that is not in the enum`);
+        }
+      }
     });
 
-    it('logs session.wrapping activity', () => {
-      const session = store.sessions.start({
-        projectId,
-        engineId: 'claude',
-        tmuxSession: 'wrapping-log-test'
-      });
+    it('leaves active as the only status anything follows', () => {
+      const nonTerminal = Object.entries(store.SESSION_STATUS_TRANSITIONS)
+        .filter(([, targets]) => targets.length > 0)
+        .map(([from]) => from);
+      assert.deepEqual(nonTerminal, ['active']);
+    });
 
-      store.sessions.setWrapping(session.id);
-
-      const activity = store.activity.query({ sessionId: session.id, eventType: 'session.wrapping' });
-      assert.ok(activity.length >= 1);
+    it('rejects a transition that is not in the map', () => {
+      assert.equal(store.canTransition('active', 'wrapped'), true);
+      assert.equal(store.canTransition('active', 'killed'), true);
+      assert.equal(store.canTransition('active', 'crashed'), true);
+      // Terminal means terminal — no resurrection, and no ending twice.
+      assert.equal(store.canTransition('wrapped', 'killed'), false);
+      assert.equal(store.canTransition('killed', 'active'), false);
+      assert.equal(store.canTransition('crashed', 'wrapped'), false);
+      // A status the vocabulary does not contain is not a transition anyone
+      // can make, in either direction.
+      assert.equal(store.canTransition('active', 'wrapping'), false);
+      assert.equal(store.canTransition('wrapping', 'wrapped'), false);
     });
   });
 
-  describe('getWrapping', () => {
-    it('returns wrapping session', () => {
-      // Clean up any existing wrapping sessions first
-      let existing = store.sessions.getWrapping(projectId);
-      while (existing) {
-        store.sessions.wrap(existing.id, 'cleanup');
-        existing = store.sessions.getWrapping(projectId);
-      }
-
+  describe('transition enforcement', () => {
+    it('refuses to re-end a session that has already ended', () => {
       const session = store.sessions.start({
-        projectId,
-        engineId: 'claude',
-        tmuxSession: 'get-wrapping-test'
+        projectId, engineId: 'claude', tmuxSession: 'terminal-guard-test'
       });
-      store.sessions.setWrapping(session.id);
+      const killed = store.sessions.kill(session.id, 'first');
+      assert.equal(killed.status, 'killed');
 
-      const wrapping = store.sessions.getWrapping(projectId);
-      assert.ok(wrapping);
-      assert.equal(wrapping.id, session.id);
-      assert.equal(wrapping.status, 'wrapping');
+      // `null` is the whole point: a caller cannot tell a refused `wrap` from a
+      // successful one by reading `.status` back — both say `wrapped` — so the
+      // outcome has to travel in the return value.
+      assert.equal(store.sessions.kill(session.id, 'second'), null);
+      assert.equal(store.sessions.wrap(session.id, 'should not land'), null);
+      assert.equal(store.sessions.markCrashed(session.id, 'should not land'), null);
+
+      const after = store.sessions.get(session.id);
+      assert.equal(after.status, 'killed');
+      assert.equal(after.endedAt, killed.endedAt, 'ended_at must not be rewritten');
+      assert.equal(after.wrapSummary, null);
     });
 
-    it('returns null when no wrapping session', () => {
-      // Wrap all wrapping sessions to clear them
-      let wrapping = store.sessions.getWrapping(projectId);
-      while (wrapping) {
-        store.sessions.wrap(wrapping.id, 'cleanup');
-        wrapping = store.sessions.getWrapping(projectId);
-      }
+    it('refuses a target no modelled status can reach', () => {
+      // The transition map is data, and a future edit can leave a status with no
+      // inbound transition. The precondition is then over an empty source list,
+      // and this pins that such a call refuses like any other disallowed
+      // transition — writing nothing and throwing nothing. Reached through the
+      // internal helper because no public writer targets an unreachable status
+      // today.
+      const session = store.sessions.start({
+        projectId, engineId: 'claude', tmuxSession: 'unreachable-target-test'
+      });
+      const result = store._transitionSession(session.id, 'not-a-status', "ended_at = datetime('now')", []);
+      assert.equal(result.changed, false);
+      assert.equal(result.session.status, 'active', 'the row is untouched');
+      assert.equal(store.sessions.get(session.id).status, 'active');
+      store.sessions.kill(session.id, 'test cleanup');
+    });
 
-      const result = store.sessions.getWrapping(projectId);
-      assert.equal(result, null);
+    it('writes no activity row for a refused transition', () => {
+      const session = store.sessions.start({
+        projectId, engineId: 'claude', tmuxSession: 'terminal-activity-test'
+      });
+      store.sessions.wrap(session.id, 'done');
+      store.sessions.wrap(session.id, 'again');
+      store.sessions.kill(session.id, 'and again');
+
+      // The refusal is the point: a duplicate `session.wrapped` here would
+      // corrupt the only durable record of what the lifecycle actually did.
+      const wrapped = store.activity.query({ sessionId: session.id, eventType: 'session.wrapped' });
+      assert.equal(wrapped.length, 1);
+      const killedRows = store.activity.query({ sessionId: session.id, eventType: 'session.killed' });
+      assert.equal(killedRows.length, 0);
     });
   });
 
   describe('getActive', () => {
+    it('resolves the newest row when two share a started_at second', () => {
+      // `started_at` is second-resolution. This lookup is what a wrap and a
+      // kill resolve their target through, so a tie must not be settled by
+      // whatever order SQLite happens to scan in — it settled on the OLDER row.
+      // Earlier tests in this file leave active rows behind; clear them so the
+      // pair below is unambiguously what `getActive` is choosing between.
+      for (let a = store.sessions.getActive(projectId); a; a = store.sessions.getActive(projectId)) {
+        store.sessions.kill(a.id, 'test setup');
+      }
+      const older = store.sessions.start({
+        projectId, engineId: 'claude', tmuxSession: 'tie-older'
+      });
+      const newer = store.sessions.start({
+        projectId, engineId: 'claude', tmuxSession: 'tie-newer'
+      });
+      // Force the tie rather than hoping the two inserts land in the same
+      // second. Without this the assertions below pass on any run that straddles
+      // a second boundary — including with the `id DESC` tiebreak removed, which
+      // makes the guard for this chunk's own defect unfalsifiable most of the time.
+      store.getDb().prepare(
+        'UPDATE sessions SET started_at = (SELECT MAX(started_at) FROM sessions) WHERE id IN (?, ?)'
+      ).run(older.id, newer.id);
+      assert.equal(store.sessions.get(older.id).startedAt, store.sessions.get(newer.id).startedAt,
+        'the precondition this guard needs: the two rows share a started_at');
+
+      assert.equal(store.sessions.getActive(projectId).id, newer.id);
+      assert.equal(store.sessions.getLatest(projectId).id, newer.id);
+      // `list` orders the same way and then applies a LIMIT, so the tie decides
+      // which of the two a caller with a page size of one actually sees.
+      const page = store.sessions.list(projectId, { limit: 1 });
+      assert.equal(page[0].id, newer.id);
+      store.sessions.kill(newer.id, 'test cleanup');
+      store.sessions.kill(older.id, 'test cleanup');
+    });
+
     it('returns null after session is wrapped', () => {
       const session = store.sessions.start({
         projectId,

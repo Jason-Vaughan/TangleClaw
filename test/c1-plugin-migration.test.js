@@ -691,8 +691,8 @@ describe('C1 — per-project plugin migration (#262)', () => {
     it('does NOT defer on a stale ownership row whose pane is gone (live:false) — isolates the .live gate', async () => {
       const p = mkProjectDir('stalerow');
       store.projects.create({ name: 'c1-stale', path: p, engine: 'claude' });
-      // resolveByProject returns an object for any active/wrapping DB row; a
-      // dead pane has live:false and must migrate, not falsely defer.
+      // resolveByProject returns an object for any live DB row; a dead pane
+      // has live:false and must migrate, not falsely defer.
       mock.method(sessionOwnership, 'resolveByProject', () => ({ sessionId: 2, project: 'c1-stale', live: false }));
       const r = await projects.migrateProjectToPlugin('c1-stale');
       assert.equal(r.deferred || false, false, 'a stale (dead-pane) row must not defer');

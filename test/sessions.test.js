@@ -1889,16 +1889,16 @@ describe('sessions', () => {
     });
   });
 
-  // The same defect one state along: a WRAPPING row. `autoCompleteWrap` writes
-  // the wrap complete, tears down the Medusa listener, and commits the
-  // operator's repository — so a tmux server too wedged to answer could end a
-  // wrap that was still running and commit a working tree, on a fact nobody
-  // established. Nothing recovered when tmux came back (#908).
+  // The same defect on the finalize path. `completeWrap` writes the wrap
+  // complete, tears down the Medusa listener, and commits the operator's
+  // repository — so a tmux server too wedged to answer could end a wrap that
+  // was still running and commit a working tree, on a fact nobody established
+  // (#908).
   //
   // Every test here booby-traps `git.commit`. The failure mode of these guards
   // is not a wrong assertion — it is a REAL commit in a repository, so a
   // regression has to fail loudly rather than quietly write history.
-  describe('a wrap whose liveness tmux could not report is not completed (#908)', () => {
+  describe('finalizing a wrap is an action, never a side effect of a read (#908/#910)', () => {
     let sessions;
     const tmux = require('../lib/tmux');
     const git = require('../lib/git');
@@ -1916,49 +1916,14 @@ describe('sessions', () => {
     });
 
     /**
-     * Run `fn` with `tmux.probeSession` answering `verdict`, and with
-     * `git.commit` trapped so that reaching it fails the test instead of
-     * committing a real repository.
-     * @param {object} verdict - `{live, answered, cause}`.
-     * @param {Function} fn - Test body.
-     * @returns {any}
-     */
-    function withProbeAndNoCommit(verdict, fn) {
-      const realProbe = tmux.probeSession;
-      const realCommit = git.commit;
-      const realIsRepo = git.isGitRepo;
-      const realCreate = tmux.createSession;
-      tmux.probeSession = () => verdict;
-      // ARMING THE TRAP, and it is load-bearing. `_autoCommitIfDirty` returns
-      // early unless the project path is a git repository, and the fixture
-      // directory is not one — so without this the commit trap below is
-      // UNREACHABLE and every guard in this describe passes whether or not the
-      // code auto-completes. A trap that cannot fire measures nothing.
-      git.isGitRepo = () => true;
-      git.commit = () => {
-        throw new Error('a wrap that could not be observed must not commit the operator repository');
-      };
-      tmux.createSession = () => {
-        throw new Error('launchSession must refuse before creating a session');
-      };
-      try {
-        return fn();
-      } finally {
-        tmux.probeSession = realProbe;
-        git.commit = realCommit;
-        git.isGitRepo = realIsRepo;
-        tmux.createSession = realCreate;
-      }
-    }
-
-    /**
-     * Create a wrapping session row for the fixture project.
+     * Start the session a wrap runs under. There is no distinct status for it:
+     * a session holds `active` from launch until something ends it, and a wrap
+     * in progress is one of the things that has not ended it yet (#1034).
      * @param {string} tmuxName - tmux handle to record on the row.
-     * @returns {object} The wrapping session row.
+     * @returns {object} The session row.
      */
     function startWrapping(tmuxName) {
       const s = store.sessions.start({ projectId, engineId: 'claude', tmuxSession: tmuxName });
-      store.sessions.setWrapping(s.id);
       return store.sessions.get(s.id);
     }
 
@@ -1968,106 +1933,47 @@ describe('sessions', () => {
      */
     function cleanup(id) {
       const row = store.sessions.get(id);
-      if (row && row.status !== 'wrapped' && row.status !== 'killed') {
+      if (row && row.status === 'active') {
         store.sessions.kill(id, 'test cleanup');
       }
     }
 
-    it('launchSession refuses instead of completing a wrap it could not observe', () => {
-      const wrapping = startWrapping('tc-wedge-wrap-launch');
-      try {
-        // THE MUTATION THIS CATCHES: auto-completing on `!live` alone, which is
-        // what `!tmux.hasSession(...)` meant here and what shipped.
-        const result = withProbeAndNoCommit(
-          { live: false, answered: false, cause: 'read-timed-out' },
-          () => sessions.launchSession('wedge-wrap')
-        );
-
-        assert.equal(result.session, null);
-        assert.equal(result.code, 'LIVENESS_UNKNOWN',
-          'the route classifies by code, so the refusal must carry one');
-        assert.match(result.error, /could not determine/i);
-        assert.equal(store.sessions.get(wrapping.id).status, 'wrapping',
-          'the wrap must still be open — completing it is what nobody established');
-      } finally {
-        cleanup(wrapping.id);
-      }
-    });
-
-    it('getSessionStatus reports still-wrapping rather than finalizing it', () => {
-      const wrapping = startWrapping('tc-wedge-wrap-status');
-      try {
-        const status = withProbeAndNoCommit(
-          { live: false, answered: false, cause: 'read-timed-out' },
-          () => sessions.getSessionStatus('wedge-wrap')
-        );
-
-        assert.equal(status.wrapping, true, 'the row says wrapping; the read must not overrule it');
-        assert.notEqual(status.wrapCompleted, true);
-        assert.deepEqual(status.incomplete, ['idle', 'lastOutputAge'],
-          'the fields it could not establish are the ones it returns, named');
-        assert.equal(status.cause, 'read-timed-out');
-        // `false` here would be a plausible default in the one change whose
-        // subject is not shipping plausible defaults — and the session page
-        // reads `idle` as its wrap-completion signal, so a definite "not idle"
-        // is a wrong answer to the question it is asking.
-        assert.equal(status.idle, null, 'idle is unknown, not false');
-        assert.equal(status.lastOutputAge, null);
-        assert.equal(store.sessions.get(wrapping.id).status, 'wrapping');
-      } finally {
-        cleanup(wrapping.id);
-      }
-    });
-
-    it('REPORTS a finished wrap when tmux answered the pane is gone, and finalizes nothing', () => {
-      // The contract this test pins CHANGED, deliberately (#910). It used to
-      // assert that an observed-dead pane made `getSessionStatus` write the wrap
-      // complete, tear down the listener, and run a real `git commit` in the
-      // operator's repository. #908 had already made the TRIGGER honest — only a
-      // probe that answered may act — and that was correct; what it left was a
-      // read path that still mutates on the answered branch, correct only for as
-      // long as the predicate stays correct.
-      //
-      // So the assertion is not weakened, it is relocated: the same finalizing
-      // must still happen, and the test below proves it does, through
-      // `completeWrap` — an action, asked for. What must NOT happen is any of it
-      // as a side effect of a poll.
-      const wrapping = startWrapping('tc-wedge-wrap-dead');
+    it('a status read never commits the operator repository, whatever the pane says', () => {
+      // The contract #910 relocated, and the reason this guard outlives the
+      // `wrapping` status it was written against: reading a status used to
+      // finalize a wrap — writing the session record, tearing down the Medusa
+      // listener, and running a real `git commit` in the operator's repository.
+      // The trap is armed as REACHABLE and counted, so "no commit" is a
+      // measurement rather than an absence.
+      const session = startWrapping('tc-wedge-wrap-dead');
       const realProbe = tmux.probeSession;
       const realCommit = git.commit;
       const realIsRepo = git.isGitRepo;
       let committed = 0;
       tmux.probeSession = () => ({ live: false, answered: true, cause: null });
-      // The commit is stubbed as REACHABLE and counted, so "no commit" is a
-      // measurement rather than an absence — the same trap the old test armed.
       git.isGitRepo = () => true;
       git.commit = () => { committed++; return { committed: true }; };
       try {
         const status = sessions.getSessionStatus('wedge-wrap');
-        assert.equal(status.wrapFinished, true, 'the observation is reported');
-        assert.equal(status.wrapping, true,
-          'the row still says wrapping, because nothing has finalized it');
         assert.notEqual(status.wrapCompleted, true,
           'a read must not report a completion it did not perform');
-        assert.equal(store.sessions.get(wrapping.id).status, 'wrapping',
-          'the session row is untouched by a read');
+        assert.equal(status.wrapFinished, undefined,
+          'and it has no wrap of its own to report finished');
         assert.equal(committed, 0,
-          'reading a status must not commit the operator\'s repository');
-        assert.equal(status.idle, null, 'no pane, so no idle signal to report');
+          "reading a status must not commit the operator's repository");
       } finally {
         tmux.probeSession = realProbe;
         git.commit = realCommit;
         git.isGitRepo = realIsRepo;
-        cleanup(wrapping.id);
+        cleanup(session.id);
       }
     });
 
-    it('completeWrap finalizes what the read only reported — the relocated half (#910)', () => {
-      // The other side of the contract change above. Moving finalization out of
-      // the read is only correct if an action still performs it, in full: the row
-      // wrapped, the listener gone, the repository committed. A fix that just
-      // stopped auto-completing would strand every finished wrap.
-      const wrapping = startWrapping('tc-wedge-wrap-finalize');
+    it('completeWrap finalizes — the row wrapped, the repository committed (#910)', () => {
+      // Moving finalization out of the read is only correct if an action still
+      // performs it, in full. A fix that just stopped auto-completing would
+      // strand every finished wrap.
+      const session = startWrapping('tc-wedge-wrap-finalize');
       const realCommit = git.commit;
       const realIsRepo = git.isGitRepo;
       let committed = 0;
@@ -2076,39 +1982,35 @@ describe('sessions', () => {
       try {
         const result = sessions.completeWrap('wedge-wrap');
         assert.equal(result.error, null);
-        assert.equal(store.sessions.get(wrapping.id).status, 'wrapped');
+        assert.equal(store.sessions.get(session.id).status, 'wrapped');
         assert.equal(committed, 1, 'the auto-commit moved with the finalizing, it did not vanish');
       } finally {
         git.commit = realCommit;
         git.isGitRepo = realIsRepo;
-        cleanup(wrapping.id);
+        cleanup(session.id);
       }
     });
 
-    it('completeWrap recovers the pane summary the read used to parse', () => {
-      // The parse lived inside `autoCompleteWrap`, which the status poll called.
-      // Relocating the finalize had to bring it along, or the same wrap records
-      // an empty summary and the wrap commit subject — the permanent record —
-      // goes blank. A caller that DOES pass a summary still overrides it.
-      const wrapping = startWrapping('tc-wedge-wrap-summary');
+    it('records the summary it was given, and null when it was given none', () => {
+      // Absence is deliberate. The alternative — inventing a summary from raw
+      // pane text — lands in the wrap commit subject and the next session's
+      // prime, and a wrong summary is worse than an absent one.
       const realCommit = git.commit;
       const realIsRepo = git.isGitRepo;
       git.isGitRepo = () => false;
       git.commit = () => ({ committed: false });
       try {
-        sessions._wrapPaneCache.set(wrapping.id, '## Summary\nDid the thing.\n');
+        const given = startWrapping('tc-wedge-wrap-summary');
+        sessions.completeWrap('wedge-wrap', '## Summary\nDid the thing.\n');
+        assert.match(store.sessions.get(given.id).wrapSummary, /Did the thing/);
 
-        const result = sessions.completeWrap('wedge-wrap');
-        assert.equal(result.error, null);
-        const stored = store.sessions.get(wrapping.id);
-        assert.ok(stored.wrapSummary && stored.wrapSummary.length > 0,
-          'a finalize with no summary argument must still record what the pane said');
-        assert.match(stored.wrapSummary, /Did the thing/);
+        const none = startWrapping('tc-wedge-wrap-nosummary');
+        sessions.completeWrap('wedge-wrap');
+        assert.equal(store.sessions.get(none.id).wrapSummary, null,
+          'a finalize with nothing to record records nothing, not a guess');
       } finally {
         git.commit = realCommit;
         git.isGitRepo = realIsRepo;
-        sessions._wrapPaneCache.delete(wrapping.id);
-        cleanup(wrapping.id);
       }
     });
 
@@ -2117,23 +2019,69 @@ describe('sessions', () => {
       // resolves its target by PROJECT. Between the poll that observed a
       // finished wrap and the POST that finalizes it, a relaunch can put a
       // different session under the same name and receive both.
-      const wrapping = startWrapping('tc-wedge-wrap-identity');
+      const session = startWrapping('tc-wedge-wrap-identity');
       const realCommit = git.commit;
       const realIsRepo = git.isGitRepo;
       let committed = 0;
       git.isGitRepo = () => true;
       git.commit = () => { committed++; return { committed: true }; };
       try {
-        const result = sessions.completeWrap('wedge-wrap', undefined, wrapping.id + 999);
+        const result = sessions.completeWrap('wedge-wrap', undefined, session.id + 999);
         assert.equal(result.session, null);
         assert.match(result.error, /no longer the current session/);
-        assert.equal(store.sessions.get(wrapping.id).status, 'wrapping',
+        // The code is what the route maps to 409; the prose is not. Asserted at
+        // the PRODUCER, because the route test for this mapping is the only
+        // other reader and it would pass against a producer that stopped
+        // emitting the field.
+        assert.equal(result.code, 'SESSION_CHANGED');
+        assert.equal(store.sessions.get(session.id).status, 'active',
           'the session it did NOT name is left alone');
         assert.equal(committed, 0, 'and the repository is not committed');
       } finally {
         git.commit = realCommit;
         git.isGitRepo = realIsRepo;
-        cleanup(wrapping.id);
+        cleanup(session.id);
+      }
+    });
+
+    it('refuses to finalize a session that ended first, and commits nothing', () => {
+      // The interleaving the transition map introduced a way to get wrong: the
+      // row ends between the lookup and the write. `completeWrap` resolves its
+      // target, and only then wraps — so a refusal here must not be reported as
+      // a completed finalize, and must not run the teardown a completed one
+      // runs. The commit trap is armed as REACHABLE and counted, so "no commit"
+      // is measured rather than assumed.
+      const session = startWrapping('tc-wedge-wrap-raced');
+      const realWrap = store.sessions.wrap;
+      const realCommit = git.commit;
+      const realIsRepo = git.isGitRepo;
+      let committed = 0;
+      git.isGitRepo = () => true;
+      git.commit = () => { committed++; return { committed: true }; };
+      // Kill it at the moment `completeWrap` has its target and is about to
+      // write — the window an operator pressing Kill mid-wrap actually lands in.
+      store.sessions.wrap = (id, summary) => {
+        store.sessions.kill(id, 'killed mid-wrap');
+        return realWrap.call(store.sessions, id, summary);
+      };
+      try {
+        const result = sessions.completeWrap('wedge-wrap');
+        assert.equal(result.session, null);
+        assert.match(result.error, /ended before this finalize/);
+        // Same reason as the identity refusal above: without this, deleting the
+        // `code` from this branch leaves every test green and silently restores
+        // the 500 that latches the session page's finalizer.
+        assert.equal(result.code, 'SESSION_CHANGED');
+        assert.equal(store.sessions.get(session.id).status, 'killed');
+        assert.equal(store.sessions.get(session.id).wrapSummary, null,
+          'a refused wrap records no summary');
+        assert.equal(committed, 0,
+          'and it does not commit the repository on behalf of a wrap that did not happen');
+      } finally {
+        store.sessions.wrap = realWrap;
+        git.commit = realCommit;
+        git.isGitRepo = realIsRepo;
+        cleanup(session.id);
       }
     });
 
@@ -2141,160 +2089,52 @@ describe('sessions', () => {
       // The identity check must not become a new way to fail: naming the right
       // session works, and omitting it keeps the pre-existing behaviour exactly.
       for (const name of ['tc-wedge-id-match', 'tc-wedge-id-absent']) {
-        const wrapping = startWrapping(name);
+        const session = startWrapping(name);
         const realCommit = git.commit;
         const realIsRepo = git.isGitRepo;
         git.isGitRepo = () => false;
         git.commit = () => ({ committed: false });
         try {
           const result = name.endsWith('match')
-            ? sessions.completeWrap('wedge-wrap', undefined, wrapping.id)
+            ? sessions.completeWrap('wedge-wrap', undefined, session.id)
             : sessions.completeWrap('wedge-wrap');
           assert.equal(result.error, null, name);
-          assert.equal(store.sessions.get(wrapping.id).status, 'wrapped', name);
+          assert.equal(store.sessions.get(session.id).status, 'wrapped', name);
         } finally {
           git.commit = realCommit;
           git.isGitRepo = realIsRepo;
-          cleanup(wrapping.id);
+          cleanup(session.id);
         }
       }
     });
 
-    it('launchSession still completes a young wrap tmux ANSWERED was dead, and proceeds', () => {
-      // The launch-path counterpart of the test above, and it exists because a
-      // mutation proved it was missing: widening the refusal from
-      // `!probe.answered` to `!probe.live` survived the whole suite. That
-      // mutation would refuse every launch after a genuinely finished wrap —
-      // the project becomes unlaunchable until the row ages out an hour.
-      const wrapping = startWrapping('tc-wedge-wrap-dead-launch');
+    it('launchSession clears a session whose pane tmux ANSWERED was dead, and proceeds', () => {
+      // The launch-path counterpart, and it exists because a mutation proved it
+      // was missing: widening the refusal from `!probe.answered` to
+      // `!probe.live` survived the whole suite. That mutation would refuse every
+      // launch after a session whose pane is genuinely gone — the project
+      // becomes unlaunchable with nothing to un-stick it.
+      const session = startWrapping('tc-wedge-wrap-dead-launch');
       const realProbe = tmux.probeSession;
-      const realCommit = git.commit;
-      const realIsRepo = git.isGitRepo;
       const realCreate = tmux.createSession;
       const realDetect = engines.detectEngine;
       tmux.probeSession = () => ({ live: false, answered: true, cause: null });
-      git.isGitRepo = () => true;
-      git.commit = () => ({ committed: true });
       tmux.createSession = () => true;
       engines.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
       try {
         const result = sessions.launchSession('wedge-wrap');
 
-        assert.equal(store.sessions.get(wrapping.id).status, 'wrapped',
-          'tmux answered that the pane is gone, so the wrap is genuinely over');
+        assert.equal(store.sessions.get(session.id).status, 'crashed',
+          'tmux answered that the pane is gone, so the row records a death that was observed');
         assert.ok(result.session,
-          'and the launch proceeds — refusing here would brick the project for an hour');
+          'and the launch proceeds — refusing here would brick the project');
       } finally {
         tmux.probeSession = realProbe;
-        git.commit = realCommit;
-        git.isGitRepo = realIsRepo;
         tmux.createSession = realCreate;
         engines.detectEngine = realDetect;
-        cleanup(wrapping.id);
+        cleanup(session.id);
         const active = store.sessions.getActive(projectId);
         if (active) store.sessions.kill(active.id, 'test cleanup');
-      }
-    });
-
-    // The #105 interaction, and the reason this fix is a restructure rather than
-    // one extra condition. The age recovery used to be nested INSIDE the
-    // liveness branch, so a probe that never answered skipped it too — and a
-    // refusal on the unanswered path would then have left the row `wrapping`
-    // with no way out, which is the exact brick #105 was filed for. Age is
-    // evidence this process owns, so it is now tested first.
-    it('still recovers a row older than the threshold when the probe never answers (#105)', () => {
-      const wrapping = startWrapping('tc-wedge-wrap-stale');
-      const db = store.getDb();
-      db.prepare(`UPDATE sessions SET wrap_started_at = datetime('now', '-3 hours') WHERE id = ?`)
-        .run(wrapping.id);
-
-      const realProbe = tmux.probeSession;
-      const realKill = tmux.killSession;
-      const realCreate = tmux.createSession;
-      const realDetect = engines.detectEngine;
-      tmux.probeSession = () => ({ live: false, answered: false, cause: 'read-timed-out' });
-      tmux.killSession = () => {};
-      tmux.createSession = () => true;
-      engines.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
-      try {
-        // MUTATION THIS CATCHES: letting an unanswered probe withhold the age
-        // recovery. The row would stay `wrapping` forever on a wedged server —
-        // the exact brick #105 exists to prevent.
-        //
-        // The invariant is the OUTCOME, not whether a probe happened. An earlier
-        // version of this guard asserted the probe was never called, which
-        // pinned an implementation detail: the probe MAY be consulted here (it
-        // has to be, to preserve auto-complete for a confirmed-dead pane), it
-        // just may not be allowed to withhold recovery.
-        sessions.launchSession('wedge-wrap');
-
-        assert.equal(store.sessions.get(wrapping.id).status, 'killed',
-          'an hours-old wrapping row is an orphan whether or not tmux will discuss it');
-      } finally {
-        tmux.probeSession = realProbe;
-        tmux.killSession = realKill;
-        tmux.createSession = realCreate;
-        engines.detectEngine = realDetect;
-        cleanup(wrapping.id);
-        const active = store.sessions.getActive(projectId);
-        if (active) store.sessions.kill(active.id, 'test cleanup');
-      }
-    });
-
-    it('an aged-out row whose pane tmux CONFIRMS is gone is completed, not killed', () => {
-      // The outcome the first cut of #908 changed by accident. Hoisting the age
-      // test above the liveness test silently turned "old + confirmed dead" from
-      // autoCompleteWrap into a plain kill — dropping the wrap summary, the
-      // Medusa teardown and the auto-commit, for a row where tmux had actually
-      // ANSWERED. Nothing about fixing the unanswered case justifies altering
-      // what happens when tmux did answer, so this pins the pre-existing outcome.
-      const wrapping = startWrapping('tc-wedge-wrap-old-dead');
-      store.getDb()
-        .prepare(`UPDATE sessions SET wrap_started_at = datetime('now', '-3 hours') WHERE id = ?`)
-        .run(wrapping.id);
-
-      const realProbe = tmux.probeSession;
-      const realCommit = git.commit;
-      const realIsRepo = git.isGitRepo;
-      const realCreate = tmux.createSession;
-      const realDetect = engines.detectEngine;
-      let committed = 0;
-      tmux.probeSession = () => ({ live: false, answered: true, cause: null });
-      git.isGitRepo = () => true;
-      git.commit = () => { committed++; return { committed: true }; };
-      tmux.createSession = () => true;
-      engines.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
-      try {
-        sessions.launchSession('wedge-wrap');
-
-        assert.equal(store.sessions.get(wrapping.id).status, 'wrapped',
-          'tmux answered that the pane is gone, so the wrap is over and completing it is honest');
-        assert.equal(committed, 1,
-          'and the auto-commit that outcome has always carried still runs');
-      } finally {
-        tmux.probeSession = realProbe;
-        git.commit = realCommit;
-        git.isGitRepo = realIsRepo;
-        tmux.createSession = realCreate;
-        engines.detectEngine = realDetect;
-        cleanup(wrapping.id);
-        const active = store.sessions.getActive(projectId);
-        if (active) store.sessions.kill(active.id, 'test cleanup');
-      }
-    });
-
-    it('still refuses a launch while a young wrap is genuinely live', () => {
-      const wrapping = startWrapping('tc-wedge-wrap-live');
-      try {
-        const result = withProbeAndNoCommit(
-          { live: true, answered: true, cause: null },
-          () => sessions.launchSession('wedge-wrap')
-        );
-        assert.equal(result.session, null);
-        assert.match(result.error, /currently wrapping/);
-        assert.equal(store.sessions.get(wrapping.id).status, 'wrapping');
-      } finally {
-        cleanup(wrapping.id);
       }
     });
   });
@@ -2586,7 +2426,7 @@ describe('sessions', () => {
     });
   });
 
-  describe('killSession recovers wrapping + orphan tmux (#105)', () => {
+  describe('killSession recovers a stuck wrap + orphan tmux (#105)', () => {
     let sessions;
     const tmux = require('../lib/tmux');
     let originalHasSession;
@@ -2607,24 +2447,27 @@ describe('sessions', () => {
     afterEach(() => {
       tmux.hasSession = originalHasSession;
       tmux.killSession = originalKillSession;
-      // Cleanup any leftover wrapping/active rows so tests are independent
+      // Cleanup any leftover live rows so tests are independent
       const project = store.projects.getByName('prime-test');
       if (project) {
-        const wrapping = store.sessions.getWrapping(project.id);
-        if (wrapping) store.sessions.kill(wrapping.id, 'test cleanup');
-        const active = store.sessions.getActive(project.id);
-        if (active) store.sessions.kill(active.id, 'test cleanup');
+        let active = store.sessions.getActive(project.id);
+        while (active) {
+          store.sessions.kill(active.id, 'test cleanup');
+          active = store.sessions.getActive(project.id);
+        }
       }
     });
 
-    it('kills wrapping session when tmux is alive', () => {
+    it('kills a session stuck mid-wrap when tmux is alive', () => {
+      // A session holds `active` for the whole of its wrap, so "stuck mid-wrap"
+      // and "running" are the same row to this button — which is the point:
+      // the kill affordance exists precisely for a wrap that never finished.
       const project = store.projects.getByName('prime-test');
-      const session = store.sessions.start({
+      store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
         tmuxSession: 'kill-wrapping-alive'
       });
-      store.sessions.setWrapping(session.id);
       tmux.hasSession = (name) => name === 'kill-wrapping-alive';
 
       const result = sessions.killSession('prime-test', 'user kill while wrapping');
@@ -2635,14 +2478,13 @@ describe('sessions', () => {
       assert.deepEqual(killedTmux, ['kill-wrapping-alive'], 'tmux session should be killed');
     });
 
-    it('kills wrapping session when tmux is already dead — reconciles DB only', () => {
+    it('kills a session stuck mid-wrap when tmux is already dead — reconciles DB only', () => {
       const project = store.projects.getByName('prime-test');
-      const session = store.sessions.start({
+      store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
         tmuxSession: 'kill-wrapping-dead'
       });
-      store.sessions.setWrapping(session.id);
       tmux.hasSession = () => false;
 
       const result = sessions.killSession('prime-test');
@@ -2653,8 +2495,36 @@ describe('sessions', () => {
       assert.deepEqual(killedTmux, [], 'should not call tmux.killSession when session is dead');
     });
 
+    it('reports the true status when the session ended before the kill landed', () => {
+      // A wrap finishing between the lookup and the write. The operator's ask is
+      // met — the pane is gone — but the row says `wrapped`, and that is what
+      // the caller must get back. `reconciled` is NOT set: that flag means there
+      // was no row at all, and its route branch answers without a sessionId.
+      const project = store.projects.getByName('prime-test');
+      const session = store.sessions.start({
+        projectId: project.id, engineId: 'claude', tmuxSession: 'kill-lost-the-race'
+      });
+      const realKill = store.sessions.kill;
+      store.sessions.kill = (id, reason) => {
+        store.sessions.wrap(id, 'wrapped first');
+        return realKill.call(store.sessions, id, reason);
+      };
+      tmux.hasSession = () => true;
+      try {
+        const result = sessions.killSession('prime-test', 'operator pressed Kill');
+        assert.equal(result.error, null);
+        assert.equal(result.session.id, session.id);
+        assert.equal(result.session.status, 'wrapped',
+          'the row says how it actually ended, not how this call meant to end it');
+        assert.notEqual(result.reconciled, true, 'a row existed — this is not orphan reconciliation');
+        assert.deepEqual(killedTmux, ['kill-lost-the-race'], 'the pane still goes');
+      } finally {
+        store.sessions.kill = realKill;
+      }
+    });
+
     it('reconciles orphan tmux when no DB row exists', () => {
-      // No active and no wrapping row — but tmux still has a session.
+      // No live row — but tmux still has a session.
       tmux.hasSession = (name) => name === 'prime-test';
 
       const result = sessions.killSession('prime-test', 'cleanup orphan');
@@ -2676,46 +2546,29 @@ describe('sessions', () => {
       assert.deepEqual(killedTmux, []);
     });
 
-    it('clears wrap pane cache when killing wrapping session', () => {
+    it('targets the most recently started row when a project somehow has two', () => {
+      // Defensive: there should not normally be two live rows for one project,
+      // but if a bug allows it the kill button must resolve to the one the
+      // operator is looking at — the newest — rather than an older orphan.
       const project = store.projects.getByName('prime-test');
-      const session = store.sessions.start({
+      const older = store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
-        tmuxSession: 'kill-wrapping-cache'
+        tmuxSession: 'kill-priority-older'
       });
-      store.sessions.setWrapping(session.id);
-      sessions._wrapPaneCache.set(session.id, 'cached pane output');
-      tmux.hasSession = () => true;
-
-      sessions.killSession('prime-test');
-
-      assert.equal(sessions._wrapPaneCache.has(session.id), false, 'cache entry should be cleared');
-    });
-
-    it('prefers active over wrapping when both somehow exist', () => {
-      // Defensive: there shouldn't normally be both, but if a future bug allows
-      // it the kill button must target the active row first.
-      const project = store.projects.getByName('prime-test');
-      const wrappingSession = store.sessions.start({
+      const newer = store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
-        tmuxSession: 'kill-priority-wrap'
-      });
-      store.sessions.setWrapping(wrappingSession.id);
-      const activeSession = store.sessions.start({
-        projectId: project.id,
-        engineId: 'claude',
-        tmuxSession: 'kill-priority-active'
+        tmuxSession: 'kill-priority-newer'
       });
       tmux.hasSession = () => true;
 
       const result = sessions.killSession('prime-test');
 
-      assert.equal(result.session.id, activeSession.id, 'should target the active row');
-      assert.deepEqual(killedTmux, ['kill-priority-active']);
+      assert.equal(result.session.id, newer.id, 'should target the newest live row');
+      assert.deepEqual(killedTmux, ['kill-priority-newer']);
 
-      // Cleanup the still-wrapping row
-      store.sessions.kill(wrappingSession.id, 'test cleanup');
+      store.sessions.kill(older.id, 'test cleanup');
     });
   });
 
@@ -2756,8 +2609,6 @@ describe('sessions', () => {
       store.documentLocks.acquire(doc.id, session.id, 'prime-test');
       assert.ok(store.documentLocks.check(doc.id), 'Lock should be acquired');
 
-      // Mark as wrapping and complete
-      store.sessions.setWrapping(session.id);
       sessions.completeWrap('prime-test', 'test wrap');
 
       // Lock should be released
@@ -2766,96 +2617,6 @@ describe('sessions', () => {
       // Clean up
       store.sharedDocs.delete(doc.id);
       store.projectGroups.delete(group.id);
-    });
-  });
-
-  describe('parseWrapSummary', () => {
-    let sessions;
-
-    before(() => {
-      sessions = require('../lib/sessions');
-    });
-
-    it('extracts structured fields from markdown headings', () => {
-      const rawOutput = [
-        'Some preamble',
-        '## summary',
-        'We completed chunk 5',
-        'All tests pass',
-        '## nextSteps',
-        'Start chunk 6',
-        '## learnings',
-        'Wrap parsing is tricky'
-      ].join('\n');
-
-      const result = sessions.parseWrapSummary(rawOutput, ['summary', 'nextSteps', 'learnings']);
-      assert.ok(result.includes('## summary'));
-      assert.ok(result.includes('We completed chunk 5'));
-      assert.ok(result.includes('## nextSteps'));
-      assert.ok(result.includes('Start chunk 6'));
-      assert.ok(result.includes('## learnings'));
-    });
-
-    it('falls back to last 50 lines when no fields match', () => {
-      const lines = Array.from({ length: 60 }, (_, i) => `line ${i}`);
-      const rawOutput = lines.join('\n');
-
-      const result = sessions.parseWrapSummary(rawOutput, ['nonexistent']);
-      assert.ok(result.includes('line 59'));
-      assert.ok(result.includes('line 10'));
-      assert.ok(!result.includes('line 9'));
-    });
-
-    it('returns empty string for empty input', () => {
-      const result = sessions.parseWrapSummary('', ['summary']);
-      assert.equal(result, '');
-    });
-
-    it('falls back to raw output when no captureFields provided', () => {
-      const result = sessions.parseWrapSummary('some output', []);
-      assert.equal(result, 'some output');
-    });
-  });
-
-  describe('autoCompleteWrap', () => {
-    let sessions;
-
-    before(() => {
-      sessions = require('../lib/sessions');
-    });
-
-    it('wraps session with cached pane output', () => {
-      const project = store.projects.getByName('prime-test');
-      const session = store.sessions.start({
-        projectId: project.id,
-        engineId: 'claude',
-        tmuxSession: 'auto-wrap-test'
-      });
-      store.sessions.setWrapping(session.id);
-
-      // Simulate cached pane output
-      sessions._wrapPaneCache.set(session.id, '## summary\nDone with chunk\n## nextSteps\nNext chunk');
-
-      const result = sessions.autoCompleteWrap(project, session);
-      assert.ok(result);
-      assert.equal(result.status, 'wrapped');
-      assert.ok(result.wrapSummary.includes('Done with chunk'));
-    });
-
-    it('handles missing cache gracefully', () => {
-      const project = store.projects.getByName('prime-test');
-      const session = store.sessions.start({
-        projectId: project.id,
-        engineId: 'claude',
-        tmuxSession: 'auto-wrap-empty-test'
-      });
-      store.sessions.setWrapping(session.id);
-
-      const result = sessions.autoCompleteWrap(project, session);
-      assert.ok(result);
-      assert.equal(result.status, 'wrapped');
-      // Empty cache → empty string → store converts to null
-      assert.equal(result.wrapSummary, null);
     });
   });
 
@@ -2888,14 +2649,12 @@ describe('sessions', () => {
     afterEach(() => {
       tmux.sendKeys = originalSendKeys;
       tmux.hasSession = originalHasSession;
-      // Cleanup active/wrapping sessions and restore methodology
+      // Cleanup live sessions and restore methodology
       const project = store.projects.getByName('prime-test');
       if (project) {
         store.projects.update(project.id, { methodology: 'minimal' });
         const active = store.sessions.getActive(project.id);
         if (active) store.sessions.kill(active.id, 'test cleanup');
-        const wrapping = store.sessions.getWrapping(project.id);
-        if (wrapping) store.sessions.wrap(wrapping.id, 'test cleanup');
       }
     });
 
@@ -3439,6 +3198,54 @@ describe('sessions', () => {
         assert.equal(wrapped.wrapSummary, 'wrapped via V2');
         assert.deepEqual(killCalls, ['wrap-v2-lifecycle-ok'], 'tmux session killed');
         assert.deepEqual(releaseCalls, [session.id], 'doc locks released for this session');
+        assert.equal(result.lifecycleCompleted, true, 'and it says the record was written');
+      });
+
+      it('ok + commitSha but the session was killed mid-wrap → reports no lifecycle', async () => {
+        // The pipeline runs for minutes and the operator can press Kill inside
+        // that window, so the row it started against can end before it finishes.
+        // The transition map then refuses the wrap and NOTHING is written — so
+        // `lifecycleCompleted` must be derived from that write rather than
+        // asserted beside it, or the only record of the wrap says the opposite
+        // of what happened.
+        const project = store.projects.getByName('prime-test');
+        const session = store.sessions.start({
+          projectId: project.id,
+          engineId: 'claude',
+          tmuxSession: 'wrap-v2-lifecycle-raced'
+        });
+
+        stubPipeline({
+          ok: true,
+          blockedAt: null,
+          results: [
+            { stepId: 'memory-update', kind: 'ai-content', status: 'done',
+              output: { parsedFields: { summary: 'wrapped via V2' } }, blockers: [] }
+          ],
+          commitSha: 'abc123',
+          summary: null,
+          error: null
+        });
+        // Kill it while the pipeline is "running" — the real window.
+        wrapPipelineMod.runWrapPipeline = async () => {
+          store.sessions.kill(session.id, 'operator pressed Kill mid-wrap');
+          return {
+            ok: true, blockedAt: null, commitSha: 'abc123', summary: null, error: null,
+            results: [
+              { stepId: 'memory-update', kind: 'ai-content', status: 'done',
+                output: { parsedFields: { summary: 'wrapped via V2' } }, blockers: [] }
+            ]
+          };
+        };
+
+        const result = await sessions.triggerWrap('prime-test');
+        assert.equal(result.ok, true, 'the PIPELINE succeeded — that part is true');
+        assert.equal(result.lifecycleCompleted, false,
+          'but no session record was written, and the result must say so');
+
+        const row = store.sessions.get(session.id);
+        assert.equal(row.status, 'killed');
+        assert.equal(row.wrapSummary, null, 'a refused wrap records no summary');
       });
 
       it('ok + null commitSha (clean session) → session stays active', async () => {
@@ -3799,28 +3606,31 @@ describe('sessions', () => {
       tmux.capturePane = originalCapturePane;
       tmux.killSession = originalKillSession;
       tmux.probeSession = originalProbeSession;
-      // Cleanup wrapping sessions
+      // Cleanup live sessions
       const project = store.projects.getByName('prime-test');
       if (project) {
-        const wrapping = store.sessions.getWrapping(project.id);
-        if (wrapping) store.sessions.wrap(wrapping.id, 'test cleanup');
         const active = store.sessions.getActive(project.id);
         if (active) store.sessions.kill(active.id, 'test cleanup');
       }
     });
 
-    it('getSessionStatus stays wrapping while tmux is alive', () => {
+    it('getSessionStatus keeps reporting a session that is mid-wrap as live', () => {
+      // The wrap runs for minutes and the session page polls throughout it. The
+      // row stays `active` for the duration, so the read must keep saying the
+      // session is there — a read that went `active: false` mid-wrap would make
+      // the page declare the session over while the pipeline was still running.
       const project = store.projects.getByName('prime-test');
-      const session = store.sessions.start({
+      store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
         tmuxSession: 'wrap-stays-active-test'
       });
-      store.sessions.setWrapping(session.id);
 
       const status = sessions.getSessionStatus('prime-test');
-      assert.equal(status.wrapping, true);
-      assert.equal(status.active, false);
+      assert.equal(status.active, true);
+      assert.equal(status.wrapping, undefined,
+        'this route reports no wrap state at all — the run registry is where a '
+        + 'running pipeline lives, and wiring the card to it is #1034 chunk 02');
     });
 
     it('does not export WRAP_TIMEOUT_MS or _wrapStartTimes — server-side timeout removed', () => {
@@ -4006,213 +3816,14 @@ describe('sessions', () => {
     });
   });
 
-  describe('launchSession stale wrapping recovery (#105)', () => {
-    const tmux = require('../lib/tmux');
-    const enginesModule = require('../lib/engines');
+  describe('_parseSqliteUtcMs', () => {
     let sessions;
-    let originalHasSession;
-    let originalDetectEngine;
-    let originalKillSession;
-    let originalCreateSession;
-    let killedTmux;
 
     before(() => {
       sessions = require('../lib/sessions');
-      // Project for launch-guard tests
-      const projDir = path.join(projectsDir, 'stale-wrap');
-      fs.mkdirSync(projDir, { recursive: true });
-      store.projects.create({
-        name: 'stale-wrap',
-        path: projDir,
-        engine: 'claude'
-      });
     });
 
-    let originalProbeSession;
-
-    beforeEach(() => {
-      originalHasSession = tmux.hasSession;
-      originalDetectEngine = enginesModule.detectEngine;
-      originalKillSession = tmux.killSession;
-      originalCreateSession = tmux.createSession;
-      originalProbeSession = tmux.probeSession;
-      killedTmux = [];
-      tmux.killSession = (name) => { killedTmux.push(name); };
-      tmux.createSession = () => true;
-      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/claude' });
-    });
-
-    afterEach(() => {
-      tmux.hasSession = originalHasSession;
-      tmux.killSession = originalKillSession;
-      tmux.createSession = originalCreateSession;
-      tmux.probeSession = originalProbeSession;
-      enginesModule.detectEngine = originalDetectEngine;
-      const project = store.projects.getByName('stale-wrap');
-      if (project) {
-        const wrapping = store.sessions.getWrapping(project.id);
-        if (wrapping) store.sessions.kill(wrapping.id, 'test cleanup');
-        const active = store.sessions.getActive(project.id);
-        if (active) store.sessions.kill(active.id, 'test cleanup');
-      }
-    });
-
-    /**
-     * Force a session row's wrap_started_at to a past timestamp (simulating a
-     * wrap that has been stuck for `hoursAgo` hours). Uses store.getDb()
-     * directly since there is no public mutator for this column — appropriate
-     * here because the field is otherwise managed exclusively by setWrapping.
-     */
-    function _backdateWrapStart(sessionId, hoursAgo) {
-      const db = store.getDb();
-      db.prepare(`UPDATE sessions SET wrap_started_at = datetime('now', ?) WHERE id = ?`)
-        .run(`-${hoursAgo} hours`, sessionId);
-    }
-
-    function _backdateStartedAt(sessionId, hoursAgo) {
-      const db = store.getDb();
-      db.prepare(`UPDATE sessions SET started_at = datetime('now', ?) WHERE id = ?`)
-        .run(`-${hoursAgo} hours`, sessionId);
-    }
-
-    function _clearWrapStart(sessionId) {
-      const db = store.getDb();
-      db.prepare('UPDATE sessions SET wrap_started_at = NULL WHERE id = ?').run(sessionId);
-    }
-
-    it('recovers stale wrapping row (>1h) and proceeds with fresh launch', () => {
-      const project = store.projects.getByName('stale-wrap');
-      // Distinct tmux name on the wrapping row so the recovery-kill is
-      // distinguishable from the pre-launch orphan-kill that fires later in
-      // launchSession against the project's canonical tmux name (Critic MINOR).
-      const stale = store.sessions.start({
-        projectId: project.id,
-        engineId: 'claude',
-        tmuxSession: 'stale-wrap-OLD'
-      });
-      store.sessions.setWrapping(stale.id);
-      _backdateWrapStart(stale.id, 2); // wrap began 2h ago — well past threshold
-      tmux.hasSession = (name) => name === 'stale-wrap-OLD' || name === 'stale-wrap';
-      // Re-pointed from `hasSession` (#908): the wrapping path asks
-      // `probeSession` now. Same meaning as before — this pane is ANSWERED live,
-      // which is the case this test has always been about. A confirmed-DEAD pane
-      // takes the auto-complete branch instead, which is pinned separately.
-      tmux.probeSession = (name) => ({
-        live: name === 'stale-wrap-OLD' || name === 'stale-wrap',
-        answered: true,
-        cause: null
-      });
-
-      const result = sessions.launchSession('stale-wrap');
-
-      assert.equal(result.error, null, 'launch should proceed');
-      assert.ok(result.session, 'fresh session should be created');
-      assert.notEqual(result.session.id, stale.id, 'should be a new session row');
-      assert.ok(killedTmux.includes('stale-wrap-OLD'),
-        'stale wrapping tmux name should have been killed during recovery branch');
-
-      // Original wrapping row should now be marked killed
-      const recovered = store.sessions.list(project.id, { status: 'killed', limit: 5 })
-        .find((s) => s.id === stale.id);
-      assert.ok(recovered, 'stale row should be marked killed');
-      assert.equal(recovered.status, 'killed');
-    });
-
-    it('falls back to recovery (not block) when timestamps are unparseable', () => {
-      // Defense for MINOR 5: a wrapping row with corrupt timestamps must not
-      // brick the project. Fail-safe direction is "recover" since that's the
-      // entire bug class #105 was filed for.
-      const project = store.projects.getByName('stale-wrap');
-      const corrupt = store.sessions.start({
-        projectId: project.id,
-        engineId: 'claude',
-        tmuxSession: 'corrupt-wrap'
-      });
-      store.sessions.setWrapping(corrupt.id);
-      const db = store.getDb();
-      db.prepare("UPDATE sessions SET wrap_started_at = '<not a date>', started_at = '<not a date>' WHERE id = ?")
-        .run(corrupt.id);
-      tmux.hasSession = () => true;
-
-      const result = sessions.launchSession('stale-wrap');
-      assert.equal(result.error, null, 'corrupt timestamps must not block launch');
-      assert.ok(result.session);
-    });
-
-    it('blocks launch when wrapping row is recent (<1h) and tmux is alive', () => {
-      const project = store.projects.getByName('stale-wrap');
-      const recent = store.sessions.start({
-        projectId: project.id,
-        engineId: 'claude',
-        tmuxSession: 'recent-wrap'
-      });
-      store.sessions.setWrapping(recent.id);
-      // wrap_started_at defaults to now (just set by setWrapping) — well within threshold
-      // Re-pointed from `hasSession` to `probeSession` (#908): an ANSWERED
-      // liveness of true, which is what the old stub meant.
-      tmux.probeSession = (name) => ({
-        live: name === 'recent-wrap', answered: true, cause: null
-      });
-
-      const result = sessions.launchSession('stale-wrap');
-
-      assert.equal(result.session, null);
-      assert.ok(result.error.includes('currently wrapping'));
-      assert.deepEqual(killedTmux, [], 'recent wrap should not be killed');
-    });
-
-    it('falls back to started_at for legacy rows with NULL wrap_started_at', () => {
-      // Legacy row predates schema v14 — wrap_started_at is NULL but the row
-      // is in wrapping status with an old started_at. Should still recover.
-      const project = store.projects.getByName('stale-wrap');
-      const legacy = store.sessions.start({
-        projectId: project.id,
-        engineId: 'claude',
-        tmuxSession: 'legacy-wrap-OLD'
-      });
-      store.sessions.setWrapping(legacy.id);
-      _clearWrapStart(legacy.id);
-      _backdateStartedAt(legacy.id, 3); // started 3h ago
-      tmux.hasSession = (name) => name === 'legacy-wrap-OLD' || name === 'stale-wrap';
-      // Re-pointed from `hasSession` (#908), same meaning: an ANSWERED live pane.
-      tmux.probeSession = (name) => ({
-        live: name === 'legacy-wrap-OLD' || name === 'stale-wrap',
-        answered: true,
-        cause: null
-      });
-
-      const result = sessions.launchSession('stale-wrap');
-
-      assert.equal(result.error, null, 'legacy stale row should be recovered too');
-      assert.ok(result.session);
-      assert.notEqual(result.session.id, legacy.id);
-      assert.ok(killedTmux.includes('legacy-wrap-OLD'),
-        'legacy stale tmux name should have been killed during recovery');
-    });
-
-    it('STALE_WRAPPING_THRESHOLD_MS is 1 hour', () => {
-      assert.equal(sessions.STALE_WRAPPING_THRESHOLD_MS, 60 * 60 * 1000);
-    });
-
-    it('setWrapping populates wrap_started_at on transition (schema v14)', () => {
-      const project = store.projects.getByName('stale-wrap');
-      const session = store.sessions.start({
-        projectId: project.id,
-        engineId: 'claude',
-        tmuxSession: 'set-wrapping-timestamp'
-      });
-      const wrapped = store.sessions.setWrapping(session.id);
-      assert.ok(wrapped, 'setWrapping should return updated row');
-      assert.equal(wrapped.status, 'wrapping');
-      assert.ok(wrapped.wrapStartedAt, 'wrap_started_at should be populated');
-      // Should be within the last few seconds. Parse as UTC since SQLite emits
-      // a TZ-less string and the test machine may not be in UTC.
-      const ageMs = Date.now() - sessions._parseSqliteUtcMs(wrapped.wrapStartedAt);
-      assert.ok(ageMs < 5000, `wrap_started_at should be very recent (got ageMs=${ageMs})`);
-      assert.ok(ageMs >= 0, `wrap_started_at should not be in the future (got ageMs=${ageMs})`);
-    });
-
-    it('_parseSqliteUtcMs interprets TZ-less SQLite timestamps as UTC', () => {
+    it('interprets TZ-less SQLite timestamps as UTC', () => {
       // SQLite emits 'YYYY-MM-DD HH:MM:SS' without timezone — should parse as UTC.
       const tzLess = '2026-04-29 05:00:00';
       const withZ = '2026-04-29T05:00:00Z';

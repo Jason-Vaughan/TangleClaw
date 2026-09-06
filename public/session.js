@@ -5074,8 +5074,9 @@ async function confirmReturnFromWrapIdle() {
  *
  * A failure is not retried in a loop: `wrapCompleting` stays set so the next poll
  * does not fire a second POST, and the operator is told. Nothing is lost by
- * waiting — the launch path claims a stale wrapping row on its own (#105), so the
- * row cannot become unrecoverable because this call did not land.
+ * waiting — the session stays `active`, so the Kill button still reaches it and
+ * the next launch's stale-pane cleanup still claims it. (This whole path is
+ * unreachable today: the server no longer sends `wrapFinished` — #1302.)
  * @returns {Promise<void>}
  */
 async function finalizeFinishedWrap(sessionId) {

@@ -67,6 +67,9 @@ function installWorld(overrides = {}) {
     cursor: null,
     injected: [],
     injectResult: { ok: true, error: null },
+    // Whether `lib/wrap-run-registry` says a wrap pipeline is running for this
+    // project. False is the ordinary case.
+    wrapRunning: false,
     // The Master's seams (#996). `null` = no Master to scan, which keeps every
     // project-only test exactly as it was; the Master tests set a record.
     masterRecord: null,
@@ -85,6 +88,10 @@ function installWorld(overrides = {}) {
   wake._internal.listLiveAll = () => world.sessions;
   wake._internal.getProject = () => world.project;
   wake._internal.loadProjectConfig = () => world.config;
+  // Stubbed rather than left to the real registry: the fixture project names
+  // resolve there too, so an unstubbed read makes this gate inert in every test
+  // instead of exercised in one.
+  wake._internal.wrapRunning = () => world.wrapRunning;
   wake._internal.getStatus = () => world.status;
   wake._internal.getMessages = () => world.inbox;
   wake._internal.capturePane = () => ({ lines: world.pane });
@@ -694,14 +701,46 @@ describe('medusa-wake — gates (each one blocks alone)', () => {
     assert.equal(world.injected.length, 1, 'the held wake fires after recovery — same mail, no new edge required');
   });
 
-  it('never nudges a wrapping session', () => {
-    const wrapping = { ...claudeSession(1), status: 'wrapping' };
-    const world = installWorld({ sessions: [wrapping] });
+  it('never nudges into a pane a wrap pipeline is driving', () => {
+    // The guard that replaced the retired `wrapping` status. A wrap pauses
+    // between steps, and a pane at rest there is exactly the shape this monitor
+    // acts on — so without this it would type a line into a running wrap.
+    const world = installWorld({ wrapRunning: true });
     tickThroughDebounce();
     assert.equal(world.injected.length, 0);
-    world.sessions = [{ ...claudeSession(1), status: 'active' }];
+    assert.ok(world.recorded.some((r) => r.skipReason === 'wrap-running'),
+      'and the skip is recorded, not silent');
+
+    world.wrapRunning = false;
     tickThroughDebounce();
-    assert.equal(world.injected.length, 1, 'same session nudges once active again');
+    assert.equal(world.injected.length, 1, 'the held nudge fires once the wrap is over');
+  });
+
+  it('holds the nudge when the wrap registry cannot be read', () => {
+    // The gate withholds a nudge, so an unreadable registry is a reason to
+    // withhold one — never a reason to send it. Reversing this is silent: the
+    // nudge lands and nothing says the gate was skipped.
+    const world = installWorld({ sessions: [claudeSession(7)] });
+    wake._internal.wrapRunning = () => { throw new Error('registry exploded'); };
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 0);
+  });
+
+  it('never nudges a session that has ended', () => {
+    // `listLiveAll` returns only `active` rows, so this guard fires on the race:
+    // the session ended between the roster read and this scan. Enumerated over
+    // every terminal status, because one of them is not the family — and each
+    // gets its own id, since the monitor keeps state per session.
+    ['wrapped', 'killed', 'crashed'].forEach((status, i) => {
+      const ended = { ...claudeSession(i + 1), status };
+      const world = installWorld({ sessions: [ended] });
+      tickThroughDebounce();
+      assert.equal(world.injected.length, 0, `a ${status} session must not be nudged`);
+    });
+    // And the skip is a per-session decision, not a latch on the monitor.
+    const world = installWorld({ sessions: [{ ...claudeSession(4), status: 'active' }] });
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1, 'a live session still nudges');
   });
 
   it('skips webui sessions and unprofiled engines (#560 gate)', () => {

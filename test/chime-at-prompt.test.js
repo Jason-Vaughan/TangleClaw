@@ -157,13 +157,6 @@ describe('#1180 detectAtPrompt — wired to a real session row', () => {
     assert.match(r.reason, /^staleness:/);
   });
 
-  it('the WRAPPING site deliberately stays on the staleness heuristic', () => {
-    // Wrap-completion was built against "≥10s of unchanged output". Migrating
-    // it is a separate behaviour change; this pins that the decision was made
-    // rather than overlooked.
-    assert.match(sessionsSrc, /detectIdle\(wrapping\.tmuxSession\)/);
-  });
-
   it('the other detectIdle callers are untouched, and the reason is recorded', () => {
     for (const f of ['lib/wrap-steps/ai-content.js', 'lib/actions/invoke-critic.js']) {
       const src = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');

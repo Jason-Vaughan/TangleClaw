@@ -34,6 +34,54 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-06 — #1034: the session lifecycle has a vocabulary, and `wrapping` is not in it
+
+<!-- prawduct: type=feature | scope=ses-5w9d -->
+
+SES-5W9D Chunk 01.
+
+**What shipped.** `sessions.status` lived as SQL string literals scattered across `lib/store.js`
+and `lib/sessions.js` — no enum, no allowed-transition table, and no way to answer "which values
+exist" other than grepping for quoted words. `SESSION_STATUS` and `SESSION_STATUS_TRANSITIONS` now
+hold the four statuses a session can be in (`active`, `wrapped`, `killed`, `crashed`) and the moves
+between them, mirroring the `SESSION_RULE_KINDS` pattern already in the file. The map is
+**enforced, not declared**: `wrap`, `kill` and `markCrashed` derive their SQL precondition from it,
+so a transition it does not model changes no row. A refused transition is a logged no-op returning
+`null` — not a throw — because roughly sixty callers use these as "end it if it is still live", and
+reading the row back cannot distinguish a refused `wrap` on an already-`wrapped` row from a
+successful one.
+
+Enforcement fixed a real defect on the way past: a second `kill` on an ended session used to
+rewrite `ended_at` and `duration_seconds` and append a duplicate `session.killed` row to
+`activity_log`, corrupting the only durable record of what the lifecycle actually did — the record
+this whole ruling depends on being readable. `POST /wrap/complete` now answers **409
+`SESSION_CHANGED`** for a finalize that wrote nothing rather than 200, and does not tear down the
+listener or commit the repo on behalf of a wrap that was never recorded; `DELETE
+/api/sessions/:project` reports that the row ended `wrapped` instead of borrowing `reconciled`,
+whose meaning is "there was no session row at all". The wrap POST's HTTP response shape is
+unchanged — `lifecycleCompleted` is deliberately not forwarded.
+
+`wrapping` is absent from the enum, so its whole ecosystem retires as a consequence of the model
+rather than as a cleanup that happens to delete a state: `setWrapping`/`getWrapping`, the
+launch-time stale-wrapping recovery and `autoCompleteWrap`, and the `IN ('active','wrapping')`
+disjunctions. The `session.wrapping` **activity event type is kept** — nothing emits it any more,
+but 166 historical rows must stay readable, and they were verified readable on the live install.
+
+**The lesson worth carrying: ask which NOUN the roster is of.** Enumerating the consumers of the
+terminal writers, I built the roster of "callers that use the return value" — which is empty, since
+nothing did — when the roster that mattered was "callers that REPORT an outcome", which has three
+members. All three Critic reviewers found what that missed. The enumeration was complete and
+correct against the wrong noun, which is the failure mode a careful sweep does not catch: the
+sweep's rigor is spent inside a boundary chosen before the sweep began.
+
+**Verification.** Suite green, no failures — the evidence store holds the per-tree counts, so
+they are deliberately not restated here. Live-install checks on the restarted server
+covered the status route, the 166 historical activity rows, `tc sessions`, and the dashboard
+payload. The second check — a real wrap end to end — rode a real session wrap on this branch's
+code: session 930 ended `wrapped` with a 491-character summary and `lifecycleCompleted=true` over
+15 pipeline steps, with zero `Refused a session status transition` warnings (the warning string is
+live at `lib/store.js:2607`, so the absence is a measurement, not a missing emitter).
+
 ## 2026-09-06 — #1132: one managed-block policy, decided by the marker counts
 
 <!-- prawduct: type=fix | scope=train-13 -->

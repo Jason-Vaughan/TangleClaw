@@ -273,8 +273,6 @@ describe('api-sessions', () => {
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
         // Clean up the active session.
-        const wrapping = store.sessions.getWrapping(project.id);
-        if (wrapping) store.sessions.wrap(wrapping.id, 'cleanup');
         const active = store.sessions.getActive(project.id);
         if (active) store.sessions.kill(active.id, 'cleanup');
       }
@@ -311,8 +309,6 @@ describe('api-sessions', () => {
         assert.equal(res.body.pipelineResult.results[0].status, 'blocked');
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
-        const wrapping = store.sessions.getWrapping(project.id);
-        if (wrapping) store.sessions.wrap(wrapping.id, 'cleanup');
         const active = store.sessions.getActive(project.id);
         if (active) store.sessions.kill(active.id, 'cleanup');
       }
@@ -371,8 +367,6 @@ describe('api-sessions', () => {
         assert.equal(typeof Object.keys(receivedOptions.prHandling)[0], 'string');
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
-        const wrapping = store.sessions.getWrapping(project.id);
-        if (wrapping) store.sessions.wrap(wrapping.id, 'cleanup');
         const active = store.sessions.getActive(project.id);
         if (active) store.sessions.kill(active.id, 'cleanup');
       }
@@ -405,8 +399,6 @@ describe('api-sessions', () => {
           'non-object options bodies must be discarded before reaching the runner (only the registry hook remains)');
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
-        const wrapping = store.sessions.getWrapping(project.id);
-        if (wrapping) store.sessions.wrap(wrapping.id, 'cleanup');
         const active = store.sessions.getActive(project.id);
         if (active) store.sessions.kill(active.id, 'cleanup');
       }
@@ -442,8 +434,6 @@ describe('api-sessions', () => {
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
         // Cleanup
-        const wrapping = store.sessions.getWrapping(project.id);
-        if (wrapping) store.sessions.wrap(wrapping.id, 'cleanup');
         const active = store.sessions.getActive(project.id);
         if (active) store.sessions.kill(active.id, 'cleanup');
       }
@@ -451,19 +441,18 @@ describe('api-sessions', () => {
   });
 
   describe('POST /api/sessions/:project/wrap/complete', () => {
-    it('returns 404 when no wrapping session', async () => {
+    it('returns 404 when there is no session to complete', async () => {
       const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap/complete', {});
       assert.equal(res.status, 404);
     });
 
-    it('completes a wrapping session with summary', async () => {
+    it('completes the wrapping session with summary', async () => {
       const project = store.projects.getByName('api-sess-test');
       const session = store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
         tmuxSession: 'wrap-complete-test'
       });
-      store.sessions.setWrapping(session.id);
 
       const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap/complete', {
         summary: 'Manual wrap summary'
@@ -487,18 +476,41 @@ describe('api-sessions', () => {
         engineId: 'claude',
         tmuxSession: 'wrap-complete-stale'
       });
-      store.sessions.setWrapping(session.id);
       try {
         const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap/complete', {
           sessionId: session.id + 999
         });
         assert.equal(res.status, 409);
         assert.equal(res.body.code, 'SESSION_CHANGED');
-        assert.equal(store.sessions.get(session.id).status, 'wrapping',
+        assert.equal(store.sessions.get(session.id).status, 'active',
           'the session it did not name is untouched');
       } finally {
         const still = store.sessions.get(session.id);
         if (still && still.status !== 'wrapped') store.sessions.kill(session.id, 'cleanup');
+      }
+    });
+
+    it('returns 409, not 500, when the session ends mid-finalize', async () => {
+      // This pins the ROUTE's half of the contract only: given the code, it
+      // answers 409. The producer is stubbed here, so it cannot vouch that
+      // `completeWrap` still emits the field — `test/sessions.test.js` asserts
+      // that at the producer, and both halves are needed. The library's refusal
+      // is a stale client view, not a server fault, and a 500 reaches the page
+      // as one — its finalizer latches permanently on that. Same class as the
+      // identity-check 409 above, one race later.
+      const sessionsLifecycle = require('../lib/sessions');
+      const original = sessionsLifecycle.completeWrap;
+      sessionsLifecycle.completeWrap = () => ({
+        session: null,
+        code: 'SESSION_CHANGED',
+        error: 'Session 5 for "api-sess-test" ended before this finalize could record it — nothing was changed.'
+      });
+      try {
+        const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap/complete', {});
+        assert.equal(res.status, 409);
+        assert.equal(res.body.code, 'SESSION_CHANGED');
+      } finally {
+        sessionsLifecycle.completeWrap = original;
       }
     });
 
@@ -509,7 +521,6 @@ describe('api-sessions', () => {
         engineId: 'claude',
         tmuxSession: 'wrap-complete-match'
       });
-      store.sessions.setWrapping(session.id);
 
       const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap/complete', {
         sessionId: session.id,
@@ -569,7 +580,7 @@ describe('api-sessions', () => {
       }
     });
 
-    it('returns 200 with sessionId when killSession kills a wrapping row (#105)', async () => {
+    it('returns 200 with sessionId when killSession kills a session stuck mid-wrap (#105)', async () => {
       const sessionsLifecycle = require('../lib/sessions');
       const original = sessionsLifecycle.killSession;
       sessionsLifecycle.killSession = () => ({

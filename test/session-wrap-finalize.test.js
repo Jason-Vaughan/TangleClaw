@@ -167,8 +167,12 @@ describe('#910 — the page asks for the finalize the status read no longer perf
   it('does not retry in a loop after a failure — the launch path recovers the row', async () => {
     // `wrapCompleting` stays set on the failure path, so the next poll's
     // `!sessionState.wrapCompleting` guard declines to fire again. Nothing is
-    // lost by stopping: the launch path claims a stale wrapping row on its own
-    // (#105), so the row cannot become unrecoverable because this call failed.
+    // lost by stopping: the session stays `active`, so Kill still reaches it.
+    //
+    // This whole file guards a client path the server can no longer trigger —
+    // `GET /status` stopped sending `wrapFinished` with #1034. Kept until the
+    // branches it covers are removed together (#1302); retiring it first would
+    // leave that code unguarded while it is still shipped.
     const s = loadFinalizer({ post: null });
 
     await s.finalizeFinishedWrap();

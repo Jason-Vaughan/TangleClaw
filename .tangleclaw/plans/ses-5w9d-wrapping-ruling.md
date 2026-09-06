@@ -135,13 +135,47 @@ that something was happening.
 
 ## Status
 
-- [ ] Chunk 01: The status vocabulary is explicit, and `wrapping` is not in it (#1034)
+- [x] Chunk 01: The status vocabulary is explicit, and `wrapping` is not in it (#1034)
 - [ ] Chunk 02: The dashboard says a session is wrapping again, sourced from the run registry (#1034)
 - [ ] Chunk 03: The vestigial `V2` designators are retired (#1034)
 
 Context: Ruling made 2026-09-06 by the operator, as a gate between Train 13 and Train 14 — the
 sequencing #1034's own comment sets, and the sequencing the roadmap coordinator halted Train 14 to
 enforce. Train 14 is paused after its Chunk 01 and resumes when this closes.
+
+Chunk 01 built 2026-09-06 on `feat/1034-session-status-vocabulary`. Reviewed twice: a cumulative
+pass (0 blocking, 9 warnings, 6 notes — all dispositioned) and a `verify-resolutions` pass that
+re-derived every warning from the tree and closed all nine.
+
+**Live verification, on the restarted server** (listener pid 58339, cwd this repo, booted
+15:10:58 — after `lib/store.js` at 14:39 and `lib/sessions.js` at 14:51, so it is running this
+branch's code, measured rather than assumed):
+
+| Surface | Result |
+|---|---|
+| `GET /api/sessions/TangleClaw/status` | `active: true`, no `wrapping` / `wrapFinished` keys, `incomplete: []`, `cause: null` |
+| `GET /api/activity?type=session.wrapping` | **166 rows**, 2026-03-18 → 2026-05-21 — the retired emitter's history is still readable, which was the Verification Strategy's first check |
+| `GET /api/tc/sessions` | 11 live sessions, all `active` — the collapsed `listLiveAll` |
+| `GET /api/projects` | 57 projects, 10 session cards, all `status: active` — `enrichProject` with the wrapping branch removed. ScrapeGoat is in the roster but has no card: a live row whose pane tmux confirms is gone, correctly dropped rather than reported as a phantom |
+
+**The Verification Strategy's second check PASSED: a real wrap, end to end.** The operator ruled
+2026-09-06 that it rides the previous session's own wrap — this clone is the live install, so
+wrapping a session here exercises the edited path while the branch is still unmerged. Session
+**930** (TangleClaw, started 2026-09-06 04:53:27) wrapped at 2026-09-06 22:42:36Z on this
+branch's code. All three criteria met, measured rather than assumed:
+
+| Criterion | Evidence |
+|---|---|
+| Row ends `wrapped`, not `killed`/`crashed` | `sessions` row 930: `status=wrapped`, `ended_at=2026-09-06 22:42:36` |
+| Non-null `wrap_summary` | 491 characters |
+| `lifecycleCompleted: true` in the pipeline log | `[sessions] Wrap pipeline ran project=TangleClaw session=930 ok=true blockedAt=null stepCount=15 commitSha=16bfef9 lifecycleCompleted=true` |
+| No `Refused a session status transition` warning | zero occurrences in `~/.tangleclaw/logs/tangleclaw.log`; the string is live at `lib/store.js:2607`, so the absence is a measurement and not a missing emitter |
+
+The two suspects the check was aimed at — `_completeV2Wrap`'s derived `lifecycleCompleted` and
+`store.sessions.wrap`'s new precondition — both behaved. Chunk 01's verification is complete and
+the merge is unblocked.
+
+No PR is open; none was asked for.
 
 Chunk order is deliberate and the first chunk is NOT the deletion. Chunk 01 lands the enum and the
 transition map — the thing #1034 actually asks for — with `wrapping` absent from it, which makes
@@ -180,6 +214,81 @@ the product worse at the thing the state was for.
   | `api-contract.md` §769-840 | the `GET /status` wrapping responses are retired |
   | `api-contract.md` §1005 | **unchanged** — the wrap POST's `status: 'wrapping'` comes from the run registry, not the table |
 
+  **Four behaviors the bundle ships that this table did not list.** Recorded here because
+  Chunk 02 is planned against the registry read and Chunk 03 against `_completeV2Wrap`, and a
+  reader who finds four hand-written corrections below reasonably treats the table as complete.
+  All four are in `CHANGELOG.md`, so the release narrative was never wrong — the gap was
+  traceability in the artifact the later chunks are designed from.
+
+  | Site | What happens |
+  |---|---|
+  | `lib/medusa-wake.js` wrap gate | **new.** Reads `lib/wrap-run-registry.js` via the `_internal.wrapRunning` seam, so a wake cannot land mid-wrap. This makes Chunk 01 the registry's FIRST consumer, ahead of the plan's assignment of the registry to Chunk 02. Caveat as built: the Project Master gets no gate. |
+  | `POST /wrap/complete` | answers **409 `SESSION_CHANGED`** for a finalize whose row ended mid-flight, where it answered 200; and no longer tears down the listener or commits the repo for a wrap that wrote nothing |
+  | `DELETE /api/sessions/:project` | reports the row's real ending (`wrapped`) instead of borrowing `reconciled: true`, whose meaning is "there was no session row at all" — a branch that replies without a `sessionId` |
+  | `_completeV2Wrap` | returns a boolean, surfaced on `triggerWrap`'s result as `lifecycleCompleted` **derived from** the write rather than asserted beside it. Deliberately NOT forwarded to the HTTP payload — see decision 4. |
+
+  **Four decisions the plan did not settle, taken at build time.**
+
+  1. **The transition map is ENFORCED, not merely declared.** It generates a SQL precondition on
+     `wrap`/`kill`/`markCrashed`, so a transition the map does not allow changes no row. This is
+     `setWrapping`'s own idiom (`AND status = 'active'`, return null on zero changes) generalised
+     rather than a new invention, and an unenforced map would be a description that decays —
+     `data-model.md` would say what the code no longer does. It also fixes a real defect: a
+     second `kill` on an ended session currently rewrites `ended_at`/`duration_seconds` and
+     appends a duplicate `session.killed` row to `activity_log`, corrupting exactly the history
+     this ruling depends on being able to read.
+  2. **A refused transition is a logged no-op returning the row unchanged — not a throw.** Roughly
+     sixty call sites (fixtures, plus `server.js`'s kill route) call these unconditionally as
+     "end it if it is still live"; throwing would turn a benign redundancy into a failure with no
+     product benefit. The caller reads `.status` to learn what happened, and `log.warn` means the
+     refusal is never silent. `_completeV2Wrap`'s comment that an already-wrapped row is
+     "harmlessly re-stamped" describes the behavior being replaced and moves with it.
+  3. **No `CHECK (status IN …)` constraint is added.** SQLite cannot add one without rebuilding
+     the table, and the live install holds 875 session rows. The enum already constrains the only
+     writer; the constraint would buy defence against a hand-written `UPDATE`, at the cost of a
+     rebuild migration on the operator's live database.
+  4. **`wrap_started_at` stays, as a historical column.** After `setWrapping` goes nothing writes
+     it, but 166 rows carry a real value and dropping a column is the same table rebuild as (3).
+     Documented in `data-model.md` as written by no current code path.
+
+  **Deferred, and filed rather than dropped (issue #1302 — filed 2026-09-06; a Critic pass read a
+  backlog cache snapshotted before it and reported it unresolved):** `public/session.js`'s status-poll branches on
+  `data.wrapping` / `data.wrapFinished` / `data.wrapCompleted` become unreachable when this route
+  stops sending those fields. They are not removed here — they hang off the wrap-idle modal
+  (#98's history) and `finalizeFinishedWrap`, an operator-visible frontend surface that deserves
+  its own chunk rather than a rider on a store deletion. The session page's own wrapping UI is
+  already driven by the wrap POST and its stream, so nothing regresses in the meantime.
+  `test/session-wrap-finalize.test.js` guards those same branches and is deferred with them —
+  retiring the test first would leave shipped code unguarded, so it carries a note saying what it
+  is waiting on.
+
+  **One name in the table above is wrong:** the fleet-wide reader is `store.sessions.listLiveAll`,
+  not `getActiveAll`. Same site, same collapse.
+
+  **The `_wrapPaneCache` row above is wrong, and it was checked rather than trusted.** The table
+  says it is "populated on the wrapping path but read by `completeWrap` and the active path too".
+  There is no active-path read, and the wrapping branch held its ONLY `.set()` — verified against
+  `HEAD` before deciding. After the deletion the Map has no writer, so `completeWrap`'s
+  summary-recovery fallback could only ever return nothing, and `sessions.parseWrapSummary` behind
+  it would have no caller but its own unit test. Both are deleted rather than kept, because a read
+  of an always-empty cache reads to a later maintainer as a live contract. Nothing changes in
+  production: the cache has been empty since 2026-05-21 for the same reason the status has.
+  `_deriveV2WrapSummary` — which reads the pipeline's structured output rather than pane text — is
+  the live summary producer and is untouched.
+
+  **The `lib/projects.js` row above is wrong too.** It says the dashboard wrapping branch is
+  "not deleted — re-sourced in Chunk 02", and it is deleted here. It had to be: the branch's only
+  entry point was `store.sessions.getWrapping`, which the row two above deletes, so the two rows
+  contradicted each other and only one could be acted on. The re-sourcing is still Chunk 02's, and
+  `lib/projects.js` carries a comment at the site saying so — but see the Chunk 02 note below,
+  because the branch was never rendering anything in the first place.
+
+  **One defect found, not inherited.** `store.sessions.getActive` ordered by `started_at DESC`
+  with no tiebreak. The column is second-resolution, so two rows created in the same second tie
+  and SQLite settled it — in favour of the older row. That lookup decides which session a wrap or
+  a kill lands on, and this chunk makes it the lookup for a mid-wrap session too. Fixed by
+  breaking the tie on `id DESC` (also in `getLatest`), with a guard.
+
   **The one thing that must not be conflated.** The wrap POST already reports
   `status: 'wrapping'` with no DB row behind it. Retiring the persisted state does not retire that
   contract, and a chunk that treats "remove `wrapping`" as a vocabulary-wide sweep would break a
@@ -217,6 +326,17 @@ the product worse at the thing the state was for.
   **Verify the process boundary before designing the read** — see the open assumption above. If
   `enrichProject`'s relevant branch runs in the killable scanner child, the registry cannot be
   required there and its state has to be passed in.
+
+  **The card this chunk means to restore does not exist in the frontend, found while building
+  Chunk 01.** `_liveSession(row, 'wrapping')` set a `status` field on the card payload, and
+  nothing renders it: `public/ui.js` reads `session.active`, `session.sessionMode`,
+  `session.lastEngineError` and the unknown-read state, and never `session.status` (grep it — the
+  only `.status` hits in `public/` are on session RULES). So even before the row stopped existing,
+  a wrapping project's card looked identical to a running one. Pointing the server branch at
+  `wrapRunRegistry` therefore changes nothing an operator can see; this chunk needs a frontend
+  half — a field the card actually reads, and a dot or pill that reads it. That is also why its
+  acceptance criterion is "verified by running a real wrap" rather than by tests: a test on the
+  payload would have passed against a card that renders nothing.
 - **Tests:** a project with a running wrap renders as wrapping; one with no run renders active and
   reports the answer as established rather than unknown; a finished run does not leave the card
   stuck.

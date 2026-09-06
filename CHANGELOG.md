@@ -4,7 +4,85 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **The session lifecycle has an explicit vocabulary and an enforced transition map (#1034).**
+  `sessions.status` lived as SQL string literals scattered across `lib/store.js` and
+  `lib/sessions.js`, with no enum, no allowed-transition table, and no way to answer "which values
+  are there" other than grepping. `SESSION_STATUS` and `SESSION_STATUS_TRANSITIONS` now hold the
+  four statuses a session can be in — `active`, `wrapped`, `killed`, `crashed` — and the moves
+  between them. The map is not a description: `wrap`, `kill` and `markCrashed` derive their SQL
+  precondition from it, so a transition it does not model changes no row. That makes the three
+  terminal statuses genuinely terminal; previously a second `kill` on an ended session rewrote
+  `ended_at` and `duration_seconds` and appended a duplicate `session.killed` row to the activity
+  log — corrupting the only durable record of what the lifecycle actually did. A refused
+  transition is a logged no-op rather than a throw, because roughly sixty callers use these as
+  "end it if it is still live"; it returns **`null`**, which is how a caller learns it was not the
+  one that ended the session. Reading the row back cannot answer that — a refused `wrap` on an
+  already-`wrapped` row reads exactly like a successful one.
+- **A wrap that finishes after its session was killed no longer reports success.** The pipeline
+  runs for minutes and the operator can press Kill inside that window, so the row a wrap started
+  against can end before it completes. `POST /wrap/complete` now answers an explicit error instead
+  of 200 for a finalize that wrote nothing, and does not tear down the listener or commit the
+  repository on behalf of a wrap that was never recorded; `triggerWrap` returns
+  `lifecycleCompleted` **derived from** the write rather than asserted beside it, so its log and
+  its result no longer claim a completed lifecycle over a `killed` row with no summary. The wrap
+  POST's HTTP response shape is unchanged — `lifecycleCompleted` is deliberately not forwarded.
+  The refusal answers **409 `SESSION_CHANGED`**, the same code the identity check already used and
+  for the same reason (a stale client view, not a server fault — a 500 reaches the session page as
+  one and latches its finalizer permanently). Both refusals are now classified by a code the
+  library returns rather than by matching the message, so improving a sentence cannot change a
+  status code.
+- **`DELETE /api/sessions/:project` reports how the session actually ended.** When a wrap finishes
+  between the route resolving the session and the kill landing, the transition map refuses the
+  second ending — the pane and the Medusa listener still go, but the row says `wrapped`, and the
+  response now says so too. It previously answered `reconciled: true`, borrowing a flag whose
+  meaning is "there was no session row at all"; that branch replies without a `sessionId`, so a
+  caller that *did* have a session lost the handle to it. The reason for the disagreement is in
+  the server log, not the payload.
+- **The wake monitor will not type into a pane a wrap is driving.** Its `status !== 'active'` gate
+  used to refuse a wrapping session; with that status gone the gate can only mean "already ended",
+  so the mid-wrap protection went with it. It now asks `lib/wrap-run-registry` — the thing that
+  actually knows a pipeline is running — and holds the nudge (never sends it) when that read
+  throws. A wrap pauses between steps, and a pane at rest there is exactly the shape the monitor
+  acts on.
+- **`GET /api/sessions/:project/status` no longer reports `wrapping` or `wrapFinished`.** Both were
+  sourced from the retired DB state; a session mid-wrap now answers as the ordinary active session
+  it is. `public/session.js` still branches on those fields — a tolerated dead branch that costs
+  nothing while a not-yet-restarted server may send them. **`POST /api/sessions/:project/wrap`'s
+  `status: "wrapping"` is unchanged**: it never read the column, it names the pipeline the call
+  just started, and `lib/wrap-run-registry.js` is where that lives.
+
+### Removed
+- **The persisted `wrapping` session status, and the recovery machinery built to clean up after it
+  (#1034).** Operator-ruled 2026-09-06 after both branches were priced. The argument is positive
+  rather than "the code is dead": `lib/wrap-run-registry.js` is process-local *by design*, because
+  a pipeline cannot survive a server restart — so a persisted row saying a wrap is in progress
+  would durably record something that is false the moment the process dies, with a one-hour shelf
+  life. The state had been unreachable since 2026-05-19, when `_completeV2Wrap` began taking a
+  session from `active` straight to `wrapped`; 233+ wraps have completed since with the session
+  sitting `active` throughout. Gone with it: `store.sessions.setWrapping` / `getWrapping`, the
+  launch-time stale-wrapping recovery and `STALE_WRAPPING_THRESHOLD_MS`, `autoCompleteWrap`,
+  `getSessionStatus`'s wrapping branch and `_wrappingStatus`. The 166 historical
+  `session.wrapping` activity rows (2026-03-18 → 2026-05-21) remain readable — the event type is
+  retired as an emitter, not as a record. The honest cost, stated rather than buried: wrap state
+  is now neither queryable nor historical. If either becomes a requirement, the answer is to
+  persist the *registry* — which knows which run, which step, and what happened — not to
+  resurrect a column that knew only that something was happening.
+- **`_wrapPaneCache` and `sessions.parseWrapSummary`.** The cache's only writer was the deleted
+  wrapping branch, so `completeWrap`'s "recover the summary from the pane" fallback could only
+  ever yield nothing, and the parser behind it had no caller but its own test. A finalize with no
+  summary in its body records `null`, which is what it has done in production since May and is
+  deliberate: guessing a summary from raw pane text lands in the wrap commit subject and the next
+  session's prime, and a wrong summary is worse than an absent one.
+
 ### Fixed
+- **Session lookups resolved arbitrarily between two rows started in the same second.**
+  `started_at` is second-resolution and none of the session orderings had a tiebreak, so SQLite
+  decided — and it decided in favour of the OLDER row. `getActive` is what a wrap and a kill
+  resolve their target through, and it is now the lookup for a session mid-wrap too; `list` orders
+  the same way and then applies a LIMIT, so the tie decided which rows a paged caller saw at all.
+  Every session ordering now breaks the tie on `id DESC`. Surfaced by a test written for the
+  transition map above.
 - **The boot orphan sweep no longer records its deletions as if the owner made them (#692).**
   `_cleanupOrphanLeases` runs unattended on every boot and releases every port lease whose project
   it classifies as gone. Those releases were written to the activity log as `port.released` — the
@@ -33,6 +111,20 @@ All notable changes to TangleClaw are documented in this file.
   an audit trail that named the ports and looked correct. The read failure is now reported and the
   sweep declines to run: a classifier that lost an input cannot tell an orphan from a live lease,
   and leaving leases in place for one boot is recoverable where deleting them is not.
+
+### Internal
+- **Two fixtures that constructed a session status the product cannot hold.** Both passed, which is
+  what made them worth finding: a test that builds an impossible state exercises a guard with an
+  input no caller can produce, then reads as coverage of a contract nothing enforces. The
+  `medusa-wake` one was load-bearing — it pinned the ended-session skip with a `wrapping` row and
+  then flipped that same row back to `active`, a sequence that was never a real transition. It now
+  enumerates all three terminal statuses.
+- **The card payload's `status` parameter, and a guard keyed to a parse error that does not happen.**
+  `_liveSession`/`_unknownSession` took a status to report because the caller had two to choose
+  between; with the wrapping branch gone both sites pass `row.status`, so the parameter offered a
+  choice that no longer exists. Separately, `_transitionSession` briefly carried a guard against
+  `status IN ()` being a SQLite syntax error — it is not one, SQLite reads it as the empty set, so
+  the guard mutated green and was replaced by a comment recording what was actually verified.
 
 ## [5.21.0] - 2026-09-06
 

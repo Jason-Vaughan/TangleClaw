@@ -19,11 +19,11 @@
  *
  * ## Why a guard and not three stubs
  *
- * Three separate blocks could reach the real path, and the block that did stub
- * it (`stale wrapping recovery`) was correct by accident of one author being
- * careful. Stubbing the three is a fix that holds until someone writes a fourth
- * block — and the failure is silent, slow, and lands on the maintainer's own
- * machine rather than in CI.
+ * Three separate blocks could reach the real path, and the one block that did
+ * stub it was correct by accident of one author being careful. Stubbing the
+ * three is a fix that holds until someone writes a fourth block — and the
+ * failure is silent, slow, and lands on the maintainer's own machine rather
+ * than in CI.
  *
  * So the default is inverted: the real `createSession` is unreachable, and a
  * test that wants it must say so. A new block that forgets fails loudly, on its

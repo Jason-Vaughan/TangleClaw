@@ -120,11 +120,11 @@ describe('tc verb roster (lib/tc-verbs)', () => {
       const out = renderSessions({
         sessions: [
           { id: 7, projectId: 3, projectName: 'other', engineId: 'claude', status: 'active', startedAt: 't1' },
-          { id: 9, projectId: 5, projectName: 'mine', engineId: 'aider', status: 'wrapping', startedAt: 't2' }
+          { id: 9, projectId: 5, projectName: 'mine', engineId: 'aider', status: 'active', startedAt: 't2' }
         ]
       }, { TANGLECLAW_PROJECT_ID: '5' });
       assert.match(out, /2 live TangleClaw session\(s\)/);
-      assert.match(out, /#9 mine — engine aider, wrapping.*← your project/);
+      assert.match(out, /#9 mine — engine aider, active.*← your project/);
       assert.ok(!/#7 other.*← your project/.test(out), 'only the caller\'s project is marked');
     });
 
