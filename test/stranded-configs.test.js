@@ -61,6 +61,20 @@ describe('_findStrandedAncestorConfigs (#592)', () => {
     assert.deepStrictEqual(out[0].files, [path.join('.claude', 'settings.json')]);
   });
 
+  it('flags a stranded .claude/settings.local.json — where TC\'s own hooks live (#1022)', () => {
+    // The file TangleClaw writes its SessionStart hooks into. Claude Code merges it
+    // over settings.json from the same ancestor walk, so a stranded one injects a
+    // hook exactly as the shared file does — and after #1022 it is the MORE likely
+    // of the two to hold one, since TangleClaw no longer writes to the other.
+    const inner = mkdirs('nest-local/repo');
+    mkdirs('nest-local/.claude');
+    fs.writeFileSync(path.join(root, 'nest-local', '.claude', 'settings.local.json'), '{}');
+
+    const out = projects._findStrandedAncestorConfigs(inner, new Set([inner]), root);
+    assert.equal(out.length, 1);
+    assert.deepStrictEqual(out[0].files, [path.join('.claude', 'settings.local.json')]);
+  });
+
   it('reports both files when an ancestor holds CLAUDE.md and settings.json', () => {
     const inner = mkdirs('both/repo');
     mkdirs('both/.claude');
