@@ -95,6 +95,34 @@ this work should close.
   that would consume it must run in the parent. If it turns out to run in the child, the
   registry's state has to reach it as an argument rather than as a require.
 
+  **VERIFIED TRUE at the start of Chunk 02 — the branch runs in the PARENT, and the registry is
+  readable by `require`. No argument-passing plumbing is needed.** Three independent proofs, any
+  one sufficient:
+
+  1. The branch reads SQLite. `lib/projects.js:873` calls `store.sessions.getActive`, a
+     `better-sqlite3` prepared statement — and `lib/dir-scanner-child.js:26-38` refuses to open
+     SQLite by design, in comments naming that refusal ("a process built to be killed"). There is
+     no sessions handler in the child's `HANDLERS` table either.
+  2. The branch already reads process-local module state of the server: `_liveSession` calls
+     `engineErrors.get(row.id)` against a plain in-process `Map`. Were it running in the child,
+     `lastEngineError` would already be permanently null and the #261 badge dead.
+  3. Only `facts` crosses the boundary — six JSON fields from the child's `projectFacts` handler.
+     `session` is not among them and never crosses.
+
+  **What this changes about the chunk's shape:** nothing structural, but two design constraints
+  follow from HOW the read should be made rather than whether it can be.
+
+  - **Lazy require behind a seam, not a module-top require.** `lib/sessions.js` already requires
+    the registry eagerly, and `projects -> sessions -> project-version -> projects` is a recorded
+    cycle that has already cost this repo a partial-exports casualty. `lib/medusa-wake.js:1201`
+    is the precedent to copy: the require lives inside an `_internal` seam object, which both
+    avoids the edge and gives the tests a stub point.
+  - **The fail posture INVERTS the precedent, and that is deliberate.** `medusa-wake` fails
+    CLOSED (an unreadable registry means "assume a wrap is running") because withholding a
+    keystroke is the safe error. A display indicator must fail OPEN: a registry read that throws
+    must not paint "wrapping" onto every card on the dashboard. Same mechanism, opposite default,
+    because the cost of being wrong points the other way.
+
 **What would raise confidence:** N/A at High.
 
 ## Why the registry, and not the row

@@ -1370,6 +1370,44 @@
   }
 
   /**
+   * Is a wrap pipeline running over this project right now?
+   *
+   * DELIBERATELY NOT a fourth value of `tcSessionLiveness`. A wrapping session
+   * is still a live one, and the liveness classifier feeds `renderSessionCount`
+   * — so a fourth value there would silently drop the header's active count by
+   * one the moment a wrap started. Wrapping is a property OF a live session,
+   * not an alternative to being live, and the shapes follow that.
+   *
+   * `wrapping === null` is the read that failed, and it answers `false` here:
+   * the display fails OPEN, because painting "working" onto a card on the
+   * strength of a broken read is worse than showing nothing. The payload still
+   * carries the null and names it in `incomplete`, so the honesty lives where
+   * something can act on it.
+   *
+   * @param {object|null} project - An enriched project from `GET /api/projects`.
+   * @returns {boolean}
+   */
+  function tcSessionWrapping(project) {
+    const session = project && project.session;
+    if (!session) return false;
+    return Boolean(session.wrapping);
+  }
+
+  /**
+   * The wrap-step label for a project's tooltip, or null when there is none.
+   *
+   * The registry knows which step a run is on; the card has room for a title
+   * attribute and nothing more, so that is as far as the richer answer travels.
+   *
+   * @param {object|null} project - An enriched project.
+   * @returns {string|null}
+   */
+  function tcSessionWrapStep(project) {
+    if (!tcSessionWrapping(project)) return null;
+    return project.session.wrapping.step || null;
+  }
+
+  /**
    * The degraded-read record for a project's session liveness.
    *
    * The remedy is specific to tmux and is NOT taken from any shared table: a
@@ -2278,6 +2316,8 @@
   // are internal to the classifiers and reached by closure — exporting them
   // would enlarge the global surface that every page carries for no consumer.
   global.tcSessionLiveness = tcSessionLiveness;
+  global.tcSessionWrapping = tcSessionWrapping;
+  global.tcSessionWrapStep = tcSessionWrapStep;
   global.tcSessionRead = tcSessionRead;
   global.tcMasterRead = tcMasterRead;
   global.tcRulesUnknownHtml = tcRulesUnknownHtml;

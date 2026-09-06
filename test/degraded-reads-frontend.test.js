@@ -851,13 +851,23 @@ describe('the dashboard actually consults the helpers (#885)', () => {
   });
 
   it('the card status dot has a third state carrying a glyph, not colour alone', () => {
-    const body = functionBody(ui, 'function renderCard(project)');
+    // The dot moved into its own renderer when a fourth state (a running wrap,
+    // #1034) gave it a real precedence rule worth running rather than reading.
+    // Every property this guard held still holds, at its new address — and the
+    // delegation is now asserted too, so renderCard cannot grow a private copy.
+    const body = functionBody(ui, 'function renderStatusDot(project)');
     assert.ok(body.includes('tcSessionLiveness(project)'),
-      'the card must classify liveness through the shared helper');
+      'the dot must classify liveness through the shared helper');
     assert.ok(body.includes("liveness === 'unknown'"),
-      'the card must draw the unknown distinctly from "no active session"');
+      'the dot must draw the unknown distinctly from "no active session"');
     assert.ok(body.includes('status-dot-glyph'),
       'the unknown dot must carry a glyph — an error is never communicated by colour alone');
+
+    const cardBody = functionBody(ui, 'function renderCard(project)');
+    assert.ok(cardBody.includes('renderStatusDot(project)'),
+      'the card must use the shared dot renderer');
+    assert.doesNotMatch(cardBody, /status-dot-glyph/,
+      'the card must not carry its own copy of the dot markup');
   });
 
   it('both card kinds share ONE unreadable badge, with no private copy', () => {

@@ -1685,6 +1685,32 @@ body {
   align-items: center;
   justify-content: center;
 }
+/* A wrap is running over this session. Sized to match `.status-dot.unknown`
+   rather than the 8px `.active`, so switching between the two never reflows the
+   card row.
+
+   The blades are the state, and the spin is only the emphasis: `style.css`
+   disables every animation under `prefers-reduced-motion`, and a screenshot has
+   no animation either, so anything carried by motion alone would be carried by
+   nothing there. A frozen conic-gradient is still visibly a pinwheel and still
+   unmistakably not the solid `.active` dot.
+
+   Hard colour stops rather than a soft sweep: at 12px on a phone — the primary
+   target — a gradient blends into a smudge, while hard stops stay four blades. */
+.status-dot.wrapping {
+  width: 12px;
+  height: 12px;
+  background: conic-gradient(
+    var(--primary) 0deg 45deg,
+    transparent 45deg 90deg,
+    var(--primary) 90deg 135deg,
+    transparent 135deg 180deg,
+    var(--primary) 180deg 225deg,
+    transparent 225deg 270deg,
+    var(--primary) 270deg 315deg,
+    transparent 315deg 360deg);
+  animation: spin 1.4s linear infinite;
+}
 .status-dot-glyph {
   font-size: 9px;
   font-weight: 700;
