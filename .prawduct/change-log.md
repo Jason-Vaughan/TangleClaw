@@ -403,6 +403,34 @@ so the test now asserts the refusal on both resolvers and that no git runs at al
 
 **Classification:** fix
 
+
+## 2026-09-06 — Train 13 Chunks 01 and 02 shipped without change-log entries
+
+<!-- prawduct: type=chore | scope=train-13 -->
+
+Train 13 Chunks 01 and 02. **This is a gap note, not an entry.** Both chunks shipped and merged;
+neither wrote its change-log entry, and this records that rather than papering over it.
+
+- **Chunk 01** — the machine-local hook moves out of the shareable file. Issues #1022, #1242,
+  #1275. Shipped as **PR #1277**, "Write TangleClaw's hooks to settings.local.json, and retire them
+  from the shared file".
+- **Chunk 02** — a read does not finalize, and a payload proves whose run wrote it. Issues #910,
+  #840. Shipped as **PR #1279**, "A status read reports a finished wrap; it does not finalize one".
+
+**Why nothing was reconstructed.** The gap was found by project-master at Train 13's close, while
+the release cut was due — this file is tracked and feeds that flow, so the gap travels to every
+clone. Writing the two entries from git history was the obvious remedy and is the wrong one: an
+entry's value here is the first-hand account of what surprised the builder, and a session that was
+not there would be inventing exactly that. A reader can reach the work through the PRs above; what
+they cannot reach is a lesson nobody recorded, and a fabricated one is worse than its absence. The
+operator was given the choice — reconstruct, note the gap, or say nothing — and chose this.
+
+**What it costs, stated plainly.** Two chunks of this train have no lesson in the file that carries
+them, and the later Train 13 entries lean on lessons those chunks produced (Chunk 01's orphan
+scanner and Chunk 02's half-covered guard are cited in Chunks 03-06 as the origin of "enumerate the
+guard's family"). Those citations now point at work with no entry of its own. That is the price of
+not inventing, and it is the right way round.
+
 ## 2026-09-05 — #736: the engine display name is normalised once, at the projection
 
 <!-- prawduct: type=chore | scope=engine-name-736 -->
