@@ -624,8 +624,13 @@ describe('every operator-facing timeout branch in the swept steps (#897)', () =>
             return ok();
           };
           const delta = await continuityStep._sessionDelta(os.tmpdir());
-          assert.deepEqual(delta, { touched: [], deleted: [], kind: null },
-            'the safe degrade is unchanged — the Map is left alone');
+          assert.deepEqual(delta.touched, [], 'the safe degrade is unchanged — the Map is left alone');
+          assert.deepEqual(delta.deleted, []);
+          // A range DID resolve; it was the diff that was stopped. Reporting that
+          // as `kind: null` would tell the operator this is not a repository.
+          assert.equal(delta.kind, 'diff-failed');
+          assert.ok(delta.stopped.some((c) => c.includes('diff --name-status')),
+            'and the killed probe is named, so the fallback is not read as a fact');
         } finally {
           continuityStep._internal.exec = saved;
         }

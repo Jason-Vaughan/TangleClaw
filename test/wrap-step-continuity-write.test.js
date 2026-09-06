@@ -498,7 +498,7 @@ describe('continuity-write wrap step (CC-1)', () => {
       { id: 55, engineId: 'claude' },
       [
         { stepId: 'memory-update', status: 'done', output: { parsedFields: { summary: 'CC-5 search', nextSteps: 'n' } } },
-        { stepId: 'commit', status: 'done', output: { commitSha: '', branch: 'feat/cc-3', previousWrapSha: null, previousWrapShaRead: 'absent' } }
+        { stepId: 'commit', status: 'done', output: { commitSha: 'abc1234deadbeef', branch: 'feat/cc-3', previousWrapSha: null, previousWrapShaRead: 'absent' } }
       ]
     ));
     assert.equal(res.ok, true);

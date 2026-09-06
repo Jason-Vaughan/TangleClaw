@@ -40,8 +40,25 @@ All notable changes to TangleClaw are documented in this file.
   `blocker` is operator-overridable), and a range that resolved to nothing each withhold the
   stamp and log which one it was. Reading all three as "no earlier session" is `architecture.md`'s
   rule backwards, and it is #797's own shape — a plausible default published as an established
-  fact. A wrap that committed nothing records the empty set rather than a range running back
-  through the previous wrap's commit.
+  fact. A wrap that committed *nothing* is not a session that changed nothing, so it takes the same
+  path as every other: the commit step skips on a clean tree, which a session that committed by hand
+  reaches with real work behind it, and `commitSha` is null on the *committed* path too when
+  `git rev-parse HEAD` fails after the commit lands. Dropping paths from a provenance record is
+  #797's own second half, so the range answers and over-reports by the previous wrap's commit
+  (#1280) rather than under-reporting real work.
+
+  A refusal says what it actually knows. A `git diff` that would not answer is reported as that
+  rather than as "this is not a repository", which sent an operator hunting a trunk branch that was
+  sitting right there; a probe stopped at its own timeout is named, because a killed
+  `merge-base --is-ancestor` is indistinguishable from a real negative to every predicate
+  downstream, and both sibling range callers already say so; and the two paths that previously
+  logged at `debug` — which a default install never prints — now log at `warn`, since each is a
+  reason no provenance stamp was written.
+- **The wrap's range resolver refuses an endpoint it would have to trust (#797).** `resolveSessionRange`
+  interpolates its range into a shell string on the `execSync` seam, and its far end became a
+  parameter in this change precisely so a step could measure to a computed commit. Both resolvers now
+  accept only `HEAD` or an object name, before running any git — the invariant the code's own comment
+  asserted, enforced rather than described.
 - **A caller's `onError` survives `store.projectConfig.load` (#797).** The wrapper took one
   argument and dropped the reader options, so a caller that needed to know a config was
   malformed — rather than absent, which returns the same defaults — had a guard that could

@@ -279,7 +279,7 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
       setConsoleStream(null);
       setLevel(prior);
     }
-    const withheld = lines.find((l) => /records no files: stamp/.test(l));
+    const withheld = lines.find((l) => /range could not be established/.test(l));
     assert.ok(withheld, `no line named the withheld stamp: ${lines.join(' | ')}`);
     assert.match(withheld, /not an ancestor/, 'the line says WHY, not just that it happened');
     assert.match(withheld, /remediation/, 'and what the operator can do about it');
@@ -301,7 +301,7 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
       setConsoleStream(null);
       setLevel(prior);
     }
-    assert.ok(!lines.some((l) => /records no files: stamp/.test(l)),
+    assert.ok(!lines.some((l) => /range could not be established/.test(l)),
       'a warning on the healthy path teaches operators to ignore it');
   });
 
@@ -319,12 +319,13 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
     assert.match(map, /lib\/two\.js/);
   });
 
-  it('records nothing for a clean session, whose commit step skipped', async () => {
-    // The boundary is the PARENT of the previous wrap commit — what
-    // `_stampLastWrapSha` actually writes (#664) — not the wrap commit itself.
-    // With the wrap commit as the base this passes for the wrong reason: the
-    // range is empty either way. With the real base the range spans the previous
-    // wrap's own commit, so only the skip check keeps the record honest.
+  it('measures the range as usual when the commit step skipped — a wrap that committed nothing is not a session that changed nothing', async () => {
+    // The commit step skips on a clean tree, which a session that committed BY
+    // HAND reaches with real work behind it. `commitSha: null` is also what the
+    // committed path returns when `git rev-parse HEAD` fails after the commit
+    // landed. Publishing the empty set on either would drop real work from a
+    // provenance record — #797's own second half — so every path goes through
+    // `_stampDecision` and the range answers.
     const res = await step.run(ctx({
       reason: 'no changes to commit',
       flushed: [],
@@ -333,12 +334,84 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
       previousWrapShaRead: 'recorded'
     }, 3));
     assert.equal(res.ok, true);
-    assert.deepEqual(recordedFiles(3), [],
-      'nothing was committed, so the session changed nothing');
 
-    const changelog = fs.readFileSync(continuity.changelogPath(repo), 'utf8');
-    assert.doesNotMatch(changelog, /files:/,
-      'and no line claiming the previous wrap\'s paths as this session\'s');
+    // No anchor, so the tip is HEAD — the branch tip in this fixture.
+    const expected = git('diff', '--name-only', `${sha.session2Work}..HEAD`)
+      .split('\n').filter(Boolean);
+    assert.deepEqual(recordedFiles(3).sort(), expected.sort(),
+      'the range since the boundary, not a fabricated empty set');
+    assert.ok(expected.length > 0, 'the fixture must reach a non-empty range, or this proves nothing');
+  });
+
+  it('names a stopped probe rather than asserting a cause it cannot know', async () => {
+    // A killed `merge-base --is-ancestor` produces the same `kind: 'branch'` as a
+    // genuine negative, and the withheld-stamp warning would otherwise send the
+    // operator to check a boundary that is perfectly fine.
+    const realExec = step._internal.exec;
+    step._internal.exec = async (file, args, opts) => {
+      if (args.includes('--is-ancestor')) {
+        return { exitCode: 124, stdout: '', stderr: '', error: 'timed out', timedOut: true };
+      }
+      return realExec(file, args, opts);
+    };
+    const lines = [];
+    const prior = getLevel();
+    setLevel('warn');
+    setConsoleStream({ write: (t) => lines.push(t) });
+    try {
+      await step.run(ctx({
+        commitSha: sha.session2Wrap,
+        branch: 'feat/long-lived',
+        previousWrapSha: sha.session1Work,
+        previousWrapShaRead: 'recorded'
+      }, 8));
+    } finally {
+      setConsoleStream(null);
+      setLevel(prior);
+      step._internal.exec = realExec;
+    }
+    assert.deepEqual(recordedFiles(8), [], 'an unknown answer publishes nothing');
+    const withheld = lines.find((l) => /range could not be established/.test(l));
+    assert.ok(withheld, `no withheld line: ${lines.join(' | ')}`);
+    assert.match(withheld, /stopped before it answered/,
+      'the reason must say the negative may be an unknown answer, not a fact');
+    assert.match(withheld, /is-ancestor/, 'and name which probe');
+  });
+
+  it('says a resolved range whose diff would not answer is exactly that', async () => {
+    // Three conditions used to arrive as one `kind: null` and be reported as
+    // "this is not a repository, or it has no trunk branch" — sending the
+    // operator to hunt a trunk branch that is sitting right there.
+    const realExec = step._internal.exec;
+    step._internal.exec = async (file, args, opts) => {
+      if (args.includes('--name-status')) {
+        return { exitCode: 128, stdout: '', stderr: 'fatal: bad object\n', error: null, timedOut: false };
+      }
+      return realExec(file, args, opts);
+    };
+    const lines = [];
+    const prior = getLevel();
+    setLevel('warn');
+    setConsoleStream({ write: (t) => lines.push(t) });
+    try {
+      await step.run(ctx({
+        commitSha: sha.session2Wrap,
+        branch: 'feat/long-lived',
+        previousWrapSha: sha.session1Work,
+        previousWrapShaRead: 'recorded'
+      }, 9));
+    } finally {
+      setConsoleStream(null);
+      setLevel(prior);
+      step._internal.exec = realExec;
+    }
+    assert.deepEqual(recordedFiles(9), []);
+    assert.ok(lines.some((l) => /session delta was refused/.test(l)),
+      'the refusal gets its own line — it previously had none at any level');
+    const withheld = lines.find((l) => /range could not be established/.test(l));
+    assert.ok(withheld, `no withheld line: ${lines.join(' | ')}`);
+    assert.match(withheld, /diff did not answer/, 'and the cause is the diff, not a missing trunk');
+    assert.doesNotMatch(withheld, /not a repository/);
   });
 
   it('withholds the stamp when the config could not be read', async () => {
@@ -396,6 +469,11 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
     }
     assert.equal(new Set(refusals.map((r) => r.why)).size, 4,
       'the distinct causes get distinct explanations');
+    assert.match(d('diff-failed', 'recorded').why, /diff did not answer/);
+    assert.match(
+      step._stampDecision({ kind: 'branch', commitStepReported: true, boundaryRead: 'recorded', stopped: ['git merge-base --is-ancestor a b'] }).why,
+      /stopped before it answered/,
+      'a negative taken on an unknown answer says so');
     assert.equal(d('session', 'recorded').why, null, 'nothing to explain when it publishes');
   });
 

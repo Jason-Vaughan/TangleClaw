@@ -164,6 +164,29 @@ describe('_git-range — the tip is a parameter (#797)', () => {
   it('defaults the tip to HEAD', () => {
     assert.equal(gitRange.resolveSessionRange('/p', 'c1f94ac', { exec: fakeExec() }).range, 'c1f94ac..HEAD');
   });
+
+  it('refuses a tip that is neither HEAD nor an object name — on BOTH resolvers', async () => {
+    // The sync seam interpolates the tip into a shell string, and the range it
+    // returns is interpolated again by `features-toc._diffNameOnly`. The
+    // parameter exists so a step can measure to a COMPUTED commit, so the
+    // invariant is enforced rather than described: no caller needs branch names
+    // or `~`/`^` expressions, and accepting them is the surface this denies.
+    const probed = [];
+    const watching = (cmd) => { probed.push(cmd); return ''; };
+    for (const tip of ['main; rm -rf /', 'HEAD~1', 'origin/main', '$(id)', 'a b', '']) {
+      assert.equal(gitRange.resolveSessionRange('/p', 'c1f94ac', { tip, exec: watching }), null,
+        `sync resolver accepted ${JSON.stringify(tip)}`);
+      assert.equal(
+        await gitRange.resolveSessionRangeAsync('/p', 'c1f94ac', { tip, exec: async () => ({ exitCode: 0 }) }),
+        null,
+        `async resolver accepted ${JSON.stringify(tip)}`);
+    }
+    assert.deepEqual(probed, [], 'and it refuses BEFORE running any git at all');
+
+    // The two shapes that are allowed still work, or the guard is just a block.
+    assert.equal(gitRange.resolveSessionRange('/p', 'c1f94ac', { tip: 'HEAD', exec: fakeExec() }).range, 'c1f94ac..HEAD');
+    assert.equal(gitRange.resolveSessionRange('/p', 'c1f94ac', { tip: 'deadbee', exec: fakeExec() }).range, 'c1f94ac..deadbee');
+  });
 });
 
 describe('_git-range — the sync and async resolvers agree', () => {
