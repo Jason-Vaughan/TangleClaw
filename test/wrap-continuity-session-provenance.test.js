@@ -24,7 +24,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { initRepo } = require('./_temp-repo');
-const { setLevel } = require('../lib/logger');
+const { setLevel, getLevel, setConsoleStream } = require('../lib/logger');
 
 setLevel('error');
 
@@ -249,6 +249,50 @@ describe('continuity-write — the files: stamp is the session\'s own set (#797)
 
     const changelog = fs.readFileSync(continuity.changelogPath(repo), 'utf8');
     assert.doesNotMatch(changelog, /files:/, 'no line at all, rather than an empty one');
+  });
+
+  it('says out loud that the stamp was withheld, and why', async () => {
+    // Withholding is only defensible if it is visible. This step is best-effort
+    // by contract — it writes an index either way and returns ok — so the log
+    // line is the ONLY place the difference between "changed nothing" and
+    // "could not tell" survives.
+    const lines = [];
+    const prior = getLevel();
+    setLevel('warn');
+    setConsoleStream({ write: (t) => lines.push(t) });
+    try {
+      await step.run(ctx({
+        commitSha: sha.session2Wrap,
+        branch: 'feat/long-lived',
+        previousWrapSha: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'
+      }));
+    } finally {
+      setConsoleStream(null);
+      setLevel(prior);
+    }
+    const withheld = lines.find((l) => /records no files: stamp/.test(l));
+    assert.ok(withheld, `no line named the withheld stamp: ${lines.join(' | ')}`);
+    assert.match(withheld, /not an ancestor/, 'the line says WHY, not just that it happened');
+    assert.match(withheld, /remediation/, 'and what the operator can do about it');
+  });
+
+  it('says nothing when the stamp is written normally', async () => {
+    const lines = [];
+    const prior = getLevel();
+    setLevel('warn');
+    setConsoleStream({ write: (t) => lines.push(t) });
+    try {
+      await step.run(ctx({
+        commitSha: sha.session2Wrap,
+        branch: 'feat/long-lived',
+        previousWrapSha: sha.session1Work
+      }));
+    } finally {
+      setConsoleStream(null);
+      setLevel(prior);
+    }
+    assert.ok(!lines.some((l) => /records no files: stamp/.test(l)),
+      'a warning on the healthy path teaches operators to ignore it');
   });
 
   it('still maintains the Map when the files: stamp is withheld', async () => {
