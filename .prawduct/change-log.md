@@ -42,8 +42,12 @@ been a refactor a day earlier. Adjacency to what just shipped is the pick criter
 whatever is on disk, so a hand-added profile can carry no `name` — or a truthy non-string, which
 `esc` renders as `''`, giving a blank unidentifiable control that nothing turns red for. #707 fixed
 that at the two surfaces it touched by guarding at the render site; that left the predicate
-duplicated in three places, mirrored in two test fixtures, and still absent at `public/ui.js`'s two
-`project.engine.name` reads. `engineClientPayload` now guarantees a non-empty string — declared name
+duplicated in three places, mirrored in two test fixtures, and absent at every other site reading
+`engine.name` straight — `public/ui.js`, `public/landing.js` and `public/session.js` among them, all
+fed from `enrichProject` off the same `id`-only-validated record. (The first draft of this entry
+named only `ui.js`, which read as the complete remainder — the under-enumerated set claim this very
+change is about, for the third time in it. Relational phrasing, not a longer list that can go stale
+the same way.) `engineClientPayload` now guarantees a non-empty string — declared name
 → id → `'Unnamed engine'` — and the three per-site guards are gone. Normalised AFTER the overrides,
 so a connection-backed engine's operator-authored label is covered rather than bypassing the rule.
 

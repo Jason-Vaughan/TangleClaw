@@ -428,8 +428,10 @@ All notable changes to TangleClaw are documented in this file.
   is on disk, so a hand-added or hand-edited profile can carry no `name` — or a truthy non-string,
   which `esc` renders as `''`. #707 fixed that at the two surfaces it touched by guarding at the
   render site, which left the same predicate duplicated across `public/api-helper.js` and
-  `public/setup.js` (twice), mirrored in two test fixtures, and **still absent** at
-  `public/ui.js`'s two `project.engine.name` reads. Guarding per site is the wrong shape: every new
+  `public/setup.js` (twice), mirrored in two test fixtures, and **absent at every other site that
+  reads `engine.name` straight** — `public/ui.js`, `public/landing.js` and `public/session.js` among
+  them, all fed from `enrichProject` off the same `id`-only-validated record. Counting them is the
+  wrong instinct: the number is what grows. Guarding per site is the wrong shape: every new
   surface showing an engine name has to remember, nothing fails when one does not, and the failure
   is a blank unidentifiable control rather than an error.
 
