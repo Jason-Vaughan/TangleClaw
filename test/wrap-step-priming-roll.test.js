@@ -230,7 +230,7 @@ describe('wrap-step priming-roll — pure helpers (#139 Chunk 6)', () => {
       assert.ok(out.startsWith(begin), 'empty prior → block at top with no leading whitespace');
     });
 
-    it('repairs out-of-order markers into one block, keeping the prose between them', () => {
+    it('repairs out-of-order markers into one block, keeping the text between them', () => {
       // This case used to append a second pair, on the reasoning that slice
       // math over misordered markers would corrupt the file. The goal it was
       // protecting — any user prose between the misordered markers MUST
@@ -260,22 +260,28 @@ describe('wrap-step priming-roll — pure helpers (#139 Chunk 6)', () => {
       assert.equal(thrice, once, 'stability holds past the first re-run, not just at it');
     });
 
-    it('with multiple BEGIN/END pairs, collapses to one and keeps the prose between them', () => {
-      // Previously this pinned that the orphan second pair stayed as inert
-      // content, explicitly so that a later "find all markers" pass would be
-      // intentional rather than accidental. This is that intent: an orphan pair
-      // is a stale copy of our own output, and content between our own markers
-      // is regenerated every wrap. `middle` was never ours, so it stays.
+    it('reports a repair, and reports an ordinary roll as not one', () => {
+      // The repair moves bytes outside the block, so `run` has something to
+      // warn about and put on the step row. Mutation this catches: hardcoding
+      // `repaired` at either value.
+      assert.equal(primingRoll._replaceManagedBlock(`${end}\nx\n${begin}`, '\nb\n').repaired, true);
+      assert.equal(primingRoll._replaceManagedBlock(`${begin}\nold\n${end}`, '\nb\n').repaired, false);
+      assert.equal(primingRoll._replaceManagedBlock('prose\n', '\nb\n').repaired, false);
+    });
+
+    it('refuses a duplicated pair rather than editing the first and stranding the rest', () => {
+      // Previously this edited the first pair and left the orphan as inert
+      // content, pinned so a future find-all-markers pass would be intentional.
+      // This is that intent, and it lands on the safe side: an operator who
+      // pasted the markers into their own notes owns both pairs, and nothing in
+      // the text says which one is ours. Refusing leaves the file untouched.
       const prior =
         `${begin}\nfirst\n${end}\n` +
         `middle\n` +
         `${begin}\nsecond\n${end}\n`;
-      const out = splice(prior, '\nrolled\n');
-      assert.match(out, /rolled/);
-      assert.ok(!out.includes('first'), 'first managed-block body must be replaced');
-      assert.ok(!out.includes('second'), 'the orphan pair is a stale copy of our own output');
-      assert.match(out, /middle/, 'prose between pairs survives');
-      assert.equal(out.split(begin).length - 1, 1);
+      const { merged, error } = primingRoll._replaceManagedBlock(prior, '\nrolled\n');
+      assert.equal(merged, null, 'the priming file is left exactly as it was');
+      assert.match(error, /2 begin, 2 end/);
     });
 
     it('refuses a body carrying a marker literal rather than writing a boundary the operator never authored', () => {
@@ -385,6 +391,72 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     assert.equal(result.ok, false);
     assert.equal(result.status, 'blocked');
     assert.match(result.blockers[0], /requires context\.project\.path/);
+  });
+
+  it('blocks with a remediation when the plan heading carries a priming-roll marker (#1132)', async () => {
+    // The half the operator actually sees. The rendered body embeds the chunk
+    // TITLE read out of their plan, so a heading carrying the END literal
+    // reaches the splice as a marker in the body — a real producer, not a stub.
+    // Splicing it would write a boundary they never authored, after which the
+    // next wrap reads their prose as our region and deletes it.
+    writePlan('p.md', `## Status\n\n### Chunk 1: Ship ${primingRoll.END_MARKER} it\n\nbody\n`);
+    const primingDir = path.join(projectPath, '.claude', 'priming');
+    fs.mkdirSync(primingDir, { recursive: true });
+    const primingFile = path.join(primingDir, 'build-session.md');
+    fs.writeFileSync(primingFile, 'operator prose\n');
+
+    const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'blocked');
+    assert.match(result.blockers[0], /refused to write/);
+    assert.match(result.blockers[0], /build-session\.md/, 'the blocker names the file');
+    assert.match(result.blockers[0], /marker literal/);
+    assert.match(result.output.remediation, /chunk heading/i, 'and says what to do about it');
+    assert.equal(fs.readFileSync(primingFile, 'utf8'), 'operator prose\n',
+      'a refusal stages nothing, so the priming file is untouched');
+  });
+
+  it('blocks rather than editing a priming file whose marker counts are ambiguous (#1132)', async () => {
+    writePlan('p.md', '## Status\n\n### Chunk 1: Ship it\n\nbody\n');
+    const primingDir = path.join(projectPath, '.claude', 'priming');
+    fs.mkdirSync(primingDir, { recursive: true });
+    const primingFile = path.join(primingDir, 'build-session.md');
+    // Their own notes quote the markers, and the real block sits below.
+    const seeded =
+      `Notes: the roll lives between ${primingRoll.BEGIN_MARKER} and ${primingRoll.END_MARKER}.\n\n`
+      + `${primingRoll.BEGIN_MARKER}\nold\n${primingRoll.END_MARKER}\n`;
+    fs.writeFileSync(primingFile, seeded);
+
+    const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+    assert.equal(result.status, 'blocked');
+    assert.match(result.blockers[0], /2 begin, 2 end/);
+    assert.equal(fs.readFileSync(primingFile, 'utf8'), seeded, 'their notes are left exactly as written');
+  });
+
+  it('reports a repaired priming file on the step row, not just in the log (#1132)', async () => {
+    writePlan('p.md', '## Status\n\n### Chunk 1: Ship it\n\nbody\n');
+    const primingDir = path.join(projectPath, '.claude', 'priming');
+    fs.mkdirSync(primingDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(primingDir, 'build-session.md'),
+      `${primingRoll.END_MARKER}\nstranded\n${primingRoll.BEGIN_MARKER}\n`
+    );
+
+    const context = buildContext({ id: 'next-session-prime' });
+    const result = await primingRoll.run(context);
+    assert.equal(result.status, 'done');
+    // Mutation this catches: dropping `repaired` from the output, which would
+    // leave a rewrite of the operator's file visible only by diffing it.
+    assert.equal(result.output.repaired, true);
+    assert.match(context.staged['next-session-prime'].newContent, /stranded/);
+
+    // And an ordinary roll does not claim one.
+    fs.writeFileSync(
+      path.join(primingDir, 'build-session.md'),
+      `${primingRoll.BEGIN_MARKER}\nold\n${primingRoll.END_MARKER}\n`
+    );
+    const plain = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+    assert.equal(plain.output.repaired, false);
   });
 
   it('skips (not blocks) when no plans directory exists and no step.planPath (#676)', async () => {

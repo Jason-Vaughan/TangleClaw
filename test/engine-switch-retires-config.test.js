@@ -136,6 +136,52 @@ describe('#858 an engine switch retires the previous engine\'s config file', () 
     assert.match(fs.readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8'), /INACTIVE engine config[\s\S]*switched from claude to antigravity/);
   });
 
+  it('a carrier with one unmatched marker is refused, never whole-file replaced (#1132)', () => {
+    // The ownership question used to be "does the file have BOTH markers", and
+    // a carrier with one said no. Control then fell past the managed-block
+    // branch: a file whose generated header is present got its WHOLE contents
+    // replaced by the inactive notice — destroying the operator's sections and
+    // the other tool's block, the exact loss the managed block exists to
+    // prevent — and one without that header took a skip whose stated reason
+    // ("no managed markers") was untrue of the file, leaving a superseded
+    // config live as canon. Mutation this catches: restoring the both-markers
+    // gate, which turns this into a silent whole-file write.
+    const dir = seed('retire-unmatched-marker', 'antigravity');
+    const agents = path.join(dir, 'AGENTS.md');
+    const markers = engines._managedBlockMarkers('markdown');
+    const seeded =
+      '# AGENTS\n\n**CRITICAL RULE:** operator content that must survive.\n\n'
+      + '<!-- BEGIN:nextjs-agent-rules -->\nvendor\n<!-- END:nextjs-agent-rules -->\n\n'
+      + `${markers.begin}\ntruncated — no end marker\n`;
+    fs.writeFileSync(agents, seeded);
+
+    const result = engines.retireInactiveEngineConfig(dir, 'antigravity', 'claude');
+    assert.equal(result.retired, false, 'an unreadable marker set is not a retirement');
+    assert.equal(result.reason, 'managed-block merge refused');
+    assert.match(result.error, /malformed/);
+    assert.equal(fs.readFileSync(agents, 'utf8'), seeded,
+      'the co-owned file is byte-identical — no whole-file notice, no partial splice');
+  });
+
+  it('a misordered pair on the retired carrier is repaired, and the switch says so (#1132)', () => {
+    const dir = seed('retire-misordered', 'antigravity');
+    const agents = path.join(dir, 'AGENTS.md');
+    const markers = engines._managedBlockMarkers('markdown');
+    fs.writeFileSync(
+      agents,
+      `# AGENTS\n\n**CRITICAL RULE:** keep me.\n\n${markers.end}\nstranded\n${markers.begin}\n`
+    );
+
+    const result = engines.retireInactiveEngineConfig(dir, 'antigravity', 'claude');
+    assert.equal(result.retired, true);
+    const after = fs.readFileSync(agents, 'utf8');
+    assert.ok(after.includes('**CRITICAL RULE:** keep me.'), 'operator content outside the block survives');
+    assert.ok(after.includes('stranded'), 'text between the misordered markers survives');
+    assert.ok(after.includes('INACTIVE engine config'), 'the notice landed inside the repaired block');
+    assert.equal(after.split(markers.begin).length - 1, 1);
+    assert.equal(after.split(markers.end).length - 1, 1);
+  });
+
   it('a failed retirement is an error the switch logs at warn — not a choice logged as "left alone"', async () => {
     const dir = seed('retire-unwritable', 'antigravity');
     const agents = path.join(dir, 'AGENTS.md');

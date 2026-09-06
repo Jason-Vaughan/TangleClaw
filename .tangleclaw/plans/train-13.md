@@ -270,14 +270,41 @@ profiles through `store.engines` for exactly that reason. `lib/update-applier.js
 `lib/engines` mid-function on the same grounds. Engines keeps ownership of the engine-config
 policy; only the mechanism moved.
 
-**The shared policy is repair, and it flips the engine side too.** The plan's assumption held —
-option 2 is the only one satisfying both existing contracts — but its blast radius was wider than
-the chunk described: five tests pinned the engine layer's *refusal*, so unifying rewrote those
-contracts, not just the priming roll's. Argued rather than weakened: every guarantee the refusal
-made still holds (nothing guessed, nothing of the operator's deleted, no text stranded inside a
-region we then claim), and repair adds the one refusal could not reach — the region keeps
-updating. The pinned "orphan pair remains as inert content" test said in its own comment that it
-existed so a future find-all-markers pass would be intentional; this is that intent.
+**The plan's assumption held, but only for the shape the issue names — and my first build of it
+was wrong.** Option 2 (repair) is right for a MISORDERED pair, which is what #1132 is about. I
+generalised it to every broken marker set: any begin-then-end became "our region", later pairs were
+dropped as "stale copies of our own output", and stray markers were stripped. The Critic blocked it,
+correctly. **A marker literal is not proof the marker is ours.** An operator documenting this
+mechanism inside the very file it edits writes both literals in their own prose — the reason
+`test/repo-governance-reference.test.js` exists is that this repo's own CLAUDE.md header once did —
+and nothing in the text separates that from a real region. My version deleted their explanation,
+relocated the block into their header, and dropped the real block below it. That is a new
+silent-data-loss path in the exact files the mechanism exists to protect, and I had written
+"nothing of the operator's deleted" in four places while the code did the opposite.
+
+The reviewer's own narrow fix (repair strays, refuse more-than-one-complete-pair) was still too
+wide: a second reviewer's case — ONE stray marker in prose plus the real block — has one complete
+pair and would still have relocated. **The safe line is the counts, and only the counts.** Exactly
+one begin and one end is our region (spliced in order, repaired out of order); none of either
+appends; every other count is refused with the counts named. That restores every guarantee the old
+engine-side refusal made, adds the order repair #1132 asked for, and takes back nothing else.
+
+**The lesson, and it is the one Chunk 05's handoff predicted in different words.** I unified two
+implementations and, in the act of unifying, invented a THIRD policy neither had — broader than
+both — while the commit message claimed it was strictly stronger. Extract-and-unify is not a
+behavior-preserving refactor: whatever the merged policy is, it is new, and it needs the same
+scrutiny as new code. The tell was available before the review: I wrote "nothing outside a complete
+pair is deleted" and never asked what makes a complete pair OURS.
+
+**Three call sites, not two.** #1132 named two splicers and I unified both — and
+`retireInactiveEngineConfig` kept a third, older judgement of marker state (`includes(begin) &&
+includes(end)`) written under the refusal policy, whose tests still passed. Three reviewers found it
+independently. Its consequence was worse than an inconsistency: a shared carrier with ONE unmatched
+marker answered "not ours", and control fell through to a whole-file write of the inactive notice,
+destroying the operator's sections and the other tool's block. That path predates this chunk.
+Ownership is now one question in one place (`hasManagedMarkers`), so no call site can hold a private
+idea of what a marker set means. This is "one call site is not the family" recurring INSIDE the fix
+that was supposed to end it — the third recorded instance of that shape.
 
 **Answering the question Chunk 05's handoff left: what does a throw halfway leave?** The priming
 roll never writes — it stages, and `commit` flushes — so nothing there changed. `writeEngineConfig`

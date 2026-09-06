@@ -244,27 +244,40 @@ describe("this repo's plugin install reference is committed (#833)", () => {
       + 'changes, CLAUDE.md is protected on its own and this coupling can be revisited.');
   });
 
-  it('is still spliceable — the real merge accepts the committed file', () => {
+  it('is still spliceable — the real merge accepts the committed file and moves nothing', () => {
     // The whole point of governance here is that TangleClaw splices its region
     // instead of replacing the document. That property dies quietly if the file
-    // ever contains a SECOND marker literal: `_mergeManagedBlock` counts
-    // occurrences, reads 2-begin/1-end as malformed, refuses to write, and both
-    // call sites only `log.warn` — so the block silently freezes at whatever it
-    // last held while everything still looks fine.
+    // ever contains a SECOND marker literal: only one begin and one end is
+    // actionable, any other count is refused, and both call sites only
+    // `log.warn` — so the block silently freezes at whatever it last held while
+    // everything still looks fine.
     //
     // Writing prose *about* the markers is exactly how a second literal gets in;
     // this file's own header did it. Driving the real merge rather than counting
     // markers here, so the assertion tracks the predicate instead of restating
     // one half of it.
+    //
+    // A clean `error` is no longer the whole property. One begin and one end
+    // OUT OF ORDER splices without error and rewrites the file around the
+    // markers, which would move TangleClaw's region up into the hand-maintained
+    // header and falsify that header's own "everything above the BEGIN marker
+    // is hand-maintained" claim. So assert the bytes before the marker are
+    // untouched, not merely that the call succeeded.
     const claudeMd = fs.readFileSync(path.join(REPO_ROOT, 'CLAUDE.md'), 'utf8');
     const markers = engines._managedBlockMarkers('markdown');
     assert.ok(markers, 'markdown must have a managed-block comment form');
     assert.ok(claudeMd.includes(markers.begin),
       'CLAUDE.md must carry the managed block, or this asserts nothing');
 
-    const { merged, error } = engines._mergeManagedBlock(claudeMd, 'PROBE BODY', 'markdown');
+    const { merged, error, repaired } = engines._mergeManagedBlock(claudeMd, 'PROBE BODY', 'markdown');
     assert.equal(error, null, `TangleClaw could not splice its own config: ${error}`);
+    assert.equal(repaired, false, 'a splice of the committed file must not have to repair it');
     assert.ok(merged.includes('PROBE BODY'), 'the spliced body must land in the file');
+    assert.equal(
+      merged.slice(0, merged.indexOf(markers.begin)),
+      claudeMd.slice(0, claudeMd.indexOf(markers.begin)),
+      'every byte above the BEGIN marker must come through the splice unchanged'
+    );
     assert.ok(merged.includes('## Core Rules (Enforced)'),
       'hand-maintained content above the markers must survive the splice');
     assert.ok(merged.includes('PRAWDUCT:ANCHOR'),

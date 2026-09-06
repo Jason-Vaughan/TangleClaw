@@ -100,51 +100,70 @@ describe('managed-block merge — preserves what TangleClaw does not own', () =>
   });
 });
 
-// These four cases used to be REFUSALS here, and an append in the priming roll
-// (#1132). Repair replaces both. It is not a weakened contract: every guarantee
-// the refusal made — no guessing, nothing of the operator's deleted, no text
-// stranded inside a region we then claim — still holds below, and repair adds
-// the one the refusal could not, that the region keeps updating. What the
-// refusal bought was that the file stayed byte-identical; that is worth less
-// than it reads, because the operator only learned of it by reading a log.
-describe('managed-block merge — repairs a broken marker set rather than guessing', () => {
-  test('a begin marker with no end is closed, and the text after it stays the operator\'s', () => {
+// #1132 unified this policy with the priming roll's. What changed here is
+// narrow: a MISORDERED pair is now repaired instead of refused, because one
+// begin and one end are unambiguously ours and only their order is wrong. Every
+// other broken count is still refused, and for the reason the refusal was
+// written — a marker literal is not proof the marker is ours, so a file with
+// extra markers cannot be edited without guessing whose they are.
+describe('managed-block merge — the counts decide, and only order is repaired', () => {
+  test('a begin marker with no end is refused and nothing is merged', () => {
     const broken = `head\n${BEGIN}\norphaned`;
     const { merged, error } = engines._mergeManagedBlock(broken, 'body', 'markdown');
-    // Mutation this catches: treating "no complete pair" as "no block" and
-    // appending, which would leave two begins and strand `orphaned` inside a
-    // region we then claim to own.
-    assert.equal(error, null);
-    assert.equal(merged, `head\n${BEGIN}\nbody\n${END}\norphaned`);
+    // Mutation this catches: treating "no valid pair" as "no block" and
+    // appending, which would leave two begins and strand the operator's text
+    // inside a region we then claim to own.
+    assert.equal(merged, null, 'no merged output is produced');
+    assert.match(error, /malformed/);
   });
 
-  test('an end marker before its begin is repaired, keeping the prose between them', () => {
+  test('an end marker before its begin is repaired, keeping the text between them', () => {
     const inverted = `${END}\nkeep me\n${BEGIN}`;
-    const { merged, error } = engines._mergeManagedBlock(inverted, 'body', 'markdown');
+    const { merged, error, repaired } = engines._mergeManagedBlock(inverted, 'body', 'markdown');
     assert.equal(error, null);
-    assert.match(merged, /keep me/, 'prose between misordered markers is not ours to delete');
-    assert.equal(merged.split(BEGIN).length - 1, 1, 'exactly one begin survives');
-    assert.equal(merged.split(END).length - 1, 1, 'exactly one end survives');
+    assert.equal(repaired, true, 'the caller must be able to report the rewrite');
+    assert.match(merged, /keep me/, 'text between misordered markers is not ours to delete');
+    assert.equal(merged.split(BEGIN).length - 1, 1);
+    assert.equal(merged.split(END).length - 1, 1);
   });
 
   test('a repaired file is byte-identical on the next pass', () => {
-    // The property the old append lacked and the old refusal never reached.
-    // Mutation this catches: repairing to something that is still malformed,
-    // or appending a second block on the pass after the repair.
-    const inverted = `${END}\nkeep me\n${BEGIN}`;
-    const once = engines._mergeManagedBlock(inverted, 'body', 'markdown').merged;
-    const twice = engines._mergeManagedBlock(once, 'body', 'markdown').merged;
-    assert.equal(twice, once);
+    // The property the priming roll's old append lacked: it appended one block
+    // per wrap forever. Mutation this catches: repairing to something still
+    // malformed, or appending on the pass after the repair.
+    const once = engines._mergeManagedBlock(`${END}\nkeep me\n${BEGIN}`, 'body', 'markdown').merged;
+    const again = engines._mergeManagedBlock(once, 'body', 'markdown');
+    assert.equal(again.merged, once);
+    assert.equal(again.repaired, false, 'a well-formed file is not a repair');
   });
 
-  test('duplicated blocks collapse to one; only their own bodies are dropped', () => {
-    const doubled = `${BEGIN}\na\n${END}\nmiddle\n${BEGIN}\nb\n${END}`;
-    const { merged, error } = engines._mergeManagedBlock(doubled, 'fresh', 'markdown');
+  test('duplicated markers are refused rather than partially spliced', () => {
+    const doubled = `${BEGIN}\na\n${END}\n${BEGIN}\nb\n${END}`;
+    const { merged, error } = engines._mergeManagedBlock(doubled, 'body', 'markdown');
+    assert.equal(merged, null);
+    assert.match(error, /2 begin/);
+  });
+
+  test('an operator documenting the markers in their own prose is refused, not adopted', () => {
+    // Why counting is the only honest test. A carrier that explains the
+    // mechanism carries both literals in the operator's prose, and adopting the
+    // first begin-then-end pair would delete their explanation and drop the
+    // real block below it. Mutation this catches: classifying any begin-then-end
+    // as our region.
+    const documented =
+      `# AGENTS\nTangleClaw writes between ${BEGIN} and ${END}; leave that region alone.\n\n`
+      + `${BEGIN}\nreal\n${END}\n`;
+    const { merged, error } = engines._mergeManagedBlock(documented, 'body', 'markdown');
+    assert.equal(merged, null, 'their explanation is not ours to overwrite');
+    assert.match(error, /2 begin, 2 end/);
+  });
+
+  test('a well-formed pair still splices in place, byte for byte around it', () => {
+    const prior = `head\n${BEGIN}\nold\n${END}\ntail`;
+    const { merged, error, repaired } = engines._mergeManagedBlock(prior, 'new', 'markdown');
     assert.equal(error, null);
-    assert.equal(merged, `${BEGIN}\nfresh\n${END}\nmiddle\n`);
-    // `a` and `b` sat between our own markers, which every caller documents as
-    // regenerated each run. `middle` did not, so it survives.
-    assert.ok(!merged.includes('\na\n') && !merged.includes('\nb\n'), 'stale copies of our own output go');
+    assert.equal(repaired, false);
+    assert.equal(merged, `head\n${BEGIN}\nnew\n${END}\ntail`);
   });
 
   test('a marker literal in the generated body is refused at the door', () => {
@@ -230,8 +249,8 @@ describe('writeEngineConfig honors mergeStrategy', () => {
     assert.ok(after.includes(BEGIN), 'our block was added');
   });
 
-  test('a malformed marker pair is repaired through a real write, keeping foreign content', (t) => {
-    const seed = `${FOREIGN_FILE}\n${BEGIN}\nno end marker here`;
+  test('a misordered pair is repaired through a real write, keeping foreign content', (t) => {
+    const seed = `${FOREIGN_FILE}\n${END}\nstranded prose\n${BEGIN}\n`;
     const { dir, file } = makeProject(seed);
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
@@ -243,7 +262,7 @@ describe('writeEngineConfig honors mergeStrategy', () => {
     const after = fs.readFileSync(file, 'utf8');
     assert.ok(after.includes('BEGIN:nextjs-agent-rules'), 'next dev block preserved through the repair');
     assert.ok(after.includes('**CRITICAL RULE:**'), 'operator rules preserved through the repair');
-    assert.ok(after.includes('no end marker here'), 'text after an unclosed marker is not ours to delete');
+    assert.ok(after.includes('stranded prose'), 'text between misordered markers is not ours to delete');
     assert.equal(after.split(BEGIN).length - 1, 1, 'exactly one begin after the repair');
     assert.equal(after.split(END).length - 1, 1, 'exactly one end after the repair');
 
@@ -252,6 +271,18 @@ describe('writeEngineConfig honors mergeStrategy', () => {
     const second = engines.writeEngineConfig('antigravity', dir, {}, profile);
     assert.equal(second.error, null);
     assert.equal(fs.readFileSync(file, 'utf8'), after, 'a repaired carrier is stable across runs');
+  });
+
+  test('an ambiguous marker set leaves the file untouched and reports an error', (t) => {
+    const seed = `${BEGIN}\nno end marker here`;
+    const { dir, file } = makeProject(seed);
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    const result = engines.writeEngineConfig('antigravity', dir, {}, profile);
+    assert.equal(result.skipped, false, `fixture did not reach the write path: ${result.skipReason}`);
+    assert.equal(result.written, false, 'nothing was written');
+    assert.match(result.error, /managed-block merge refused/);
+    assert.equal(fs.readFileSync(file, 'utf8'), seed, 'the operator file is byte-identical after a refusal');
   });
 });
 
