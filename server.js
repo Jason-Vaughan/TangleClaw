@@ -3080,8 +3080,9 @@ function recordTcAwareness(headers) {
 }
 
 // GET /api/tc/sessions — the fleet-wide live-session roster for `tc sessions`
-// (ambient-awareness Chunk 03). Every session with status active/wrapping,
-// across all projects, enriched with the project name so the caller need not
+// (ambient-awareness Chunk 03). Every session still running — `active` is the
+// only non-terminal status, and it spans a wrap — across all projects, enriched
+// with the project name so the caller need not
 // resolve numeric ids. An empty list is an honest answer (the fleet is idle),
 // and the receipt for a tc invocation of this route is recorded by the
 // dispatcher's provenance interception, not here.
@@ -4725,6 +4726,10 @@ function _wrapResultPayload(projectName, result) {
     ...(typeof result.runId === 'string' ? { runId: result.runId } : {}),
     sessionId: result.sessionId,
     project: projectName,
+    // NOT the `sessions.status` column — there is no such value there, and this
+    // never read it. It reports the pipeline this call just started, which is
+    // what `lib/wrap-run-registry.js` knows. A sweep that retires the persisted
+    // session status must leave this alone (#1034).
     status: result.ok ? 'wrapping' : 'blocked',
     wrapCommand: result.wrapCommand,
     wrapSteps: result.wrapSteps,

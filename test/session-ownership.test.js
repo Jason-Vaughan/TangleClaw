@@ -98,15 +98,18 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
       assert.equal(ownership.resolveByProject('does-not-exist'), null);
     });
 
-    it('resolves a wrapping session (live = active OR wrapping)', (t) => {
+    it('resolves a session that is mid-wrap — the agent is still running', (t) => {
+      // #340's scope guard has to handle this case, and it is why "live" cannot
+      // narrow to "not yet asked to wrap": the session holds `active` for the
+      // whole of its wrap, which is exactly the window in which an agent can
+      // commit into the wrong repository.
       t.mock.method(tmux, 'probeSession', () => ({ live: true, answered: true, cause: null }));
       const { session } = makeLocalSession('wrapping-resolve');
-      store.sessions.setWrapping(session.id);
 
       const own = ownership.resolveByProject('wrapping-resolve');
       assert.ok(own, 'a mid-wrap session should still resolve by project');
       assert.equal(own.sessionId, session.id);
-      assert.equal(own.status, 'wrapping');
+      assert.equal(own.status, 'active');
     });
   });
 
@@ -268,18 +271,18 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
   });
 
   describe('listLive', () => {
-    it('enumerates active and wrapping sessions, excludes ended ones', (t) => {
+    it('enumerates live sessions, excludes ended ones', (t) => {
       t.mock.method(tmux, 'probeSession', () => ({ live: true, answered: true, cause: null }));
 
-      const active = makeLocalSession('live-active');
-      const wrapping = makeLocalSession('live-wrapping');
-      store.sessions.setWrapping(wrapping.session.id);
+      const running = makeLocalSession('live-active');
+      const midWrap = makeLocalSession('live-wrapping');
       const ended = makeLocalSession('live-ended');
       store.sessions.kill(ended.session.id, 'test');
 
       const ids = ownership.listLive().map((o) => o.sessionId);
-      assert.ok(ids.includes(active.session.id), 'active session should be listed');
-      assert.ok(ids.includes(wrapping.session.id), 'wrapping session should be listed (agent still running)');
+      assert.ok(ids.includes(running.session.id), 'a running session should be listed');
+      assert.ok(ids.includes(midWrap.session.id),
+        'so should one mid-wrap — it holds the same status, and its agent is still running');
       assert.ok(!ids.includes(ended.session.id), 'ended session should be excluded');
     });
 
@@ -305,7 +308,6 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
       });
       const project = store.projects.create({ name, path: `/tmp/${name}` });
       const session = store.sessions.start({ projectId: project.id, engineId: `openclaw:${conn.id}`, sessionMode: 'webui' });
-      if (status === 'wrapping') store.sessions.setWrapping(session.id);
       return { conn, project, session };
     }
 
@@ -404,9 +406,9 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
       assert.equal(row.status, 'killed');
     });
 
-    it('store.sessions.listLiveAll returns only active/wrapping rows', () => {
+    it('store.sessions.listLiveAll returns only live rows', () => {
       const all = store.sessions.listLiveAll();
-      assert.ok(all.every((s) => s.status === 'active' || s.status === 'wrapping'));
+      assert.ok(all.every((s) => s.status === 'active'));
     });
   });
 
@@ -532,12 +534,17 @@ describe('session-ownership (#347 Slices 1–2a)', () => {
       const other2 = store.projects.create({ name: 'sg-other', path: '/tmp/sg-other' });
       t.mock.method(store.sessions, 'listLiveAll', () => [
         { id: 9001, projectId: other1.id, engineId: 'claude', sessionMode: 'tmux', status: 'active', startedAt: 'x' },
-        { id: 9002, projectId: other2.id, engineId: 'claude', sessionMode: 'tmux', status: 'wrapping', startedAt: 'x' }
+        { id: 9002, projectId: other2.id, engineId: 'claude', sessionMode: 'tmux', status: 'active', startedAt: 'x' },
+        { id: 9003, projectId: other2.id, engineId: 'claude', sessionMode: 'tmux', status: 'killed', startedAt: 'x' }
       ]);
 
       const names = bulletNames(ownership.scopeGuardSection({ name: 'sg-self', engineId: 'claude' }));
       assert.ok(names.includes('sg-portfolio'), 'lists a live sibling session');
-      assert.ok(names.includes('sg-other'), 'lists a wrapping sibling session (agent still running)');
+      assert.ok(names.includes('sg-other'),
+        'lists a second live sibling — a session mid-wrap holds the same status, '
+        + 'and its agent can still commit into the wrong repository');
+      assert.equal(names.filter((n) => n === 'sg-other').length, 1,
+        'an ended row for the same project must not add a second bullet');
     });
 
     it('never lists the owned project among the other live sessions', (t) => {

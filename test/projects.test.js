@@ -1075,46 +1075,19 @@ describe('projects', () => {
       }
     });
 
-    it('reports a wrapping session as unknown too', async () => {
-      projects.createProject({ name: 'wedged-tmux-wrapping' });
-      const project = store.projects.getByName('wedged-tmux-wrapping');
+    it('still drops a session tmux positively said is gone', async () => {
+      // The honest negative, which nothing else pins: widening the unknown test
+      // from `!verdict.answered` to `verdict` passes the whole suite otherwise,
+      // and a session tmux confirmed is dead would then publish `active: null`
+      // — an unknown invented out of a fact.
+      projects.createProject({ name: 'answered-dead-session' });
+      const project = store.projects.getByName('answered-dead-session');
       const session = store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
-        tmuxSession: 'tc-wedged-tmux-wrapping',
+        tmuxSession: 'tc-answered-dead-session',
         primePrompt: ''
       });
-      store.sessions.setWrapping(session.id);
-      try {
-        // The wrapping branch is asymmetric with the active one — a wrapping
-        // session with no tmux handle is NOT live — so it can lose the unknown
-        // state independently. This is the second half of the same guard.
-        const enriched = await withStalledTmux(
-          () => projects.enrichProject(store.projects.get(project.id)));
-
-        assert.ok(enriched.session, 'a wrapping session must not vanish either');
-        assert.equal(enriched.session.active, null);
-        assert.equal(enriched.session.status, 'wrapping');
-        assert.equal(enriched.session.cause, 'read-timed-out');
-      } finally {
-        store.sessions.kill(session.id, 'test cleanup');
-      }
-    });
-
-    it('still drops a wrapping session tmux positively said is gone', async () => {
-      // The wrapping branch's honest negative, which nothing else pins: widening
-      // its unknown test from `!verdict.answered` to `verdict` passes the whole
-      // suite otherwise, and a wrapping session tmux confirmed is dead would
-      // then publish `active: null` — an unknown invented out of a fact.
-      projects.createProject({ name: 'answered-dead-wrapping' });
-      const project = store.projects.getByName('answered-dead-wrapping');
-      const session = store.sessions.start({
-        projectId: project.id,
-        engineId: 'claude',
-        tmuxSession: 'tc-answered-dead-wrapping',
-        primePrompt: ''
-      });
-      store.sessions.setWrapping(session.id);
       try {
         // tmux answers, and names a different session: this pane is gone.
         const enriched = await withAnsweringTmux('some-other-session\n',

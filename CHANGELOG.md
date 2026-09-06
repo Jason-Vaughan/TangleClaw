@@ -4,7 +4,55 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **The session lifecycle has an explicit vocabulary and an enforced transition map (#1034).**
+  `sessions.status` lived as SQL string literals scattered across `lib/store.js` and
+  `lib/sessions.js`, with no enum, no allowed-transition table, and no way to answer "which values
+  are there" other than grepping. `SESSION_STATUS` and `SESSION_STATUS_TRANSITIONS` now hold the
+  four statuses a session can be in — `active`, `wrapped`, `killed`, `crashed` — and the moves
+  between them. The map is not a description: `wrap`, `kill` and `markCrashed` derive their SQL
+  precondition from it, so a transition it does not model changes no row. That makes the three
+  terminal statuses genuinely terminal; previously a second `kill` on an ended session rewrote
+  `ended_at` and `duration_seconds` and appended a duplicate `session.killed` row to the activity
+  log — corrupting the only durable record of what the lifecycle actually did. A refused
+  transition is a logged no-op that returns the row untouched, because roughly sixty callers use
+  these as "end it if it is still live" and a throw would buy nothing there.
+- **`GET /api/sessions/:project/status` no longer reports `wrapping` or `wrapFinished`.** Both were
+  sourced from the retired DB state; a session mid-wrap now answers as the ordinary active session
+  it is. `public/session.js` still branches on those fields — a tolerated dead branch that costs
+  nothing while a not-yet-restarted server may send them. **`POST /api/sessions/:project/wrap`'s
+  `status: "wrapping"` is unchanged**: it never read the column, it names the pipeline the call
+  just started, and `lib/wrap-run-registry.js` is where that lives.
+
+### Removed
+- **The persisted `wrapping` session status, and the recovery machinery built to clean up after it
+  (#1034).** Operator-ruled 2026-09-06 after both branches were priced. The argument is positive
+  rather than "the code is dead": `lib/wrap-run-registry.js` is process-local *by design*, because
+  a pipeline cannot survive a server restart — so a persisted row saying a wrap is in progress
+  would durably record something that is false the moment the process dies, with a one-hour shelf
+  life. The state had been unreachable since 2026-05-19, when `_completeV2Wrap` began taking a
+  session from `active` straight to `wrapped`; 233+ wraps have completed since with the session
+  sitting `active` throughout. Gone with it: `store.sessions.setWrapping` / `getWrapping`, the
+  launch-time stale-wrapping recovery and `STALE_WRAPPING_THRESHOLD_MS`, `autoCompleteWrap`,
+  `getSessionStatus`'s wrapping branch and `_wrappingStatus`. The 166 historical
+  `session.wrapping` activity rows (2026-03-18 → 2026-05-21) remain readable — the event type is
+  retired as an emitter, not as a record. The honest cost, stated rather than buried: wrap state
+  is now neither queryable nor historical. If either becomes a requirement, the answer is to
+  persist the *registry* — which knows which run, which step, and what happened — not to
+  resurrect a column that knew only that something was happening.
+- **`_wrapPaneCache` and `sessions.parseWrapSummary`.** The cache's only writer was the deleted
+  wrapping branch, so `completeWrap`'s "recover the summary from the pane" fallback could only
+  ever yield nothing, and the parser behind it had no caller but its own test. A finalize with no
+  summary in its body records `null`, which is what it has done in production since May and is
+  deliberate: guessing a summary from raw pane text lands in the wrap commit subject and the next
+  session's prime, and a wrong summary is worse than an absent one.
+
 ### Fixed
+- **`store.sessions.getActive` resolved arbitrarily between two rows started in the same second.**
+  `started_at` is second-resolution and the ordering had no tiebreak, so SQLite decided — and it
+  decided in favour of the OLDER row. This lookup is what a wrap and a kill resolve their target
+  through, and it is now the lookup for a session mid-wrap too, so the tie breaks toward the newest
+  id. Same fix in `getLatest`. Surfaced by a test written for the transition map above.
 - **The boot orphan sweep no longer records its deletions as if the owner made them (#692).**
   `_cleanupOrphanLeases` runs unattended on every boot and releases every port lease whose project
   it classifies as gone. Those releases were written to the activity log as `port.released` — the

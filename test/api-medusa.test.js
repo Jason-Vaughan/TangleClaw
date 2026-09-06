@@ -645,16 +645,33 @@ describe('Medusa teardown is wired into EVERY session-end path (MED-2K9P Chunk 0
     return src.slice(start, next === -1 ? undefined : next);
   }
 
-  for (const fn of ['killSession', '_completeV2Wrap', 'completeWrap', 'autoCompleteWrap']) {
+  for (const fn of ['killSession', '_completeV2Wrap', 'completeWrap']) {
     it(`${fn} tears down Medusa`, () => {
       assert.match(fnBody(sessionsSrc, fn), /_teardownMedusa\(/, `${fn} must call _teardownMedusa`);
     });
   }
 
-  it('the stale-wrapping recovery path tears down the recovered session', () => {
-    // Inside launchSession; anchor on the recovery marker + the teardown call nearby.
-    assert.match(sessionsSrc, /auto-recovered stale wrapping row'\);[\s\S]{0,200}_teardownMedusa\(project, wrapping\)/);
-  });
+  // The three `markCrashed` sites end a session just as finally as a wrap or a
+  // kill does, and they are anchored individually rather than by the function
+  // that contains them: two of them live inside functions far larger than the
+  // branch, so a `fnBody` match would pass on a teardown that belongs to some
+  // other path in the same function.
+  for (const [label, marker] of [
+    ['the launch-time stale-active cleanup', "Cleaned up stale active session before launch"],
+    ['the status read that observes a dead pane', "Active session tmux died"],
+    ['the boot-time listener re-sync reaper', "Reaped a dead session instead of re-syncing its Medusa listener"]
+  ]) {
+    it(`${label} tears down the crashed session`, () => {
+      const at = sessionsSrc.indexOf(marker);
+      assert.ok(at >= 0, `marker not found: ${marker}`);
+      // Look back from the log line to the markCrashed that precedes it: the
+      // teardown must sit between the two.
+      const from = sessionsSrc.lastIndexOf('markCrashed(', at);
+      assert.ok(from >= 0, `no markCrashed precedes: ${marker}`);
+      assert.match(sessionsSrc.slice(from, at), /_teardownMedusa\(/,
+        `${label} must call _teardownMedusa`);
+    });
+  }
 
   it('the tunnel-kill path (server.js) forgets the killed webui session', () => {
     assert.match(serverSrc, /Tunnel killed from connection panel'\);[\s\S]{0,200}medusa\.forgetSession\(/);

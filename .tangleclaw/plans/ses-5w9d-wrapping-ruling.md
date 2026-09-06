@@ -180,6 +180,57 @@ the product worse at the thing the state was for.
   | `api-contract.md` §769-840 | the `GET /status` wrapping responses are retired |
   | `api-contract.md` §1005 | **unchanged** — the wrap POST's `status: 'wrapping'` comes from the run registry, not the table |
 
+  **Four decisions the plan did not settle, taken at build time.**
+
+  1. **The transition map is ENFORCED, not merely declared.** It generates a SQL precondition on
+     `wrap`/`kill`/`markCrashed`, so a transition the map does not allow changes no row. This is
+     `setWrapping`'s own idiom (`AND status = 'active'`, return null on zero changes) generalised
+     rather than a new invention, and an unenforced map would be a description that decays —
+     `data-model.md` would say what the code no longer does. It also fixes a real defect: a
+     second `kill` on an ended session currently rewrites `ended_at`/`duration_seconds` and
+     appends a duplicate `session.killed` row to `activity_log`, corrupting exactly the history
+     this ruling depends on being able to read.
+  2. **A refused transition is a logged no-op returning the row unchanged — not a throw.** Roughly
+     sixty call sites (fixtures, plus `server.js`'s kill route) call these unconditionally as
+     "end it if it is still live"; throwing would turn a benign redundancy into a failure with no
+     product benefit. The caller reads `.status` to learn what happened, and `log.warn` means the
+     refusal is never silent. `_completeV2Wrap`'s comment that an already-wrapped row is
+     "harmlessly re-stamped" describes the behavior being replaced and moves with it.
+  3. **No `CHECK (status IN …)` constraint is added.** SQLite cannot add one without rebuilding
+     the table, and the live install holds 875 session rows. The enum already constrains the only
+     writer; the constraint would buy defence against a hand-written `UPDATE`, at the cost of a
+     rebuild migration on the operator's live database.
+  4. **`wrap_started_at` stays, as a historical column.** After `setWrapping` goes nothing writes
+     it, but 166 rows carry a real value and dropping a column is the same table rebuild as (3).
+     Documented in `data-model.md` as written by no current code path.
+
+  **Deferred, and filed rather than dropped (issue #1302):** `public/session.js`'s status-poll branches on
+  `data.wrapping` / `data.wrapFinished` / `data.wrapCompleted` become unreachable when this route
+  stops sending those fields. They are not removed here — they hang off the wrap-idle modal
+  (#98's history) and `finalizeFinishedWrap`, an operator-visible frontend surface that deserves
+  its own chunk rather than a rider on a store deletion. The session page's own wrapping UI is
+  already driven by the wrap POST and its stream, so nothing regresses in the meantime.
+
+  **One name in the table above is wrong:** the fleet-wide reader is `store.sessions.listLiveAll`,
+  not `getActiveAll`. Same site, same collapse.
+
+  **The `_wrapPaneCache` row above is wrong, and it was checked rather than trusted.** The table
+  says it is "populated on the wrapping path but read by `completeWrap` and the active path too".
+  There is no active-path read, and the wrapping branch held its ONLY `.set()` — verified against
+  `HEAD` before deciding. After the deletion the Map has no writer, so `completeWrap`'s
+  summary-recovery fallback could only ever return nothing, and `sessions.parseWrapSummary` behind
+  it would have no caller but its own unit test. Both are deleted rather than kept, because a read
+  of an always-empty cache reads to a later maintainer as a live contract. Nothing changes in
+  production: the cache has been empty since 2026-05-21 for the same reason the status has.
+  `_deriveV2WrapSummary` — which reads the pipeline's structured output rather than pane text — is
+  the live summary producer and is untouched.
+
+  **One defect found, not inherited.** `store.sessions.getActive` ordered by `started_at DESC`
+  with no tiebreak. The column is second-resolution, so two rows created in the same second tie
+  and SQLite settled it — in favour of the older row. That lookup decides which session a wrap or
+  a kill lands on, and this chunk makes it the lookup for a mid-wrap session too. Fixed by
+  breaking the tie on `id DESC` (also in `getLatest`), with a guard.
+
   **The one thing that must not be conflated.** The wrap POST already reports
   `status: 'wrapping'` with no DB row behind it. Retiring the persisted state does not retire that
   contract, and a chunk that treats "remove `wrapping`" as a vocabulary-wide sweep would break a
