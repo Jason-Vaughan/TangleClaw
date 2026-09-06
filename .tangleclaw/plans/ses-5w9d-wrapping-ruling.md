@@ -135,13 +135,22 @@ that something was happening.
 
 ## Status
 
-- [ ] Chunk 01: The status vocabulary is explicit, and `wrapping` is not in it (#1034)
+- [x] Chunk 01: The status vocabulary is explicit, and `wrapping` is not in it (#1034)
 - [ ] Chunk 02: The dashboard says a session is wrapping again, sourced from the run registry (#1034)
 - [ ] Chunk 03: The vestigial `V2` designators are retired (#1034)
 
 Context: Ruling made 2026-09-06 by the operator, as a gate between Train 13 and Train 14 — the
 sequencing #1034's own comment sets, and the sequencing the roadmap coordinator halted Train 14 to
 enforce. Train 14 is paused after its Chunk 01 and resumes when this closes.
+
+Chunk 01 built 2026-09-06 on `feat/1034-session-status-vocabulary`. Reviewed twice: a cumulative
+pass (0 blocking, 9 warnings, 6 notes — all dispositioned) and a `verify-resolutions` pass that
+re-derived every warning from the tree and closed all nine. **Its Done-when 1 is not fully met and
+that is deliberate:** the Verification Strategy's real-wrap check has not run, because the server
+on this install booted before the branch and is still serving the old `lib/`. The wrap path this
+chunk edits is the one that wraps this very session, so that verification is the operator's own
+session wrap after a restart onto the branch — it cannot be performed from inside the session that
+is about to be its subject. No PR is open; none was asked for.
 
 Chunk order is deliberate and the first chunk is NOT the deletion. Chunk 01 lands the enum and the
 transition map — the thing #1034 actually asks for — with `wrapping` absent from it, which makes
