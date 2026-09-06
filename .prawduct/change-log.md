@@ -26,6 +26,92 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-06 — #797/#882: the provenance record says what the session did, and corruption is detected
+
+<!-- prawduct: type=fix | scope=train-13 -->
+
+Train 13 Chunk 03. Two defects of one shape: a mechanism recorded something the caller did not
+ask for and could not see.
+
+**#797 — the `files:` stamp.** `continuity-write._mapDelta` diffed `<trunk>...<tip>` — every
+commit on the branch, however many sessions built it — and then filtered the result through the
+Feature Index's source-file allowlist. Two independent errors on one field, and they compound:
+on a long-lived branch the recorded set came out *disjoint* from the wrap's own commit, the
+branch-wide half carrying paths from sessions ago while the allowlist dropped every
+`.tangleclaw/` path the commit actually contained. It had already mis-tiered a
+`/prawduct:critic` run in a consuming project, which escalated on `skills/` paths its session
+never touched.
+
+The field is now measured over the range since the previous wrap's recorded boundary and left
+unfiltered; the allowlist applies to the Map, which is what it was written for. Because `commit`
+overwrites the boundary before `continuity-write` runs, the step that replaces it reports what
+it replaced. Range resolution goes through the shared `_git-range` resolver rather than a fourth
+private copy — which is also where the tip stopped being hardcoded to `HEAD`, since a step
+running after the wrap commit measures to that commit and #467's close-loop may already have
+moved `HEAD` off the branch.
+
+**#882 — the detection gap.** All three marker lines were once committed into
+`.prawduct/change-log.md` (this file) and merged to `main`, where they sat across three sessions
+with nothing noticing. `scripts/conflict-marker-scan.js` is one `git grep` over the tracked
+working tree, first step of the Tests workflow. Tracked-tree scope is a property of the
+repository rather than of a machine, which is the question Chunk 01's gitignore evidence got
+wrong and this one had to answer: a green here means the same thing on a laptop and on a shallow
+CI checkout.
+
+**The claim was wrong before the code was.** A cross-step test — the commit step's real output
+driven into `continuity-write`, rather than an output shape written by hand — showed the record
+does not mean what the first commit's prose said. `lastWrapSha` records the wrap commit's PARENT
+so a squash-merge cannot orphan it (#664), so a session whose only commit IS its wrap commit
+leaves a boundary that precedes its own work, and a boundary that has not moved for several
+sessions spans all of them (this repo's own stamp spans four right now). The field is therefore
+"changed since the previous wrap's recorded boundary" — the same range every other wrap step
+measures — not "changed by this session's commits". Three artifacts were carrying the stronger
+claim; all three now say what the range is. Tightening the range itself is #1280.
+
+**The Critic round found the fix reintroducing its own defect.** All three reviewers reached it
+from different goals: `_rangeIsSessionScoped` published the branch-wide inventory whenever the
+boundary was falsy, on the reasoning that "no boundary recorded means no earlier session". The
+producer never established that — `store.projectConfig.load` returns defaults for a malformed
+config, a stamp that failed to write leaves null, and `blocker` is operator-overridable so a
+BLOCKED commit reaches the step carrying no report at all. `commit` now reports the read's
+outcome (`recorded` / `absent` / `unreadable`) and `_stampDecision` publishes only on a boundary
+positively established, naming which refusal it took otherwise.
+
+**And writing that guard exposed a vacuous one.** `store.projectConfig.load` took a single
+argument and silently dropped the caller's reader options, so the `unreadable` branch could
+never fire. Its mutation came back GREEN, which is the only reason it was found — the guard read
+as caution while doing nothing, for the second time this session. The wrapper now forwards.
+
+**Mutation evidence.** Every guard added across the two commits was mutated and watched go red:
+the branch range restored, the allowlist re-applied to `files:`, the branch fallback published
+unconditionally, the tip pinned to `HEAD`, the ancestry probe asked about `HEAD`, the scanner's
+pattern narrowed three ways, the CI step removed, the clean-session check disabled, the
+unreadable branch collapsed into absent, the store forwarding removed, and the shared probe argv
+desynchronised. One came back GREEN on the first attempt — the unreadable branch — which is how
+the dropped `onError` was found.
+
+**Critic rounds.** Cumulative `rev-20260906T034652Z-c2bc464e` (three reviewers, tier `escalate`):
+1 blocking, 10 warnings, 11 notes. The verifying round's id and outcome are in the build plan's
+Context block, written when it returned.
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | blocking | fixed | plan prose read as a declared deliverable — path shape removed from the Description |
+| R-2 | warning | fixed | a clean session recorded the previous wrap's paths; its test used a boundary shape `commit.js` never writes — fixture rebuilt on the producer's, watched red |
+| R-3, R-8, R-15 | warning | fixed | the three sources of a null boundary collapsed into one; `previousWrapShaRead` now reports the outcome and `_stampDecision` acts on it |
+| R-4 | warning | fixed | end-to-end pin added: the real `commit` output driven into the real consumer |
+| R-5 | warning | fixed | `diff3`/`zdiff3`'s base marker was unmatched — the one form a half-resolved file keeps |
+| R-9 | warning | fixed | each probe was spelled out twice; a `PROBES` table declares each argv once |
+| R-10 | warning | fixed | `cc-5-operator-search.md` still described the pre-fix filtered source — the half a future session would have restored |
+| R-16 | warning | fixed | `FEATURES.md` gained the CI gate (a recurrence past a class the 2026-09-01 round recorded closed) |
+| R-11, R-17 | note | fixed | the timeout constant's claim narrowed to the half it governs; a range resolving to nothing now logs too |
+| R-12, R-19 | note | fixed | the setext false positive named in the failure output rather than excluded |
+| R-7 | warning | filed | #1280 — subtract wrap commits from the range so `files:` is the session's work alone |
+| R-13 | note | filed | #1281 — the `files:` line lost its only bound with the allowlist; a persisted-format decision |
+| R-6, R-14, R-18, R-20, R-21, R-22 | note | accepted | clean checks, tip-moved acknowledgments, and the #882 hard-gate sentence (added rather than deferred) |
+
+**Classification:** fix
+
 ## 2026-09-05 — #736: the engine display name is normalised once, at the projection
 
 <!-- prawduct: type=chore | scope=engine-name-736 -->

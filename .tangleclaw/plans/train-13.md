@@ -83,7 +83,7 @@ than unknowns, and both are surfaced at the chunk that would act on them.
 
 - [x] Chunk 01: The machine-local hook moves out of the shareable file (#1022, #1242, #1275)
 - [x] Chunk 02: A read does not finalize, and a payload proves whose run wrote it (#910, #840)
-- [ ] Chunk 03: The provenance record says what the session did, and corruption is detected (#797, #882)
+- [x] Chunk 03: The provenance record says what the session did, and corruption is detected (#797, #882)
 - [ ] Chunk 04: One derivation of the base directory, one containment predicate (#828, #1052)
 - [ ] Chunk 05: Validate every field before writing any, in the real run and the rehearsal (#1033, #929)
 - [ ] Chunk 06: One managed-block policy for a malformed marker pair (#1132)
@@ -137,7 +137,44 @@ lost when `9c67b2c` stripped the V1 wrap path, in which case wrap-recovery has b
 disabled for months and the code is not dead but starved. Chunk 02 shipped anyway: a read that
 commits the operator's repository should not, reachable or not.
 
-Next: Chunk 03 (#797, #882) — whose `wrap-direction.md` Instances entry is already registered.
+**Chunk 03 is done** — branch `fix/797-session-provenance-and-conflict-markers`, Critic
+`rev-20260906T034652Z-c2bc464e` (three reviewers, tier `escalate`: 1 blocking, 10 warnings, 11
+notes — 13 fixed, 7 accepted, 2 filed as **#1280** and **#1281**), verified by a
+`verify-resolutions` round. Both `## Instances` entries are registered: #797's was already there
+and now records how it resolved, and #882 gained one — it is a CI gate rather than a wrap gate, so
+commitment 3 reaches it by analogy, and the entry says so rather than implying direct reach.
+
+**The reviewers found the fix reintroducing its own defect, and that is the lesson.** The stamp
+was published whenever the recorded boundary was falsy, on the reasoning that "no boundary means
+no earlier session". The producer never established that: `store.projectConfig.load` returns
+defaults for a malformed config, a failed stamp leaves null, and `blocker` is operator-overridable
+so a BLOCKED commit reaches the step reporting nothing at all. Three different conditions, one
+value, and the consumer took an ACTION on it — which is `architecture.md`'s Direction read
+backwards and #797's own shape one level up. **When a fix turns on a value that can be absent, ask
+what else produces that absence before deciding what absence means.**
+
+**And the guard for it was vacuous on the first try.** `store.projectConfig.load` takes one
+argument and silently dropped the `onError` the new code passed, so the `unreadable` branch could
+never fire. The mutation came back GREEN, which is the only reason it was found — second time this
+session a guard read as caution while doing nothing. **A wrapper that narrows another module's
+signature is where a caller's new requirement goes to die; check the wrapper, not the module it
+delegates to.**
+
+**One method note worth carrying into Chunk 04.** The defect that mattered most was found by a
+cross-step test — the real `commit` output driven into the real `continuity-write` — and what it
+first corrected was the *prose*, not the code: `lastWrapSha` records the wrap commit's PARENT
+(#664), so the range cannot mean "this session's commits", and three artifacts were claiming it
+did. Every other case in the file hand-wrote the producer's shape and would have carried the claim
+forever.
+
+**Carried into the train, not dropped:** `.prawduct/change-log.md` has no entries for Chunks 01
+and 02 — Chunk 03 wrote its own. Decide at the train's close whether to backfill; only a session
+with their context can write them honestly.
+
+Next: Chunk 04 (#828, #1052) — one derivation of the base directory, one containment predicate.
+Its "whose machine makes this true, and does it travel?" precondition had a good answer in Chunk
+03 worth reusing: the conflict scan's reach is the TRACKED working tree, which is a property of
+the repository rather than of a machine.
 
 ## Scaffolding
 
