@@ -95,7 +95,8 @@ the dropped `onError` was found.
 resolved and found **one new blocking in the fix pass itself** — the `maxBuffer` raise had shipped
 as an exported constant nobody read, so deleting the line left every case green, and the same round
 noticed the record-lint prose fix had landed on the tracked plan while the graded artifact is the
-gitignored `.prawduct/artifacts/` mirror. Both fixed; a third round clean at 0/0/0.
+gitignored `.prawduct/artifacts/` mirror. Both fixed; a third round clean at 0/0/0. Then a cumulative round over the whole span
+(`rev-20260906T042122Z-46274408`) — 0 blocking, but 7 warnings worth acting on, tabled below.
 
 | Finding | Severity | State | Detail |
 |---|---|---|---|
@@ -119,6 +120,25 @@ gitignored `.prawduct/artifacts/` mirror. Both fixed; a third round clean at 0/0
 |---|---|---|---|
 | R-1 | blocking | fixed | the ENOBUFS fix was an exported constant with no reader — both spawn bounds now pinned against the injected double, each mutation red |
 | (prior R-1) | blocking | fixed | the record-lint prose fix had landed only on the tracked plan; the graded `.prawduct/artifacts/` mirror is now in sync and `verify-chunk-refs 03` exits 0 |
+
+**rev-20260906T042122Z-46274408** — cumulative (three reviewers), 0 blocking / 7 warning / 10 note.
+Gated nothing; acted on anyway, because two reviewers converged independently on the same pair.
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-3, R-5 | warning | fixed | `committedNothing` keyed on a null `commitSha`, which the COMMITTED path emits too when `rev-parse HEAD` fails after the commit lands — and a wrap that commits nothing is not a session that changed nothing. The short-circuit is gone; every path goes through `_stampDecision` |
+| R-1, R-6 | warning | fixed | a killed `merge-base --is-ancestor` read as a definite negative, and the withheld-stamp line stated a confident cause; the stopped probes are now collected and named, as both sibling range callers already did |
+| R-11 | warning | fixed | three conditions arrived as one `kind: null` reported as "not a repository"; `diff-failed` is its own signal and the two `debug` paths log at `warn` |
+| R-2 | warning | fixed | the `tip` parameter reached the sync seam's shell string unvalidated under a comment claiming otherwise — both resolvers now accept only `HEAD` or an object name, before running any git |
+| R-7 | warning | fixed | `FEATURES.md`'s resolver entry still described the pre-#797 surface |
+| R-9, R-12 | note | fixed | three async probes exported with no consumer — unexported |
+| R-8 | note | accepted | `absent` cannot be split from "a wrap whose stamp failed": that happens in a PREVIOUS wrap and leaves nothing for this one to read |
+| R-16 | note | accepted | the scanner prints the matched line deliberately — for a marker that line is the marker plus its ref label, and file:line alone would make the operator open each file to see which form fired |
+| R-14 | note | accepted | the backlog cache answered `resolved: false` for #1280/#1281 **and** for #797/#882, with `synced_at` an hour behind the round that filed them — staleness, not absence. All four verified OPEN against GitHub directly |
+| R-4, R-10, R-13, R-15, R-17 | note | accepted | machine notes, priors acknowledgments, and reconciliations that found nothing this bundle resolves |
+
+One fix in that batch needed a second attempt: the `tip` validation's first guard came back GREEN,
+so the test now asserts the refusal on both resolvers and that no git runs at all.
 
 **Classification:** fix
 

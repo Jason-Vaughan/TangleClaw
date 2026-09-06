@@ -141,7 +141,10 @@ commits the operator's repository should not, reachable or not.
 `rev-20260906T034652Z-c2bc464e` (three reviewers, tier `escalate`: 1 blocking, 10 warnings, 11
 notes — 13 fixed, 7 accepted, 2 filed as **#1280** and **#1281**), then
 `rev-20260906T040926Z-c74243ed`, which verified 9 of 10 resolved and found **one new blocking** in
-the fix pass itself, then a third round clean at 0/0/0. Both `## Instances` entries are registered: #797's was already there
+the fix pass itself, then a third round clean at 0/0/0, then a cumulative
+`rev-20260906T042122Z-46274408` over the whole span — 0 blocking, but 7 warnings acted on because
+two reviewers converged independently on the same pair. Five rounds; the change-log carries every
+disposition. Both `## Instances` entries are registered: #797's was already there
 and now records how it resolved, and #882 gained one — it is a CI gate rather than a wrap gate, so
 commitment 3 reaches it by analogy, and the entry says so rather than implying direct reach.
 
@@ -153,6 +156,15 @@ so a BLOCKED commit reaches the step reporting nothing at all. Three different c
 value, and the consumer took an ACTION on it — which is `architecture.md`'s Direction read
 backwards and #797's own shape one level up. **When a fix turns on a value that can be absent, ask
 what else produces that absence before deciding what absence means.**
+
+**A fix for one finding introduced the next.** Closing the first round's "a clean session records
+the previous wrap's paths" produced a short-circuit keyed on a null `commitSha` — which the
+COMMITTED path also emits, when `git rev-parse HEAD` fails after the commit lands. And the premise
+underneath it was wrong anyway: a wrap that commits nothing is not a session that changed nothing,
+because the commit step skips on a clean tree and a session that committed by hand reaches that with
+real work behind it. The short-circuit is gone; one function owns the decision. **The general rule:
+a remedy that adds a special case to a decision function is the shape to distrust — ask whether the
+condition it excepts is really the condition you were told about.**
 
 **The second round found a third guard that was not there at all.** The `maxBuffer` raise on the
 conflict scanner shipped as an exported constant nobody read — deleting the line left every case
