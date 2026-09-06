@@ -48,11 +48,13 @@ All notable changes to TangleClaw are documented in this file.
   session's prime, and a wrong summary is worse than an absent one.
 
 ### Fixed
-- **`store.sessions.getActive` resolved arbitrarily between two rows started in the same second.**
-  `started_at` is second-resolution and the ordering had no tiebreak, so SQLite decided — and it
-  decided in favour of the OLDER row. This lookup is what a wrap and a kill resolve their target
-  through, and it is now the lookup for a session mid-wrap too, so the tie breaks toward the newest
-  id. Same fix in `getLatest`. Surfaced by a test written for the transition map above.
+- **Session lookups resolved arbitrarily between two rows started in the same second.**
+  `started_at` is second-resolution and none of the session orderings had a tiebreak, so SQLite
+  decided — and it decided in favour of the OLDER row. `getActive` is what a wrap and a kill
+  resolve their target through, and it is now the lookup for a session mid-wrap too; `list` orders
+  the same way and then applies a LIMIT, so the tie decided which rows a paged caller saw at all.
+  Every session ordering now breaks the tie on `id DESC`. Surfaced by a test written for the
+  transition map above.
 - **The boot orphan sweep no longer records its deletions as if the owner made them (#692).**
   `_cleanupOrphanLeases` runs unattended on every boot and releases every port lease whose project
   it classifies as gone. Those releases were written to the activity log as `port.released` — the

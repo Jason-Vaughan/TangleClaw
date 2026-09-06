@@ -286,6 +286,10 @@ describe('store.sessions (write methods)', () => {
       });
       assert.equal(store.sessions.getActive(projectId).id, newer.id);
       assert.equal(store.sessions.getLatest(projectId).id, newer.id);
+      // `list` orders the same way and then applies a LIMIT, so the tie decides
+      // which of the two a caller with a page size of one actually sees.
+      const page = store.sessions.list(projectId, { limit: 1 });
+      assert.equal(page[0].id, newer.id);
       store.sessions.kill(newer.id, 'test cleanup');
       store.sessions.kill(older.id, 'test cleanup');
     });
