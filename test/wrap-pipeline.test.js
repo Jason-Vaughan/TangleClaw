@@ -16,6 +16,33 @@ const wrapPipeline = require('../lib/wrap-pipeline');
 const defaultPipeline = require('../lib/wrap-default-pipeline');
 
 /**
+ * Replace every real step handler with a no-op for the duration of one test.
+ *
+ * Derived from `STEP_DISPATCH` rather than transcribed, because a kind missing
+ * from a hand-kept roster does not fail — it lets that step's REAL handler run
+ * inside a unit test that believes it patched everything. Three copies of this
+ * list had already fallen behind the dispatch table, so the roster reads from
+ * whatever produces it (the same fix `CANONICAL_KINDS` took).
+ *
+ * @param {object} mod - The `lib/wrap-pipeline` module whose table to patch
+ * @param {string[]} [except] - Kinds to leave alone, for a test that installs
+ *   its own stub for one step and needs every OTHER step out of the way
+ * @returns {function(): void} Restores every patched entry
+ */
+function stubRealHandlers(mod, except = []) {
+  const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
+  const originals = {};
+  for (const kind of Object.keys(mod.STEP_DISPATCH)) {
+    if (except.includes(kind)) continue;
+    originals[kind] = mod.STEP_DISPATCH[kind];
+    mod.STEP_DISPATCH[kind] = { run: noopRun };
+  }
+  return () => {
+    for (const [kind, handler] of Object.entries(originals)) mod.STEP_DISPATCH[kind] = handler;
+  };
+}
+
+/**
  * Run `fn` with the code-owned pipeline temporarily replaced by a mutated
  * deep copy — the seam tests use to synthesize variant pipelines now that
  * the runner no longer reads methodology templates.
@@ -93,13 +120,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       // dispatch entry to the canonical no-op result for this test only.
       // The real-handler behavior is covered by per-handler describes
       // below.
-      const realKinds = ['preflight', 'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'pr-check', 'pr-merge', 'commit', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'continuity-write'];
-      const originals = {};
-      const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
-      for (const kind of realKinds) {
-        originals[kind] = wrapPipeline.STEP_DISPATCH[kind];
-        wrapPipeline.STEP_DISPATCH[kind] = { run: noopRun };
-      }
+      const restoreHandlers = stubRealHandlers(wrapPipeline);
 
       try {
         const result = await wrapPipeline.runWrapPipeline('pipeline-test');
@@ -117,10 +138,42 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
           assert.deepStrictEqual(stepResult.blockers, []);
         }
       } finally {
-        for (const kind of realKinds) {
-          wrapPipeline.STEP_DISPATCH[kind] = originals[kind];
-        }
+        restoreHandlers();
       }
+    });
+
+    it('stubbing leaves no real handler in the dispatch table', () => {
+      // The hazard the derived roster removes: a kind missing from a
+      // hand-kept list does not fail, it lets that step's REAL handler run
+      // inside a unit test that believes it patched everything — for
+      // `preflight` that means spawning `prawduct-hook`. Assert the property
+      // rather than the list, so this cannot go stale the way three
+      // transcribed rosters did. Mutation this catches: narrowing the helper
+      // back to any fixed set of kinds.
+      const before = { ...wrapPipeline.STEP_DISPATCH };
+      const restore = stubRealHandlers(wrapPipeline);
+      try {
+        const unstubbed = Object.keys(wrapPipeline.STEP_DISPATCH)
+          .filter((kind) => wrapPipeline.STEP_DISPATCH[kind] === before[kind]);
+        assert.deepEqual(unstubbed, [], 'every dispatch entry must be stubbed');
+      } finally {
+        restore();
+      }
+      assert.deepEqual(wrapPipeline.STEP_DISPATCH, before, 'and restored exactly');
+    });
+
+    it('an excepted kind is the only one left real', () => {
+      const before = { ...wrapPipeline.STEP_DISPATCH };
+      const restore = stubRealHandlers(wrapPipeline, ['commit']);
+      try {
+        assert.equal(wrapPipeline.STEP_DISPATCH['commit'], before['commit'],
+          'the caller installs its own stub for this one');
+        assert.notEqual(wrapPipeline.STEP_DISPATCH['preflight'], before['preflight'],
+          'and every other kind is out of the way — preflight spawns a process if it is not');
+      } finally {
+        restore();
+      }
+      assert.deepEqual(wrapPipeline.STEP_DISPATCH, before);
     });
 
     it('preserves step ID order from the code-owned pipeline', async () => {
@@ -2817,13 +2870,7 @@ describe('runWrapPipeline — commitSha threading (#139 Chunk 9)', () => {
 
   it('surfaces the commit step output.commitSha on the runner return shape', async () => {
     // Stub every other step to no-op so the runner reaches the commit step.
-    const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'pr-check', 'version-bump'];
-    const originals = {};
-    const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
-    for (const kind of realKinds) {
-      originals[kind] = wrapPipelineMod.STEP_DISPATCH[kind];
-      wrapPipelineMod.STEP_DISPATCH[kind] = { run: noopRun };
-    }
+    const restoreHandlers = stubRealHandlers(wrapPipelineMod, ['commit']);
     const origCommit = wrapPipelineMod.STEP_DISPATCH['commit'];
     wrapPipelineMod.STEP_DISPATCH['commit'] = {
       run: async () => ({
@@ -2840,21 +2887,13 @@ describe('runWrapPipeline — commitSha threading (#139 Chunk 9)', () => {
       assert.equal(result.commitSha, 'deadbeefcafe1234567890abcdef01234567890a',
         'runner must surface commit step output.commitSha at the top level');
     } finally {
-      for (const kind of realKinds) {
-        wrapPipelineMod.STEP_DISPATCH[kind] = originals[kind];
-      }
+      restoreHandlers();
       wrapPipelineMod.STEP_DISPATCH['commit'] = origCommit;
     }
   });
 
   it('keeps commitSha null when commit step skips (clean session)', async () => {
-    const realKinds = ['lint', 'test', 'ai-content', 'priming-roll', 'pr-check', 'version-bump'];
-    const originals = {};
-    const noopRun = async () => ({ ok: true, status: 'done', output: null, blockers: [] });
-    for (const kind of realKinds) {
-      originals[kind] = wrapPipelineMod.STEP_DISPATCH[kind];
-      wrapPipelineMod.STEP_DISPATCH[kind] = { run: noopRun };
-    }
+    const restoreHandlers = stubRealHandlers(wrapPipelineMod, ['commit']);
     const origCommit = wrapPipelineMod.STEP_DISPATCH['commit'];
     wrapPipelineMod.STEP_DISPATCH['commit'] = {
       run: async () => ({
@@ -2871,9 +2910,7 @@ describe('runWrapPipeline — commitSha threading (#139 Chunk 9)', () => {
       assert.equal(result.commitSha, null,
         'a skipped (clean) commit step must leave runner commitSha null');
     } finally {
-      for (const kind of realKinds) {
-        wrapPipelineMod.STEP_DISPATCH[kind] = originals[kind];
-      }
+      restoreHandlers();
       wrapPipelineMod.STEP_DISPATCH['commit'] = origCommit;
     }
   });

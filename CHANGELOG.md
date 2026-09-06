@@ -17,6 +17,17 @@ All notable changes to TangleClaw are documented in this file.
   install's state and not its ingress; `docs/configuration-reference.md` says so and #1283
   carries the remainder.
 
+### Internal
+- **The wrap-pipeline tests derive their stub rosters from the dispatch table (#1231).** Three
+  hand-transcribed `realKinds` literals in `test/wrap-pipeline.test.js` decided which step handlers
+  to monkey-patch to no-ops. A kind missing from one of those lists does not fail the test — it
+  lets that step's *real* handler run inside a unit test that believes it patched everything, which
+  for `preflight` means spawning `prawduct-hook`. Two of the three lists predated `preflight` and
+  six other kinds, and stayed harmless only because those handlers self-skip in a bare fixture. One
+  `stubRealHandlers` helper now reads `STEP_DISPATCH`, so the roster cannot fall behind whatever
+  produces it, and a test asserts the property directly: after stubbing, no dispatch entry is still
+  the real handler.
+
 ### Fixed
 - **A misordered marker pair no longer grows the priming file by one stale block per wrap
   (#1132).** TangleClaw splices a managed block into a file it co-owns with another writer in two
