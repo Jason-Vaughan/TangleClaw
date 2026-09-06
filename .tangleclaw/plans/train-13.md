@@ -81,7 +81,7 @@ than unknowns, and both are surfaced at the chunk that would act on them.
 
 ## Status
 
-- [ ] Chunk 01: The machine-local hook moves out of the shareable file (#1022, #1242, #1275)
+- [x] Chunk 01: The machine-local hook moves out of the shareable file (#1022, #1242, #1275)
 - [ ] Chunk 02: A read does not finalize, and a payload proves whose run wrote it (#910, #840)
 - [ ] Chunk 03: The provenance record says what the session did, and corruption is detected (#797, #882)
 - [ ] Chunk 04: One derivation of the base directory, one containment predicate (#828, #1052)
@@ -91,7 +91,25 @@ than unknowns, and both are surfaced at the chunk that would act on them.
 Context: Plan written 2026-09-06 against the roadmap's blessed Train 13 roster and order
 (`ROADMAP_STATE.md`, "Train 13: Nothing Mutates Behind Your Back"). The roadmap leads with
 **#1022 (fixes #1275, #1242)**, which is why the hook relocation is Chunk 01 rather than the
-status-poll fix carried in session memory. Nothing built yet. Next: Chunk 01.
+status-poll fix carried in session memory.
+
+**Chunk 01 is done** — branch `fix/1022-hook-to-settings-local`, Critic
+`rev-20260906T011122Z-b1f1f02b` (29 findings: 19 fixed, 9 accepted, 1 filed onto #1035) then
+`rev-20260906T013813Z-edfb34f4` verifying all 13 gating findings fixed with none new. Filed rather
+than absorbed: **#1276** (a committed install reference does not mean a loaded plugin, so a clone
+reads as governed while its contributor has neither the plugin nor TC's guide) and a comment on
+**#868** carrying #1275's surviving third remedy — any red check still strands a wrap PR silently.
+#1275's second remedy was descoped with the reasoning recorded in the chunk above.
+
+**One lesson worth carrying into every later chunk.** The relocation's safety rested on
+`settings.local.json` being gitignored, and the evidence for it — 16 of 16 managed projects ignore
+it — measured the wrong thing: `git check-ignore -v` attributes the rule to the operator's
+USER-GLOBAL ignore file, which travels with a home directory rather than a repository. A
+per-path check on one machine cannot establish a property of every clone. Chunks 03 and 04 both
+have preconditions of this shape (a CI detector's reach; a base directory that must relocate as a
+whole), so ask of each: *whose machine makes this true, and does it travel?*
+
+Next: Chunk 02 (#910, #840).
 
 ## Scaffolding
 

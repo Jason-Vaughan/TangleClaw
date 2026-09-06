@@ -69,7 +69,6 @@ All notable changes to TangleClaw are documented in this file.
   hooks and what an orphan is, so the pair cannot disagree — the failure #145 exists to prevent is a
   scan reporting an orphan the repair declines to remove.
 
-
 ## [5.20.0] - 2026-09-05
 
 ### Added
