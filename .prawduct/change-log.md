@@ -91,8 +91,11 @@ desynchronised. One came back GREEN on the first attempt — the unreadable bran
 the dropped `onError` was found.
 
 **Critic rounds.** Cumulative `rev-20260906T034652Z-c2bc464e` (three reviewers, tier `escalate`):
-1 blocking, 10 warnings, 11 notes. The verifying round's id and outcome are in the build plan's
-Context block, written when it returned.
+1 blocking, 10 warnings, 11 notes. Then `rev-20260906T040926Z-c74243ed`, which verified 9 of 10
+resolved and found **one new blocking in the fix pass itself** — the `maxBuffer` raise had shipped
+as an exported constant nobody read, so deleting the line left every case green, and the same round
+noticed the record-lint prose fix had landed on the tracked plan while the graded artifact is the
+gitignored `.prawduct/artifacts/` mirror. Both fixed; a third round clean at 0/0/0.
 
 | Finding | Severity | State | Detail |
 |---|---|---|---|
@@ -109,6 +112,13 @@ Context block, written when it returned.
 | R-7 | warning | filed | #1280 — subtract wrap commits from the range so `files:` is the session's work alone |
 | R-13 | note | filed | #1281 — the `files:` line lost its only bound with the allowlist; a persisted-format decision |
 | R-6, R-14, R-18, R-20, R-21, R-22 | note | accepted | clean checks, tip-moved acknowledgments, and the #882 hard-gate sentence (added rather than deferred) |
+
+**rev-20260906T040926Z-c74243ed** — verify-resolutions
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | blocking | fixed | the ENOBUFS fix was an exported constant with no reader — both spawn bounds now pinned against the injected double, each mutation red |
+| (prior R-1) | blocking | fixed | the record-lint prose fix had landed only on the tracked plan; the graded `.prawduct/artifacts/` mirror is now in sync and `verify-chunk-refs 03` exits 0 |
 
 **Classification:** fix
 

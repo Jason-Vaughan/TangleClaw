@@ -139,8 +139,9 @@ commits the operator's repository should not, reachable or not.
 
 **Chunk 03 is done** — branch `fix/797-session-provenance-and-conflict-markers`, Critic
 `rev-20260906T034652Z-c2bc464e` (three reviewers, tier `escalate`: 1 blocking, 10 warnings, 11
-notes — 13 fixed, 7 accepted, 2 filed as **#1280** and **#1281**), verified by a
-`verify-resolutions` round. Both `## Instances` entries are registered: #797's was already there
+notes — 13 fixed, 7 accepted, 2 filed as **#1280** and **#1281**), then
+`rev-20260906T040926Z-c74243ed`, which verified 9 of 10 resolved and found **one new blocking** in
+the fix pass itself, then a third round clean at 0/0/0. Both `## Instances` entries are registered: #797's was already there
 and now records how it resolved, and #882 gained one — it is a CI gate rather than a wrap gate, so
 commitment 3 reaches it by analogy, and the entry says so rather than implying direct reach.
 
@@ -153,7 +154,13 @@ value, and the consumer took an ACTION on it — which is `architecture.md`'s Di
 backwards and #797's own shape one level up. **When a fix turns on a value that can be absent, ask
 what else produces that absence before deciding what absence means.**
 
-**And the guard for it was vacuous on the first try.** `store.projectConfig.load` takes one
+**The second round found a third guard that was not there at all.** The `maxBuffer` raise on the
+conflict scanner shipped as an exported constant nobody read — deleting the line left every case
+green. Both spawn bounds are now asserted against the injected `spawn`'s options, since neither has
+a symptom the behavioural cases can see. Same rule as below, one level further in: **a finding-fix
+is new code, and a GREEN mutation is the finding.**
+
+**And the guard for the falsy boundary was vacuous on the first try.** `store.projectConfig.load` takes one
 argument and silently dropped the `onError` the new code passed, so the `unreadable` branch could
 never fire. The mutation came back GREEN, which is the only reason it was found — second time this
 session a guard read as caution while doing nothing. **A wrapper that narrows another module's
