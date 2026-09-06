@@ -2285,11 +2285,13 @@ describe('engines', () => {
         engines.syncEngineHooks(p);
 
         const settings = JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.json'), 'utf8'));
-        assert.ok(settings.hooks, 'the L1 prime hook block must remain');
-        assert.ok(settings.hooks.SessionStart, 'TC L1 silent-prime SessionStart hook must survive on a governed project');
-        assert.equal(settings.hooks.Stop, undefined, 'the governance Stop hook must be dropped (delegated to the plugin)');
-        // No surviving hook may reference the vendored governance script.
-        const allCommands = JSON.stringify(settings.hooks);
+        const local = JSON.parse(fs.readFileSync(path.join(p, '.claude', engines.LOCAL_SETTINGS_BASENAME), 'utf8'));
+        assert.ok(local.hooks, 'the L1 prime hook block must remain');
+        assert.ok(local.hooks.SessionStart, 'TC L1 silent-prime SessionStart hook must survive on a governed project');
+        assert.equal(settings.hooks, undefined, 'the governance Stop hook must be dropped (delegated to the plugin)');
+        // No surviving hook may reference the vendored governance script — in EITHER
+        // file, since the retirement pass and the emission pass write to different ones.
+        const allCommands = JSON.stringify([settings.hooks, local.hooks]);
         assert.ok(!allCommands.includes('product-hook'), 'no surviving hook may reference the removed vendored governance script');
         assert.equal(settings.enabledPlugins['prawduct@prawduct'], true, 'the plugin enablement must be preserved');
       });
@@ -2393,7 +2395,14 @@ describe('engines', () => {
 
         engines.syncEngineHooks(p);
 
-        const written = JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.json'), 'utf8'));
+        // The stale entry is retired from the TRACKED file it was written into; the
+        // live one is emitted into the machine-local file (#1022). Both halves are
+        // asserted, because "no stale entry" is trivially true of a file we stopped
+        // writing — the accumulation this pins could only reappear where we DO write.
+        const tracked = JSON.parse(fs.readFileSync(path.join(p, '.claude', 'settings.json'), 'utf8'));
+        assert.equal(tracked.hooks, undefined, 'the pre-rename entry must be retired from the tracked file');
+
+        const written = JSON.parse(fs.readFileSync(path.join(p, '.claude', engines.LOCAL_SETTINGS_BASENAME), 'utf8'));
         const commands = written.hooks.SessionStart.flatMap((e) => e.hooks.map((h) => h.command));
         assert.ok(!commands.some((c) => /data\/hooks\/sessionstart-(prime|rules)\.sh"/.test(c)),
           `a pre-rename entry survived beside the live one: ${JSON.stringify(commands)}`);
@@ -2854,17 +2863,31 @@ describe('engines', () => {
     });
 
     /**
-     * Helper to read .claude/settings.json from the test project dir.
+     * Helper to read the TRACKED .claude/settings.json from the test project dir.
+     * Carries the plugin install reference and the operator's own hooks; TangleClaw
+     * writes no hooks here and only retires its own (#1022).
      * @returns {object}
      */
     function readSettings() {
-      return JSON.parse(fs.readFileSync(path.join(projectDir, '.claude', 'settings.json'), 'utf8'));
+      return JSON.parse(fs.readFileSync(
+        path.join(projectDir, '.claude', engines.SHARED_SETTINGS_BASENAME), 'utf8'));
+    }
+
+    /**
+     * Helper to read the machine-local .claude/settings.local.json — where
+     * TangleClaw's own hooks live, because they name an absolute path to one
+     * machine's install (#1022).
+     * @returns {object}
+     */
+    function readLocalSettings() {
+      return JSON.parse(fs.readFileSync(
+        path.join(projectDir, '.claude', engines.LOCAL_SETTINGS_BASENAME), 'utf8'));
     }
 
     it('writes the baseline SessionStart hook when silentPrime is on', () => {
       engines.syncEngineHooks(projectDir);
 
-      const settings = readSettings();
+      const settings = readLocalSettings();
       assert.ok(settings.hooks, 'hooks key should exist');
       assert.ok(settings.hooks.SessionStart, 'SessionStart hooks should exist');
       assert.equal(settings.hooks.SessionStart.length, 1);
@@ -2873,7 +2896,7 @@ describe('engines', () => {
     it('resolves the {{TANGLECLAW_DIR}} placeholder in the hooks it writes', () => {
       engines.syncEngineHooks(projectDir);
 
-      const cmd = readSettings().hooks.SessionStart[0].hooks[0].command;
+      const cmd = readLocalSettings().hooks.SessionStart[0].hooks[0].command;
       assert.ok(!cmd.includes('{{TANGLECLAW_DIR}}'), 'placeholder should be resolved');
       assert.ok(path.isAbsolute(cmd.split(' ')[0].replace(/^"/, '')) || cmd.includes('/'),
         'resolved command should carry a real path');
@@ -2900,7 +2923,9 @@ describe('engines', () => {
       assert.deepStrictEqual(settings.companyAnnouncements, ['Test announcement']);
       assert.deepStrictEqual(settings.hooks.PreToolUse, [operatorHook],
         'a foreign hook event must survive TangleClaw\'s sync');
-      assert.ok(settings.hooks.SessionStart, 'new hooks should be present');
+      assert.ok(!settings.hooks.SessionStart,
+        'TangleClaw writes no hooks into the tracked file — its own go to the local one (#1022)');
+      assert.ok(readLocalSettings().hooks.SessionStart, 'new hooks should be present');
     });
 
     it('removes the hooks block when nothing of its own is left to hold', () => {
@@ -2936,9 +2961,12 @@ describe('engines', () => {
 
         engines.syncEngineHooks(freshDir);
 
-        assert.ok(fs.existsSync(path.join(freshDir, '.claude', 'settings.json')));
-        const settings = JSON.parse(fs.readFileSync(path.join(freshDir, '.claude', 'settings.json'), 'utf8'));
+        const localFile = path.join(freshDir, '.claude', engines.LOCAL_SETTINGS_BASENAME);
+        assert.ok(fs.existsSync(localFile));
+        const settings = JSON.parse(fs.readFileSync(localFile, 'utf8'));
         assert.ok(settings.hooks.SessionStart);
+        assert.equal(fs.existsSync(path.join(freshDir, '.claude', engines.SHARED_SETTINGS_BASENAME)), false,
+          'and the tracked file is not conjured into existence to hold nothing (#1022)');
       } finally {
         fs.rmSync(freshDir, { recursive: true, force: true });
       }
@@ -3035,8 +3063,15 @@ describe('engines', () => {
       fs.rmSync(projectDir, { recursive: true, force: true });
     });
 
+    /**
+     * Read the file TangleClaw actually emits its hooks into. Every assertion in
+     * this block is about TangleClaw's OWN entries, and those live in the
+     * machine-local file because they name an absolute install path (#1022).
+     * @returns {object}
+     */
     function readSettings() {
-      return JSON.parse(fs.readFileSync(path.join(projectDir, '.claude', 'settings.json'), 'utf8'));
+      return JSON.parse(fs.readFileSync(
+        path.join(projectDir, '.claude', engines.LOCAL_SETTINGS_BASENAME), 'utf8'));
     }
 
     function writeProjConfig(config) {
@@ -3172,7 +3207,11 @@ describe('engines', () => {
       writeProjConfig({ engine: 'codex', silentPrime: true });
       engines.syncEngineHooks(projectDir);
 
-      assert.equal(fs.existsSync(path.join(projectDir, '.claude', 'settings.json')), false,
+      // Neither file: a non-claude engine gets no hooks written anywhere, and the
+      // tracked file is not created just to be retired from (#1022).
+      assert.equal(fs.existsSync(path.join(projectDir, '.claude', engines.LOCAL_SETTINGS_BASENAME)), false,
+        'should not write .claude/settings.local.json for non-claude engine');
+      assert.equal(fs.existsSync(path.join(projectDir, '.claude', engines.SHARED_SETTINGS_BASENAME)), false,
         'should not write .claude/settings.json for non-claude engine');
     });
   });

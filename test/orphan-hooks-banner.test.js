@@ -126,6 +126,10 @@ describe('Dashboard orphan-hooks banner (#145, chunk 2)', () => {
       // Each line should reference the event name and the missing paths
       assert.match(js, /o\.event/);
       assert.match(js, /o\.missing\.join/);
+      // …and WHICH FILE the orphan is in. There are two — TangleClaw's own hooks
+      // live in settings.local.json and the operator's may be in either (#1022) —
+      // so an event name alone does not tell the operator which one to open.
+      assert.match(js, /o\.file/);
     });
 
     it('wireOrphanHooksBanner is called from init so click handlers exist before first render', () => {

@@ -10,13 +10,23 @@
 # managed-block to WHOLE-FILE and destroys it on first launch. Tracking this
 # file is what makes a committed CLAUDE.md survive.
 #
-# `settings.local.json` (permissions) stays ignored: genuinely per-machine.
+# `settings.local.json` stays ignored: genuinely per-machine. It holds the
+# permissions AND, since #1022, TangleClaw's own `hooks` block — those commands
+# carry absolute paths to one machine's checkout, so a clone elsewhere would run
+# two commands that do not exist at every Claude Code start, a broken hook rather
+# than merely a stale path.
 #
-# The `hooks` block is NOT committed. It carries absolute paths to one machine's
-# checkout, and a clone elsewhere would run two commands that do not exist at
-# every Claude Code start — a broken hook, not merely a stale path. `syncEngineHooks`
-# writes it at launch, so **expect this tracked file to show as modified**; that is
-# known, and moving machine-local keys out for good is #1242.
+# So the tracked file above is expected to be CLEAN, not modified. It was
+# permanently dirty for as long as `syncEngineHooks` wrote hooks into it, which is
+# what fed it into the wrap's `git add -A`, where the no-absolute-path guard in
+# `test/repo-governance-reference.test.js` rejected it and stranded the wrap PR
+# with auto-merge armed (#1242, #1275).
+#
+# TangleClaw still writes here once per project, to RETIRE the entry an older
+# version left behind — so a diff is either that one-time migration or a human.
+# `lib/update-applier.js#_classifyDirty` still counts this file as TC-written and
+# discardable, which is what makes the migration safe to self-update over; it is
+# not a claim that TangleClaw regenerates the file's contents.
 .claude/*
 !.claude/settings.json
 

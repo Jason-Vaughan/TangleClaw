@@ -4,6 +4,71 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **TangleClaw's hooks moved out of the file projects are supposed to commit (#1022, #1242,
+  #1275).** `syncEngineHooks` wrote a `SessionStart` hook naming an **absolute path to one
+  machine's install** into `.claude/settings.json` — the shared, committable file the Claude
+  Code docs point operators at, and the only carrier of the plugin install reference
+  `lib/governance-state.js` anchors governance detection on. So every managed project had to
+  choose between a clone that works and committed governance: ignore the file to protect other
+  clones and the governance reference goes with it. They now go to `.claude/settings.local.json`,
+  which Claude Code merges over the shared file and which is already gitignored in every
+  managed project on this machine.
+
+  The relocation is not just a new write target. Every project configured before it holds an
+  entry in the old file that resolves nowhere else, so `syncEngineHooks` **retires from the
+  tracked file on every sync** — the same ownership predicate, run with nothing to add. A
+  relocation that skips that step orphans a dead hook in every project it ever touched, which
+  is what happened the last time these two scripts moved and left 25 entries across 24 projects
+  firing an error at each session start (#1007). The non-claude branch clears both files, since
+  a project that flipped engines can hold a phantom in either.
+
+  The second consequence was this repo's own: because the file was rewritten on **every** launch,
+  create, attach, PATCH and boot-sync, it was permanently dirty, so the wrap's `git add -A` swept
+  it into the wrap commit, where `test/repo-governance-reference.test.js`'s no-absolute-path guard
+  rejected it — and `pr-merge` deliberately does not wait for CI, so the PR stranded with
+  auto-merge armed while the wrap reported success. `_reconcileHooksFile` now writes **only when
+  the serialized file actually changes**, which is what makes "clean" the tracked file's resting
+  state rather than a coincidence; the governance guard asserts it on the working tree, not only
+  on the committed blob, because asserting the blob alone can no longer tell "fixed" from "dirty
+  again". Two prior behaviours were also wrong in the same direction and are now refusals: an
+  unparseable or non-object settings file was rebuilt from `{}`, silently discarding the install
+  reference, and a file that did not exist could be created holding nothing.
+
+  The orphan-hooks scanner and its repair (`lib/projects.js`) read **both** files — scanning only
+  the shared one would have gone quiet about precisely the hooks that scanner exists to catch,
+  TangleClaw's own, whose script paths are the ones that move — and each reported orphan now names
+  the `file` it was found in, since two orphans at index 0 of the same event are otherwise
+  indistinguishable. Filed rather than absorbed: #1276 (a committed install reference does not mean
+  a loaded plugin, so a clone reads as governed while its contributor has neither the plugin nor
+  TC's guide) and a note on #868 (any red check still strands a wrap PR silently — the half that
+  survives this fix).
+
+  **The Critic found the relocation's precondition was assumed rather than owned.** The claim
+  that `settings.local.json` is already ignored everywhere is true on this machine and proves the
+  wrong thing: `git check-ignore -v` attributes the rule to the operator's **user-global** ignore
+  file for most managed projects, and that travels with a home directory rather than a repository.
+  On a contributor's clone, a second machine or CI, TangleClaw would have been the first thing to
+  create a committable file holding an absolute install path — #1022's own shape, relocated. So the
+  sync now establishes the precondition: when git says the target is not ignored, the rule is
+  written to `.claude/.gitignore` — the directory TangleClaw already owns, never the operator's
+  root ignore file — and a project that ignores it by any existing rule is left alone.
+
+  Three more, same review. The "write only when something changed" test was **byte-equality against
+  TangleClaw's own re-serialization**, which conflates *we changed something* with *we would format
+  this differently*: a project whose committed file uses four-space indent, tabs, or no trailing
+  newline had its tracked governance file rewritten by a sync that retired nothing — the
+  permanently-dirty file this change exists to end, one layer up, re-arming every time the project's
+  formatter put it back. The predicate now compares the hooks block before and after, and the
+  fixtures are written in formats TangleClaw would not choose. The retirement reached only projects
+  that sync again, so an **archived** or never-reopened project kept its absolute-path entry forever
+  and `scanForOrphanHooks` could not backstop it (the path still resolves locally, and that scan
+  filters archived projects out) — it is now its own pass over every project, archived included,
+  which is the ruling this repo already made under #247. And the orphan scan and its repair had each
+  grown their own copy of the two-file walk; one `_classifyHookFiles` now owns which files hold
+  hooks and what an orphan is, so the pair cannot disagree — the failure #145 exists to prevent is a
+  scan reporting an orphan the repair declines to remove.
+
 ## [5.20.0] - 2026-09-05
 
 ### Added

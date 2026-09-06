@@ -24,6 +24,21 @@ function readSettings(projectPath) {
   return JSON.parse(fs.readFileSync(path.join(projectPath, '.claude', 'settings.json'), 'utf8'));
 }
 
+// TangleClaw's own hooks live in `.claude/settings.local.json` (#1022), which is
+// where an orphaned TC hook is now found — the scanner reads both files, and these
+// helpers are how that half is exercised rather than assumed.
+function writeLocalSettings(projectPath, hooks, extraKeys = {}) {
+  const settingsDir = path.join(projectPath, '.claude');
+  fs.mkdirSync(settingsDir, { recursive: true });
+  const settings = { ...extraKeys };
+  if (hooks !== null) settings.hooks = hooks;
+  fs.writeFileSync(path.join(settingsDir, 'settings.local.json'), JSON.stringify(settings, null, 2));
+}
+
+function readLocalSettings(projectPath) {
+  return JSON.parse(fs.readFileSync(path.join(projectPath, '.claude', 'settings.local.json'), 'utf8'));
+}
+
 function orphanStopEntry(scriptPath = 'tools/product-hook') {
   return {
     matcher: '',
@@ -206,6 +221,39 @@ describe('scanForOrphanHooks (#145, chunk 2)', () => {
       'the silentPrime entry must not be flagged');
   });
 
+  it('finds an orphan in settings.local.json, where TC\'s own hooks live (#1022)', () => {
+    // The half that would go silent if the scan only read the shared file. After
+    // the relocation this is the MORE likely of the two to hold an orphan, because
+    // TangleClaw's are the hooks whose script paths move — which is the whole
+    // reason this scanner exists (#1007 renamed two of them and orphaned 25).
+    const p = registerProject('local-orphan');
+    writeLocalSettings(p, { SessionStart: [orphanStopEntry('data/hooks/gone.sh')] });
+
+    const result = projects.scanForOrphanHooks();
+    const inv = result.projectsWithOrphans.find((x) => x.name === 'local-orphan');
+    assert.ok(inv, 'an orphan in settings.local.json must be detected');
+    assert.equal(inv.orphans.length, 1);
+    assert.equal(inv.orphans[0].file, 'settings.local.json',
+      'the report must name which file the orphan is in');
+  });
+
+  it('reports orphans from BOTH files, each naming its own', () => {
+    // Two orphans at index 0 of the same event are indistinguishable without the
+    // `file` field, and the repair could not say which file it rewrote.
+    const p = registerProject('both-files');
+    writeSettings(p, { Stop: [orphanStopEntry()] });
+    writeLocalSettings(p, { SessionStart: [orphanStopEntry('data/hooks/gone.sh')] });
+
+    const result = projects.scanForOrphanHooks();
+    const inv = result.projectsWithOrphans.find((x) => x.name === 'both-files');
+    assert.ok(inv);
+    assert.equal(inv.orphans.length, 2);
+    assert.deepStrictEqual(
+      inv.orphans.map((o) => o.file).sort(),
+      ['settings.json', 'settings.local.json']
+    );
+  });
+
   it('skips projects with no .claude/settings.json', () => {
     registerProject('bare');
     const result = projects.scanForOrphanHooks();
@@ -373,6 +421,44 @@ describe('repairOrphanHooks (#145, chunk 2)', () => {
     registerProject('bare-repair');
     const result = projects.repairOrphanHooks();
     assert.ok(result.skipped.some((s) => s.name === 'bare-repair' && /settings\.json/.test(s.reason)));
+  });
+
+  it('reports a malformed file as an error and NOT also as a skip', () => {
+    // Reading two files made this reachable: a parse failure in one leaves the
+    // other looking merely empty, so the same project would appear in `errors`
+    // AND in `skipped` with a reason that contradicts it.
+    const p = registerProject('malformed-repair');
+    fs.mkdirSync(path.join(p, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(p, '.claude', 'settings.json'), '{ this is not json');
+
+    const result = projects.repairOrphanHooks('malformed-repair');
+    assert.equal(result.errors.length, 1);
+    assert.equal(result.skipped.filter((x) => x.name === 'malformed-repair').length, 0,
+      'an errored project must not also be reported as skipped');
+  });
+
+  it('repairs an orphan in settings.local.json without touching the tracked file (#1022)', () => {
+    // Both halves at once. The repair must reach the file TangleClaw's own hooks
+    // live in, AND must not bump the mtime of the tracked, committable file it
+    // found nothing wrong with — a gratuitous rewrite there is the permanently-
+    // dirty-tracked-file problem this whole relocation exists to end (#1242).
+    const p = registerProject('local-repair');
+    writeSettings(p, { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'npm run lint' }] }] });
+    writeLocalSettings(p, { SessionStart: [orphanStopEntry('data/hooks/gone.sh')] });
+
+    const sharedPath = path.join(p, '.claude', 'settings.json');
+    const sharedBefore = fs.statSync(sharedPath).mtimeMs;
+    const waitUntil = Date.now() + 10;
+    while (Date.now() < waitUntil) { /* spin so mtime can advance if a write occurs */ }
+
+    const result = projects.repairOrphanHooks('local-repair');
+    assert.equal(result.repaired.length, 1);
+    assert.equal(result.repaired[0].removed[0].file, 'settings.local.json');
+
+    assert.equal(readLocalSettings(p).hooks, undefined, 'the orphan must be stripped');
+    assert.equal(fs.statSync(sharedPath).mtimeMs, sharedBefore,
+      'the tracked file held no orphan and must not have been rewritten');
+    assert.ok(readSettings(p).hooks.PreToolUse, 'and the operator hook in it is untouched');
   });
 
   it('does not rewrite the file when no orphans are found (mtime preserved)', () => {

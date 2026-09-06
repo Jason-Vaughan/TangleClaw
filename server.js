@@ -3738,7 +3738,7 @@ route('POST', '/api/projects/attach', async (_req, res, _params, body) => {
 });
 
 // GET /api/projects/orphan-hooks-scan — Read-only inventory of projects with
-// orphan hook entries in .claude/settings.json (#145, chunk 2). MUST be
+// orphan hook entries in the .claude hook settings files (#145, chunk 2). MUST be
 // registered before GET /api/projects/:name so the literal path wins.
 route('GET', '/api/projects/orphan-hooks-scan', (_req, res) => {
   const result = projects.scanForOrphanHooks();

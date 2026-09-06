@@ -1125,7 +1125,7 @@ async function loadProjects() {
 
 // ── Orphan Hooks Banner (#145, chunk 2) ──
 // The Stop-hook infinite-loop incident that prompted chunk 2 lives in
-// projects whose .claude/settings.json points at a hook runtime that was
+// projects whose .claude hook settings point at a hook runtime that was
 // never installed. The banner gives users a one-click escape hatch
 // without waiting for each project's next session-launch sync to self-heal.
 
@@ -1190,7 +1190,10 @@ function showOrphanHooksDetails() {
   const list = (state.orphanHooks && state.orphanHooks.projectsWithOrphans) || [];
   if (list.length === 0) return;
   const lines = list.map((p) => {
-    const orphans = p.orphans.map((o) => `  • ${o.event}${o.matcher ? ` (matcher: "${o.matcher}")` : ''} → missing: ${o.missing.join(', ')}`).join('\n');
+    // The file is named because there are two of them: TangleClaw's own hooks
+    // live in `settings.local.json` and the operator's may be in either (#1022),
+    // so "SessionStart → missing: …" alone does not say which file to open.
+    const orphans = p.orphans.map((o) => `  • ${o.file ? `${o.file}: ` : ''}${o.event}${o.matcher ? ` (matcher: "${o.matcher}")` : ''} → missing: ${o.missing.join(', ')}`).join('\n');
     return `${p.name}\n${orphans}`;
   });
   window.alert(`Orphan hooks detected:\n\n${lines.join('\n\n')}`);
