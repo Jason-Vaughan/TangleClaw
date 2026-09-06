@@ -85,7 +85,7 @@ than unknowns, and both are surfaced at the chunk that would act on them.
 - [x] Chunk 02: A read does not finalize, and a payload proves whose run wrote it (#910, #840)
 - [x] Chunk 03: The provenance record says what the session did, and corruption is detected (#797, #882)
 - [x] Chunk 04: One derivation of the base directory, one containment predicate (#828, #1052)
-- [ ] Chunk 05: Validate every field before writing any, in the real run and the rehearsal (#1033, #929)
+- [x] Chunk 05: Validate every field before writing any, in the real run and the rehearsal (#1033, #929)
 - [ ] Chunk 06: One managed-block policy for a malformed marker pair (#1132)
 
 Context: Plan written 2026-09-06 against the roadmap's blessed Train 13 roster and order
@@ -235,6 +235,29 @@ Next: Chunk 05 (#1033, #929) — validate every field before writing any, in the
 rehearsal. Its "whose machine makes this true, and does it travel?" precondition has a good
 answer available from Chunk 03: the conflict scan's reach is the TRACKED working tree, a property
 of the repository rather than of a machine.
+
+**Chunk 05 is done** — branch `fix/1033-validate-before-write`, Critic
+`rev-20260906T061154Z-2ca67c88` (three reviewers; 0 blocking, 6 warnings, 13 notes) then
+`rev-20260906T063010Z-a50eac2f` clean at 0/0. Both defects were reproduced before being fixed, and
+the plan's Description was checked against the code first as the last chunk's handoff asked: two of
+its claims had gone stale (`updateProject` is ~615 lines, not 397, and there is no methodology
+switching left in it — that axis was deleted in v4.30.0), while the partial-update defect itself was
+real and worse than filed. Filed rather than absorbed: **#1286**, **#1287**, **#1288**, **#1289**.
+
+**The lesson for Chunk 06, and it is the sharper version of Chunk 02's.** I scoped this chunk to
+*refusals* and closed the defect for every path that RETURNS a verdict — then three reviewers
+independently found the same state still reachable by a THROW, because the rename wrote to disk
+immediately while the row naming it waited fifteen statements for a batched write, past a dozen
+unguarded `store.projectConfig.save` calls. Fixing a defect class by the mechanism the issue named
+leaves it reachable by every other mechanism. Chunk 06 has exactly this shape — it makes a
+malformed marker pair *repair* instead of append, which is a verdict-shaped fix to a file-writing
+step — so ask of it: what happens when the write throws halfway, and what state does that leave.
+
+Second, cheaper lesson: a completeness guard is only as wide as its roster. Mine read the settings
+modal and therefore could not see `quickCommands`, persisted with no verdict at all. Widening it to
+what the WRITE phase reads immediately found a third gap (`activePlan` missing from the fixture,
+so the partial-update tests had been one field smaller than they looked). When a guard enumerates,
+ask what produces the roster and whether that producer can see everything the code can.
 
 ## Scaffolding
 

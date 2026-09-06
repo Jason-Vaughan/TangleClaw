@@ -187,6 +187,14 @@ To see what it would do without changing anything:
 node scripts/reset-admin.js --dry-run
 ```
 
+If you pipe the new password in, the rehearsal judges it by the same rules the real run
+does and fails the same way, so a password the reset would refuse is refused here too
+rather than blessed by a plan that never read it:
+
+```sh
+echo 'the-new-password' | node scripts/reset-admin.js --password-stdin --dry-run
+```
+
 ### If there is no login to reset
 
 An install that finished setup before a login was required — and later moved to Caddy

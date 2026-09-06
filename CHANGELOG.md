@@ -18,6 +18,26 @@ All notable changes to TangleClaw are documented in this file.
   carries the remainder.
 
 ### Fixed
+- **A rejected project PATCH no longer leaves the project half-changed (#1033).** `updateProject`
+  validated most fields before writing anything and three of them inside the blocks that write,
+  so `PATCH { name, engine }` with an unknown engine renamed the directory on disk and *then*
+  refused — leaving the `projects` row pointing at a path that no longer existed, which does not
+  half-update a project so much as break it. The same shape refused a disabled core rule only
+  after the whole engine switch had run (config rewritten, previous config retired, both hook
+  sets re-synced). Every field is now judged by a `PROJECT_UPDATE_VALIDATORS` table that runs to
+  a verdict before `_applyProjectUpdates` touches the disk or the row, so a refused save leaves
+  both exactly as it found them. Nothing about which values are accepted changed: the engine
+  check still only fires on a real switch, so a settings save that re-sends the current engine
+  still succeeds for a project whose engine profile has gone missing.
+- **`reset-admin --password-stdin --dry-run` refuses the passwords the real run refuses (#929).**
+  The rehearsal never read the piped password: it printed a full plan that claimed it "would
+  prompt", exited 0, and blessed a password the real invocation rejects with exit 1. It now runs
+  the piped password through the same `acquirePassword` the real run does, in the same order
+  (before the gate verdict, which is where `createGate` asks it), so both invocations agree on the
+  exit code and on the reason — and the plan names stdin instead of describing a prompt it will
+  not reach. Without `--password-stdin` nothing is read and nothing is prompted, as before. Found
+  during a live auth verification; a rehearsal that diverges from the run is at its most expensive
+  during the lockout that is the only reason to run this tool.
 - **One derivation of TangleClaw's base directory, and one containment predicate (#828, #1052).**
   Where `~/.tangleclaw` *is* was answered independently at six sites, half from
   `process.env.HOME` and half from `os.homedir()`. #828 diagnosed the divergence as macOS

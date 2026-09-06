@@ -191,6 +191,12 @@ describe('the preview cannot promise what the run refuses', () => {
   // the first hit sliced backwards to an empty string that satisfied nothing.
   const dryRunStart = code.indexOf('if (dryRun) {');
   const dryRun = code.slice(dryRunStart, code.indexOf('let password;', dryRunStart));
+  // The would-do description is anchored on its own `  would: ` prefix rather
+  // than on the sentence that follows it. That sentence is now written from the
+  // flag — `--password-stdin` names stdin, everything else prompts — so pinning
+  // one wording would measure a single branch and read as satisfied while the
+  // other moved.
+  const WOULD_DO = '  would: ';
 
   it('the slice actually covers the dry-run branch', () => {
     // Guards the two assertions below from silently measuring an empty string.
@@ -206,11 +212,125 @@ describe('the preview cannot promise what the run refuses', () => {
 
   it('reports the refusal and stops, instead of describing the steps anyway', () => {
     const refusalAt = dryRun.indexOf('would REFUSE');
-    const stepsAt = dryRun.indexOf('would: prompt new password');
+    const stepsAt = dryRun.indexOf(WOULD_DO);
     assert.ok(refusalAt > -1, 'a refused preview must say so');
     assert.ok(refusalAt < stepsAt,
       'the refusal must be handled before the would-do description is printed');
     assert.match(dryRun.slice(refusalAt, stepsAt), /return;/,
       'and it must stop, not fall through into describing a rebuild that will not happen');
+  });
+});
+
+describe('the rehearsal refuses what the run refuses (#929)', () => {
+  // These drive the real CLI as a subprocess, because the divergence #929
+  // reports is between two whole invocations — exit code included — and nothing
+  // reachable from inside the process observes that. `TANGLECLAW_HOME` moves the
+  // store base, and `caddy.getCaddyfilePath()` derives from it, so each run gets
+  // its own Caddyfile and its own database and touches neither the operator's.
+  const { spawnSync } = require('node:child_process');
+
+  // A credential line only counts if it matches caddy.js's CREDENTIAL_LINE_RE:
+  // `$2a$NN$` plus exactly 53 chars. A shorter stand-in parses as no gate at
+  // all, and every invocation below would then exit 1 for the wrong reason —
+  // agreeing with each other while testing nothing.
+  const FAKE_HASH = `$2a$14$${'a'.repeat(53)}`;
+  const GATED_CADDYFILE = [
+    'https://tc.example {',
+    '\tbasic_auth @protected {',
+    `\t\tjason ${FAKE_HASH}`,
+    '\t}',
+    '\treverse_proxy localhost:3102',
+    '}',
+    ''
+  ].join('\n');
+
+  /**
+   * Run the script against a throwaway TangleClaw home.
+   * @param {string[]} args - CLI arguments.
+   * @param {string} input - stdin contents.
+   * @returns {{status:number, stdout:string, stderr:string, caddyfile:string}}
+   */
+  function run(args, input) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-reset-cli-'));
+    const caddyfile = path.join(home, 'Caddyfile');
+    fs.writeFileSync(caddyfile, GATED_CADDYFILE);
+    try {
+      const r = spawnSync(process.execPath,
+        [path.join(__dirname, '..', 'scripts', 'reset-admin.js'), ...args],
+        { input, encoding: 'utf8', env: { ...process.env, TANGLECLAW_HOME: home } });
+      return {
+        status: r.status,
+        stdout: r.stdout || '',
+        stderr: r.stderr || '',
+        caddyfile: fs.readFileSync(caddyfile, 'utf8')
+      };
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  }
+
+  it('rehearsal and run agree on a password the run refuses — code AND reason', () => {
+    // #929's reproduction, both invocations. The dry-run printed the whole plan
+    // and exited 0 for `short123`; the real run exits 1. An operator rehearsing
+    // a recovery got a green light for a password that would then be refused,
+    // during the lockout that is the only reason to run this tool.
+    const rehearsal = run(['--password-stdin', '--dry-run'], 'short123\n');
+    const real = run(['--password-stdin'], 'short123\n');
+
+    assert.equal(real.status, 1, 'the real run refuses a short password');
+    assert.equal(rehearsal.status, real.status,
+      'the rehearsal must exit with the run\'s code, not 0');
+    assert.match(real.stderr, /Password must be at least/);
+    assert.match(rehearsal.stderr, /Password must be at least/,
+      'and must give the same reason, not merely fail');
+    assert.equal(rehearsal.caddyfile, GATED_CADDYFILE,
+      'a dry run still writes nothing');
+  });
+
+  it('reads the piped password rather than describing a prompt it will not reach', () => {
+    // The plan text is the other half of #929: it said "would: prompt new
+    // password" while `--password-stdin` was on the command line, describing a
+    // step that run does not take.
+    const r = run(['--password-stdin', '--dry-run'], 'a-perfectly-fine-passphrase\n');
+    assert.equal(r.status, 0, 'an acceptable password still previews');
+    assert.match(r.stdout, /would: use the stdin password/);
+    assert.doesNotMatch(r.stdout, /would: prompt new password/,
+      'it must not claim it would prompt when the password is already in hand');
+    assert.equal(r.caddyfile, GATED_CADDYFILE);
+  });
+
+  it('answers the password before the gate, because that is the order the run asks in', () => {
+    // `--create-gate` refuses on a non-caddy install, and the real run reaches
+    // that refusal only AFTER `acquirePassword` — `createGate` asks
+    // `canCreateGate` from inside itself. A preview that asked the gate first
+    // would report a different reason from the run for the same command, and
+    // exit 0 where the run exits 1. The fixture's store is fresh, so
+    // `ingressMode` is `direct` and the gate verdict is a refusal waiting to be
+    // reported if the ordering slips.
+    const rehearsal = run(['--create-gate', '--user', 'newadmin', '--password-stdin', '--dry-run'], 'short123\n');
+    const real = run(['--create-gate', '--user', 'newadmin', '--password-stdin'], 'short123\n');
+
+    assert.equal(real.status, 1);
+    assert.equal(rehearsal.status, real.status);
+    assert.match(rehearsal.stderr, /Password must be at least/,
+      'the password is judged first, as the run judges it');
+    assert.doesNotMatch(rehearsal.stdout, /would REFUSE/,
+      'the gate refusal must not be the reason reported for a bad password');
+
+    // And with an acceptable password the gate refusal is still reached — the
+    // ordering must not have swallowed it.
+    const gated = run(['--create-gate', '--user', 'newadmin', '--password-stdin', '--dry-run'],
+      'a-perfectly-fine-passphrase\n');
+    assert.match(gated.stdout, /would REFUSE: this install is not in caddy ingress mode/);
+  });
+
+  it('still describes a prompt — and reads no password — without --password-stdin', () => {
+    // The fix must not turn every dry run into a stdin read. With no flag there
+    // is no password to judge, and a preview that prompted would be a dry run
+    // that touches the terminal.
+    const r = run(['--dry-run'], '');
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /would: prompt new password/);
+    assert.equal(r.caddyfile, GATED_CADDYFILE);
   });
 });
