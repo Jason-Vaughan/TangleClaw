@@ -14,8 +14,10 @@ settings cleanup.)
   independent **Critic gate** for conflicting/autonomous edits.
 
 This doc is the **canonical, git-tracked** reference. Everything under `.claude/` is ignored
-except `settings.json`, which carries the plugin install reference (#833) — so the paste-able
-priming copy at `.claude/priming/d1b-rule-review.md` is still per-clone and points here.
+except `settings.json`, which carries the plugin install reference (#833) and nothing
+machine-specific — TangleClaw's SessionStart hooks live in the ignored
+`.claude/settings.local.json` (#1022). So the paste-able priming copy at
+`.claude/priming/d1b-rule-review.md` is still per-clone and points here.
 
 ## Data model
 

@@ -145,22 +145,31 @@ describe("this repo's plugin install reference is committed (#833)", () => {
   });
 
   it('commits no absolute path, so a clone at another path is not broken', () => {
-    // Read the COMMITTED blob, not the working tree. The property is about what
-    // a clone receives, and the working copy is expected to differ: every
-    // TangleClaw launch calls `syncEngineHooks`, which writes a `hooks` block
-    // full of absolute paths back into this file. Reading from disk would red
-    // this on the machine that develops the repo — and the cheapest-looking fix
-    // for that red is deleting the two assertions holding the portable half of
-    // the #833 reference.
-    //
-    // The hooks block matters because its paths point at one checkout: committed,
-    // a clone elsewhere would run commands that do not exist at every Claude Code
-    // start, and hook failures here feed back as synthetic user messages.
+    // The property is about what a clone receives: a `hooks` block naming one
+    // checkout's absolute paths would, committed, make every other clone run two
+    // commands that do not exist at each Claude Code start — and hook failures
+    // feed back as synthetic user messages.
     const raw = committed('.claude/settings.json');
     assert.doesNotMatch(raw, /"?\/(Users|home)\//,
       'the COMMITTED settings must carry no machine-absolute path');
     assert.equal(JSON.parse(raw).hooks, undefined,
-      'the hooks block is machine-local — syncEngineHooks writes it at launch');
+      'the hooks block is machine-local — it belongs in settings.local.json');
+  });
+
+  it('is not rewritten by a launch, so the tracked file is not permanently dirty', () => {
+    // The working tree used to be EXPECTED to differ here: `syncEngineHooks` wrote
+    // its absolute-path hooks straight into this tracked file on every launch,
+    // create, attach, PATCH and boot-sync. That permanent modification is what the
+    // wrap's `git add -A` swept into a commit the assertion above then rejected,
+    // stranding the wrap PR with auto-merge armed while the wrap reported success
+    // (#1275). The hooks now go to `.claude/settings.local.json` (#1022), so the
+    // two halves must agree — and asserting only the committed blob can no longer
+    // tell the difference between "fixed" and "dirty again".
+    const onDisk = fs.readFileSync(path.join(REPO_ROOT, '.claude/settings.json'), 'utf8');
+    assert.doesNotMatch(onDisk, /"?\/(Users|home)\//,
+      'the WORKING-TREE settings must carry no machine-absolute path either');
+    assert.equal(JSON.parse(onDisk).hooks, undefined,
+      'nothing may write a hooks block back into the tracked file');
   });
 
   it('reads as plugin-governed, which is the property that protects CLAUDE.md', () => {

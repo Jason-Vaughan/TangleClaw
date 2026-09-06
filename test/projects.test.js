@@ -3263,20 +3263,25 @@ describe('projects', () => {
       assert.equal(afterRow.engineId, beforeRow.engineId);
     });
 
-    // ── #137: PATCH must sync .claude/settings.json + prime file immediately ──
-    it('updateProject syncs SessionStart hook to .claude/settings.json on silentPrime=true (#137)', async () => {
+    // ── #137: PATCH must sync the hooks file + prime file immediately ──
+    // The hooks land in `.claude/settings.local.json`: the command is an absolute
+    // path to this machine's install, so the shared, committable file must not
+    // carry it (#1022).
+    it('updateProject syncs SessionStart hook to .claude/settings.local.json on silentPrime=true (#137)', async () => {
       const projPath = path.join(primeDir, 'sp-sync-on');
       fs.mkdirSync(projPath, { recursive: true });
       store.projects.create({ name: 'sp-sync-on', path: projPath, engineId: 'claude' });
 
-      const settingsFile = path.join(projPath, '.claude', 'settings.json');
-      assert.equal(fs.existsSync(settingsFile), false, 'baseline: no settings.json yet');
+      const settingsFile = path.join(projPath, '.claude', 'settings.local.json');
+      assert.equal(fs.existsSync(settingsFile), false, 'baseline: no settings.local.json yet');
 
       const result = await projects.updateProject('sp-sync-on', { silentPrime: true });
       assert.deepEqual(result.errors, []);
       assert.equal(result.project.silentPrime, true);
 
-      assert.equal(fs.existsSync(settingsFile), true, 'settings.json should be written by syncEngineHooks');
+      assert.equal(fs.existsSync(settingsFile), true, 'settings.local.json should be written by syncEngineHooks');
+      assert.equal(fs.existsSync(path.join(projPath, '.claude', 'settings.json')), false,
+        'the shared, committable file must not receive a machine-absolute hook path (#1022)');
       const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
       assert.ok(settings.hooks, 'hooks block should exist');
       assert.ok(settings.hooks.SessionStart, 'SessionStart entry should exist');
@@ -3288,14 +3293,14 @@ describe('projects', () => {
       assert.equal(cmd.includes('{{TANGLECLAW_DIR}}'), false, 'placeholder should be resolved');
     });
 
-    it('updateProject removes SessionStart hook from .claude/settings.json on silentPrime=false (#137)', async () => {
+    it('updateProject removes SessionStart hook from .claude/settings.local.json on silentPrime=false (#137)', async () => {
       const projPath = path.join(primeDir, 'sp-sync-off');
       fs.mkdirSync(projPath, { recursive: true });
       store.projects.create({ name: 'sp-sync-off', path: projPath, engineId: 'claude' });
 
       // Seed silentPrime=true via PATCH so the baseline matches the on-disk shape PATCH would produce.
       await projects.updateProject('sp-sync-off', { silentPrime: true });
-      const settingsFile = path.join(projPath, '.claude', 'settings.json');
+      const settingsFile = path.join(projPath, '.claude', 'settings.local.json');
       const seeded = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
       assert.ok(seeded.hooks && seeded.hooks.SessionStart, 'baseline: hook should be present after silentPrime=true');
 
@@ -3331,7 +3336,7 @@ describe('projects', () => {
       assert.equal(fs.existsSync(primeFile), false, 'stale prime file should be removed by PATCH');
     });
 
-    // ── #140: engine PATCH must clear orphan .claude/settings.json hooks ──
+    // ── #140: engine PATCH must clear orphan hooks from the file they live in ──
     it('updateProject clears orphan SessionStart hook when engine flips claude → non-claude (#140)', async () => {
       const projPath = path.join(primeDir, 'sp-engine-flip-orphan');
       fs.mkdirSync(projPath, { recursive: true });
@@ -3341,7 +3346,7 @@ describe('projects', () => {
       // as the canonical pre-flip state — same shape an existing install would
       // have on disk before the engine change.
       await projects.updateProject('sp-engine-flip-orphan', { silentPrime: true });
-      const settingsFile = path.join(projPath, '.claude', 'settings.json');
+      const settingsFile = path.join(projPath, '.claude', 'settings.local.json');
       const seeded = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
       assert.ok(seeded.hooks && seeded.hooks.SessionStart, 'baseline: SessionStart hook present after silentPrime=true');
 
@@ -3384,15 +3389,15 @@ describe('projects', () => {
       seed.silentPrime = true;
       store.projectConfig.save(projPath, seed);
 
-      const settingsFile = path.join(projPath, '.claude', 'settings.json');
-      assert.equal(fs.existsSync(settingsFile), false, 'baseline: no .claude/settings.json yet');
+      const settingsFile = path.join(projPath, '.claude', 'settings.local.json');
+      assert.equal(fs.existsSync(settingsFile), false, 'baseline: no .claude/settings.local.json yet');
 
       // Flip onto claude. CHANGELOG claims the hook is materialized immediately
       // rather than waiting for the next launchSession.
       const result = await projects.updateProject('sp-engine-flip-onto-claude', { engine: 'claude' });
       assert.deepEqual(result.errors, []);
 
-      assert.equal(fs.existsSync(settingsFile), true, '.claude/settings.json should be written by syncEngineHooks');
+      assert.equal(fs.existsSync(settingsFile), true, '.claude/settings.local.json should be written by syncEngineHooks');
       const after = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
       assert.ok(after.hooks && after.hooks.SessionStart, 'SessionStart hook should be materialized on flip onto claude');
       assert.equal(after.hooks.SessionStart[0].matcher, 'startup');

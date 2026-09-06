@@ -21,10 +21,23 @@ TangleClaw has multiple subsystems that encode the same conceptual state in two 
 
 | Conceptual state | Persisted in | Materialized in | Re-derivation function |
 |---|---|---|---|
-| Methodology | `projects.methodology` (SQLite) + `.tangleclaw/project.json.methodology` | `.claude/settings.json.hooks` (methodology entries) | `engines.syncEngineHooks` |
-| Engine | `projConfig.engine` | `.claude/settings.json` is consulted by the runtime when `engine === 'claude'`; otherwise it's stale | `engines.syncEngineHooks` (cleanup branch) |
-| silentPrime | `projConfig.silentPrime` | `.claude/settings.json.hooks.SessionStart` (baseline entry) + `.tangleclaw/session-prime.md` | `engines.syncEngineHooks` (via `_buildBaselineHooks`) + `sessions._removePrimeFile` |
+| Methodology | `projects.methodology` (SQLite) + `.tangleclaw/project.json.methodology` | `.claude/settings.local.json.hooks` (methodology entries) | `engines.syncEngineHooks` |
+| Engine | `projConfig.engine` | `.claude/settings.local.json` is consulted by the runtime when `engine === 'claude'`; otherwise it's stale | `engines.syncEngineHooks` (cleanup branch, which clears BOTH settings files) |
+| silentPrime | `projConfig.silentPrime` | `.claude/settings.local.json.hooks.SessionStart` (baseline entry) + `.tangleclaw/session-prime.md` | `engines.syncEngineHooks` (via `_buildBaselineHooks`) + `sessions._removePrimeFile` |
 | Methodology hook `requires` | hook entry's `requires` array in `data/templates/<id>/template.json` | runtime file at `<projectPath>/<requires-path>` (the script the hook would invoke) | `engines._filterHookEntriesByRequires` (skips entry if any required path absent) |
+
+> **Where the hooks live (#1022).** The materialized side of these gates moved from the
+> tracked `.claude/settings.json` to the machine-local `.claude/settings.local.json`. The
+> hook commands name an absolute path to one machine's TangleClaw install, so writing them
+> into the shared, committable file forced every managed project to choose between a working
+> clone and committed governance — and it made the tracked file permanently dirty, which is
+> how it reached the wrap's `git add -A` and stranded the wrap PR against the repo's own
+> no-absolute-path guard (#1242, #1275). `settings.json` keeps only the plugin install
+> reference `lib/governance-state.js` reads. This ADR's rule is unchanged by the move; only
+> the file name in the tables is. Note that the relocation itself creates a THIRD location
+> for the same conceptual state for as long as any project still holds a pre-move entry —
+> which is why `syncEngineHooks` retires from the old file on every sync rather than only
+> writing to the new one.
 
 When two locations encode the same conceptual state, **every transition path between configurations must consistently update both locations**. Asymmetric transitions — where one path updates state-A but skips state-B, or updates state-B with the wrong derivation — leak orphan state: stale entries in one location that no longer reflect the other.
 
@@ -53,9 +66,9 @@ Concretely — the four gates currently in scope:
 
 | Gate | DB / projConfig field | On-disk artifact | PATCH branch must call |
 |---|---|---|---|
-| **Methodology** | `projConfig.methodology` + `projects.methodology` | `.claude/settings.json.hooks` (methodology entries) | `engines.syncEngineHooks(projPath, newTemplate)` |
-| **Engine** | `projConfig.engine` | `.claude/settings.json` (entire file's relevance) | `engines.syncEngineHooks(projPath, methodologyTemplate)` (cleanup branch handles non-claude case) |
-| **silentPrime** | `projConfig.silentPrime` | `.claude/settings.json.hooks.SessionStart` (baseline entry) + `.tangleclaw/session-prime.md` | `engines.syncEngineHooks(projPath, methodologyTemplate)` + `sessions._removePrimeFile(projPath)` on OFF transition |
+| **Methodology** | `projConfig.methodology` + `projects.methodology` | `.claude/settings.local.json.hooks` (methodology entries) | `engines.syncEngineHooks(projPath, newTemplate)` |
+| **Engine** | `projConfig.engine` | `.claude/settings.local.json` (entire file's relevance) | `engines.syncEngineHooks(projPath, methodologyTemplate)` (cleanup branch handles non-claude case, in both files) |
+| **silentPrime** | `projConfig.silentPrime` | `.claude/settings.local.json.hooks.SessionStart` (baseline entry) + `.tangleclaw/session-prime.md` | `engines.syncEngineHooks(projPath, methodologyTemplate)` + `sessions._removePrimeFile(projPath)` on OFF transition |
 | **Methodology hook `requires`** | hook entry's `requires` array | `<projectPath>/<requires-path>` (runtime file) | `engines._filterHookEntriesByRequires(hooks, projPath)` inside the `syncEngineHooks` pipeline |
 
 Verified callsites that already follow the rule (line numbers as of #145 chunk 3 merge):

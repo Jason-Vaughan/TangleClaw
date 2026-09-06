@@ -259,16 +259,22 @@ describe('api-projects', () => {
       assert.ok(data.error.toLowerCase().includes('boolean'));
     });
 
-    // #137 — PATCH must sync .claude/settings.json hooks immediately, not defer to next launch
-    it('PATCH silentPrime=true writes SessionStart hook to .claude/settings.json on disk', async () => {
+    // #137 — PATCH must sync the hooks immediately, not defer to next launch.
+    // The target is `.claude/settings.local.json`: the command is an absolute path to
+    // this machine's install, which is valid nowhere else, so it must not land in the
+    // shared, committable file (#1022).
+    it('PATCH silentPrime=true writes SessionStart hook to .claude/settings.local.json on disk', async () => {
       // Use a dedicated project so we don't entangle with the existing api-test-project assertions
       await request('POST', '/api/projects', { name: 'sp-api-sync' });
 
       const { status } = await request('PATCH', '/api/projects/sp-api-sync', { silentPrime: true });
       assert.equal(status, 200);
 
-      const settingsFile = path.join(projectsDir, 'sp-api-sync', '.claude', 'settings.json');
-      assert.equal(fs.existsSync(settingsFile), true, 'settings.json should be written by PATCH');
+      const claudeDir = path.join(projectsDir, 'sp-api-sync', '.claude');
+      const settingsFile = path.join(claudeDir, 'settings.local.json');
+      assert.equal(fs.existsSync(settingsFile), true, 'settings.local.json should be written by PATCH');
+      assert.equal(fs.existsSync(path.join(claudeDir, 'settings.json')), false,
+        'the shared, committable file must not receive a machine-absolute hook path (#1022)');
       const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
       assert.ok(settings.hooks && settings.hooks.SessionStart, 'SessionStart hook should be present');
       const cmd = settings.hooks.SessionStart[0].hooks[0].command;

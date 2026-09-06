@@ -4,6 +4,46 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **TangleClaw's hooks moved out of the file projects are supposed to commit (#1022, #1242,
+  #1275).** `syncEngineHooks` wrote a `SessionStart` hook naming an **absolute path to one
+  machine's install** into `.claude/settings.json` — the shared, committable file the Claude
+  Code docs point operators at, and the only carrier of the plugin install reference
+  `lib/governance-state.js` anchors governance detection on. So every managed project had to
+  choose between a clone that works and committed governance: ignore the file to protect other
+  clones and the governance reference goes with it. They now go to `.claude/settings.local.json`,
+  which Claude Code merges over the shared file and which is already gitignored in every
+  managed project on this machine.
+
+  The relocation is not just a new write target. Every project configured before it holds an
+  entry in the old file that resolves nowhere else, so `syncEngineHooks` **retires from the
+  tracked file on every sync** — the same ownership predicate, run with nothing to add. A
+  relocation that skips that step orphans a dead hook in every project it ever touched, which
+  is what happened the last time these two scripts moved and left 25 entries across 24 projects
+  firing an error at each session start (#1007). The non-claude branch clears both files, since
+  a project that flipped engines can hold a phantom in either.
+
+  The second consequence was this repo's own: because the file was rewritten on **every** launch,
+  create, attach, PATCH and boot-sync, it was permanently dirty, so the wrap's `git add -A` swept
+  it into the wrap commit, where `test/repo-governance-reference.test.js`'s no-absolute-path guard
+  rejected it — and `pr-merge` deliberately does not wait for CI, so the PR stranded with
+  auto-merge armed while the wrap reported success. `_reconcileHooksFile` now writes **only when
+  the serialized file actually changes**, which is what makes "clean" the tracked file's resting
+  state rather than a coincidence; the governance guard asserts it on the working tree, not only
+  on the committed blob, because asserting the blob alone can no longer tell "fixed" from "dirty
+  again". Two prior behaviours were also wrong in the same direction and are now refusals: an
+  unparseable or non-object settings file was rebuilt from `{}`, silently discarding the install
+  reference, and a file that did not exist could be created holding nothing.
+
+  The orphan-hooks scanner and its repair (`lib/projects.js`) read **both** files — scanning only
+  the shared one would have gone quiet about precisely the hooks that scanner exists to catch,
+  TangleClaw's own, whose script paths are the ones that move — and each reported orphan now names
+  the `file` it was found in, since two orphans at index 0 of the same event are otherwise
+  indistinguishable. Filed rather than absorbed: #1276 (a committed install reference does not mean
+  a loaded plugin, so a clone reads as governed while its contributor has neither the plugin nor
+  TC's guide) and a note on #868 (any red check still strands a wrap PR silently — the half that
+  survives this fix).
+
 ## [5.20.0] - 2026-09-05
 
 ### Added
