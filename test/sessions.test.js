@@ -2486,6 +2486,34 @@ describe('sessions', () => {
       assert.deepEqual(killedTmux, [], 'should not call tmux.killSession when session is dead');
     });
 
+    it('reports the true status when the session ended before the kill landed', () => {
+      // A wrap finishing between the lookup and the write. The operator's ask is
+      // met — the pane is gone — but the row says `wrapped`, and that is what
+      // the caller must get back. `reconciled` is NOT set: that flag means there
+      // was no row at all, and its route branch answers without a sessionId.
+      const project = store.projects.getByName('prime-test');
+      const session = store.sessions.start({
+        projectId: project.id, engineId: 'claude', tmuxSession: 'kill-lost-the-race'
+      });
+      const realKill = store.sessions.kill;
+      store.sessions.kill = (id, reason) => {
+        store.sessions.wrap(id, 'wrapped first');
+        return realKill.call(store.sessions, id, reason);
+      };
+      tmux.hasSession = () => true;
+      try {
+        const result = sessions.killSession('prime-test', 'operator pressed Kill');
+        assert.equal(result.error, null);
+        assert.equal(result.session.id, session.id);
+        assert.equal(result.session.status, 'wrapped',
+          'the row says how it actually ended, not how this call meant to end it');
+        assert.notEqual(result.reconciled, true, 'a row existed — this is not orphan reconciliation');
+        assert.deepEqual(killedTmux, ['kill-lost-the-race'], 'the pane still goes');
+      } finally {
+        store.sessions.kill = realKill;
+      }
+    });
+
     it('reconciles orphan tmux when no DB row exists', () => {
       // No live row — but tmux still has a session.
       tmux.hasSession = (name) => name === 'prime-test';
