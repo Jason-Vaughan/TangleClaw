@@ -219,6 +219,25 @@ async function main() {
     process.stdout.write(`\n[dry-run] ${createGate ? 'create admin gate' : 'reset admin credential'}\n`);
     process.stdout.write(`  caddyfile:    ${caddyfilePath}\n`);
     process.stdout.write(`  admin user:   ${targetUser}\n`);
+    // A piped password is input the rehearsal already HAS, so it is judged here
+    // on the real run's own path — same function, same rules, same exit code.
+    // Skipping it printed a full plan and exited 0 for a password the real run
+    // refuses (#929), during a lockout, which is the only time anyone runs this.
+    // Asked BEFORE the gate verdict below because that is the order the real run
+    // asks them in: `acquirePassword` runs first, and `canCreateGate` only from
+    // inside `createGate` after it. A preview that reported the second refusal
+    // where the run reports the first would diverge on the reason as well as the
+    // code. Nothing is read without `--password-stdin`: a dry run must not
+    // prompt, so there is no password to judge and none is invented.
+    if (passwordStdin) {
+      try {
+        await acquirePassword({ passwordStdin, user: targetUser });
+      } catch (err) {
+        process.stderr.write(`ERROR: ${err.message}\n`);
+        store.close();
+        process.exit(1);
+      }
+    }
     // A preview is read by someone deciding whether to commit, often already
     // locked out. It asks the SAME predicate the real run will, so it can never
     // describe a rebuild that would then be refused.
@@ -230,10 +249,16 @@ async function main() {
       store.close();
       return;
     }
+    // Named from the flag rather than assumed. Saying "prompt new password"
+    // under `--password-stdin` described a step the run does not take, about a
+    // password this preview has already read and accepted.
+    const passwordStep = passwordStdin
+      ? 'use the stdin password (read and validated above)'
+      : 'prompt new password';
     process.stdout.write(createGate
-      ? '  would: prompt new password → caddy hash-password → rebuild this generated Caddyfile\n'
+      ? `  would: ${passwordStep} → caddy hash-password → rebuild this generated Caddyfile\n`
         + '         from its own settings, adding the gate and changing nothing else\n'
-      : '  would: prompt new password → caddy hash-password → patch credential line(s)\n');
+      : `  would: ${passwordStep} → caddy hash-password → patch credential line(s)\n`);
     process.stdout.write(`         → backup + caddy validate (restore on failure) → sync config → launchctl ${reloadCaddyArgs(uid).join(' ')}\n\n`);
     store.close();
     return;
