@@ -117,12 +117,22 @@ No new scaffolding: every chunk edits existing modules in an established repo. T
 constraints govern where the work happens.
 
 **This clone is the running install** ([[project_repo_is_the_live_install]]) — the server
-serves `public/` straight off the working tree, so an edit there is deployed the instant it
-hits disk. No chunk in this train touches `public/`; the roster is `lib/`, `scripts/`,
-`.github/workflows/` and `test/`, which the running process holds in its `require` cache
-until it is restarted. That bounds the hazard rather than removing it: after a chunk merges,
-the live install is behind until it is pulled and restarted, and saying so is part of each
-chunk's close.
+serves `public/` straight off the working tree, so an edit there is deployed to the operator's
+open dashboard the instant it hits disk, with no restart in between.
+
+*Corrected at Chunk 01's close.* This section originally claimed no chunk touches `public/`.
+That was wrong twice over: Chunk 01 edited `public/landing.js` (the orphan-hooks details view
+had to name which settings file an orphan is in), and Chunk 02 must edit `public/session.js`,
+because moving wrap finalization out of the status poll changes what the session page does with
+the poll's answer. So the hazard is live, not bounded away: an edit to `public/session.js`
+reaches a page the operator may have open mid-wrap. Each such edit lands as one whole-file write
+rather than a sequence of partial ones, so there is no interval in which the page is half
+updated.
+
+`lib/`, `scripts/` and `.github/workflows/` are the safer half — the running process holds those
+in its `require` cache until restarted. That bounds when a change takes effect rather than
+whether: after a chunk merges the live install is behind until pulled and restarted, and saying
+so is part of each chunk's close.
 
 **Merge strategy is squash**, per `project-preferences.md`, which overrides the plugin's
 merge-commit default. Squash-merged branches are therefore single-use — never reuse one, or a

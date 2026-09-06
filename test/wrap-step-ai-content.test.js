@@ -120,6 +120,57 @@ describe('wrap-step ai-content — #287 captureFile parsing', () => {
       assert.equal(removeCalled, false, 'do not attempt removal when the read itself failed');
     });
 
+    it('clears a captureFile left by a PREVIOUS run before asking the AI to write one (#840)', async () => {
+      // The file is a hand-off between the memory-update step and this one, at a
+      // well-known path, with nothing binding it to the run that should have
+      // produced it. On the 2026-08-01 wrap it was already present carrying the
+      // previous session's content — three well-formed blocks, correct markdown,
+      // real issue numbers — so no validation could catch it, and `## Summary`
+      // becomes the wrap commit subject.
+      //
+      // Removing it BEFORE the prompt is what makes its later existence proof
+      // that THIS run wrote it, without asking the AI to stamp anything (which
+      // `wrap-direction.md` commitment 2 forbids: no step may need a capability
+      // only some engines have).
+      let existsCalls = 0;
+      const removedAt = [];
+      aic._internal.captureFileExists = () => { existsCalls += 1; return existsCalls === 1; };
+      aic._internal.removeCaptureFile = (_p, rel) => { removedAt.push(rel); };
+      aic._internal.readCaptureFile = () => RAW_BLOCK;
+      let sentAfter = null;
+      aic._internal.sendKeys = () => { sentAfter = removedAt.length; };
+
+      const res = await aic.run(baseCtx());
+
+      assert.equal(res.ok, true);
+      assert.equal(removedAt[0], '.tangleclaw/.wrap-summary.md');
+      assert.equal(sentAfter, 1,
+        'the stale file must be gone BEFORE the prompt — clearing it afterwards proves nothing');
+    });
+
+    it('REFUSES rather than parsing when a stale captureFile cannot be removed (#840)', async () => {
+      // The case the delete does not cover. A capture step that proceeds on a
+      // payload it cannot attribute is the same defect one level up, so this is a
+      // hard refusal: `wrap-direction.md` commitment 3 reserves blocking for a
+      // failure that is silent or destructive regardless of preference, and a
+      // wrap reporting success while attributing another session's work to this
+      // one is exactly that.
+      let readCalled = false;
+      aic._internal.captureFileExists = () => true;   // never goes away
+      aic._internal.removeCaptureFile = () => { throw new Error('EACCES'); };
+      aic._internal.readCaptureFile = () => { readCalled = true; return RAW_BLOCK; };
+      let sent = false;
+      aic._internal.sendKeys = () => { sent = true; };
+
+      const res = await aic.run(baseCtx());
+
+      assert.equal(res.ok, false);
+      assert.equal(res.status, 'blocked');
+      assert.match(res.blockers[0], /belongs to no current run/);
+      assert.equal(sent, false, 'the prompt is not even sent — there is nothing safe to capture into');
+      assert.equal(readCalled, false, 'and the stale content is never parsed');
+    });
+
     it('backward-compat: captureFields WITHOUT captureFile still parses the pane', async () => {
       // An engine that emits raw markdown into the pane (hashes intact).
       aic._internal.capturePane = () => ({ lines: RAW_BLOCK.split('\n') });

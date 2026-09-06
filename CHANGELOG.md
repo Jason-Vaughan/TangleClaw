@@ -5,6 +5,42 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **A status poll no longer finalizes wraps or commits the operator's repository (#910).**
+  `getSessionStatus` is a read, and the session page polls it every two seconds throughout a
+  wrap. On its dead-tmux branch it called `autoCompleteWrap`, which writes the wrap complete,
+  tears down the Medusa listener, and runs a real `git commit` in the operator's repository —
+  so reading a status wrote to the operator's git history, and nothing about the request said
+  mutate. #908 had already made the trigger honest (only a probe that ANSWERED may act) and
+  that was correct; what it left standing was a read path that still mutates on the answered
+  branch, correct only for as long as the predicate stays correct.
+
+  The read now reports `wrapFinished` — an appearance, named as one, because whether the wrap
+  IS finished is settled by the finalizer rather than by the reader — and changes nothing. The
+  session page turns that observation into the same explicit
+  `POST /api/sessions/:project/wrap/complete` its wrap-idle modal already uses. Nothing is lost
+  if that call fails: the launch path still claims a stale wrapping row on its own, so #105's
+  guarantee that a wrapping row never becomes unrecoverable is untouched, and the page reports
+  the failure rather than retrying in a loop. `completeWrap` gained the pane-summary parse that
+  used to live inside the status branch, because relocating the finalize without it would have
+  recorded an empty summary — and that summary becomes the wrap commit subject, so the blast
+  radius is the permanent record. A caller that passes its own summary still overrides it.
+- **A wrap no longer reads a `.wrap-summary.md` that belongs to no current run (#840).** The
+  file is the hand-off between the `memory-update` step and `lib/wrap-steps/ai-content.js`, at
+  a well-known path, with nothing binding it to the run that should have produced it. On the
+  2026-08-01 wrap it was already present when the step began, carrying the *previous* session's
+  content: three well-formed `## Summary` / `## NextSteps` / `## Learnings` blocks, correct
+  markdown, real issue numbers. Nothing about it looks wrong, so no validation catches it, and
+  its `## Summary` flows into the wrap commit subject.
+
+  The step now removes any such file **before** the AI is asked to write one, which makes the
+  file's later existence the proof that this run produced it. The provenance is established
+  mechanically rather than by asking the AI to stamp a run id, because `wrap-direction.md`
+  commitment 2 requires the mechanical layer to produce identical results on every engine and a
+  stamp only some models write reliably is exactly the capability dependency it forbids. A
+  delete that does not take is a hard refusal — the prompt is not even sent — because a capture
+  step proceeding on a payload it cannot attribute is the same defect one level up, and it
+  meets commitment 3's bright-line: the wrap would otherwise report success while attributing
+  another session's work to this one, which no project preference should be allowed to choose.
 - **TangleClaw's hooks moved out of the file projects are supposed to commit (#1022, #1242,
   #1275).** `syncEngineHooks` wrote a `SessionStart` hook naming an **absolute path to one
   machine's install** into `.claude/settings.json` — the shared, committable file the Claude
