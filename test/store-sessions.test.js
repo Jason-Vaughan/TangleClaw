@@ -240,6 +240,22 @@ describe('store.sessions (write methods)', () => {
       assert.equal(crashAttempt.status, 'killed');
     });
 
+    it('refuses a target no modelled status can reach', () => {
+      // The transition map is data, and a future edit can leave a status with no
+      // inbound transition. The precondition is then over an empty source list,
+      // and this pins that such a call refuses like any other disallowed
+      // transition — writing nothing and throwing nothing. Reached through the
+      // internal helper because no public writer targets an unreachable status
+      // today.
+      const session = store.sessions.start({
+        projectId, engineId: 'claude', tmuxSession: 'unreachable-target-test'
+      });
+      const result = store._transitionSession(session.id, 'not-a-status', "ended_at = datetime('now')", []);
+      assert.equal(result.changed, false);
+      assert.equal(result.session.status, 'active', 'the row is untouched');
+      store.sessions.kill(session.id, 'test cleanup');
+    });
+
     it('writes no activity row for a refused transition', () => {
       const session = store.sessions.start({
         projectId, engineId: 'claude', tmuxSession: 'terminal-activity-test'
