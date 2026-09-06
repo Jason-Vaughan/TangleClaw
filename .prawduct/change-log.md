@@ -11,6 +11,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
   new chunk ids, so borrowed tags rot (the ART-4K9M failure). A scope with no build-plan
   file is fine — regen-views flags it only while status=merged, and deliberately not once
   status=shipped (retired/planless scopes are expected history).
+- chunks= and status= : **RETIRED upstream (prawduct 3.4.0, `lib/change_log.py`), along with
+  the derived views that were their only reader.** Which chunks an entry shipped now belongs in
+  the entry BODY, where readers actually look — the 2026-09-06 entries write `Train 13 Chunk NN.`
+  as their first line. Historical entries carrying either key still parse (the parser preserves
+  unknown keys), so nothing below needs rewriting; the two bullets that follow are kept as the
+  record of why they existed and are no longer instructions. Noted 2026-09-06 because this header
+  still read as live guidance and produced a `chunks=05` tag line on the Chunk 05 entry before a
+  Critic pass caught it.
 - status= : (none) on branch → `shipped` stamped at merge (AMENDED 2026-07-17, ratified
   under ART-7W2J/PRW-9K4C: upstream trunk semantics — TC restarts the server onto main
   right after merge, so merged work IS live; the wrap's version number is bookkeeping.
