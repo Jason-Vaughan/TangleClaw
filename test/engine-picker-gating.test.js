@@ -124,21 +124,123 @@ describe('engine picker gating (#707)', () => {
       assert.doesNotMatch(codexOpt, /disabled/);
     });
 
-    it('falls back to the id when a profile has no name', () => {
-      // Only `id` is validated when an engine profile is saved, so a
-      // hand-added profile can lack `name`. Without the fallback the option
-      // renders blank — unselectable-looking, everywhere it is shared.
-      const html = buildEngineOptions([{ id: 'homegrown', available: true }], '');
-      assert.match(html, />homegrown</);
+    // The fallback these two pin MOVED, it was not dropped (#736). It used to
+    // live in `tcBuildEngineOptions`, re-established at every render site; it
+    // is now established once in `engines.engineClientPayload`, the single
+    // projection through which both the roster and the per-project engine
+    // reach the browser.
+    //
+    // So they now drive the real producer. Feeding this function a RAW profile
+    // asserted against a shape production never sends it — the same fixture
+    // trap that let a browser predicate gate on an unprojected field and answer
+    // for every engine (#1251). If the projection stops normalising, these go
+    // red; if a render site re-adds a private guard, the parity check below
+    // catches that instead.
+    const engines = require('../lib/engines');
+
+    it('labels an unnamed profile with its id, through the projection', () => {
+      // Only `id` is validated when a profile is saved, and `get()` JSON-parses
+      // whatever is on disk, so a hand-added profile can lack `name` entirely.
+      const projected = engines.engineClientPayload({ id: 'homegrown' }, { available: true });
+      assert.equal(projected.name, 'homegrown', 'the projection owns the fallback now');
+      assert.match(buildEngineOptions([projected], ''), />homegrown</);
     });
 
-    it('falls back for a non-string name too, which esc drops', () => {
-      // `e.name || e.id` alone is not enough: a truthy non-string takes the
-      // left branch and production `esc` returns '' for it, so the option is
-      // blank anyway. Profile save validates only `id`, and `get()` JSON-parses
-      // whatever is on disk, so the shape is reachable.
-      const html = buildEngineOptions([{ id: 'homegrown', name: 42, available: true }], '');
-      assert.match(html, />homegrown</);
+    it('does the same for a truthy non-string name, which esc would drop', () => {
+      // `name || id` alone is not enough: a truthy non-string takes the left
+      // branch and production `esc` returns '' for it, so the option is blank
+      // anyway. That is why the projection tests the type, not truthiness.
+      const projected = engines.engineClientPayload({ id: 'homegrown', name: 42 }, { available: true });
+      assert.equal(projected.name, 'homegrown');
+      assert.match(buildEngineOptions([projected], ''), />homegrown</);
+    });
+
+    it('no render site keeps a private copy of the fallback', () => {
+      // The point of moving it: one owner, not one per surface. A re-added
+      // guard is not a bug in itself — it is the drift that made the count of
+      // sites needing to remember grow without anything failing.
+      //
+      // Walks EVERY `.js` under `public/`, not a hand-listed three. A guard
+      // that enumerates today's files answers "clean" about the eleven it never
+      // opened, which is this repo's own recorded lesson about set claims — and
+      // the first cut of this test made exactly that mistake.
+      const fs = require('node:fs');
+      const path = require('node:path');
+      const root = path.join(__dirname, '..', 'public');
+
+      /** @param {string} dir - Directory to walk. @returns {string[]} */
+      const jsFiles = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) return jsFiles(full);
+        return e.name.endsWith('.js') ? [full] : [];
+      });
+
+      const files = jsFiles(root);
+      assert.ok(files.length >= 10, `the walk found only ${files.length} files — it is not reaching public/`);
+
+      // `tcEngineDisplayName` is the one legitimate holder: it is the browser
+      // half of `engines.engineDisplayName`, whose server callers pass raw
+      // profiles, and the parity test holds the two to the same words. Its body
+      // is excised so the scan cannot pass by finding it — the exact way the
+      // first cut of this guard stayed green with a live copy inside a file it
+      // was already reading.
+      const owner = /function tcEngineDisplayName\(engine\) \{[\s\S]*?\n {2}\}/;
+      let sawOwner = false;
+      for (const file of files) {
+        let src = fs.readFileSync(file, 'utf8');
+        if (owner.test(src)) { sawOwner = true; src = src.replace(owner, ''); }
+        const rel = path.relative(path.join(__dirname, '..'), file);
+        // BOTH spellings are scoped to lines that also name an engine, because
+        // neither pattern belongs to this domain on its own. Unscoped, the `||`
+        // form matches any `x.name || x.id` — `public/session.js` builds a
+        // Medusa WORKSPACE label that way, a different domain with no
+        // projection behind it — and the `typeof` form would fail unrelated
+        // code with a message about engine names. Scoping one and not the other
+        // is the same error as the too-narrow first cut, pointed the other way.
+        for (const line of src.split('\n')) {
+          if (!/engine/i.test(line)) continue;
+          assert.doesNotMatch(line, /typeof\s+\w+\.name\s*===\s*'string'/,
+            `${rel} re-establishes the engine-name fallback the projection already `
+            + `guarantees: ${line.trim()}`);
+          assert.doesNotMatch(line, /\w+\.name\s*\|\|\s*\w+\.id/,
+            `${rel} re-establishes the engine-name fallback with the || form: ${line.trim()}`);
+        }
+      }
+      assert.ok(sawOwner, 'tcEngineDisplayName was not found — the exclusion is stale, not satisfied');
+    });
+
+    it('no browser code reads the one engine response that is not projected', () => {
+      // `GET /api/engines/:id` returns the RAW profile on purpose — it is the
+      // introspection endpoint and carries fields the projection drops
+      // (`detection`, `errorPatterns`, `statusPage`). So it is the single
+      // engine response without #736's usable-`name` guarantee, and the render
+      // sites that now read `engine.name` straight are safe only while nothing
+      // in `public/` fetches it.
+      //
+      // Pinned rather than trusted: "no caller today" is what made the old
+      // per-site guards look redundant, and a future fetch here would reopen
+      // the blank-label hole with nothing turning red.
+      const fs = require('node:fs');
+      const path = require('node:path');
+      const root = path.join(__dirname, '..', 'public');
+      /** @param {string} dir - Directory to walk. @returns {string[]} */
+      const jsFiles = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) return jsFiles(full);
+        return e.name.endsWith('.js') ? [full] : [];
+      });
+      for (const file of jsFiles(root)) {
+        const src = fs.readFileSync(file, 'utf8');
+        const rel = path.relative(path.join(__dirname, '..'), file);
+        // The trailing slash is the discriminator: the roster is
+        // `'/api/engines'` and is projected. Deliberately NOT requiring a
+        // character after it — the realistic caller writes
+        // `'/api/engines/' + id`, where the next character is the closing
+        // quote, and a pattern demanding a literal id matched none of them.
+        assert.doesNotMatch(src, /['"`]\/api\/engines\//,
+          `${rel} fetches the unprojected single-engine endpoint — route it through the roster, `
+          + 'or project that response first (#736)');
+      }
     });
 
     it('never disables the engine currently in use', () => {

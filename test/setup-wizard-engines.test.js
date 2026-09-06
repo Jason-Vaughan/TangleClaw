@@ -153,7 +153,15 @@ describe('Setup wizard — engine step (#707)', () => {
       // `name` is not validated when an engine profile is saved (only `id` is),
       // and `esc` returns '' for a non-string — so a hand-added profile would
       // otherwise show an unidentifiable empty option in the wizard's picker.
-      const ctx = loadSetup([{ id: 'homegrown', available: true }], { defaultEngine: 'homegrown' });
+      //
+      // Driven through `engineClientPayload`, which is what `/api/engines`
+      // actually hands this step and is where the fallback now lives (#736).
+      // A raw fixture here would assert against a shape the wizard is never
+      // given, and would stay green against a projection that stopped
+      // normalising.
+      const projected = require('../lib/engines')
+        .engineClientPayload({ id: 'homegrown' }, { available: true });
+      const ctx = loadSetup([projected], { defaultEngine: 'homegrown' });
       ctx.showWizard();
       const html = renderEngineStep(ctx);
       // Scoped to the <option>, not the whole step: the step also renders

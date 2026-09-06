@@ -26,6 +26,73 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-05 — #736: the engine display name is normalised once, at the projection
+
+<!-- prawduct: type=chore | scope=engine-name-736 -->
+
+Quick win taken at the close of Train 12.5, on the operator's standing ask for one per train.
+
+**Why now, specifically.** #736 was raised by the Critic during #707 and had sat in Quick Wins
+since. It became a one-line fix tonight because chunk D2a had just made `engineClientPayload` the
+single projection through which both the engine roster and the per-project engine reach the browser
+— the boundary the issue asks for did not exist this morning, which is why the same work would have
+been a refactor a day earlier. Adjacency to what just shipped is the pick criterion, not size.
+
+**What.** Only `id` is validated when an engine profile is saved, and `engines.get()` JSON-parses
+whatever is on disk, so a hand-added profile can carry no `name` — or a truthy non-string, which
+`esc` renders as `''`, giving a blank unidentifiable control that nothing turns red for. #707 fixed
+that at the two surfaces it touched by guarding at the render site; that left the predicate
+duplicated in three places, mirrored in two test fixtures, and absent at every other site reading
+`engine.name` straight — `public/ui.js`, `public/landing.js` and `public/session.js` among them, all
+fed from `enrichProject` off the same `id`-only-validated record. (The first draft of this entry
+named only `ui.js`, which read as the complete remainder — the under-enumerated set claim this very
+change is about, for the third time in it. Relational phrasing, not a longer list that can go stale
+the same way.) `engineClientPayload` now guarantees a non-empty string — declared name
+→ id → `'Unnamed engine'` — and the three per-site guards are gone. Normalised AFTER the overrides,
+so a connection-backed engine's operator-authored label is covered rather than bypassing the rule.
+
+**The decision the issue left open: normalise at the READ, not at `store.engines.save`.**
+`save` is unused outside tests — an operator profile arrives as a hand-dropped file in
+`~/.tangleclaw/engines/` — so write-time validation would guard the path the exposure does not take.
+That is the same reasoning the wake block's read guard follows (#1255), one chunk earlier.
+
+**Critic: 0 blocking, 7 warnings, 10 notes — all 17 dispositioned, all 7 warnings FIXED.** Two
+verify rounds after, both 0 findings. The round was worth more than the original change, and both
+learnings it flagged as reintroduced were mine, inside a change whose whole point was centralising a
+duplicated predicate:
+
+- *One call site is not the family.* `engineDisplayName` kept the `||` this change documents as
+  insufficient, and its callers pass RAW profiles — so a `name: 42` would have the two realms
+  narrating one engine differently. It shares the predicate now, and the cross-realm parity loop
+  gained two unusable-name fixtures, because every profile it iterated carried a good name and it
+  could not have caught the divergence.
+- *A set claim is worth its enumeration.* The new no-private-copy guard hand-listed three of
+  fourteen files under `public/` and passed with a live copy inside one it already read. It walks
+  the tree now. Widening it immediately found a fourth `x.name || x.id` — which turned out to be a
+  Medusa WORKSPACE label, a different domain, so both spellings are scoped to lines naming an
+  engine. Too narrow, then too broad, then right.
+
+**A green mutation was the finding.** `_displayName` fell back to an id without type-testing it, so
+`id: 42` moved the blank label one level down. My own guard varied a non-string NAME and never a
+non-string ID, so reverting the id test passed clean. Fixed and covered; the transferable lesson is
+that a mutation set has to vary every input the code branches on, not only the one the bug was
+about.
+
+**Tried and reverted:** projecting `GET /api/engines/:id`. It dropped `detection` and failed an
+existing API test — a real response-shape change for a benefit no caller wants yet. That endpoint
+keeps the raw profile by design and now documents that it is the one engine response WITHOUT the
+guarantee, with a guard pinning that no file under `public/` fetches it.
+
+**Tests:** the two that pinned the retired guards now drive `engineClientPayload` instead of raw
+fixtures — they were asserting against a shape production never sends the browser, the same fixture
+trap that let a browser predicate gate on an unprojected field (#1251). Three new guards: the walk
+over `public/`, the no-browser-caller pin on the raw endpoint, and totality of the name guarantee
+across unusable ids. Every new guard mutation-verified red. Full suite 0-fail.
+
+**Process defect, recorded:** the mutation harness backed up two of the three files its mutations
+touched, so one survived a "revert" and a dirty tree was recorded as test evidence before it was
+caught. Rewritten to back up every file it touches and to print `git status` after restoring.
+
 ## 2026-09-05 — #1251/#1255: the two audit defects that needed a design before code
 
 <!-- prawduct: type=bugfix | scope=audit-defects-1251 | chunks=D2a,D2b -->

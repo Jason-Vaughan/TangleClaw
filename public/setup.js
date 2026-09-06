@@ -700,10 +700,9 @@ function renderEngines(body) {
     // server-side is the backstop.
     const selected = e.id === wizard.defaultEngine ? ' selected' : '';
     const disabled = e.available ? '' : ' disabled';
-    // `name` is not validated when an engine profile is saved (only `id` is),
-    // and `esc` returns '' for a non-string — so a hand-added profile without a
-    // usable name would render a blank, unidentifiable option.
-    const engineName = typeof e.name === 'string' && e.name ? e.name : e.id;
+    // Read straight: `engines.engineClientPayload` guarantees `name` is a
+    // non-empty string for every engine the API hands a client (#736).
+    const engineName = e.name;
     const label = e.available ? esc(engineName) : `${esc(engineName)} (not installed)`;
     optionsHtml += `<option value="${esc(e.id)}"${selected}${disabled}>${label}</option>`;
 
@@ -794,7 +793,8 @@ function renderEngines(body) {
  */
 function _engineInstallOptionsHtml(list) {
   const rows = (list || []).map((e) => {
-    const name = typeof e.name === 'string' && e.name ? e.name : e.id;
+    // See above: the projection guarantees a usable `name` (#736).
+    const name = e.name;
     const install = e.install || {};
     const command = typeof install.command === 'string' ? install.command : '';
     // http(s) only. Engine profiles are operator-authored through the API and

@@ -734,6 +734,15 @@ describe('settingDisposition — the one answer to "does this setting apply here
         // evalAuditMode row would only ever be compared on `applies: false` —
         // the two realms agreeing about the case that needs no gate.
         { id: 'openclaw:conn-1', name: 'Studio (OpenClaw)', capabilities: {}, launchModes: {} },
+        // Profiles whose NAME is unusable. Every reason string starts with the
+        // engine's display name, and the two realms compute that separately —
+        // `engines.engineDisplayName` here, `tcEngineDisplayName` there — with
+        // the server's copy taking RAW profiles, where the case is live. Every
+        // bundled profile carries a good name, so without these two the loop
+        // compares that half of the sentence only where any two spellings
+        // agree, and a `||` on one side would go unnoticed (#736).
+        { id: 'homegrown', capabilities: {}, launchModes: {} },
+        { id: 'homegrown', name: 42, capabilities: {}, launchModes: {} },
         // No profile at all. Both realms hand-write a sentence for this case
         // and nothing compared them: the browser reaches it whenever the
         // settings dropdown names an engine that is neither in `state.engines`
@@ -1273,6 +1282,39 @@ describe('what the browser is sent is what its predicates may read (#1251)', () 
     const claude = engines.engineClientPayload(
       bundledProfiles().find((p) => p.id === 'claude'), { available: true });
     assert.equal(claude.configFormat.filename, 'CLAUDE.md');
+  });
+
+  it('every engine the browser receives carries a usable name (#736)', () => {
+    // The invariant that lets every render site read `engine.name` straight.
+    // Only `id` is validated when a profile is saved and `get()` JSON-parses
+    // whatever is on disk, so the unusable shapes below are reachable — and
+    // `esc` renders a non-string as '', which is a blank, unidentifiable
+    // control that nothing turns red for.
+    for (const profile of bundledProfiles()) {
+      const client = engines.engineClientPayload(profile, { available: true });
+      assert.equal(typeof client.name, 'string');
+      assert.ok(client.name.length > 0, `${profile.id} must reach the browser with a name`);
+    }
+    for (const bad of [undefined, '', 42, {}, null]) {
+      const client = engines.engineClientPayload({ id: 'homegrown', name: bad }, { available: true });
+      assert.equal(client.name, 'homegrown',
+        `a ${JSON.stringify(bad)} name must fall back to the id, not reach a render site`);
+    }
+    // Normalised AFTER the overrides, so a connection-backed engine's
+    // operator-authored label is covered too rather than bypassing the rule.
+    const conn = engines.engineClientPayload({ id: 'openclaw', name: 'OpenClaw' },
+      { id: 'openclaw:c1', name: 7, available: true });
+    assert.equal(conn.name, 'openclaw:c1', 'the override is normalised, not trusted');
+
+    // The id gets the SAME type test as the name. Falling back to an id that is
+    // itself a number just moves the blank label one level down — nothing
+    // validates a hand-dropped profile, so both halves are reachable.
+    for (const badId of [42, {}, '', undefined]) {
+      const client = engines.engineClientPayload({ id: badId, name: undefined }, { available: true });
+      assert.equal(typeof client.name, 'string',
+        `an id of ${JSON.stringify(badId)} must not become the name`);
+      assert.ok(client.name.length > 0, 'the guarantee is total, or the render sites cannot rest on it');
+    }
   });
 
   it('both realms answer the same for a client-shaped engine', () => {

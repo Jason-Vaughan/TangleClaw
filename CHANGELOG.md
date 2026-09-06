@@ -423,6 +423,51 @@ All notable changes to TangleClaw are documented in this file.
   title so the meaning does not rest on colour.
 
 ### Internal
+- **An engine's display name is normalised once, where profile data becomes client data (#736).**
+  Only `id` is validated when an engine profile is saved, and `engines.get()` JSON-parses whatever
+  is on disk, so a hand-added or hand-edited profile can carry no `name` — or a truthy non-string,
+  which `esc` renders as `''`. #707 fixed that at the two surfaces it touched by guarding at the
+  render site, which left the same predicate duplicated across `public/api-helper.js` and
+  `public/setup.js` (twice), mirrored in two test fixtures, and **absent at every other site that
+  reads `engine.name` straight** — `public/ui.js`, `public/landing.js` and `public/session.js` among
+  them, all fed from `enrichProject` off the same `id`-only-validated record. Counting them is the
+  wrong instinct: the number is what grows. Guarding per site is the wrong shape: every new
+  surface showing an engine name has to remember, nothing fails when one does not, and the failure
+  is a blank unidentifiable control rather than an error.
+
+  `engineClientPayload` now guarantees `name` is a non-empty string, falling back to the id, and the
+  three per-site guards are gone. That boundary is the whole fix only because #1251 made it the
+  single projection through which both the engine roster and the per-project engine reach the
+  browser — before that there were two hand-built shapes and no one place to establish the
+  invariant. Normalised **after** the overrides, so a connection-backed engine's
+  operator-authored `"<conn> (OpenClaw)"` label is covered rather than bypassing the rule.
+
+  **Not validated at the write, deliberately** — the issue left that open. `store.engines.save` is
+  unused outside tests: an operator profile arrives as a hand-dropped file in
+  `~/.tangleclaw/engines/`, so save-time validation would guard the path the exposure does not take.
+  Establishing it at the read is the same reasoning the wake block's read guard already follows
+  (#1255).
+
+  The two tests that pinned the retired guards now drive `engineClientPayload` instead of raw
+  fixtures — they were asserting against a shape production never sends the browser, which is the
+  fixture trap that let a browser predicate gate on an unprojected field and answer for every engine
+  (#1251).
+
+  Three guards came out of the review round. One walks **every** `.js` under `public/` — the first
+  cut listed three by hand, which answered "clean" about every file it never opened and passed with
+  a live private copy sitting inside one it did — and fails if any of them re-establishes the
+  fallback, since a re-added copy changes no behaviour and is otherwise invisible. One pins that no
+  browser code fetches `GET /api/engines/:id`: that endpoint returns the **raw** profile by design
+  (it carries `detection`, `errorPatterns` and `statusPage`, which the projection drops), so it is
+  the single engine response without the guarantee, and it is safe only while nothing in `public/`
+  reads it. The third asserts the guarantee is **total** — the id gets the same type test as the
+  name, because falling back to an id that is itself a number just moves the blank label one level
+  down.
+
+  `engineDisplayName` now shares the predicate instead of keeping its own `||`. Its callers pass raw
+  profiles, so a `name: 42` would otherwise have the two realms narrating the same engine
+  differently — and the cross-realm parity loop could not have caught it while every fixture it
+  iterated carried a good name. Two unusable-name profiles now go through that loop.
 - **Ratified the norm that a setting TangleClaw offers must take effect, or say why it does not
   (`docs/adr/0013-settings-take-effect-or-say-why-not.md`).** The design pass classified the
   per-project and global settings it audited against the engine roster and found that "universal but unevenly
