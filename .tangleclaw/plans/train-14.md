@@ -120,12 +120,29 @@ decisions surfaced at the chunk that acts on them, not unknowns.
 
 ## Status
 
-- [ ] Chunk 01: The boot sweep says what it displaced (#692)
+- [x] Chunk 01: The boot sweep says what it displaced (#692)
 - [ ] Chunk 02: The activity log is bounded without losing the rare row (#869)
 - [ ] Chunk 03: A durable failure is logged when it changes, not when it repeats (#956)
 - [ ] Chunk 04: One broadcast per reader per quiet period, and a drain for what nobody reads (#1108)
 - [ ] Chunk 05: The cache-bump guard fires on the next miss, not the last one (#625)
 - [ ] Chunk 06: The uploads module reads a project directory the way the scanner does (#889, uploads half)
+
+**Chunk 01 is done** — branch `fix/692-orphan-sweep-audit`, Critic `rev-20260906T203735Z-565f2547`
+(1 blocking, 8 warning, 10 note across three reviewers; 11 fixed in one pass, 8 accepted), then
+`rev-20260906T205118Z-54a31b64` verifying 9 of 9 resolved with none new.
+
+**TRAIN PAUSED AFTER THIS CHUNK.** The roadmap coordinator objected that the board's
+`Currently Executing` block holds Discovery Spike #1034, and the operator ruled for the Spike on
+2026-09-06. Chunks 02-06 resume after it. Nothing in this train is technically blocked by the
+Spike — checked per car, none touches session status — so the pause is about context cost, not a
+dependency.
+
+**The lesson Chunk 01 paid for, and Chunk 02 inherits.** Its own commit message claimed the
+family sweep was complete because `release()` "already warns" on a forced cross-project release.
+Warning is not labelling: that path still wrote `port.released` naming the *displaced* project.
+The roster that finds it is not "who deletes a lease" (three `DELETE FROM port_leases` sites) but
+"who displaces a lease someone else holds" (four). Chunk 02 enumerates deleters over a table with
+many more writers — ask which noun the roster is of before trusting it.
 
 Context: Plan written 2026-09-06 against the roadmap's blessed Train 14 roster
 (`MASTER_ROADMAP.md`, "Train 14: Bounded, Not Infinite" — #869, #889, #692, #956, #625, #1108).
@@ -201,12 +218,19 @@ retrofitting its audit line second.
   service, queryable through `activity.query({ eventType: 'port.orphan_swept' })`, and produces
   **no** `port.released` row for the same deletion; an owner-initiated `releaseByProject` still
   produces `port.released` and no `port.orphan_swept`; a project holding three leases produces
-  three swept rows; a sweep that displaces nothing writes nothing. The mutation that must go red:
-  drop the reason at the sweep's call site and the first two assertions fail together.
+  three swept rows; a sweep that displaces nothing writes nothing. Added at review close, because
+  each names a behavior nothing else pinned: the per-lease `log.warn` (captured through the
+  logger's console seam at `warn`, since the suite runs at `error` and the block was deletable
+  with the suite green); a forced cross-project `release()` emitting `port.force_released` with
+  both sides named; and a throwing OpenClaw connection read leaving every lease in place. Three
+  mutations must go red — drop the reason at the sweep's call site, drop the forced label, restore
+  the silent catch.
 - **Acceptance criteria:** after a boot that sweeps at least one orphan, `activity_log` holds a
   `port.orphan_swept` row for every displaced lease naming its host, port and service, and no
   `port.released` row for those same deletions; the log carries the same at `warn`. An
-  owner-initiated release is unchanged in both. No change in which leases are deleted.
+  owner-initiated release keeps its event type. Which leases are deleted is unchanged **except**
+  when the classifier's OpenClaw input fails, where the sweep now declines entirely — the
+  departure recorded as a DECISION above.
 - **Done when:**
   1. Acceptance criteria met and tests pass
   2. `/prawduct:critic` run and blocking findings resolved
