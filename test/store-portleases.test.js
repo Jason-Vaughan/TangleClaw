@@ -128,6 +128,80 @@ describe('store.portLeases', () => {
     assert.equal(store.activity.query({ eventType: 'port.released' }).length, 0);
   });
 
+  it('names every displaced lease in the log, not only in the activity table', () => {
+    // The activity row needs a query to find. The warn is what an operator
+    // sees tailing a boot, so it is the half a human actually reads — and
+    // nothing else in this file asserts it, because the suite runs at `error`.
+    const { setLevel: setLogLevel } = require('../lib/logger');
+    store.portLeases.lease({ port: 6400, project: 'Ghost', service: 'dev-server' });
+    store.portLeases.lease({ port: 6401, project: 'Ghost', service: 'api' });
+
+    const lines = [];
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    setLogLevel('warn');
+    process.stdout.write = (chunk, ...rest) => { lines.push(String(chunk)); return originalWrite(chunk, ...rest); };
+    try {
+      store.portLeases.releaseByProject('Ghost', { reason: 'orphan-sweep' });
+    } finally {
+      process.stdout.write = originalWrite;
+      setLogLevel('error');
+    }
+
+    const swept = lines.filter((l) => l.includes('Orphan sweep released a port lease'));
+    assert.equal(swept.length, 2, 'one warn per displaced lease');
+    assert.ok(swept.some((l) => l.includes('6400') && l.includes('dev-server')));
+    assert.ok(swept.some((l) => l.includes('6401') && l.includes('api')));
+    assert.ok(swept.every((l) => l.includes('Ghost') && l.includes('localhost')));
+  });
+
+  it('an owner-initiated bulk release is not announced as a displacement', () => {
+    const { setLevel: setLogLevel } = require('../lib/logger');
+    store.portLeases.lease({ port: 6500, project: 'Owned', service: 'a' });
+
+    const lines = [];
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    setLogLevel('warn');
+    process.stdout.write = (chunk, ...rest) => { lines.push(String(chunk)); return originalWrite(chunk, ...rest); };
+    try {
+      store.portLeases.releaseByProject('Owned');
+    } finally {
+      process.stdout.write = originalWrite;
+      setLogLevel('error');
+    }
+
+    assert.equal(lines.filter((l) => l.includes('Orphan sweep released a port lease')).length, 0);
+  });
+
+  it('a forced cross-project release names both sides, not just the displaced owner', () => {
+    store.portLeases.lease({ port: 6600, project: 'Holder', service: 'dev-server' });
+
+    store.portLeases.release(6600, 'localhost', { project: 'Taker', force: true });
+
+    // `port.released` says "this project gave the port back". Nobody gave this
+    // one back, so recording it that way names the victim as the actor.
+    assert.equal(store.activity.query({ eventType: 'port.released' }).length, 0);
+    const forced = store.activity.query({ eventType: 'port.force_released' });
+    assert.equal(forced.length, 1);
+    assert.deepEqual(forced[0].detail, {
+      host: 'localhost',
+      port: 6600,
+      displacedProject: 'Holder',
+      displacedService: 'dev-server',
+      byProject: 'Taker'
+    });
+  });
+
+  it('an owner releasing its own port is still an ordinary release', () => {
+    store.portLeases.lease({ port: 6601, project: 'Holder', service: 'dev-server' });
+
+    store.portLeases.release(6601, 'localhost', { project: 'Holder' });
+
+    assert.equal(store.activity.query({ eventType: 'port.force_released' }).length, 0);
+    const released = store.activity.query({ eventType: 'port.released' });
+    assert.equal(released.length, 1);
+    assert.equal(released[0].detail.project, 'Holder');
+  });
+
   it('heartbeat extends TTL lease', () => {
     store.portLeases.lease({
       port: 8000,

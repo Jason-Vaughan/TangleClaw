@@ -15,7 +15,24 @@ All notable changes to TangleClaw are documented in this file.
   service is still listening and the next claimant collides with it. A swept lease is now recorded
   as `port.orphan_swept` with its host, port, project and service, and warned per lease, following
   the same shape a forced takeover has had since it was given `port.takeover`. Ordinary
-  project-deletion releases are unchanged.
+  project-deletion releases keep the `port.released` event type; their payload now carries `host`
+  too, ending a state where one event type had two payload shapes depending on which emitter wrote
+  it.
+- **A forced cross-project port release named the displaced project as the releaser (#692).**
+  `release(port, host, { project, force: true })` takes a lease another project still holds, and
+  recorded it as `port.released` naming that project — the same row the owner's own release
+  produces, so the trail read as though the displaced project had given the port back. It is now
+  `port.force_released`, carrying the displaced owner and the caller who took it, mirroring
+  `port.takeover` on the lease path. Found by the Critic as the fourth member of the family the
+  orphan-sweep fix above enumerated three of.
+- **The orphan sweep no longer deletes every tunnel lease when it loses one of its inputs (#692).**
+  `_cleanupOrphanLeases` resolves `oc-direct-<id>` identifiers from the OpenClaw connection list
+  to decide which leases are NOT orphans, and swallowed every error from that read as "an older
+  schema". Any other failure — a locked database, a corrupt row — silently emptied that input, so
+  every live tunnel lease classified as an orphan and the sweep took them all in one boot, leaving
+  an audit trail that named the ports and looked correct. The read failure is now reported and the
+  sweep declines to run: a classifier that lost an input cannot tell an orphan from a live lease,
+  and leaving leases in place for one boot is recoverable where deleting them is not.
 
 ## [5.21.0] - 2026-09-06
 

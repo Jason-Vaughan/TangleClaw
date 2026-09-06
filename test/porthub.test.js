@@ -294,6 +294,32 @@ describe('porthub (store-backed)', () => {
       );
     });
 
+    it('declines to sweep when the connection list cannot be read', () => {
+      // The oc-direct-<id> identifiers are one of the three inputs that decide
+      // "not an orphan". Lose them and every live tunnel lease looks orphaned,
+      // so the sweep would delete the exact leases it exists to protect — and
+      // the audit trail would name those ports as a correct-looking result.
+      porthub.registerPort(13501, 'deleted-project', 'dev-server');
+
+      const config = store.config.load();
+      config.projectsDir = tmpDir;
+      store.config.save(config);
+
+      const original = store.openclawConnections.list;
+      store.openclawConnections.list = () => { throw new Error('database is locked'); };
+      try {
+        porthub.bootstrap({ ttydPort: 3100, serverPort: 3101 });
+      } finally {
+        store.openclawConnections.list = original;
+      }
+
+      assert.ok(
+        store.portLeases.get(13501),
+        'a lease survives a boot whose classifier lost an input — refusing to classify beats guessing in the deleting direction'
+      );
+      assert.equal(store.activity.query({ eventType: 'port.orphan_swept' }).length, 0);
+    });
+
     it('writes nothing when the sweep displaces nothing', () => {
       const config = store.config.load();
       config.projectsDir = tmpDir;
