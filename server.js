@@ -4946,7 +4946,12 @@ route('POST', '/api/sessions/:project/wrap/complete', (_req, res, params, body) 
     // The session moved on between the client's observation and this request.
     // The caller's view is stale, not the server's state broken — a 500 here
     // reaches the page as a server fault, and its finalizer latches on that.
-    if (result.error.includes('no longer the current session')) {
+    //
+    // Classified by CODE. The prose match stayed for one release after the code
+    // landed and is gone now: there are two ways to be a stale view (the caller
+    // named a session that had moved on, or the right one ended mid-finalize),
+    // and a second sentence to grep is how the first one got missed.
+    if (result.code === 'SESSION_CHANGED') {
       return errorResponse(res, 409, result.error, 'SESSION_CHANGED');
     }
     return errorResponse(res, 500, result.error, 'INTERNAL_ERROR');

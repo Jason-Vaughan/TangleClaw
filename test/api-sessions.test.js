@@ -490,6 +490,27 @@ describe('api-sessions', () => {
       }
     });
 
+    it('returns 409, not 500, when the session ends mid-finalize', async () => {
+      // Asserted at the ROUTE that PRODUCES it. The library's refusal is a stale
+      // client view, not a server fault, and a 500 reaches the page as one — its
+      // finalizer latches permanently on that. Same class as the identity-check
+      // 409 above, one race later.
+      const sessionsLifecycle = require('../lib/sessions');
+      const original = sessionsLifecycle.completeWrap;
+      sessionsLifecycle.completeWrap = () => ({
+        session: null,
+        code: 'SESSION_CHANGED',
+        error: 'Session 5 for "api-sess-test" ended before this finalize could record it — nothing was changed.'
+      });
+      try {
+        const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap/complete', {});
+        assert.equal(res.status, 409);
+        assert.equal(res.body.code, 'SESSION_CHANGED');
+      } finally {
+        sessionsLifecycle.completeWrap = original;
+      }
+    });
+
     it('accepts a request naming the current session', async () => {
       const project = store.projects.getByName('api-sess-test');
       const session = store.sessions.start({

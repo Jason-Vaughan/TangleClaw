@@ -27,6 +27,11 @@ All notable changes to TangleClaw are documented in this file.
   `lifecycleCompleted` **derived from** the write rather than asserted beside it, so its log and
   its result no longer claim a completed lifecycle over a `killed` row with no summary. The wrap
   POST's HTTP response shape is unchanged — `lifecycleCompleted` is deliberately not forwarded.
+  The refusal answers **409 `SESSION_CHANGED`**, the same code the identity check already used and
+  for the same reason (a stale client view, not a server fault — a 500 reaches the session page as
+  one and latches its finalizer permanently). Both refusals are now classified by a code the
+  library returns rather than by matching the message, so improving a sentence cannot change a
+  status code.
 - **The wake monitor will not type into a pane a wrap is driving.** Its `status !== 'active'` gate
   used to refuse a wrapping session; with that status gone the gate can only mean "already ended",
   so the mid-wrap protection went with it. It now asks `lib/wrap-run-registry` — the thing that
