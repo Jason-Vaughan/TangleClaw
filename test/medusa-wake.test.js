@@ -694,14 +694,21 @@ describe('medusa-wake — gates (each one blocks alone)', () => {
     assert.equal(world.injected.length, 1, 'the held wake fires after recovery — same mail, no new edge required');
   });
 
-  it('never nudges a wrapping session', () => {
-    const wrapping = { ...claudeSession(1), status: 'wrapping' };
-    const world = installWorld({ sessions: [wrapping] });
+  it('never nudges a session that has ended', () => {
+    // `listLiveAll` returns only `active` rows, so this guard fires on the race:
+    // the session ended between the roster read and this scan. Enumerated over
+    // every terminal status, because one of them is not the family — and each
+    // gets its own id, since the monitor keeps state per session.
+    ['wrapped', 'killed', 'crashed'].forEach((status, i) => {
+      const ended = { ...claudeSession(i + 1), status };
+      const world = installWorld({ sessions: [ended] });
+      tickThroughDebounce();
+      assert.equal(world.injected.length, 0, `a ${status} session must not be nudged`);
+    });
+    // And the skip is a per-session decision, not a latch on the monitor.
+    const world = installWorld({ sessions: [{ ...claudeSession(4), status: 'active' }] });
     tickThroughDebounce();
-    assert.equal(world.injected.length, 0);
-    world.sessions = [{ ...claudeSession(1), status: 'active' }];
-    tickThroughDebounce();
-    assert.equal(world.injected.length, 1, 'same session nudges once active again');
+    assert.equal(world.injected.length, 1, 'a live session still nudges');
   });
 
   it('skips webui sessions and unprofiled engines (#560 gate)', () => {
