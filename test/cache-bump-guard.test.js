@@ -31,6 +31,20 @@ const SCRIPT = path.join(REPO_ROOT, 'scripts', 'cache-bump-guard.js');
 const REAL_SW = fs.readFileSync(path.join(REPO_ROOT, 'public', 'sw.js'), 'utf8');
 
 /**
+ * Environment for every git invocation below — the fixture's and the script's.
+ *
+ * Naming individual settings to neutralize is a list that is always one entry
+ * short: `commit.gpgsign` signs commits the throwaway repo has no key for,
+ * `core.hooksPath` and `init.templateDir` run a contributor's pre-commit hooks
+ * inside it, and a global `commit.template` bites the same way. Each would go
+ * green on CI, which has no global config, and red on the machine of whoever
+ * has it set — host plumbing scoring a guard that has nothing to do with it.
+ * Pointing git at empty config files forecloses the class instead of the
+ * members.
+ */
+const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
+
+/**
  * Rewrite the `CACHE_NAME` generation in a `sw.js` source.
  *
  * @param {string} src - A `sw.js` source.
@@ -183,6 +197,28 @@ describe('cache-bump-guard: arm 2 — the guard defends its own shape', () => {
       'the form is what the guard parses — losing it would disarm arm 1 silently');
   });
 
+  it('FAILS when sw.js stops treating navigations as network-first', () => {
+    // The one hardcoded premise that can make the guard report LESS. If the
+    // handler drops the navigate branch, the .html files become cache-first and
+    // an exemption written here would hide them forever with nothing red.
+    const headSw = REAL_SW.replace("event.request.mode === 'navigate'", 'false');
+    const verdict = guard.evaluate({ baseSw: REAL_SW, headSw, changedPaths: ['public/sw.js'] });
+    assert.equal(verdict.ok, false);
+    assert.match(verdict.message, /navigations as network-first/);
+  });
+
+  it('accepts a CACHE_NAME whose declaration was merely reformatted', () => {
+    // The strict and loose patterns must differ in the VALUE they accept and
+    // nothing else, or a whitespace edit produces a rejection message that
+    // contradicts the value it quotes.
+    const state = guard.parseSwState(REAL_SW);
+    const headSw = REAL_SW.replace(/const CACHE_NAME = '[^']*';/,
+      `const CACHE_NAME="tangleclaw-v3-${state.generation + 1}";`);
+    assert.equal(guard.parseSwState(headSw).generation, state.generation + 1);
+    const verdict = guard.evaluate({ baseSw: REAL_SW, headSw, changedPaths: ['public/sw.js'] });
+    assert.equal(verdict.ok, true, verdict.message);
+  });
+
   it('FAILS when NETWORK_FIRST_PATHS disappears', () => {
     const headSw = REAL_SW.replace('const NETWORK_FIRST_PATHS', 'const RENAMED_PATHS');
     const verdict = guard.evaluate({ baseSw: REAL_SW, headSw, changedPaths: ['public/sw.js'] });
@@ -211,13 +247,10 @@ describe('cache-bump-guard: the CLI over a real git repository', () => {
    */
   function makeRepo(edit) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cache-bump-guard-'));
-    const run = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' });
+    const run = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe', env: GIT_ENV });
     run('init', '-q', '-b', 'main');
     run('config', 'user.email', 'guard@test.invalid');
     run('config', 'user.name', 'guard');
-    // A contributor with `commit.gpgsign` on globally would otherwise fail
-    // every commit here on a key this throwaway repo has no business holding.
-    run('config', 'commit.gpgsign', 'false');
     fs.mkdirSync(path.join(dir, 'public'));
     fs.writeFileSync(path.join(dir, 'public', 'sw.js'), REAL_SW);
     fs.writeFileSync(path.join(dir, 'public', 'history-drawer.js'), 'const drawer = 1;\n');
@@ -241,7 +274,7 @@ describe('cache-bump-guard: the CLI over a real git repository', () => {
    */
   function runGuard(dir, args) {
     const res = require('node:child_process').spawnSync(
-      process.execPath, [SCRIPT, '--repo', dir, ...args], { encoding: 'utf8' }
+      process.execPath, [SCRIPT, '--repo', dir, ...args], { encoding: 'utf8', env: GIT_ENV }
     );
     return { status: res.status, out: `${res.stdout}${res.stderr}` };
   }
@@ -294,6 +327,44 @@ describe('cache-bump-guard: the CLI over a real git repository', () => {
       assert.equal(status, 1, out);
       assert.match(out, /non-empty value/);
       assert.doesNotMatch(out, /skipped/);
+    } finally {
+      repo.cleanup();
+    }
+  });
+
+  it('refuses a --base that looks like an option rather than a ref', () => {
+    // Unchecked, `--oops` reaches `git merge-base` as an option: git answers
+    // with a usage dump the reader attributes to this guard, or accepts one
+    // that silently changes what is compared.
+    const repo = makeRepo(() => {});
+    try {
+      const { status, out } = runGuard(repo.dir, ['--base', '--oops']);
+      assert.equal(status, 1, out);
+      assert.match(out, /looks like an option, not a ref/);
+      assert.doesNotMatch(out, /usage: git/, 'the guard answers, not git');
+    } finally {
+      repo.cleanup();
+    }
+  });
+
+  it('says what it read on a PASSING run, not only on a failing one', () => {
+    // A roster parsed empty exempts nothing and one parsed short exempts too
+    // little; from outside, both look exactly like a clean pass. The generation
+    // and the roster size are what make a bad parse visible in a green run.
+    const generation = guard.parseSwState(REAL_SW).generation;
+    const repo = makeRepo((dir) => {
+      fs.writeFileSync(path.join(dir, 'public', 'history-drawer.js'), 'const drawer = 2;\n');
+      fs.writeFileSync(path.join(dir, 'public', 'sw.js'), withGeneration(REAL_SW, generation + 1));
+    });
+    try {
+      const { status, out } = runGuard(repo.dir, ['--base', 'main', '--head', 'topic']);
+      assert.equal(status, 0, out);
+      assert.match(out, new RegExp(`CACHE_NAME tangleclaw-v3-${generation + 1}`));
+      assert.match(out, /\d+ network-first path\(s\)/);
+      const size = Number(out.match(/(\d+) network-first path\(s\)/)[1]);
+      assert.equal(size, guard.parseSwState(REAL_SW).networkFirst.size,
+        'the reported roster size must be the one the run actually parsed');
+      assert.ok(size > 0, 'an empty roster would exempt nothing and must never read as normal');
     } finally {
       repo.cleanup();
     }

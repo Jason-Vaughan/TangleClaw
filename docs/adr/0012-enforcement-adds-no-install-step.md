@@ -113,6 +113,48 @@ mode, which is the same defect this decision is trying to avoid — see #835, wh
 
 ---
 
+## Amendment 2026-09-07 — a relational property may be enforced from CI (#625)
+
+**What changed.** The Decision above names two homes for a norm's enforcement: inside the existing
+`node --test` invocation, or janitor-homed. `scripts/cache-bump-guard.js` is a third — a step of
+the `test` job that runs only on `pull_request`. That is the "Run checkers in CI only" alternative
+this ADR rejects by name, so it is recorded here rather than left to read as conformance.
+
+**Why the two existing homes cannot hold it.** The property is *"if a cache-first `public/*` asset
+changed in this diff, `CACHE_NAME` must have changed too."* It is relational: it is about a change,
+not about a tree. A source-scanning test reads one working tree and has no access to "changed
+relative to what," which is why the nine unit assertions written for it over four recurrences were
+all monotone floors that could never fail for the next miss. Janitor-homing it means a periodic
+sweep noticing a stale cache weeks after the operator stopped seeing their own fix.
+
+**The three rejection reasons, answered for this class:**
+
+1. *"It splits enforcement — a CI-only check does not run for the operator editing locally."*
+   Partly stands, and is mitigated rather than dismissed. The check runs locally in one command
+   with no install — `node scripts/cache-bump-guard.js --base main`, documented in
+   `CONTRIBUTING.md`. What is genuinely CI-only is the *trigger*, not the availability, and the
+   trigger is where the diff lives.
+2. *"It would require a `package.json` in a repository whose ratified norm is that there is none."*
+   Does not apply. The check is git plus two `node:` stdlib requires; no package, no lockfile, no
+   install step. The install-step half of this ADR is honoured exactly.
+3. *"CI-only checks have their own silent-skip failure mode (#835)."* The sharpest reason, and the
+   one this design had to answer structurally rather than promise around. Three answers: an empty
+   `--base` is an **error**, never a skip, so a workflow expression that resolved to nothing fails
+   loudly instead of reporting a clean pass; the only skip path requires the flag to be absent
+   entirely and prints why; and `test/ci-workflow.test.js` pins that the workflow invokes the script
+   with a base and full history, so a workflow edit that disarmed it goes red in the suite. The
+   guard also lives in the **`test` job** rather than its own, because a job name is what branch
+   protection requires and `main` requires only `test` — a separate job would have been a check that
+   reports a miss `gh pr merge --auto` merges straight past, which is #835's failure wearing a
+   different hat.
+
+**Scope.** This amendment licenses CI-homed enforcement for **relational properties that no reading
+of a single tree can decide**, subject to all three answers above holding. It does not reopen
+CI-installed tooling: a check that wants a package is still answered by the Decision, unchanged.
+A future proposal that is *not* relational belongs in `node --test` or is janitor-homed.
+
+---
+
 ## Provenance note
 
 This ADR records a decision made and corrected on the same day. The ruling was first stated on a

@@ -14,8 +14,13 @@
  * CURRENT `CACHE_NAME` — so for a cache-first asset, a `CACHE_NAME` bump is the
  * one mechanism that gets a new version to a browser with an active worker.
  * Ship a change to one without a bump and it is invisible: the operator is
- * remote on iOS and has no hard-reload. It has recurred at #246, #271, #427
- * and #623.
+ * remote on iOS and * has no hard-reload. It has recurred at #246, #271, #427 and #623 — and each
+ * was closed by moving that one file into `NETWORK_FIRST_PATHS`, the other valid
+ * remedy, which is why not one of those four is in this guard's scope today.
+ * That is the argument FOR the guard rather than against it: the carve-out fixes
+ * the file someone already noticed, and this checks the ones nobody has. The
+ * gated set is computed from `sw.js` on every run precisely so it keeps covering
+ * whatever is cache-first now, including files added after this was written.
  *
  * The property is relational — *if a cache-first asset changed in this diff,
  * `CACHE_NAME` must also have changed* — so no read of a single tree can
@@ -52,6 +57,10 @@
  * Keying on `STATIC_ASSETS` would gate the files that need it least and miss
  * every file for which the bump is the only remedy.
  *
+ * Reads committed history on both sides, so it answers about what is COMMITTED
+ * — an uncommitted edit to a cache-first asset is invisible to it. Right for the
+ * CI use (a pull request is commits) and worth knowing locally: commit, then ask.
+ *
  * Usage: node scripts/cache-bump-guard.js --base <ref> [--head <ref>] [--repo <path>]
  * Exit 0 when the diff is clean or there is no comparison base (the reason is
  * printed), 1 when an arm fires or git cannot answer.
@@ -72,10 +81,19 @@ const SW_PATH = `${PUBLIC_DIR}/sw.js`;
  * needs an ORDER to tell a bump from a regression, and `tangleclaw-v3-N` is the
  * form every generation since v3-1 has used.
  */
-const CACHE_NAME_PATTERN = /const CACHE_NAME = '(tangleclaw-v3-(\d+))';/;
+const CACHE_NAME_PATTERN = /CACHE_NAME\s*=\s*['"](tangleclaw-v3-(\d+))['"]/;
 
-/** A looser match, used only to report a `CACHE_NAME` that abandoned the form. */
-const CACHE_NAME_LOOSE = /const CACHE_NAME\s*=\s*'([^']*)'/;
+/**
+ * A looser match, used only to report a `CACHE_NAME` that abandoned the form.
+ *
+ * It must differ from `CACHE_NAME_PATTERN` in the VALUE it accepts and nothing
+ * else. When the two disagreed on whitespace and quote style as well, a
+ * reformatted-but-valid declaration failed the strict parse, passed this one,
+ * and produced "CACHE_NAME is 'tangleclaw-v3-63', which is not the
+ * tangleclaw-v3-N form" — a message contradicting the value it had just
+ * printed, sending a maintainer after a problem that did not exist.
+ */
+const CACHE_NAME_LOOSE = /CACHE_NAME\s*=\s*['"]([^'"]*)['"]/;
 
 /** How long a git invocation may take before it is treated as unanswered. */
 const GIT_TIMEOUT_MS = 60 * 1000;
@@ -86,6 +104,21 @@ const GIT_TIMEOUT_MS = 60 * 1000;
  * change reaches the operator without a bump.
  */
 const NAVIGATION_EXTENSIONS = new Set(['.html']);
+
+/**
+ * The fetch-handler condition `NAVIGATION_EXTENSIONS` stands in for.
+ *
+ * This script derives `CACHE_NAME` and `NETWORK_FIRST_PATHS` from `sw.js`, but
+ * three premises about the fetch handler are written here rather than read from
+ * there. Two of them — that `/api/*` is network-first and that everything else
+ * is cache-first — can only make the guard report MORE, which is safe. The
+ * navigate premise is the one that can make it report LESS: if the handler ever
+ * stops treating navigations as network-first, the three `.html` files become
+ * cache-first and this script would keep exempting them forever with nothing
+ * going red. So the premise is checked rather than assumed, in the same shape as
+ * the `NETWORK_FIRST_PATHS` arm.
+ */
+const NAVIGATION_CONDITION = /event\.request\.mode === 'navigate'/;
 
 /**
  * Strip comments so a prose apostrophe cannot be read as a string delimiter.
@@ -197,6 +230,17 @@ function evaluate({ baseSw, headSw, changedPaths }) {
   const head = parseSwState(headSw);
   const base = parseSwState(baseSw);
 
+  if (!NAVIGATION_CONDITION.test(headSw)) {
+    return {
+      ok: false,
+      offenders: [],
+      message: `${SW_PATH} no longer treats navigations as network-first, so this guard's HTML `
+        + 'exemption no longer follows from the worker: index.html, session.html and '
+        + 'openclaw-view.html would be served cache-first and silently exempted. Change this '
+        + 'script in the same commit.'
+    };
+  }
+
   if (head.networkFirst === null) {
     return {
       ok: false,
@@ -293,6 +337,12 @@ function parseArgs(argv) {
     if (!key) throw new Error(`unrecognized argument '${flag}'`);
     const value = argv[i + 1];
     if (!value) throw new Error(`${flag} needs a non-empty value`);
+    // A ref beginning with `-` reaches `git merge-base` as an OPTION. git either
+    // rejects it with a usage dump attributed to this guard, or accepts one that
+    // silently changes what is being compared.
+    if (value.startsWith('-')) {
+      throw new Error(`${flag} value '${value}' looks like an option, not a ref`);
+    }
     opts[key] = value;
     i += 1;
   }
@@ -327,6 +377,7 @@ function main(argv) {
   }
 
   let verdict;
+  let report;
   try {
     const mergeBase = git(['merge-base', base, head], repo);
     const changedPaths = git(['diff', '--name-only', mergeBase, head], repo)
@@ -337,10 +388,22 @@ function main(argv) {
     const baseSw = git(['show', `${mergeBase}:${SW_PATH}`], repo, { tolerate: true }) || '';
     const headSw = git(['show', `${head}:${SW_PATH}`], repo, { tolerate: true }) || '';
     verdict = evaluate({ baseSw, headSw, changedPaths });
+
+    // What the run READ, printed on success as well as failure. A guard that
+    // only speaks when it fails is indistinguishable from one whose roster came
+    // back wrong: a network-first set parsed empty exempts nothing and one
+    // parsed short exempts too little, and from outside both look exactly like a
+    // clean pass. Naming the generation and the roster size puts a bad parse in
+    // the log of the run nobody was worried about.
+    const state = parseSwState(headSw);
+    report = `cache-bump-guard: read ${SW_PATH} at ${head} — CACHE_NAME `
+      + `${state.cacheName || '(unparsed)'}, ${state.networkFirst ? state.networkFirst.size : 0} `
+      + `network-first path(s), ${changedPaths.length} file(s) changed since ${mergeBase.slice(0, 8)}`;
   } catch (err) {
     process.stderr.write(`cache-bump-guard: ${err.message}\n`);
     return 1;
   }
+  process.stdout.write(`${report}\n`);
   const stream = verdict.ok ? process.stdout : process.stderr;
   stream.write(`cache-bump-guard: ${verdict.ok ? 'ok' : 'FAILED'} — ${verdict.message}\n`);
   return verdict.ok ? 0 : 1;

@@ -110,6 +110,28 @@ describe('CI workflow (.github/workflows/test.yml)', () => {
       'merge-base cannot answer in a depth-1 clone');
   });
 
+  it('the cache guard runs in the job branch protection requires, even on a red suite (#625)', () => {
+    // Two properties, both of which decide whether the guard GATES or merely
+    // reports. First, it must be a step of `test`: a job name is what branch
+    // protection enumerates, `main` requires only `test`, and this repo's
+    // standing habit is `gh pr merge --auto` — which waits for the required set
+    // and merges past a red optional check. A separate job would have been a
+    // guard that announces the miss into a run nobody blocks on.
+    //
+    // Second, `!cancelled()`: the suite's verdict and the guard's are
+    // independent, so a failing suite must not withhold the second answer and
+    // cost a whole round trip to learn it.
+    const src = workflowSource();
+    const jobs = src.slice(src.indexOf('jobs:'));
+    assert.equal((jobs.match(/^  \w[\w-]*:$/gm) || []).length, 1,
+      'the workflow has exactly one job, so `test` is the only name protection has to require');
+    const testJob = jobs.slice(jobs.indexOf('  test:'));
+    assert.ok(testJob.includes('scripts/cache-bump-guard.js'),
+      'the guard must run inside the required `test` job, not a job of its own');
+    assert.match(src, /if: \$\{\{ !cancelled\(\) && github\.event_name == 'pull_request' \}\}/,
+      'the guard reports even when the suite failed, and only where a base exists');
+  });
+
   it('pins Node 22 (node:sqlite floor / production runtime)', () => {
     assert.match(workflowSource(), /node-version: 22/);
   });

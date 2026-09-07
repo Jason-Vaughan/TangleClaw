@@ -25,7 +25,7 @@ governed_by:
       - "Bounded exception (#1180, chime idle detection) → inapplicable; no chunk touches idle detection."
   - artifact: project-preferences
     dispositions:
-      - "No npm dependencies — for runtime or for tooling, and the ruling that an enforcement mechanism must add no installation step (ADR 0012) → ENGAGED, and it decides Chunk 05's shape before design starts. #625 recommends a CI check; ADR 0012 forecloses reaching for any tool the workflow does not already have. The check is git plus Node stdlib inside the existing `.github/workflows/test.yml` invocation, and #625's option 3 (hash-derived CACHE_NAME) stays foreclosed by the same norm's 'no build step' half."
+      - "No npm dependencies — for runtime or for tooling, and the ruling that an enforcement mechanism must add no installation step (ADR 0012) → ENGAGED, and it decides Chunk 05's shape before design starts. #625 recommends a CI check; ADR 0012 forecloses reaching for any tool the workflow does not already have. The check is git plus Node stdlib — no package, no install step — and #625's option 3 (hash-derived CACHE_NAME) stays foreclosed by the same norm's 'no build step' half. CORRECTED 2026-09-07 (Critic R-20): this line previously read 'inside the existing `.github/workflows/test.yml` invocation', paraphrasing ADR 0012's 'inside the existing `node --test` invocation'. The substitution mattered — the ADR's two sanctioned homes are the SUITE and the janitor, and it rejects CI-only enforcement by name, so Chunk 05 is a DEPARTURE that reads as conformance under the paraphrase. The install-step half is honoured; the home is not. Recorded as an amendment on `docs/adr/0012-enforcement-adds-no-install-step.md` answering the ADR's three rejection reasons for relational properties."
       - "CommonJS, 'use strict', no build step → conforms; every file this train touches is already CommonJS and stays so."
       - "Tests are `node:test` + `node:assert/strict`, one file per module, and every API endpoint has them → conforms. Chunk 06 touches two endpoints (`listUploads`, `saveUpload`) whose route tests must cover the new failure report, not only the happy path."
   - artifact: nonfunctional-requirements
@@ -469,7 +469,7 @@ retrofitting its audit line second.
   touches only a network-first-only file is unaffected.
 - **Done when:**
   1. Acceptance criteria met and both directions demonstrated
-  2. The three monotone floor assertions are resolved consistently
+  2. The monotone floor assertions are resolved consistently, across the whole family
   3. `/prawduct:critic` run and blocking findings resolved
   4. Committed, PR merged, chunk marked `[x]` in Status
 
