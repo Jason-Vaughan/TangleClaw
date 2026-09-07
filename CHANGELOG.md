@@ -135,7 +135,9 @@ All notable changes to TangleClaw are documented in this file.
   fail postures are untouched and remain deliberately asymmetric — the restart gate and the wake
   monitor fail closed, the dashboard fails open — because that split is action-versus-display.
   The card gains the honest fourth state rather than the two lies available to it: a stalled
-  pinwheel in `var(--warning)`, frozen where the running one spins, with the disclosure row saying
+  TWO-blade pinwheel in `var(--warning)`, frozen where the running one has four blades and spins
+  — the silhouette differs because motion is gone under `prefers-reduced-motion` and in a
+  screenshot, and this card carries no state on colour alone, with the disclosure row saying
   "Wrap stalled", the step it wedged on, and how old the run is — in words, because the dot's
   discriminators are colour and the absence of motion, and both vanish under
   `prefers-reduced-motion`, in a screenshot, and for a colour-blind operator. The row says
