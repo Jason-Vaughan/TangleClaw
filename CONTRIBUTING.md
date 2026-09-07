@@ -172,10 +172,45 @@ By contributing, you agree that your contributions will be licensed under the MI
 
 ## Security & Contribution Guidelines
 
-To protect the integrity of the project and the machines running it, all incoming Pull Requests are subject to a strict security audit. Please adhere to the following guidelines:
+TangleClaw launches AI sessions that run with real permissions on real machines, so every incoming
+pull request is audited as a potential supply-chain vector. None of this is a judgement about you —
+it is the same process for everyone, and it is designed so that a good contribution still gets in.
 
-1. **Zero-Dependency Policy:** TangleClaw is a strict zero-dependency project (ADR 0012). Any PR that adds a `package.json`, a lockfile, or any `node_modules` reference will be immediately rejected and closed.
-2. **Off-Limits Execution Vectors:** Unless explicitly requested by the maintainers for a specific issue, do not modify files in `data/hooks/`, `hooks/`, `scripts/`, `deploy/`, or `.github/workflows/`. PRs containing unexplained edits to these execution vectors are treated as malicious payloads and will result in a ban.
-3. **Audit Methodology:** Maintainers will review all PRs via raw text diffs. We do not checkout unknown branches locally or execute third-party code prior to a full audit.
+1. **Scope.** One issue per PR, and nothing outside it. A diff that touches files unrelated to the
+   issue is closed regardless of quality: from the outside, scope overrun and probing look identical.
 
-Thank you for respecting these boundaries and helping us keep the supply chain safe!
+2. **Zero Trust — and you still get the credit.** Maintainers audit pull requests as raw text
+   diffs. We do not check out contributor branches or run contributor code on our own machines.
+   (CI does run your tests, in an isolated runner with a read-only token and no access to secrets.)
+   If your logic is sound, we reconstruct the fix in a clean commit and credit you by name.
+
+3. **Because we reconstruct it, your explanation is worth more than your code.** The most valuable
+   pull request describes the bug precisely, says why it happens, and explains the approach. A clear
+   description gets reconstructed and shipped. A large, clever, unexplained diff does not, however
+   good it is.
+
+4. **Forbidden files.** `data/hooks/`, `hooks/`, `scripts/`, `deploy/` and `.github/workflows/` are
+   off-limits unless a maintainer has asked for a change there on a specific issue. These run on
+   maintainer machines or in CI *without anyone choosing to run them*, which is what separates them
+   from ordinary source. Modifications there are treated as payload and the pull request is closed.
+
+5. **Tests are welcome, and they are executable code.** Please add tests for your change — the suite
+   is `node --test 'test/*.test.js'`. They are audited line by line like any other file and
+   reconstructed the same way, so keep them small and obvious.
+
+6. **Reviewable text only.** No binary files, and no generated, minified or vendored code: none of
+   them can be read as a diff, which is the only review we perform. Source must also contain no
+   bidirectional control characters, no zero-width or invisible characters, and no non-ASCII
+   homoglyphs standing in for ASCII in identifiers. Those three make a diff *render* differently
+   from what it *executes*, which defeats a text audit by construction rather than by degree.
+   Ordinary Unicode in prose, comments and string literals is fine — it is the invisible and the
+   disguised that are the problem, not the non-English.
+
+7. **No new dependencies.** Adding third-party packages introduces supply-chain risk that this
+   project has deliberately designed out. TangleClaw is strictly zero-dependency (ADR 0012): any
+   pull request adding a `package.json`, a lockfile, or a `node_modules` reference is rejected
+   without further review. Solve it with the Node standard library, or open an issue arguing the
+   case before writing code.
+
+Expect a rigorous review and some back-and-forth. That is not hostility — it is the same bar the
+maintainers hold themselves to, and a contribution that clears it is genuinely valued.
