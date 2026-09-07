@@ -370,3 +370,9 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
   `wrapping` / `wrapFinished` / `wrapCompleted` poll branches. Those branches are dead now that
   the status vocabulary has retired `wrapping` (#1034), but `public/session.js` still carries them
   for a server that has not restarted; the test retires **with** them under #1302, never before.
+
+## TODO (auto-stubbed 2026-09-07)
+
+- **TBD** — touched in this session: `docs/adr/0014-dual-key-review-for-untrusted-prs.md`. <!-- describe -->
+- **TBD** — touched in this session: `test/project-update-two-phase.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/store-activity.test.js`. <!-- describe -->
