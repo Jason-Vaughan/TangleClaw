@@ -16,9 +16,10 @@
  * Ship a change to one without a bump and it is invisible: the operator is
  * remote on iOS and has no hard-reload. It has recurred at #246, #271, #427 and
  * #623, and not one of those four files is in this guard's scope today: each has
- * since been carved into `NETWORK_FIRST_PATHS`, some at the time and some later
- * (`ui.js` and `style.css` went network-first for #422, a year before #623 was
- * closed by a v3-53 -> v3-54 bump).
+ * since been carved into `NETWORK_FIRST_PATHS` — though not always by its own
+ * fix. `ui.js` and `style.css` were carved for #422 about three weeks BEFORE
+ * #623 was closed by a v3-53 -> v3-54 bump, so the carve-out that put them out
+ * of this guard's reach had nothing to do with the recurrence they are cited for.
  *
  * That history is the argument FOR the guard rather than against it. A carve-out
  * fixes the one file somebody already noticed; the gated set is recomputed from

@@ -54,7 +54,7 @@ node scripts/test-skip-audit.js test-results.xml
 
 ### The service-worker cache guard
 
-`public/sw.js` serves most `public/*` assets cache-first, so a browser with an active service worker keeps handing out the copy it already has until `CACHE_NAME` changes. Ship a change to one of those files without bumping the generation and it is invisible to operators — who are typically remote, on a phone, with no hard-reload. It has recurred four times (#246, #271, #427, #623), and none of those four files is what the guard watches today — each has since been carved into `NETWORK_FIRST_PATHS`, in some cases long after its own fix. It watches whatever is still cache-first, recomputed from `sw.js` on every run, so files added later are covered without anyone maintaining a list.
+`public/sw.js` serves most `public/*` assets cache-first, so a browser with an active service worker keeps handing out the copy it already has until `CACHE_NAME` changes. Ship a change to one of those files without bumping the generation and it is invisible to operators — who are typically remote, on a phone, with no hard-reload. It has recurred four times (#246, #271, #427, #623), and none of those four files is what the guard watches today — each has since been carved into `NETWORK_FIRST_PATHS`, and not always by its own fix — `ui.js` and `style.css` were carved for #422 some three weeks before #623 was closed by a `CACHE_NAME` bump. It watches whatever is still cache-first, recomputed from `sw.js` on every run, so files added later are covered without anyone maintaining a list.
 
 CI decides this on the pull request, because "did a cache-first asset change" is a question about a diff and no reading of a single tree can answer it. If the check fails, it names the files:
 

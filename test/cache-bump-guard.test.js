@@ -294,9 +294,11 @@ describe('cache-bump-guard: the CLI over a real git repository', () => {
    * branch carrying one edit.
    *
    * @param {(dir: string) => void} edit - Mutates the working tree for the branch commit.
+   * @param {(dir: string) => void} [seed] - Mutates the working tree BEFORE the base
+   *   commit, so a case can exercise a modified file rather than an added one.
    * @returns {{dir: string, cleanup: () => void}}
    */
-  function makeRepo(edit) {
+  function makeRepo(edit, seed) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cache-bump-guard-'));
     const run = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe', env: GIT_ENV });
     run('init', '-q', '-b', 'main');
@@ -305,6 +307,7 @@ describe('cache-bump-guard: the CLI over a real git repository', () => {
     fs.mkdirSync(path.join(dir, 'public'));
     fs.writeFileSync(path.join(dir, 'public', 'sw.js'), REAL_SW);
     fs.writeFileSync(path.join(dir, 'public', 'history-drawer.js'), 'const drawer = 1;\n');
+    if (seed) seed(dir);
     run('add', '-A');
     run('commit', '-q', '-m', 'base');
     run('checkout', '-q', '-b', 'topic');
@@ -352,6 +355,40 @@ describe('cache-bump-guard: the CLI over a real git repository', () => {
     try {
       const { status, out } = runGuard(repo.dir, ['--base', 'main', '--head', 'topic']);
       assert.equal(status, 0, out);
+    } finally {
+      repo.cleanup();
+    }
+  });
+
+  it('names a cache-first asset whose filename git would otherwise quote', () => {
+    // `-c core.quotepath=false` — what this replaced — only stops git C-quoting
+    // NON-ASCII bytes. A double quote in a name is escaped regardless, and a
+    // quoted name matches no `public/` prefix, so the asset would be exempted in
+    // SILENCE: the guard reporting a clean pass over a file it never considered.
+    //
+    // A double quote rather than an accent on purpose: APFS renormalizes
+    // non-ASCII names to NFD, so an accented fixture would score the host's
+    // filesystem rather than this guard.
+    const QUOTED = 'public/logo "wide".png';
+    const repo = makeRepo(
+      (dir) => fs.writeFileSync(path.join(dir, QUOTED), 'changed'),
+      (dir) => fs.writeFileSync(path.join(dir, QUOTED), 'original')
+    );
+    try {
+      // The hazard has to be real for the case to prove anything: confirm git
+      // actually quotes this path when asked for names the old way.
+      const oldWay = execFileSync(
+        'git', ['-C', repo.dir, '-c', 'core.quotepath=false', 'diff', '--name-only', 'main', 'topic'],
+        { encoding: 'utf8', env: GIT_ENV }
+      );
+      assert.match(oldWay, /^"/m,
+        'git must really quote this name, or this fixture is exercising nothing');
+      assert.ok(!oldWay.split('\n').includes(QUOTED),
+        'and the quoted form must not equal the real path, or the prefix test would have passed');
+
+      const { status, out } = runGuard(repo.dir, ['--base', 'main', '--head', 'topic']);
+      assert.equal(status, 1, out);
+      assert.ok(out.includes(QUOTED), `the failure must name the asset; got:\n${out}`);
     } finally {
       repo.cleanup();
     }
