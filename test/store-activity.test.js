@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { setLevel } = require('../lib/logger');
+const { setLevel, getLevel, setConsoleStream } = require('../lib/logger');
 
 setLevel('error');
 
@@ -128,6 +128,23 @@ describe('store.activity', () => {
     const newestFirst = (eventType) =>
       store.activity.query({ eventType, limit: 100 }).sort((a, b) => b.id - a.id);
 
+    // The `log.warn` is the surface an operator greps, so it is asserted rather
+    // than assumed. The suite runs at level `error`, so the level is raised and
+    // the stream pinned for the duration — the seam `lib/logger.js` exposes.
+    const captureLogs = (fn) => {
+      const lines = [];
+      const priorLevel = getLevel();
+      setLevel('warn');
+      setConsoleStream({ write: (s) => lines.push(s) });
+      try {
+        fn();
+      } finally {
+        setConsoleStream(null);
+        setLevel(priorLevel);
+      }
+      return lines.filter((l) => /Retention sweep pruned activity log/.test(l));
+    };
+
     afterEach(() => {
       store._setActivityLogRetention(store.ACTIVITY_LOG_RETENTION);
     });
@@ -174,18 +191,26 @@ describe('store.activity', () => {
       // Each insert past the cap trims exactly one row. Reporting that would
       // write a second row per insert, doubling the table's write rate and
       // making the report the churniest type in the table.
+      //
+      // Asserted as a SHAPE (no report names this type) rather than as a count
+      // delta. `activity.pruned` is itself capped, so once a count reaches the
+      // cap it cannot rise, and a count-based assertion would silently stop
+      // detecting the very defect it guards — passing for the wrong reason.
       store._setActivityLogRetention(3);
-      const before = newestFirst(store.ACTIVITY_PRUNE_EVENT).length;
 
-      for (let i = 0; i < 8; i++) {
-        store.activity.log({ eventType: 'steady.churn', detail: { i } });
-      }
+      const warnings = captureLogs(() => {
+        for (let i = 0; i < 8; i++) {
+          store.activity.log({ eventType: 'steady.churn', detail: { i } });
+        }
+      });
 
       assert.equal(newestFirst('steady.churn').length, 3, 'the type is still capped');
-      assert.equal(
-        newestFirst(store.ACTIVITY_PRUNE_EVENT).length, before,
-        'eight over-cap inserts wrote no prune reports'
+      assert.ok(
+        !newestFirst(store.ACTIVITY_PRUNE_EVENT)
+          .some((r) => r.detail && r.detail.prunedType === 'steady.churn'),
+        'eight over-cap inserts wrote no prune report'
       );
+      assert.deepEqual(warnings, [], 'and logged no warning — one per insert is the flood');
     });
 
     it('reports a convergence prune, naming what it displaced and what survived', () => {
@@ -200,7 +225,9 @@ describe('store.activity', () => {
       assert.equal(newestFirst('converge.test').length, 10, 'the backlog exists before the cap applies');
 
       store._setActivityLogRetention(3);
-      store.activity.log({ eventType: 'converge.test', detail: { i: 'trigger' } });
+      const warnings = captureLogs(() => {
+        store.activity.log({ eventType: 'converge.test', detail: { i: 'trigger' } });
+      });
 
       assert.equal(newestFirst('converge.test').length, 3, 'the backlog converged to the cap');
 
@@ -209,6 +236,13 @@ describe('store.activity', () => {
       assert.ok(report, 'the convergence prune is on the record');
       assert.equal(report.detail.count, 8, 'the report names how many rows it displaced');
       assert.ok(report.detail.retainedFrom, 'and the history horizon it left behind');
+
+      // The durable row is half the report; the other half is the line the
+      // operator greps, and it must carry the same three facts.
+      assert.equal(warnings.length, 1, 'a converged backlog warns exactly once');
+      assert.match(warnings[0], /converge\.test/, 'the warning names the type it pruned');
+      assert.match(warnings[0], /count=8/, 'and how many rows it displaced');
+      assert.match(warnings[0], /retainedFrom=/, 'and the horizon it left behind');
     });
 
     it('does not report its own prune, so the report path cannot re-enter itself', () => {
@@ -232,6 +266,28 @@ describe('store.activity', () => {
         !rows.some((r) => r.detail && r.detail.prunedType === store.ACTIVITY_PRUNE_EVENT),
         'no report names the report type — the path never re-entered'
       );
+    });
+
+    it('names the failing step when a write fails, so a broken prune is detectable', () => {
+      // The catch swallows deliberately — activity logging must not break its
+      // caller — which makes the log line the only evidence. A prune throwing on
+      // every insert means the table is growing unbounded again, the condition
+      // this policy exists to prevent, and it must not read like one lost event.
+      const lines = [];
+      const priorLevel = getLevel();
+      setLevel('error');
+      setConsoleStream({ write: (s) => lines.push(s) });
+      try {
+        // `event_type` is NOT NULL, so this fails inside the insert.
+        assert.doesNotThrow(() => store.activity.log({ eventType: null }));
+      } finally {
+        setConsoleStream(null);
+        setLevel(priorLevel);
+      }
+
+      const failure = lines.find((l) => /Activity log write failed/.test(l));
+      assert.ok(failure, 'the failure reaches the logger, not a raw stderr write');
+      assert.match(failure, /phase=insert/, 'and names which step failed');
     });
 
     it('keeps everything when retention is disabled, at zero AND below it', () => {
