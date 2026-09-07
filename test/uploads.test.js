@@ -15,7 +15,7 @@ const { describe, it, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const dirScanner = require('../lib/dir-scanner');
 const uploads = require('../lib/uploads');
-const { setLevel } = require('../lib/logger');
+const { setLevel, setConsoleStream } = require('../lib/logger');
 
 setLevel('error');
 
@@ -115,6 +115,51 @@ describe('uploads (server half)', () => {
       assert.equal(unavailable.status, 'unavailable');
       assert.equal(unavailable.unreadableCode, 'SCAN_TIMEOUT');
       assert.match(unavailable.unreadableHint, /Full Disk Access/);
+    });
+
+    it('a project directory that is THERE and refused is not reported as one that is gone', async () => {
+      // THE MUTATION THIS CATCHES: map anything-not-saved to `project-missing`.
+      // The route turns that into a 400 asserting the operator's project is not
+      // on disk, so a directory they can see, whose permissions are merely
+      // wrong, is reported to them as deleted. The child already draws this
+      // distinction with `_probe`; collapsing it here restores the misdiagnosis
+      // one layer above the fix, at the surface the operator actually reads.
+      mock.method(dirScanner, 'interactiveRequest',
+        async () => ({ status: 'project-refused', code: 'EACCES' }));
+
+      const result = await uploads.saveUpload('/p', 'a.txt', 'YQ==');
+      assert.equal(result.status, 'unavailable',
+        'a refusal is the server reporting its own limit (500), never the operator\'s 400');
+      assert.notEqual(result.status, 'project-missing');
+      assert.equal(result.unreadableCode, 'EACCES');
+      assert.match(result.unreadable, /may not read it/);
+      assert.equal(result.unreadableHint, null,
+        'the filesystem answered — the Full Disk Access remedy would be the wrong advice');
+    });
+
+    it('a status this module does not know becomes the server\'s limit, and is logged', async () => {
+      // A future handler status must not silently acquire the 400's meaning.
+      // The log line is the only thing that would contradict a confident wrong
+      // answer, so it is asserted rather than assumed.
+      mock.method(dirScanner, 'interactiveRequest', async () => ({ status: 'invented-later' }));
+      // Captured from the logger's own console seam rather than by spying on a
+      // logger object: `createLogger` returns a FRESH object per call, so a spy
+      // built here would watch something `lib/uploads.js` never calls and the
+      // assertion would pass while the log line was absent.
+      let written = '';
+      setConsoleStream({ write: (chunk) => { written += chunk; } });
+      try {
+        const result = await uploads.saveUpload('/p', 'a.txt', 'YQ==');
+        assert.equal(result.status, 'unavailable');
+        assert.equal(result.unreadableCode, 'SCAN_FAILED');
+        assert.match(result.unreadable, /invented-later/,
+          'the unknown status is named, so the log and the response agree');
+        assert.match(written, /invented-later/,
+          'an unrecognised status must be logged, not swallowed — the log line is the only thing '
+          + 'that would contradict a confident wrong answer');
+      } finally {
+        setConsoleStream(null);
+      }
     });
 
     it('sends the whole payload to the child, so no part of the write stays on the event loop', async () => {

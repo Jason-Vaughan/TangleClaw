@@ -92,6 +92,14 @@ All notable changes to TangleClaw are documented in this file.
   at least one cache-first file still exists, which is the check that would catch the guard
   becoming vacuous.
 
+  **The `project-refused` distinction is proven at the route, not only at the child.** The first
+  fix drew it in the scanner child and left the server's mapping untested, so collapsing
+  `lib/uploads.js` back to `project-missing` restored the whole misdiagnosis at the only surface
+  the operator reads — a 400 saying their project is not on disk. `POST /api/upload` now answers a
+  refused directory with a 500 that names it, asserted end to end through a real fork, and an
+  unrecognised child status is reported as the server's own limit with a log line rather than
+  silently acquiring the 400's meaning.
+
   The remainder of #889 is filed as #1350 with a re-derived census: `lib/projects.js` holds **43**
   synchronous calls, not the 47 the plan carried, **32 of them route-reachable**, plus the two
   sites that need a different answer from "move the read" — `createProject`/`deleteProject`

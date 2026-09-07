@@ -176,6 +176,35 @@ describe('API /api/upload + /api/uploads', () => {
       }
     });
 
+    it('POST /api/upload returns 500, not 400, when the project directory is there and refused (needs a directory this process cannot read)', async (t) => {
+      if (!canForceRefusal()) { t.skip('this process can read a 000 directory'); return; }
+      // The route is where this distinction is finally spent. A 400 says "Project
+      // directory not found on disk" — a specific claim about the operator's
+      // machine — so answering a permissions problem with it tells them their
+      // project was deleted. Asserted end to end through a real fork, because the
+      // collapse could be reintroduced at the child, at lib/uploads.js, or here,
+      // and only this test sees all three.
+      const refused = 'upload-refused-proj';
+      const parent = path.join(tmpDir, 'refused-parent');
+      const dir = path.join(parent, refused);
+      fs.mkdirSync(dir, { recursive: true });
+      store.projects.create({ name: refused, path: dir, engine: 'claude', tags: [], ports: {} });
+      fs.chmodSync(parent, 0o000);
+      try {
+        const res = await request(server, 'POST', '/api/upload', {
+          project: refused,
+          filename: 'test.txt',
+          data: Buffer.from('x').toString('base64')
+        });
+        assert.equal(res.status, 500,
+          'a directory that is there and refused is the server reporting its own limit');
+        assert.notEqual(res.status, 400, 'never the 400 that asserts the project was deleted');
+        assert.match(res.data.error, /may not read it/);
+      } finally {
+        fs.chmodSync(parent, 0o755);
+      }
+    });
+
     it('POST /api/upload returns 400 when the project directory is gone from disk', async () => {
       const gone = 'upload-gone-proj';
       const dir = path.join(tmpDir, gone);

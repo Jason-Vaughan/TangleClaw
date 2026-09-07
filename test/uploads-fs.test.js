@@ -203,18 +203,27 @@ describe('uploads-fs', () => {
       fs.chmodSync(sessionDir, 0o755);
     });
 
-    it('listDir separates absent from refused (needs a directory this process cannot read)', (t) => {
-      if (!canForceRefusal()) { t.skip('this process can read a 000 directory'); return; }
+    it('listDir reports an absent directory as empty with no failure', () => {
+      // Deliberately NOT gated on `canForceRefusal`: this half needs no refusal,
+      // and pairing it with the half that does would take it off every host that
+      // runs the suite as root — losing the "absence is not refusal" assertion
+      // exactly where the refusal half is already unavailable.
       const absent = listDir(path.join(tmpDir, 'never-created'), null);
       assert.deepEqual(absent, { entries: [], unreadable: null, code: null });
+    });
 
+    it('listDir reports a refused directory with its errno (needs a directory this process cannot read)', (t) => {
+      if (!canForceRefusal()) { t.skip('this process can read a 000 directory'); return; }
       const refused = path.join(tmpDir, 'refused');
       fs.mkdirSync(refused);
       fs.chmodSync(refused, 0o000);
-      const result = listDir(refused, null);
-      assert.equal(result.code, 'EACCES');
-      assert.notEqual(result.unreadable, null);
-      fs.chmodSync(refused, 0o755);
+      try {
+        const result = listDir(refused, null);
+        assert.equal(result.code, 'EACCES');
+        assert.notEqual(result.unreadable, null);
+      } finally {
+        fs.chmodSync(refused, 0o755);
+      }
     });
   });
 
