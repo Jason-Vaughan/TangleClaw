@@ -44,7 +44,9 @@ SES-5W9D Chunk 02.
 `GET /api/projects` carries `session.wrapping` sourced from `lib/wrap-run-registry.js`. Three
 values: `{step, since}` for a run in progress, `false` for ESTABLISHED-absent, and `null` for a
 read that failed — named in `incomplete` beside `active` rather than folded into the `false` that
-would claim an answer it never got. The step and elapsed reach the card's disclosure row, not only
+would claim an answer it never got. (`incomplete` is carried for the API's consumers and because
+an unestablished read must name itself; no `public/` reader consults it today, the pre-existing
+`active` entry included.) The step and elapsed reach the card's disclosure row, not only
 a `title`, because the ratified primary client is iPhone Safari and a tooltip there has no hover.
 
 **The plan's one open assumption was verified before any design.** `enrichProject` moved much of

@@ -388,8 +388,11 @@ taken at build time.**
    the wake gate fails CLOSED (an unreadable registry means "assume a wrap is running") because
    withholding a keystroke is its safe error, while a display fails OPEN, because painting
    "working" across every card from one broken read is worse than showing nothing. The payload
-   still carries `null` and names it in `incomplete`, so the honesty survives where something can
-   act on it; only the DISPLAY declines to claim.
+   still carries `null` and names it in `incomplete`, because `architecture.md` requires an
+   unestablished read to name itself and `api-contract.md` documents the field for API consumers.
+   Note precisely what that does NOT mean: nothing in `public/` reads `session.incomplete` today,
+   the pre-existing `['active']` entry included, so it reaches the wire and no reader. The DISPLAY
+   declines to claim, and the payload stays honest for whoever asks.
 3. **The dot moved into `renderStatusDot`.** Four states with a real precedence rule is worth
    running rather than reading, and a guard over rendered markup passes happily against a dead
    branch. Two existing guards followed it, both strengthened rather than relaxed: the disclosure

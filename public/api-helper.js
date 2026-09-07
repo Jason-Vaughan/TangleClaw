@@ -1380,9 +1380,16 @@
    *
    * `wrapping === null` is the read that failed, and it answers `false` here:
    * the display fails OPEN, because painting "working" onto a card on the
-   * strength of a broken read is worse than showing nothing. The payload still
-   * carries the null and names it in `incomplete`, so the honesty lives where
-   * something can act on it.
+   * strength of a broken read is worse than showing nothing.
+   *
+   * The payload still carries that null and names it in `incomplete`. Be exact
+   * about what that buys today: NOTHING in `public/` reads `session.incomplete`
+   * — not this file, not `ui.js` — so it reaches the wire and no reader, exactly
+   * like the `['active']` entry it follows. It is carried because
+   * `architecture.md` requires an unestablished read to name itself and
+   * `api-contract.md` documents the field for any consumer of the API, not
+   * because the dashboard consults it. Saying otherwise would be the
+   * field-with-no-consumer claim this chunk exists to stop making.
    *
    * @param {object|null} project - An enriched project from `GET /api/projects`.
    * @returns {boolean}

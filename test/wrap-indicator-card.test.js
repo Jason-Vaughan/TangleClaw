@@ -322,13 +322,13 @@ describe('the card reports a running wrap from the run registry (#1034)', () => 
     // NONE of them notices if `enrichProject` stops handing the wrap state to
     // the projection. That is this chunk's own failure mode one frame upstream:
     // the payload builder stays perfect and the field silently goes undefined.
-    // Source-checked rather than executed. NOT because `enrichProject` is hard
-    // to run — `test/projects.test.js` and `test/engine-error-surface.test.js`
-    // both execute it against a live store with injected tmux names. It is
-    // checked as text because the property is "the argument is passed at all",
-    // which an execution test can only observe THROUGH a fixture whose registry
-    // is stubbed — and a stub that answers `false` renders identically whether
-    // the argument arrived or not. The text is what distinguishes them.
+    // Source-checked rather than executed, and the honest reason is cheapness:
+    // `enrichProject` runs fine in a test — `test/projects.test.js` and
+    // `test/engine-error-surface.test.js` both execute it against a live store
+    // with injected tmux names, and a stub answering a RUNNING run would
+    // distinguish "argument passed" from "argument dropped" perfectly well.
+    // These assertions buy the same mutation coverage for the price of reading
+    // a string, which is the whole of the argument.
     const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'projects.js'), 'utf8');
     const body = (decl) => {
       const start = src.indexOf(decl);
