@@ -5,6 +5,73 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Uploads leave the event loop, and an unreadable uploads directory stops reporting itself as
+  an empty one (#889, uploads half).** `lib/uploads.js` made 11 synchronous filesystem calls on
+  paths the operator chose, all three of its consumers route-reachable (`POST /api/upload`,
+  `GET /api/uploads`, `GET /api/continuity/:project/sessions/:sid`). On a TCC-protected or
+  stalled-mount project directory those calls do not fail, they never return, and a synchronous
+  call cannot be interrupted by any deadline — one upload modal opened against such a project
+  wedges the whole server while `/api/health` keeps answering 200. `fs.promises` is not the fix
+  and is the documented trap: abandoning a promise does not cancel the syscall, so the libuv
+  threadpool thread is gone permanently and four of them end the process's ability to touch the
+  filesystem at all. The work therefore moved into the forked scanner child that already exists
+  to be killed (`lib/dir-scanner.js` → new `listUploads` and `saveUpload` ops), with a new
+  `lib/uploads-fs.js` holding the filesystem half. `lib/uploads.js` no longer imports `node:fs`,
+  which is the acceptance criterion in its strongest form. The **interactive** scanner, not the
+  polled one: all three consumers are things an operator pressed a button for, and answering a
+  click from the poll's five-minute remembered refusal would tell someone who has just granted
+  Full Disk Access that their uploads are still gone.
+
+  **The listing no longer lies about what it could not read.** `listUploads` opened with
+  `if (!fs.existsSync(uploadsDir)) return []`, which answers "nothing has been uploaded" and
+  "this directory refused to be read" with the same value — and both frontends render the empty
+  case as no uploads at all. Moving the hang without carrying that distinction would have kept
+  the lie, so `listUploads` now answers `{ uploads, unreadable, unreadableHint, unreadableCode }`:
+  a partial list stays a list, the first refusal is named with the filesystem's own errno, and the
+  supervisor's failures classify in the vocabulary already in use (`SCAN_TIMEOUT` / `SCAN_CACHED`
+  / `SCAN_ABORTED` / `SCAN_FAILED`). Only a `tcTimedOut` earns the Full Disk Access remedy — an
+  `EACCES` means the filesystem answered, and sending the operator to change a privacy setting
+  that was never the problem is the misdiagnosis the scanner exists to remove. Both surfaces
+  render the difference: the upload modal's Recent uploads panel and the session drill-down in the
+  history drawer.
+
+  **Both writers stage and rename**, because moving a write into a process the supervisor SIGKILLs
+  mid-syscall changes its contract: `writeFileSync` truncates the destination first, so a kill in
+  that window leaves a half-written upload the listing offers as a saved file, or a truncated
+  `_scan.json` that reads as "nothing was ever flagged" — losing every previous secret flag
+  silently. This inherits `projectFacts`'s rule rather than re-deciding it, and adds what a
+  directory the operator *reads* additionally needs: a fixed dotted staging prefix, excluded from
+  the listing by name, swept on each successful write for strays older than a minute.
+
+  **`POST /api/upload`'s `existsSync(project.path)` guard moved with the write rather than being
+  dropped.** It is a read of an operator-chosen path like any other — the one most likely to hang,
+  since a project on a stalled mount is exactly what it checks for — and dropping it would let
+  `mkdir(…, { recursive: true })` materialise a whole project tree at a path the operator deleted
+  and then report the upload as saved into it. The child answers `'saved'` or `'project-missing'`
+  as a value, because the route branches on it: one is the operator's to fix (400), the other is
+  the server reporting its own limit (500), and a thrown error flattens the two.
+
+  The save deadline is computed from the body cap rather than chosen beside it, so raising the cap
+  cannot produce uploads that are accepted and then killed for taking too long and reported as a
+  permissions problem.
+
+  **Found while editing the renderer, and fixed rather than left:** the upload history's
+  possible-secrets badge (#343) could not render for any upload. It branched on `u.secretMatches`
+  and read `m.rule`, neither of which `GET /api/uploads` has ever carried — the payload has
+  `secretsFlagged` and `secretTypes` — so the flag-only secret scan was invisible on the one
+  surface that shows it. Fixing the field exposed a second half: the badge named `secret-badge`,
+  which no stylesheet defines, while the real `.badge-secret` rule lived in `public/style.css`,
+  which `session.html` does not load. The rule moved to `public/shared-controls.css`, which both
+  pages load, so it now applies where it is used. `test/upload-modal-frontend.test.js` pins both
+  halves by deriving them — the field names from a real `listUploads` result, the stylesheets from
+  `session.html`'s own `<link>` tags — rather than from literals typed on the consumer's side.
+
+  The remainder of #889 is filed as #1350 with a re-derived census: `lib/projects.js` holds **43**
+  synchronous calls, not the 47 the plan carried, **32 of them route-reachable**, plus the two
+  sites that need a different answer from "move the read" — `createProject`/`deleteProject`
+  create and destroy directories, where a child killed mid-`rmSync` leaves a half-deleted project,
+  and `detectExistingProjects` is proven to have no caller outside tests. The three-copy
+  duplication of the Full Disk Access remedy sentence is filed as #1351.
 - **`activity_log` is bounded per event type, so the rare forensic row is never the one deleted
   (#869).** The table was append-only with no TTL, no cap and no vacuum — 6,046 rows spanning
   2026-03-14 to 2026-09-07 on this install, growing for the life of the install. The measured

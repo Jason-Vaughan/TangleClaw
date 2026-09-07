@@ -585,3 +585,65 @@ describe('dir-scanner child — probeDir (the health panel\'s Full Disk Access r
     await assert.rejects(HANDLERS.probeDir({ dir: path.join(tmpRoot, 'probe-missing') }), { code: 'ENOENT' });
   });
 });
+
+describe('dir-scanner child — uploads ops (#889)', () => {
+  test('listUploads answers with the project\'s uploads', async () => {
+    const dir = scratch('uploads-list');
+    const saved = await HANDLERS.saveUpload({
+      projectPath: dir,
+      filename: 'note.txt',
+      base64Data: Buffer.from('hello').toString('base64'),
+      sid: 3
+    });
+    assert.equal(saved.status, 'saved');
+
+    const listed = await HANDLERS.listUploads({ projectPath: dir });
+    assert.equal(listed.uploads.length, 1);
+    assert.equal(listed.uploads[0].name, saved.upload.name);
+    assert.equal(String(listed.uploads[0].session), '3');
+    assert.equal(listed.unreadable, null);
+  });
+
+  test('listUploads reports a refused directory on the SUCCESS value, keeping what it read', async () => {
+    const dir = scratch('uploads-refused');
+    await HANDLERS.saveUpload({
+      projectPath: dir,
+      filename: 'legacy.txt',
+      base64Data: Buffer.from('a').toString('base64'),
+      sid: null
+    });
+    await HANDLERS.saveUpload({
+      projectPath: dir,
+      filename: 'session.txt',
+      base64Data: Buffer.from('b').toString('base64'),
+      sid: 12
+    });
+    const refused = path.join(dir, '.tangleclaw', 'continuity', 'sessions', '12', 'uploads');
+    fs.chmodSync(refused, 0o000);
+
+    try {
+      const listed = await HANDLERS.listUploads({ projectPath: dir });
+      // Failing the whole request would throw away the legacy upload in order to
+      // report the session directory — the contract this op is shaped around.
+      assert.equal(listed.uploads.length, 1, 'what was readable is still answered');
+      assert.equal(listed.code, 'EACCES');
+      assert.notEqual(listed.unreadable, null);
+    } finally {
+      fs.chmodSync(refused, 0o755);
+    }
+  });
+
+  test('saveUpload reports a missing project directory instead of creating one', async () => {
+    const missing = path.join(tmpRoot, 'uploads-never-existed');
+    const result = await HANDLERS.saveUpload({
+      projectPath: missing,
+      filename: 'note.txt',
+      base64Data: Buffer.from('x').toString('base64'),
+      sid: null
+    });
+    assert.equal(result.status, 'project-missing');
+    // `recursive: true` would happily build the whole tree at a path the
+    // operator deleted, then report the upload as saved into it.
+    assert.equal(fs.existsSync(missing), false, 'the project tree must not be materialised');
+  });
+});

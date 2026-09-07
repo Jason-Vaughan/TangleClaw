@@ -3081,11 +3081,25 @@ async function openUploadModal() {
   // Load recent uploads
   const data = await api(`/api/uploads?project=${encodeURIComponent(projectName)}`);
   const historyEl = document.getElementById('uploadHistory');
+  // A directory that would not answer is not a directory with nothing in it.
+  // Rendering the empty state for a failed read tells the operator their files
+  // are gone, and that is the one thing this notice exists to stop (#889).
+  const unreadableHtml = (data && data.unreadable)
+    ? `<div class="form-hint" style="color:var(--danger)">&#9888; Could not read this project's uploads: ${esc(data.unreadable)}${
+      data.unreadableHint ? ` — ${esc(data.unreadableHint)}` : ''}. Any files listed below are the ones that could be read.</div>`
+    : '';
   if (data && data.uploads && data.uploads.length > 0) {
-    historyEl.innerHTML = '<div class="upload-history-title">Recent uploads</div>' +
+    historyEl.innerHTML = unreadableHtml + '<div class="upload-history-title">Recent uploads</div>' +
       data.uploads.slice(0, 5).map(u => {
-        const secretBadge = u.secretMatches && u.secretMatches.length > 0 
-          ? ` <span class="secret-badge" title="Secrets detected: ${u.secretMatches.map(m=>m.rule).join(', ')}">⚠️ SECRETS</span>` 
+        // `secretsFlagged` and `secretTypes` are the ONLY flag fields
+        // `GET /api/uploads` carries — `lib/uploads-fs.js#listDir` builds each
+        // entry — and `.badge-secret` lives in shared-controls.css, which this
+        // page loads. Both halves are pinned by
+        // test/upload-modal-frontend.test.js, which derives them from the
+        // producer rather than from a literal, because a badge keyed to a field
+        // the payload does not have renders for nobody and reports nothing.
+        const secretBadge = u.secretsFlagged
+          ? ` <span class="badge-secret" title="Secrets detected: ${esc((u.secretTypes || []).join(', ') || 'pattern types only')}">⚠️ SECRETS</span>`
           : '';
         return `<div class="upload-history-item" role="button" tabindex="0" data-path="${esc(u.path)}" title="Click to copy path: ${esc(u.path)}"><code>${esc(u.name)}</code>${secretBadge}<span class="upload-history-size">${formatSize(u.size)}</span></div>`;
       }).join('');
@@ -3106,7 +3120,7 @@ async function openUploadModal() {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); copyFromTarget(e.target); }
     };
   } else {
-    historyEl.innerHTML = '';
+    historyEl.innerHTML = unreadableHtml;
     historyEl.onclick = null;
     historyEl.onkeydown = null;
   }

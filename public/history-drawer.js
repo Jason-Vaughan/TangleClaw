@@ -220,8 +220,15 @@ async function openHistorySession(sid) {
   }
 
   const uploads = (data.uploads || []);
-  const uploadsHtml = uploads.length
-    ? `<div class="history-section"><strong>Uploads (${uploads.length})</strong>${uploads.map((u) =>
+  // A refused directory renders as a notice, never as an absent section: a
+  // session whose uploads could not be read must not look like one that has
+  // none (#889).
+  const uploadsUnreadable = data.uploadsUnreadable
+    ? `<div class="form-hint" style="color:var(--danger)">&#9888; Could not read this project's uploads: ${esc(data.uploadsUnreadable)}${
+      data.uploadsUnreadableHint ? ` — ${esc(data.uploadsUnreadableHint)}` : ''}.</div>`
+    : '';
+  const uploadsHtml = (uploads.length || uploadsUnreadable)
+    ? `<div class="history-section"><strong>Uploads (${uploads.length})</strong>${uploadsUnreadable}${uploads.map((u) =>
         `<div class="form-hint">${esc(u.name || u.path || '')}</div>`).join('')}</div>`
     : '';
 
