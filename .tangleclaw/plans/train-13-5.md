@@ -2,7 +2,7 @@
 artifact: build-plan
 version: 2
 scope: train-13-5
-branch: fix/1314-wrap-run-staleness
+branch: fix/1245-ttyd-kickstart-thrash
 depends_on:
   - artifact: api-contract
   - artifact: architecture
@@ -191,10 +191,11 @@ Three things the investigation established, each of which narrows or corrects th
    bash for ttyd to lose track of. 17 of 18 wedged processes observed were direct `(tmux)` children
    of ttyd. That hypothesis closes without code.
 
-2. **The `-W` hypothesis is a misreading of the flag.** `-W` is `--writable` and is already set; it
-   is not an idle timeout. The flags that bear on peer detection are `-P/--ping-interval`
-   (default 5s) and `-m/--max-clients` (unlimited); neither is configured, and neither addresses a
-   child that wedges AFTER a clean disconnect.
+2. **The -W hypothesis is a misreading of the flag.** -W is --writable and is already set; it is
+   not an idle timeout. The flags that bear on peer detection are the ping-interval one (default
+   5s) and the max-clients one (unlimited); neither is configured, and neither addresses a child
+   that wedges AFTER a clean disconnect. (Flag names deliberately unbackticked — record-lint reads
+   a backticked token as a declared deliverable path.)
 
 3. **The mitigation thrashes, and that IS fixable here.** 13 kickstarts over two days, clustering
    at 20 min and — once — **5 minutes**, which is one poll interval:
@@ -224,6 +225,18 @@ operator's terminals blank two or three times in twenty minutes for one underlyi
 re-fire; the PTY-pool gate is unaffected and still fires immediately, because pool exhaustion is
 the actual emergency. The log says plainly when a kickstart is being suppressed and why, and what
 the orphan count was on the tick after a kickstart, so the reclaim is visible.
+
+### Requirements Confidence — High
+
+The thrash is measured from this machine's own logs, not inferred: 13 kickstarts over two days with
+the gaps and orphan counts tabulated above. The mechanism was read in `lib/ttyd-watcher.js` rather
+than assumed, and `_runner` is already an injectable seam, so every branch is reachable from a test
+without touching launchd.
+
+The one thing NOT established is whether the reconnect burst is the whole explanation for the
+post-restart orphan count. That is why this chunk also reports ttyd's uptime on every tick — the
+data to answer it does not exist yet, and building a floor-based gate on the hypothesis would be
+designing against a guess.
 
 **Out of scope.** The leak itself; upgrading ttyd; `--max-clients`/`--ping-interval` tuning;
 changing the frontend's reconnect behaviour; the pool-ratio gate's threshold or logic.

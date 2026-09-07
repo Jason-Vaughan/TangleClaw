@@ -124,8 +124,16 @@ All notable changes to TangleClaw are documented in this file.
   churn is exactly what leaks: on 2026-09-07 a *fresh* ttyd reached 22 wedged children within five
   minutes of being restarted, and the gate fired again on the very next poll — 13 kickstarts in two
   days, clustering at five and twenty minutes, each one blanking the operator's terminals. The
-  orphan gate is now held down for 15 minutes after a kickstart, so the post-restart reconnect burst
-  is counted as the cost of the restart rather than as a fresh leak. **The PTY-pool gate is never
+  orphan gate now stays quiet until ttyd has been up for 15 minutes, so the post-restart reconnect
+  burst is counted as the cost of the restart rather than as a fresh leak. It is keyed to **ttyd's
+  own uptime**, never to this module's bookkeeping, which is what makes it cover the operator's
+  manual `launchctl kickstart` — the remedy the health panel itself hands them — a launchd respawn,
+  and a server restart alike; counting only our own kickstarts would have left the documented
+  remedy producing the identical burst with nothing recording it. It also makes a FAILED kickstart
+  harmless by construction: if `launchctl` refused, ttyd's age is unchanged, so the gate retries on
+  schedule instead of holding the only gate that fires on this box down for 15 minutes after doing
+  nothing at all. The health panel now says when the count it is showing may be a recent restart's
+  burst, so the operator is not invited into another one. **The PTY-pool gate is never
   held down** — pool exhaustion is the #94 incident, where every attach fails and the machine is
   unusable, and observed pool ratios during this thrash were 0.084–0.115 against a 0.85 gate, so
   suppressing it too would trade a papercut for the incident the watcher exists to prevent. A
