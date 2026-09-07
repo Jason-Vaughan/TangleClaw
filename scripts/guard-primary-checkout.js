@@ -270,9 +270,15 @@ function resolveShellPath(p, base) {
  *     DIRECTORIES lets the caller ask `landsInPrimary`, which subtracts the
  *     worktree roots, exactly as the file-write arm does.
  *
- * Bound worth knowing: a segment split inside a quoted string containing `|` or
- * `;` yields odd segments. It cannot invent a git subcommand, so it can only
- * fail toward permitting — the direction this guard is allowed to fail in.
+ * Subshell parentheses are segment separators too, not just `&&` and `;`.
+ * Without that, `(cd <primary> && git checkout main)` tokenizes its first
+ * segment as `(cd` — which is not the token `cd`, so the directory never moved
+ * and the command resolved against the tool's cwd instead.
+ *
+ * Bound worth knowing: a segment split inside a quoted string containing `|`,
+ * `;` or a parenthesis yields odd segments. It cannot invent a git subcommand in
+ * subcommand position, so it can only fail toward permitting — the direction
+ * this guard is allowed to fail in.
  *
  * @param {string} command - The Bash tool's command string.
  * @param {string} cwd - The tool's working directory.
@@ -281,7 +287,7 @@ function resolveShellPath(p, base) {
 function movingGitTargets(command, cwd) {
   const targets = [];
   let dir = cwd;
-  for (const segment of command.split(/&&|\|\||[;|]/)) {
+  for (const segment of command.split(/&&|\|\||[;|()]/)) {
     const toks = tokenize(segment);
     let i = 0;
     while (i < toks.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[i]) || toks[i] === 'sudo')) i += 1;

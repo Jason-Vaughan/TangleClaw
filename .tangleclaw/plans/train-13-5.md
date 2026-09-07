@@ -25,7 +25,7 @@ Coordinator, because it blocks Train 14, which runs as a multi-agent swarm.
 |---|---|---|---|
 | 01 | #1314 — the registry owns the staleness predicate | Medium | Complete |
 | 02 | #1245 — ttyd child leak, code-side branches only | Medium | Complete — see Scoping Ruling |
-| 03 | #798 — the primary checkout stops being a writable surface for work that belongs elsewhere | Medium | In review |
+| 03 | #798 — the primary checkout stops being a writable surface for work that belongs elsewhere | Medium | Complete |
 
 ### Scoping Ruling — #1245 (Operator, 2026-09-07)
 
@@ -488,31 +488,31 @@ disarms it indefinitely. Neither is a lock; both are a deliberate act that leave
 
 ### Done when
 
-- [ ] P1 refuses a tracked-file write and a HEAD-moving git command that land in the primary when
+- [x] P1 refuses a tracked-file write and a HEAD-moving git command that land in the primary when
       the session root is a linked worktree, and does not fire when the session root is the primary.
-- [ ] P2 refuses a `public/**` or `server.js` write in the primary from any session root, and does
+- [x] P2 refuses a `public/**` or `server.js` write in the primary from any session root, and does
       not fire on `lib/**` or on the same paths inside a worktree.
-- [ ] `.prawduct/` writes in the primary are never refused, including through a worktree's symlink.
-- [ ] `git commit` is never refused; `git checkout` from a primary-rooted session is never refused.
-- [ ] Every internal failure path exits 0 with no decision — asserted, not asserted-about.
-- [ ] Both override routes work and are named in the refusal text.
-- [ ] The installer wires, re-wires idempotently, reports with `--check` and unwires with
+- [x] `.prawduct/` writes in the primary are never refused, including through a worktree's symlink.
+- [x] `git commit` is never refused; `git checkout` from a primary-rooted session is never refused.
+- [x] Every internal failure path exits 0 with no decision — asserted, not asserted-about.
+- [x] Both override routes work and are named in the refusal text.
+- [x] The installer wires, re-wires idempotently, reports with `--check` and unwires with
       `--remove`; the tracked `.claude/settings.json` still carries no `hooks` block. Exercised at
       the CLI, not only through `apply()`.
-- [ ] `--check` reports the command actually PRESENT and calls a stale pin stale; `--self-test`
+- [x] `--check` reports the command actually PRESENT and calls a stale pin stale; `--self-test`
       drives the wired command and fails when the guard refuses nothing.
-- [ ] The wired entry survives TangleClaw's own `_mergeBaselineHooks` reconciliation as a foreign
+- [x] The wired entry survives TangleClaw's own `_mergeBaselineHooks` reconciliation as a foreign
       entry.
-- [ ] Arming on the live install is queued as an owned post-merge step
+- [x] Arming on the live install is queued as an owned post-merge step
       (`VRF-798-arm-the-primary-guard` in `.prawduct/operator-verification.md`), not left to memory.
-- [ ] The 23 already-merged, clean worktrees are removed and the removal is reversible.
-- [ ] Every new branch mutation-checked against a green control.
-- [ ] Full suite green; evidence recorded.
-- [ ] `/prawduct:critic`; findings dispositioned in one pass.
-- [ ] CHANGELOG entry under `### Added`.
+- [x] The 23 already-merged, clean worktrees are removed and the removal is reversible.
+- [x] Every new branch mutation-checked against a green control.
+- [x] Full suite green; evidence recorded.
+- [x] `/prawduct:critic`; findings dispositioned in one pass.
+- [x] CHANGELOG entry under `### Added`.
 
 ## Status
 
 - [x] Chunk 01 — #1314, the registry owns the staleness predicate
 - [x] Chunk 02 — #1245, the mitigation stops seeding its own next trigger
-- [ ] Chunk 03 — #798, the primary checkout stops being a writable surface for work that belongs elsewhere
+- [x] Chunk 03 — #798, the primary checkout stops being a writable surface for work that belongs elsewhere

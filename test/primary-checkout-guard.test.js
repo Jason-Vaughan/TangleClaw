@@ -328,6 +328,20 @@ describe('#798 primary-checkout guard — Bash, working-tree-moving commands', (
     assert.equal(r.decision, 'deny');
   });
 
+  it('sees through a subshell', () => {
+    // `(cd /p && git checkout main)` tokenized its first segment as `(cd`, which
+    // is not the token `cd`, so the directory never moved and the command
+    // resolved against the tool cwd. Fail-open — the permitted direction — but a
+    // real escape, and parentheses are segment separators like `&&` and `;`.
+    const r = bash(`(cd ${fx.primary} && git checkout main)`, fx.worktree, fx.worktree);
+    assert.equal(r.decision, 'deny');
+  });
+
+  it('does not let a parenthesis inside a commit message refuse the commit', () => {
+    const r = bash('git commit -m "fix (checkout) path"', fx.worktree, fx.primary);
+    assert.equal(r.decision, null, `expected no decision, got ${r.stdout}`);
+  });
+
   it('honours the LAST cd, not the tool cwd, when the command moves first', () => {
     const r = bash(`cd ${fx.worktree} && git checkout main`, fx.worktree, fx.primary);
     assert.equal(r.decision, null, `expected no decision, got ${r.stdout}`);
