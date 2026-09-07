@@ -122,7 +122,7 @@ decisions surfaced at the chunk that acts on them, not unknowns.
 
 - [x] Chunk 01: The boot sweep says what it displaced (#692)
 - [ ] Chunk 02: The activity log is bounded without losing the rare row (#869)
-- [ ] Chunk 03: A durable failure is logged when it changes, not when it repeats (#956)
+- [x] Chunk 03: A durable failure is logged when it changes, not when it repeats (#956)
 - [ ] Chunk 04: One broadcast per reader per quiet period, and a drain for what nobody reads (#1108)
 - [ ] Chunk 05: The cache-bump guard fires on the next miss, not the last one (#625)
 - [ ] Chunk 06: The uploads module reads a project directory the way the scanner does (#889, uploads half)
