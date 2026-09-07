@@ -215,6 +215,9 @@ describe('cache-bump-guard: the CLI over a real git repository', () => {
     run('init', '-q', '-b', 'main');
     run('config', 'user.email', 'guard@test.invalid');
     run('config', 'user.name', 'guard');
+    // A contributor with `commit.gpgsign` on globally would otherwise fail
+    // every commit here on a key this throwaway repo has no business holding.
+    run('config', 'commit.gpgsign', 'false');
     fs.mkdirSync(path.join(dir, 'public'));
     fs.writeFileSync(path.join(dir, 'public', 'sw.js'), REAL_SW);
     fs.writeFileSync(path.join(dir, 'public', 'history-drawer.js'), 'const drawer = 1;\n');
