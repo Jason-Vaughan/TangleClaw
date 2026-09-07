@@ -229,6 +229,35 @@ All notable changes to TangleClaw are documented in this file.
   session's prime, and a wrong summary is worse than an absent one.
 
 ### Fixed
+- **`tags` and `quickCommands` are validated on the project PATCH path, so a non-array can no
+  longer be stored and read back as the wrong type (#1287).** `store.projects` writes
+  `JSON.stringify(data.tags)` into a TEXT column and reads it back with `_jsonParse(row.tags, [])`,
+  so `PATCH {"tags": "a,b"}` round-tripped as the **string** `"a,b"` where every reader expects
+  `string[]`; `quickCommands` went straight into `project.json` with no verdict on its shape.
+  Both now have `PROJECT_UPDATE_VALIDATORS` entries, and the
+  declared-unvalidated allowlist in `test/project-update-two-phase.test.js` is **empty** — that
+  set is what let the gap exist while staying visible, so emptying it is the actual fix; a future
+  field cannot hide in it.
+  The floors are the types `data-model.md` already declares (`string[]`, `QuickCommand[]`, the
+  latter as the `{label, command}` shape `lib/store.js` ships as its own default). Per-element
+  rules — tag length and character set, a count cap, whether an empty string is a tag, whether a
+  command is bounded — are named as **open** in #1287 and deliberately not invented here; extra
+  keys on a quick command stay permitted for the same reason, since refusing them would decide
+  that question by omission. Clearing tags still works: the settings modal sends `[]`, which is
+  valid.
+  **The `quickCommands` half of this is a prospective floor, and #1287's own body is wrong about
+  why it is needed.** Nothing reads the per-project `quickCommands`: `public/session.js` renders
+  `sessionState.config.quickCommands`, which is the **global** config from `GET /api/config` — a
+  different field. So a malformed per-project value reaches no browser today. The entry holds the
+  declared type before a reader exists to be broken by it, and closes the allowlist. The globally
+  configured list that *is* rendered has no type check at all on `PATCH /api/config` (#1339), and
+  `createProject` still writes `tags` unvalidated so the same input is refused on PATCH and
+  accepted on POST (#1338) — both found while reconstructing this, both filed rather than folded
+  in.
+  **Contributed by [@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in
+  [#1334](https://github.com/Jason-Vaughan/TangleClaw/pull/1334). Their diff was reviewed and
+  passed, then re-implemented here from the issue rather than merged, per this repo's clean-room
+  policy for external contributions (`CONTRIBUTING.md`) — the analysis is theirs.
 - **The offline update-check warning is logged when it changes, not when it repeats (#956).** An
   install that cannot reach `origin` was restating one unchanging fact at measurement rate. Since
   #954 shortened the interval, that reached **~288 warnings a day** with a session page open,
@@ -362,6 +391,21 @@ All notable changes to TangleClaw are documented in this file.
   and leaving leases in place for one boot is recoverable where deleting them is not.
 
 ### Internal
+- **ADR 0014 records the dual-key review for untrusted external PRs**, and was corrected by its own
+  first application before another repository adopts it. Two sessions audit an external diff — a
+  macro filter for supply-chain and payload categories, an independent micro filter for logic — and
+  only then is the change **re-implemented from the issue** on a clean branch, never transcribed
+  from the contributor's diff. That distinction is the whole mechanism rather than a nicety: on the
+  first run it caught a clause the contributor and the reconstruction both wrote which a mutation
+  proved dead, and it surfaced a second unguarded code path the diff never touched (#1338).
+  Corrected after that run: the reconstruction matches the reviewed scope and anything else found is
+  filed rather than bundled; the reconstruction earns the repo's normal gates, because a dual-key
+  pass answers "safe to read", never "this ships"; credit uses `Reported-by:` rather than
+  `Co-Authored-By`, which `project-preferences.md` forbids; the filter is stated as four *categories*
+  so an adopting repo enumerates its own paths instead of inheriting TangleClaw's; every outcome owes
+  the contributor a reply, drafted by the filter that reached the verdict and sent by the operator;
+  and a rejection on a *security* trip deliberately says less, because naming the tripwire is free
+  reconnaissance if the submission was a probe.
 - **Two fixtures that constructed a session status the product cannot hold.** Both passed, which is
   what made them worth finding: a test that builds an impossible state exercises a guard with an
   input no caller can produce, then reads as coverage of a contract nothing enforces. The

@@ -1368,6 +1368,92 @@ describe('projects', () => {
       assert.deepEqual(result.project.tags, ['updated']);
     });
 
+    it('refuses a non-array tags, which used to round-trip as a string (#1287)', async () => {
+      // The defect, not a paraphrase of it: `tags` is stored with
+      // `JSON.stringify` and read back with `_jsonParse(row.tags, [])`, so a
+      // string persisted cleanly and came back a string where every reader
+      // expects `string[]`. Asserting the STORED value is what distinguishes a
+      // fix from a rejection that still writes.
+      const result = await projects.updateProject('new-project', { tags: 'not-an-array' });
+      assert.equal(result.project, null);
+      assert.deepEqual(result.errors, ['tags must be an array of strings']);
+
+      const stored = store.projects.getByName('new-project');
+      assert.ok(Array.isArray(stored.tags), 'the refused write never reached storage');
+    });
+
+    it('refuses an array holding a non-string tag', async () => {
+      // `Array.isArray` alone passes `[1, 2]`, which is the same wrong type one
+      // level down — the mutation that catches a shape check stopping at the
+      // container.
+      const result = await projects.updateProject('new-project', { tags: ['ok', 42] });
+      assert.equal(result.project, null);
+      assert.deepEqual(result.errors, ['tags must be an array of strings']);
+    });
+
+    it('still accepts the shapes the settings modal actually sends', async () => {
+      // `public/ui.js` builds tags as `.split(',').map(trim).filter(Boolean)`, so
+      // clearing the field sends `[]`. A validator that refused the empty array
+      // would break clearing tags — passing this is what makes the fix safe to
+      // ship rather than merely strict.
+      const cleared = await projects.updateProject('new-project', { tags: [] });
+      assert.ok(cleared.project, 'clearing tags is not a validation failure');
+      assert.deepEqual(cleared.project.tags, []);
+
+      const set = await projects.updateProject('new-project', { tags: ['alpha', 'beta'] });
+      assert.deepEqual(set.project.tags, ['alpha', 'beta']);
+    });
+
+    it('refuses quickCommands that are not command objects (#1287)', async () => {
+      const result = await projects.updateProject('new-project', { quickCommands: 'nope' });
+      assert.equal(result.project, null);
+      assert.deepEqual(result.errors,
+        ['quickCommands must be an array of objects with string label and command']);
+    });
+
+    it('refuses a quick command missing label or command', async () => {
+      for (const bad of [[{ label: 'x' }], [{ command: 'ls' }], [null], [['label', 'cmd']]]) {
+        const result = await projects.updateProject('new-project', { quickCommands: bad });
+        assert.equal(result.project, null, `${JSON.stringify(bad)} must be refused`);
+        assert.deepEqual(result.errors,
+          ['quickCommands must be an array of objects with string label and command']);
+      }
+    });
+
+    it('accepts the quickCommands shape the product ships as its default', async () => {
+      // READ from `store.DEFAULT_CONFIG` rather than retyped, so this is measured
+      // against what the product actually ships: a retyped literal agrees with
+      // the default until someone changes the default, which is exactly when a
+      // shape guard should have spoken up.
+      //
+      // That default is the GLOBAL config's — the per-project field's own default
+      // is `[]` (`lib/project-config.js`), which pins no shape. Naming which one
+      // this comes from matters here, because the two `quickCommands` being
+      // different fields is what #1287 got wrong.
+      const shipped = store.DEFAULT_CONFIG.quickCommands;
+      assert.ok(Array.isArray(shipped) && shipped.length > 0,
+        'the fixture is only meaningful if the shipped default has entries');
+
+      const result = await projects.updateProject('new-project', {
+        // Copied per element, not spread by reference: `_applyProjectUpdates`
+        // assigns this array into the project's config, so sharing the objects
+        // would put the process-global default's elements inside a project.
+        // Nothing mutates them today, which is what makes it worth closing now.
+        //
+        // Plus one carrying an extra key: #1287 leaves per-element rules open, so
+        // unknown keys are permitted deliberately — refusing them would decide
+        // that question by omission.
+        quickCommands: [
+          ...shipped.map((cmd) => ({ ...cmd })),
+          { label: 'ls', command: 'ls -la', icon: 'folder' }
+        ]
+      });
+      // `errors` first: `ok(result.project)` would throw before anything could
+      // report WHY, so a failure here would name the shape without the reason.
+      assert.deepEqual(result.errors, [], 'a real quickCommands array raises no error');
+      assert.ok(result.project, 'and the update is applied');
+    });
+
     it('rejects core rule disabling', async () => {
       const result = await projects.updateProject('new-project', {
         rules: { core: { changelogPerChange: false } }
