@@ -20,8 +20,27 @@ const { execFileSync } = require('node:child_process');
 
 const { initRepo } = require('./_temp-repo');
 const {
-  realOrSelf, locateCheckouts, linkedWorktreeRoots, landsInPrimary
+  realOrSelf, locateCheckouts, linkedWorktreeRoots, landsInPrimary, OVERRIDE_FILE, OVERRIDE_ENV
 } = require('../lib/checkout-layout');
+const guardSource = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'guard-primary-checkout.js'), 'utf8');
+const installerSource = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'install-primary-guard.js'), 'utf8');
+
+describe('the override constants have exactly one spelling', () => {
+  it('neither script re-declares them', () => {
+    // Spelled twice, a rename in the guard would leave `--self-test` telling the
+    // operator to delete a path that no longer exists — advice that reads
+    // authoritative and does nothing. Neither script can import the other (the
+    // guard attaches stdin handlers at load), so this module is the one thing
+    // both already require.
+    for (const [name, src] of [['guard', guardSource], ['installer', installerSource]]) {
+      assert.doesNotMatch(src, /const OVERRIDE_FILE\s*=/, `${name} re-declares OVERRIDE_FILE`);
+      assert.doesNotMatch(src, /const OVERRIDE_ENV\s*=/, `${name} re-declares OVERRIDE_ENV`);
+      assert.match(src, /OVERRIDE_FILE/, `${name} should still use the shared constant`);
+    }
+    assert.equal(OVERRIDE_FILE, path.join('.prawduct', '.allow-primary-write'));
+    assert.equal(OVERRIDE_ENV, 'TANGLECLAW_ALLOW_PRIMARY_WRITE');
+  });
+});
 
 describe('locateCheckouts', () => {
   let base;

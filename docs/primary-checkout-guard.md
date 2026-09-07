@@ -37,9 +37,13 @@ itself launched in the primary.
 
 ## What it never refuses
 
-- **Anything under `.prawduct/`** — untracked governance state is written in the primary *by
-  design*: the Stop hook's reflection lands there, and every worktree session symlinks its state
-  back to it. P1's test is "tracked by git", not "under the primary", for exactly this reason.
+- **Untracked state under `.prawduct/`** — it is written in the primary *by design*: the Stop
+  hook's reflection lands there, and every worktree session symlinks its state back to it. P1's
+  test is "tracked by git", not "under the primary", for exactly this reason — so the lead phrase
+  here is deliberately narrower than the directory. `.prawduct/change-log.md` and
+  `.prawduct/backlog.md` *are* tracked (`.gitignore` negates them) and P1 does refuse a write to
+  the primary's copy from a worktree session. That is the correct answer, not an exception: a
+  worktree whose `change-log.md` resolves into the primary is the known #710-chunk-3 defect.
 - **`git commit`** — a commit does not move file content, and the session wrap commits on `main` in
   the primary by design.
 - **`git checkout main` from a primary-rooted session** — the documented fast rollback from a bad

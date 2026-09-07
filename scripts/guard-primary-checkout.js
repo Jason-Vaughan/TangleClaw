@@ -53,18 +53,12 @@ const { execFileSync } = require('node:child_process');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const {
-  realOrSelf, locateCheckouts, linkedWorktreeRoots, landsInPrimary
+  realOrSelf, locateCheckouts, linkedWorktreeRoots, landsInPrimary, OVERRIDE_FILE, OVERRIDE_ENV
 } = require(path.join(REPO_ROOT, 'lib', 'checkout-layout.js'));
 const { checkContainment } = require(path.join(REPO_ROOT, 'lib', 'project-paths.js'));
 
 /** Verbs that move a working tree under the running server. `commit` is not one. */
 const HEAD_MOVING_VERBS = ['checkout', 'switch', 'reset', 'rebase', 'merge'];
-
-/** Waives the guard for one command; can be set inline, so it is not sticky. */
-const OVERRIDE_ENV = 'TANGLECLAW_ALLOW_PRIMARY_WRITE';
-
-/** Waives the guard for a tool call, which cannot carry an env var. Gitignored. */
-const OVERRIDE_FILE = path.join('.prawduct', '.allow-primary-write');
 
 /**
  * Emit the documented PreToolUse refusal.

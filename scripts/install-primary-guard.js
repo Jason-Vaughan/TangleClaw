@@ -38,13 +38,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-const { locateCheckouts } = require('../lib/checkout-layout');
+const { locateCheckouts, OVERRIDE_FILE } = require('../lib/checkout-layout');
 
 /** Tool matcher for the file-writing arm. */
 const WRITE_MATCHER = 'Edit|Write|NotebookEdit|MultiEdit';
-
-/** The guard's sentinel override, named here only so `--self-test` can explain a miss. */
-const OVERRIDE_FILE = path.join('.prawduct', '.allow-primary-write');
 
 /**
  * Repo-relative location of the guard script.
