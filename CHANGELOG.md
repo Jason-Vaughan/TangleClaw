@@ -250,7 +250,7 @@ All notable changes to TangleClaw are documented in this file.
   `sessionState.config.quickCommands`, which is the **global** config from `GET /api/config` — a
   different field. So a malformed per-project value reaches no browser today. The entry holds the
   declared type before a reader exists to be broken by it, and closes the allowlist. The globally
-  configured list that *is* rendered has no type check at all on `PUT /api/config` (#1339), and
+  configured list that *is* rendered has no type check at all on `PATCH /api/config` (#1339), and
   `createProject` still writes `tags` unvalidated so the same input is refused on PATCH and
   accepted on POST (#1338) — both found while reconstructing this, both filed rather than folded
   in.
