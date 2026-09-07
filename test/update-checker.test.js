@@ -280,19 +280,55 @@ describe('#716 measuring on demand', () => {
   const TAGS = '0000\trefs/tags/v9.9.9\n1111\trefs/tags/v1.0.0\n';
 
   let realLsRemote;
+  let realLsRemoteSync;
   let realGitRemote;
 
   beforeEach(() => {
     realLsRemote = uc._internal.lsRemote;
+    realLsRemoteSync = uc._internal.lsRemoteSync;
     realGitRemote = uc._internal.gitRemote;
     uc._reset();
   });
 
   afterEach(() => {
     uc._internal.lsRemote = realLsRemote;
+    uc._internal.lsRemoteSync = realLsRemoteSync;
     uc._internal.gitRemote = realGitRemote;
     uc._reset();
   });
+
+  /**
+   * Install a synchronous lsRemote stub for the `update-applier` pre-flight path.
+   * @param {string|null} output - stdout to return, or null to throw
+   * @returns {{count: () => number}}
+   */
+  function stubLsRemoteSync(output) {
+    let calls = 0;
+    uc._internal.lsRemoteSync = () => {
+      calls++;
+      if (output === null) throw new Error('offline');
+      return output;
+    };
+    return { count: () => calls };
+  }
+
+  /**
+   * Capture log output at the level an operator actually runs at.
+   * `lib/logger.js` defaults to `info`, and the suite runs at `error`, so a
+   * transition asserted without raising the level would pass while invisible.
+   * @returns {{warnings: () => string[], all: () => string[], stop: () => void}}
+   */
+  function captureAtInfo() {
+    const logger = require('../lib/logger');
+    const lines = [];
+    logger.setConsoleStream({ write: (s) => lines.push(s) });
+    logger.setLevel('info');
+    return {
+      all: () => lines,
+      warnings: () => lines.filter((l) => /\[WARN\].*\[update-checker\]/.test(l)),
+      stop: () => { logger.setConsoleStream(null); logger.setLevel('error'); }
+    };
+  }
 
   /**
    * Install an lsRemote stub and count how often the network was touched.
@@ -494,31 +530,151 @@ describe('#716 measuring on demand', () => {
     // `lib/logger.js` defaults to `info`. At debug, an install that had quietly
     // stopped being able to detect releases left no trace an operator would
     // ever find — the failure mode is silence, so the log IS the feature.
-    const logger = require('../lib/logger');
-    const lines = [];
-    logger.setConsoleStream({ write: (s) => lines.push(s) });
-    logger.setLevel('info');
+    // #956 narrowed WHEN this fires (the transition, not every occurrence); it
+    // did not narrow the level, which is the half that must not regress.
+    const lines = captureAtInfo();
     try {
       stubLsRemote(null);
       await new Promise((resolve) => uc.checkForUpdateAsync(resolve));
     } finally {
-      logger.setConsoleStream(null);
-      logger.setLevel('error');
+      lines.stop();
     }
-    assert.ok(lines.some((l) => /Update check failed/.test(l)),
+    assert.ok(lines.all().some((l) => /Update checks are failing/.test(l)),
       'a failed check must surface at info, not only at debug');
   });
 
-  it('upgraded BOTH failure paths, not just the one under test', () => {
+  describe('a durable failure is logged when it changes, not when it repeats (#956)', () => {
+    it('warns once for an episode, however many times the check runs', async () => {
+      // The flood: the client poll cadence equals AUTO_REFRESH_MIN_AGE_MS, so a
+      // visible session page measured on nearly every tick — ~288 warnings a day
+      // restating one fact that had not changed.
+      const lines = captureAtInfo();
+      try {
+        stubLsRemote(null);
+        for (let i = 0; i < 10; i++) {
+          await new Promise((resolve) => uc.checkForUpdateAsync(resolve));
+        }
+      } finally {
+        lines.stop();
+      }
+      assert.equal(lines.warnings().length, 1,
+        'ten failed measurements are one episode, and one warning');
+    });
+
+    it('warns on the recovery, so the end of the episode is visible too', async () => {
+      const lines = captureAtInfo();
+      try {
+        stubLsRemote(null);
+        await new Promise((resolve) => uc.checkForUpdateAsync(resolve));
+        stubLsRemote(TAGS);
+        await new Promise((resolve) => uc.checkForUpdateAsync(resolve));
+      } finally {
+        lines.stop();
+      }
+      const warnings = lines.warnings();
+      assert.equal(warnings.length, 2, 'the episode has two ends and both are logged');
+      assert.match(warnings[0], /failing/, 'the first says detection stopped');
+      assert.match(warnings[1], /recovered/, 'the second says it came back');
+    });
+
+    it('warns again on a SECOND episode — the latch resets', async () => {
+      // The mutation this exists to catch is a latch that is set and never
+      // cleared: it silences the flood and also silences every future outage,
+      // which looks identical to a healthy install in the log.
+      const lines = captureAtInfo();
+      try {
+        stubLsRemote(null);
+        await new Promise((resolve) => uc.checkForUpdateAsync(resolve));
+        stubLsRemote(TAGS);
+        await new Promise((resolve) => uc.checkForUpdateAsync(resolve));
+        stubLsRemote(null);
+        await new Promise((resolve) => uc.checkForUpdateAsync(resolve));
+      } finally {
+        lines.stop();
+      }
+      const warnings = lines.warnings();
+      assert.equal(warnings.length, 3, 'fail, recover, fail — three transitions');
+      assert.match(warnings[2], /failing/, 'the second outage is reported, not swallowed');
+    });
+
+    it('keeps the per-occurrence detail at debug rather than discarding it', async () => {
+      // Narrowing the norm must not delete the evidence: every attempt is still
+      // recorded with its own error, one level down, for anyone who turns it up.
+      const logger = require('../lib/logger');
+      const lines = [];
+      logger.setConsoleStream({ write: (s) => lines.push(s) });
+      logger.setLevel('debug');
+      try {
+        stubLsRemote(null);
+        for (let i = 0; i < 3; i++) {
+          await new Promise((resolve) => uc.checkForUpdateAsync(resolve));
+        }
+      } finally {
+        logger.setConsoleStream(null);
+        logger.setLevel('error');
+      }
+      const debugLines = lines.filter((l) => /\[DEBUG\].*Update check failed/.test(l));
+      assert.equal(debugLines.length, 3, 'each attempt is still recorded at debug');
+      assert.match(debugLines[0], /error=offline/, 'with its own error, not a summary');
+    });
+
+    it('the sync pre-flight path shares the same episode state', async () => {
+      // One family, one latch. If the sync path kept its own state, an outage
+      // seen first by the async timer would warn a second time the moment
+      // `update-applier` ran its pre-flight — the flood returning by another door.
+      const lines = captureAtInfo();
+      try {
+        stubLsRemote(null);
+        await new Promise((resolve) => uc.checkForUpdateAsync(resolve));
+        stubLsRemoteSync(null);
+        uc.checkForUpdate();
+        uc.checkForUpdate();
+      } finally {
+        lines.stop();
+      }
+      assert.equal(lines.warnings().length, 1,
+        'the same outage is one episode across both check forms');
+    });
+
+    it('a recovery seen by the sync path clears an episode the async path opened', async () => {
+      const lines = captureAtInfo();
+      try {
+        stubLsRemote(null);
+        await new Promise((resolve) => uc.checkForUpdateAsync(resolve));
+        stubLsRemoteSync(TAGS);
+        uc.checkForUpdate();
+      } finally {
+        lines.stop();
+      }
+      const warnings = lines.warnings();
+      assert.equal(warnings.length, 2);
+      assert.match(warnings[1], /recovered/, 'either form can close the episode');
+    });
+  });
+
+  it('reports from BOTH failure paths, not just the one under test', async () => {
     // The sync path is what `update-applier` runs pre-flight — i.e. one that
     // fails on an unattended server, where nobody is watching a dashboard.
-    // Upgrading only the async path would leave the quieter path dark.
-    const src = require('node:fs').readFileSync(
-      path.join(__dirname, '..', 'lib', 'update-checker.js'), 'utf8');
-    assert.doesNotMatch(src, /log\.debug\('Update check failed/,
-      'both catch blocks must report at the same visible level');
-    assert.equal((src.match(/log\.warn\('Update check failed/g) || []).length, 2,
-      'sync and async both report the failure');
+    // Fixing only the async path would leave the quieter path dark.
+    //
+    // This asserted the PROPERTY by grepping this module for `log.warn('Update
+    // check failed` twice. That tell stopped tracking the property when #956
+    // moved the level decision into `_reportCheckOutcome` — so it now drives
+    // each path for real, which is what the string count was standing in for.
+    for (const drive of [
+      () => { stubLsRemoteSync(null); uc.checkForUpdate(); },
+      async () => { stubLsRemote(null); await new Promise((r) => uc.checkForUpdateAsync(r)); }
+    ]) {
+      uc._reset();
+      const lines = captureAtInfo();
+      try {
+        await drive();
+      } finally {
+        lines.stop();
+      }
+      assert.ok(lines.warnings().length === 1,
+        'each path reports its first failure at a level the operator sees');
+    }
   });
 
   it('one throwing waiter cannot strand the others', async () => {

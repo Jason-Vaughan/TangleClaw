@@ -206,6 +206,25 @@ All notable changes to TangleClaw are documented in this file.
   session's prime, and a wrong summary is worse than an absent one.
 
 ### Fixed
+- **The offline update-check warning is logged when it changes, not when it repeats (#956).** An
+  install that cannot reach `origin` was restating one unchanging fact at measurement rate. Since
+  #954 shortened the interval, that reached **~288 warnings a day** with a session page open,
+  because the client's 5-minute poll equals `AUTO_REFRESH_MIN_AGE_MS` and so measures on nearly
+  every tick. The rate itself is correct and deliberate — being told about a release within
+  minutes requires measuring within minutes — so the logging was what scaled badly, not the
+  checking. Now the **transition** is warned: once when checks start failing, once when they
+  recover, and nothing in between. Every individual attempt is still recorded at `debug` with its
+  own error, so narrowing the norm deletes no evidence.
+  This narrows #916 rather than reversing it. That issue's point was that an install which had
+  silently stopped detecting releases must leave a trace an operator would find, and `lib/logger.js`
+  defaults to `info` — so the transition stays at `warn`, and what changes is only how often an
+  unchanged fact is repeated. The failing state also remains queryable the whole time rather than
+  merely inferable from an old log line: `checkOk: false` is carried in the payload
+  `GET /api/update/status` already serves. A transition rather than a dedupe window, because a
+  window is a second number to tune and still restates something that has not changed.
+  Both check forms share one episode, which is the part worth stating: the synchronous form is
+  `update-applier`'s pre-flight path and runs unattended, so a per-path latch would have let the
+  same outage warn twice — the flood returning through the quieter door.
 - **The ttyd leak watchdog stops firing on damage its own restart caused (#1245).** ttyd 1.7.7 does
   not reliably reap the `tmux attach` child it spawns per websocket; those children wedge in the
   macOS kernel `E` state, where nothing but ttyd dying reclaims them, so a watcher kickstarts the
