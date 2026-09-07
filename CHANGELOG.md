@@ -229,6 +229,27 @@ All notable changes to TangleClaw are documented in this file.
   session's prime, and a wrong summary is worse than an absent one.
 
 ### Fixed
+- **`tags` and `quickCommands` are validated on the project PATCH path, so a non-array can no
+  longer be stored and read back as the wrong type (#1287).** `store.projects` writes
+  `JSON.stringify(data.tags)` into a TEXT column and reads it back with `_jsonParse(row.tags, [])`,
+  so `PATCH {"tags": "a,b"}` round-tripped as the **string** `"a,b"` where every reader expects
+  `string[]`; `quickCommands` went straight into `project.json`, and `public/session.js` iterates
+  it to build buttons, so a non-array persisted cleanly and then threw in the browser rather than
+  at the boundary. Both now have `PROJECT_UPDATE_VALIDATORS` entries, and the
+  declared-unvalidated allowlist in `test/project-update-two-phase.test.js` is **empty** — that
+  set is what let the gap exist while staying visible, so emptying it is the actual fix; a future
+  field cannot hide in it.
+  The floors are the types `data-model.md` already declares (`string[]`, `QuickCommand[]`, the
+  latter as the `{label, command}` shape `lib/store.js` ships as its own default). Per-element
+  rules — tag length and character set, a count cap, whether an empty string is a tag, whether a
+  command is bounded — are named as **open** in #1287 and deliberately not invented here; extra
+  keys on a quick command stay permitted for the same reason, since refusing them would decide
+  that question by omission. Clearing tags still works: the settings modal sends `[]`, which is
+  valid.
+  **Contributed by [@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in
+  [#1334](https://github.com/Jason-Vaughan/TangleClaw/pull/1334). Their diff was reviewed and
+  passed, then re-implemented here from the issue rather than merged, per this repo's clean-room
+  policy for external contributions (`CONTRIBUTING.md`) — the analysis is theirs.
 - **The offline update-check warning is logged when it changes, not when it repeats (#956).** An
   install that cannot reach `origin` was restating one unchanging fact at measurement rate. Since
   #954 shortened the interval, that reached **~288 warnings a day** with a session page open,

@@ -1368,6 +1368,72 @@ describe('projects', () => {
       assert.deepEqual(result.project.tags, ['updated']);
     });
 
+    it('refuses a non-array tags, which used to round-trip as a string (#1287)', async () => {
+      // The defect, not a paraphrase of it: `tags` is stored with
+      // `JSON.stringify` and read back with `_jsonParse(row.tags, [])`, so a
+      // string persisted cleanly and came back a string where every reader
+      // expects `string[]`. Asserting the STORED value is what distinguishes a
+      // fix from a rejection that still writes.
+      const result = await projects.updateProject('new-project', { tags: 'not-an-array' });
+      assert.equal(result.project, null);
+      assert.deepEqual(result.errors, ['tags must be an array of strings']);
+
+      const stored = store.projects.getByName('new-project');
+      assert.ok(Array.isArray(stored.tags), 'the refused write never reached storage');
+    });
+
+    it('refuses an array holding a non-string tag', async () => {
+      // `Array.isArray` alone passes `[1, 2]`, which is the same wrong type one
+      // level down — the mutation that catches a shape check stopping at the
+      // container.
+      const result = await projects.updateProject('new-project', { tags: ['ok', 42] });
+      assert.equal(result.project, null);
+      assert.deepEqual(result.errors, ['tags must be an array of strings']);
+    });
+
+    it('still accepts the shapes the settings modal actually sends', async () => {
+      // `public/ui.js` builds tags as `.split(',').map(trim).filter(Boolean)`, so
+      // clearing the field sends `[]`. A validator that refused the empty array
+      // would break clearing tags — passing this is what makes the fix safe to
+      // ship rather than merely strict.
+      const cleared = await projects.updateProject('new-project', { tags: [] });
+      assert.ok(cleared.project, 'clearing tags is not a validation failure');
+      assert.deepEqual(cleared.project.tags, []);
+
+      const set = await projects.updateProject('new-project', { tags: ['alpha', 'beta'] });
+      assert.deepEqual(set.project.tags, ['alpha', 'beta']);
+    });
+
+    it('refuses quickCommands that are not command objects (#1287)', async () => {
+      const result = await projects.updateProject('new-project', { quickCommands: 'nope' });
+      assert.equal(result.project, null);
+      assert.deepEqual(result.errors,
+        ['quickCommands must be an array of objects with string label and command']);
+    });
+
+    it('refuses a quick command missing label or command', async () => {
+      for (const bad of [[{ label: 'x' }], [{ command: 'ls' }], [null], [['label', 'cmd']]]) {
+        const result = await projects.updateProject('new-project', { quickCommands: bad });
+        assert.equal(result.project, null, `${JSON.stringify(bad)} must be refused`);
+        assert.deepEqual(result.errors,
+          ['quickCommands must be an array of objects with string label and command']);
+      }
+    });
+
+    it('accepts the quickCommands shape the product ships as its default', async () => {
+      // Built from `lib/store.js`'s own default rather than retyped, so the
+      // validator is measured against what this product actually stores. Extra
+      // keys are permitted deliberately — #1287 leaves per-element rules open,
+      // and refusing unknown keys would decide that question by omission.
+      const result = await projects.updateProject('new-project', {
+        quickCommands: [
+          { label: 'git status', command: 'git status' },
+          { label: 'ls', command: 'ls -la', icon: 'folder' }
+        ]
+      });
+      assert.ok(result.project, 'a real quickCommands array is accepted');
+    });
+
     it('rejects core rule disabling', async () => {
       const result = await projects.updateProject('new-project', {
         rules: { core: { changelogPerChange: false } }
