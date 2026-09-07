@@ -23,9 +23,9 @@ Coordinator, because it blocks Train 14, which runs as a multi-agent swarm.
 
 | Chunk | Issue | Size | State |
 |---|---|---|---|
-| 01 | #1314 — the registry owns the staleness predicate | Medium | In progress |
-| 02 | #1245 — ttyd child leak, code-side branches only | Medium | Not started — see Scoping Ruling |
-| 03 | #798 — the primary checkout stops being a writable surface for work that belongs elsewhere | Medium | Not started |
+| 01 | #1314 — the registry owns the staleness predicate | Medium | Complete |
+| 02 | #1245 — ttyd child leak, code-side branches only | Medium | Complete — see Scoping Ruling |
+| 03 | #798 — the primary checkout stops being a writable surface for work that belongs elsewhere | Medium | In review |
 
 ### Scoping Ruling — #1245 (Operator, 2026-09-07)
 
@@ -421,6 +421,61 @@ session launched in a worktree whose branch predates this feature does not invok
 not exist — and it ends in `|| true`, so the guard can never itself start the hook-failure loop it
 exists downstream of.
 
+**D7a — the script lives in `scripts/`, not `.claude/hooks/`** (found at commit time, not designed).
+`.gitignore` excludes `.claude/*` fail-closed with one deliberate negation for `settings.json`, so
+the guard's first home made it *invisible to git*: it existed, ran, and passed every test, and
+would have been committed nowhere — a clone or a fresh worktree would carry an installer pointing
+at a script that does not exist. `fs.existsSync` cannot see that; only git can, which is why the
+regression test asks git rather than the filesystem.
+
+**D9 — the Bash arm asks the layout module, not the command text (Critic R-1/R-8, blocking).** The
+first cut closed the `cd <primary> && git …` case with `command.includes(primary)` — a substring
+scan — and that was wrong in BOTH directions, which is why two reviewers found it independently.
+Every worktree root is lexically prefixed by the primary, so `git -C <abs worktree> checkout` was
+REFUSED with a message telling the actor to run it where it already was: D5a's exact failure,
+reintroduced on the text path only, on the absolute-path invocation that is normal for a dispatched
+actor. And `cd ~/…/TangleClaw && git checkout main` contains no resolved primary path, so the case
+the scan existed for walked straight past it. `movingGitTargets` now walks the command's segments,
+tracks what `cd` moves to (tilde expanded), honours `-C`, and returns DIRECTORIES — which the
+caller runs through the same `landsInPrimary` subtraction the file arm uses. One predicate, one
+place.
+
+**D9a — a moving verb counts only in git's SUBCOMMAND position (R-2).** Matching the verb anywhere
+in the string made `git commit -m "fix the checkout path"` a working-tree move, refused with a
+message asserting something false — against a Done-when line and a documented promise. The old
+"never refuses a commit" test used the message `"wrap"`, which contains no verb word, so it stayed
+green straight through it.
+
+**D10 — the readback exercises the path, not the listing (R-4/R-14).** `--check` printed the
+command it WOULD write; it now prints the one it read and calls a stale pin stale. `--self-test`
+pipes a synthetic payload through the wired command and asserts a refusal. #755 was the mirror
+image — a posture readback keyed on the guard SCRIPT, blind to the REGISTRATION being gone — and a
+wired command ending in `|| true` fails silently, so a listing-only readback reports healthy on a
+dead guard. Arming the live install is queued as `VRF-798-arm-the-primary-guard` rather than left
+to memory, because after the merge an un-run installer, a merge regression, a deleted script and a
+throwing node all look identical.
+
+**D11 — unknown is not empty (R-3).** `linkedWorktreeRoots` returned `{roots: []}` for any
+`readdirSync` failure. `ENOENT` means "no worktrees"; every other errno means the subtraction list
+could not be established — and an empty list makes every path inside every nested worktree read as
+the primary, so the guard refuses all of them. A fail-CLOSED hole inside a fail-open guard, and a
+silent one. It now reports the errno and the guard stands down.
+
+**D12 — the path that disarms the guard says so (R-15).** An active override produced output
+byte-identical to "no rule matched", so a forgotten sentinel was indistinguishable from
+not-applicable and the first conclusion available was "the guard is broken". D6 calls both routes
+"a deliberate act that leaves a trace"; the trace now exists, naming which route and which file.
+
+**D8 — three defects found by scrubbing the committed diff, none of which any test would have
+caught.** (1) `deny()` called `process.exit(0)` straight after writing to stdout; writes to a pipe
+are asynchronous and `process.exit` discards what has not flushed, so a refusal could arrive
+TRUNCATED — which parses as nothing and silently permits the write it just refused. Both emitters
+now return and let the process end on its own. (2) The git-token test required whitespace before
+`git`, so `/usr/bin/git checkout` walked straight past the guard. (3) Nothing scoped the guard to
+its own repository: the wiring is machine-local, so a session in another project would have had
+this repo's `public/**` policy applied to a tree nobody serves. It now compares the session's
+primary against its own and stands down when they differ.
+
 **D6 — Two override routes, because they answer different situations.** `TANGLECLAW_ALLOW_PRIMARY_WRITE=1`
 can be set **inline on a single command**, which is the precise, non-sticky form and the right one
 for the Bash arm. A tool call cannot carry an env var, so the file arm also honours a sentinel,
@@ -442,9 +497,14 @@ disarms it indefinitely. Neither is a lock; both are a deliberate act that leave
 - [ ] Every internal failure path exits 0 with no decision — asserted, not asserted-about.
 - [ ] Both override routes work and are named in the refusal text.
 - [ ] The installer wires, re-wires idempotently, reports with `--check` and unwires with
-      `--remove`; the tracked `.claude/settings.json` still carries no `hooks` block.
+      `--remove`; the tracked `.claude/settings.json` still carries no `hooks` block. Exercised at
+      the CLI, not only through `apply()`.
+- [ ] `--check` reports the command actually PRESENT and calls a stale pin stale; `--self-test`
+      drives the wired command and fails when the guard refuses nothing.
 - [ ] The wired entry survives TangleClaw's own `_mergeBaselineHooks` reconciliation as a foreign
       entry.
+- [ ] Arming on the live install is queued as an owned post-merge step
+      (`VRF-798-arm-the-primary-guard` in `.prawduct/operator-verification.md`), not left to memory.
 - [ ] The 23 already-merged, clean worktrees are removed and the removal is reversible.
 - [ ] Every new branch mutation-checked against a green control.
 - [ ] Full suite green; evidence recorded.

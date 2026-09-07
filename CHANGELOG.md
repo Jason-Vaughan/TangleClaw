@@ -63,10 +63,17 @@ All notable changes to TangleClaw are documented in this file.
   `test/repo-governance-reference.test.js`), and "this checkout is the running install" is a fact
   about one machine rather than about the repository — a committed P2 would refuse `public/**`
   edits in a contributor's clone, where nothing is served at all.
-  `scripts/install-primary-guard.js` (idempotent, `--check`, `--remove`) writes into
+  `scripts/install-primary-guard.js` (idempotent, `--check`, `--self-test`, `--remove`) writes into
   `.claude/settings.local.json`, where `_mergeBaselineHooks` preserves it as a foreign entry across
   TangleClaw's per-launch reconciliation — asserted, because the guard silently vanishing at the
   next session launch is the failure mode of a control that looks like it did something.
+  `--check` reports the command actually present and calls a stale pin stale; `--self-test` goes
+  further and drives that command with a synthetic payload, because a listing is not a readback —
+  this repo shipped the mirror image in #755, where a posture check keyed on the guard SCRIPT
+  reported healthy after the hook's REGISTRATION was removed, and a wired command ending in
+  `|| true` fails silently by construction. Arming the live install is queued as
+  `VRF-798-arm-the-primary-guard` rather than left to memory, because after the merge an un-run
+  installer, a merge regression, a deleted script and a throwing node all look identical.
   `scripts/guard-primary-checkout.js`, `lib/checkout-layout.js`,
   `scripts/install-primary-guard.js`. Docs: `docs/primary-checkout-guard.md`.
 

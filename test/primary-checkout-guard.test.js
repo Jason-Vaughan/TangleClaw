@@ -36,9 +36,10 @@ const REPO_ROOT = path.join(__dirname, '..');
 // a hook at one path and test a script at another, and both halves would pass.
 const GUARD_REL = installer.GUARD_REL;
 
-/** Files the guard needs at runtime, copied into each fixture repo. */
+/** Files the guard and its installer need at runtime, copied into each fixture repo. */
 const GUARD_SOURCES = [
   GUARD_REL,
+  path.join('scripts', 'install-primary-guard.js'),
   path.join('lib', 'checkout-layout.js'),
   path.join('lib', 'project-paths.js')
 ];
@@ -295,6 +296,43 @@ describe('#798 primary-checkout guard — Bash, working-tree-moving commands', (
     assert.equal(r.decision, null, `expected no decision, got ${r.stdout}`);
   });
 
+  it('allows a git command naming its OWN worktree by absolute path', () => {
+    // Every worktree root is lexically prefixed by the primary
+    // (`<primary>/.claude/worktrees/<name>`), so answering "does this touch the
+    // primary" by substring-matching the command text refused a worktree's own
+    // commands — telling the actor to go run it where it already was. Absolute
+    // paths are the normal form for a dispatched actor, whose cwd resets between
+    // Bash calls, so this fired on ordinary swarm work. The test above cannot
+    // see it: its command carries no absolute path at all.
+    for (const command of [
+      `git -C ${fx.worktree} checkout -b feat/x`,
+      `git -C ${fx.worktree} merge main`,
+      `cd ${fx.worktree} && git rebase main`
+    ]) {
+      const r = bash(command, fx.worktree, fx.primary);
+      assert.equal(r.decision, null, `${command} must not be refused; got ${r.stdout}`);
+    }
+  });
+
+  it('refuses a `cd` to the primary written with a tilde', () => {
+    // `cd ~/Documents/Projects/TangleClaw && git checkout main` is the form an
+    // operator types, and it never contains the RESOLVED primary path — so the
+    // substring test this replaced walked straight past the very case it existed
+    // for. `HOME` is set for the child rather than skipping when the fixture is
+    // not under the real home: a test that skips on this machine is not a test.
+    const r = runGuard({
+      primary: fx.primary, sessionRoot: fx.worktree, cwd: fx.worktree, tool: 'Bash',
+      toolInput: { command: `cd ~/${path.basename(fx.primary)} && git checkout main` },
+      env: { HOME: path.dirname(fx.primary) }
+    });
+    assert.equal(r.decision, 'deny');
+  });
+
+  it('honours the LAST cd, not the tool cwd, when the command moves first', () => {
+    const r = bash(`cd ${fx.worktree} && git checkout main`, fx.worktree, fx.primary);
+    assert.equal(r.decision, null, `expected no decision, got ${r.stdout}`);
+  });
+
   it('allows a checkout in the primary from a primary-rooted session — the fast rollback', () => {
     // `git checkout main` in the primary is the documented recovery from a bad
     // branch. Refusing it would take away the fix.
@@ -307,8 +345,47 @@ describe('#798 primary-checkout guard — Bash, working-tree-moving commands', (
     assert.equal(r.decision, null, `expected no decision, got ${r.stdout}`);
   });
 
+  it('never refuses a commit whose MESSAGE contains a moving verb', () => {
+    // The verb was matched anywhere in the string, so an ordinary commit message
+    // made `git commit` refusable — with a refusal asserting something false.
+    // The test above cannot catch it: "wrap" contains no verb word, so it stays
+    // green straight through the defect. The verb is now recognised only in
+    // git's subcommand position.
+    for (const command of [
+      'git commit -m "fix the checkout path"',
+      'git commit -m "merge main into the branch"',
+      'git log --grep "reset"',
+      'git commit -am "switch to the new reader"'
+    ]) {
+      const r = bash(command, fx.worktree, fx.primary);
+      assert.equal(r.decision, null, `${command} must not be refused; got ${r.stdout}`);
+    }
+  });
+
+  it('still refuses a moving verb that IS the subcommand, after git options', () => {
+    const r = bash('git --no-pager -c core.pager=cat checkout main', fx.worktree, fx.primary);
+    assert.equal(r.decision, 'deny');
+  });
+
+  it('sees a moving verb in the second of two chained commands', () => {
+    const r = bash('git add -A && git reset --hard origin/main', fx.worktree, fx.primary);
+    assert.equal(r.decision, 'deny');
+  });
+
   it('does not read a non-git command mentioning a moving verb as one', () => {
     const r = bash('grep -rn "checkout" .', fx.worktree, fx.primary);
+    assert.equal(r.decision, null, `expected no decision, got ${r.stdout}`);
+  });
+
+  it('recognises an absolute git invocation', () => {
+    // `/usr/bin/git checkout` is the same command. Requiring whitespace before
+    // the token let a fully-qualified path walk straight past the guard.
+    const r = bash('/usr/bin/git checkout main', fx.worktree, fx.primary);
+    assert.equal(r.decision, 'deny');
+  });
+
+  it('still does not match a word merely ending in "git"', () => {
+    const r = bash('mygit checkout main', fx.worktree, fx.primary);
     assert.equal(r.decision, null, `expected no decision, got ${r.stdout}`);
   });
 
@@ -364,6 +441,26 @@ describe('#798 primary-checkout guard — overrides', () => {
     }
     assert.equal(runGuard(denied()).decision, 'deny');
   });
+
+  it('SAYS which route disarmed it, rather than looking like "no rule matched"', () => {
+    // The one path that disarms the guard was the one path that emitted nothing,
+    // so a forgotten sentinel was byte-identical to not-applicable and whoever
+    // debugged "why did that write land in the primary" reached "the guard is
+    // broken" first.
+    const byEnv = runGuard({ ...denied(), env: { TANGLECLAW_ALLOW_PRIMARY_WRITE: '1' } });
+    assert.match(byEnv.stderr, /standing down.*TANGLECLAW_ALLOW_PRIMARY_WRITE/);
+
+    const sentinel = path.join(fx.primary, '.prawduct', '.allow-primary-write');
+    fs.writeFileSync(sentinel, '');
+    try {
+      const bySentinel = runGuard(denied());
+      assert.match(bySentinel.stderr, /standing down.*allow-primary-write/);
+      assert.ok(bySentinel.stderr.includes(sentinel),
+        'name the file to delete, or the note cannot be acted on');
+    } finally {
+      fs.rmSync(sentinel);
+    }
+  });
 });
 
 describe('#798 primary-checkout guard — every failure path exits 0 with no decision', () => {
@@ -411,6 +508,57 @@ describe('#798 primary-checkout guard — every failure path exits 0 with no dec
     const r = runGuard(denied({ rawStdin: '{}' }));
     assert.equal(r.status, 0);
     assert.equal(r.stdout, '');
+  });
+
+  it('falls open for a session belonging to a DIFFERENT repository', () => {
+    // The wiring is machine-local, so nothing structurally stops this guard
+    // being invoked for another project's session — where it would apply THIS
+    // repo's public/** policy to a tree nobody serves.
+    const other = makeFixture();
+    try {
+      const r = runGuard({
+        primary: fx.primary,          // this guard
+        sessionRoot: other.primary,   // someone else's checkout
+        cwd: other.primary,
+        toolInput: { file_path: path.join(other.primary, 'public', 'sw.js') }
+      });
+      assert.equal(r.status, 0);
+      assert.equal(r.stdout, '');
+      assert.match(r.stderr, /belongs to/);
+    } finally {
+      other.cleanup();
+    }
+  });
+
+  it('emits the WHOLE decision, not a truncated one', () => {
+    // Writes to a pipe are asynchronous and `process.exit` discards what has not
+    // flushed — a truncated decision parses as nothing and silently permits the
+    // write it just refused. Asserting the closing sentence proves the tail
+    // arrived, which asserting `deny` alone does not.
+    const r = runGuard(denied());
+    assert.equal(r.decision, 'deny');
+    assert.ok(r.reason.endsWith('delete it after.'),
+      `decision looks truncated: ...${r.reason.slice(-60)}`);
+    assert.doesNotThrow(() => JSON.parse(r.stdout));
+  });
+
+  it('falls open when the worktree list cannot be established', () => {
+    // Not the same as "no worktrees". With an unknown subtraction list every
+    // path inside every nested worktree reads as the primary, so treating it as
+    // empty makes a fail-open guard refuse everything.
+    const records = path.join(fx.primary, '.git', 'worktrees');
+    const saved = `${records}.saved`;
+    fs.renameSync(records, saved);
+    fs.writeFileSync(records, 'not a directory\n');
+    try {
+      const r = runGuard(denied());
+      assert.equal(r.status, 0);
+      assert.equal(r.stdout, '', 'an unknown worktree list must not produce a refusal');
+      assert.match(r.stderr, /could not read the worktree records/);
+    } finally {
+      fs.rmSync(records);
+      fs.renameSync(saved, records);
+    }
   });
 
   it('falls open when the evaluation itself throws', () => {
@@ -499,6 +647,15 @@ describe('#798 installer — scripts/install-primary-guard.js', () => {
     assert.equal(installer.apply({}, '/repo', 'install').wiredBefore, false);
   });
 
+  it('refuses a PreToolUse it cannot model instead of overwriting it', () => {
+    // `_mergeBaselineHooks` preserves unmodelled shapes verbatim; an installer
+    // that silently replaced them would make the two disagree about one file,
+    // and the operator would lose whatever they wrote there.
+    assert.throws(
+      () => installer.apply({ hooks: { PreToolUse: { matcher: 'Bash' } } }, '/repo', 'install'),
+      /not an array/);
+  });
+
   it('the guard script itself is TRACKED, not gitignored', () => {
     // Found the hard way: the guard was first written to `.claude/hooks/`, which
     // `.gitignore` excludes fail-closed (`.claude/*`, one deliberate exception).
@@ -511,6 +668,157 @@ describe('#798 installer — scripts/install-primary-guard.js', () => {
         () => execFileSync('git', ['ls-files', '--error-unmatch', '--', rel],
           { cwd: REPO_ROOT, stdio: 'ignore' }),
         `${rel} must be tracked — an ignored guard ships to nobody`);
+    }
+  });
+});
+
+describe('#798 installer — the CLI, against a real settings file', () => {
+  let fx;
+  before(() => { fx = makeFixture(); });
+  after(() => fx.cleanup());
+
+  const SETTINGS = () => path.join(fx.primary, '.claude', 'settings.local.json');
+
+  /**
+   * Run the fixture's own copy of the installer.
+   *
+   * The CLI resolves its primary from `__dirname`, so only the copy inside the
+   * fixture can be driven against the fixture. `apply()` alone leaves main(),
+   * readSettings(), writeSettings() and every exit code unexercised — including
+   * `--check`'s exit 1, which is a Done-when deliverable.
+   *
+   * @param {...string} args - CLI arguments.
+   * @returns {{status:number, stdout:string, stderr:string}}
+   */
+  const cli = (...args) => {
+    const r = spawnSync(process.execPath,
+      [path.join(fx.primary, 'scripts', 'install-primary-guard.js'), ...args],
+      { encoding: 'utf8' });
+    return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+  };
+
+  it('--check exits 1 and says so before anything is wired', () => {
+    const r = cli('--check');
+    assert.equal(r.status, 1);
+    assert.match(r.stdout, /NOT wired/);
+  });
+
+  it('installs, is idempotent, and writes a settings file that parses', () => {
+    const first = cli();
+    assert.equal(first.status, 0);
+    assert.match(first.stdout, /wired into/);
+    const parsed = JSON.parse(fs.readFileSync(SETTINGS(), 'utf8'));
+    assert.equal(parsed.hooks.PreToolUse.length, 2);
+
+    const second = cli();
+    assert.equal(second.status, 0);
+    assert.match(second.stdout, /already wired/);
+  });
+
+  it('--check reports the command actually PRESENT, not the one it would write', () => {
+    // The two are IDENTICAL in the normal case, so comparing against the wired
+    // command as-installed cannot tell the readings apart — a version printing
+    // `guardCommand(primary)` passes such a test unchanged. The entry is
+    // therefore hand-edited to a still-valid but DIFFERENT command first, which
+    // is also the real-world shape: an operator or an older installer wrote it.
+    const settings = JSON.parse(fs.readFileSync(SETTINGS(), 'utf8'));
+    // Not a SUPERSTRING of the installer's command either: `/usr/bin/env node
+    // "<path>" || true` contains `node "<path>" || true` verbatim, so the
+    // negative assertion below could not tell the two readings apart — the same
+    // defect this test exists to catch, one level down. Differing in the tail
+    // makes neither string a substring of the other.
+    const distinct = `node "${path.join(fx.primary, installer.GUARD_REL)}" || exit 0`;
+    assert.ok(!distinct.includes(installer.guardCommand(fx.primary))
+      && !installer.guardCommand(fx.primary).includes(distinct),
+    'the fixture must be distinguishable from the installer output in both directions');
+    settings.hooks.PreToolUse[0].hooks[0].command = distinct;
+    fs.writeFileSync(SETTINGS(), JSON.stringify(settings, null, 2));
+    try {
+      const r = cli('--check');
+      assert.equal(r.status, 0);
+      assert.ok(r.stdout.includes(distinct),
+        `--check printed ${r.stdout.trim()}, not the command in the file`);
+      assert.ok(!r.stdout.includes(installer.guardCommand(fx.primary)),
+        '--check echoed the command it WOULD write, which answers a different question');
+    } finally {
+      fs.writeFileSync(SETTINGS(), JSON.stringify(
+        installer.apply({}, fx.primary, 'install').settings, null, 2));
+    }
+  });
+
+  it('--self-test drives the WIRED command and sees a real refusal', () => {
+    const r = cli('--self-test');
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /self-test: PASS/);
+  });
+
+  it('--check calls a stale pin STALE, and --self-test fails on it', () => {
+    // `isGuardEntry` matches the script BASENAME, so an entry pinned at a path
+    // that no longer exists still reads as "wired" — and the wired command ends
+    // in `|| true`, so it fails silently. This repo already shipped the mirror
+    // image (#755: a readback keyed on the SCRIPT, blind to the registration
+    // being gone); a readback keyed on the registration must not be blind to the
+    // script being gone.
+    const settings = JSON.parse(fs.readFileSync(SETTINGS(), 'utf8'));
+    settings.hooks.PreToolUse[0].hooks[0].command =
+      `node "${path.join(fx.primary, 'scripts', 'gone', 'guard-primary-checkout.js')}" || true`;
+    fs.writeFileSync(SETTINGS(), JSON.stringify(settings, null, 2));
+
+    const checked = cli('--check');
+    assert.equal(checked.status, 1);
+    assert.match(checked.stdout, /STALE/);
+
+    fs.writeFileSync(SETTINGS(), JSON.stringify(
+      installer.apply({}, fx.primary, 'install').settings, null, 2));
+  });
+
+  it('--self-test FAILS when a sentinel has silently disarmed the guard', () => {
+    // The case `--check` structurally cannot see: entry listed, script present,
+    // and the guard refusing nothing.
+    const sentinel = path.join(fx.primary, '.prawduct', '.allow-primary-write');
+    fs.writeFileSync(sentinel, '');
+    try {
+      const r = cli('--self-test');
+      assert.equal(r.status, 1);
+      assert.match(r.stdout, /self-test: FAIL/);
+      assert.match(r.stdout, /NO decision/);
+    } finally {
+      fs.rmSync(sentinel);
+    }
+  });
+
+  it('--remove unwires and leaves the file parseable', () => {
+    assert.equal(cli('--remove').status, 0);
+    assert.equal(JSON.parse(fs.readFileSync(SETTINGS(), 'utf8')).hooks, undefined);
+    assert.equal(cli('--check').status, 1);
+    assert.match(cli('--remove').stdout, /already absent/);
+  });
+
+  it('refuses an unparseable settings file rather than clobbering it', () => {
+    // The operator's permissions block lives in this file. Replacing it to
+    // install a guard would be a worse outcome than not installing one.
+    const saved = fs.readFileSync(SETTINGS(), 'utf8');
+    fs.writeFileSync(SETTINGS(), '{ not json');
+    try {
+      const r = cli();
+      assert.notEqual(r.status, 0);
+      assert.equal(fs.readFileSync(SETTINGS(), 'utf8'), '{ not json',
+        'the malformed file must be left exactly as it was');
+    } finally {
+      fs.writeFileSync(SETTINGS(), saved);
+    }
+  });
+
+  it('refuses to wire a hook to a guard script that is not there', () => {
+    const guard = path.join(fx.primary, installer.GUARD_REL);
+    const saved = fs.readFileSync(guard, 'utf8');
+    fs.rmSync(guard);
+    try {
+      const r = cli();
+      assert.equal(r.status, 1);
+      assert.match(r.stderr, /guard script missing/);
+    } finally {
+      fs.writeFileSync(guard, saved);
     }
   });
 });

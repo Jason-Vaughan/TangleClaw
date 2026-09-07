@@ -84,7 +84,21 @@ describe('linkedWorktreeRoots', () => {
   afterEach(() => fs.rmSync(base, { recursive: true, force: true }));
 
   it('is empty, not an error, for a repository with no worktrees', () => {
-    assert.deepEqual(linkedWorktreeRoots(base), { roots: [], unreadable: [] });
+    assert.deepEqual(linkedWorktreeRoots(base), { roots: [], unreadable: [], failed: null });
+  });
+
+  it('distinguishes "no worktrees" from "could not list them"', () => {
+    // ENOENT genuinely means none. Any other errno means the subtraction list is
+    // UNKNOWN — and a caller handed an empty list reads every path inside every
+    // nested worktree as the primary and refuses all of them. Collapsing the two
+    // is a fail-CLOSED hole inside a fail-open guard, and a silent one, because
+    // `unreadable` would be empty too. ENOTDIR is used rather than a chmod:
+    // permission games score host plumbing and red differently under CI.
+    fs.mkdirSync(path.join(base, '.git'), { recursive: true });
+    fs.writeFileSync(path.join(base, '.git', 'worktrees'), 'not a directory\n');
+    const out = linkedWorktreeRoots(base);
+    assert.deepEqual(out.roots, []);
+    assert.equal(out.failed, 'ENOTDIR', 'an unlistable directory must name why');
   });
 
   it('reports a record it cannot read instead of silently skipping it', () => {
@@ -99,13 +113,14 @@ describe('linkedWorktreeRoots', () => {
     const out = linkedWorktreeRoots(base);
     assert.deepEqual(out.roots, [path.join(base, 'wt')]);
     assert.deepEqual(out.unreadable, ['broken']);
+    assert.equal(out.failed, null);
   });
 
   it('reports an empty gitdir file as unreadable rather than as the filesystem root', () => {
     const recs = path.join(base, '.git', 'worktrees');
     fs.mkdirSync(path.join(recs, 'empty'), { recursive: true });
     fs.writeFileSync(path.join(recs, 'empty', 'gitdir'), '\n');
-    assert.deepEqual(linkedWorktreeRoots(base), { roots: [], unreadable: ['empty'] });
+    assert.deepEqual(linkedWorktreeRoots(base), { roots: [], unreadable: ['empty'], failed: null });
   });
 });
 

@@ -27,18 +27,24 @@
  * machine.
  *
  * Usage:
- *   node scripts/install-primary-guard.js            wire it (idempotent)
- *   node scripts/install-primary-guard.js --check    report only; exit 1 if unwired
- *   node scripts/install-primary-guard.js --remove   unwire it
+ *   node scripts/install-primary-guard.js              wire it (idempotent)
+ *   node scripts/install-primary-guard.js --check      report what is wired; exit 1 if not
+ *   node scripts/install-primary-guard.js --self-test  drive the WIRED command; exit 1 if it
+ *                                                      does not refuse
+ *   node scripts/install-primary-guard.js --remove     unwire it
  */
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 
 const { locateCheckouts } = require('../lib/checkout-layout');
 
 /** Tool matcher for the file-writing arm. */
 const WRITE_MATCHER = 'Edit|Write|NotebookEdit|MultiEdit';
+
+/** The guard's sentinel override, named here only so `--self-test` can explain a miss. */
+const OVERRIDE_FILE = path.join('.prawduct', '.allow-primary-write');
 
 /**
  * Repo-relative location of the guard script.
@@ -85,10 +91,12 @@ function isGuardEntry(entry) {
 /**
  * The two entries the guard needs.
  *
- * Two rather than one because the matchers are different questions: file writes
- * carry a `file_path`, Bash carries a `command`, and a single combined matcher
- * would run the guard on every Bash call in a primary-rooted session for
- * nothing.
+ * Two rather than one, and NOT for a cost reason — a single combined
+ * `Edit|Write|NotebookEdit|MultiEdit|Bash` matcher invokes the guard on exactly
+ * the same set of tool calls. The split is legibility: the two arms answer
+ * different questions from different input (a `file_path` versus a `command`),
+ * they are refused for different reasons, and either can be unwired on its own
+ * while debugging without silencing the other.
  *
  * @param {string} primary - Absolute primary checkout root.
  * @returns {object[]} PreToolUse entries.
@@ -149,14 +157,26 @@ function writeSettings(file, settings) {
  * decision is testable without a filesystem, and `--check` and the install path
  * ask the same question of the same code.
  *
+ * A `PreToolUse` that is present but not an array is REFUSED rather than
+ * replaced. `_mergeBaselineHooks` preserves shapes it does not model verbatim,
+ * on the reasoning that dropping something an operator or a future Claude Code
+ * version wrote is worse than not merging — and an installer that quietly
+ * discarded it while that reconciler preserved it would make the two disagree
+ * about the same file.
+ *
  * @param {object} settings - Current settings.
  * @param {string} primary - Absolute primary checkout root.
  * @param {'install'|'remove'} action - What to do.
  * @returns {{settings:object, wiredBefore:boolean, changed:boolean}}
+ * @throws {Error} When `hooks.PreToolUse` exists in a shape this cannot model.
  */
 function apply(settings, primary, action) {
   const next = { ...settings };
   const hooks = { ...(next.hooks || {}) };
+  if ('PreToolUse' in hooks && !Array.isArray(hooks.PreToolUse)) {
+    throw new Error('hooks.PreToolUse is not an array — refusing to overwrite it; '
+      + 'fix or remove it by hand first');
+  }
   const existing = Array.isArray(hooks.PreToolUse) ? hooks.PreToolUse : [];
   const foreign = existing.filter((e) => !isGuardEntry(e));
   const wiredBefore = foreign.length !== existing.length;
@@ -170,6 +190,89 @@ function apply(settings, primary, action) {
 
   const changed = JSON.stringify(next) !== JSON.stringify(settings);
   return { settings: next, wiredBefore, changed };
+}
+
+/**
+ * The command string actually present in the settings file, if any.
+ *
+ * `--check` used to print the command it WOULD write, which answers a different
+ * question from the one asked: an entry pinned at a stale absolute path matches
+ * `isGuardEntry` on the basename, so it reads as wired, and the wired command
+ * ends in `|| true`, so it fails silently. The readback has to report what is
+ * there.
+ *
+ * @param {object} settings - Parsed settings.
+ * @returns {string|null} The wired command, or null when none is.
+ */
+function wiredCommand(settings) {
+  const entries = (settings && settings.hooks && settings.hooks.PreToolUse) || [];
+  if (!Array.isArray(entries)) return null;
+  for (const entry of entries) {
+    if (!isGuardEntry(entry)) continue;
+    const hook = entry.hooks.find((h) => h && typeof h.command === 'string'
+      && h.command.includes(path.basename(GUARD_REL)));
+    if (hook) return hook.command;
+  }
+  return null;
+}
+
+/**
+ * The script path a wired command points at.
+ *
+ * @param {string} command - A wired hook command.
+ * @returns {string|null} The path it invokes, or null when it cannot be read.
+ */
+function pinnedScript(command) {
+  const m = /"([^"]+)"|(\S*guard-primary-checkout\.js)/.exec(command);
+  return m ? (m[1] || m[2]) : null;
+}
+
+/**
+ * Drive the WIRED command with a synthetic refusal case and check a deny comes
+ * back.
+ *
+ * `--check` proves the entry is listed and the pinned script exists. It cannot
+ * prove the wired command still produces a decision — and this repo has already
+ * shipped the mirror-image bug (#755: a posture readback keyed on the guard
+ * SCRIPT, so removing the hook's REGISTRATION reported healthy). A readback that
+ * exercises the path answers the question the operator is actually asking.
+ *
+ * The probe names `server.js` in the primary, which P2 refuses from any session
+ * root, so it needs no worktree and mutates nothing.
+ *
+ * @param {string} command - The wired command string.
+ * @param {string} primary - Absolute primary checkout root.
+ * @returns {{ok:boolean, detail:string}}
+ */
+function selfTest(command, primary) {
+  const payload = JSON.stringify({
+    tool_name: 'Write',
+    tool_input: { file_path: path.join(primary, 'server.js') },
+    cwd: primary
+  });
+  let stdout;
+  try {
+    stdout = execFileSync('/bin/sh', ['-c', command], {
+      input: payload,
+      encoding: 'utf8',
+      env: { ...process.env, CLAUDE_PROJECT_DIR: primary, TANGLECLAW_ALLOW_PRIMARY_WRITE: '' }
+    });
+  } catch (err) {
+    return { ok: false, detail: `the wired command failed to run: ${err.message}` };
+  }
+  if (!stdout.trim()) {
+    return { ok: false, detail: 'the wired command produced NO decision for a write to '
+      + `${path.join(primary, 'server.js')} — it should have refused. A sentinel at `
+      + `${path.join(primary, OVERRIDE_FILE)} would also explain this.` };
+  }
+  try {
+    const parsed = JSON.parse(stdout);
+    const d = parsed.hookSpecificOutput && parsed.hookSpecificOutput.permissionDecision;
+    if (d !== 'deny') return { ok: false, detail: `decision was ${JSON.stringify(d)}, not "deny"` };
+  } catch (err) {
+    return { ok: false, detail: `the wired command emitted unparseable output: ${stdout.slice(0, 200)}` };
+  }
+  return { ok: true, detail: 'the wired command refused a write to the live surface' };
 }
 
 /**
@@ -195,14 +298,28 @@ function main(argv) {
   const file = path.join(primary, '.claude', 'settings.local.json');
   const current = readSettings(file);
   const action = argv.includes('--remove') ? 'remove' : 'install';
-  const result = apply(current, primary, action);
 
-  if (argv.includes('--check')) {
-    process.stdout.write(result.wiredBefore
-      ? `wired: ${guardCommand(primary)}\n`
-      : `NOT wired — run: node scripts/install-primary-guard.js\n`);
-    return result.wiredBefore ? 0 : 1;
+  if (argv.includes('--check') || argv.includes('--self-test')) {
+    const command = wiredCommand(current);
+    if (!command) {
+      process.stdout.write('NOT wired — run: node scripts/install-primary-guard.js\n');
+      return 1;
+    }
+    // Report what is THERE, not what would be written.
+    process.stdout.write(`wired: ${command}\n`);
+    const pinned = pinnedScript(command);
+    if (!pinned || !fs.existsSync(pinned)) {
+      process.stdout.write(`STALE: it invokes ${pinned || '(unreadable)'}, which does not exist — `
+        + 'the command ends in `|| true`, so this fails silently. Re-run the installer.\n');
+      return 1;
+    }
+    if (!argv.includes('--self-test')) return 0;
+    const probe = selfTest(command, primary);
+    process.stdout.write(`self-test: ${probe.ok ? 'PASS' : 'FAIL'} — ${probe.detail}\n`);
+    return probe.ok ? 0 : 1;
   }
+
+  const result = apply(current, primary, action);
 
   if (!result.changed) {
     process.stdout.write(`already ${action === 'remove' ? 'absent' : 'wired'}: ${file}\n`);
@@ -218,4 +335,7 @@ function main(argv) {
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
 
-module.exports = { apply, isGuardEntry, guardCommand, guardEntries, GUARD_REL, WRITE_MATCHER };
+module.exports = {
+  main, apply, isGuardEntry, guardCommand, guardEntries, wiredCommand, pinnedScript, selfTest,
+  readSettings, writeSettings, GUARD_REL, WRITE_MATCHER
+};
