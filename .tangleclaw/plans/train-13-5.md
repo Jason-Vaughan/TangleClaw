@@ -243,10 +243,23 @@ changing the frontend's reconnect behaviour; the pool-ratio gate's threshold or 
 
 ### Design decisions
 
-**D1 — The cooldown binds the ORPHAN gate only, never the pool gate.** Observed pool ratios are
+**D1 — The hold binds the ORPHAN gate only, never the pool gate.** Observed pool ratios are
 0.084–0.115 against a 0.85 threshold, so the pool gate has never fired here — it is the true
 safety net for actual exhaustion and must keep its ability to fire on any tick. Gating it too
 would trade a papercut for the #94 incident.
+
+**D1a — Keyed to ttyd's OWN AGE, not to our bookkeeping (added after review).** The first
+implementation remembered when *this module* last kickstarted. Two reviewers each found the same
+two holes in that: a FAILED kickstart still armed it (no restart happened, so there was no burst to
+excuse, yet the only gate that fires on this box sat down for 15 minutes), and it was blind to every
+restart we did not perform — including the `launchctl kickstart` that `lib/system-health.js` hands
+the operator as this very row's remedy, and which produces the identical burst. Reading ttyd's start
+time from `ps -o etime=` covers the whole class by construction, survives a TC server restart
+because the fact lives in the OS, and makes the failed-kickstart case harmless: an unchanged age
+means the next tick retries on schedule.
+
+The constant is therefore `DEFAULT_MIN_TTYD_AGE_MS` — "how long ttyd must have been running before
+the orphan gate may fire" — and not a cooldown, which is what the replaced mechanism was.
 
 **D2 — Suppression is logged at `warn`, not swallowed.** A gate that declines to act is exactly
 the thing an operator later needs to explain why terminals were blanking, or why they weren't.
@@ -263,17 +276,20 @@ bash for 30 seconds per failed attach. Small, in the same family, and correct re
 
 ### Done when
 
-- [ ] The orphan gate does not fire within the cooldown of a previous kickstart; the pool gate is
-      demonstrably unaffected.
-- [ ] A suppressed kickstart logs why, with the elapsed time and the orphan count.
-- [ ] The tick after a kickstart reports the observed orphan count.
-- [ ] `deploy/ttyd-attach.sh`'s no-session branch execs.
-- [ ] Every new branch mutation-checked against a green control.
-- [ ] Full suite green; evidence recorded.
-- [ ] `/prawduct:critic`; findings dispositioned in one pass.
-- [ ] CHANGELOG entry under `### Fixed`.
+- [x] The orphan gate does not fire while ttyd is younger than the minimum age, whoever restarted
+      it; the pool gate is demonstrably unaffected.
+- [x] A suppressed kickstart logs why, with ttyd's age, how long is left, and the orphan count —
+      asserted against the LOG, not against the return value, which no production caller reads.
+- [x] Every tick reports ttyd's age, so a restart's reclaim is visible rather than inferred.
+- [x] The health panel says when the count it shows may be a recent restart's burst, so its own
+      remedy does not invite a restart that buys nothing.
+- [x] `deploy/ttyd-attach.sh`'s no-session branch execs.
+- [x] Every new branch mutation-checked against a green control.
+- [x] Full suite green; evidence recorded.
+- [x] `/prawduct:critic`; findings dispositioned in one pass.
+- [x] CHANGELOG entry under `### Fixed`.
 
 ## Status
 
 - [x] Chunk 01 — #1314, the registry owns the staleness predicate
-- [ ] Chunk 02 — #1245, the mitigation stops seeding its own next trigger
+- [x] Chunk 02 — #1245, the mitigation stops seeding its own next trigger

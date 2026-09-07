@@ -326,12 +326,12 @@ not numeric ?Es
   // fired again on the very next poll. Each round blanks the operator's
   // terminals, so the thrash is the user-visible half of this bug.
   //
-  // The cooldown is derived from ttyd's OWN uptime, never from this module's
+  // The hold is derived from ttyd's OWN uptime, never from this module's
   // bookkeeping, so it covers the operator's manual `launchctl kickstart` (the
   // remedy the health panel hands them) and a launchd respawn exactly as it
   // covers ours — and it survives a server restart, because the fact lives in
   // the OS.
-  describe('_check — post-restart cooldown, keyed to ttyd uptime (#1245)', () => {
+  describe('_check — the orphan gate waits for ttyd to be old enough (#1245)', () => {
     const ORPHANS_OVER = '  12345 ?Es\n'.repeat(25);
 
     /**
@@ -358,7 +358,7 @@ not numeric ?Es
 
     const CHECK = { ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 };
 
-    it('fires when ttyd has been up longer than the cooldown', () => {
+    it('fires when ttyd has been up longer than the minimum age', () => {
       const runner = leakyRunner('02:58:17');
       ttydWatcher._setRunner(runner);
       const r = ttydWatcher._check(CHECK);
@@ -390,7 +390,7 @@ not numeric ?Es
       assert.equal(kicks(runner), 0);
     });
 
-    it('fires the moment ttyd is older than the cooldown, and not before', () => {
+    it('fires the moment ttyd passes the minimum age, and not before', () => {
       const under = leakyRunner('14:59');
       ttydWatcher._setRunner(under);
       assert.equal(ttydWatcher._check(CHECK).action, 'suppressed', 'one second short still holds');
@@ -398,7 +398,7 @@ not numeric ?Es
       const over = leakyRunner('15:00');
       ttydWatcher._setRunner(over);
       assert.equal(ttydWatcher._check(CHECK).action, 'kickstart',
-        'the cooldown bounds the thrash, it does not disable the gate');
+        'the hold bounds the thrash, it does not disable the gate');
       assert.equal(kicks(over), 1);
     });
 
@@ -425,7 +425,7 @@ not numeric ?Es
 
     // A failed kickstart must not arm anything. Keyed to uptime it cannot: if
     // launchctl refused, ttyd's age is unchanged and old, so the next tick
-    // retries on schedule instead of sitting out the cooldown after doing
+    // retries on schedule instead of sitting the hold out after doing
     // nothing at all.
     it('a REFUSED kickstart leaves the gate armed for the next tick', () => {
       const runner = makeRunner({
@@ -461,8 +461,8 @@ not numeric ?Es
       assert.equal(r.ttydUptimeMs, null);
     });
 
-    it('the cooldown is three poll intervals, computed rather than restated', () => {
-      assert.equal(ttydWatcher.DEFAULT_KICKSTART_COOLDOWN_MS,
+    it('the minimum age is three poll intervals, computed rather than restated', () => {
+      assert.equal(ttydWatcher.DEFAULT_MIN_TTYD_AGE_MS,
         3 * ttydWatcher.DEFAULT_INTERVAL_MS);
     });
   });

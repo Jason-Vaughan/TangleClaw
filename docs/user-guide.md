@@ -717,7 +717,8 @@ condition fired or could not be measured. Each row carries its own fix; the back
   kernel's exiting state and hold `/dev/ttys*` slots until ttyd itself restarts. The ttyd watcher
   restarts it automatically once either gate trips (pool ≥ 85% full, or ≥ 20 leaked children);
   the panel shows the same reading so you can act before the watcher's next five-minute tick, or
-  when the watcher's own restart did not take. Sessions survive the restart — tmux servers are
+  when the watcher's own restart did not take — read the note below about a recently restarted ttyd
+  first, because acting immediately is not always worth it. Sessions survive the restart — tmux servers are
   separate processes and the browser reconnects.
 
   A restart makes every open terminal reconnect at once, and that churn leaks children of its own,

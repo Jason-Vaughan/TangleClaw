@@ -32,7 +32,7 @@ const DARWIN = { platform: () => 'darwin', homedir: () => '/Users/op' };
 /**
  * A healthy ttyd reading, in the shape `ttydWatcher.measureLeak` really returns.
  *
- * `uptimeMs`/`cooldownMs` are part of that shape (#1245) and are carried here
+ * `uptimeMs`/`minTtydAgeMs` are part of that shape (#1245) and are carried here
  * deliberately: a fixture missing a field the real producer emits makes every
  * branch that reads it unreachable, so the test passes while the code is
  * unexercised. Defaulted to an OLD ttyd, because that is the ordinary case —
@@ -46,7 +46,7 @@ function healthyLeak(overrides) {
     orphanThreshold: 20,
     ptyThresholdRatio: 0.85,
     uptimeMs: 6 * 60 * 60 * 1000,
-    cooldownMs: 15 * 60 * 1000,
+    minTtydAgeMs: 15 * 60 * 1000,
     ...overrides
   };
 }
@@ -149,7 +149,7 @@ describe('lib/system-health (#345)', () => {
       assert.match(c.detail, /holding off until it is 15 min old/);
     });
 
-    it('does not qualify the count on a ttyd that has been up longer than the cooldown', async () => {
+    it('does not qualify the count on a ttyd that has been up longer than the minimum age', async () => {
       const c = await ttydVerdict({ measureLeak: async () => healthyLeak({ orphans: 25 }) });
       assert.equal(c.state, 'fired');
       assert.ok(!/reconnect burst/.test(c.detail),
