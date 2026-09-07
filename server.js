@@ -23,13 +23,31 @@ const sharedDocWatchers = new Map();
 const docDebounceTimers = new Map();
 
 /**
+ * @type {number} Trailing debounce on a shared doc's `fs.watch` events.
+ *
+ * Sized for ONE atomic save — a write followed by a rename arrives as two
+ * events milliseconds apart — and deliberately not for an editing session.
+ * Widening it is a per-document answer to a per-participant cost; the
+ * coalescing in `broadcastSharedDocUpdate` is the one that scales.
+ */
+const SHARED_DOC_DEBOUNCE_MS = 500;
+
+/**
  * The shared doc a Medusa inbox entry is an un-handled "this doc changed"
  * notice for, or `null` if it is anything else.
  *
- * Only a message the Bridge stamps `from: 'system'` qualifies. A peer could
- * type the same JSON by hand, and a peer message has a sender waiting on it —
- * treating one as a redundant broadcast would let this suppress a message
+ * Only a message whose envelope `from` is `system` qualifies. A peer could type
+ * the same JSON into its own body, and a peer message has a sender waiting on
+ * it — treating one as a redundant broadcast would let this suppress a message
  * somebody is blocked on.
+ *
+ * What enforces that is TangleClaw, not the Bridge: `/medusa/send` reads only
+ * `to` and `message`, and `lib/medusa.js#sendMessage` derives `from` from the
+ * sending listener's own workspace id, so no caller going through TC can label
+ * itself `system`. The Bridge copies the value it is given, so a process that
+ * reaches its loopback endpoint directly can set anything — the guarantee is
+ * exactly as strong as "every sender goes through TC", and keying another
+ * decision on `from` inherits that limit.
  *
  * Reads `docId`, not the display name: two groups may each register a doc
  * called `ROADMAP`, and matching on the name would suppress a notice about a
@@ -58,13 +76,17 @@ function sharedDocNoticeId(entry) {
  * had already drifted (#990 review).
  *
  * @param {string} docId - Shared doc id
- * @returns {Promise<{notified: number, errors: string[]}>} count of sessions
- *   actually notified, plus one message per failed notification
+ * @returns {Promise<{notified: number, coalesced: number, errors: string[]}>}
+ *   count of sessions actually notified, count skipped because they already
+ *   hold an un-handled notice for this doc, plus one message per failed
+ *   notification. All three fields are present on every exit — the route
+ *   serialises them, and a field that disappears on the failure path is a field
+ *   a client reads as an older TangleClaw.
  */
 async function broadcastSharedDocUpdate(docId) {
   try {
     const doc = store.sharedDocs.get(docId);
-    if (!doc || !doc.groupId) return { notified: 0, errors: [] };
+    if (!doc || !doc.groupId) return { notified: 0, coalesced: 0, errors: [] };
 
     // Membership from the join table that actually holds it. `projects.list()`
     // takes `archived`, `engine` and `tag` and SILENTLY IGNORES every other
@@ -131,8 +153,9 @@ async function broadcastSharedDocUpdate(docId) {
         // One notice per reader per quiet period, where the READER defines the
         // period: while an un-handled "this doc changed" for this doc is still
         // sitting in their inbox, a second one carries no information the first
-        // did not. The `fs.watch` debounce below is per DOCUMENT and 500 ms, so
-        // it collapses one atomic save (write + rename) and nothing more — every
+        // did not. The `fs.watch` debounce below is per DOCUMENT and sized by
+        // `SHARED_DOC_DEBOUNCE_MS` for one atomic save (write + rename), so it
+        // collapses that and nothing more — every
         // intra-burst gap in the four incidents on #1108 was 1.3-4.7 s, so each
         // edit in an agent's minutes-long editing session became its own
         // broadcast to every live participant. Widening that window would be a
@@ -172,7 +195,7 @@ async function broadcastSharedDocUpdate(docId) {
     return { notified, coalesced, errors };
   } catch (err) {
     log.error('Broadcast failed', { error: err.stack });
-    return { notified: 0, errors: [err.message] };
+    return { notified: 0, coalesced: 0, errors: [err.message] };
   }
 }
 
@@ -221,7 +244,7 @@ function refreshSharedDocWatchers() {
           if (docDebounceTimers.has(doc.id)) clearTimeout(docDebounceTimers.get(doc.id));
           docDebounceTimers.set(doc.id, setTimeout(() => {
              broadcastSharedDocUpdate(doc.id);
-          }, 500));
+          }, SHARED_DOC_DEBOUNCE_MS));
         }
       });
       sharedDocWatchers.set(doc.id, { watcher, filePath: doc.filePath });

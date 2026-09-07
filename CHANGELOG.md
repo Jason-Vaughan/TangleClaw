@@ -254,8 +254,18 @@ All notable changes to TangleClaw are documented in this file.
   they stop existing rather than stopping being visible. **A peer message is never drained at any
   volume** and is never counted toward the cap: its sender is blocked on it and the switchboard's
   rule is that the initiator closes the loop, so expiring one would close somebody else's exchange
-  silently. The property keyed on is the Bridge-stamped `from === 'system'` — the one field a peer
-  cannot forge — never the payload's `type`, which any peer can write.
+  silently. The property keyed on is the envelope's `from === 'system'`, never the payload's `type`,
+  which any peer can write. That guarantee is TangleClaw's own and not the Bridge's — the Bridge
+  copies the `from` it is handed; what makes it trustworthy is that `/medusa/send` reads only `to`
+  and `message` and `lib/medusa.js#sendMessage` fills `from` from the sending listener's workspace
+  id, now pinned by a test. A process reaching the Bridge's loopback endpoint directly can still
+  label itself, and would get its own message drained.
+  The cap is `SYSTEM_MESSAGE_RETENTION = 150`, sized against this install rather than estimated:
+  `shared_documents` holds 72 docs across 7 groups and the largest ("habitat group") holds 43, so
+  coalescing's one-pending-notice-per-`(doc, reader)` puts a reader in that group at 43 and the cap
+  leaves room for it to more than triple before it binds. Which mechanism actually bounds a given
+  inbox is worth saying plainly: for today's system messages — all shared-doc broadcasts —
+  coalescing does, and the cap never fires. It is the backstop for what coalescing does not cover.
   Profiling codex so those sessions become wakeable at all is filed as #1344, not folded in: a
   wake block needs a live idle/busy capture per engine, which is its own verification.
 - **`tags` and `quickCommands` are validated on the project PATCH path, so a non-array can no

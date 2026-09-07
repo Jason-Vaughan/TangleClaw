@@ -1050,6 +1050,24 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     assert.equal(bridge.received[0].from, workspaceId);
   });
 
+  it('a caller-supplied `from` never reaches the Bridge — TC owns that field (#1108 review)', async () => {
+    // The Bridge copies whatever `from` its caller sends, so nothing downstream
+    // authenticates this field. What makes it trustworthy is that TC refuses to
+    // accept one: the route reads `to` and `message` only, and `sendMessage`
+    // fills `from` from the sending listener's own workspace id. Two consumers
+    // now key a decision on it — the shared-doc coalescing check and the
+    // system-broadcast drain, both of which treat `from: 'system'` as proof that
+    // no peer is waiting — so a session able to label itself `system` could
+    // suppress another reader's notices or get its own message drained away.
+    const { status } = await req('/api/sessions/sender/medusa/send', 'POST', {
+      to: 'live-ws', message: 'hello', from: 'system'
+    });
+    assert.equal(status, 200);
+    assert.equal(bridge.received[0].from, workspaceId,
+      'a sender that can name itself `system` can silence a reader or expire its own mail');
+    assert.notEqual(bridge.received[0].from, 'system');
+  });
+
   it('send to an offline target → 200 queued (surfaced as queued, not sent)', async () => {
     const { status, data } = await req('/api/sessions/sender/medusa/send', 'POST', { to: 'offline-ws', message: 'later' });
     assert.equal(status, 200);

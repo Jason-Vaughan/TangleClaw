@@ -238,9 +238,10 @@ describe('a reader gets one shared-doc notice per quiet period (#1108)', () => {
   });
 
   it('a peer message that happens to look like a notice does not suppress a real one', async () => {
-    // `from` is stamped by the Bridge from the sender, so it is the only field a
-    // peer cannot forge. A check that keyed on the payload's `type: "system"`
-    // would let any peer silence a reader's shared-doc notices.
+    // TangleClaw fills `from` from the sending listener's own workspace id and
+    // refuses a caller-supplied one, so no peer routed through TC can label
+    // itself `system`. A check that keyed on the payload's `type: "system"`
+    // instead would let any peer silence a reader's shared-doc notices.
     inboxes.set(wsFor(readerA), [{
       id: 'peer-1',
       from: 'ws-some-peer',
@@ -264,6 +265,47 @@ describe('a reader gets one shared-doc notice per quiet period (#1108)', () => {
     assert.equal(second.body.coalescedCount, 2,
       'and "everybody already knew" must not look identical to "the broadcast reached nobody"');
     assert.equal(second.body.success, true);
+  });
+
+  it('reports coalescedCount on the failure path too, where a missing field reads as an older TC', async () => {
+    // The field exists to disambiguate a zero `notifiedCount`, so dropping it on
+    // the exit where `notifiedCount` is *always* zero is the one place it must
+    // not be missing. `JSON.stringify` deletes an `undefined` value outright, so
+    // this is presence, not value.
+    const broken = medusa.getStatus;
+    medusa.getStatus = () => { throw new Error('status read exploded'); };
+    try {
+      const res = await post(server, `/api/shared-docs/${docId}/notify`);
+      assert.equal(res.status, 200);
+      assert.ok(Object.prototype.hasOwnProperty.call(res.body, 'coalescedCount'),
+        'a client using key presence as capability detection reads a failure as an older TangleClaw');
+      assert.equal(res.body.coalescedCount, 0);
+      assert.equal(res.body.notifiedCount, 0);
+      assert.ok(res.body.errors && res.body.errors.length > 0,
+        'and the failure must still say it failed');
+    } finally {
+      medusa.getStatus = broken;
+    }
+  });
+
+  it('reports coalescedCount for a doc with no group, the other early exit', async () => {
+    // Reached through the store's own getter rather than by deleting a group:
+    // deleting one cascades its documents, which would take the rest of this
+    // fixture with it. The exit under test is `!doc.groupId`, so a doc that
+    // answers with no group is the whole precondition.
+    const realGet = store.sharedDocs.get;
+    store.sharedDocs.get = (id) => ({ ...realGet.call(store.sharedDocs, id), groupId: null });
+    try {
+      const res = await post(server, `/api/shared-docs/${docId}/notify`);
+      assert.equal(res.status, 200);
+      assert.ok(Object.prototype.hasOwnProperty.call(res.body, 'coalescedCount'),
+        'all three of the helper\'s exits carry the field, or the contract is a lie');
+      assert.equal(res.body.coalescedCount, 0);
+      assert.equal(res.body.notifiedCount, 0);
+      assert.deepEqual(sent, [], 'a doc with no group reaches nobody, which is the point of the exit');
+    } finally {
+      store.sharedDocs.get = realGet;
+    }
   });
 
   it('an un-handled notice with no docId suppresses nothing — it fails open', async () => {

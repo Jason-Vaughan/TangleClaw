@@ -19,7 +19,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  MedusaListener, SYSTEM_MESSAGE_RETENTION, _setSystemMessageRetention
+  MedusaListener, DEFAULT_MAX_INBOX, SYSTEM_MESSAGE_RETENTION, _setSystemMessageRetention
 } = require('../lib/medusa-listener');
 const registry = require('../lib/medusa-registry');
 
@@ -619,8 +619,12 @@ describe('MedusaListener — ACK-on-handled (TC#547, narrowed by #785)', () => {
  * The boundary this must not cross: only a SYSTEM broadcast may be drained. A
  * peer-to-peer message has a sender waiting on it and the switchboard's rule is
  * that the initiator closes the loop, so expiring one would close somebody
- * else's exchange silently. The property keyed on is `from === 'system'` —
- * stamped by the Bridge from the sender, and the one field a peer cannot forge.
+ * else's exchange silently. The property keyed on is the envelope's
+ * `from === 'system'` rather than anything in the payload, which any peer can
+ * write. That `from` is trustworthy because TANGLECLAW fills it — the Bridge
+ * copies what its caller supplies, while `/medusa/send` reads only `to` and
+ * `message` and `lib/medusa.js#sendMessage` uses the sending listener's own
+ * workspace id (pinned in `test/api-medusa.test.js`).
  */
 describe('MedusaListener — the system-broadcast drain (#1108)', () => {
   /**
@@ -756,7 +760,7 @@ describe('MedusaListener — the system-broadcast drain (#1108)', () => {
     l.stop();
   });
 
-  it('keys on the Bridge-stamped sender, not on the payload a peer can write', () => {
+  it('keys on the envelope sender, not on the payload a peer can write', () => {
     _setSystemMessageRetention(1);
     const { l, sockets } = listening();
     sockets[0]._message({
@@ -784,12 +788,59 @@ describe('MedusaListener — the system-broadcast drain (#1108)', () => {
     l.stop();
   });
 
-  it('ships with a cap that is actually a ceiling', () => {
-    // The call site's policy argument is code: a default of 0, or one large
-    // enough never to bite, would leave every test above measuring a seam
-    // nothing reaches in production.
-    assert.ok(SYSTEM_MESSAGE_RETENTION > 0 && SYSTEM_MESSAGE_RETENTION <= 100,
-      'the default must bound an undrained inbox at a size an operator can read');
+  it('bounds the unconfirmed-ack set, so an unanswering Hub cannot reproduce the leak elsewhere', () => {
+    // The drain adds one id per arrival on exactly the sessions with no consumer,
+    // and ids leave `_ackAwaiting` only on a Hub `ack_response` this fake never
+    // sends. Unbounded, that is #1108's end state one collection over, with
+    // `_flushAcks` re-sending the whole set every time.
+    _setSystemMessageRetention(1);
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-unprofiled', maxInbox: 5, wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-unprofiled' });
+    for (let i = 0; i < 40; i++) deliverSystem(sockets[0], `s${i}`);
+
+    assert.ok(l._ackAwaiting.size <= 5,
+      'every other collection on the receive path is capped; this one was not');
+    const last = ackFrames(sockets[0]).at(-1);
+    assert.ok(last.messageIds.length <= 5,
+      'and the frame it sends must not grow with the number of messages ever drained');
+    l.stop();
+  });
+
+  it('an evicted ack id leaves its message queued Hub-side rather than being re-ACKed forever', () => {
+    // The cost of the bound, stated as a test: eviction is allowed precisely
+    // because the at-least-once contract already covers it.
+    _setSystemMessageRetention(1);
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-unprofiled', maxInbox: 2, wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-unprofiled' });
+    for (let i = 0; i < 10; i++) deliverSystem(sockets[0], `s${i}`);
+
+    const last = ackFrames(sockets[0]).at(-1);
+    assert.ok(!last.messageIds.includes('s0'),
+      'the oldest unconfirmed id is the one a responsive Hub would have answered by now');
+    l.stop();
+  });
+
+  it('ships with a cap that is actually a ceiling, and a distinct one', () => {
+    // The call site's policy argument is code. Stated as a RELATION rather than
+    // a number, because the number was re-decided once already (#1108 review:
+    // 20 sat below the 43 documents this install's largest group holds, so it
+    // bound the ordinary case instead of backstopping it) and a test asserting
+    // a literal would have to be re-decided alongside it. What must stay true:
+    // it bounds something, and it is not a second name for the memory bound —
+    // if it reached `maxInbox` the drain would never fire before the silent
+    // local shift already did. How much headroom it leaves over a real group's
+    // document count is a fact about the install, recorded where it was
+    // measured, in the constant's own JSDoc.
+    assert.ok(SYSTEM_MESSAGE_RETENTION > 0,
+      'a cap of zero disables the drain, and every test above would measure a seam nothing reaches');
+    assert.ok(SYSTEM_MESSAGE_RETENTION < DEFAULT_MAX_INBOX,
+      'a cap at or above maxInbox never fires — the memory shift gets there first, silently');
     const { l, sockets } = listening();
     for (let i = 0; i < SYSTEM_MESSAGE_RETENTION + 5; i++) deliverSystem(sockets[0], `s${i}`);
     assert.equal(l.inbox.length, SYSTEM_MESSAGE_RETENTION,
