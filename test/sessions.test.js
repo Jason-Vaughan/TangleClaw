@@ -2630,7 +2630,7 @@ describe('sessions', () => {
     // Shared empty-pipeline-result stub used by wrap-routing tests that
     // don't care about the pipeline body (only the routing contract).
     // Frozen so a test can't accidentally mutate the shared instance.
-    const EMPTY_V2_RESULT = Object.freeze({
+    const EMPTY_PIPELINE_RESULT = Object.freeze({
       ok: true, blockedAt: null, results: [], commitSha: null, summary: null, error: null
     });
 
@@ -2680,7 +2680,7 @@ describe('sessions', () => {
       const wrapPipelineMod = require('../lib/wrap-pipeline');
       const realRun = wrapPipelineMod.runWrapPipeline;
       let pipelineCalls = 0;
-      wrapPipelineMod.runWrapPipeline = async () => { pipelineCalls += 1; return EMPTY_V2_RESULT; };
+      wrapPipelineMod.runWrapPipeline = async () => { pipelineCalls += 1; return EMPTY_PIPELINE_RESULT; };
 
       try {
         const result = await sessions.triggerWrap('prime-test');
@@ -2717,7 +2717,7 @@ describe('sessions', () => {
 
       const wrapPipelineMod = require('../lib/wrap-pipeline');
       const realRun = wrapPipelineMod.runWrapPipeline;
-      wrapPipelineMod.runWrapPipeline = async () => EMPTY_V2_RESULT;
+      wrapPipelineMod.runWrapPipeline = async () => EMPTY_PIPELINE_RESULT;
 
       try {
         await sessions.triggerWrap('prime-test');
@@ -2841,7 +2841,7 @@ describe('sessions', () => {
 
       const wrapPipelineMod = require('../lib/wrap-pipeline');
       const realRun = wrapPipelineMod.runWrapPipeline;
-      wrapPipelineMod.runWrapPipeline = async () => EMPTY_V2_RESULT;
+      wrapPipelineMod.runWrapPipeline = async () => EMPTY_PIPELINE_RESULT;
 
       try {
         const result = await sessions.triggerWrap('prime-test');
@@ -3093,7 +3093,7 @@ describe('sessions', () => {
       // so absence-of-flag runs the pipeline like everything else.
       const wrapPipelineMod = require('../lib/wrap-pipeline');
       const originalRun = wrapPipelineMod.runWrapPipeline;
-      wrapPipelineMod.runWrapPipeline = async () => EMPTY_V2_RESULT;
+      wrapPipelineMod.runWrapPipeline = async () => EMPTY_PIPELINE_RESULT;
 
       const project = store.projects.getByName('prime-test');
       store.projects.update(project.id, { methodology: 'prawduct' });
@@ -3535,6 +3535,61 @@ describe('sessions', () => {
       });
     });
 
+    // The two wrap teardowns emit the same messages, and both can touch one
+    // session in a single wrap, so `path` in the structured context is the only
+    // thing in the log that says which finalizer ran. Derived from the function
+    // bodies rather than a list of today's strings: a log line added later is
+    // covered the moment it is written, which a roster of known messages is not.
+    describe('every wrap-teardown log line names its path', () => {
+      const SRC = fs.readFileSync(require.resolve('../lib/sessions.js'), 'utf8');
+
+      /**
+       * Slice a named function's body out of the source.
+       * @param {string} name - Function name.
+       * @returns {string} The body, braces included.
+       */
+      const fnBody = (name) => {
+        const start = SRC.indexOf(`function ${name}(`);
+        assert.notEqual(start, -1, `function ${name} must exist`);
+        const open = SRC.indexOf('{', start);
+        let depth = 0;
+        for (let i = open; i < SRC.length; i++) {
+          if (SRC[i] === '{') depth++;
+          else if (SRC[i] === '}' && --depth === 0) return SRC.slice(open, i + 1);
+        }
+        return assert.fail(`function ${name} body must close`);
+      };
+
+      /**
+       * Every `log.*(...)` call in a body, each sliced to its balanced close.
+       * @param {string} body - A function body.
+       * @returns {string[]} The call expressions.
+       */
+      const logCalls = (body) => {
+        const out = [];
+        for (let i = body.indexOf('log.'); i !== -1; i = body.indexOf('log.', i + 1)) {
+          const open = body.indexOf('(', i);
+          let depth = 0;
+          for (let j = open; j < body.length; j++) {
+            if (body[j] === '(') depth++;
+            else if (body[j] === ')' && --depth === 0) { out.push(body.slice(i, j + 1)); break; }
+          }
+        }
+        return out;
+      };
+
+      for (const [fn, path] of [['_completePipelineWrap', 'pipeline'], ['completeWrap', 'finalize']]) {
+        it(`${fn} stamps path: '${path}' on all of them`, () => {
+          const calls = logCalls(fnBody(fn));
+          assert.ok(calls.length > 0, `${fn} must emit log lines for this to pin anything`);
+          for (const call of calls) {
+            assert.match(call, new RegExp(`path: '${path}'`),
+              `this ${fn} log line does not say which teardown it came from: ${call.slice(0, 90)}`);
+          }
+        });
+      }
+    });
+
     // Retirement pins for the `wrapV2` flag itself — the flag is no
     // longer seeded into fresh configs, and a fresh project (no on-disk
     // config at all) runs the pipeline. The legacy-opt-out byte-equal
@@ -3549,7 +3604,7 @@ describe('sessions', () => {
       it('a fresh project (no on-disk config) runs the pipeline', async () => {
         const wrapPipelineMod = require('../lib/wrap-pipeline');
         const originalRun = wrapPipelineMod.runWrapPipeline;
-        wrapPipelineMod.runWrapPipeline = async () => EMPTY_V2_RESULT;
+        wrapPipelineMod.runWrapPipeline = async () => EMPTY_PIPELINE_RESULT;
 
         const project = store.projects.getByName('prime-test');
         store.projects.update(project.id, { methodology: 'prawduct' });
