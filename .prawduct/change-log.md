@@ -6003,6 +6003,18 @@ change: `wheresmy-d5fca7e1` (codex, `unprofiled-engine`) at **unread 8** — up 
 original report — and `openclaw-genesis-0d6e2322` at 2, created during the build session. The
 mechanism was still running.
 
+**Restart before you read those numbers again.** This clone IS the live install: launchd runs
+`server.js` from the primary checkout and there is no build or deploy step, so merging changes
+nothing until the process restarts and the listeners are rebuilt. A verifier who merges and
+immediately re-reads the ledger sees identical unread counts and can read a working fix as
+ineffective. The ledger rows are also historical — they record the state at the moment of a scan, so
+what confirms the fix is the ABSENCE of new duplicate `shared_doc_updated` rows for one edit, not a
+falling count on an old row.
+
+**Rollback is plain.** No schema change, no config change, and `coalescedCount` is additive, so a
+revert costs nothing but the behavior. The one unrecoverable effect is broadcasts the drain already
+ACKed away — which are by construction the ones no peer was waiting on.
+
 **Two review findings worth carrying, both of the same shape: a claim stated more confidently than
 the evidence supported.** First, the safety property was attributed to the wrong owner at three live
 sites — `from` is NOT Bridge-stamped. The Bridge copies the value its caller supplies; what makes it
