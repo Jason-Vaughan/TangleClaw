@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, before, after } = require('node:test');
+const { describe, it, before, after, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -122,72 +122,127 @@ describe('store.activity', () => {
   });
 
   describe('retention (#869)', () => {
-    let originalRetention;
-    before(() => {
-      // Need a clean table for precise counting, but activity_log is 
-      // heavily appended by other tests. Best to just use specific event types.
+    // `created_at` has one-second resolution, so a burst inside one second has no
+    // total order by timestamp and `query()`'s ORDER BY created_at DESC is
+    // arbitrary among them. Order by `id`, which is what the prune orders by.
+    const newestFirst = (eventType) =>
+      store.activity.query({ eventType, limit: 100 }).sort((a, b) => b.id - a.id);
+
+    afterEach(() => {
+      store._setActivityLogRetention(store.ACTIVITY_LOG_RETENTION);
     });
 
-    after(() => {
-      store._setActivityLogRetention(500); // restore default
-    });
-
-    it('bounds a churny type at its cap while an older forensic row survives (per-type cap)', () => {
+    it('caps a churny type while a rarer type past that volume is untouched', () => {
       store._setActivityLogRetention(3);
 
-      // The forensic row (rare type)
+      // The forensic row goes in FIRST and is the oldest row in the table, so a
+      // time-based TTL or a table-wide cap would evict it first. A per-type cap
+      // cannot: eviction never crosses a type boundary.
       store.activity.log({ eventType: 'wrap.auto_pr', detail: { id: 'forensic-1' } });
+      for (let i = 1; i <= 4; i++) {
+        store.activity.log({ eventType: 'port.leased', detail: { id: `churn-${i}` } });
+      }
 
-      // The churny rows (volume exceeds cap)
-      store.activity.log({ eventType: 'port.leased', detail: { id: 'churn-1' } });
-      store.activity.log({ eventType: 'port.leased', detail: { id: 'churn-2' } });
-      store.activity.log({ eventType: 'port.leased', detail: { id: 'churn-3' } });
-      store.activity.log({ eventType: 'port.leased', detail: { id: 'churn-4' } }); // This triggers prune of churn-1
-
-      const forensic = store.activity.query({ eventType: 'wrap.auto_pr' });
-      assert.equal(forensic.length, 1, 'forensic type is untouched because it never hit the cap');
+      const forensic = newestFirst('wrap.auto_pr');
+      assert.equal(forensic.length, 1, 'a type below its cap is never pruned, however old its rows');
       assert.equal(forensic[0].detail.id, 'forensic-1');
 
-      const churny = store.activity.query({ eventType: 'port.leased' }).sort((a, b) => b.id - a.id);
-      assert.equal(churny.length, 3, 'churny type is capped at 3');
-      
-      // Newest rows kept: churn-2, churn-3, churn-4
-      assert.equal(churny[0].detail.id, 'churn-4');
-      assert.equal(churny[1].detail.id, 'churn-3');
-      assert.equal(churny[2].detail.id, 'churn-2');
+      const churny = newestFirst('port.leased');
+      assert.equal(churny.length, 3, 'the churny type stops at its cap');
+      assert.deepEqual(
+        churny.map((r) => r.detail.id),
+        ['churn-4', 'churn-3', 'churn-2'],
+        'the rows kept are the newest, and the oldest is the one dropped'
+      );
     });
 
-    it('subjects NULL-project_id rows to the policy (Master footprint)', () => {
+    it('prunes NULL-project_id rows, which are the whole of the largest type', () => {
+      // The Project Master writes rows with no project, and so does every
+      // `port.leased`. A project-keyed prune would leave exactly these unbounded
+      // — the case `_pruneSessionRuleDeliveries` documents itself as not covering.
       store._setActivityLogRetention(2);
-      
-      store.activity.log({ eventType: 'master.ping', detail: { n: 1 } });
-      store.activity.log({ eventType: 'master.ping', detail: { n: 2 } });
-      store.activity.log({ eventType: 'master.ping', detail: { n: 3 } });
 
-      const pings = store.activity.query({ eventType: 'master.ping' }).sort((a, b) => b.id - a.id);
-      assert.equal(pings.length, 2);
-      assert.equal(pings[0].detail.n, 3);
-      assert.equal(pings[1].detail.n, 2);
-      assert.equal(pings[0].projectId, null, 'row is a NULL-project row');
+      for (let n = 1; n <= 3; n++) store.activity.log({ eventType: 'master.ping', detail: { n } });
+
+      const pings = newestFirst('master.ping');
+      assert.equal(pings.length, 2, 'a NULL-project row is subject to the policy');
+      assert.deepEqual(pings.map((r) => r.detail.n), [3, 2]);
+      assert.equal(pings[0].projectId, null, 'the rows under test really do carry no project');
     });
 
-    it('reports the first prune on a real table via activity.pruned', () => {
-      store._setActivityLogRetention(2);
-      
-      // Ensure we trigger a prune of a new type
-      store.activity.log({ eventType: 'test.report', detail: 1 });
-      store.activity.log({ eventType: 'test.report', detail: 2 });
-      
-      // Clear out any previous activity.pruned so we can measure just this one
-      // (not strictly necessary if we query carefully, but safe)
-      
-      store.activity.log({ eventType: 'test.report', detail: 3 }); // Triggers prune of 1 row
-      
-      const prunes = store.activity.query({ eventType: 'activity.pruned' });
-      // Might be more than 1 if earlier tests triggered it, but we can look for test.report
-      const reportPrune = prunes.find(p => p.detail && p.detail.prunedType === 'test.report');
-      assert.ok(reportPrune, 'prune was reported');
-      assert.equal(reportPrune.detail.count, 1);
+    it('stays silent on a steady-state trim, so the report is not itself churn', () => {
+      // Each insert past the cap trims exactly one row. Reporting that would
+      // write a second row per insert, doubling the table's write rate and
+      // making the report the churniest type in the table.
+      store._setActivityLogRetention(3);
+      const before = newestFirst(store.ACTIVITY_PRUNE_EVENT).length;
+
+      for (let i = 0; i < 8; i++) {
+        store.activity.log({ eventType: 'steady.churn', detail: { i } });
+      }
+
+      assert.equal(newestFirst('steady.churn').length, 3, 'the type is still capped');
+      assert.equal(
+        newestFirst(store.ACTIVITY_PRUNE_EVENT).length, before,
+        'eight over-cap inserts wrote no prune reports'
+      );
+    });
+
+    it('reports a convergence prune, naming what it displaced and what survived', () => {
+      // The case that matters on a real install: the cap meets existing history
+      // and one insert deletes a backlog. Built by writing the backlog with the
+      // policy disabled, so the trim happens in a single statement — the shape
+      // the live table will actually take on the first insert after this ships.
+      store._setActivityLogRetention(0);
+      for (let i = 0; i < 10; i++) {
+        store.activity.log({ eventType: 'converge.test', detail: { i } });
+      }
+      assert.equal(newestFirst('converge.test').length, 10, 'the backlog exists before the cap applies');
+
+      store._setActivityLogRetention(3);
+      store.activity.log({ eventType: 'converge.test', detail: { i: 'trigger' } });
+
+      assert.equal(newestFirst('converge.test').length, 3, 'the backlog converged to the cap');
+
+      const report = newestFirst(store.ACTIVITY_PRUNE_EVENT)
+        .find((r) => r.detail && r.detail.prunedType === 'converge.test');
+      assert.ok(report, 'the convergence prune is on the record');
+      assert.equal(report.detail.count, 8, 'the report names how many rows it displaced');
+      assert.ok(report.detail.retainedFrom, 'and the history horizon it left behind');
+    });
+
+    it('does not report its own prune, so the report path cannot re-enter itself', () => {
+      // `activity.pruned` is written by the report path, so pruning it must not
+      // report in turn. Asserting the row COUNT cannot see this — the extra
+      // self-report is immediately trimmed back to the cap either way. What
+      // distinguishes them is whether any report names the report type itself.
+      store._setActivityLogRetention(0);
+      for (let i = 0; i < 6; i++) {
+        store.activity.log({ eventType: store.ACTIVITY_PRUNE_EVENT, detail: { i } });
+      }
+
+      store._setActivityLogRetention(3);
+      assert.doesNotThrow(() => {
+        store.activity.log({ eventType: store.ACTIVITY_PRUNE_EVENT, detail: { i: 'trigger' } });
+      });
+
+      const rows = newestFirst(store.ACTIVITY_PRUNE_EVENT);
+      assert.equal(rows.length, 3, 'its own type is capped like any other');
+      assert.ok(
+        !rows.some((r) => r.detail && r.detail.prunedType === store.ACTIVITY_PRUNE_EVENT),
+        'no report names the report type — the path never re-entered'
+      );
+    });
+
+    it('keeps everything when retention is disabled, at zero AND below it', () => {
+      // The seam documents "<= 0 keeps all", so both halves of that are asserted:
+      // a falsy check alone would satisfy 0 while silently pruning on a negative.
+      for (const disabled of [0, -1]) {
+        const type = `unbounded.test.${disabled}`;
+        store._setActivityLogRetention(disabled);
+        for (let i = 0; i < 12; i++) store.activity.log({ eventType: type, detail: { i } });
+        assert.equal(newestFirst(type).length, 12, `retention ${disabled} keeps all`);
+      }
     });
   });
 });
