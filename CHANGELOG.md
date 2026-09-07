@@ -76,6 +76,33 @@ All notable changes to TangleClaw are documented in this file.
   installer, a merge regression, a deleted script and a throwing node all look identical.
   `scripts/guard-primary-checkout.js`, `lib/checkout-layout.js`,
   `scripts/install-primary-guard.js`. Docs: `docs/primary-checkout-guard.md`.
+- **The contributor security policy is published, and precise enough to enforce (#1327, #1328).**
+  TangleClaw is about to receive pull requests from contributors nobody here knows, and
+  `CONTRIBUTING.md` said nothing about how they are reviewed. It now publishes the standard rather
+  than keeping it internal: contributions from unknown contributors are audited as **raw text
+  diffs**, maintainers do not check out the branch or run the code on their own machines, and a
+  sound change is **re-implemented in a clean commit with the author credited** — ideas are merged,
+  not raw bytes. Transparency is deliberate; a contributor who knows the rules can clear them.
+  Three of the seven points exist because the review METHOD had holes, not because the thresholds
+  were loose. **Trojan Source (CVE-2021-42574)** is named — bidirectional control characters,
+  zero-width characters and non-ASCII homoglyph identifiers are refused, because they make a diff
+  *render* differently from what it *executes*, which defeats a text audit by construction. Named as
+  three specific classes rather than a blanket ASCII ban: this file itself contains em dashes, so the
+  blanket form would have been unenforceable on its first day. **Scope overrun is closed** — from
+  outside, a diff touching unrelated files is indistinguishable from probing. And contributors are
+  told that under a reconstruction standard their **prose is worth more than their code**, since the
+  fix gets retyped either way; saying so stops them wasting effort we then cannot use.
+  One claim was corrected rather than softened: "maintainers will never execute your code" is
+  disprovable in one click, because `.github/workflows/test.yml` triggers on `pull_request`. The
+  accurate version is the stronger one — no execution on maintainer machines, CI isolated with a
+  read-only token and no secrets. **"Immediate ban" was deliberately softened** to closing the PR
+  for an *unexplained* edit: disproportionate for a first-timer who innocently touched `scripts/`,
+  and this file is read by people evaluating the project. Bans stay for demonstrated malice.
+  Two candidates were declined on purpose, recorded so they are not added later as oversights:
+  `public/` stays off the forbidden-files list — that list's principle is files which execute
+  *without anyone choosing to run them*, and forbidding `public/` would block every legitimate UI
+  contribution for no gain — and there is no force-push rule, because contributor bytes are never
+  merged, so rewriting their branch only changes what the sandboxed CI runs.
 
 ### Changed
 - **The session lifecycle has an explicit vocabulary and an enforced transition map (#1034).**
@@ -313,6 +340,10 @@ All notable changes to TangleClaw are documented in this file.
   ahead of `main` and clean working trees, re-checked at removal time rather than trusted from an
   earlier snapshot; their gitignored session state was archived first. Leaves 12 with unmerged
   commits untouched. Half of #1267's symptom, by hand — the mechanism is still owed.
+- **Archived the Train 13.5 build plan (#1327).** All three chunks shipped — #1314, #1245
+  (code-side per its scoping ruling) and #798 — so the plan is history rather than a pointer to
+  available work. Moved to `.tangleclaw/plans/archive/` rather than deleted: a shipped plan left
+  beside active ones makes a future session treat closed work as ready.
 
 ## [5.21.0] - 2026-09-06
 
