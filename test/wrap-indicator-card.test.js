@@ -86,7 +86,22 @@ describe('the card reports a running wrap from the run registry (#1034)', () => 
         runId: 'r1', running: true, sessionId: 7, startedAt: 1757200000000,
         currentStepId: 'ai-content', finishedAt: null, result: null
       });
-      assert.deepEqual(projects._wrapState('demo'), { step: 'ai-content', since: 1757200000000 });
+      assert.deepEqual(projects._wrapState('demo'),
+        { step: 'ai-content', since: 1757200000000, stale: false });
+    });
+
+    // #1314 — a run claimed and never settled. The registry reports it as
+    // `running: false, stale: true`, so the boolean stays the safe answer for
+    // every consumer that only asks whether a wrap is in progress; this
+    // projection is the one that has to keep the two apart.
+    it('reports a WEDGED run as stale rather than collapsing it into "no wrap"', () => {
+      projects._internal.wrapRun = () => ({
+        runId: 'r1', running: false, stale: true, sessionId: 7, startedAt: 1757200000000,
+        currentStepId: 'ai-content', finishedAt: null, result: null
+      });
+      assert.deepEqual(projects._wrapState('demo'),
+        { step: 'ai-content', since: 1757200000000, stale: true },
+        'the step it wedged ON is the most useful thing the card can say');
     });
 
     it('answers ESTABLISHED-absent as false, never as null', () => {
@@ -108,7 +123,7 @@ describe('the card reports a running wrap from the run registry (#1034)', () => 
       // on the pinwheel after the wrap ends — the acceptance criterion's second
       // half ("finishing it changes it back").
       projects._internal.wrapRun = () => ({
-        runId: 'r1', running: false, sessionId: 7, startedAt: 1757200000000,
+        runId: 'r1', running: false, stale: false, sessionId: 7, startedAt: 1757200000000,
         currentStepId: 'commit', finishedAt: 1757200500000, result: { ok: true }
       });
       assert.equal(projects._wrapState('demo'), false);
@@ -158,6 +173,7 @@ describe('the card reports a running wrap from the run registry (#1034)', () => 
         esc,
         tcSessionLiveness: globalThis.tcSessionLiveness,
         tcSessionWrapping: globalThis.tcSessionWrapping,
+        tcSessionWrapStale: globalThis.tcSessionWrapStale,
         tcSessionWrapStep: globalThis.tcSessionWrapStep,
         tcSessionRead: globalThis.tcSessionRead,
         degradedTooltip: (read) => esc(read.why || '')
@@ -200,6 +216,20 @@ describe('the card reports a running wrap from the run registry (#1034)', () => 
       const html = dot({ session: { active: true, wrapping: { step: null, since: 1 } } });
       assert.ok(classesOf(html).has('wrapping'));
       assert.match(html, /aria-label="Wrap running"/, 'no dangling separator when there is no step');
+    });
+
+    // #1314 — the wedged run. Before the registry applied its own staleness
+    // threshold to readers, this card spun forever; collapsing it into the
+    // plain active dot instead would have hidden the fault behind the most
+    // plausible reading there is.
+    it('renders a stalled, distinct dot for a wrap that was claimed and never settled', () => {
+      const html = dot({ session: { active: true, wrapping: { step: 'ai-content', since: 1, stale: true } } });
+      const classes = classesOf(html);
+      assert.ok(classes.has('wrap-stalled'), `expected the stalled dot, got: ${html}`);
+      assert.ok(!classes.has('wrapping'), 'a wedged run is not making progress; it must not spin');
+      assert.ok(!classes.has('active'), 'nor may it look like a session with nothing running');
+      assert.match(html, /aria-label="Wrap stalled — ai-content"/,
+        'the state and the step it wedged on are both in the accessible name');
     });
 
     it('fails OPEN when the wrap read could not be established', () => {
@@ -264,6 +294,7 @@ describe('the card reports a running wrap from the run registry (#1034)', () => 
         esc,
         tcSessionLiveness: globalThis.tcSessionLiveness,
         tcSessionWrapping: globalThis.tcSessionWrapping,
+        tcSessionWrapStale: globalThis.tcSessionWrapStale,
         tcSessionWrapStep: globalThis.tcSessionWrapStep,
         tcSessionRead: globalThis.tcSessionRead,
         degradedTooltip: (read) => esc(read.why || '')
@@ -435,10 +466,32 @@ describe('the card reports a running wrap from the run registry (#1034)', () => 
         esc,
         tcSessionLiveness: globalThis.tcSessionLiveness,
         tcSessionWrapping: globalThis.tcSessionWrapping,
+        tcSessionWrapStale: globalThis.tcSessionWrapStale,
         tcSessionWrapStep: globalThis.tcSessionWrapStep,
         tcSessionWrapElapsed: globalThis.tcSessionWrapElapsed,
         tcSessionRead: globalThis.tcSessionRead
       })(project);
+    });
+
+    it('says "Wrap stalled" in words, the one surface a touch operator can reach', () => {
+      // The dot's discriminator is colour plus the absence of motion, and both
+      // vanish under `prefers-reduced-motion`, in a screenshot, and for a
+      // colour-blind operator. This row is what actually carries the state.
+      const html = detail({ session: { active: true, startedAt: 'x', wrapping: { step: 'ai-content', since: Date.now() - 2_400_000, stale: true } } });
+      // The CLASS, not just the words: `.detail-unknown` is this codebase's
+      // vocabulary for a read that established nothing, and a wedged run is a
+      // known fault. Sharing it would restyle a wrap state whenever the
+      // degraded-read palette moves.
+      assert.match(html, /class="detail-wrap-stalled">Wrap stalled</);
+      assert.ok(!/detail-unknown/.test(html),
+        `a known fault must not borrow the unreadable-state class: ${html}`);
+      assert.match(html, /ai-content/, 'the step it wedged on');
+      // "started 40m ago", not "no progress for 40m": the number is the run's
+      // age, and the registry keeps no per-event timestamp, so the stronger
+      // claim would mis-date a wedge that happened a minute ago by 40 minutes.
+      assert.match(html, /started 40m ago/, 'and how old the run is — the fact actually available');
+      assert.ok(!/no progress for/.test(html), 'never a time-since-last-progress this cannot know');
+      assert.ok(!/>Wrapping</.test(html), `a wedged run must not claim to be wrapping: ${html}`);
     });
 
     it('names the step in the disclosure row, not only the tooltip', () => {

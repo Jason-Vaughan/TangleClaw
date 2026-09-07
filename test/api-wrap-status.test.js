@@ -121,6 +121,8 @@ describe('api wrap-run status + single-flight (#583)', () => {
         project: 'wrap-run-test',
         runId: null,
         running: false,
+        // An absent run is not a wedged one — `false`, never omitted.
+        stale: false,
         sessionId: null,
         startedAt: null,
         currentStepId: null,
@@ -202,6 +204,37 @@ describe('api wrap-run status + single-flight (#583)', () => {
     });
   });
 
+  // #1314 — the route re-types the registry payload by hand, so a field added
+  // to `get()` stops at the HTTP boundary unless someone remembers to copy it.
+  // That is how the reference came to document a `stale` nobody sent. Pinning
+  // the key SET (not just `stale`) is what makes the next added field fail
+  // here instead of silently going missing.
+  describe('GET /wrap/status forwards the registry payload whole', () => {
+    it('carries every field the registry reports, stale included', async () => {
+      const realNow = wrapRunRegistry._internal.now;
+      let fakeNow = realNow();
+      wrapRunRegistry._internal.now = () => fakeNow;
+      try {
+        wrapRunRegistry.begin('wrap-run-test', 1);
+        const live = await request(server, 'GET', '/api/sessions/wrap-run-test/wrap/status');
+        assert.deepEqual(Object.keys(live.body).sort(),
+          ['currentStepId', 'finishedAt', 'project', 'result', 'runId', 'running', 'sessionId', 'stale', 'startedAt'],
+          'the route\'s key set is the contract docs/configuration-reference.md describes');
+        assert.equal(live.body.running, true);
+        assert.equal(live.body.stale, false);
+
+        fakeNow += wrapRunRegistry.STALE_RUN_MS;
+        const wedged = await request(server, 'GET', '/api/sessions/wrap-run-test/wrap/status');
+        assert.equal(wedged.body.running, false, 'the safe boolean for any consumer that only asks that');
+        assert.equal(wedged.body.stale, true,
+          'and the reason, for the drawer that must not call this a dead run');
+      } finally {
+        wrapRunRegistry._internal.now = realNow;
+        wrapRunRegistry._resetForTests();
+      }
+    });
+  });
+
   describe('POST /api/server/restart — wrap guard', () => {
     it('refuses 409 WRAP_RESTART_BLOCKED while any wrap is running (guard precedes mechanism detection)', async () => {
       // Claim a run directly — the guard reads the registry, and this keeps
@@ -213,6 +246,33 @@ describe('api wrap-run status + single-flight (#583)', () => {
         assert.equal(res.body.code, 'WRAP_RESTART_BLOCKED');
         assert.match(res.body.error, /wrap-run-test/, 'refusal names the wrapping project');
       } finally {
+        wrapRunRegistry._resetForTests();
+      }
+    });
+
+    // #1314 — the reason this gate needed the registry's own staleness test.
+    // `STALE_RUN_MS` was applied by `begin` alone, so a pipeline promise that
+    // never settled left this route answering 409 for the life of the process:
+    // the operator, who is usually not at this machine, permanently lost the
+    // one restart control they have.
+    it('lets the restart through once the running wrap is wedged past STALE_RUN_MS', async () => {
+      const realNow = wrapRunRegistry._internal.now;
+      const realDetect = serverInfo.detectRestartMechanism;
+      let fakeNow = realNow();
+      wrapRunRegistry._internal.now = () => fakeNow;
+      serverInfo.detectRestartMechanism = () => null;
+      try {
+        wrapRunRegistry.begin('wrap-run-test', 1);
+        const blocked = await request(server, 'POST', '/api/server/restart', {});
+        assert.equal(blocked.status, 409, 'a live wrap still blocks — the guard is not disabled');
+
+        fakeNow += wrapRunRegistry.STALE_RUN_MS;
+        const res = await request(server, 'POST', '/api/server/restart', {});
+        assert.equal(res.status, 501,
+          'the wedged run no longer blocks: the request reached mechanism detection (stubbed null)');
+      } finally {
+        wrapRunRegistry._internal.now = realNow;
+        serverInfo.detectRestartMechanism = realDetect;
         wrapRunRegistry._resetForTests();
       }
     });

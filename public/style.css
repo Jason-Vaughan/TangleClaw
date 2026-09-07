@@ -1711,6 +1711,51 @@ body {
     transparent 315deg 360deg);
   animation: spin 1.4s linear infinite;
 }
+/* A wrap that was claimed and never settled (#1314). Same pinwheel geometry as
+   `.status-dot.wrapping`, so the row never reflows between the two, but amber
+   and stopped.
+
+   Stopped is the point. The running dot's comment notes that the blades are the
+   state and the spin is only emphasis — which is exactly what makes a frozen
+   pinwheel the honest glyph for a wrap that stopped moving. It carries no
+   `animation`, so it looks identical under `prefers-reduced-motion` and in a
+   screenshot, where the running dot is also still. That is why the detail row
+   spells out "Wrap stalled": between those two contexts and colour blindness,
+   the dot alone cannot be the only thing saying it.
+
+   `var(--warning)`, not a literal: the token is declared per theme precisely
+   because one hardcoded amber measured ~1.8:1 on the Light theme's white card,
+   under WCAG 1.4.11's 3:1 floor for a graphical object. On a collapsed card
+   this dot is the only signal of the fault, so it is the last place that can
+   afford to be the least perceivable thing on the row.
+
+   TWO blades, where the running dot has four. Hue and the absence of motion
+   cannot be the whole difference: motion is gone under
+   `prefers-reduced-motion` and in a screenshot, which leaves hue alone, and
+   this card's own `?` dot carries a glyph precisely so no state here rests on
+   colour. Halving the blades is the same move in the pinwheel's own vocabulary
+   — still unmistakably the wrap family, a different silhouette at 12px on a
+   phone, and legible to an operator who cannot separate amber from the
+   running dot's `--primary`. */
+.status-dot.wrap-stalled {
+  width: 12px;
+  height: 12px;
+  background: conic-gradient(
+    var(--warning) 0deg 45deg,
+    transparent 45deg 180deg,
+    var(--warning) 180deg 225deg,
+    transparent 225deg 360deg);
+}
+/* R-12: the wedged wrap's own label. `.detail-unknown` is this codebase's
+   vocabulary for a read that established NOTHING, and a wedged run is a known
+   fault — sharing the class would restyle a wrap state whenever the
+   degraded-read palette moves, and put a false hit in front of anyone grepping
+   for the unreadable-state surface. Same hue, its own name, following the
+   precedent `.detail-wrapping` set for the running case. */
+.detail-wrap-stalled {
+  color: var(--warning);
+  font-weight: 600;
+}
 /* The detail row's wrap label. Shares the muted-emphasis treatment the unknown
    row uses, because both are "this card is telling you something extra" rather
    than an error. */

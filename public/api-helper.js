@@ -1397,7 +1397,47 @@
   function tcSessionWrapping(project) {
     const session = project && project.session;
     if (!session) return false;
-    return Boolean(session.wrapping);
+    // A wedged run is NOT wrapping. It was claimed and never settled, so it is
+    // making no progress and the spinner would be claiming work that stopped
+    // (#1314). `tcSessionWrapStale` is where that case is answered.
+    return Boolean(session.wrapping) && !session.wrapping.stale;
+  }
+
+  /**
+   * Is this project's wrap wedged — claimed, never settled, past the registry's
+   * staleness threshold?
+   *
+   * Split from `tcSessionWrapping` rather than folded into it because the card
+   * has to tell them apart: a running wrap is work in progress and a wedged one
+   * is a fault. Collapsing the wedged case into "not wrapping" would hide it
+   * behind the most plausible reading there is.
+   *
+   * `wrapping === null` (the read failed) answers false here for the same
+   * reason it answers false there — the display fails OPEN.
+   *
+   * @param {object|null} project - An enriched project from `GET /api/projects`.
+   * @returns {boolean}
+   */
+  function tcSessionWrapStale(project) {
+    const session = project && project.session;
+    if (!session || !session.wrapping) return false;
+    return Boolean(session.wrapping.stale);
+  }
+
+  /**
+   * This project's wrap record whether it is running or wedged, else null.
+   *
+   * The step and elapsed helpers below both want it: an operator needs the step
+   * a wrap wedged ON and how long ago at least as much as they need the same
+   * facts about a healthy run.
+   *
+   * @param {object|null} project - An enriched project.
+   * @returns {object|null}
+   */
+  function tcSessionWrapRecord(project) {
+    const session = project && project.session;
+    if (!session || !session.wrapping) return null;
+    return session.wrapping;
   }
 
   /**
@@ -1410,8 +1450,8 @@
    * @returns {string|null}
    */
   function tcSessionWrapStep(project) {
-    if (!tcSessionWrapping(project)) return null;
-    return project.session.wrapping.step || null;
+    const record = tcSessionWrapRecord(project);
+    return (record && record.step) || null;
   }
 
   /**
@@ -1428,8 +1468,9 @@
    * @returns {string|null} e.g. `"4m"`, or null when there is no running wrap or no start.
    */
   function tcSessionWrapElapsed(project, now) {
-    if (!tcSessionWrapping(project)) return null;
-    const since = project.session.wrapping.since;
+    const record = tcSessionWrapRecord(project);
+    if (!record) return null;
+    const since = record.since;
     if (typeof since !== 'number' || !isFinite(since)) return null;
     const seconds = Math.floor(((typeof now === 'number' ? now : Date.now()) - since) / 1000);
     if (seconds < 0) return null;
@@ -2349,6 +2390,7 @@
   // would enlarge the global surface that every page carries for no consumer.
   global.tcSessionLiveness = tcSessionLiveness;
   global.tcSessionWrapping = tcSessionWrapping;
+  global.tcSessionWrapStale = tcSessionWrapStale;
   global.tcSessionWrapStep = tcSessionWrapStep;
   global.tcSessionWrapElapsed = tcSessionWrapElapsed;
   global.tcSessionRead = tcSessionRead;

@@ -301,6 +301,124 @@ describe('wrap-run-registry (#583)', () => {
     });
   });
 
+  // #1314 — STALE_RUN_MS was applied by `begin` alone. Every reader of
+  // `running` believed a wedged run forever, so one pipeline promise that
+  // never settled refused `POST /api/server/restart` permanently and stopped
+  // `lib/medusa-wake.js` nudging the project at all. These pin the readers
+  // against the same threshold `begin` has always used.
+  describe('a wedged run stops being believed by readers (#1314)', () => {
+    it('get reports a stale run as not running, and says so, keeping its identity', () => {
+      const claim = registry.begin('proj-a', 7);
+
+      fakeNow += registry.STALE_RUN_MS - 1;
+      const fresh = registry.get('proj-a');
+      assert.equal(fresh.running, true, 'just under the threshold it is still live');
+      assert.equal(fresh.stale, false);
+
+      fakeNow += 1;
+      const wedged = registry.get('proj-a');
+      assert.equal(wedged.running, false, 'at the threshold no reader should still believe it');
+      assert.equal(wedged.stale, true, 'and the reason is reported, not merely the absence');
+      // The record survives: a stale run is reported, never reaped. The card
+      // needs `startedAt` to say HOW long it has been wedged, and the stream
+      // route still resolves the run by id.
+      assert.equal(wedged.runId, claim.runId);
+      assert.equal(wedged.startedAt, 1_000_000);
+      assert.equal(wedged.sessionId, 7);
+    });
+
+    it('a finished run is not stale — settled and wedged are different answers', () => {
+      registry.begin('proj-a', 1);
+      finish('proj-a', { ok: true });
+      fakeNow += registry.STALE_RUN_MS * 2;
+      const status = registry.get('proj-a');
+      assert.equal(status.running, false);
+      assert.equal(status.stale, false, 'it finished; age is irrelevant');
+      assert.equal(status.result.ok, true);
+    });
+
+    it('anyRunning skips a wedged run so the restart gate stops refusing forever', () => {
+      registry.begin('proj-a', 1);
+      assert.equal(registry.anyRunning(), 'proj-a');
+      fakeNow += registry.STALE_RUN_MS;
+      assert.equal(registry.anyRunning(), null, 'server.js:979 must let the restart through');
+    });
+
+    it('anyRunning still names a live wrap when another project holds a wedged one', () => {
+      registry.begin('proj-wedged', 1);
+      fakeNow += registry.STALE_RUN_MS;
+      registry.begin('proj-live', 2);
+      // Insertion order puts the wedged project first, so a reader that stops
+      // at the first truthy `running` would answer with it.
+      assert.equal(registry.anyRunning(), 'proj-live');
+    });
+
+    it('subscribe closes a stream opened on a wedged run instead of hanging it', () => {
+      const claim = registry.begin('proj-a', 1);
+      emit('proj-a', { type: 'run-start', steps: [] });
+      fakeNow += registry.STALE_RUN_MS;
+
+      let ended = 0;
+      const sub = registry.subscribe('proj-a', claim.runId, {
+        onEvent: () => {},
+        onEnd: () => { ended += 1; }
+      });
+      assert.equal(sub.ok, true, 'the run still exists, so the id resolves');
+      assert.equal(sub.finished, true, 'a wedged run will never emit again — do not hold the client');
+      assert.deepEqual(sub.replay.map((ev) => ev.type), ['run-start', 'run-done'],
+        'it gets what the run emitted, then a terminal frame it never emitted itself');
+      // Synthesised, not appended: a read must not write to the log, and the
+      // run may still settle for real afterwards.
+      const terminal = sub.replay[1];
+      assert.equal(terminal.stale, true, 'the terminal frame says WHY the stream ended');
+      assert.equal(terminal.result, null, 'a wedged pipeline\'s outcome is what nobody knows');
+      assert.equal(terminal.seq, 2, 'numbered as the next event would have been');
+      assert.deepEqual(registry.get('proj-a').runId, claim.runId);
+
+      // No listener was registered: a late finish must not call back into a
+      // client that was already told the stream was over.
+      finish('proj-a', { ok: false });
+      assert.equal(ended, 0);
+    });
+
+    // The writers ask a DIFFERENT question from the readers. `run.running`
+    // means "has this run settled?"; staleness means "should a reader still
+    // believe it is in progress?". A wedged pipeline that finally completes
+    // must be able to record its outcome — dropping it would strand the run
+    // stale forever with no result.
+    it('the run\'s own pipeline can still finish it after it has gone stale', () => {
+      const claim = registry.begin('proj-a', 1);
+      fakeNow += registry.STALE_RUN_MS;
+      assert.equal(registry.get('proj-a').stale, true);
+
+      assert.equal(registry.finish('proj-a', claim.runId, { ok: true, tag: 'late' }), true,
+        'the owning pipeline settles its own run');
+      const status = registry.get('proj-a');
+      assert.equal(status.running, false);
+      assert.equal(status.stale, false, 'settled, so no longer wedged');
+      assert.equal(status.result.tag, 'late');
+    });
+
+    it('emit from the run\'s own pipeline still records after it has gone stale', () => {
+      const claim = registry.begin('proj-a', 1);
+      fakeNow += registry.STALE_RUN_MS;
+      const stored = registry.emit('proj-a', claim.runId, { type: 'step-done', stepId: 's1' });
+      assert.notEqual(stored, null, 'the record of what the run did is still worth keeping');
+      assert.equal(stored.seq, 1);
+    });
+
+    it('begin still takes over a wedged run — the behaviour that already worked is untouched', () => {
+      registry.begin('proj-a', 1);
+      fakeNow += registry.STALE_RUN_MS;
+      const takeover = registry.begin('proj-a', 2);
+      assert.equal(takeover.ok, true);
+      const status = registry.get('proj-a');
+      assert.equal(status.running, true, 'the takeover is live');
+      assert.equal(status.stale, false);
+      assert.equal(status.sessionId, 2);
+    });
+  });
+
   it('anyRunning names a project with a live wrap, null otherwise', () => {
     assert.equal(registry.anyRunning(), null);
     registry.begin('proj-a', 1);

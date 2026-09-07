@@ -194,8 +194,11 @@ Projects are displayed as compact cards. Each card shows:
   working tree could not be read, which is **not** the same as clean — hover or tap the badge for
   the reason
 - **Session indicator** — a green breathing dot when a session is active, nothing when there is no
-  session, and a `?` dot when TangleClaw could not reach tmux to find out. The three are
-  deliberately distinct: an unreadable state is never drawn as an absent one
+  session, and a `?` dot when TangleClaw could not reach tmux to find out. While a session wrap is
+  running the dot becomes a spinning pinwheel; if that wrap stops reporting, the pinwheel turns
+  amber and freezes, and the card's detail row names the step it stalled on. Every one of these is
+  deliberately distinct: an unreadable state is never drawn as an absent one, and a wrap that
+  stalled is never drawn as one that finished
 - **Unreadable badge** — a ⚠ marker when the project's own folder did not answer. Its git, engine
   and version details are missing rather than absent, and the badge carries the reason and, where
   there is one, the remedy

@@ -279,6 +279,24 @@ function renderStatusDot(project) {
     return `<span class="status-dot wrapping" role="img"`
       + ` aria-label="Wrap running${stepText}" title="Wrap running${stepText}"></span>`;
   }
+  // A wrap that was claimed and never settled (#1314). Gated on `live` like the
+  // running case above, and deliberately so even though a wrap pipeline lives
+  // in the server process and outlives its pane: when tmux says the session is
+  // gone, "No active session" is the more urgent fact, and a card cannot lead
+  // with two. The payload still carries `stale` for a reader that wants both.
+  //
+  // The same pinwheel, stopped: the blades already carry "a wrap" without the spin, so freezing
+  // them says the wrap stopped moving in the one visual the operator already
+  // reads that way. Colour is not doing the work alone — the detail row below
+  // names it in words, which is also the only one of the two a touch operator
+  // can reach.
+  if (liveness === 'live' && tcSessionWrapStale(project)) {
+    const step = tcSessionWrapStep(project);
+    const stepText = step ? ` — ${esc(step)}` : '';
+    const label = `Wrap stalled${stepText}`;
+    return `<span class="status-dot wrap-stalled" role="img"`
+      + ` aria-label="${label}" title="${label}"></span>`;
+  }
   if (liveness === 'live') {
     return `<span class="status-dot active" title="Session active"></span>`;
   }
@@ -473,7 +491,7 @@ function renderArchivedCard(project) {
  * The Session row's value in the card detail.
  *
  * Pure, and separate from `toggleCardDetail`, because that function reaches for
- * the DOM and this is the part with three outcomes worth testing directly.
+ * the DOM and this is the part with the outcomes worth testing directly.
  *
  * @param {object} project - Project data.
  * @returns {string} HTML for the detail value.
@@ -492,6 +510,21 @@ function renderSessionDetail(project) {
       return `<span class="detail-wrapping">Wrapping</span>`
         + (step ? ` — ${esc(step)}` : '')
         + (elapsed ? ` <span class="detail-remedy">${esc(elapsed)}</span>` : '');
+    }
+    // The wedged case says so in words. This row is the one surface with room
+    // to explain, and the one a touch operator can reach at all — so it, not
+    // the dot's tooltip, is what has to carry "this stopped" (#1314).
+    if (tcSessionWrapStale(project)) {
+      const step = tcSessionWrapStep(project);
+      const elapsed = tcSessionWrapElapsed(project);
+      // "started Nm ago", not "no progress for Nm": the number is the run's age
+      // from `startedAt`, and the registry stores no per-event timestamp, so
+      // time-since-last-progress is not a fact available here. A run that
+      // emitted at minute 39 and wedged a minute ago would have mis-dated the
+      // wedge by 40 minutes and sent triage after the wrong cause.
+      return `<span class="detail-wrap-stalled">Wrap stalled</span>`
+        + (step ? ` — ${esc(step)}` : '')
+        + (elapsed ? ` <span class="detail-remedy">started ${esc(elapsed)} ago</span>` : '');
     }
     return `Active since ${esc(project.session.startedAt || '')}`;
   }

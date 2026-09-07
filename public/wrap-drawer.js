@@ -884,15 +884,28 @@
    *   - `'watch'`  — a pipeline is running; poll it to completion.
    *   - `'render'` — a run finished at/after the caller's POST went out;
    *     its retained result IS this wrap's outcome — render the drawer.
+   *   - `'stalled'` — the run was claimed and never settled: the registry
+   *     stopped calling it live, but it was not observed to end and no
+   *     result was retained. Distinct from `'error'` because the outcome is
+   *     UNKNOWN rather than absent — see below.
    *   - `'error'`  — nothing to reattach to (no run, or only a STALE
    *     result from some previous wrap — which must never render as this
    *     one's). Caller falls back to its own error UI.
    *
+   * The `'stalled'` branch exists because the alternative is a false claim.
+   * Folded into `'error'`, a wedged run reaches the caller's restart notice —
+   * "its commit step never ran, so nothing was committed. It is safe to start
+   * a new wrap" — and not one of those statements is established here. The
+   * registry's threshold is a generous multiple of the worst observed pipeline
+   * wall-time, not a proof of death, so the reachable case is a genuinely slow
+   * wrap watched past it: the pipeline may be mid-`commit` while the operator
+   * is being invited to start a second one (#1314).
+   *
    * @param {object|null} status - `GET /wrap/status` body
-   *   (`{running, finishedAt, result, …}`), or null on a failed fetch.
+   *   (`{running, stale, finishedAt, result, …}`), or null on a failed fetch.
    * @param {number} postStartedAtMs - Epoch ms when the caller's wrap POST
    *   went out — the freshness gate for a finished result.
-   * @returns {'watch'|'render'|'error'}
+   * @returns {'watch'|'render'|'stalled'|'error'}
    */
   function wrapWatchDecision(status, postStartedAtMs) {
     if (!status || typeof status !== 'object') return 'error';
@@ -905,6 +918,9 @@
     ) {
       return 'render';
     }
+    // Checked AFTER the fresh-result gate: a run that went stale and then
+    // settled for real has an outcome, and the outcome is the better answer.
+    if (status.stale === true) return 'stalled';
     return 'error';
   }
 
