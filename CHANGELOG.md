@@ -164,6 +164,11 @@ All notable changes to TangleClaw are documented in this file.
   choice that no longer exists. Separately, `_transitionSession` briefly carried a guard against
   `status IN ()` being a SQLite syntax error — it is not one, SQLite reads it as the empty set, so
   the guard mutated green and was replaced by a comment recording what was actually verified.
+- **The `ses-5w9d` wrapping-ruling plan is archived (#1319).** All three chunks shipped and #1034
+  closed with the last of them, so the plan moved to `.tangleclaw/plans/archive/`. Moved rather
+  than deleted: its Requirements Confidence section rebuts three of #1034's own load-bearing
+  claims, and the issue text is what a later reader finds first.
+
 ## [5.21.0] - 2026-09-06
 
 ### Added
