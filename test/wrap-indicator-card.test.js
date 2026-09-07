@@ -322,8 +322,13 @@ describe('the card reports a running wrap from the run registry (#1034)', () => 
     // NONE of them notices if `enrichProject` stops handing the wrap state to
     // the projection. That is this chunk's own failure mode one frame upstream:
     // the payload builder stays perfect and the field silently goes undefined.
-    // Source-checked rather than executed because `enrichProject` needs a live
-    // store, tmux and the scanner child; the property here is small and exact.
+    // Source-checked rather than executed. NOT because `enrichProject` is hard
+    // to run — `test/projects.test.js` and `test/engine-error-surface.test.js`
+    // both execute it against a live store with injected tmux names. It is
+    // checked as text because the property is "the argument is passed at all",
+    // which an execution test can only observe THROUGH a fixture whose registry
+    // is stubbed — and a stub that answers `false` renders identically whether
+    // the argument arrived or not. The text is what distinguishes them.
     const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'projects.js'), 'utf8');
     const body = (decl) => {
       const start = src.indexOf(decl);
@@ -375,6 +380,46 @@ describe('the card reports a running wrap from the run registry (#1034)', () => 
     it('style.css defines the detail row label too', () => {
       const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
       assert.match(css, /\.detail-wrapping\s*\{/);
+    });
+
+    it('every class the dot can emit has a rule — roster DERIVED, not listed', () => {
+      // One call site is not the family. Pinning `.status-dot.wrapping` alone
+      // closes today's instance and lets the next state ship unstyled, so the
+      // roster comes from what `renderStatusDot` actually emits rather than
+      // from a list written here that would go stale the moment a fifth state
+      // arrives. `status-dot` itself is the base class and is expected.
+      const uiSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+      const start = uiSrc.indexOf('function renderStatusDot(project)');
+      assert.notEqual(start, -1);
+      const open = uiSrc.indexOf('{', start);
+      let depth = 0;
+      let body = '';
+      for (let i = open; i < uiSrc.length; i++) {
+        if (uiSrc[i] === '{') depth++;
+        else if (uiSrc[i] === '}' && --depth === 0) { body = uiSrc.slice(open, i + 1); break; }
+      }
+      const emitted = new Set();
+      // The lookahead matters: without it `class="status-dot-glyph"` also matches
+      // and yields a phantom `-glyph` modifier. The glyph is a CHILD span, not a
+      // state of the dot. Caught by this guard failing on its own first run,
+      // which is the only reason it is written down here.
+      for (const m of body.matchAll(/class="status-dot(?=[\s"])([^"]*)"/g)) {
+        for (const cls of m[1].split(/\s+/).filter(Boolean)) emitted.add(cls);
+      }
+      assert.ok(emitted.size >= 2, `expected modifier classes, derived: ${[...emitted]}`);
+
+      const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+      for (const cls of emitted) {
+        assert.match(css, new RegExp(`\\.status-dot\\.${cls}\\s*\\{`),
+          `renderStatusDot emits .status-dot.${cls} and style.css has no rule for it`);
+      }
+    });
+
+    it('the keyframes the pinwheel animates with actually exist', () => {
+      // `animation: spin` naming a keyframes block that no longer exists is a
+      // silent no-op: the dot renders, and simply never turns.
+      const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+      assert.match(css, /@keyframes\s+spin\s*\{/, 'the spin keyframes must exist');
     });
   });
 
