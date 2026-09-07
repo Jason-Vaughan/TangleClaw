@@ -10,14 +10,29 @@ However, relying on a single AI session or operator to audit the raw text diff l
 
 ## Decision
 We establish a **Dual-Key (Two-Person) Review** mechanism for all untrusted external PRs.
-1. **The Coordinator (Macro Filter):** The Coordinator session performs the initial security audit exclusively via raw text diffs (`gh pr diff`). It explicitly checks for and rejects:
-   - Modifications to `package.json` or lockfiles.
-   - Any edits to `data/hooks/`, `hooks/`, `scripts/`, `deploy/`, `.github/workflows/` (execute-on-our-machine category).
-   - Any edits to `public/**` or `server.js` (live-serving surface).
-   - Obfuscated or base64 payloads, dynamic require/eval, and hidden network requests.
-   - Scope overrun (files unrelated to the fix, however innocuous).
+1. **The Coordinator (Macro Filter):** The Coordinator session performs the initial security audit exclusively via raw text diffs (`gh pr diff`). It rejects on four **categories**, stated as categories because each repository's paths differ — a repo adopting this ADR enumerates its own and does not inherit the list below:
+   - **Dependency manifest** — any change to a manifest or lockfile.
+   - **Execute-on-our-machine** — any file that runs on a maintainer's host or in CI without anyone choosing to run it.
+   - **Live-serving surface** — any file served or executed by the running product.
+   - **Payload and reach** — obfuscated or base64 content, dynamic `require`/`eval`, any outbound network call.
+
+   Plus **scope overrun**: files unrelated to the fix, however innocuous.
+
+   In **this** repository those categories resolve to: `package.json` and lockfiles; `data/hooks/`, `hooks/`, `scripts/`, `deploy/`, `.github/workflows/`; and `public/**` and `server.js` — the last because this clone *is* the live install, which is a property of this deployment and not a general rule. **A repo that mirrors these literal paths instead of re-deriving them gets a checklist that reads as authoritative while naming files it does not have.**
 2. **The Builder (Micro Filter):** If the PR clears the Coordinator's macro audit, the Coordinator passes the PR details to the Builder via Medusa. The Builder performs a secondary independent raw-text audit, focusing on logical soundness, regressions, and subtle implementation flaws.
-3. **Execution:** Only when both sessions have passed the PR does the Builder proceed to manually reconstruct the logic on a clean branch off `main`, crediting the contributor. **Note: Running the test suite on an untrusted branch is an execution vector. Maintainers must never checkout the branch to "just run the tests".**
+3. **Execution:** Only when both sessions have passed the PR does the Builder reconstruct, on a clean branch off `main`.
+
+   **Reconstruct from the ISSUE, not from their diff.** This is the difference between a clean room and laundering, and it is the step most easily skipped because transcription is faster and looks identical in the final diff. Re-derive the fix from the requirement — the issue text, the code, the artifacts — and consult their diff only to confirm the audit already performed, never as the source. Two things fall out of doing it properly, both observed on this ADR's first application (#1287 / PR #1334):
+   - **Their flaws do not become ours.** An independently written validator contained a clause that a mutation proved *dead*; it was deleted. A transcription would have shipped it, with our name on it.
+   - **The requirement is larger than their patch, and you find out.** The issue asked that a second code path be checked; the contributor's diff did not touch it. Deriving from the issue surfaced it (filed as #1338). Transcription cannot surface what the diff omits.
+
+   **The reconstruction matches the reviewed scope.** Anything else found while doing it is FILED, not bundled: the two filters passed a specific change, and shipping more under that label means shipping scope nobody reviewed.
+
+   **The reconstruction is new code and earns its own review.** A dual-key pass answers "safe to read, logic sound" — not "this ships". It goes through the repository's normal gates (tests, Critic, PR) exactly as if no contributor existed, because with respect to authorship none did.
+
+   **Running the test suite on an untrusted branch is an execution vector.** A contributor's added test file executes under `node --test`. Never check out their branch to "just run the tests" — the suite runs against the reconstruction, on our own branch.
+
+   **Credit is explicit and uses the repository's own conventions.** In this repo: a `Reported-by:` trailer naming the contributor and their profile, a named credit line in the `CHANGELOG.md` entry, and a link to their PR in the reconstruction's PR body. **Do not reach for `Co-Authored-By`** — `project-preferences.md` forbids attribution trailers by default, and it would also misstate what happened: they authored the analysis, not these bytes.
 4. **Closure:** Once the reconstruction is merged, the Operator holds the authority to reply to, label, or close the original PR.
 
 ## Communication With the Contributor
@@ -51,4 +66,5 @@ is not.
 ## Consequences
 - **Positive:** Dramatically reduces the surface area for supply-chain attacks, obfuscation, or logic bombs making it into the codebase. Enforces the Swarm Protocol's division of concerns.
 - **Negative:** Adds a mandatory Medusa round-trip to the PR processing workflow, marginally increasing cycle time for external contributions.
+- **Negative:** reconstructing from the issue rather than transcribing costs real time — it is a second implementation of a solved problem, and the Builder must resist a correct answer sitting in front of them. That cost is the mechanism, not overhead on it: transcription produces a diff that looks identical and carries none of the guarantee.
 - **Negative, and accepted knowingly:** a contributor whose sound patch is reconstructed rather than merged loses the commit attribution they would get in an ordinary project, keeping only the credit we write. That cost is real and falls on the person who did nothing wrong. It is accepted because the alternative is executing unreviewed code on a machine that serves the operator's live install.
