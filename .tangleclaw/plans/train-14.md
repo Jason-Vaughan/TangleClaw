@@ -93,13 +93,12 @@ fire in one direction.
   type intact indefinitely, which is what the issue asks for; a TTL does the opposite. The
   precedent also brings its own test seam and JSDoc-rationale shape, so the chunk reuses a
   reviewed pattern rather than inventing a third one.
-- [ASSUMPTION: the first application of that cap does NOT retroactively purge this install's
-  existing history in one boot | HIGH impact | user can override at Chunk 02]. A trim-to-cap on
-  the next insert would delete ~1,600 real `port.leased` rows from the operator's live database
-  the first time the policy runs — and this repo IS the live install
-  ([[project_repo_is_the_live_install]]), so the plan's own execution triggers it. Chunk 02 owes
-  an explicit decision on convergence, and Chunk 01's norm (a sweep that deletes says what it
-  displaced) binds it.
+- ~~[ASSUMPTION: the first application of that cap does NOT retroactively purge this install's
+  existing history in one boot | HIGH impact | user can override at Chunk 02]~~ **OVERRIDDEN by
+  the operator at Chunk 02, 2026-09-07: it DOES purge, by decision.** The assumption was written
+  to force the question, and the answer went the other way — trim-to-cap on the first insert of
+  each over-cap type, ~2,363 rows on this install, reported. The reasoning and the two rejected
+  alternatives are the `[DECISION: ...]` in Chunk 02; that entry is the authority, not this line.
 - [ASSUMPTION: #1108's drain half applies to `type:"system"` broadcasts only | MED impact | user
   can correct at Chunk 04]. A peer-blocking message must never auto-drain — the switchboard's own
   rule is that the initiator closes the loop ([[feedback_initiator_closes_loop_with_ack]]), so
@@ -121,7 +120,7 @@ decisions surfaced at the chunk that acts on them, not unknowns.
 ## Status
 
 - [x] Chunk 01: The boot sweep says what it displaced (#692)
-- [ ] Chunk 02: The activity log is bounded without losing the rare row (#869)
+- [x] Chunk 02: The activity log is bounded without losing the rare row (#869)
 - [x] Chunk 03: A durable failure is logged when it changes, not when it repeats (#956)
 - [ ] Chunk 04: One broadcast per reader per quiet period, and a drain for what nobody reads (#1108)
 - [ ] Chunk 05: The cache-bump guard fires on the next miss, not the last one (#625)
@@ -131,11 +130,18 @@ decisions surfaced at the chunk that acts on them, not unknowns.
 (1 blocking, 8 warning, 10 note across three reviewers; 11 fixed in one pass, 8 accepted), then
 `rev-20260906T205118Z-54a31b64` verifying 9 of 9 resolved with none new.
 
-**TRAIN PAUSED AFTER THIS CHUNK.** The roadmap coordinator objected that the board's
-`Currently Executing` block holds Discovery Spike #1034, and the operator ruled for the Spike on
-2026-09-06. Chunks 02-06 resume after it. Nothing in this train is technically blocked by the
-Spike — checked per car, none touches session status — so the pause is about context cost, not a
-dependency.
+**The pause is lifted.** Discovery Spike #1034 — the reason chunks 02-06 waited — is CLOSED,
+verified 2026-09-07 before Chunk 02 resumed.
+
+**Chunk 02 shipped in two parts, and the split is worth knowing about.** The implementation was
+written into this session's worktree by a subagent of the TangleClaw-Coordinator session, which
+committed it and merged PR #1330 (`2e17646`) with no Critic review and no CHANGELOG entry. Its
+design is sound and is what the operator ratified; its report path was not — it reported every
+prune rather than only a converged one, which at steady state doubles the table's write rate and
+lets `activity.pruned` prune itself. Corrected in a follow-up PR rather than reverted, because the
+design was right and the history is more honest kept than squashed. The cross-session write is
+filed as #1332; the sibling-table finding this chunk owed is a comment on #869, and the one table
+that shares the defect class is #1331.
 
 **The lesson Chunk 01 paid for, and Chunk 02 inherits.** Its own commit message claimed the
 family sweep was complete because `release()` "already warns" on a forced cross-project release.
@@ -270,11 +276,28 @@ retrofitting its audit line second.
   a mechanical rule a future event type can be classified by, not a hand-written list that the
   next `activity.log` call site silently falls outside of ([[feedback_verify_mechanism_uniformity]]).
 
-  **Convergence decision, owed explicitly.** This repo is the live install, so the first insert
-  after this ships prunes the operator's real table. Trim-to-cap deletes ~1,600 `port.leased`
-  rows in one statement; the alternatives (a higher initial cap, or a bounded trim per insert
-  that converges over days) trade promptness for the operator's ability to see it happen. Chunk
-  01's norm binds whichever is chosen: the first prune says what it displaced.
+  **Convergence decision, owed explicitly — SETTLED (operator, 2026-09-07).**
+
+  [DECISION: the cap is 500 per `event_type`, trimmed to cap on the first insert of each type
+  after this ships, and a prune reports when it removes MORE THAN ONE row | a per-type cap needs
+  no exemption list, because eviction cannot cross a type boundary — rarity exempts itself and a
+  new event type is bounded on its first insert with nothing to maintain; and one row is exactly
+  the steady state, since the insert that triggered the trim put its type one over the cap, so
+  ">1" is the converged case and nothing else. Reporting every trim was measured on a probe and
+  is self-defeating: 12 inserts at cap 3 produced ~15 WARN lines, wrote a second row per insert
+  (doubling the write rate of the table the policy exists to bound), and made `activity.pruned`
+  the churniest type in the table, where it was observed pruning itself and so destroying the
+  audit record it exists to keep | operator chose this over a higher initial cap (defers the
+  issue: the table stays at 6,046 and the ceiling rises to ~85k) and over a bounded per-insert
+  trim converging over days (deletes the same rows more slowly, adds machinery, and only helps
+  someone who happens to be watching the log)]
+
+  **This supersedes the HIGH-impact assumption in Requirements Confidence** that the first
+  application would NOT retroactively purge existing history. It does purge, deliberately: on
+  this install ~2,363 rows across the four types over cap, once. The rows are March–September
+  lease churn with no consumer; the forensic types are untouched by construction. Chunk 01's norm
+  is met by the report, which names the type, the count, and `retainedFrom` — the history horizon
+  the sweep left behind, not merely how much it destroyed.
 
   **Scope, stated because the issue invites widening.** #869 says "include `sessions`/`eval_*`
   growth in the same pass if they share the problem." Measured: `eval_exchanges` and
@@ -286,8 +309,15 @@ retrofitting its audit line second.
   (the Master-footprint trap); the seam makes the cap testable without writing thousands of rows.
   The mutation that must go red: remove the exemption and the forensic-type assertion fails.
 - **Acceptance criteria:** `activity_log` growth is bounded per event type; every type classified
-  as forensic survives an insert volume that would evict a churny one; the first prune on a real
-  table is reported, not silent.
+  as forensic survives an insert volume that would evict a churny one; a **convergence** prune on
+  a real table is reported, not silent.
+
+  *(That last criterion originally read "the first prune". Restated when the chunk shipped,
+  because the threshold that makes the report useful — report above one row, since one is exactly
+  the steady state — has a knowable blind spot the universal wording denied: a type sitting at
+  exactly cap+1 when the policy first applies converges silently. The cost is one deleted row of
+  501 that nobody is looking for, which is a better trade than a report on every insert; the
+  criterion now says what the code does.)*
 - **Done when:**
   1. Acceptance criteria met and tests pass
   2. The `sessions` / `medusa_deliveries` / `eval_*` finding is written down — on #869 or as its

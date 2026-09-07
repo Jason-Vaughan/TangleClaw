@@ -5,6 +5,29 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Added
+- **`activity_log` is bounded per event type, so the rare forensic row is never the one deleted
+  (#869).** The table was append-only with no TTL, no cap and no vacuum — 6,046 rows spanning
+  2026-03-14 to 2026-09-07 on this install, growing for the life of the install. The measured
+  distribution is what chose the instrument: `port.leased` alone is 2,167 rows (36%), while
+  `wrap.auto_pr` — the type that exists so a stale record can explain a branch nobody looked at
+  for five days — is 45. A time-based TTL deletes the second and keeps the first, which is
+  backwards. A **per-`event_type` cap of 500, trimmed on insert**, does the opposite, and it needs
+  no exemption list to do it: because eviction never crosses a type boundary, a rare type cannot
+  be evicted by a churny one, and a brand-new event type is bounded on its first insert with
+  nothing for anyone to maintain. Rarity exempts itself. Keyed on `event_type` and never
+  `project_id`, because every `port.leased` and `port.released` row carries a NULL `project_id` —
+  a project-keyed prune would leave the single largest type entirely unbounded, the case
+  `_pruneSessionRuleDeliveries` documents itself as not covering.
+  A sweep that deletes says what it displaced, so a prune that removes **more than one** row logs
+  it and records an `activity.pruned` row naming the type, the count and the history horizon it
+  left behind. The threshold is the load-bearing part rather than a tuning knob: a steady-state
+  trim removes exactly one row (the insert just put the type one over its cap), so reporting
+  every trim would write a second row per insert — doubling the table's write rate, emitting one
+  warning per insert, and making `activity.pruned` the churniest type in the table, where it
+  would rotate at its own cap and evict the convergence record it exists to keep. Above one means
+  a backlog converged, which is the only case that deletes history an operator might be looking
+  for. On this install the first insert of each churny type trims ~2,363 rows in total, once, and
+  says so.
 - **A wrapping project's card now says so, with a spinning pinwheel (#1034).** For three and a
   half months a wrap taking minutes looked exactly like an ordinary active session. The server
   had a branch for it — `_liveSession` set a `status` field — but no frontend ever read that
