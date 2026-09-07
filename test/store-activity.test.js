@@ -268,6 +268,25 @@ describe('store.activity', () => {
       );
     });
 
+    it('still warns when the report type itself converges, so no sweep is unnamed', () => {
+      // Only the recursive ROW is suppressed for this type. Suppressing the
+      // warning too would make the audit type the one deletion nothing records
+      // — the single exemption from Chunk 01's norm, in the type that exists to
+      // uphold it.
+      store._setActivityLogRetention(0);
+      for (let i = 0; i < 6; i++) {
+        store.activity.log({ eventType: store.ACTIVITY_PRUNE_EVENT, detail: { i } });
+      }
+
+      store._setActivityLogRetention(2);
+      const warnings = captureLogs(() => {
+        store.activity.log({ eventType: store.ACTIVITY_PRUNE_EVENT, detail: { i: 'trigger' } });
+      });
+
+      assert.equal(warnings.length, 1, 'its own convergence is warned like any other type');
+      assert.match(warnings[0], /activity\.pruned/, 'and the warning names it');
+    });
+
     it('names the failing step when a write fails, so a broken prune is detectable', () => {
       // The catch swallows deliberately — activity logging must not break its
       // caller — which makes the log line the only evidence. A prune throwing on

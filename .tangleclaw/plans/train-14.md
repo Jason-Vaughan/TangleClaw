@@ -309,8 +309,15 @@ retrofitting its audit line second.
   (the Master-footprint trap); the seam makes the cap testable without writing thousands of rows.
   The mutation that must go red: remove the exemption and the forensic-type assertion fails.
 - **Acceptance criteria:** `activity_log` growth is bounded per event type; every type classified
-  as forensic survives an insert volume that would evict a churny one; the first prune on a real
-  table is reported, not silent.
+  as forensic survives an insert volume that would evict a churny one; a **convergence** prune on
+  a real table is reported, not silent.
+
+  *(That last criterion originally read "the first prune". Restated when the chunk shipped,
+  because the threshold that makes the report useful — report above one row, since one is exactly
+  the steady state — has a knowable blind spot the universal wording denied: a type sitting at
+  exactly cap+1 when the policy first applies converges silently. The cost is one deleted row of
+  501 that nobody is looking for, which is a better trade than a report on every insert; the
+  criterion now says what the code does.)*
 - **Done when:**
   1. Acceptance criteria met and tests pass
   2. The `sessions` / `medusa_deliveries` / `eval_*` finding is written down — on #869 or as its
