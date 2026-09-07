@@ -1421,17 +1421,27 @@ describe('projects', () => {
     });
 
     it('accepts the quickCommands shape the product ships as its default', async () => {
-      // Built from `lib/store.js`'s own default rather than retyped, so the
-      // validator is measured against what this product actually stores. Extra
-      // keys are permitted deliberately — #1287 leaves per-element rules open,
-      // and refusing unknown keys would decide that question by omission.
+      // READ from `store.DEFAULT_CONFIG` rather than retyped, so this is measured
+      // against what the product actually ships: a retyped literal agrees with
+      // the default until someone changes the default, which is exactly when a
+      // shape guard should have spoken up.
+      //
+      // That default is the GLOBAL config's — the per-project field's own default
+      // is `[]` (`lib/project-config.js`), which pins no shape. Naming which one
+      // this comes from matters here, because the two `quickCommands` being
+      // different fields is what #1287 got wrong.
+      const shipped = store.DEFAULT_CONFIG.quickCommands;
+      assert.ok(Array.isArray(shipped) && shipped.length > 0,
+        'the fixture is only meaningful if the shipped default has entries');
+
       const result = await projects.updateProject('new-project', {
-        quickCommands: [
-          { label: 'git status', command: 'git status' },
-          { label: 'ls', command: 'ls -la', icon: 'folder' }
-        ]
+        // Plus one carrying an extra key: #1287 leaves per-element rules open, so
+        // unknown keys are permitted deliberately — refusing them would decide
+        // that question by omission.
+        quickCommands: [...shipped, { label: 'ls', command: 'ls -la', icon: 'folder' }]
       });
       assert.ok(result.project, 'a real quickCommands array is accepted');
+      assert.equal(result.project ? null : result.errors[0], null);
     });
 
     it('rejects core rule disabling', async () => {
