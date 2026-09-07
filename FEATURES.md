@@ -218,6 +218,8 @@ fails any auto-stub section older than 14 days.
 - **Security policy** — how to report a vulnerability in TangleClaw responsibly, and what is in scope. `SECURITY.md`.
 - **Update-beacon restart verification** — integration check for #954 / #955 driven against real parts instead of stubs: a real git binary and a real bare repo standing in for origin (so `git ls-remote --tags` genuinely runs), the real `lib/update-checker.js` including its throttle, single-flight and cache, a real HTTP server carrying the real route bodies, and real `fetch`. `scripts/verify-update-beacon-restart.js`.
 - **Wrap-step shell runner** — the child-process runners shared by every wrap step that executes a command. Consolidated from byte-identical copies that had spread across `test.js`, `lint.js`, `commit.js`, `pr-merge.js`, `pr-check.js` and `continuity-write.js`, each carrying the same dead timeout branch (#894) — a defect in a duplicated function is a defect per duplicate, and the missed one is the copy nobody was looking at. `lib/wrap-steps/_exec-shell.js`.
+- **Backlog label-triage scripts** (one-off, not a maintained mechanism) — batches of `gh issue edit --add-label` that applied the `kind:` / `impact:` / `effort:` / `stage:` / `area:` / `source:` taxonomy to a named set of issues during a triage pass. Hand-written for one sweep and kept as a record of what was labelled and why, not as a tool to re-run: the issue numbers are hard-coded and the labels are already applied, so a re-run is a no-op at best. The taxonomy itself is the durable part — reuse the label vocabulary, not the scripts. `tag_issues.sh` (10 issues, the fuller pass including `area:` labels).
+- **Backlog label-triage, second pass** — a narrower re-run over four issues from the pass above (#1009, #992, #984, #979), dropping `area:` on three of them. Superseded by the first script for every issue it touches except where the narrower label set was deliberate; read both before inferring what an issue's labels were meant to be. `tag_issues_2.sh`.
 
 ## Tests
 
@@ -368,8 +370,3 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
   `wrapping` / `wrapFinished` / `wrapCompleted` poll branches. Those branches are dead now that
   the status vocabulary has retired `wrapping` (#1034), but `public/session.js` still carries them
   for a server that has not restarted; the test retires **with** them under #1302, never before.
-
-## TODO (auto-stubbed 2026-09-06)
-
-- **TBD** — touched in this session: `tag_issues.sh`. <!-- describe -->
-- **TBD** — touched in this session: `tag_issues_2.sh`. <!-- describe -->
