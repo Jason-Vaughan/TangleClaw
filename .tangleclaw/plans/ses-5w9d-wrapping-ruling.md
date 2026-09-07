@@ -164,7 +164,7 @@ that something was happening.
 ## Status
 
 - [x] Chunk 01: The status vocabulary is explicit, and `wrapping` is not in it (#1034)
-- [ ] Chunk 02: The dashboard says a session is wrapping again, sourced from the run registry (#1034)
+- [x] Chunk 02: The dashboard says a session is wrapping again, sourced from the run registry (#1034)
 - [ ] Chunk 03: The vestigial `V2` designators are retired (#1034)
 
 Context: Ruling made 2026-09-06 by the operator, as a gate between Train 13 and Train 14 — the
