@@ -271,18 +271,27 @@ function git(args, repo, opts = {}) {
 /**
  * Parse argv into options.
  *
+ * A flag present but EMPTY is an error, never a skip. The workflow passes the
+ * base through `$BASE_SHA`, so an expression that resolved to nothing would
+ * otherwise reach the "no base given" branch and report a clean skip — a guard
+ * that reads as caution while doing nothing, on the one event it exists for.
+ * Absent and empty are different states and only the first is legitimate.
+ *
  * @param {string[]} argv - Arguments after the script name.
  * @returns {{base: string|null, head: string, repo: string}}
+ * @throws {Error} On an unrecognized flag, or one whose value is missing or empty.
  */
 function parseArgs(argv) {
   const opts = { base: null, head: 'HEAD', repo: process.cwd() };
+  const takesValue = { '--base': 'base', '--head': 'head', '--repo': 'repo' };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
+    const key = takesValue[flag];
+    if (!key) throw new Error(`unrecognized argument '${flag}'`);
     const value = argv[i + 1];
-    if (flag === '--base') { opts.base = value; i += 1; } else if (flag === '--head') { opts.head = value; i += 1; } else if (flag === '--repo') { opts.repo = value; i += 1; } else {
-      process.stderr.write(`cache-bump-guard: unrecognized argument '${flag}'\n`);
-      process.exit(1);
-    }
+    if (!value) throw new Error(`${flag} needs a non-empty value`);
+    opts[key] = value;
+    i += 1;
   }
   return opts;
 }
@@ -294,7 +303,14 @@ function parseArgs(argv) {
  * @returns {number} Process exit code.
  */
 function main(argv) {
-  const { base, head, repo } = parseArgs(argv);
+  let opts;
+  try {
+    opts = parseArgs(argv);
+  } catch (err) {
+    process.stderr.write(`cache-bump-guard: ${err.message}\n`);
+    return 1;
+  }
+  const { base, head, repo } = opts;
 
   // No base is a legitimate state, not a failure: a push to a branch with no
   // pull request has nothing to be a diff against. Say so — a check that goes

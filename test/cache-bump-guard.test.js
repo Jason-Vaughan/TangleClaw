@@ -284,6 +284,21 @@ describe('cache-bump-guard: the CLI over a real git repository', () => {
     }
   });
 
+  it('exits 1 on an EMPTY --base, rather than reporting a skip', () => {
+    // The workflow passes the base through $BASE_SHA. An expression that
+    // resolved to nothing must not reach the skip branch: that would report
+    // caution while checking nothing, on the one event the guard exists for.
+    const repo = makeRepo(() => {});
+    try {
+      const { status, out } = runGuard(repo.dir, ['--base', '']);
+      assert.equal(status, 1, out);
+      assert.match(out, /non-empty value/);
+      assert.doesNotMatch(out, /skipped/);
+    } finally {
+      repo.cleanup();
+    }
+  });
+
   it('exits 1 when git cannot answer, rather than reporting a pass', () => {
     const repo = makeRepo(() => {});
     try {
