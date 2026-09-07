@@ -375,3 +375,7 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals â
   `wrapping` / `wrapFinished` / `wrapCompleted` poll branches. Those branches are dead now that
   the status vocabulary has retired `wrapping` (#1034), but `public/session.js` still carries them
   for a server that has not restarted; the test retires **with** them under #1302, never before.
+
+## TODO (auto-stubbed 2026-09-07)
+
+- **TBD** â€” touched in this session: `test/terminal-touch-scroll.test.js`. <!-- describe -->
