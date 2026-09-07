@@ -6020,8 +6020,9 @@ asserts the RELATION (>0, `< maxInbox`) so re-deciding again does not falsify it
 per engine, which is its own verification.
 
 **Critic rounds.** Cumulative `rev-20260907T201552Z-77751892` (three reviewers): 0 blocking,
-6 warning, 14 note. All six warnings fixed in one batch;
-the verify-resolutions id is recorded below once that round lands. Fourteen mutations confirmed red across the two commits — ten on the
+6 warning, 14 note. All six warnings fixed in one batch and verified by
+`rev-20260907T203148Z-2a99435c` — 6 of 6 resolved, 0 new, each re-run as its own search rather than
+read off the diff, since two of the findings named a class. Fourteen mutations confirmed red across the two commits — ten on the
 original build (coalescing disabled, the `from` guard dropped, the key moved to display name,
 `docId` removed; the drain not called, everything drainable, keyed on the payload's `type`, newest
 dropped instead of oldest, discard without ACK, the shipped cap zeroed) and four on the fixes
