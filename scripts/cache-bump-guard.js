@@ -44,8 +44,11 @@
  * Precaching decides what is in the cache at install time; it does not decide
  * which branch serves a request. `install` re-runs `cache.addAll(STATIC_ASSETS)`
  * on any `sw.js` change, so a precached asset is refreshed even without a bump —
- * while a cache-first asset that is NOT precached (`logo.png`, `icons/*`) is
- * populated by `_cachePut` on first fetch and evicted by nothing but a bump.
+ * and that refresh really reaches the network, because `server.js` sends
+ * `Cache-Control: no-cache` on every static asset, leaving the HTTP cache no
+ * copy to answer `addAll` with. A cache-first asset that is NOT precached
+ * (`logo.png`, `icons/*`) has neither remedy: it is populated by `_cachePut` on
+ * first fetch and evicted by nothing but a bump.
  * Keying on `STATIC_ASSETS` would gate the files that need it least and miss
  * every file for which the bump is the only remedy.
  *
@@ -245,13 +248,14 @@ function evaluate({ baseSw, headSw, changedPaths }) {
 }
 
 /**
- * Run git, failing the process when it cannot answer.
+ * Run git, refusing to answer when it cannot.
  *
  * @param {string[]} args - Arguments after `git`.
  * @param {string} repo - Repository working directory.
  * @param {{tolerate?: boolean}} [opts] - When `tolerate`, a non-zero exit
- *   returns null instead of exiting; used where absence is a legitimate answer.
+ *   returns null instead of throwing; used where absence is a legitimate answer.
  * @returns {string|null} stdout with trailing newline removed.
+ * @throws {Error} When git cannot answer and `tolerate` is not set.
  */
 function git(args, repo, opts = {}) {
   const run = spawnSync('git', ['-C', repo, ...args], {
@@ -262,8 +266,7 @@ function git(args, repo, opts = {}) {
   if (run.error || run.status !== 0) {
     if (opts.tolerate) return null;
     const detail = (run.error && run.error.message) || run.stderr || `exit ${run.status}`;
-    process.stderr.write(`cache-bump-guard: git ${args.join(' ')} failed: ${detail.trim()}\n`);
-    process.exit(1);
+    throw new Error(`git ${args.join(' ')} failed: ${detail.trim()}`);
   }
   return run.stdout.replace(/\n$/, '');
 }
@@ -323,16 +326,21 @@ function main(argv) {
     return 0;
   }
 
-  const mergeBase = git(['merge-base', base, head], repo);
-  const changedPaths = git(['diff', '--name-only', mergeBase, head], repo)
-    .split('\n')
-    .filter(Boolean);
-  // A deleted or not-yet-added sw.js reads as empty, which `evaluate` rejects
-  // through its parse arms rather than treating as "no network-first paths".
-  const baseSw = git(['show', `${mergeBase}:${SW_PATH}`], repo, { tolerate: true }) || '';
-  const headSw = git(['show', `${head}:${SW_PATH}`], repo, { tolerate: true }) || '';
-
-  const verdict = evaluate({ baseSw, headSw, changedPaths });
+  let verdict;
+  try {
+    const mergeBase = git(['merge-base', base, head], repo);
+    const changedPaths = git(['diff', '--name-only', mergeBase, head], repo)
+      .split('\n')
+      .filter(Boolean);
+    // A deleted or not-yet-added sw.js reads as empty, which `evaluate` rejects
+    // through its parse arms rather than treating as "no network-first paths".
+    const baseSw = git(['show', `${mergeBase}:${SW_PATH}`], repo, { tolerate: true }) || '';
+    const headSw = git(['show', `${head}:${SW_PATH}`], repo, { tolerate: true }) || '';
+    verdict = evaluate({ baseSw, headSw, changedPaths });
+  } catch (err) {
+    process.stderr.write(`cache-bump-guard: ${err.message}\n`);
+    return 1;
+  }
   const stream = verdict.ok ? process.stdout : process.stderr;
   stream.write(`cache-bump-guard: ${verdict.ok ? 'ok' : 'FAILED'} — ${verdict.message}\n`);
   return verdict.ok ? 0 : 1;
@@ -340,4 +348,9 @@ function main(argv) {
 
 module.exports = { parseSwState, isCacheFirstAsset, evaluate, stripComments, bracketedLiteral, main };
 
-if (require.main === module) process.exit(main(process.argv.slice(2)));
+// `process.exitCode` rather than `process.exit()`. Writes to a piped stdout are
+// asynchronous, and `process.exit()` tears the process down without waiting for
+// them — under a CI runner, where stdout is always a pipe, that can drop the
+// very message naming the offending files. Setting the code and letting the
+// event loop drain is the only version that always says why it failed.
+if (require.main === module) process.exitCode = main(process.argv.slice(2));
