@@ -29,7 +29,15 @@ const systemHealth = require('../lib/system-health');
 
 const DARWIN = { platform: () => 'darwin', homedir: () => '/Users/op' };
 
-/** A healthy ttyd reading. */
+/**
+ * A healthy ttyd reading, in the shape `ttydWatcher.measureLeak` really returns.
+ *
+ * `uptimeMs`/`minTtydAgeMs` are part of that shape (#1245) and are carried here
+ * deliberately: a fixture missing a field the real producer emits makes every
+ * branch that reads it unreachable, so the test passes while the code is
+ * unexercised. Defaulted to an OLD ttyd, because that is the ordinary case —
+ * a young one is the exception the panel has to speak about.
+ */
 function healthyLeak(overrides) {
   return {
     pid: 4242,
@@ -37,6 +45,8 @@ function healthyLeak(overrides) {
     orphans: 1,
     orphanThreshold: 20,
     ptyThresholdRatio: 0.85,
+    uptimeMs: 6 * 60 * 60 * 1000,
+    minTtydAgeMs: 15 * 60 * 1000,
     ...overrides
   };
 }
@@ -122,6 +132,53 @@ describe('lib/system-health (#345)', () => {
       const c = await ttydVerdict({ measureLeak: async () => healthyLeak({ orphans: 90 }) });
       assert.equal(c.state, 'fired');
       assert.match(c.detail, /90 leaked tmux clients/);
+    });
+
+    // #1245 — this row's remediation is `launchctl kickstart`, and a restart
+    // makes every terminal reconnect at once, which leaks. On a ttyd that only
+    // just restarted, the count shown may BE that burst, and the watcher is
+    // already holding its own gate down. Saying so is what stops the panel
+    // inviting the operator into a restart that buys nothing.
+    it('says when a young ttyd\'s orphan count may be the last restart\'s reconnect burst', async () => {
+      const c = await ttydVerdict({
+        measureLeak: async () => healthyLeak({ orphans: 25, uptimeMs: 4 * 60 * 1000 })
+      });
+      assert.equal(c.state, 'fired', 'it still reports the leak — it qualifies it');
+      assert.match(c.detail, /25 leaked tmux clients/);
+      assert.match(c.detail, /restarted 4 min ago/);
+      assert.match(c.detail, /holding off until it is 15 min old/);
+    });
+
+    it('does not qualify the count on a ttyd that has been up longer than the minimum age', async () => {
+      const c = await ttydVerdict({ measureLeak: async () => healthyLeak({ orphans: 25 }) });
+      assert.equal(c.state, 'fired');
+      assert.ok(!/reconnect burst/.test(c.detail),
+        `an old ttyd's leak is not excused by a restart: ${c.detail}`);
+    });
+
+    // Pool exhaustion is never qualified. A full pool means no terminal can
+    // attach at all, so "this may be a restart burst" would be an invitation to
+    // wait through the #94 incident.
+    it('never qualifies POOL exhaustion, however young ttyd is', async () => {
+      const c = await ttydVerdict({
+        measureLeak: async () => healthyLeak({
+          pool: { exhausted: true, used: 480, cap: 511, ratio: 0.94 },
+          orphans: 25,
+          uptimeMs: 30 * 1000
+        })
+      });
+      assert.equal(c.state, 'fired');
+      assert.ok(!/reconnect burst/.test(c.detail),
+        `a full pool is urgent regardless of ttyd's age: ${c.detail}`);
+    });
+
+    it('does not qualify when ttyd\'s age could not be read', async () => {
+      const c = await ttydVerdict({
+        measureLeak: async () => healthyLeak({ orphans: 25, uptimeMs: null })
+      });
+      assert.equal(c.state, 'fired');
+      assert.ok(!/reconnect burst/.test(c.detail),
+        `an unread age establishes nothing, so it must not excuse a leak: ${c.detail}`);
     });
 
     it('fires on the orphan gate when the pool reading failed — a broken pool never suppresses a leak', async () => {

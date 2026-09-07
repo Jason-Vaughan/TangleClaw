@@ -717,8 +717,19 @@ condition fired or could not be measured. Each row carries its own fix; the back
   kernel's exiting state and hold `/dev/ttys*` slots until ttyd itself restarts. The ttyd watcher
   restarts it automatically once either gate trips (pool ≥ 85% full, or ≥ 20 leaked children);
   the panel shows the same reading so you can act before the watcher's next five-minute tick, or
-  when the watcher's own restart did not take. Sessions survive the restart — tmux servers are
+  when the watcher's own restart did not take — read the note below about a recently restarted ttyd
+  first, because acting immediately is not always worth it. Sessions survive the restart — tmux servers are
   separate processes and the browser reconnects.
+
+  A restart makes every open terminal reconnect at once, and that churn leaks children of its own,
+  so the leaked-child gate stays quiet until ttyd has been up for 15 minutes — otherwise it trips
+  on the reconnect burst a restart just caused and your terminals blank repeatedly for one
+  underlying leak. It is keyed to ttyd's own age, so **your** manual `launchctl kickstart` counts
+  exactly as the watcher's does; the panel will also tell you when the count it is showing may be a
+  recent restart's burst rather than a new leak, so you know another restart may buy nothing. The
+  pool gate is **not** held back: a full pool means no terminal can attach at all, which is worth
+  an immediate restart whenever it happens. If you see `ttyd orphan gate held down` in the log,
+  that is this wait, and it names how long is left.
 - **Full Disk Access missing** — the server process cannot read protected folders. A background
   (launchd-spawned) `node` gets no permission prompt; reads under `~/Documents`, `~/Desktop` and
   `~/Downloads` simply never return. Grant Full Disk Access to the exact `node` binary the

@@ -46,5 +46,11 @@ else
   # Sleep so the message stays visible in the ttyd terminal; ttyd closes
   # the connection when this process exits, which would flash the message
   # too briefly to read. The frontend redirects after ~10s anyway.
-  sleep 30
+  #
+  # `exec`, for the same reason the attach above uses it: ttyd does not reliably
+  # reap the child it spawns per websocket, and a non-exec'd bash sitting here
+  # for 30 seconds is a second process for it to lose (#1245 — of 18 wedged
+  # processes observed on 2026-09-07, one was a bash still holding a tmux
+  # child). Replacing the shell leaves ttyd exactly one child to reap.
+  exec sleep 30
 fi

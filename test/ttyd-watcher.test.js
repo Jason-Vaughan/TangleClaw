@@ -2,7 +2,7 @@
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
-const { setLevel } = require('../lib/logger');
+const { setLevel, setConsoleStream } = require('../lib/logger');
 
 setLevel('error');
 
@@ -315,6 +315,206 @@ not numeric ?Es
         assert.equal(runner.calls.length, 0);
       } finally {
         process.getuid = originalGetuid;
+      }
+    });
+  });
+
+  // #1245 — the orphan gate could fire on damage a RESTART caused. A restart
+  // blanks every open terminal iframe at once, they all reconnect together, and
+  // connect/disconnect churn is what leaks: on 2026-09-07 a FRESH ttyd reached
+  // 22 wedged children within five minutes of being kickstarted, and the gate
+  // fired again on the very next poll. Each round blanks the operator's
+  // terminals, so the thrash is the user-visible half of this bug.
+  //
+  // The hold is derived from ttyd's OWN uptime, never from this module's
+  // bookkeeping, so it covers the operator's manual `launchctl kickstart` (the
+  // remedy the health panel hands them) and a launchd respawn exactly as it
+  // covers ours — and it survives a server restart, because the fact lives in
+  // the OS.
+  describe('_check — the orphan gate waits for ttyd to be old enough (#1245)', () => {
+    const ORPHANS_OVER = '  12345 ?Es\n'.repeat(25);
+
+    /**
+     * A runner whose pool reading is healthy and whose orphan count is over the
+     * gate — the #1245 shape, never the #94 one.
+     * @param {string} etime - what `ps -o etime=` reports for ttyd
+     * @returns {Function & {calls: Array}}
+     */
+    function leakyRunner(etime) {
+      return makeRunner({
+        'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
+        'sysctl:-n': '511\n',
+        'sh:-c': '54\n', // ratio 0.106 — nowhere near the 0.85 pool gate
+        'ps:-A': ORPHANS_OVER,
+        'ps:-o': `${etime}\n`,
+        'launchctl:kickstart': ''
+      });
+    }
+
+    /** Count kickstart invocations in a runner's call log. @returns {number} */
+    const kicks = (runner) => runner.calls.filter(
+      (c) => c.cmd === 'launchctl' && c.args[0] === 'kickstart'
+    ).length;
+
+    const CHECK = { ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 };
+
+    it('fires when ttyd has been up longer than the minimum age', () => {
+      const runner = leakyRunner('02:58:17');
+      ttydWatcher._setRunner(runner);
+      const r = ttydWatcher._check(CHECK);
+      assert.equal(r.action, 'kickstart');
+      assert.equal(kicks(runner), 1);
+    });
+
+    it('holds down on a ttyd restarted five minutes ago — the 01:09 to 01:14 shape', () => {
+      const runner = leakyRunner('05:00');
+      ttydWatcher._setRunner(runner);
+      const r = ttydWatcher._check(CHECK);
+      assert.equal(r.action, 'suppressed');
+      assert.equal(r.orphans, 25, 'it still MEASURED the leak — it declined to act on it');
+      assert.equal(r.ttydUptimeMs, 5 * 60 * 1000);
+      assert.equal(kicks(runner), 0, 'the terminals do not blank a second time');
+    });
+
+    // THE POINT OF KEYING ON UPTIME. `lib/system-health.js` hands the operator
+    // `launchctl kickstart -k …` as the panel's remedy and the user guide tells
+    // them to run it. That restart makes the identical reconnect burst. Keyed to
+    // our own bookkeeping the gate would fire on it next tick; keyed to ttyd's
+    // age it cannot, because a manually restarted ttyd is just as young.
+    it('covers a restart this process did not perform', () => {
+      // No kickstart has EVER been fired through this module — the state is
+      // fresh — and the gate still holds, purely because ttyd is young.
+      const runner = leakyRunner('00:30');
+      ttydWatcher._setRunner(runner);
+      assert.equal(ttydWatcher._check(CHECK).action, 'suppressed');
+      assert.equal(kicks(runner), 0);
+    });
+
+    it('fires the moment ttyd passes the minimum age, and not before', () => {
+      const under = leakyRunner('14:59');
+      ttydWatcher._setRunner(under);
+      assert.equal(ttydWatcher._check(CHECK).action, 'suppressed', 'one second short still holds');
+
+      const over = leakyRunner('15:00');
+      ttydWatcher._setRunner(over);
+      assert.equal(ttydWatcher._check(CHECK).action, 'kickstart',
+        'the hold bounds the thrash, it does not disable the gate');
+      assert.equal(kicks(over), 1);
+    });
+
+    // THE ASYMMETRY, and the reason this change is safe. Pool exhaustion is the
+    // #94 incident — every attach fails and the box is unusable. Observed pool
+    // ratios during the #1245 thrash were 0.084–0.115 against a 0.85 gate, so
+    // the pool gate has never fired here and must keep its ability to fire on
+    // ANY tick. Binding it too would trade a papercut for the incident the
+    // watcher exists to prevent.
+    it('the POOL gate still fires on a freshly restarted ttyd', () => {
+      const runner = makeRunner({
+        'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
+        'sysctl:-n': '511\n',
+        'sh:-c': '527\n', // the canonical #94 overflow
+        'ps:-A': ORPHANS_OVER,
+        'ps:-o': '00:30\n',
+        'launchctl:kickstart': ''
+      });
+      ttydWatcher._setRunner(runner);
+      const r = ttydWatcher._check(CHECK);
+      assert.equal(r.action, 'kickstart', 'pool exhaustion is never suppressed');
+      assert.equal(kicks(runner), 1);
+    });
+
+    // A failed kickstart must not arm anything. Keyed to uptime it cannot: if
+    // launchctl refused, ttyd's age is unchanged and old, so the next tick
+    // retries on schedule instead of sitting the hold out after doing
+    // nothing at all.
+    it('a REFUSED kickstart leaves the gate armed for the next tick', () => {
+      const runner = makeRunner({
+        'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
+        'sysctl:-n': '511\n',
+        'sh:-c': '54\n',
+        'ps:-A': ORPHANS_OVER,
+        'ps:-o': '02:58:17\n',
+        'launchctl:kickstart': new Error('permission denied')
+      });
+      ttydWatcher._setRunner(runner);
+      const first = ttydWatcher._check(CHECK);
+      assert.equal(first.action, 'kickstart-failed', 'the refusal is reported, not swallowed');
+
+      // ttyd is still the same old process, so the gate fires again.
+      const second = ttydWatcher._check(CHECK);
+      assert.equal(second.action, 'kickstart-failed');
+      assert.equal(kicks(runner), 2, 'it retried rather than holding itself down for 15 minutes');
+    });
+
+    it('an unreadable uptime does not suppress — a failed measurement is no reason to sit on a leak', () => {
+      const runner = makeRunner({
+        'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
+        'sysctl:-n': '511\n',
+        'sh:-c': '54\n',
+        'ps:-A': ORPHANS_OVER,
+        'ps:-o': new Error('ps: no such process'),
+        'launchctl:kickstart': ''
+      });
+      ttydWatcher._setRunner(runner);
+      const r = ttydWatcher._check(CHECK);
+      assert.equal(r.action, 'kickstart');
+      assert.equal(r.ttydUptimeMs, null);
+    });
+
+    it('the minimum age is three poll intervals, computed rather than restated', () => {
+      assert.equal(ttydWatcher.DEFAULT_MIN_TTYD_AGE_MS,
+        3 * ttydWatcher.DEFAULT_INTERVAL_MS);
+    });
+  });
+
+  // The SHIPPED surface. Everything above measures `_check`'s return value,
+  // which is a test-only seam — no production caller reads it. What an operator
+  // actually gets when the gate holds down is a log line, so that is what has to
+  // be pinned: a suppression that logged nothing would pass every assertion
+  // above while leaving them unable to explain why terminals stopped blanking.
+  describe('_check — the suppression is legible in the log (#1245)', () => {
+    it('says it held down, and how long is left', () => {
+      const lines = [];
+      setLevel('warn');
+      setConsoleStream({ write: (text) => lines.push(text) });
+      try {
+        ttydWatcher._setRunner(makeRunner({
+          'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
+          'sysctl:-n': '511\n',
+          'sh:-c': '54\n',
+          'ps:-A': '  12345 ?Es\n'.repeat(25),
+          'ps:-o': '05:00\n',
+          'launchctl:kickstart': ''
+        }));
+        ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 });
+      } finally {
+        setConsoleStream(null);
+        setLevel('error');
+      }
+      const held = lines.join('');
+      assert.match(held, /orphan gate held down/, 'the decision is on the record, not swallowed');
+      assert.match(held, /ttydUptimeMs=300000/, 'with how young ttyd is');
+      assert.match(held, /remainingMs=600000/, 'and how long is left, not just the elapsed');
+      assert.match(held, /orphans=25/, 'and the leak it declined to act on');
+      assert.ok(!/leak detected, kickstarting/.test(held),
+        `a suppressed tick must not also claim it kickstarted: ${held}`);
+    });
+  });
+
+  describe('_parseEtime — macOS ps has no `etimes` keyword (#1245)', () => {
+    it('parses every documented shape of [[dd-]hh:]mm:ss', () => {
+      assert.equal(ttydWatcher._parseEtime('05:00'), 5 * 60 * 1000);
+      assert.equal(ttydWatcher._parseEtime('02:58:17'), ((2 * 3600) + (58 * 60) + 17) * 1000);
+      assert.equal(ttydWatcher._parseEtime('3-02:58:17'),
+        ((3 * 86400) + (2 * 3600) + (58 * 60) + 17) * 1000);
+      assert.equal(ttydWatcher._parseEtime('  00:07\n'), 7000, 'ps pads and newline-terminates');
+    });
+
+    it('returns null rather than a plausible number for anything it does not recognise', () => {
+      // A wrong number here would silently suppress a real leak, so an
+      // unrecognised shape must be an ANSWER THIS DID NOT GET, not a zero.
+      for (const bad of ['', '   ', 'not-a-time', '17', '1:2:3:4', '-']) {
+        assert.equal(ttydWatcher._parseEtime(bad), null, `should reject: ${JSON.stringify(bad)}`);
       }
     });
   });
@@ -668,16 +868,23 @@ describe('ttyd-watcher measureLeak (#345 — a reading the health panel can trus
   it('runs through an injected async runner when one is set', async () => {
     const seen = [];
     ttydWatcher._setAsyncRunner(async (cmd, args) => {
-      seen.push(cmd);
+      seen.push(`${cmd}:${args[0]}`);
       if (cmd === 'launchctl') return LAUNCHCTL_OUTPUT_RUNNING;
       if (cmd === 'sysctl') return '511\n';
       if (cmd === 'sh') return '40\n';
-      if (cmd === 'ps') return PS_HEALTHY;
-      throw new Error('unexpected ' + cmd);
+      // TWO ps reads, and they ask different questions: the child population,
+      // and ttyd's own age (#1245).
+      if (cmd === 'ps' && args[0] === '-A') return PS_HEALTHY;
+      if (cmd === 'ps' && args[0] === '-o') return '02:58:17\n';
+      throw new Error('unexpected ' + cmd + ' ' + args.join(' '));
     });
     const m = await ttydWatcher.measureLeak();
     assert.equal(m.pid, 12345);
     assert.equal(m.pool.used, 40);
-    assert.deepEqual([...seen].sort(), ['launchctl', 'ps', 'sh', 'sysctl'], 'measured through the async runner');
+    assert.equal(m.uptimeMs, ((2 * 3600) + (58 * 60) + 17) * 1000,
+      'the panel gets ttyd\'s age, so it can say when a leak count may be a restart burst');
+    assert.deepEqual([...seen].sort(),
+      ['launchctl:list', 'ps:-A', 'ps:-o', 'sh:-c', 'sysctl:-n'],
+      'measured through the async runner');
   });
 });
