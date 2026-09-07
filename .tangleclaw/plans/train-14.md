@@ -473,6 +473,15 @@ retrofitting its audit line second.
   3. `/prawduct:critic` run and blocking findings resolved
   4. Committed, PR merged, chunk marked `[x]` in Status
 
+  **Both directions were demonstrated in real CI**, not only over throwaway repos — the layer the
+  unit tests structurally cannot reach (the `pull_request` condition, `fetch-depth: 0`, and whether
+  `github.event.pull_request.base.sha` resolves against the merge-ref HEAD `actions/checkout`
+  leaves). On PR #1347: run `34165988998` shows the step reading `public/sw.js`, parsing 18
+  network-first paths and passing; a probe commit touching `public/history-drawer.js` with no bump
+  then produced run `34166131583`, where every other step succeeded and the guard alone failed —
+  turning the REQUIRED `test` check red, which is the property that makes it a gate rather than a
+  notification. The probe was reverted and the branch restored to the reviewed tree.
+
 ### Chunk 06: The uploads module reads a project directory the way the scanner does
 
 - **Description:** `lib/uploads.js` performs 11 synchronous filesystem operations on paths under
