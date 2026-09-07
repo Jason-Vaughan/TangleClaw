@@ -129,7 +129,7 @@ decisions surfaced at the chunk that acts on them, not unknowns.
 - [x] Chunk 02: The activity log is bounded without losing the rare row (#869)
 - [x] Chunk 03: A durable failure is logged when it changes, not when it repeats (#956)
 - [x] Chunk 04: One broadcast per reader per quiet period, and a drain for what nobody reads (#1108)
-- [ ] Chunk 05: The cache-bump guard fires on the next miss, not the last one (#625)
+- [x] Chunk 05: The cache-bump guard fires on the next miss, not the last one (#625)
 - [ ] Chunk 06: The uploads module reads a project directory the way the scanner does (#889, uploads half)
 
 **Chunk 01 is done** — branch `fix/692-orphan-sweep-audit`, Critic `rev-20260906T203735Z-565f2547`
@@ -155,6 +155,15 @@ Warning is not labelling: that path still wrote `port.released` naming the *disp
 The roster that finds it is not "who deletes a lease" (three `DELETE FROM port_leases` sites) but
 "who displaces a lease someone else holds" (four). Chunk 02 enumerates deleters over a table with
 many more writers — ask which noun the roster is of before trusting it.
+
+**Chunk 05 is done** — branch `chore/625-cache-bump-guard`, squash-merged as `9dd8051` (PR
+#1347), #625 closed. Four review rounds: cumulative `rev-20260907T214451Z-d3ea86c3` then three
+`verify-resolutions` passes ending at `rev-20260907T220328Z-17ad5a1b` (0 blocking / 0 warning /
+0 note); all 44 findings dispositioned. Three of the four rounds were spent on one defect of mine —
+a mechanism claim written before the command that would check it — now a rule in `learnings.md`.
+Chunk 04's field verification was also discharged during this chunk: two shared-doc saves 2.17s
+apart logged `notified=2 coalesced=0` then `notified=0 coalesced=2`, so #1108 is confirmed
+suppressing the defect in production rather than merely shipped.
 
 **Chunk 04 is done** — branch `fix/1108-broadcast-coalesce`, Critic
 `rev-20260907T201552Z-77751892` (three reviewers; 0 blocking, 6 warning, 14 note), fixed in one
