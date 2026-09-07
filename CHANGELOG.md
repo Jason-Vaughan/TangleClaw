@@ -220,7 +220,7 @@ All notable changes to TangleClaw are documented in this file.
   defaults to `info` — so the transition stays at `warn`, and what changes is only how often an
   unchanged fact is repeated. The failing state also remains queryable the whole time rather than
   merely inferable from an old log line: `checkOk: false` is carried in the payload
-  `GET /api/update/status` already serves. A transition rather than a dedupe window, because a
+  `GET /api/update-status` already serves. A transition rather than a dedupe window, because a
   window is a second number to tune and still restates something that has not changed.
   Both check forms share one episode, which is the part worth stating: the synchronous form is
   `update-applier`'s pre-flight path and runs unattended, so a per-path latch would have let the
