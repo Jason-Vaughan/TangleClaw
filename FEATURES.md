@@ -387,3 +387,7 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals â
   page's `wrapping` / `wrapFinished` / `wrapCompleted` poll branches. Those branches are
   dead once the status vocabulary retires `wrapping` (#1034), but `public/session.js` still
   carries them; the test retires **with** them under #1302, never before.
+
+## TODO (auto-stubbed 2026-09-06)
+
+- **TBD** â€” touched in this session: `test/wrap-indicator-card.test.js`. <!-- describe -->
