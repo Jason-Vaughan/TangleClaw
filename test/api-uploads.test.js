@@ -9,6 +9,7 @@ const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const { createServer } = require('../server');
+const { canForceRefusal } = require('./_eacces');
 
 setLevel('error');
 
@@ -126,39 +127,10 @@ describe('API /api/upload + /api/uploads', () => {
   });
 
   describe('a directory that cannot be read is not a directory with nothing in it (#889)', () => {
-    /**
-     * Can this process still read a directory it has removed its own permission
-     * from? Root can, and a container that runs the suite as root would turn
-     * every assertion below into a false pass. Probed rather than inferred from
-     * the uid, because that is the condition that actually matters.
-     * @returns {boolean}
-     */
-    function canForceRefusal() {
-      const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-eacces-probe-'));
-      try {
-        fs.chmodSync(probe, 0o000);
-        fs.readdirSync(probe);
-        return false; // it answered anyway — this process outranks the mode bits
-      } catch {
-        return true;
-      } finally {
-        try {
-          fs.chmodSync(probe, 0o755);
-          fs.rmSync(probe, { recursive: true, force: true });
-        } catch {
-          // The probe directory is disposable; a failure to clean it is not a
-          // reason to fail the suite.
-        }
-      }
-    }
-
     const projDir = () => path.join(tmpDir, projectName);
 
-    it('GET /api/uploads names the refusal instead of reporting an empty list', async (t) => {
-      if (!canForceRefusal()) {
-        t.skip('this process can read a 000 directory, so no genuine EACCES can be staged');
-        return;
-      }
+    it('GET /api/uploads names the refusal instead of reporting an empty list (needs a directory this process cannot read)', async (t) => {
+      if (!canForceRefusal()) { t.skip('this process can read a 000 directory'); return; }
       const legacy = path.join(projDir(), '.uploads');
       fs.chmodSync(legacy, 0o000);
       try {
@@ -188,11 +160,8 @@ describe('API /api/upload + /api/uploads', () => {
       assert.equal(res.data.unreadableCode, null);
     });
 
-    it('the session drill-down carries the same distinction', async (t) => {
-      if (!canForceRefusal()) {
-        t.skip('this process can read a 000 directory, so no genuine EACCES can be staged');
-        return;
-      }
+    it('the session drill-down carries the same distinction (needs a directory this process cannot read)', async (t) => {
+      if (!canForceRefusal()) { t.skip('this process can read a 000 directory'); return; }
       const legacy = path.join(projDir(), '.uploads');
       fs.chmodSync(legacy, 0o000);
       try {

@@ -21,11 +21,10 @@ const STATIC_ASSETS = [
   '/shared-controls.css',
   '/landing.js',
   '/ui.js',
-  // history-drawer.js is the dashboard-shell sibling of ui.js (CC-5): cache-first
-  // ui.js card buttons call into it (openHistory), so it must be precached in the
-  // same generation to avoid the cache-first version skew #271 describes for
-  // ui.js feature changes. The CACHE_NAME bump above is what surfaces it (and the
-  // new index.html + ui.js) to operators with an active SW.
+  // history-drawer.js is the dashboard-shell sibling of ui.js (CC-5): ui.js card
+  // buttons call into it (openHistory), so the two must not skew. Precached here
+  // for offline coherence of '/', and network-first below because ui.js is —
+  // dual-listed for the same reason landing.js and sw-register.js are.
   '/history-drawer.js',
   // sw-register.js owns SW registration + update propagation (#380). Like
   // landing.js it is dual-listed (precached here for offline coherence of
@@ -105,6 +104,16 @@ const NETWORK_FIRST_PATHS = new Set([
   // network-first index.html; both stay precached above for offline coherence.
   '/ui.js',
   '/style.css',
+  // history-drawer.js is the third instance of the lockstep pair this file keeps
+  // describing — session.js/wrap-drawer.js, ui.js/next-markdown.js, and now
+  // ui.js/history-drawer.js. A network-first ui.js renders a card whose button
+  // calls openHistory() in here, so a cached old drawer against a fresh ui.js is
+  // the same version skew, and the drawer is where a feature change lands (CC-5
+  // search, the #889 unreadable-uploads notice) that a stale copy hides.
+  // Network-first rather than a CACHE_NAME bump: the bump evicts every operator's
+  // whole cache to deliver one file, and behind a basic_auth gate that has cost
+  // an operator their browser session before (#710).
+  '/history-drawer.js',
   // next-markdown.js is the pure-helper sibling of ui.js, the same lockstep
   // case wrap-drawer.js has with session.js above: ui.js (network-first) calls
   // renderNextMarkdown directly at render time, so a stale copy served against

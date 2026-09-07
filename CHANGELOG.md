@@ -66,6 +66,32 @@ All notable changes to TangleClaw are documented in this file.
   halves by deriving them — the field names from a real `listUploads` result, the stylesheets from
   `session.html`'s own `<link>` tags — rather than from literals typed on the consumer's side.
 
+  **Review-driven, and each one worth naming.** The staged-write mechanism is now
+  `lib/staged-write.js`, shared with `lib/project-version-files.js` rather than reconstructed
+  beside it — the second child-side writer had rebuilt the first's sweep line for line, and a
+  partially-observable write is not a defect anyone spots by reading the code that has it, so one
+  copy is the only way it stays fixed. `saveUpload` probes the project directory with the child's
+  `_probe` rather than `_exists`: `_exists` collapses "not there" and "there and refused" into one
+  `false`, which would have answered a permissions problem with a 400 saying the operator's project
+  was deleted — the misdiagnosis this whole family of changes exists to remove, arriving inside the
+  op that removed it. A refused directory is now a 500 that says so. `lib/uploads.js` stops
+  re-exporting `uploadsDirFor`, which had no caller and was the only edge pulling the child-side
+  module, and `node:fs` with it, back into the server's require graph.
+
+  **`public/history-drawer.js` becomes network-first instead of taking a `CACHE_NAME` bump.** The
+  cache-bump guard (#625) correctly refused this branch: the drawer is cache-first and changed, so
+  an operator with an active service worker would keep the old one. Of the two remedies the guard
+  names, the bump evicts every operator's entire cache to deliver one file — and behind the Caddy
+  `basic_auth` gate that has cost an operator their browser session before (#710). The drawer is
+  also the third instance of a pattern `sw.js` already documents twice: a network-first `ui.js`
+  renders the card whose button calls into it, exactly the `session.js`/`wrap-drawer.js` skew.
+  Its own precache comment still described `ui.js` as cache-first, which stopped being true when
+  `ui.js` went network-first; that is corrected too. The guard's tests named `/history-drawer.js`
+  as their specimen of a cache-first asset, so a legitimate reclassification reddened four
+  assertions about the guard — they now DERIVE a specimen from the real `sw.js`, and assert that
+  at least one cache-first file still exists, which is the check that would catch the guard
+  becoming vacuous.
+
   The remainder of #889 is filed as #1350 with a re-derived census: `lib/projects.js` holds **43**
   synchronous calls, not the 47 the plan carried, **32 of them route-reachable**, plus the two
   sites that need a different answer from "move the read" — `createProject`/`deleteProject`

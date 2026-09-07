@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const uploadsFs = require('../lib/uploads-fs');
+const { canForceRefusal } = require('./_eacces');
 const { saveUpload, listUploads, listDir, readScanManifest, recordScan } = uploadsFs;
 const continuity = require('../lib/continuity');
 
@@ -154,7 +155,8 @@ describe('uploads-fs', () => {
   });
 
   describe('an unreadable directory is named, not reported as empty (#889)', () => {
-    it('names the refusal and carries the errno when the legacy dir cannot be read', () => {
+    it('names the refusal and carries the errno when the legacy dir cannot be read (needs a directory this process cannot read)', (t) => {
+      if (!canForceRefusal()) { t.skip('this process can read a 000 directory'); return; }
       const data = Buffer.from('secret contents').toString('base64');
       saveUpload(tmpDir, 'kept.txt', data);
       const legacy = path.join(tmpDir, '.uploads');
@@ -169,7 +171,8 @@ describe('uploads-fs', () => {
       assert.deepEqual(result.uploads, [], 'nothing readable was found, which is a separate fact');
     });
 
-    it('still lists what WAS readable when only one directory refuses', () => {
+    it('still lists what WAS readable when only one directory refuses (needs a directory this process cannot read)', (t) => {
+      if (!canForceRefusal()) { t.skip('this process can read a 000 directory'); return; }
       saveUpload(tmpDir, 'legacy.txt', Buffer.from('a').toString('base64'));
       saveUpload(tmpDir, 'in-session.txt', Buffer.from('b').toString('base64'), 4);
       fs.chmodSync(continuity.sessionUploadsDir(tmpDir, 4), 0o000);
@@ -183,7 +186,8 @@ describe('uploads-fs', () => {
       fs.chmodSync(continuity.sessionUploadsDir(tmpDir, 4), 0o755);
     });
 
-    it('keeps the FIRST refusal, so the reported cause is not the last dir walked', () => {
+    it('keeps the FIRST refusal, so the reported cause is not the last dir walked (needs a directory this process cannot read)', (t) => {
+      if (!canForceRefusal()) { t.skip('this process can read a 000 directory'); return; }
       saveUpload(tmpDir, 'a.txt', Buffer.from('a').toString('base64'));
       saveUpload(tmpDir, 'b.txt', Buffer.from('b').toString('base64'), 5);
       const legacy = path.join(tmpDir, '.uploads');
@@ -199,7 +203,8 @@ describe('uploads-fs', () => {
       fs.chmodSync(sessionDir, 0o755);
     });
 
-    it('listDir separates absent from refused', () => {
+    it('listDir separates absent from refused (needs a directory this process cannot read)', (t) => {
+      if (!canForceRefusal()) { t.skip('this process can read a 000 directory'); return; }
       const absent = listDir(path.join(tmpDir, 'never-created'), null);
       assert.deepEqual(absent, { entries: [], unreadable: null, code: null });
 
