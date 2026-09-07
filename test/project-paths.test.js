@@ -212,6 +212,37 @@ describe('containment policy is explicit in both directions', () => {
       fs.symlinkSync(root, path.join(root, 'real', 'self'));
       assert.equal(isInsideProject(root, path.join(root, 'real', 'self')), false);
     });
+
+    it('allowRoot flips it for a caller asking about a DIRECTORY', () => {
+      // The exemption the module header anticipated and, until #798, had no
+      // caller for: `lib/checkout-layout.js` asks "does this git command act on
+      // the primary checkout", where the root itself is the case that matters.
+      assert.equal(isInsideProject(root, root, { allowRoot: true }), true);
+      assert.equal(checkContainment(root, root, { allowRoot: true }).inside, true);
+    });
+
+    it('allowRoot binds on the symlink pass too, not only the lexical one', () => {
+      // Half-applying it would clear a root reached as `.` and still refuse the
+      // same root reached through a link — the predicate disagreeing with
+      // itself on one question.
+      fs.symlinkSync(root, path.join(root, 'real', 'self'));
+      assert.equal(isInsideProject(root, path.join(root, 'real', 'self'), { allowRoot: true }), true);
+    });
+
+    it('allowRoot does not widen anything else: an escape is still an escape', () => {
+      assert.equal(isInsideProject(root, path.join(base, 'outside'), { allowRoot: true }), false);
+      assert.equal(
+        isInsideProject(root, path.join(root, 'linkdir', 'VERSION.json'), { allowRoot: true }), false);
+    });
+
+    it('stays off unless asked — a file caller keeps the strict rule', () => {
+      // The default is what every existing caller relies on; an option that
+      // silently defaulted on would let a directory be accepted where a file
+      // will be opened for writing.
+      assert.equal(isInsideProject(root, root, {}), false);
+      assert.equal(isInsideProject(root, root, { allowRoot: false }), false);
+      assert.equal(isInsideProject(root, root, { allowRoot: 'yes' }), false);
+    });
   });
 
   describe('followSymlinks', () => {

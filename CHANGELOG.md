@@ -22,6 +22,53 @@ All notable changes to TangleClaw are documented in this file.
   reads are independent, and the unknown is the one carrying a remedy. The step and elapsed
   appear in the card's disclosure row, not only in a `title`, because the primary client is
   iPhone Safari and a tooltip there has no hover to open it.
+- **The primary checkout stops being a writable surface for work that belongs elsewhere
+  (#798).** On this machine the primary checkout *is* production: launchd runs `server.js` from it
+  and serves `public/` off the working tree, with no build and no deploy step. Chunk work moved
+  into git worktrees several incidents ago — but `$CLAUDE_PROJECT_DIR` expands to where a session
+  STARTED and stays fixed after it enters a worktree, so every subagent, Skill and script the
+  session dispatches inherits the primary as its cwd. One mechanism, five documented incidents,
+  including the `sw.js` cache bump on an unmerged branch that locked the operator out of Chrome
+  (#710). A PreToolUse hook now refuses those calls before they land.
+  Two predicates, and **neither is armed by worktree presence**, which is what the issue proposed:
+  measured at build time this install carried 34 worktrees, 12 with unmerged commits, the oldest
+  three weeks old (#1267 — nothing retires them), so a presence-armed guard would have been armed
+  permanently on every legitimate main-side edit, and a guard that is always on is a guard that
+  gets switched off. **P1** refuses a *tracked-file* write, or a working-tree-moving git verb
+  (`checkout`/`switch`/`reset`/`rebase`/`merge` — never `commit`, which moves no file content and
+  which the wrap performs on `main` by design), that lands in the primary while the session's own
+  root is a linked worktree; that is the dispatched-actor shape exactly, and it has no false
+  positives however many worktrees exist beside it. **P2** refuses `public/**` and `server.js` in
+  the primary from any session root — the surface that is live on WRITE rather than on restart, and
+  the only predicate that can see a swarm subagent whose coordinator was itself launched in the
+  primary. `lib/**` is deliberately outside P2 (live on restart; refusing it would block ordinary
+  main-side work whose worst case is a lost edit), `.prawduct/` is never refused (untracked, and
+  written in the primary by design — the tracked-by-git conjunct is what protects it, including
+  through a worktree's symlinks), and `git checkout main` from a primary-rooted session stays
+  available because it is the documented fast rollback.
+  It **fails open** on every internal error — exit 0, no decision, one line on stderr — which is
+  the opposite of `lib/master.js`'s write guard and is argued rather than inherited: that guard
+  bounds an untrusted agent's authority, where failing open means writing where it was never
+  allowed; this one prevents an accident by a trusted agent, where failing closed costs the whole
+  session, because Claude Code feeds hook failures back as synthetic user messages and a buggy
+  guard loops forever on a machine the operator is almost never at. The wired command ends in
+  `|| true`, so a missing node or a deleted script cannot produce a non-zero hook exit at all.
+  Overridable two ways, both named in every refusal and both read per invocation:
+  `TANGLECLAW_ALLOW_PRIMARY_WRITE=1` inline on a command, or the gitignored
+  `.prawduct/.allow-primary-write` sentinel for a tool call, which cannot carry an env var. Neither
+  is a lock — an exported variable is inherited by the very subagents the guard exists to catch —
+  and the refusal text says so rather than implying a boundary.
+  The script is tracked; the **wiring is machine-local**, forced twice over: the tracked
+  `.claude/settings.json` carries no `hooks` block by contract (#1022/#1275, asserted by
+  `test/repo-governance-reference.test.js`), and "this checkout is the running install" is a fact
+  about one machine rather than about the repository — a committed P2 would refuse `public/**`
+  edits in a contributor's clone, where nothing is served at all.
+  `scripts/install-primary-guard.js` (idempotent, `--check`, `--remove`) writes into
+  `.claude/settings.local.json`, where `_mergeBaselineHooks` preserves it as a foreign entry across
+  TangleClaw's per-launch reconciliation — asserted, because the guard silently vanishing at the
+  next session launch is the failure mode of a control that looks like it did something.
+  `scripts/guard-primary-checkout.js`, `lib/checkout-layout.js`,
+  `scripts/install-primary-guard.js`. Docs: `docs/primary-checkout-guard.md`.
 
 ### Changed
 - **The session lifecycle has an explicit vocabulary and an enforced transition map (#1034).**
@@ -91,6 +138,15 @@ All notable changes to TangleClaw are documented in this file.
   emitted — `Released document locks on wrap` became byte-identical across both — so every log line
   in either teardown now carries `path: 'pipeline'` or `path: 'finalize'`. Both can touch one session
   in a single wrap, and that field is the only thing saying which finalizer ran.
+- **`lib/project-paths.js` gained `allowRoot`, its first caller for a directory question (#798).**
+  The module's header recorded that counting the project root as inside was "a policy option
+  nothing selects" — no caller validated directories, so the rule was one rule. `lib/checkout-layout.js`
+  is that caller: "does this git command act on the primary checkout" is a question about a
+  directory, and there the root is precisely the case that matters. Asked with an option rather
+  than a hand-rolled check, which is the module's whole contract — a hand-rolled directory check is
+  how two predicates in this codebase came to disagree about the root without anyone deciding they
+  should. It binds on the lexical and symlink-resolved passes alike; applying it to one only would
+  clear a root reached as `.` and still refuse the same root reached through a link.
 
 ### Removed
 - **The persisted `wrapping` session status, and the recovery machinery built to clean up after it
@@ -246,6 +302,10 @@ All notable changes to TangleClaw are documented in this file.
   closed with the last of them, so the plan moved to `.tangleclaw/plans/archive/`. Moved rather
   than deleted: its Requirements Confidence section rebuts three of #1034's own load-bearing
   claims, and the issue text is what a later reader finds first.
+- **Removed 23 already-merged worktrees from this install (#798 chunk).** All had zero commits
+  ahead of `main` and clean working trees, re-checked at removal time rather than trusted from an
+  earlier snapshot; their gitignored session state was archived first. Leaves 12 with unmerged
+  commits untouched. Half of #1267's symptom, by hand — the mechanism is still owed.
 
 ## [5.21.0] - 2026-09-06
 
