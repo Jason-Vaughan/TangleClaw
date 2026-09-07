@@ -1,0 +1,11 @@
+#!/bin/bash
+gh issue edit 1314 --add-label "kind:bug,impact:H,effort:S,stage:ready,source:janitor"
+gh issue edit 1311 --add-label "kind:bug,impact:S,effort:S,stage:ready,source:janitor"
+gh issue edit 1309 --add-label "kind:bug,impact:M,effort:S,stage:ready,source:janitor"
+gh issue edit 1245 --add-label "kind:bug,impact:M,effort:M,stage:ready,source:janitor"
+gh issue edit 1025 --add-label "kind:bug,impact:H,effort:M,stage:idea,area:sessions,source:user"
+gh issue edit 1009 --add-label "kind:feature,impact:S,effort:S,stage:idea,area:ui,source:user"
+gh issue edit 993 --add-label "kind:feature,impact:S,effort:M,stage:idea,area:deploy,source:user"
+gh issue edit 992 --add-label "kind:feature,impact:S,effort:S,stage:idea,area:ci,source:user"
+gh issue edit 984 --add-label "kind:feature,impact:S,effort:S,stage:idea,area:ui,source:user"
+gh issue edit 979 --add-label "kind:feature,impact:M,effort:L,stage:idea,area:sessions,source:user"

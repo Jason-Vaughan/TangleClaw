@@ -176,6 +176,7 @@ fails any auto-stub section older than 14 days.
 - **ADR: enforcement adds no install step** — decision record governing how any norm may be mechanically enforced: a linter or checker that adds an installation step is refused (2026-08-01 norm-registry ratification). `docs/adr/0012-enforcement-adds-no-install-step.md`.
 - **Aider engine profile** — the Aider CLI's detection, launch command, launch-mode flag sets, and capability declarations. `data/engines/aider.json`.
 - **Antigravity engine profile** — the Antigravity CLI's detection, launch command, launch-mode flag sets, and capability declarations. `data/engines/antigravity.json`.
+- **ADR: a setting must take effect, or say why not** — decision record binding that any setting TangleClaw offers either applies or explains itself; the norm behind `engines.settingDisposition` and the four separate filings of the one bug (#741, #758, #1227, #1236). Tracked here because `.prawduct/artifacts/` is gitignored, which would otherwise leave a ratified norm on one machine. `docs/adr/0013-settings-take-effect-or-say-why-not.md`.
 
 ## CLI / Tooling
 
@@ -215,6 +216,7 @@ fails any auto-stub section older than 14 days.
 - **Setup guide** — operator-facing first-install walkthrough, and the checklist for confirming an existing install is set up the way its operator believes. Assumes no web-server background. `docs/setup-guide.md`.
 - **Security policy** — how to report a vulnerability in TangleClaw responsibly, and what is in scope. `SECURITY.md`.
 - **Update-beacon restart verification** — integration check for #954 / #955 driven against real parts instead of stubs: a real git binary and a real bare repo standing in for origin (so `git ls-remote --tags` genuinely runs), the real `lib/update-checker.js` including its throttle, single-flight and cache, a real HTTP server carrying the real route bodies, and real `fetch`. `scripts/verify-update-beacon-restart.js`.
+- **Wrap-step shell runner** — the child-process runners shared by every wrap step that executes a command. Consolidated from byte-identical copies that had spread across `test.js`, `lint.js`, `commit.js`, `pr-merge.js`, `pr-check.js` and `continuity-write.js`, each carrying the same dead timeout branch (#894) — a defect in a duplicated function is a defect per duplicate, and the missed one is the copy nobody was looking at. `lib/wrap-steps/_exec-shell.js`.
 
 ## Tests
 
@@ -346,48 +348,22 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/engine-errors.test.js` — #261: the `codex-json` parser on real Codex error shapes (a 400 `invalid_request_error`, a 500, a line tmux wrapped across rows), `errorPatterns` validation (bad regex and unknown parser rejected), and the record/clear rule of `lib/engine-errors.js#observe`. `test/engine-error-surface.test.js` — the same fact reaching the wrap sentinel's tick, `lib/sessions.js#getSessionStatus` and `lib/projects.js#enrichProject`. `test/engine-error-ui.test.js` — the session banner and card badge rendered from the payload, and hidden again when it is null.
 - `test/pill-ux-contract.test.js` — #104: every session banner pill carries its `data-tooltip` category label and no `title`; the `[data-tooltip]` primitive exists in `public/session.css` and hangs below the pill; `public/session.js#loadModelStatus` puts the engine status text into the click detail (`#togglePillDetail`) while the colour state still applies; `#setConnected` keeps the status pill's detail and accessible name current.
 - `test/silent-prime-drop-warning.test.js` — #741: on an engine without `supportsSilentPrime` a project's `silentPrime` setting is neither honored nor offered and nothing said so. Pins `lib/engines.js#silentPrimeDisposition` as the one owner of that answer, and the launch path's record of it at info rather than warn — a stored value on such a project is indistinguishable from the shipped default, so an alarm would fire on every non-Claude launch about a preference nobody set.
-
-## TODO (auto-stubbed 2026-09-03)
-
-- **TBD** — touched in this session: `lib/wrap-steps/_exec-shell.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/orphan-hooks-banner.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/ttyd-watcher.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-09-04)
-
-- **TBD** — touched in this session: `test/chime-control.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/repo-governance-reference.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/settings-launch-mode-render.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-09-05)
-
-- **TBD** — touched in this session: `docs/adr/0013-settings-take-effect-or-say-why-not.md`. <!-- describe -->
-- **TBD** — touched in this session: `test/_engine-store.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/create-launch-posture.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/engine-capability-reads.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/eval-audit-reachable.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/extension-rule-values.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/setting-disposition.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/settings-index-toggle-render.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/settings-silent-prime-render.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/theme-contrast.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-09-06)
-
-<!-- Six further entries the stubber wrote here were removed by hand: it named
-     files this branch never touched (lib/tangleclaw-home.js and the #828/#1052
-     wrap-step tests, which merged before this branch was cut), so it measured a
-     span wider than the session: it measures `<lastWrapSha>..HEAD`, so it sweeps
-     up everything merged since the previous wrap. Filed as #1309, which covers
-     all three of _git-range's consumers; #1280 predicts the same defect in its
-     Notes but is scoped to continuity-write.js alone. The one real entry is
-     kept below. -->
-
-- **Session wrap finalize** — `test/session-wrap-finalize.test.js` guards the session
-  page's `wrapping` / `wrapFinished` / `wrapCompleted` poll branches. Those branches are
-  dead once the status vocabulary retires `wrapping` (#1034), but `public/session.js` still
-  carries them; the test retires **with** them under #1302, never before.
-
-## TODO (auto-stubbed 2026-09-06)
-
-- **TBD** — touched in this session: `test/wrap-indicator-card.test.js`. <!-- describe -->
+- **Orphan-hooks banner** — `test/orphan-hooks-banner.test.js` — #145 chunk 2: the dashboard's orphan-hooks banner across its three hosts — `public/landing.js` (fetch + state init), `public/index.html` (markup) and `public/style.css` (treatment). Structural source assertions, the same pattern the silentPrime modal guard uses.
+- **TTYD watcher** — `test/ttyd-watcher.test.js` — the watcher's two independent leak gates (PTY-pool ratio and leaked-child count) and the `launchctl kickstart` recycle, driven against a stubbed launchd plist rather than the live service.
+- **Session chime control** — `test/chime-control.test.js` — #1181: the per-session chime moved from the Settings modal to the live banner. The control is LIFTED out of `public/api-helper.js` and RUN against a mini DOM, because the defect the move retires — an indicator that read the flag correctly but was never re-rendered — is invisible to a source pin.
+- **Repo governance reference** — `test/repo-governance-reference.test.js` — #833: this repo's own plugin install reference is a committed artifact. Guards the reason `CLAUDE.md` is SAFE to track — `writeEngineConfig` resolves `managed-block` only while the repo reads as governed, and an ungoverned clone would resolve `whole-file` and overwrite it.
+- **Launch-mode settings render** — `test/settings-launch-mode-render.test.js` — #1037: `renderLaunchModeSettings` is RUN, not matched as source. Its only prior guards asserted the symbol was spelled in `public/ui.js`, which stayed green while a deleted `const` binding made every open of the settings modal a ReferenceError on the live install.
+- **Engine store on a throwaway base path** — `test/_engine-store.js` — a real store rooted at a disposable path, established synchronously at require time, so a test that reads `ENGINE_WAKE_PROFILES` (#1255) does not silently lean on whatever `~/.tangleclaw/engines` the host happens to have — green on a dev box, red on CI.
+- **Create-project launch posture** — `test/create-launch-posture.test.js` — #626: project creation collects the settings that are load-bearing for the first session, and specifically `showLaunchModePicker`, which is not merely a fifth field — hiding the picker under a warning-carrying default removes the eyes-open guard.
+- **Engine capability reads** — `test/engine-capability-reads.test.js` — #1254: a capability an engine profile DECLARES is not one TangleClaw READS. Pins `READ_CAPABILITIES` as the distinction, so a future capability panel cannot render `supportsCoAuthor: true` as a promise the product does not keep.
+- **Eval Audit reachability** — `test/eval-audit-reachable.test.js` — #1236: Eval Audit could only be switched on by hand-editing `project.json`, so its dashboard panel was empty on every install and read as dead code (#1227 filed to delete it, closed NOT_PLANNED). Pins the write path, the readable value, and that the feature is per-connection rather than universal.
+- **Extension rule values** — `test/extension-rule-values.test.js` — #1253: an extension rule carrying a VALUE must reach the generated config. `rules.extensions` filtered on `v === true`, so `loggingLevel` reached two generators and never the three markdown ones — a real setting silently doing nothing on three of five engines.
+- **Setting disposition** — `test/setting-disposition.test.js` — ADR 0013's one mechanism: does this setting apply on this project's engine, what does the operator read when it does not, and was the stored value a real choice. Pins the warn/info asymmetry as DERIVED from provenance, so collapsing it to one level reds.
+- **Feature Index / Project Map toggle render** — `test/settings-index-toggle-render.test.js` — #1252: both toggles are RUN, not matched as source. Each has an engine-agnostic half (the wrap maintains the file) and an engine-specific one (the SessionStart pointer rides the hidden prime), so on four of five engines the toggle built a file nothing was told to read; the missing sentence is the deliverable.
+- **Silent-prime toggle render** — `test/settings-silent-prime-render.test.js` — `renderSilentPrimeToggle` is RUN, because it calls `tcSettingDisposition`, a global published by a different file, and a regex cannot tell whether that identifier resolves at runtime. The same shape shipped a ReferenceError to the live install once already (#1037).
+- **Theme contrast floor** — `test/theme-contrast.test.js` — enforces the 4.5:1 body-text floor that `nonfunctional-requirements.md` § Direction binds and nothing checked: `var(--warning, #ffb300)` was spelled at five sites with `--warning` declared in neither stylesheet, so every one took the literal amber at 1.8:1 on the Light theme. Scoped to the tokens a theme declares.
+- **Wrap indicator card** — `test/wrap-indicator-card.test.js` — #1034: the dashboard says a session is wrapping, sourced from the run registry. Holds BOTH halves and RUNS the renderer against the server's own payload, because the previous version of this state shipped as a server field no frontend read — a wrapping card looked identical to a running one for three and a half months while a payload test passed.
+- **Session wrap finalize** — `test/session-wrap-finalize.test.js` guards the session page's
+  `wrapping` / `wrapFinished` / `wrapCompleted` poll branches. Those branches are dead now that
+  the status vocabulary has retired `wrapping` (#1034), but `public/session.js` still carries them
+  for a server that has not restarted; the test retires **with** them under #1302, never before.
