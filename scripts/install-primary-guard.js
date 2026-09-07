@@ -129,7 +129,16 @@ function readSettings(file) {
     throw err;
   }
   if (raw.trim() === '') return {};
-  return JSON.parse(raw);
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    // `JSON.parse`'s own error names no file. This CLI is what
+    // `VRF-798-arm-the-primary-guard` tells a remote operator to run, and a bare
+    // `SyntaxError` at the end of an ssh session tells them nothing about which
+    // file to open.
+    throw new Error(`${file} is not valid JSON (${err.message}). `
+      + 'Refusing to touch it — fix or move it, then re-run.');
+  }
 }
 
 /**
@@ -333,7 +342,14 @@ function main(argv) {
   return 0;
 }
 
-if (require.main === module) process.exit(main(process.argv.slice(2)));
+if (require.main === module) {
+  try {
+    process.exit(main(process.argv.slice(2)));
+  } catch (err) { // prawduct:allow prawduct/broad-except -- the operator runs this over ssh from the arming runbook; a raw stack trace with no file named is not an answer they can act on. The message is printed, never swallowed.
+    process.stderr.write(`install-primary-guard: ${err && err.message}\n`);
+    process.exit(1);
+  }
+}
 
 module.exports = {
   main, apply, isGuardEntry, guardCommand, guardEntries, wiredCommand, pinnedScript, selfTest,

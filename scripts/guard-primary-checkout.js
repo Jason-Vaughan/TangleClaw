@@ -124,14 +124,17 @@ function failOpen(note) {
  * surface. There is also no on-disk index this module could read as cheaply or
  * as correctly.
  *
- * A git that will not answer leaves the question unestablished, and unestablished
- * means "do not refuse" here. That is the permissive direction, chosen to match
- * this guard's fail-open posture, and stated because the opposite reading is the
- * one a reader would expect from a guard.
+ * Three answers, not two. `git ls-files --error-unmatch` exits **1** for a path
+ * it does not track — that is an ANSWER. Every other failure (git not on PATH,
+ * exit 128 in a broken repository, a killed subprocess) means the question was
+ * never answered, and collapsing those into `false` silently disarms P1 while
+ * everything still looks healthy: `--self-test` probes P2, so it reports PASS
+ * with P1 dead. Unestablished still does not refuse — that is this guard's
+ * posture — but it says so, like every other unestablished read here.
  *
  * @param {string} primary - Absolute primary checkout root.
  * @param {string} realTarget - Absolute, symlink-resolved target path.
- * @returns {boolean} True only when git says the path is tracked.
+ * @returns {boolean|null} True/false when git answered, null when it did not.
  */
 function isTracked(primary, realTarget) {
   const rel = path.relative(primary, realTarget);
@@ -141,7 +144,8 @@ function isTracked(primary, realTarget) {
       { stdio: 'ignore' });
     return true;
   } catch (err) {
-    return false;
+    if (err && err.status === 1) return false; // git answered: not tracked
+    return null;                               // git did not answer
   }
 }
 
@@ -251,6 +255,43 @@ function resolveShellPath(p, base) {
 }
 
 /**
+ * The shell's control operators, as a split pattern that KEEPS them.
+ *
+ * Derived from what the shell treats as a command boundary rather than
+ * hand-picked, because hand-picking is how this got it wrong twice: first
+ * parentheses were missing, then newline. A newline miss is the dangerous
+ * direction — `cd <primary>` on one line and `git checkout main` on the next is
+ * one segment, so the directory moves and the git command behind it is never
+ * inspected at all.
+ *
+ * `&&` and `||` are listed before the single-character class so the two-character
+ * operators win the alternation.
+ */
+const SHELL_SEPARATORS = /(&&|\|\||[;|&\n\r(){}])/;
+
+/** A `cd` whose destination this cannot resolve — never a reason to refuse. */
+const UNKNOWN_DIR = null;
+
+/**
+ * Where a `cd` argument lands, or UNKNOWN_DIR when that cannot be established.
+ *
+ * `cd -`, `cd $VAR`, `cd "$(…)"` and a bare `cd` all name a directory this
+ * cannot compute. Treating them as "no change" would silently attribute the
+ * NEXT git command to the wrong tree — in either direction — so they resolve to
+ * unknown, and an unknown directory yields no target, which is the permissive
+ * answer this guard is allowed to give.
+ *
+ * @param {string|undefined} arg - The token after `cd`.
+ * @param {string|null} base - Directory it is relative to, or unknown.
+ * @returns {string|null} Absolute path, or UNKNOWN_DIR.
+ */
+function cdTarget(arg, base) {
+  if (!arg || base === UNKNOWN_DIR) return UNKNOWN_DIR;
+  if (arg === '-' || arg === '~-' || arg.includes('$') || arg.includes('`')) return UNKNOWN_DIR;
+  return resolveShellPath(arg, base);
+}
+
+/**
  * Every directory this command would move a working tree in.
  *
  * Walks the command's segments in order, tracking the directory a `cd` moves to,
@@ -270,15 +311,23 @@ function resolveShellPath(p, base) {
  *     DIRECTORIES lets the caller ask `landsInPrimary`, which subtracts the
  *     worktree roots, exactly as the file-write arm does.
  *
- * Subshell parentheses are segment separators too, not just `&&` and `;`.
- * Without that, `(cd <primary> && git checkout main)` tokenizes its first
- * segment as `(cd` — which is not the token `cd`, so the directory never moved
- * and the command resolved against the tool's cwd instead.
+ * A subshell SAVES and RESTORES the directory rather than merely bounding a
+ * segment. Consuming `)` without restoring made `(cd <primary> && git log) && git
+ * checkout -b x` refuse the trailing checkout — telling the actor to go run it in
+ * the worktree they were already standing in. That is the fail-CLOSED direction,
+ * which this guard is not allowed to fail in, and it is why the stack exists
+ * rather than a depth counter.
  *
- * Bound worth knowing: a segment split inside a quoted string containing `|`,
- * `;` or a parenthesis yields odd segments. It cannot invent a git subcommand in
- * subcommand position, so it can only fail toward permitting — the direction
- * this guard is allowed to fail in.
+ * A `cd` does not end its own segment either. It sets the directory and scanning
+ * continues from the next token, so a separator this pattern does not know about
+ * cannot hide a `git` command behind a `cd` that has already moved the tree.
+ *
+ * Bound worth knowing, and stated precisely because the earlier version of this
+ * sentence was false: a separator appearing inside a quoted string yields odd
+ * segments. It cannot invent a git subcommand in subcommand position, but it CAN
+ * move the tracked directory under a real one — so the failure is not
+ * one-directional, and an unresolvable `cd` therefore yields no target at all
+ * rather than a guessed one.
  *
  * @param {string} command - The Bash tool's command string.
  * @param {string} cwd - The tool's working directory.
@@ -286,16 +335,27 @@ function resolveShellPath(p, base) {
  */
 function movingGitTargets(command, cwd) {
   const targets = [];
+  const saved = [];
   let dir = cwd;
-  for (const segment of command.split(/&&|\|\||[;|()]/)) {
+
+  for (const segment of command.split(SHELL_SEPARATORS)) {
+    if (segment === '(') { saved.push(dir); continue; }
+    if (segment === ')') { if (saved.length) dir = saved.pop(); continue; }
+    // `split` with a capture group returns each separator as its own entry, so
+    // a captured operator is exactly one of these — no partial matching needed.
+    if (/^(&&|\|\||[;|&\n\r{}])$/.test(segment)) continue;
+
     const toks = tokenize(segment);
     let i = 0;
     while (i < toks.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[i]) || toks[i] === 'sudo')) i += 1;
-    if (i >= toks.length) continue;
-    if (toks[i] === 'cd') {
-      if (toks[i + 1]) dir = resolveShellPath(toks[i + 1], dir);
-      continue;
+
+    // A `cd` moves the directory and scanning CONTINUES in the same segment.
+    while (i < toks.length && toks[i] === 'cd') {
+      dir = cdTarget(toks[i + 1], dir);
+      i += 2;
     }
+    if (i >= toks.length) continue;
+
     // Exactly `git`, or a path ending in `/git` — so `/usr/bin/git` counts and
     // `mygit` does not.
     if (!/(^|\/)git$/.test(toks[i])) continue;
@@ -303,7 +363,7 @@ function movingGitTargets(command, cwd) {
     let at = dir;
     while (i < toks.length && toks[i].startsWith('-')) {
       if (toks[i] === '-C') {
-        if (toks[i + 1]) at = resolveShellPath(toks[i + 1], dir);
+        at = toks[i + 1] ? cdTarget(toks[i + 1], dir === UNKNOWN_DIR ? cwd : dir) : UNKNOWN_DIR;
         i += 2;
       } else if (GIT_OPTS_WITH_VALUE.includes(toks[i])) {
         i += 2;
@@ -311,6 +371,7 @@ function movingGitTargets(command, cwd) {
         i += 1;
       }
     }
+    if (at === UNKNOWN_DIR) continue;
     if (i < toks.length && HEAD_MOVING_VERBS.includes(toks[i])) targets.push(realOrSelf(at));
   }
   return targets;
@@ -391,7 +452,12 @@ function evaluate(input) {
       + 'worktree unless you intend it to be live right now.' + overrideHint(primary));
   }
 
-  if (sessionIsWorktree && isTracked(primary, realTarget)) {
+  if (!sessionIsWorktree) return;
+  const tracked = isTracked(primary, realTarget);
+  if (tracked === null) {
+    return failOpen(`git could not say whether ${realTarget} is tracked — P1 not applied`);
+  }
+  if (tracked) {
     return deny(`Refused: ${realTarget} is a tracked file in the PRIMARY checkout, but this session `
       + `is rooted in the worktree ${realOrSelf(sessionRoot)} — so this write almost certainly `
       + 'inherited the primary as its cwd rather than meaning to land there. Dispatched subagents '

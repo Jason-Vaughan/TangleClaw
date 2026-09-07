@@ -328,6 +328,71 @@ describe('#798 primary-checkout guard — Bash, working-tree-moving commands', (
     assert.equal(r.decision, 'deny');
   });
 
+  it('treats a NEWLINE as a command boundary', () => {
+    // The dangerous direction, and the one a hand-picked separator set missed:
+    // with `\n` absent the whole thing is one segment, so `cd` moved the
+    // directory and the `git checkout` behind it was never inspected at all —
+    // a straight bypass of the arm.
+    const r = bash(`cd ${fx.primary}\ngit checkout main`, fx.worktree, fx.worktree);
+    assert.equal(r.decision, 'deny');
+  });
+
+  it('newline separates two GIT commands, with no cd involved', () => {
+    // Isolates the separator set. The test above cannot: with `\n` removed the
+    // whole string is one segment, and the `cd` loop then finds `git` anyway —
+    // the two fixes are deliberate belt-and-braces for one bypass, so each needs
+    // a case the other cannot cover. Here there is no `cd` to fall back on: with
+    // `\n` absent, the segment's subcommand is `log` and nothing is refused.
+    const r = bash('git log --oneline\ngit checkout main', fx.worktree, fx.primary);
+    assert.equal(r.decision, 'deny');
+  });
+
+  it('a cd does not end its own segment, whatever separated them', () => {
+    // Isolates the other half. No shell operator here at all — this is the
+    // property that a separator the pattern does NOT know about cannot hide a
+    // git command behind a cd that has already moved the tree.
+    const r = bash(`cd ${fx.primary} git checkout main`, fx.worktree, fx.worktree);
+    assert.equal(r.decision, 'deny');
+  });
+
+  it('treats the other control operators as boundaries too', () => {
+    for (const sep of ['\r\n', ' & ', '; ', ' && ']) {
+      const r = bash(`cd ${fx.primary}${sep}git checkout main`, fx.worktree, fx.worktree);
+      assert.equal(r.decision, 'deny', `separator ${JSON.stringify(sep)} was not honoured`);
+    }
+  });
+
+  it('RESTORES the directory when a subshell closes', () => {
+    // `)` was consumed as a boundary without restoring, so the trailing checkout
+    // inherited the subshell's `cd` and was refused — telling the actor to run it
+    // in the worktree they were already in. Fail-CLOSED, the direction this
+    // guard may not fail in.
+    const r = bash(
+      `(cd ${fx.primary} && git log) && git checkout -b feat/y`, fx.worktree, fx.worktree);
+    assert.equal(r.decision, null, `expected no decision, got ${r.stdout}`);
+  });
+
+  it('still refuses when the subshell itself moves the tree', () => {
+    const r = bash(`(cd ${fx.primary} && git checkout main)`, fx.worktree, fx.worktree);
+    assert.equal(r.decision, 'deny');
+  });
+
+  it('an unresolvable cd yields no target rather than a guessed one', () => {
+    // `cd -` and `cd $VAR` name a directory this cannot compute. Treating them
+    // as "no change" would attribute the next git command to the wrong tree —
+    // in either direction — so they resolve to unknown, and unknown never
+    // refuses.
+    for (const command of ['cd - && git checkout main', 'cd "$SOMEWHERE" && git checkout main']) {
+      const r = bash(command, fx.worktree, fx.primary);
+      assert.equal(r.decision, null, `${command} must not be refused; got ${r.stdout}`);
+      // "Did not refuse" is not enough: without the unknown-directory guard the
+      // path resolver THROWS on it, the outer catch fails open, and this reads
+      // green for the wrong reason. The clean fall-through is what is asserted.
+      assert.doesNotMatch(r.stderr, /internal error/,
+        `${command} fell through by throwing rather than by deciding`);
+    }
+  });
+
   it('sees through a subshell', () => {
     // `(cd /p && git checkout main)` tokenized its first segment as `(cd`, which
     // is not the token `cd`, so the directory never moved and the command
@@ -554,6 +619,23 @@ describe('#798 primary-checkout guard — every failure path exits 0 with no dec
     assert.ok(r.reason.endsWith('delete it after.'),
       `decision looks truncated: ...${r.reason.slice(-60)}`);
     assert.doesNotThrow(() => JSON.parse(r.stdout));
+  });
+
+  it('says so when git cannot answer whether a file is tracked, instead of assuming untracked', () => {
+    // `git ls-files --error-unmatch` exits 1 for "not tracked" — an ANSWER.
+    // Every other failure means the question was never answered, and folding
+    // those into "untracked" disarms P1 while everything still looks healthy:
+    // `--self-test` probes P2, so it reports PASS with P1 dead. git is removed
+    // from PATH rather than the repo being broken, so the test names the
+    // condition it means.
+    const r = runGuard({
+      primary: fx.primary, sessionRoot: fx.worktree, cwd: fx.primary,
+      toolInput: { file_path: path.join(fx.primary, 'lib', 'x.js') },
+      env: { PATH: '/nonexistent' }
+    });
+    assert.equal(r.status, 0);
+    assert.equal(r.stdout, '', 'an unestablished read must not refuse');
+    assert.match(r.stderr, /could not say whether .* is tracked/);
   });
 
   it('falls open when the worktree list cannot be established', () => {
@@ -818,6 +900,12 @@ describe('#798 installer — the CLI, against a real settings file', () => {
       assert.notEqual(r.status, 0);
       assert.equal(fs.readFileSync(SETTINGS(), 'utf8'), '{ not json',
         'the malformed file must be left exactly as it was');
+      // A bare SyntaxError naming no file is not an answer a remote operator can
+      // act on, and this CLI is exactly what the arming runbook tells them to run.
+      assert.match(r.stderr, /install-primary-guard:/);
+      assert.ok(r.stderr.includes(SETTINGS()), 'the refusal must name the file to fix');
+      assert.doesNotMatch(r.stderr, /at Object\.<anonymous>|node:internal/,
+        'a raw stack trace is not an operator-facing message');
     } finally {
       fs.writeFileSync(SETTINGS(), saved);
     }

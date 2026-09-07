@@ -2,7 +2,7 @@
 artifact: build-plan
 version: 2
 scope: train-13-5
-branch: fix/1245-ttyd-kickstart-thrash
+branch: feat/798-primary-checkout-guard
 depends_on:
   - artifact: api-contract
   - artifact: architecture
