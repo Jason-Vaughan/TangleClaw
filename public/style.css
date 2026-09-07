@@ -1721,19 +1721,35 @@ body {
    `animation`, so it looks identical under `prefers-reduced-motion` and in a
    screenshot, where the running dot is also still. That is why the detail row
    spells out "Wrap stalled": between those two contexts and colour blindness,
-   the dot alone cannot be the only thing saying it. */
+   the dot alone cannot be the only thing saying it.
+
+   `var(--warning)`, not a literal: the token is declared per theme precisely
+   because one hardcoded amber measured ~1.8:1 on the Light theme's white card,
+   under WCAG 1.4.11's 3:1 floor for a graphical object. On a collapsed card
+   this dot is the only signal of the fault, so it is the last place that can
+   afford to be the least perceivable thing on the row. */
 .status-dot.wrap-stalled {
   width: 12px;
   height: 12px;
   background: conic-gradient(
-    #f0b860 0deg 45deg,
+    var(--warning) 0deg 45deg,
     transparent 45deg 90deg,
-    #f0b860 90deg 135deg,
+    var(--warning) 90deg 135deg,
     transparent 135deg 180deg,
-    #f0b860 180deg 225deg,
+    var(--warning) 180deg 225deg,
     transparent 225deg 270deg,
-    #f0b860 270deg 315deg,
+    var(--warning) 270deg 315deg,
     transparent 315deg 360deg);
+}
+/* R-12: the wedged wrap's own label. `.detail-unknown` is this codebase's
+   vocabulary for a read that established NOTHING, and a wedged run is a known
+   fault — sharing the class would restyle a wrap state whenever the
+   degraded-read palette moves, and put a false hit in front of anyone grepping
+   for the unreadable-state surface. Same hue, its own name, following the
+   precedent `.detail-wrapping` set for the running case. */
+.detail-wrap-stalled {
+  color: var(--warning);
+  font-weight: 600;
 }
 /* The detail row's wrap label. Shares the muted-emphasis treatment the unknown
    row uses, because both are "this card is telling you something extra" rather

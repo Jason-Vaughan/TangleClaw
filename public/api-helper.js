@@ -2391,7 +2391,6 @@
   global.tcSessionLiveness = tcSessionLiveness;
   global.tcSessionWrapping = tcSessionWrapping;
   global.tcSessionWrapStale = tcSessionWrapStale;
-  global.tcSessionWrapRecord = tcSessionWrapRecord;
   global.tcSessionWrapStep = tcSessionWrapStep;
   global.tcSessionWrapElapsed = tcSessionWrapElapsed;
   global.tcSessionRead = tcSessionRead;

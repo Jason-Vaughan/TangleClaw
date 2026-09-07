@@ -4886,6 +4886,12 @@ let wrapWatchInFlight = false;
  * restart killed it (the registry is process-local) — surfaced honestly
  * via the drawer error banner; a fresh wrap is safe at that point.
  *
+ * A run that merely STOPS REPORTING is a different answer and gets a
+ * different notice: the registry stopped calling it live, but nothing
+ * observed it end, so neither its liveness nor whether it committed is
+ * established. Claiming the restart case there would invite a second
+ * pipeline alongside a live first one.
+ *
  * @param {number} postStartedAtMs - Epoch ms when the caller's wrap POST
  *   went out; gates result freshness so a PREVIOUS wrap's retained
  *   outcome never renders as this one's.
@@ -4940,6 +4946,20 @@ async function watchWrapRun(postStartedAtMs, password) {
         'Wrap failed',
         status.result.error
           || 'The wrap failed before its pipeline produced a result. Nothing was committed; it is safe to start a new wrap.'
+      );
+    } else if (decision === 'stalled') {
+      // The run was claimed and never settled. Everything the restart notice
+      // below asserts is UNKNOWN here: the registry's threshold is a generous
+      // multiple of the worst observed pipeline wall-time, not a death
+      // certificate, so this fires for a genuinely slow wrap as readily as for
+      // a wedged one. Saying "nothing was committed; start another" would
+      // invite a second pipeline alongside a live first one — the #583
+      // incident's own shape (#1314).
+      openWrapDrawerNotice(
+        'Wrap stopped reporting',
+        'This wrap has not reported progress for a long time. TangleClaw cannot tell a wedged pipeline from a very slow one, '
+        + 'so whether it is still running, and whether it committed anything, are both unknown here. '
+        + 'Check the server log before starting another wrap — starting one now could run a second pipeline alongside a live first.'
       );
     } else {
       // Ran, then vanished without a fresh result: a server restart killed

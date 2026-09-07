@@ -365,7 +365,15 @@ describe('wrap-run-registry (#583)', () => {
       });
       assert.equal(sub.ok, true, 'the run still exists, so the id resolves');
       assert.equal(sub.finished, true, 'a wedged run will never emit again — do not hold the client');
-      assert.equal(sub.replay.length, 1, 'and it still gets what the run did emit');
+      assert.deepEqual(sub.replay.map((ev) => ev.type), ['run-start', 'run-done'],
+        'it gets what the run emitted, then a terminal frame it never emitted itself');
+      // Synthesised, not appended: a read must not write to the log, and the
+      // run may still settle for real afterwards.
+      const terminal = sub.replay[1];
+      assert.equal(terminal.stale, true, 'the terminal frame says WHY the stream ended');
+      assert.equal(terminal.result, null, 'a wedged pipeline\'s outcome is what nobody knows');
+      assert.equal(terminal.seq, 2, 'numbered as the next event would have been');
+      assert.deepEqual(registry.get('proj-a').runId, claim.runId);
 
       // No listener was registered: a late finish must not call back into a
       // client that was already told the stream was over.

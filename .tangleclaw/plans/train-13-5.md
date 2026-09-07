@@ -1,3 +1,15 @@
+---
+artifact: build-plan
+version: 2
+scope: train-13-5
+branch: fix/1314-wrap-run-staleness
+depends_on:
+  - artifact: api-contract
+  - artifact: architecture
+  - artifact: nonfunctional-requirements
+  - artifact: project-preferences
+---
+
 # Train 13.5 — Stability & Timeout Hotfixes
 
 **Board:** `MASTER_ROADMAP` → Currently Executing → *Train 13.5: Stability & Timeout Hotfixes*.
@@ -122,18 +134,46 @@ incidental: this is the reader #1314 does not mention.
 
 ### Done when
 
-- [ ] `_isLive` exists in `lib/wrap-run-registry.js` and is the only staleness test in the module.
-- [ ] `get()` reports `running: false` + `stale: true` past `STALE_RUN_MS`; `anyRunning()` skips it;
+- [x] `_isLive` exists in `lib/wrap-run-registry.js` and is the only staleness test in the module.
+- [x] `get()` reports `running: false` + `stale: true` past `STALE_RUN_MS`; `anyRunning()` skips it;
       `subscribe()` returns `finished: true` for it.
-- [ ] `begin()`'s takeover behaviour is unchanged (its existing tests still pass untouched).
-- [ ] `_wrapState` reports a stale run distinctly from both "wrapping" and "no wrap".
-- [ ] Regression tests drive every branch through injected `now`, and each one is mutation-checked:
+- [x] `begin()`'s takeover behaviour is unchanged (its existing tests still pass untouched).
+- [x] `_wrapState` reports a stale run distinctly from both "wrapping" and "no wrap".
+- [x] Regression tests drive every branch through injected `now`, and each one is mutation-checked:
       break the code, watch the test go red.
-- [ ] Full suite green; `prawduct-hook test-evidence record`.
-- [ ] `/prawduct:critic`, findings dispositioned in one pass.
-- [ ] CHANGELOG `[Unreleased]` entry under `### Fixed`.
+- [x] Full suite green; `prawduct-hook test-evidence record`.
+- [x] `/prawduct:critic`, findings dispositioned in one pass.
+- [x] CHANGELOG `[Unreleased]` entry under `### Fixed`.
+
+### What the review added — the reader table was short by three
+
+The table above enumerates the readers inside `lib/wrap-run-registry.js` and stops at the module
+boundary. `get()`'s payload is also the `GET /wrap/status` response body, and three more readers
+live past it (`boundary-patterns.md` → API Endpoints). Two act on falsy as inertia and are safe;
+`wrapWatchDecision` (`public/wrap-drawer.js`) takes an ACTION on it, and with `running` newly false
+for a wedged run it told the operator the pipeline died and nothing was committed — inviting a
+second wrap at exactly the moment `begin`'s takeover would permit one. All three reviewers reached
+it independently.
+
+The reachability argument is the part worth keeping: `STALE_RUN_MS` is 30 minutes against a ~17
+minute worst observed wall-time, so the case that actually fires is a **slow-but-alive** wrap, not
+only a wedged one. Staleness is a reader's heuristic, never an observation of death, and no surface
+may phrase it as one.
+
+Two further consequences of the same short table:
+- The SSE route closes on `finished`, which `_isLive` made reachable for a run with no `run-done`
+  in its log. A browser reads a terminal-frame-less close as a dropped connection and reconnects
+  forever. `subscribe` now synthesises the terminal frame (never appends it — a read must not write
+  to the log, and the run may still settle).
+- The status route hand-copies the registry payload field by field, so `stale` stopped at the HTTP
+  boundary while the reference documented it. The route's key SET is now pinned by a test, so the
+  next added field fails there rather than going missing.
+
+Deferred as #1321: nothing logs that a run crossed the threshold, so an operator cannot reconstruct
+why a restart was permitted or why nudges resumed. The clean fix makes a read mutate the entry,
+which is the property this chunk was careful to preserve — it deserves its own thought.
 
 ## Status
 
-- [ ] Chunk 01 — #1314, the registry owns the staleness predicate
+- [x] Chunk 01 — #1314, the registry owns the staleness predicate
 - [ ] Chunk 02 — #1245, ttyd child leak (code-side branches only)

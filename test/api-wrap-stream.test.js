@@ -334,6 +334,42 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
     assert.equal(stream.frames[1].data.result.pipelineResult, undefined, 'no per-step result exists to invent');
   });
 
+  // #1314 — the route-level half. `subscribe` gained a second way to report
+  // `finished`: a WEDGED run, whose log has no `run-done` and never will. A
+  // close with no terminal frame is not something an `EventSource` treats as
+  // the end — it is a dropped connection, and the browser reconnects every few
+  // seconds forever without ever painting its fallback.
+  it('a stream opened on a WEDGED run closes with a terminal frame, not a bare disconnect', async () => {
+    store.sessions.start({ projectId, engineId: 'claude', tmuxSession: 'wrap-stream-wedged' });
+    const realNow = wrapRunRegistry._internal.now;
+    let fakeNow = realNow();
+    wrapRunRegistry._internal.now = () => fakeNow;
+    try {
+      // A run claimed and left running: no `finish`, so no `run-done` in its log.
+      const claim = wrapRunRegistry.begin('wrap-stream-test', 1);
+      wrapRunRegistry.emit('wrap-stream-test', claim.runId, { type: 'run-start', steps: [] });
+
+      fakeNow += wrapRunRegistry.STALE_RUN_MS;
+      const stream = await openStream(server, STREAM(claim.runId));
+      await stream.until((s) => s.ended, 'the synthesised terminal frame');
+
+      assert.deepEqual(stream.frames.map((f) => f.event), ['run-start', 'run-done'],
+        'the wedged run still terminates the stream');
+      assert.equal(stream.frames[1].data.stale, true, 'and says WHY it ended');
+      assert.equal(stream.frames[1].data.result, null,
+        'a wedged pipeline\'s outcome is exactly what nobody knows — inventing one is the bug');
+
+      // The synthetic frame is not written into the run's log: a read must not
+      // mutate it, and the pipeline may still settle for real.
+      assert.equal(wrapRunRegistry.get('wrap-stream-test').stale, true);
+      assert.equal(wrapRunRegistry.finish('wrap-stream-test', claim.runId, { ok: true }), true,
+        'the owning pipeline can still settle its own run afterwards');
+    } finally {
+      wrapRunRegistry._internal.now = realNow;
+      wrapRunRegistry._resetForTests();
+    }
+  });
+
   it('a subscriber that disconnects mid-run is dropped and the run finishes untouched', async () => {
     store.sessions.start({ projectId, engineId: 'claude', tmuxSession: 'wrap-stream-drop' });
     let release;

@@ -135,10 +135,32 @@ All notable changes to TangleClaw are documented in this file.
   fail postures are untouched and remain deliberately asymmetric — the restart gate and the wake
   monitor fail closed, the dashboard fails open — because that split is action-versus-display.
   The card gains the honest fourth state rather than the two lies available to it: a stalled
-  amber pinwheel, frozen where the running one spins, with the disclosure row saying "Wrap
-  stalled", the step it wedged on, and how long it has been that way — in words, because the
-  dot's discriminators are colour and the absence of motion, and both vanish under
-  `prefers-reduced-motion`, in a screenshot, and for a colour-blind operator.
+  pinwheel in `var(--warning)`, frozen where the running one spins, with the disclosure row saying
+  "Wrap stalled", the step it wedged on, and how old the run is — in words, because the dot's
+  discriminators are colour and the absence of motion, and both vanish under
+  `prefers-reduced-motion`, in a screenshot, and for a colour-blind operator. The row says
+  "started 40m ago" and not "no progress for 40m": the registry keeps no per-event timestamp, so
+  time-since-last-progress is not a fact anything here has.
+- **The wrap drawer stops telling you a slow wrap died (#1314).** Reattaching to a run that has
+  stopped reporting used to fall through to "Wrap did not survive a server restart — its commit
+  step never ran, so nothing was committed. It is safe to start a new wrap." None of that is
+  established for a run nobody observed end: the registry's threshold is a generous multiple of
+  the worst observed pipeline wall-time, not a death certificate, so the reachable case is a
+  genuinely slow wrap watched past it — with the pipeline possibly mid-`commit` while the operator
+  is invited to start a second one, which is the #583 incident's own shape. `wrapWatchDecision`
+  answers `'stalled'` for it now, with a notice that says what is actually known: it stopped
+  reporting, whether it is still running and whether it committed are both unknown, and check the
+  server log before starting another. `GET /wrap/status` forwards `stale` for it to read — the
+  route hand-copies the registry payload field by field, so the reference had documented a field
+  nothing sent.
+- **A stream opened on a wedged wrap now closes instead of reconnecting forever (#1314).** A run
+  `finish` settles ends its event log with `run-done`, so the SSE route always had a terminal
+  frame to write before closing. A wedged run has none and never will, and a browser reads a close
+  with no terminal frame as a dropped connection — so the page reopened the stream every few
+  seconds indefinitely, never reaching the fallback its error path would paint. The frame is
+  synthesised rather than appended: a read must not write to the run's log, and the pipeline may
+  still settle for real afterwards. It carries no result, because a wedged pipeline's outcome is
+  precisely what nobody knows.
 - **Session lookups resolved arbitrarily between two rows started in the same second.**
   `started_at` is second-resolution and none of the session orderings had a tiebreak, so SQLite
   decided — and it decided in favour of the OLDER row. `getActive` is what a wrap and a kill

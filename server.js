@@ -4776,6 +4776,11 @@ route('GET', '/api/sessions/:project/wrap/status', (_req, res, params) => {
     // wants live progress before its own POST returns can open the stream.
     runId: status.runId,
     running: status.running,
+    // #1314 — a run claimed and never settled reports `running: false` with
+    // this true. The drawer's reattach decision needs the two apart: a wedged
+    // run is not "no run", and telling the operator their wrap died is a claim
+    // nobody here can make.
+    stale: status.stale,
     sessionId: status.sessionId,
     startedAt: status.startedAt,
     currentStepId: status.currentStepId,

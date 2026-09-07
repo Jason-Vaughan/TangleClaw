@@ -478,9 +478,19 @@ describe('the card reports a running wrap from the run registry (#1034)', () => 
       // vanish under `prefers-reduced-motion`, in a screenshot, and for a
       // colour-blind operator. This row is what actually carries the state.
       const html = detail({ session: { active: true, startedAt: 'x', wrapping: { step: 'ai-content', since: Date.now() - 2_400_000, stale: true } } });
-      assert.match(html, /Wrap stalled/);
+      // The CLASS, not just the words: `.detail-unknown` is this codebase's
+      // vocabulary for a read that established nothing, and a wedged run is a
+      // known fault. Sharing it would restyle a wrap state whenever the
+      // degraded-read palette moves.
+      assert.match(html, /class="detail-wrap-stalled">Wrap stalled</);
+      assert.ok(!/detail-unknown/.test(html),
+        `a known fault must not borrow the unreadable-state class: ${html}`);
       assert.match(html, /ai-content/, 'the step it wedged on');
-      assert.match(html, /no progress for 40m/, 'and how long it has been that way');
+      // "started 40m ago", not "no progress for 40m": the number is the run's
+      // age, and the registry keeps no per-event timestamp, so the stronger
+      // claim would mis-date a wedge that happened a minute ago by 40 minutes.
+      assert.match(html, /started 40m ago/, 'and how old the run is — the fact actually available');
+      assert.ok(!/no progress for/.test(html), 'never a time-since-last-progress this cannot know');
       assert.ok(!/>Wrapping</.test(html), `a wedged run must not claim to be wrapping: ${html}`);
     });
 

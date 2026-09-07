@@ -121,6 +121,8 @@ describe('api wrap-run status + single-flight (#583)', () => {
         project: 'wrap-run-test',
         runId: null,
         running: false,
+        // An absent run is not a wedged one — `false`, never omitted.
+        stale: false,
         sessionId: null,
         startedAt: null,
         currentStepId: null,
@@ -199,6 +201,37 @@ describe('api wrap-run status + single-flight (#583)', () => {
       releaseGate();
       const firstRes = await first;
       assert.equal(firstRes.status, 200, 'the original wrap completes untouched');
+    });
+  });
+
+  // #1314 — the route re-types the registry payload by hand, so a field added
+  // to `get()` stops at the HTTP boundary unless someone remembers to copy it.
+  // That is how the reference came to document a `stale` nobody sent. Pinning
+  // the key SET (not just `stale`) is what makes the next added field fail
+  // here instead of silently going missing.
+  describe('GET /wrap/status forwards the registry payload whole', () => {
+    it('carries every field the registry reports, stale included', async () => {
+      const realNow = wrapRunRegistry._internal.now;
+      let fakeNow = realNow();
+      wrapRunRegistry._internal.now = () => fakeNow;
+      try {
+        wrapRunRegistry.begin('wrap-run-test', 1);
+        const live = await request(server, 'GET', '/api/sessions/wrap-run-test/wrap/status');
+        assert.deepEqual(Object.keys(live.body).sort(),
+          ['currentStepId', 'finishedAt', 'project', 'result', 'runId', 'running', 'sessionId', 'stale', 'startedAt'],
+          'the route\'s key set is the contract docs/configuration-reference.md describes');
+        assert.equal(live.body.running, true);
+        assert.equal(live.body.stale, false);
+
+        fakeNow += wrapRunRegistry.STALE_RUN_MS;
+        const wedged = await request(server, 'GET', '/api/sessions/wrap-run-test/wrap/status');
+        assert.equal(wedged.body.running, false, 'the safe boolean for any consumer that only asks that');
+        assert.equal(wedged.body.stale, true,
+          'and the reason, for the drawer that must not call this a dead run');
+      } finally {
+        wrapRunRegistry._internal.now = realNow;
+        wrapRunRegistry._resetForTests();
+      }
     });
   });
 
