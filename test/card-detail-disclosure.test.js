@@ -258,6 +258,18 @@ describe('open-ness survives a re-render (#1015)', () => {
       degradedTooltip: () => '',
       tcSessionLiveness: () => 'none',
       tcSessionRead: () => ({ why: '', remedy: '' }),
+      // The REAL dot renderer, not a stub: renderCard delegates the status dot
+      // to it, and a stub here would let this suite keep passing over a dot
+      // that had stopped rendering. Its own free variables are supplied the
+      // same way.
+      renderStatusDot: lift('function renderStatusDot(project)', 'renderStatusDot', {
+        esc,
+        tcSessionLiveness: () => 'none',
+        tcSessionWrapping: () => false,
+        tcSessionWrapStep: () => null,
+        tcSessionRead: () => ({ why: '', remedy: '' }),
+        degradedTooltip: () => ''
+      }),
       // renderCard reads engine health off `state` to tint the engine pill.
       state: { modelStatus: {} }
     })(project);

@@ -34,6 +34,50 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-06 — #1034: the dashboard says a wrap is running, from the registry that knows
+
+<!-- prawduct: type=feature | scope=ses-5w9d -->
+
+SES-5W9D Chunk 02.
+
+**What shipped.** A wrapping project's card now shows a spinning conic-gradient pinwheel, and
+`GET /api/projects` carries `session.wrapping` sourced from `lib/wrap-run-registry.js`. Three
+values: `{step, since}` for a run in progress, `false` for ESTABLISHED-absent, and `null` for a
+read that failed — named in `incomplete` beside `active` rather than folded into the `false` that
+would claim an answer it never got. (`incomplete` is carried for the API's consumers and because
+an unestablished read must name itself; no `public/` reader consults it today, the pre-existing
+`active` entry included.) The step and elapsed reach the card's disclosure row, not only
+a `title`, because the ratified primary client is iPhone Safari and a tooltip there has no hover.
+
+**The plan's one open assumption was verified before any design.** `enrichProject` moved much of
+its filesystem work into the killable scanner child (#884), so whether the card branch could
+`require` a process-local registry decided the chunk's shape. It runs in the PARENT: the branch
+calls `store.sessions.getActive`, a prepared statement, and the child refuses to open SQLite in
+comments that say so. Recorded in the plan rather than left as a checkbox.
+
+**Two decisions worth carrying.** The fail posture INVERTS `lib/medusa-wake.js`'s on the same
+registry — the wake gate fails closed because withholding a keystroke is its safe error, while a
+display fails open, since painting "working" across every card from one broken read is worse than
+showing nothing. And `tcSessionWrapping` is deliberately not a fourth value of `tcSessionLiveness`:
+that classifier feeds `renderSessionCount`, which counts `liveness === 'live'`, so a fourth value
+would have silently dropped the header's active count by one the moment a wrap started.
+
+**The lesson worth carrying: a test per realm is not a test of the feature.** This chunk exists
+because the previous attempt DID ship a server field for the wrapping state and no frontend ever
+read it — a payload test and a renderer test were both green for three and a half months while the
+operator saw an ordinary active card. Neither kind of test can see that gap; only one that feeds
+the server's own projection into the real renderer can. Two such tests now exist, and the mutation
+that drops the field from the projection reds four tests including both. The same defect pointing
+the other way was found one function over and filed as #1311: `public/ui.js` reads
+`session.sessionMode` to word the kill modal, and no card projection has ever emitted it.
+
+**Verification.** Suite green. Six mutations, each run and each red. The acceptance criterion was
+met by a REAL wrap rather than by tests, as the chunk required: a sandboxed server on a leased
+port with an isolated `TANGLECLAW_HOME`, wrapping a throwaway git repo — never the worktree, since
+a wrap commits with `git add -A` — with the card payload going `false` -> `{"step":
+"changelog-update", "since": ...}` -> `false`. The operator's own install was untouched (same pid
+before and after). What is NOT verified is every pixel; queued as `VRF-5W9D-wrap-pinwheel`.
+
 ## 2026-09-06 — #1034: the session lifecycle has a vocabulary, and `wrapping` is not in it
 
 <!-- prawduct: type=feature | scope=ses-5w9d -->

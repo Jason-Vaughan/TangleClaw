@@ -95,6 +95,34 @@ this work should close.
   that would consume it must run in the parent. If it turns out to run in the child, the
   registry's state has to reach it as an argument rather than as a require.
 
+  **VERIFIED TRUE at the start of Chunk 02 — the branch runs in the PARENT, and the registry is
+  readable by `require`. No argument-passing plumbing is needed.** Three independent proofs, any
+  one sufficient:
+
+  1. The branch reads SQLite. `lib/projects.js:873` calls `store.sessions.getActive`, a
+     `better-sqlite3` prepared statement — and `lib/dir-scanner-child.js:26-38` refuses to open
+     SQLite by design, in comments naming that refusal ("a process built to be killed"). There is
+     no sessions handler in the child's `HANDLERS` table either.
+  2. The branch already reads process-local module state of the server: `_liveSession` calls
+     `engineErrors.get(row.id)` against a plain in-process `Map`. Were it running in the child,
+     `lastEngineError` would already be permanently null and the #261 badge dead.
+  3. Only `facts` crosses the boundary — six JSON fields from the child's `projectFacts` handler.
+     `session` is not among them and never crosses.
+
+  **What this changes about the chunk's shape:** nothing structural, but two design constraints
+  follow from HOW the read should be made rather than whether it can be.
+
+  - **Lazy require behind a seam, not a module-top require.** `lib/sessions.js` already requires
+    the registry eagerly, and `projects -> sessions -> project-version -> projects` is a recorded
+    cycle that has already cost this repo a partial-exports casualty. `lib/medusa-wake.js:1201`
+    is the precedent to copy: the require lives inside an `_internal` seam object, which both
+    avoids the edge and gives the tests a stub point.
+  - **The fail posture INVERTS the precedent, and that is deliberate.** `medusa-wake` fails
+    CLOSED (an unreadable registry means "assume a wrap is running") because withholding a
+    keystroke is the safe error. A display indicator must fail OPEN: a registry read that throws
+    must not paint "wrapping" onto every card on the dashboard. Same mechanism, opposite default,
+    because the cost of being wrong points the other way.
+
 **What would raise confidence:** N/A at High.
 
 ## Why the registry, and not the row
@@ -136,7 +164,7 @@ that something was happening.
 ## Status
 
 - [x] Chunk 01: The status vocabulary is explicit, and `wrapping` is not in it (#1034)
-- [ ] Chunk 02: The dashboard says a session is wrapping again, sourced from the run registry (#1034)
+- [x] Chunk 02: The dashboard says a session is wrapping again, sourced from the run registry (#1034)
 - [ ] Chunk 03: The vestigial `V2` designators are retired (#1034)
 
 Context: Ruling made 2026-09-06 by the operator, as a gate between Train 13 and Train 14 — the
@@ -347,6 +375,69 @@ the product worse at the thing the state was for.
   2. Verified against a real wrap on this install
   3. `/prawduct:critic` run and blocking findings resolved
   4. Committed, PR merged, chunk marked `[x]` in Status
+
+**Chunk 02 built 2026-09-06. The assumption held, and three decisions the plan left open were
+taken at build time.**
+
+1. **`tcSessionWrapping` is NOT a fourth value of `tcSessionLiveness`.** The liveness classifier
+   feeds `renderSessionCount`, which counts `liveness === 'live'` — so a fourth value there would
+   have silently dropped the dashboard header's active count by one the moment a wrap started.
+   Wrapping is a property OF a live session, not an alternative to being live, and the two
+   predicates are separate for that reason. Pinned by a test.
+2. **The fail posture inverts `medusa-wake`'s, deliberately.** Same registry, opposite default:
+   the wake gate fails CLOSED (an unreadable registry means "assume a wrap is running") because
+   withholding a keystroke is its safe error, while a display fails OPEN, because painting
+   "working" across every card from one broken read is worse than showing nothing. The payload
+   still carries `null` and names it in `incomplete`, because `architecture.md` requires an
+   unestablished read to name itself and `api-contract.md` documents the field for API consumers.
+   Note precisely what that does NOT mean: nothing in `public/` reads `session.incomplete` today,
+   the pre-existing `['active']` entry included, so it reaches the wire and no reader. The DISPLAY
+   declines to claim, and the payload stays honest for whoever asks.
+3. **The dot moved into `renderStatusDot`.** Four states with a real precedence rule is worth
+   running rather than reading, and a guard over rendered markup passes happily against a dead
+   branch. Two existing guards followed it, both strengthened rather than relaxed: the disclosure
+   suite now supplies the REAL renderer (a stub would let it pass over a dot that had stopped
+   rendering), and the degraded-reads guard keeps all three assertions at the new address and adds
+   two, that the card delegates and holds no private copy of the markup.
+
+**Unknown outranks wrapping.** The two reads are independent — the registry answers from the
+server process whether or not tmux answered — so a card can be both at once. The unknown wins
+because it is the rarer state and the only one carrying a remedy; a wrap that is running will
+still be running on the next poll once tmux replies.
+
+**Acceptance criterion MET, by a real wrap rather than by tests.** A sandboxed server was booted
+from the worktree on a leased port (5091, released after) with an isolated `TANGLECLAW_HOME`, and
+a real wrap was triggered over HTTP against a throwaway git repo — never the worktree, since a
+wrap commits with `git add -A`. The operator's own install was untouched throughout (same pid
+before and after).
+
+| Phase | The card payload's `wrapping` |
+|---|---|
+| before | `false` — established-absent, `incomplete: []` |
+| during a real wrap | `{"step": "changelog-update", "since": 1788738567080}` |
+| after | `false` |
+
+It turns on within a poll, carries the step the registry knows, and turns back off — which is the
+criterion verbatim. The served `style.css`, `ui.js` and `api-helper.js` were fetched over HTTP and
+confirmed to carry the pinwheel, the renderer and the classifier, so the frontend half is really
+delivered rather than only present on disk.
+
+**Six mutations, each run, each red**, and the tree restored green after: `null` collapsed to
+`false`; the wrapping branch disabled; the precedence flipped; the field dropped from the
+projection; a finished run read as still running; and a failed read treated as wrapping. The
+projection-dropped mutation reds four tests, including the two that feed the SERVER's own output
+into the REAL renderer — the pairing that exists precisely because asserting either realm against
+a hand-written fixture is what let this feature ship invisible the first time.
+
+**What is NOT verified: every pixel.** Nothing was rendered in a browser. Queued as
+`VRF-5W9D-wrap-pinwheel` in `.prawduct/operator-verification.md` — non-blocking, since
+`operator_verification_required` is unset on this repo.
+
+**Found while verifying the boundary, filed not fixed: #1311.** `public/ui.js:1065` reads
+`proj.session.sessionMode` to word the kill modal, and neither card projection has ever emitted
+that field — so `isWebui` is permanently false and a webui session is told its kill "terminates
+the tmux session". It is the same defect class as this chunk, one function over and pointing the
+other way: a consumer with no field, rather than a field with no consumer.
 
 ### Chunk 03: The vestigial `V2` designators are retired
 

@@ -245,6 +245,47 @@ function renderEngineErrorBadge(project) {
 }
 
 /**
+ * The card's session status dot.
+ *
+ * Four outcomes where there used to be three. Each is a distinct SHAPE, not a
+ * hue: the solid dot, the `?` glyph, the pinwheel's blades. That is what makes
+ * them survive `prefers-reduced-motion` — which disables every animation
+ * globally in `style.css` — and a screenshot, which has no animation either. An
+ * operator who cannot distinguish the colours must still tell the states apart,
+ * which is the same reason the unknown dot carries a glyph rather than a hue.
+ *
+ * UNKNOWN OUTRANKS WRAPPING, and that order is the decision rather than an
+ * accident of the branch order. The two reads are independent: the wrap-run
+ * registry answers from the server process whether or not tmux answered, so a
+ * card can genuinely be both at once. The unknown wins because it is the rarer
+ * state and the only one carrying a remedy the operator can act on — and a wrap
+ * that is running will still be running on the next poll, once tmux replies.
+ *
+ * Its own function so a test can RUN it rather than read its source: a guard
+ * over rendered markup passes happily against a dead branch (#885).
+ *
+ * @param {object} project - An enriched project from `GET /api/projects`.
+ * @returns {string} HTML for one `<span class="status-dot ...">`.
+ */
+function renderStatusDot(project) {
+  const liveness = tcSessionLiveness(project);
+  if (liveness === 'unknown') {
+    return `<span class="status-dot unknown" title="${degradedTooltip(tcSessionRead(project))}">`
+      + `<span class="status-dot-glyph" aria-hidden="true">?</span></span>`;
+  }
+  if (liveness === 'live' && tcSessionWrapping(project)) {
+    const step = tcSessionWrapStep(project);
+    const stepText = step ? ` — ${esc(step)}` : '';
+    return `<span class="status-dot wrapping" role="img"`
+      + ` aria-label="Wrap running${stepText}" title="Wrap running${stepText}"></span>`;
+  }
+  if (liveness === 'live') {
+    return `<span class="status-dot active" title="Session active"></span>`;
+  }
+  return `<span class="status-dot" title="No active session"></span>`;
+}
+
+/**
  * Render the git branch badge for a project card.
  *
  * Shared by the registered and unregistered cards. They each had their own copy
@@ -290,11 +331,10 @@ function renderCard(project) {
   // `hasSession` still drives every ACTION on this card, and still treats an
   // unknown as not-live. That is deliberate: launching, peeking and killing all
   // need a tmux server that answers, and the one that did not answer is the
-  // reason this state exists. Chunk 01 made `launchSession` refuse honestly in
-  // that case, so the button leads somewhere truthful. Only the DISPLAY below
-  // learns the third state.
+  // reason this state exists. `launchSession` refuses honestly in that case, so
+  // the button leads somewhere truthful. Only the DISPLAY knows the fuller set
+  // of states, and it reads them itself in `renderStatusDot`.
   const hasSession = project.session && project.session.active;
-  const liveness = tcSessionLiveness(project);
   const sessionClass = hasSession ? ' has-session' : '';
   const n = esc(project.name);
 
@@ -345,19 +385,7 @@ function renderCard(project) {
 
   const awarenessBadge = renderAwarenessBadge(project);
 
-  // Three outcomes where there used to be two. The unknown carries a `?` glyph
-  // rather than only a colour, because an operator who cannot distinguish the
-  // dot's hue must still be able to tell a dead session from an unreadable one.
-  const sessionRead = tcSessionRead(project);
-  let statusDot;
-  if (liveness === 'live') {
-    statusDot = `<span class="status-dot active" title="Session active"></span>`;
-  } else if (liveness === 'unknown') {
-    statusDot = `<span class="status-dot unknown" title="${degradedTooltip(sessionRead)}">`
-      + `<span class="status-dot-glyph" aria-hidden="true">?</span></span>`;
-  } else {
-    statusDot = `<span class="status-dot" title="No active session"></span>`;
-  }
+  const statusDot = renderStatusDot(project);
 
   // A project whose own folder did not answer is listed WITHOUT its git, engine
   // and version detail — so the card's other badges are absent for a reason the
@@ -453,6 +481,18 @@ function renderArchivedCard(project) {
 function renderSessionDetail(project) {
   const liveness = tcSessionLiveness(project);
   if (liveness === 'live') {
+    // The wrap's step and elapsed reach the operator HERE, not only in the dot's
+    // tooltip. A `title` needs a hover, and the ratified primary client is
+    // iPhone Safari, where there is none — so a tooltip is the one surface a
+    // touch operator can never reach. The unknown state already says its piece
+    // in this row for the same reason.
+    if (tcSessionWrapping(project)) {
+      const step = tcSessionWrapStep(project);
+      const elapsed = tcSessionWrapElapsed(project);
+      return `<span class="detail-wrapping">Wrapping</span>`
+        + (step ? ` — ${esc(step)}` : '')
+        + (elapsed ? ` <span class="detail-remedy">${esc(elapsed)}</span>` : '');
+    }
     return `Active since ${esc(project.session.startedAt || '')}`;
   }
   if (liveness === 'none') return 'No active session';

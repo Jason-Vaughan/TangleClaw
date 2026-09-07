@@ -1370,6 +1370,76 @@
   }
 
   /**
+   * Is a wrap pipeline running over this project right now?
+   *
+   * DELIBERATELY NOT a fourth value of `tcSessionLiveness`. A wrapping session
+   * is still a live one, and the liveness classifier feeds `renderSessionCount`
+   * — so a fourth value there would silently drop the header's active count by
+   * one the moment a wrap started. Wrapping is a property OF a live session,
+   * not an alternative to being live, and the shapes follow that.
+   *
+   * `wrapping === null` is the read that failed, and it answers `false` here:
+   * the display fails OPEN, because painting "working" onto a card on the
+   * strength of a broken read is worse than showing nothing.
+   *
+   * The payload still carries that null and names it in `incomplete`. Be exact
+   * about what that buys today: NOTHING in `public/` reads `session.incomplete`
+   * — not this file, not `ui.js` — so it reaches the wire and no reader, exactly
+   * like the `['active']` entry it follows. It is carried because
+   * `architecture.md` requires an unestablished read to name itself and
+   * `api-contract.md` documents the field for any consumer of the API, not
+   * because the dashboard consults it. Saying otherwise would be the
+   * field-with-no-consumer claim this chunk exists to stop making.
+   *
+   * @param {object|null} project - An enriched project from `GET /api/projects`.
+   * @returns {boolean}
+   */
+  function tcSessionWrapping(project) {
+    const session = project && project.session;
+    if (!session) return false;
+    return Boolean(session.wrapping);
+  }
+
+  /**
+   * The wrap-step label for a project's tooltip, or null when there is none.
+   *
+   * The registry knows which step a run is on; the card has room for a title
+   * attribute and nothing more, so that is as far as the richer answer travels.
+   *
+   * @param {object|null} project - An enriched project.
+   * @returns {string|null}
+   */
+  function tcSessionWrapStep(project) {
+    if (!tcSessionWrapping(project)) return null;
+    return project.session.wrapping.step || null;
+  }
+
+  /**
+   * How long the running wrap has been going, as short human text.
+   *
+   * `since` is the registry's `startedAt`, an epoch millisecond count from the
+   * SERVER's clock. Rendered as an elapsed duration rather than a wall-clock
+   * time precisely because of that: the operator is usually on a different
+   * device in a possibly different timezone, and "4m" needs no agreement about
+   * whose clock is whose, while "23:41" does.
+   *
+   * @param {object|null} project - An enriched project.
+   * @param {number} [now=Date.now()] - Injectable clock, so a test is not timing-dependent.
+   * @returns {string|null} e.g. `"4m"`, or null when there is no running wrap or no start.
+   */
+  function tcSessionWrapElapsed(project, now) {
+    if (!tcSessionWrapping(project)) return null;
+    const since = project.session.wrapping.since;
+    if (typeof since !== 'number' || !isFinite(since)) return null;
+    const seconds = Math.floor(((typeof now === 'number' ? now : Date.now()) - since) / 1000);
+    if (seconds < 0) return null;
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m`;
+    return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  }
+
+  /**
    * The degraded-read record for a project's session liveness.
    *
    * The remedy is specific to tmux and is NOT taken from any shared table: a
@@ -2278,6 +2348,9 @@
   // are internal to the classifiers and reached by closure — exporting them
   // would enlarge the global surface that every page carries for no consumer.
   global.tcSessionLiveness = tcSessionLiveness;
+  global.tcSessionWrapping = tcSessionWrapping;
+  global.tcSessionWrapStep = tcSessionWrapStep;
+  global.tcSessionWrapElapsed = tcSessionWrapElapsed;
   global.tcSessionRead = tcSessionRead;
   global.tcMasterRead = tcMasterRead;
   global.tcRulesUnknownHtml = tcRulesUnknownHtml;
