@@ -5980,3 +5980,65 @@ bare-catch family grep returns empty). Disposition table:
 | R-9, R-10, R-12 | note | accepted | clean checks (learnings cross-check, backlog reconciliation, Goal 5/6 verdict) |
 
 **Classification:** feature
+
+## 2026-09-07: one broadcast per reader per quiet period, and a drain for what nobody reads (train-14 chunk 04)
+<!-- prawduct: type=fix | scope=train-14 | chunks=04 -->
+
+**What shipped.** #1108's two halves, which only matter together. **Coalescing per `(doc, reader)`:**
+the shared-doc broadcast skips a reader still holding an un-handled notice for that document, so the
+READER ends the quiet period rather than a timer. That is why it needs no window — the existing
+`fs.watch` debounce is per DOCUMENT and sized for one atomic save, while the cost is per PARTICIPANT,
+and across four recorded incidents every intra-burst gap (1.3-4.7 s) fell outside it, so widening
+would be a search for a number with no evidence behind it and would still pay the multiplier. Fails
+open: a burst that outruns the Bridge round trip sends a duplicate, which is what every broadcast
+cost before. The notice gained `docId` (two groups may register the same display name) and the route
+gained `coalescedCount`, so a zero `notifiedCount` is not read as a failure. **A ceiling on
+broadcasts nobody drains:** past `SYSTEM_MESSAGE_RETENTION` the oldest system messages are dropped
+AND ACKed — the distinction from `maxInbox`, which drops locally and lets the Hub re-flood on
+reconnect, and the reason an inbox on an unprofiled engine grew without bound. A peer message is
+never drained at any volume and never counted toward the cap.
+
+**Live baseline, for whoever verifies this after merge.** `GET /api/medusa/deliveries` before the
+change: `wheresmy-d5fca7e1` (codex, `unprofiled-engine`) at **unread 8** — up from the 6 in the
+original report — and `openclaw-genesis-0d6e2322` at 2, created during the build session. The
+mechanism was still running.
+
+**Restart before you read those numbers again.** This clone IS the live install: launchd runs
+`server.js` from the primary checkout and there is no build or deploy step, so merging changes
+nothing until the process restarts and the listeners are rebuilt. A verifier who merges and
+immediately re-reads the ledger sees identical unread counts and can read a working fix as
+ineffective. The ledger rows are also historical — they record the state at the moment of a scan, so
+what confirms the fix is the ABSENCE of new duplicate `shared_doc_updated` rows for one edit, not a
+falling count on an old row.
+
+**Rollback is plain.** No schema change, no config change, and `coalescedCount` is additive, so a
+revert costs nothing but the behavior. The one unrecoverable effect is broadcasts the drain already
+ACKed away — which are by construction the ones no peer was waiting on.
+
+**Two review findings worth carrying, both of the same shape: a claim stated more confidently than
+the evidence supported.** First, the safety property was attributed to the wrong owner at three live
+sites — `from` is NOT Bridge-stamped. The Bridge copies the value its caller supplies; what makes it
+trustworthy is that TangleClaw refuses to accept one (`/medusa/send` reads only `to`/`message`,
+`sendMessage` fills `from` from the sending listener). Corrected everywhere and PINNED by a test, so
+the next decision keyed on `from` inherits the real limit rather than an imagined identity. Second,
+the retention cap was sized from an estimate ("above what a group realistically watches") and the
+estimate was wrong: this install holds 72 shared docs across 7 groups and the largest holds 43,
+against a proposed cap of 20 — it would have bound the ordinary case instead of backstopping it.
+Re-decided at 150 against the measured population, the way #869's cap was, and the unit test now
+asserts the RELATION (>0, `< maxInbox`) so re-deciding again does not falsify it.
+
+**Filed, not folded in.** #1344 — profiling codex's wake signature. `codex.json`, `aider.json` and
+`openclaw.json` all declare `capabilities.wake: null`; a wake block needs a live idle/busy capture
+per engine, which is its own verification.
+
+**Critic rounds.** Cumulative `rev-20260907T201552Z-77751892` (three reviewers): 0 blocking,
+6 warning, 14 note. All six warnings fixed in one batch and verified by
+`rev-20260907T203148Z-2a99435c` — 6 of 6 resolved, 0 new, each re-run as its own search rather than
+read off the diff, since two of the findings named a class. Fourteen mutations confirmed red across the two commits — ten on the
+original build (coalescing disabled, the `from` guard dropped, the key moved to display name,
+`docId` removed; the drain not called, everything drainable, keyed on the payload's `type`, newest
+dropped instead of oldest, discard without ACK, the shipped cap zeroed) and four on the fixes
+(`coalesced` dropped from each early exit, `_capAckAwaiting` not called, the route forwarding a
+caller-supplied `from`).
+
+**Classification:** fix

@@ -99,11 +99,17 @@ fire in one direction.
   to force the question, and the answer went the other way — trim-to-cap on the first insert of
   each over-cap type, ~2,363 rows on this install, reported. The reasoning and the two rejected
   alternatives are the `[DECISION: ...]` in Chunk 02; that entry is the authority, not this line.
-- [ASSUMPTION: #1108's drain half applies to `type:"system"` broadcasts only | MED impact | user
-  can correct at Chunk 04]. A peer-blocking message must never auto-drain — the switchboard's own
-  rule is that the initiator closes the loop ([[feedback_initiator_closes_loop_with_ack]]), so
-  expiring an unanswered peer message would silently break an exchange. A system broadcast has no
-  waiting sender by construction, which is the property that makes draining it safe.
+- ~~[ASSUMPTION: #1108's drain half applies to `type:"system"` broadcasts only | MED impact | user
+  can correct at Chunk 04]~~ **HELD, with the key sharpened at Chunk 04, 2026-09-07.** A
+  peer-blocking message must never auto-drain — the switchboard's own rule is that the initiator
+  closes the loop ([[feedback_initiator_closes_loop_with_ack]]), so expiring an unanswered peer
+  message would silently break an exchange. A system broadcast has no waiting sender by
+  construction, which is the property that makes draining it safe. What shipped keys on the
+  ENVELOPE's `from === 'system'` rather than the payload's `type` field, because any peer can write
+  a payload; and that guarantee is TangleClaw's, not the Bridge's — the Bridge copies the `from` it
+  is handed, while `/medusa/send` accepts only `to`/`message` and `lib/medusa.js#sendMessage` fills
+  `from` from the sending listener's own workspace id. Pinned by a test, so the property is enforced
+  rather than asserted.
 
 **Recorded scope decision (operator, 2026-09-06):**
 
@@ -122,7 +128,7 @@ decisions surfaced at the chunk that acts on them, not unknowns.
 - [x] Chunk 01: The boot sweep says what it displaced (#692)
 - [x] Chunk 02: The activity log is bounded without losing the rare row (#869)
 - [x] Chunk 03: A durable failure is logged when it changes, not when it repeats (#956)
-- [ ] Chunk 04: One broadcast per reader per quiet period, and a drain for what nobody reads (#1108)
+- [x] Chunk 04: One broadcast per reader per quiet period, and a drain for what nobody reads (#1108)
 - [ ] Chunk 05: The cache-bump guard fires on the next miss, not the last one (#625)
 - [ ] Chunk 06: The uploads module reads a project directory the way the scanner does (#889, uploads half)
 
@@ -149,6 +155,18 @@ Warning is not labelling: that path still wrote `port.released` naming the *disp
 The roster that finds it is not "who deletes a lease" (three `DELETE FROM port_leases` sites) but
 "who displaces a lease someone else holds" (four). Chunk 02 enumerates deleters over a table with
 many more writers — ask which noun the roster is of before trusting it.
+
+**Chunk 04 is done** — branch `fix/1108-broadcast-coalesce`, Critic
+`rev-20260907T201552Z-77751892` (three reviewers; 0 blocking, 6 warning, 14 note), fixed in one
+batch and re-verified. Both halves shipped: coalescing per `(doc, reader)` in the broadcast path,
+and a system-only drain in the listener. Two things the review changed that are worth carrying
+forward. First, the safety property was attributed to the wrong owner in three places — `from` is
+NOT Bridge-stamped; the Bridge copies what its caller supplies, and the guarantee is TangleClaw's
+refusal to accept one. That is now stated correctly and pinned by a test rather than a comment.
+Second, the retention cap was sized from an estimate and the estimate was wrong: this install's
+largest group holds 43 shared docs against a proposed cap of 20, so the cap would have bound the
+ordinary case instead of backstopping it. Re-decided at 150 against the measured population, the
+way #869's cap was. The codex-profile residue is filed as **#1344** (OPEN), not folded in.
 
 Context: Plan written 2026-09-06 against the roadmap's blessed Train 14 roster
 (`MASTER_ROADMAP.md`, "Train 14: Bounded, Not Infinite" — #869, #889, #692, #956, #625, #1108).

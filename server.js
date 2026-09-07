@@ -23,19 +23,70 @@ const sharedDocWatchers = new Map();
 const docDebounceTimers = new Map();
 
 /**
+ * @type {number} Trailing debounce on a shared doc's `fs.watch` events.
+ *
+ * Sized for ONE atomic save — a write followed by a rename arrives as two
+ * events milliseconds apart — and deliberately not for an editing session.
+ * Widening it is a per-document answer to a per-participant cost; the
+ * coalescing in `broadcastSharedDocUpdate` is the one that scales.
+ */
+const SHARED_DOC_DEBOUNCE_MS = 500;
+
+/**
+ * The shared doc a Medusa inbox entry is an un-handled "this doc changed"
+ * notice for, or `null` if it is anything else.
+ *
+ * Only a message whose envelope `from` is `system` qualifies. A peer could type
+ * the same JSON into its own body, and a peer message has a sender waiting on
+ * it — treating one as a redundant broadcast would let this suppress a message
+ * somebody is blocked on.
+ *
+ * What enforces that is TangleClaw, not the Bridge: `/medusa/send` reads only
+ * `to` and `message`, and `lib/medusa.js#sendMessage` derives `from` from the
+ * sending listener's own workspace id, so no caller going through TC can label
+ * itself `system`. The Bridge copies the value it is given, so a process that
+ * reaches its loopback endpoint directly can set anything — the guarantee is
+ * exactly as strong as "every sender goes through TC", and keying another
+ * decision on `from` inherits that limit.
+ *
+ * Reads `docId`, not the display name: two groups may each register a doc
+ * called `ROADMAP`, and matching on the name would suppress a notice about a
+ * genuinely different file. A notice with no `docId` — one queued Hub-side
+ * before this field existed, redelivered after a restart — matches nothing and
+ * simply costs one duplicate, which is what every broadcast cost before.
+ *
+ * @param {object} entry - A message body from `medusa.getMessages`.
+ * @returns {string|null} The doc id the notice is about, or null.
+ */
+function sharedDocNoticeId(entry) {
+  if (!entry || entry.from !== 'system') return null;
+  let payload = entry.message;
+  if (typeof payload === 'string') {
+    try { payload = JSON.parse(payload); } catch { return null; }
+  }
+  if (!payload || typeof payload !== 'object') return null;
+  if (payload.event !== 'shared_doc_updated') return null;
+  return payload.docId != null ? String(payload.docId) : null;
+}
+
+/**
  * Notify every live session whose project shares the doc's group. Shared by
  * the fs.watch debounce path and `POST /api/shared-docs/:id/notify` — the two
  * used to reimplement this lookup/filter/broadcast sequence separately and
  * had already drifted (#990 review).
  *
  * @param {string} docId - Shared doc id
- * @returns {Promise<{notified: number, errors: string[]}>} count of sessions
- *   actually notified, plus one message per failed notification
+ * @returns {Promise<{notified: number, coalesced: number, errors: string[]}>}
+ *   count of sessions actually notified, count skipped because they already
+ *   hold an un-handled notice for this doc, plus one message per failed
+ *   notification. All three fields are present on every exit — the route
+ *   serialises them, and a field that disappears on the failure path is a field
+ *   a client reads as an older TangleClaw.
  */
 async function broadcastSharedDocUpdate(docId) {
   try {
     const doc = store.sharedDocs.get(docId);
-    if (!doc || !doc.groupId) return { notified: 0, errors: [] };
+    if (!doc || !doc.groupId) return { notified: 0, coalesced: 0, errors: [] };
 
     // Membership from the join table that actually holds it. `projects.list()`
     // takes `archived`, `engine` and `tag` and SILENTLY IGNORES every other
@@ -86,15 +137,45 @@ async function broadcastSharedDocUpdate(docId) {
       s => memberIds.has(s.projectId) && !owningProjectIds.has(s.projectId)
     );
 
+    // `docId` rides alongside the display name so a reader — and the coalescing
+    // check below — can tell two same-named docs apart. Additive: `doc` is
+    // still what an agent reads.
+    const payload = JSON.stringify({
+      type: 'system', event: 'shared_doc_updated', doc: doc.name, docId: doc.id
+    });
+
     let notified = 0;
+    let coalesced = 0;
     const errors = [];
     for (const session of targetSessions) {
       const status = medusa.getStatus(session.id);
       if (status && status.state === 'listening' && status.workspaceId) {
+        // One notice per reader per quiet period, where the READER defines the
+        // period: while an un-handled "this doc changed" for this doc is still
+        // sitting in their inbox, a second one carries no information the first
+        // did not. The `fs.watch` debounce below is per DOCUMENT and sized by
+        // `SHARED_DOC_DEBOUNCE_MS` for one atomic save (write + rename), so it
+        // collapses that and nothing more — every
+        // intra-burst gap in the four incidents on #1108 was 1.3-4.7 s, so each
+        // edit in an agent's minutes-long editing session became its own
+        // broadcast to every live participant. Widening that window would be a
+        // search for a number none of the evidence supports, and would still pay
+        // the per-participant multiplier; this needs no number at all.
+        //
+        // Deliberately fail-open: the notice reaches the inbox over a round trip
+        // through the Bridge, so a burst tight enough to outrun it sends a
+        // duplicate rather than suppressing a real change. A duplicate is what
+        // every broadcast was before this; a suppressed change would be new harm.
+        const pending = medusa.getMessages(session.id)
+          .some(m => sharedDocNoticeId(m) === String(doc.id));
+        if (pending) {
+          coalesced++;
+          continue;
+        }
         try {
           await medusa.sendSystemMessage({
             to: status.workspaceId,
-            message: JSON.stringify({ type: 'system', event: 'shared_doc_updated', doc: doc.name })
+            message: payload
           });
           notified++;
         } catch (e) {
@@ -104,11 +185,17 @@ async function broadcastSharedDocUpdate(docId) {
         }
       }
     }
-    if (notified > 0) log.info('Broadcasted shared doc update', { docId: doc.id, notified });
-    return { notified, errors };
+    if (notified > 0 || coalesced > 0) {
+      // `coalesced` is reported even when it is the whole story (notified 0):
+      // a broadcast that reached nobody because everybody already knew looks
+      // identical in the logs to one that reached nobody at all, and only the
+      // second is a defect.
+      log.info('Broadcasted shared doc update', { docId: doc.id, notified, coalesced });
+    }
+    return { notified, coalesced, errors };
   } catch (err) {
     log.error('Broadcast failed', { error: err.stack });
-    return { notified: 0, errors: [err.message] };
+    return { notified: 0, coalesced: 0, errors: [err.message] };
   }
 }
 
@@ -157,7 +244,7 @@ function refreshSharedDocWatchers() {
           if (docDebounceTimers.has(doc.id)) clearTimeout(docDebounceTimers.get(doc.id));
           docDebounceTimers.set(doc.id, setTimeout(() => {
              broadcastSharedDocUpdate(doc.id);
-          }, 500));
+          }, SHARED_DOC_DEBOUNCE_MS));
         }
       });
       sharedDocWatchers.set(doc.id, { watcher, filePath: doc.filePath });
@@ -5449,8 +5536,17 @@ route('POST', '/api/shared-docs/:id/notify', async (_req, res, params) => {
     const doc = store.sharedDocs.get(params.id);
     if (!doc) return errorResponse(res, 404, 'Shared document not found', 'NOT_FOUND');
 
-    const { notified, errors } = await broadcastSharedDocUpdate(params.id);
-    jsonResponse(res, 200, { success: true, notifiedCount: notified, errors: errors.length > 0 ? errors : undefined });
+    const { notified, coalesced, errors } = await broadcastSharedDocUpdate(params.id);
+    // `coalescedCount` is reported so a zero `notifiedCount` is never mistaken
+    // for a failed notify: every recipient already holding an un-handled notice
+    // for this doc is a successful outcome, and it is the only way to tell that
+    // apart from a broadcast that reached nobody.
+    jsonResponse(res, 200, {
+      success: true,
+      notifiedCount: notified,
+      coalescedCount: coalesced,
+      errors: errors.length > 0 ? errors : undefined
+    });
   } catch (err) {
     log.error('Failed to notify shared-doc update', { error: err.stack });
     errorResponse(res, 500, err.message, 'SERVER_ERROR');

@@ -229,6 +229,45 @@ All notable changes to TangleClaw are documented in this file.
   session's prime, and a wrong summary is worse than an absent one.
 
 ### Fixed
+- **One shared-doc notice per reader per quiet period, and a ceiling on broadcasts nobody drains
+  (#1108).** Two halves that only matter together. The `fs.watch` broadcast is debounced per
+  *document* at 500 ms — sized for one atomic save (write + rename) — while the cost is per
+  *participant*. The thing writing these documents is an agent editing over minutes: across four
+  recorded incidents every intra-burst gap was 1.3-4.7 s, so not one fell inside the window, and
+  each edit became its own broadcast to every live session in the group. One operator was woken
+  seven times in twenty minutes for two edits' worth of information. Widening the window would be
+  a search for a number none of the evidence supports, and would still pay the per-participant
+  multiplier. The broadcast now skips a reader that is **still holding an un-handled notice for
+  that document** — the reader ends the quiet period, not a timer, which is why this needs no
+  window at all. It fails open: a burst tight enough to outrun the Bridge round trip sends a
+  duplicate rather than suppressing a real change, and a duplicate is what every broadcast cost
+  before. The notice gained a `docId` so two groups that each register a doc called `BOARD` are
+  not coalesced into one, and `POST /api/shared-docs/:id/notify` now returns `coalescedCount`
+  beside `notifiedCount` — without it, "everybody already knew" and "the broadcast reached
+  nobody" are the same response, and only the second is a defect.
+  The other half is the one that made the growth unbounded rather than merely noisy. A session on
+  an engine with no wake profile is skipped forever — by design, since guessing an engine's idle
+  signature is the false-idle hazard `lib/medusa-wake.js` exists to prevent — so no consumer ever
+  reports its mail handled and nothing ever ACKs it. `maxInbox` was never a drain: it drops the
+  oldest entry locally while the Hub keeps its durable copy and re-floods on the next reconnect.
+  Past `SYSTEM_MESSAGE_RETENTION` the oldest system broadcasts are now dropped **and ACKed**, so
+  they stop existing rather than stopping being visible. **A peer message is never drained at any
+  volume** and is never counted toward the cap: its sender is blocked on it and the switchboard's
+  rule is that the initiator closes the loop, so expiring one would close somebody else's exchange
+  silently. The property keyed on is the envelope's `from === 'system'`, never the payload's `type`,
+  which any peer can write. That guarantee is TangleClaw's own and not the Bridge's — the Bridge
+  copies the `from` it is handed; what makes it trustworthy is that `/medusa/send` reads only `to`
+  and `message` and `lib/medusa.js#sendMessage` fills `from` from the sending listener's workspace
+  id, now pinned by a test. A process reaching the Bridge's loopback endpoint directly can still
+  label itself, and would get its own message drained.
+  The cap is `SYSTEM_MESSAGE_RETENTION = 150`, sized against this install rather than estimated:
+  `shared_documents` holds 72 docs across 7 groups and the largest ("habitat group") holds 43, so
+  coalescing's one-pending-notice-per-`(doc, reader)` puts a reader in that group at 43 and the cap
+  leaves room for it to more than triple before it binds. Which mechanism actually bounds a given
+  inbox is worth saying plainly: for today's system messages — all shared-doc broadcasts —
+  coalescing does, and the cap never fires. It is the backstop for what coalescing does not cover.
+  Profiling codex so those sessions become wakeable at all is filed as #1344, not folded in: a
+  wake block needs a live idle/busy capture per engine, which is its own verification.
 - **`tags` and `quickCommands` are validated on the project PATCH path, so a non-array can no
   longer be stored and read back as the wrong type (#1287).** `store.projects` writes
   `JSON.stringify(data.tags)` into a TEXT column and reads it back with `_jsonParse(row.tags, [])`,
