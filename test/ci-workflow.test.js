@@ -94,6 +94,22 @@ describe('CI workflow (.github/workflows/test.yml)', () => {
       'the scan runs before the suite');
   });
 
+  it('guards the service-worker cache generation, with the history that needs (#625)', () => {
+    // A guard nothing calls is a file. This one asks whether a cache-first
+    // public/* asset changed relative to the merge base, so it needs BOTH sides
+    // in the clone — the default depth-1 checkout leaves `merge-base` unable to
+    // answer, and the script exits 1 rather than reporting a pass it cannot
+    // support. The base is passed through the environment, never interpolated
+    // into the shell line.
+    const src = workflowSource();
+    assert.match(src, /node scripts\/cache-bump-guard\.js --base "\$BASE_SHA"/,
+      'the guard must run with a comparison base taken from the environment');
+    assert.match(src, /BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/,
+      'the base comes from the pull request GitHub resolved');
+    assert.match(src, /fetch-depth: 0/,
+      'merge-base cannot answer in a depth-1 clone');
+  });
+
   it('pins Node 22 (node:sqlite floor / production runtime)', () => {
     assert.match(workflowSource(), /node-version: 22/);
   });

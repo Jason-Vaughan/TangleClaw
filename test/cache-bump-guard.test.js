@@ -310,15 +310,3 @@ describe('cache-bump-guard: the CLI over a real git repository', () => {
     }
   });
 });
-
-describe('cache-bump-guard: the workflow actually runs it', () => {
-  it('the Tests workflow invokes the guard with a base and full history', () => {
-    // A guard nothing calls is a file. `merge-base` needs both sides in the
-    // clone, which the default shallow checkout does not provide.
-    const wf = fs.readFileSync(path.join(REPO_ROOT, '.github', 'workflows', 'test.yml'), 'utf8');
-    assert.match(wf, /node scripts\/cache-bump-guard\.js --base/,
-      'the workflow must run the guard with a comparison base');
-    assert.match(wf, /fetch-depth: 0/,
-      'merge-base cannot answer in a depth-1 clone');
-  });
-});
