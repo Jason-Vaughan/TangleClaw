@@ -176,6 +176,7 @@ fails any auto-stub section older than 14 days.
 - **ADR: enforcement adds no install step** — decision record governing how any norm may be mechanically enforced: a linter or checker that adds an installation step is refused (2026-08-01 norm-registry ratification). `docs/adr/0012-enforcement-adds-no-install-step.md`.
 - **Aider engine profile** — the Aider CLI's detection, launch command, launch-mode flag sets, and capability declarations. `data/engines/aider.json`.
 - **Antigravity engine profile** — the Antigravity CLI's detection, launch command, launch-mode flag sets, and capability declarations. `data/engines/antigravity.json`.
+- **ADR: dual-key review for untrusted PRs** — decision record for how an external pull request is audited, clean-room reconstructed, credited and answered: two independent reviewers, the diff read with `gh pr diff` and never checked out (a contributor's test file would execute under `node --test`), and the reconstruction written from the ISSUE rather than their bytes. Written from PR #1334, the first external contribution to reach this repo, and corrected by its own first application the same day. `docs/adr/0014-dual-key-review-for-untrusted-prs.md`.
 - **ADR: a setting must take effect, or say why not** — decision record binding that any setting TangleClaw offers either applies or explains itself; the norm behind `engines.settingDisposition` and the four separate filings of the one bug (#741, #758, #1227, #1236). Tracked here because `.prawduct/artifacts/` is gitignored, which would otherwise leave a ratified norm on one machine. `docs/adr/0013-settings-take-effect-or-say-why-not.md`.
 
 ## CLI / Tooling
@@ -367,13 +368,10 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - **Silent-prime toggle render** — `test/settings-silent-prime-render.test.js` — `renderSilentPrimeToggle` is RUN, because it calls `tcSettingDisposition`, a global published by a different file, and a regex cannot tell whether that identifier resolves at runtime. The same shape shipped a ReferenceError to the live install once already (#1037).
 - **Theme contrast floor** — `test/theme-contrast.test.js` — enforces the 4.5:1 body-text floor that `nonfunctional-requirements.md` § Direction binds and nothing checked: `var(--warning, #ffb300)` was spelled at five sites with `--warning` declared in neither stylesheet, so every one took the literal amber at 1.8:1 on the Light theme. Scoped to the tokens a theme declares.
 - **Wrap indicator card** — `test/wrap-indicator-card.test.js` — #1034: the dashboard says a session is wrapping, sourced from the run registry. Holds BOTH halves and RUNS the renderer against the server's own payload, because the previous version of this state shipped as a server field no frontend read — a wrapping card looked identical to a running one for three and a half months while a payload test passed.
+- `test/project-update-two-phase.test.js` — #1033: `updateProject` validates EVERY field before it writes ANY, pinned from the outside — a rejected PATCH must leave both the projects row and the project's own directory exactly as it found them. Also carries the declared-unvalidated allowlist, which is now EMPTY (#1287): that set is what let a validation gap stay visible, so emptying it is what stops a future field hiding in it.
+- `test/store-activity.test.js` — `store.activity`: the log/query API plus the per-`event_type` retention cap (#869). The cap is trimmed inside the same call that inserts, and the sweep reports only when a backlog CONVERGES — a steady-state trim removes exactly one row, so reporting every trim would double the table's write rate and make `activity.pruned` the churniest type in the table.
+
 - **Session wrap finalize** — `test/session-wrap-finalize.test.js` guards the session page's
   `wrapping` / `wrapFinished` / `wrapCompleted` poll branches. Those branches are dead now that
   the status vocabulary has retired `wrapping` (#1034), but `public/session.js` still carries them
   for a server that has not restarted; the test retires **with** them under #1302, never before.
-
-## TODO (auto-stubbed 2026-09-07)
-
-- **TBD** — touched in this session: `docs/adr/0014-dual-key-review-for-untrusted-prs.md`. <!-- describe -->
-- **TBD** — touched in this session: `test/project-update-two-phase.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/store-activity.test.js`. <!-- describe -->
