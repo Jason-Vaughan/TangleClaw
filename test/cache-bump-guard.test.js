@@ -79,6 +79,45 @@ describe('cache-bump-guard: reading the roster out of the real sw.js', () => {
       '/history-drawer.js is cache-first in production — the guard exists for files like it');
   });
 
+  it('a COMMENT quoting a CACHE_NAME assignment cannot become the generation', () => {
+    // `.match` returns the first hit, so a raw read takes whatever appears
+    // highest in the file. Poison it above the real declaration: if the comment
+    // wins, `evaluate`'s "the name changed, so something was bumped"
+    // short-circuit passes a diff that bumped nothing — the guard going green on
+    // precisely what it exists to catch.
+    const poisoned = REAL_SW.replace('const CACHE_NAME =',
+      "// an older note: const CACHE_NAME = 'tangleclaw-v3-999';\nconst CACHE_NAME =");
+    assert.equal(guard.parseSwState(poisoned).cacheName, guard.parseSwState(REAL_SW).cacheName,
+      'the declaration is what counts, never a comment quoting one');
+    const verdict = guard.evaluate({
+      baseSw: REAL_SW,
+      headSw: poisoned,
+      changedPaths: ['public/sw.js', 'public/history-drawer.js']
+    });
+    assert.equal(verdict.ok, false, 'a comment must not be able to fake a bump');
+    assert.deepStrictEqual(verdict.offenders, ['public/history-drawer.js']);
+  });
+
+  it('a COMMENT quoting the navigate condition cannot satisfy the navigate premise', () => {
+    // The mirror hazard, on the one arm that guards against the guard reporting
+    // LESS: if a comment can satisfy the premise, a fetch handler that dropped
+    // the navigate branch would leave the .html files silently exempt forever.
+    const poisoned = REAL_SW
+      .replace('const CACHE_NAME =', "// was: event.request.mode === 'navigate'\nconst CACHE_NAME =")
+      .replace("event.request.mode === 'navigate' ||", 'false ||');
+    const verdict = guard.evaluate({ baseSw: REAL_SW, headSw: poisoned, changedPaths: ['public/sw.js'] });
+    assert.equal(verdict.ok, false);
+    assert.match(verdict.message, /navigations as network-first/);
+  });
+
+  it('an unreadable sw.js says so, rather than blaming the fetch handler', () => {
+    const verdict = guard.evaluate({ baseSw: REAL_SW, headSw: '', changedPaths: ['public/sw.js'] });
+    assert.equal(verdict.ok, false);
+    assert.match(verdict.message, /could not be read/);
+    assert.doesNotMatch(verdict.message, /navigations/,
+      'a file that was never read must not be reported as a fetch-handler change');
+  });
+
   it('a raw-source parse really would be wrong, so stripping comments is load-bearing', () => {
     const stripped = guard.stripComments(REAL_SW);
     assert.ok(stripped.length < REAL_SW.length, 'the production file is annotated');

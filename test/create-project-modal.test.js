@@ -18,7 +18,8 @@
  *      bottom-sheet era, where the drawer itself had no horizontal padding.
  *      The modal container owns that inset now, so those must be neutralized
  *      or the header sits 16px inside the body's left edge.
- * * A third condition — `sw.js`'s CACHE_NAME must move whenever a cache-first
+ *
+ * A third condition — `sw.js`'s CACHE_NAME must move whenever a cache-first
  * `public/*` asset changes, or the operator keeps being served the old UI — is
  * a property of a DIFF, not of this tree, so no probe here can decide it.
  * `scripts/cache-bump-guard.js` owns it and runs in CI.

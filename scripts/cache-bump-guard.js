@@ -14,13 +14,16 @@
  * CURRENT `CACHE_NAME` — so for a cache-first asset, a `CACHE_NAME` bump is the
  * one mechanism that gets a new version to a browser with an active worker.
  * Ship a change to one without a bump and it is invisible: the operator is
- * remote on iOS and * has no hard-reload. It has recurred at #246, #271, #427 and #623 — and each
- * was closed by moving that one file into `NETWORK_FIRST_PATHS`, the other valid
- * remedy, which is why not one of those four is in this guard's scope today.
- * That is the argument FOR the guard rather than against it: the carve-out fixes
- * the file someone already noticed, and this checks the ones nobody has. The
- * gated set is computed from `sw.js` on every run precisely so it keeps covering
- * whatever is cache-first now, including files added after this was written.
+ * remote on iOS and has no hard-reload. It has recurred at #246, #271, #427 and
+ * #623, and not one of those four files is in this guard's scope today: each has
+ * since been carved into `NETWORK_FIRST_PATHS`, some at the time and some later
+ * (`ui.js` and `style.css` went network-first for #422, a year before #623 was
+ * closed by a v3-53 -> v3-54 bump).
+ *
+ * That history is the argument FOR the guard rather than against it. A carve-out
+ * fixes the one file somebody already noticed; the gated set is recomputed from
+ * `sw.js` on every run so it keeps covering whatever is cache-first NOW,
+ * including files added long after this was written.
  *
  * The property is relational — *if a cache-first asset changed in this diff,
  * `CACHE_NAME` must also have changed* — so no read of a single tree can
@@ -178,9 +181,16 @@ function bracketedLiteral(src, decl) {
  *   missing, which is distinct from an empty set.
  */
 function parseSwState(src) {
-  const strict = src.match(CACHE_NAME_PATTERN);
-  const loose = src.match(CACHE_NAME_LOOSE);
+  // EVERY read is of the comment-stripped source, not just the roster. `.match`
+  // returns the FIRST hit, so a comment quoting a `CACHE_NAME = '...'`
+  // assignment above line 13 would become the generation this guard compares —
+  // and `evaluate`'s "the name changed, so something was bumped" short-circuit
+  // would then pass a diff that bumped nothing, on exactly what the guard exists
+  // to catch. This function already knew annotations defeat a raw parse; it
+  // applied the knowledge to one of three reads.
   const stripped = stripComments(src);
+  const strict = stripped.match(CACHE_NAME_PATTERN);
+  const loose = stripped.match(CACHE_NAME_LOOSE);
   const literal = bracketedLiteral(stripped, 'const NETWORK_FIRST_PATHS');
   return {
     cacheName: strict ? strict[1] : (loose ? loose[1] : null),
@@ -198,6 +208,14 @@ function parseSwState(src) {
  *   --name-only` prints it.
  * @param {Set<string>} networkFirst - `NETWORK_FIRST_PATHS` from the HEAD
  *   `sw.js` — the worker that will be installed, so the set that will govern.
+ * A file that is NEW in the diff is treated as changed, deliberately. A browser
+ * has no cache entry for it, so the cache-first branch misses and fetches it
+ * fresh — meaning a bump is not strictly required and this over-reports. Kept
+ * because the cheap answer is right in the case that matters (a path re-added
+ * after a deletion DOES have a stale entry), the cost is one line in a PR that
+ * is adding assets anyway, and distinguishing the two needs `--name-status`
+ * plus a rename-detection judgement that can itself be wrong.
+ *
  * @returns {boolean} True when a stale copy of this file can be served
  *   indefinitely and only a `CACHE_NAME` bump evicts it.
  */
@@ -227,10 +245,26 @@ function isCacheFirstAsset(repoPath, networkFirst) {
  *   the cache-first assets that changed, empty unless arm 1 fired.
  */
 function evaluate({ baseSw, headSw, changedPaths }) {
+  // Read failure is its own answer. `main` tolerates a missing `sw.js` and
+  // coerces to '', which would otherwise fall through to the navigate arm and
+  // report that the fetch handler changed — sending a maintainer to inspect a
+  // file that was never read.
+  if (!headSw.trim()) {
+    return {
+      ok: false,
+      offenders: [],
+      message: `${SW_PATH} is empty or could not be read at HEAD. Every question this guard `
+        + 'answers is derived from that file, so it has nothing to answer from.'
+    };
+  }
+
   const head = parseSwState(headSw);
   const base = parseSwState(baseSw);
 
-  if (!NAVIGATION_CONDITION.test(headSw)) {
+  // Stripped, for the reason `parseSwState` gives: a comment QUOTING the
+  // navigate condition would satisfy this premise permanently, and this is the
+  // only arm guarding against the guard reporting LESS than it should.
+  if (!NAVIGATION_CONDITION.test(stripComments(headSw))) {
     return {
       ok: false,
       offenders: [],
@@ -380,7 +414,10 @@ function main(argv) {
   let report;
   try {
     const mergeBase = git(['merge-base', base, head], repo);
-    const changedPaths = git(['diff', '--name-only', mergeBase, head], repo)
+    // -c core.quotepath=false: git otherwise C-quotes any path with a non-ASCII
+    // or special character, and a quoted name matches no `public/...` prefix, so
+    // an asset with an accent in its name would be exempted in silence.
+    const changedPaths = git(['-c', 'core.quotepath=false', 'diff', '--name-only', mergeBase, head], repo)
       .split('\n')
       .filter(Boolean);
     // A deleted or not-yet-added sw.js reads as empty, which `evaluate` rejects
