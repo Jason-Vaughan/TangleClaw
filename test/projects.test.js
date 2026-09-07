@@ -1435,13 +1435,23 @@ describe('projects', () => {
         'the fixture is only meaningful if the shipped default has entries');
 
       const result = await projects.updateProject('new-project', {
+        // Copied per element, not spread by reference: `_applyProjectUpdates`
+        // assigns this array into the project's config, so sharing the objects
+        // would put the process-global default's elements inside a project.
+        // Nothing mutates them today, which is what makes it worth closing now.
+        //
         // Plus one carrying an extra key: #1287 leaves per-element rules open, so
         // unknown keys are permitted deliberately — refusing them would decide
         // that question by omission.
-        quickCommands: [...shipped, { label: 'ls', command: 'ls -la', icon: 'folder' }]
+        quickCommands: [
+          ...shipped.map((cmd) => ({ ...cmd })),
+          { label: 'ls', command: 'ls -la', icon: 'folder' }
+        ]
       });
-      assert.ok(result.project, 'a real quickCommands array is accepted');
-      assert.equal(result.project ? null : result.errors[0], null);
+      // `errors` first: `ok(result.project)` would throw before anything could
+      // report WHY, so a failure here would name the shape without the reason.
+      assert.deepEqual(result.errors, [], 'a real quickCommands array raises no error');
+      assert.ok(result.project, 'and the update is applied');
     });
 
     it('rejects core rule disabling', async () => {
