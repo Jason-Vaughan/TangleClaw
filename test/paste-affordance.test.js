@@ -74,12 +74,11 @@ describe('Paste path decision (#402 — tcPastePath)', () => {
 });
 
 describe('Paste affordance wiring (#402 — source probes)', () => {
-  let sessionJs, sessionHtml, swJs;
+  let sessionJs, sessionHtml;
 
   before(() => {
     sessionJs = read('public/session.js');
     sessionHtml = read('public/session.html');
-    swJs = read('public/sw.js');
   });
 
   it('the banner has a Paste button that ships hidden (touch reveals it)', () => {
@@ -124,15 +123,5 @@ describe('Paste affordance wiring (#402 — source probes)', () => {
       'the fallback modal must exist — plain-HTTP has no Clipboard API');
     assert.match(sessionHtml, /<textarea[^>]*id="pasteCatcherText"/s,
       'the catcher must be a REAL textarea; only that receives the native Paste callout');
-  });
-
-  it('the service worker cache name is at or past the #402 shell version', () => {
-    // A floor, not an exact pin: later shell changes legitimately bump past
-    // v3-49 (v3-50 landed with UI-8W3D the same day); regressing BELOW the
-    // #402 version would resurrect the stale-shell invisibility.
-    const m = swJs.match(/CACHE_NAME = 'tangleclaw-v3-(\d+)'/);
-    assert.ok(m, 'CACHE_NAME must keep the tangleclaw-v3-N form');
-    assert.ok(Number(m[1]) >= 49,
-      'public/* shell changes are invisible to installed SWs without a CACHE_NAME bump');
   });
 });

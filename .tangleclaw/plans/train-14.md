@@ -25,7 +25,7 @@ governed_by:
       - "Bounded exception (#1180, chime idle detection) → inapplicable; no chunk touches idle detection."
   - artifact: project-preferences
     dispositions:
-      - "No npm dependencies — for runtime or for tooling, and the ruling that an enforcement mechanism must add no installation step (ADR 0012) → ENGAGED, and it decides Chunk 05's shape before design starts. #625 recommends a CI check; ADR 0012 forecloses reaching for any tool the workflow does not already have. The check is git plus Node stdlib inside the existing `.github/workflows/test.yml` invocation, and #625's option 3 (hash-derived CACHE_NAME) stays foreclosed by the same norm's 'no build step' half."
+      - "No npm dependencies — for runtime or for tooling, and the ruling that an enforcement mechanism must add no installation step (ADR 0012) → ENGAGED, and it decides Chunk 05's shape before design starts. #625 recommends a CI check; ADR 0012 forecloses reaching for any tool the workflow does not already have. The check is git plus Node stdlib — no package, no install step — and #625's option 3 (hash-derived CACHE_NAME) stays foreclosed by the same norm's 'no build step' half. CORRECTED 2026-09-07 (Critic R-20): this line previously read 'inside the existing `.github/workflows/test.yml` invocation', paraphrasing ADR 0012's 'inside the existing `node --test` invocation'. The substitution mattered — the ADR's two sanctioned homes are the SUITE and the janitor, and it rejects CI-only enforcement by name, so Chunk 05 is a DEPARTURE that reads as conformance under the paraphrase. The install-step half is honoured; the home is not. Recorded as an amendment on `docs/adr/0012-enforcement-adds-no-install-step.md` answering the ADR's three rejection reasons for relational properties."
       - "CommonJS, 'use strict', no build step → conforms; every file this train touches is already CommonJS and stays so."
       - "Tests are `node:test` + `node:assert/strict`, one file per module, and every API endpoint has them → conforms. Chunk 06 touches two endpoints (`listUploads`, `saveUpload`) whose route tests must cover the new failure report, not only the happy path."
   - artifact: nonfunctional-requirements
@@ -429,8 +429,17 @@ retrofitting its audit line second.
 - **Artifacts consumed:** `project-preferences.md` (Direction: no npm dependencies; ADR 0012 —
   an enforcement mechanism adds no installation step)
 - **Deliverables:** a check in `.github/workflows/test.yml` that diffs against the merge base and
-  fails when a file in `sw.js`'s `STATIC_ASSETS` changed while `CACHE_NAME` did not, naming the
-  offending assets. Git and Node stdlib only — ADR 0012 forecloses adding a tool, and the same
+  fails when a **cache-first** `public/*` asset changed while `CACHE_NAME` did not, naming the
+  offending assets.
+
+  [DECISION: the gated roster is the fetch handler's cache-first branch, not `STATIC_ASSETS` as
+  this entry and #625 both said | reading the handler shows precaching decides what is IN the cache
+  at install time, not which branch serves a request — `install` re-runs
+  `cache.addAll(STATIC_ASSETS)` on any `sw.js` change, so a precached asset is refreshed without a
+  bump, while a cache-first asset that is NOT precached (`logo.png`, `icons/*`) is populated by
+  `_cachePut` on first fetch and evicted by nothing but a generation change. `STATIC_ASSETS` minus
+  `NETWORK_FIRST_PATHS` is three paths, two of them already covered; it would gate the files
+  needing it least and miss every file for which the bump is the only remedy | user can override] Git and Node stdlib only — ADR 0012 forecloses adding a tool, and the same
   norm's no-build-step half forecloses #625's option 3 (deriving `CACHE_NAME` from asset content).
 
   **The asset list must be read from `sw.js`, not copied into the workflow.** A hand-maintained
@@ -443,9 +452,15 @@ retrofitting its audit line second.
   that demanded a bump for every `public/*` change would fire on files the bump does not gate,
   and a guard that cries wolf gets bypassed.
 
-  **The three monotone floors:** #625 says the assertion "can then be dropped or kept as
-  documentation." Decide it once, in one place, for all three sites — this is a family, and
-  leaving two of three is the shape that recurs in this repo ([[feedback_enumerate_the_guards_family]]).
+  **The monotone floors are NINE, not three.** The three this entry originally named
+  (`create-project-modal`, `bridge-port-input`, `master-drawer-frontend`) were what a bounded grep
+  window showed; a full sweep of `test/` adds `openclaw-cache` (`>= 12`), `paste-affordance`
+  (`>= 49`), `openclaw-bridge-port-row` (`>= 42`), `terminal-touch-scroll`, `master-pane-frontend`
+  and `terminal-drag-copy` (negative "not v3-3x" sets). Resolved together: eight deleted, because
+  the guard's monotonicity arm strictly subsumes them — a generation that never decreases can never
+  fall below one — and the ninth (`openclaw-cache`) converted to a FORM assertion, since the
+  `tangleclaw-v3-N` shape is what the guard parses and is the one part of this that is a property
+  of a single tree ([[feedback_enumerate_the_guards_family]], third instance).
 - **Tests:** the guard's own proof is a run against a constructed diff in both directions — a
   change to a precached asset without a bump FAILS, the same change with a bump PASSES. A check
   that has never been shown to go red is not a check ([[feedback_measure_against_the_real_shape]]).
@@ -454,9 +469,18 @@ retrofitting its audit line second.
   touches only a network-first-only file is unaffected.
 - **Done when:**
   1. Acceptance criteria met and both directions demonstrated
-  2. The three monotone floor assertions are resolved consistently
+  2. The monotone floor assertions are resolved consistently, across the whole family
   3. `/prawduct:critic` run and blocking findings resolved
   4. Committed, PR merged, chunk marked `[x]` in Status
+
+  **Both directions were demonstrated in real CI**, not only over throwaway repos — the layer the
+  unit tests structurally cannot reach (the `pull_request` condition, `fetch-depth: 0`, and whether
+  `github.event.pull_request.base.sha` resolves against the merge-ref HEAD `actions/checkout`
+  leaves). On PR #1347: run `34165988998` shows the step reading `public/sw.js`, parsing 18
+  network-first paths and passing; a probe commit touching `public/history-drawer.js` with no bump
+  then produced run `34166131583`, where every other step succeeded and the guard alone failed —
+  turning the REQUIRED `test` check red, which is the property that makes it a gate rather than a
+  notification. The probe was reverted and the branch restored to the reviewed tree.
 
 ### Chunk 06: The uploads module reads a project directory the way the scanner does
 

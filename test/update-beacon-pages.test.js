@@ -296,6 +296,7 @@ describe('#931 the markup anchors exist on both pages', () => {
     // this change did not make one, and the carve-out above is why it did not
     // need to. But pinning the literal generation string would fail the next
     // legitimate bump with a message about the beacon, which is worse than no
-    // guard. It is a property of a diff, not of the file.
+    // guard. It is a property of a diff, not of the file — which is why
+    // `scripts/cache-bump-guard.js` holds it, from CI, where a diff exists.
   });
 });

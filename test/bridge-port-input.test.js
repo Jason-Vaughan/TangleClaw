@@ -91,14 +91,12 @@ describe('tcParseBridgePort (#489 field parsing)', () => {
 describe('Bridge Port form surface (#489 structural)', () => {
   let html;
   let js;
-  let sw;
   let css;
 
   before(() => {
     const pub = path.join(__dirname, '..', 'public');
     html = fs.readFileSync(path.join(pub, 'index.html'), 'utf8');
     js = fs.readFileSync(path.join(pub, 'ui.js'), 'utf8');
-    sw = fs.readFileSync(path.join(pub, 'sw.js'), 'utf8');
     css = fs.readFileSync(path.join(pub, 'style.css'), 'utf8');
   });
 
@@ -158,16 +156,6 @@ describe('Bridge Port form surface (#489 structural)', () => {
     it('the old parseInt-with-null-fallback closure is gone', () => {
       assert.ok(!/bridgePort: \(\(\) =>/.test(js),
         'the inline bridgePort IIFE must not return — typos must error, not clear the port');
-    });
-  });
-
-  describe('propagation', () => {
-    it('CACHE_NAME is bumped so active service workers pick up the new form', () => {
-      // Past the pre-#489 generation; the exact current pin lives in
-      // test/openclaw-bridge-port-row.test.js, which owns the latest bump (#491).
-      assert.match(sw, /const CACHE_NAME = 'tangleclaw-v3-\d+';/);
-      assert.ok(!/const CACHE_NAME = 'tangleclaw-v3-3[12345]';/.test(sw),
-        'cache generation must be past v3-35 (the pre-#489 shell)');
     });
   });
 });

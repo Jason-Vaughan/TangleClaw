@@ -25,7 +25,6 @@ describe('Plain-drag terminal copy + long-press select (#445)', () => {
   let helper;
   let sessionJs;
   let uiJs;
-  let sw;
   /** The api-helper.js drag-copy function body, isolated. */
   let shim;
   /** The touch-scroll shim body (must yield to select mode). */
@@ -36,7 +35,6 @@ describe('Plain-drag terminal copy + long-press select (#445)', () => {
     helper = fs.readFileSync(path.join(pub, 'api-helper.js'), 'utf8');
     sessionJs = fs.readFileSync(path.join(pub, 'session.js'), 'utf8');
     uiJs = fs.readFileSync(path.join(pub, 'ui.js'), 'utf8');
-    sw = fs.readFileSync(path.join(pub, 'sw.js'), 'utf8');
 
     const start = helper.indexOf('function tcWireTerminalDragCopy');
     assert.ok(start > -1, 'api-helper.js defines tcWireTerminalDragCopy');
@@ -208,13 +206,4 @@ describe('Plain-drag terminal copy + long-press select (#445)', () => {
     });
   });
 
-  describe('propagation', () => {
-    it('CACHE_NAME is bumped so active service workers pick up the new shell', () => {
-      // Past the pre-#445 generation; the exact current pin lives in
-      // test/master-drawer-frontend.test.js, which owns the latest bump (#331 slice 3).
-      assert.match(sw, /const CACHE_NAME = 'tangleclaw-v3-\d+';/);
-      assert.ok(!/const CACHE_NAME = 'tangleclaw-v3-3[123]';/.test(sw),
-        'cache generation must be past v3-33 (the pre-#445 shell)');
-    });
-  });
 });

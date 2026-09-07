@@ -20,7 +20,6 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
   let html;
   let js;
   let css;
-  let sw;
   /** The ui.js Project Master section, isolated so assertions about what the
    *  master code must NOT do (e.g. polling) don't trip on unrelated code. */
   let masterSection;
@@ -30,7 +29,6 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
     html = fs.readFileSync(path.join(pub, 'index.html'), 'utf8');
     js = fs.readFileSync(path.join(pub, 'ui.js'), 'utf8');
     css = fs.readFileSync(path.join(pub, 'style.css'), 'utf8');
-    sw = fs.readFileSync(path.join(pub, 'sw.js'), 'utf8');
 
     const start = js.indexOf('── Project Master');
     const end = js.indexOf('── Event Bindings ──');
@@ -143,14 +141,6 @@ describe('Project Master pane — landing page (chunk G slice 2, #331)', () => {
       assert.match(css, /\.master-dot\.live \{/);
       assert.match(css, /\.master-dot\.pending \{/);
       assert.match(css, /\.master-dot\.down \{/);
-    });
-
-    it('CACHE_NAME is bumped so active service workers surface the new shell', () => {
-      // Past the pre-pane generation (v3-31); the exact current pin lives in
-      // test/terminal-touch-scroll.test.js, which owns the latest bump (#443).
-      assert.match(sw, /const CACHE_NAME = 'tangleclaw-v3-\d+';/);
-      assert.ok(!/const CACHE_NAME = 'tangleclaw-v3-31';/.test(sw),
-        'cache generation must be past v3-31 (the pre-Master-pane shell)');
     });
   });
 });

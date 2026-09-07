@@ -343,17 +343,21 @@ describe('service worker cache strategy for cache-bust scripts (#246)', () => {
     swSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'sw.js'), 'utf8');
   });
 
-  it('CACHE_NAME is bumped to v3-12 or higher (post-#246 unblock)', () => {
+  it('CACHE_NAME keeps the tangleclaw-v3-N form the cache-bump guard parses', () => {
     // #246 root cause: existing operators with an active SW had
     // tangleclaw-v3-11's cache holding the pre-#245 openclaw-cache.js
     // script. Bumping CACHE_NAME triggers the install + activate event
-    // pair that clears the old cache. This test pins the bump so a
-    // future hand-edit reverting to v3-11 (or earlier) fails loud
-    // rather than silently re-stranding the fix.
+    // pair that clears the old cache.
+    //
+    // What is asserted here is the FORM, not a floor. `activate` evicts by
+    // string inequality, so any changing value would serve it — but
+    // `scripts/cache-bump-guard.js` reads the numeric suffix to tell a bump
+    // from a regression, and a CACHE_NAME that abandoned the form would
+    // disarm that check. The form is a property of this one file, so a unit
+    // test can hold it; whether the generation MOVED is a property of a diff,
+    // and only the CI guard can answer that.
     const match = swSrc.match(/CACHE_NAME\s*=\s*['"]tangleclaw-v3-(\d+)['"]/);
     assert.ok(match, 'CACHE_NAME must follow the tangleclaw-v3-N pattern');
-    const version = parseInt(match[1], 10);
-    assert.ok(version >= 12, `CACHE_NAME version must be >= 12 (post-#246); found v3-${version}`);
   });
 
   it('/openclaw-cache.js is in NETWORK_FIRST_PATHS (cache-first branch carve-out)', () => {

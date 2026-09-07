@@ -9,8 +9,7 @@
  * `.modal-backdrop` / `.modal-content` that caps at 90vh and scrolls
  * internally — the fix was to adopt it, not to invent anything.
  *
- * Three things have to hold together, and two of them are the kind that break
- * silently:
+ * Two things have to hold together, and both are the kind that break silently:
  *
  *   1. The markup nests the dialog INSIDE the backdrop. That is what makes it
  *      center — but it also means an unguarded backdrop click handler would
@@ -19,9 +18,11 @@
  *      bottom-sheet era, where the drawer itself had no horizontal padding.
  *      The modal container owns that inset now, so those must be neutralized
  *      or the header sits 16px inside the body's left edge.
- *   3. `sw.js`'s CACHE_NAME must move whenever a cached `public/*` asset
- *      changes, or the operator keeps being served the old UI and the fix is
- *      invisible to the only person who reported it.
+ *
+ * A third condition — `sw.js`'s CACHE_NAME must move whenever a cache-first
+ * `public/*` asset changes, or the operator keeps being served the old UI — is
+ * a property of a DIFF, not of this tree, so no probe here can decide it.
+ * `scripts/cache-bump-guard.js` owns it and runs in CI.
  *
  * Pinned by source probes — the documented scope limit of the zero-dep /
  * no-browser-harness choice (same pattern as paste-affordance.test.js).
@@ -182,16 +183,6 @@ describe('Create Project modal (#623)', () => {
   });
 
   describe('cache busting', () => {
-    it('bumps CACHE_NAME past the revision that shipped the drawer', () => {
-      // public/* assets are precached; without a bump the operator is served
-      // the old UI and the fix is invisible to them.
-      const sw = read('public/sw.js');
-      const m = sw.match(/const CACHE_NAME = 'tangleclaw-v3-(\d+)'/);
-      assert.ok(m, 'CACHE_NAME must match the expected format');
-      assert.ok(Number(m[1]) >= 54,
-        `CACHE_NAME must be >= v3-54 (v3-53 shipped the drawer); found v3-${m[1]}`);
-    });
-
     it('still precaches the assets this change touched', () => {
       const sw = read('public/sw.js');
       assert.match(sw, /'\/ui\.js'/);

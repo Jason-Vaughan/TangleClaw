@@ -94,6 +94,44 @@ describe('CI workflow (.github/workflows/test.yml)', () => {
       'the scan runs before the suite');
   });
 
+  it('guards the service-worker cache generation, with the history that needs (#625)', () => {
+    // A guard nothing calls is a file. This one asks whether a cache-first
+    // public/* asset changed relative to the merge base, so it needs BOTH sides
+    // in the clone — the default depth-1 checkout leaves `merge-base` unable to
+    // answer, and the script exits 1 rather than reporting a pass it cannot
+    // support. The base is passed through the environment, never interpolated
+    // into the shell line.
+    const src = workflowSource();
+    assert.match(src, /node scripts\/cache-bump-guard\.js --base "\$BASE_SHA"/,
+      'the guard must run with a comparison base taken from the environment');
+    assert.match(src, /BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/,
+      'the base comes from the pull request GitHub resolved');
+    assert.match(src, /fetch-depth: 0/,
+      'merge-base cannot answer in a depth-1 clone');
+  });
+
+  it('the cache guard runs in the job branch protection requires, even on a red suite (#625)', () => {
+    // Two properties, both of which decide whether the guard GATES or merely
+    // reports. First, it must be a step of `test`: a job name is what branch
+    // protection enumerates, `main` requires only `test`, and this repo's
+    // standing habit is `gh pr merge --auto` — which waits for the required set
+    // and merges past a red optional check. A separate job would have been a
+    // guard that announces the miss into a run nobody blocks on.
+    //
+    // Second, `!cancelled()`: the suite's verdict and the guard's are
+    // independent, so a failing suite must not withhold the second answer and
+    // cost a whole round trip to learn it.
+    const src = workflowSource();
+    const jobs = src.slice(src.indexOf('jobs:'));
+    assert.equal((jobs.match(/^  \w[\w-]*:$/gm) || []).length, 1,
+      'the workflow has exactly one job, so `test` is the only name protection has to require');
+    const testJob = jobs.slice(jobs.indexOf('  test:'));
+    assert.ok(testJob.includes('scripts/cache-bump-guard.js'),
+      'the guard must run inside the required `test` job, not a job of its own');
+    assert.match(src, /if: \$\{\{ !cancelled\(\) && github\.event_name == 'pull_request' \}\}/,
+      'the guard reports even when the suite failed, and only where a base exists');
+  });
+
   it('pins Node 22 (node:sqlite floor / production runtime)', () => {
     assert.match(workflowSource(), /node-version: 22/);
   });
