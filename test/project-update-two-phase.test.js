@@ -308,12 +308,9 @@ describe('the fixture tracks the settings modal, not a remembered list', () => {
     // field the write phase ignores, and the write phase acts on fields
     // (`rules`, `quickCommands`) no browser sends.
     //
-    // The two exceptions are declared, not overlooked. Nothing validates `tags`
-    // or `quickCommands` today, so a non-array is stringified into storage and
-    // read back as a string where every reader expects an array (#1287, which
-    // empties this set). A field that is validated nowhere and declared nowhere
-    // fails here — which is how `quickCommands` was found.
-    const unvalidated = new Set(['tags', 'quickCommands']);
+    // There should be no fields reaching the write phase without a validator.
+    // #1287 closes the last declared gaps for tags and quickCommands.
+    const unvalidated = new Set();
     const known = new Set(projects._PROJECT_UPDATE_VALIDATORS
       .flatMap((v) => [...v.keys, ...(v.reads || [])]));
     for (const field of [...modalFields(), ...writtenFields()]) {

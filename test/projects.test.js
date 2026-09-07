@@ -1368,6 +1368,25 @@ describe('projects', () => {
       assert.deepEqual(result.project.tags, ['updated']);
     });
 
+    it('rejects tags that are not an array of strings', async () => {
+      const result = await projects.updateProject('new-project', {
+        tags: 'not-an-array'
+      });
+      assert.equal(result.project, null);
+      assert.equal(result.errors[0], 'tags must be an array of strings');
+    });
+
+    it('rejects quickCommands that are not valid command objects', async () => {
+      const result = await projects.updateProject('new-project', {
+        quickCommands: 'nope'
+      });
+      assert.equal(result.project, null);
+      assert.equal(
+        result.errors[0],
+        'quickCommands must be an array of objects with string label and command'
+      );
+    });
+
     it('rejects core rule disabling', async () => {
       const result = await projects.updateProject('new-project', {
         rules: { core: { changelogPerChange: false } }
