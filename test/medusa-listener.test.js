@@ -18,7 +18,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { MedusaListener } = require('../lib/medusa-listener');
+const {
+  MedusaListener, SYSTEM_MESSAGE_RETENTION, _setSystemMessageRetention
+} = require('../lib/medusa-listener');
 const registry = require('../lib/medusa-registry');
 
 /** WebSocket readyState constants (subset used by the listener). */
@@ -599,6 +601,199 @@ describe('MedusaListener — ACK-on-handled (TC#547, narrowed by #785)', () => {
     l.markRead();
     assert.equal(l.unread, 0);
     assert.equal(ackFrames(sockets[0]).length, 0);
+    l.stop();
+  });
+});
+
+/*
+ * #1108, half two — an inbox nobody drains still has a ceiling.
+ *
+ * `medusa-wake` skips a session whose engine has no wake profile, forever and
+ * by design: guessing an engine's idle signature is the false-idle hazard that
+ * module exists to prevent. So no consumer ever reports that session's mail
+ * handled, nothing ever ACKs it, and its inbox is append-only for the life of
+ * the workspace id. `maxInbox` is not a drain — it drops the oldest entry
+ * locally while the Hub keeps its durable copy and re-floods on the next
+ * reconnect.
+ *
+ * The boundary this must not cross: only a SYSTEM broadcast may be drained. A
+ * peer-to-peer message has a sender waiting on it and the switchboard's rule is
+ * that the initiator closes the loop, so expiring one would close somebody
+ * else's exchange silently. The property keyed on is `from === 'system'` —
+ * stamped by the Bridge from the sender, and the one field a peer cannot forge.
+ */
+describe('MedusaListener — the system-broadcast drain (#1108)', () => {
+  /**
+   * Parse a socket's outbound `ack` frames.
+   * @param {FakeWebSocket} socket - The fake socket.
+   * @returns {Array<{type: string, messageIds: string[]}>} Ack frames, in order.
+   */
+  function ackFrames(socket) {
+    return socket.sent.map((s) => JSON.parse(s)).filter((f) => f.type === 'ack');
+  }
+
+  /**
+   * Every envelope id this socket has ACKed, across all frames.
+   * @param {FakeWebSocket} socket - The fake socket.
+   * @returns {string[]} Acked ids.
+   */
+  function ackedIds(socket) {
+    return ackFrames(socket).flatMap((f) => f.messageIds);
+  }
+
+  /** Start and register a listener. @returns {{l: MedusaListener, sockets: FakeWebSocket[]}} */
+  function listening() {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-unprofiled', wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-unprofiled' });
+    return { l, sockets };
+  }
+
+  /**
+   * Deliver a broadcast in the shape `sendSystemMessage` produces.
+   * @param {FakeWebSocket} socket - The fake socket.
+   * @param {string} id - Envelope id.
+   * @param {string} [doc] - Doc name carried in the payload.
+   * @returns {void}
+   */
+  function deliverSystem(socket, id, doc = 'BOARD') {
+    socket._message({
+      type: 'new_message',
+      messageId: id,
+      message: {
+        id, from: 'system', to: 'ws-unprofiled',
+        message: JSON.stringify({ type: 'system', event: 'shared_doc_updated', doc })
+      }
+    });
+  }
+
+  /**
+   * Deliver a peer-to-peer message — one with a sender waiting on a reply.
+   * @param {FakeWebSocket} socket - The fake socket.
+   * @param {string} id - Envelope id.
+   * @returns {void}
+   */
+  function deliverPeer(socket, id) {
+    socket._message({
+      type: 'new_message',
+      messageId: id,
+      message: { id, from: 'ws-a-real-peer', to: 'ws-unprofiled', message: 'are you there?' }
+    });
+  }
+
+  afterEach(() => { _setSystemMessageRetention(SYSTEM_MESSAGE_RETENTION); });
+
+  it('bounds an inbox that nothing ever drains', () => {
+    _setSystemMessageRetention(3);
+    const { l, sockets } = listening();
+    for (let i = 0; i < 50; i++) deliverSystem(sockets[0], `s${i}`);
+
+    assert.equal(l.inbox.length, 3,
+      'nothing here ever reports a message handled — the cap is the only ceiling');
+    assert.equal(l.unread, 3,
+      'a badge counting mail that no longer exists is a count nothing can explain');
+    l.stop();
+  });
+
+  it('drains the OLDEST and keeps the newest — the freshest change is the one worth having', () => {
+    _setSystemMessageRetention(2);
+    const { l, sockets } = listening();
+    for (const id of ['s1', 's2', 's3', 's4']) deliverSystem(sockets[0], id);
+
+    assert.deepEqual(l.inbox.map((m) => m.id), ['s3', 's4']);
+    l.stop();
+  });
+
+  it('ACKs what it drains, so the Hub stops re-flooding it', () => {
+    // This is the whole difference from `maxInbox`, which drops locally and
+    // leaves the durable copy queued: the message comes straight back on the
+    // next reconnect and the inbox is unbounded again through a second door.
+    _setSystemMessageRetention(1);
+    const { l, sockets } = listening();
+    for (const id of ['s1', 's2', 's3']) deliverSystem(sockets[0], id);
+
+    // De-duplicated: `_flushAcks` re-sends every id still awaiting the Hub's
+    // `ack_response`, and this fake never answers, so an id legitimately
+    // appears in more than one frame. What matters is which ids were ACKed.
+    assert.deepEqual([...new Set(ackedIds(sockets[0]))].sort(), ['s1', 's2'],
+      'a drained message must stop existing, not stop being visible');
+    assert.ok(!ackedIds(sockets[0]).includes('s3'),
+      'and the message still in the inbox must stay queued Hub-side, un-ACKed');
+    l.stop();
+  });
+
+  it('NEVER drains a peer message — the initiator closes the loop, not the cap', () => {
+    // The assertion that pins the boundary. A peer is blocked on this reply;
+    // expiring it closes their exchange without them knowing.
+    _setSystemMessageRetention(1);
+    const { l, sockets } = listening();
+    deliverPeer(sockets[0], 'p1');
+    for (let i = 0; i < 20; i++) deliverSystem(sockets[0], `s${i}`);
+
+    const froms = l.inbox.map((m) => m.from);
+    assert.ok(froms.includes('ws-a-real-peer'),
+      'a peer\'s unanswered message survives any volume of broadcast');
+    assert.ok(!ackedIds(sockets[0]).includes('p1'),
+      'and is never ACKed out of the Hub behind its sender\'s back');
+    l.stop();
+  });
+
+  it('does not count peer messages toward the system cap', () => {
+    // Counting them would let a peer conversation evict the broadcasts, and a
+    // burst of broadcasts evict itself early — the cap must describe one
+    // population, not two.
+    _setSystemMessageRetention(3);
+    const { l, sockets } = listening();
+    for (const id of ['p1', 'p2', 'p3', 'p4']) deliverPeer(sockets[0], id);
+    for (const id of ['s1', 's2', 's3']) deliverSystem(sockets[0], id);
+
+    assert.equal(l.inbox.filter((m) => m.from === 'system').length, 3,
+      'three system messages against a cap of three is at the cap, not over it');
+    assert.equal(l.inbox.filter((m) => m.from !== 'system').length, 4,
+      'and every peer message is still there');
+    l.stop();
+  });
+
+  it('keys on the Bridge-stamped sender, not on the payload a peer can write', () => {
+    _setSystemMessageRetention(1);
+    const { l, sockets } = listening();
+    sockets[0]._message({
+      type: 'new_message',
+      messageId: 'forged',
+      message: {
+        id: 'forged', from: 'ws-a-real-peer',
+        message: JSON.stringify({ type: 'system', event: 'shared_doc_updated', doc: 'BOARD' })
+      }
+    });
+    for (const id of ['s1', 's2']) deliverSystem(sockets[0], id);
+
+    assert.ok(l.inbox.some((m) => m.id === 'forged'),
+      'a peer typing "type":"system" into its body must not make its own message expirable');
+    l.stop();
+  });
+
+  it('a retention of 0 keeps everything — the cap is disableable, and off is off', () => {
+    _setSystemMessageRetention(0);
+    const { l, sockets } = listening();
+    for (let i = 0; i < 30; i++) deliverSystem(sockets[0], `s${i}`);
+
+    assert.equal(l.inbox.length, 30);
+    assert.equal(ackedIds(sockets[0]).length, 0);
+    l.stop();
+  });
+
+  it('ships with a cap that is actually a ceiling', () => {
+    // The call site's policy argument is code: a default of 0, or one large
+    // enough never to bite, would leave every test above measuring a seam
+    // nothing reaches in production.
+    assert.ok(SYSTEM_MESSAGE_RETENTION > 0 && SYSTEM_MESSAGE_RETENTION <= 100,
+      'the default must bound an undrained inbox at a size an operator can read');
+    const { l, sockets } = listening();
+    for (let i = 0; i < SYSTEM_MESSAGE_RETENTION + 5; i++) deliverSystem(sockets[0], `s${i}`);
+    assert.equal(l.inbox.length, SYSTEM_MESSAGE_RETENTION,
+      'the shipped default must be the one that applies with no seam touched');
     l.stop();
   });
 });
