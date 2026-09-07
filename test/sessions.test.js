@@ -2627,10 +2627,10 @@ describe('sessions', () => {
     let originalHasSession;
     let sentCommand;
 
-    // Shared empty-pipeline-result stub used by V2-routing tests that
+    // Shared empty-pipeline-result stub used by wrap-routing tests that
     // don't care about the pipeline body (only the routing contract).
     // Frozen so a test can't accidentally mutate the shared instance.
-    const EMPTY_V2_RESULT = Object.freeze({
+    const EMPTY_PIPELINE_RESULT = Object.freeze({
       ok: true, blockedAt: null, results: [], commitSha: null, summary: null, error: null
     });
 
@@ -2680,7 +2680,7 @@ describe('sessions', () => {
       const wrapPipelineMod = require('../lib/wrap-pipeline');
       const realRun = wrapPipelineMod.runWrapPipeline;
       let pipelineCalls = 0;
-      wrapPipelineMod.runWrapPipeline = async () => { pipelineCalls += 1; return EMPTY_V2_RESULT; };
+      wrapPipelineMod.runWrapPipeline = async () => { pipelineCalls += 1; return EMPTY_PIPELINE_RESULT; };
 
       try {
         const result = await sessions.triggerWrap('prime-test');
@@ -2717,7 +2717,7 @@ describe('sessions', () => {
 
       const wrapPipelineMod = require('../lib/wrap-pipeline');
       const realRun = wrapPipelineMod.runWrapPipeline;
-      wrapPipelineMod.runWrapPipeline = async () => EMPTY_V2_RESULT;
+      wrapPipelineMod.runWrapPipeline = async () => EMPTY_PIPELINE_RESULT;
 
       try {
         await sessions.triggerWrap('prime-test');
@@ -2737,7 +2737,7 @@ describe('sessions', () => {
       store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
-        tmuxSession: 'trigger-wrap-v2-test'
+        tmuxSession: 'trigger-wrap-pipeline-test'
       });
 
       // Chunk 9 made the `commit` step a real handler — it would
@@ -2759,9 +2759,9 @@ describe('sessions', () => {
 
       try {
         const result = await sessions.triggerWrap('prime-test');
-        assert.equal(result.ok, true, 'V2 pipeline of no-op stubs returns ok:true');
-        assert.equal(sentCommand, null, 'V2 path must not send any tmux command');
-        assert.ok(result.pipelineResult, 'V2 result carries the structured pipeline output');
+        assert.equal(result.ok, true, 'a pipeline of no-op stubs returns ok:true');
+        assert.equal(sentCommand, null, 'the wrap path must not send any tmux command');
+        assert.ok(result.pipelineResult, 'the result carries the structured pipeline output');
         // The count is read off the shared pipeline, never written here. The
         // step list has grown six times, and every literal that recorded how
         // many there were went stale before the code did — the last one was
@@ -2769,7 +2769,7 @@ describe('sessions', () => {
         assert.equal(result.pipelineResult.results.length,
           require('../lib/wrap-default-pipeline').steps().length,
           'every step of the code-owned pipeline reports a result');
-        assert.equal(result.wrapCommand, null, 'V2 reports no legacy wrapCommand');
+        assert.equal(result.wrapCommand, null, 'the pipeline reports no legacy wrapCommand');
       } finally {
         for (const kind of realKinds) {
           wrapPipelineMod.STEP_DISPATCH[kind] = dispatchOrig[kind];
@@ -2777,7 +2777,7 @@ describe('sessions', () => {
       }
     });
 
-    it('#334 — webui session (null tmux) routes to the V2 pipeline; ai-content steps SKIP (not halt)', async () => {
+    it('#334 — webui session (null tmux) routes to the wrap pipeline; ai-content steps SKIP (not halt)', async () => {
       const project = store.projects.getByName('prime-test');
       store.projects.update(project.id, { methodology: 'prawduct' });
       const origCfg = store.projectConfig.load(project.path);
@@ -2805,10 +2805,10 @@ describe('sessions', () => {
 
       try {
         const result = await sessions.triggerWrap('prime-test');
-        assert.equal(result.ok, true, 'webui V2 wrap completes (ai-content skipped, not halted)');
+        assert.equal(result.ok, true, 'a webui wrap completes (ai-content skipped, not halted)');
         assert.notEqual(result.error && result.error.includes('No active session'), true,
           'webui session must NOT be rejected as "no active session"');
-        assert.equal(sentCommand, null, 'V2 path must not send any tmux command');
+        assert.equal(sentCommand, null, 'the wrap path must not send any tmux command');
         assert.equal(result.pipelineResult.blockedAt, null, 'webui wrap did not halt at any blocker step');
         const aiSteps = result.pipelineResult.results.filter((r) => r.kind === 'ai-content');
         assert.ok(aiSteps.length >= 1, 'pipeline has ai-content steps');
@@ -2841,7 +2841,7 @@ describe('sessions', () => {
 
       const wrapPipelineMod = require('../lib/wrap-pipeline');
       const realRun = wrapPipelineMod.runWrapPipeline;
-      wrapPipelineMod.runWrapPipeline = async () => EMPTY_V2_RESULT;
+      wrapPipelineMod.runWrapPipeline = async () => EMPTY_PIPELINE_RESULT;
 
       try {
         const result = await sessions.triggerWrap('prime-test');
@@ -2863,7 +2863,7 @@ describe('sessions', () => {
     // live server-side: one running pipeline per project, a concurrent
     // trigger rejected WITHOUT starting a second pipeline, and the finished
     // run's result retrievable after the triggering connection is gone.
-    it('#583 — second triggerWrap while a V2 pipeline is in flight is rejected and starts NO second pipeline', async () => {
+    it('#583 — second triggerWrap while a wrap pipeline is in flight is rejected and starts NO second pipeline', async () => {
       const project = store.projects.getByName('prime-test');
       store.projects.update(project.id, { methodology: 'prawduct' });
       store.sessions.start({
@@ -3034,7 +3034,7 @@ describe('sessions', () => {
       store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
-        tmuxSession: 'trigger-wrap-v2-options-test'
+        tmuxSession: 'trigger-wrap-pipeline-options-test'
       });
 
       // Capture the options the runner receives by patching the module
@@ -3093,7 +3093,7 @@ describe('sessions', () => {
       // so absence-of-flag runs the pipeline like everything else.
       const wrapPipelineMod = require('../lib/wrap-pipeline');
       const originalRun = wrapPipelineMod.runWrapPipeline;
-      wrapPipelineMod.runWrapPipeline = async () => EMPTY_V2_RESULT;
+      wrapPipelineMod.runWrapPipeline = async () => EMPTY_PIPELINE_RESULT;
 
       const project = store.projects.getByName('prime-test');
       store.projects.update(project.id, { methodology: 'prawduct' });
@@ -3107,12 +3107,12 @@ describe('sessions', () => {
       store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
-        tmuxSession: 'trigger-wrap-v2-absent-test'
+        tmuxSession: 'trigger-wrap-pipeline-absent-test'
       });
 
       try {
         const result = await sessions.triggerWrap('prime-test');
-        // V2 path ran → no tmux command sent; pipelineResult present.
+        // The pipeline ran → no tmux command sent; pipelineResult present.
         assert.equal(sentCommand, null, 'the pipeline path must not send any tmux command');
         assert.ok(result.pipelineResult, 'absent wrapV2 must run the pipeline');
       } finally {
@@ -3120,14 +3120,14 @@ describe('sessions', () => {
       }
     });
 
-    // #139 Chunk 11a — V2 session-lifecycle transition. A successful V2
+    // #139 Chunk 11a — session-lifecycle transition. A successful
     // wrap that produced a commit ends the session record (status
     // 'wrapped'), kills tmux, releases doc locks, and clears caches —
     // symmetric with the legacy `completeWrap` teardown minus
-    // `_autoCommitIfDirty` (V2's commit step already flushed). Halted /
+    // `_autoCommitIfDirty` (the pipeline's commit step already flushed). Halted /
     // thrown / clean-session (ok + null SHA) runs leave the session
     // active.
-    describe('V2 lifecycle transition (#139 Chunk 11a)', () => {
+    describe('wrap lifecycle transition (#139 Chunk 11a)', () => {
       let wrapPipelineMod;
       let originalRun;
       let originalKill;
@@ -3168,7 +3168,7 @@ describe('sessions', () => {
         const session = store.sessions.start({
           projectId: project.id,
           engineId: 'claude',
-          tmuxSession: 'wrap-v2-lifecycle-ok'
+          tmuxSession: 'wrap-pipeline-lifecycle-ok'
         });
 
         stubPipeline({
@@ -3176,7 +3176,7 @@ describe('sessions', () => {
           blockedAt: null,
           results: [
             { stepId: 'memory-update', kind: 'ai-content', status: 'done',
-              output: { parsedFields: { summary: 'wrapped via V2' } }, blockers: [] }
+              output: { parsedFields: { summary: 'wrapped via the pipeline' } }, blockers: [] }
           ],
           commitSha: 'abc123',
           summary: null,
@@ -3195,8 +3195,8 @@ describe('sessions', () => {
         const wrapped = wrappeds.find((s) => s.id === session.id);
         assert.ok(wrapped, 'wrapped session record must exist');
         assert.equal(wrapped.status, 'wrapped');
-        assert.equal(wrapped.wrapSummary, 'wrapped via V2');
-        assert.deepEqual(killCalls, ['wrap-v2-lifecycle-ok'], 'tmux session killed');
+        assert.equal(wrapped.wrapSummary, 'wrapped via the pipeline');
+        assert.deepEqual(killCalls, ['wrap-pipeline-lifecycle-ok'], 'tmux session killed');
         assert.deepEqual(releaseCalls, [session.id], 'doc locks released for this session');
         assert.equal(result.lifecycleCompleted, true, 'and it says the record was written');
       });
@@ -3212,7 +3212,7 @@ describe('sessions', () => {
         const session = store.sessions.start({
           projectId: project.id,
           engineId: 'claude',
-          tmuxSession: 'wrap-v2-lifecycle-raced'
+          tmuxSession: 'wrap-pipeline-lifecycle-raced'
         });
 
         stubPipeline({
@@ -3220,7 +3220,7 @@ describe('sessions', () => {
           blockedAt: null,
           results: [
             { stepId: 'memory-update', kind: 'ai-content', status: 'done',
-              output: { parsedFields: { summary: 'wrapped via V2' } }, blockers: [] }
+              output: { parsedFields: { summary: 'wrapped via the pipeline' } }, blockers: [] }
           ],
           commitSha: 'abc123',
           summary: null,
@@ -3233,7 +3233,7 @@ describe('sessions', () => {
             ok: true, blockedAt: null, commitSha: 'abc123', summary: null, error: null,
             results: [
               { stepId: 'memory-update', kind: 'ai-content', status: 'done',
-                output: { parsedFields: { summary: 'wrapped via V2' } }, blockers: [] }
+                output: { parsedFields: { summary: 'wrapped via the pipeline' } }, blockers: [] }
             ]
           };
         };
@@ -3253,7 +3253,7 @@ describe('sessions', () => {
         store.sessions.start({
           projectId: project.id,
           engineId: 'claude',
-          tmuxSession: 'wrap-v2-lifecycle-clean'
+          tmuxSession: 'wrap-pipeline-lifecycle-clean'
         });
 
         stubPipeline({
@@ -3278,7 +3278,7 @@ describe('sessions', () => {
         store.sessions.start({
           projectId: project.id,
           engineId: 'claude',
-          tmuxSession: 'wrap-v2-lifecycle-halted'
+          tmuxSession: 'wrap-pipeline-lifecycle-halted'
         });
 
         stubPipeline({
@@ -3307,7 +3307,7 @@ describe('sessions', () => {
         store.sessions.start({
           projectId: project.id,
           engineId: 'claude',
-          tmuxSession: 'wrap-v2-lifecycle-thrown'
+          tmuxSession: 'wrap-pipeline-lifecycle-thrown'
         });
 
         wrapPipelineMod.runWrapPipeline = async () => { throw new Error('boom'); };
@@ -3335,7 +3335,7 @@ describe('sessions', () => {
         const session = store.sessions.start({
           projectId: project.id,
           engineId: 'claude',
-          tmuxSession: 'wrap-v2-lifecycle-summary-parsed'
+          tmuxSession: 'wrap-pipeline-lifecycle-summary-parsed'
         });
 
         stubPipeline({
@@ -3365,7 +3365,7 @@ describe('sessions', () => {
         const session = store.sessions.start({
           projectId: project.id,
           engineId: 'claude',
-          tmuxSession: 'wrap-v2-lifecycle-summary-captured'
+          tmuxSession: 'wrap-pipeline-lifecycle-summary-captured'
         });
 
         stubPipeline({
@@ -3391,7 +3391,7 @@ describe('sessions', () => {
         const session = store.sessions.start({
           projectId: project.id,
           engineId: 'claude',
-          tmuxSession: 'wrap-v2-lifecycle-summary-null'
+          tmuxSession: 'wrap-pipeline-lifecycle-summary-null'
         });
 
         stubPipeline({
@@ -3416,7 +3416,7 @@ describe('sessions', () => {
         store.sessions.start({
           projectId: project.id,
           engineId: 'claude',
-          tmuxSession: 'wrap-v2-lifecycle-tmux-throws'
+          tmuxSession: 'wrap-pipeline-lifecycle-tmux-throws'
         });
 
         tmux.killSession = () => { throw new Error('tmux gone'); };
@@ -3442,7 +3442,7 @@ describe('sessions', () => {
         const session = store.sessions.start({
           projectId: project.id,
           engineId: 'claude',
-          tmuxSession: 'wrap-v2-lifecycle-wrap-throws'
+          tmuxSession: 'wrap-pipeline-lifecycle-wrap-throws'
         });
 
         // Stub store.sessions.wrap to throw — verifies the helper's
@@ -3461,7 +3461,7 @@ describe('sessions', () => {
 
         try {
           const result = await sessions.triggerWrap('prime-test');
-          // The runner returned ok:true so _triggerWrapV2 also returns
+          // The runner returned ok:true so _triggerWrapPipeline also returns
           // ok:true — the wrap-update throw is swallowed inside the
           // teardown helper and surfaces only via log.warn.
           assert.equal(result.ok, true);
@@ -3476,12 +3476,12 @@ describe('sessions', () => {
         }
       });
 
-      it('second triggerWrap after a successful V2 wrap returns "No active session"', async () => {
+      it('second triggerWrap after a successful wrap returns "No active session"', async () => {
         const project = store.projects.getByName('prime-test');
         store.sessions.start({
           projectId: project.id,
           engineId: 'claude',
-          tmuxSession: 'wrap-v2-lifecycle-idempotent'
+          tmuxSession: 'wrap-pipeline-lifecycle-idempotent'
         });
 
         stubPipeline({
@@ -3513,7 +3513,7 @@ describe('sessions', () => {
         store.sessions.start({
           projectId: project.id,
           engineId: 'claude',
-          tmuxSession: 'wrap-v2-lifecycle-locks-throw'
+          tmuxSession: 'wrap-pipeline-lifecycle-locks-throw'
         });
 
         store.documentLocks.releaseBySession = () => { throw new Error('lock release boom'); };
@@ -3535,6 +3535,61 @@ describe('sessions', () => {
       });
     });
 
+    // The two wrap teardowns emit the same messages, and both can touch one
+    // session in a single wrap, so `path` in the structured context is the only
+    // thing in the log that says which finalizer ran. Derived from the function
+    // bodies rather than a list of today's strings: a log line added later is
+    // covered the moment it is written, which a roster of known messages is not.
+    describe('every wrap-teardown log line names its path', () => {
+      const SRC = fs.readFileSync(require.resolve('../lib/sessions.js'), 'utf8');
+
+      /**
+       * Slice a named function's body out of the source.
+       * @param {string} name - Function name.
+       * @returns {string} The body, braces included.
+       */
+      const fnBody = (name) => {
+        const start = SRC.indexOf(`function ${name}(`);
+        assert.notEqual(start, -1, `function ${name} must exist`);
+        const open = SRC.indexOf('{', start);
+        let depth = 0;
+        for (let i = open; i < SRC.length; i++) {
+          if (SRC[i] === '{') depth++;
+          else if (SRC[i] === '}' && --depth === 0) return SRC.slice(open, i + 1);
+        }
+        return assert.fail(`function ${name} body must close`);
+      };
+
+      /**
+       * Every `log.*(...)` call in a body, each sliced to its balanced close.
+       * @param {string} body - A function body.
+       * @returns {string[]} The call expressions.
+       */
+      const logCalls = (body) => {
+        const out = [];
+        for (let i = body.indexOf('log.'); i !== -1; i = body.indexOf('log.', i + 1)) {
+          const open = body.indexOf('(', i);
+          let depth = 0;
+          for (let j = open; j < body.length; j++) {
+            if (body[j] === '(') depth++;
+            else if (body[j] === ')' && --depth === 0) { out.push(body.slice(i, j + 1)); break; }
+          }
+        }
+        return out;
+      };
+
+      for (const [fn, path] of [['_completePipelineWrap', 'pipeline'], ['completeWrap', 'finalize']]) {
+        it(`${fn} stamps path: '${path}' on all of them`, () => {
+          const calls = logCalls(fnBody(fn));
+          assert.ok(calls.length > 0, `${fn} must emit log lines for this to pin anything`);
+          for (const call of calls) {
+            assert.match(call, new RegExp(`path: '${path}'`),
+              `this ${fn} log line does not say which teardown it came from: ${call.slice(0, 90)}`);
+          }
+        });
+      }
+    });
+
     // Retirement pins for the `wrapV2` flag itself — the flag is no
     // longer seeded into fresh configs, and a fresh project (no on-disk
     // config at all) runs the pipeline. The legacy-opt-out byte-equal
@@ -3549,7 +3604,7 @@ describe('sessions', () => {
       it('a fresh project (no on-disk config) runs the pipeline', async () => {
         const wrapPipelineMod = require('../lib/wrap-pipeline');
         const originalRun = wrapPipelineMod.runWrapPipeline;
-        wrapPipelineMod.runWrapPipeline = async () => EMPTY_V2_RESULT;
+        wrapPipelineMod.runWrapPipeline = async () => EMPTY_PIPELINE_RESULT;
 
         const project = store.projects.getByName('prime-test');
         store.projects.update(project.id, { methodology: 'prawduct' });
@@ -3562,7 +3617,7 @@ describe('sessions', () => {
         store.sessions.start({
           projectId: project.id,
           engineId: 'claude',
-          tmuxSession: 'wrap-v2-default-fresh-test'
+          tmuxSession: 'wrap-pipeline-default-fresh-test'
         });
 
         try {

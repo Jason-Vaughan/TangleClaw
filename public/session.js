@@ -1848,11 +1848,13 @@ async function pollStatus() {
 
   // Handle wrap finished — tmux died during wrapping.
   //
-  // The status poll reports `wrapFinished` and finalizes nothing, so asking for
-  // the finalize is this page's job (#910) — the same explicit POST the wrap-idle
-  // modal's "Return to Projects" uses. `wrapCompleted` is honoured alongside it
-  // because a server not yet restarted onto that change still sends it; both mean
-  // the same thing here, and only who finalizes differs.
+  // The status poll finalizes nothing, so asking for the finalize is this page's
+  // job (#910) — the same explicit POST the wrap-idle modal's "Return to
+  // Projects" uses. `wrapFinished` is no longer sent by the server (#1034); the
+  // branch stays until it and the finalizer retire together (#1302).
+  // `wrapCompleted` is honoured alongside it because a server not yet restarted
+  // onto that change still sends it; both mean the same thing here, and only who
+  // finalizes differs.
   if (data.wrapCompleted && !sessionState.ended) {
     handleWrapCompleted();
     return;
@@ -3456,12 +3458,10 @@ async function confirmWrap() {
     closeWrapModal(true); // force-close past the in-flight guard on success
 
     if (data.pipelineResult) {
-      // V2 path — pipeline ran server-side; render the drawer with the
-      // per-step result. The drawer drives any retry-with-options round
-      // trips itself; the legacy wrapping bar + polling don't apply.
+      // The pipeline ran server-side; render the drawer with the per-step
+      // result. The drawer drives any retry-with-options round trips itself.
       // Hand the password down so retries can re-authenticate without
-      // re-prompting (M1 — the wrap endpoint enforces deleteProtected on
-      // every call, V1 and V2 alike).
+      // re-prompting — the wrap endpoint enforces deleteProtected on every call.
       clearWrappingState();
       // The stream's `run-done` may already have drawn this exact result;
       // the POST's return is the authoritative render either way, and

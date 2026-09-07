@@ -165,7 +165,7 @@ that something was happening.
 
 - [x] Chunk 01: The status vocabulary is explicit, and `wrapping` is not in it (#1034)
 - [x] Chunk 02: The dashboard says a session is wrapping again, sourced from the run registry (#1034)
-- [ ] Chunk 03: The vestigial `V2` designators are retired (#1034)
+- [x] Chunk 03: The vestigial `V2` designators are retired (#1034)
 
 Context: Ruling made 2026-09-06 by the operator, as a gate between Train 13 and Train 14 — the
 sequencing #1034's own comment sets, and the sequencing the roadmap coordinator halted Train 14 to
@@ -480,3 +480,47 @@ card reads correctly on a phone is not something a test can speak to.
   admitted from the issue's list?
 - **After Chunk 03** — the cumulative review, and the point at which #1034 is closed and Train 14
   resumes.
+
+## Chunk 03 built 2026-09-06 — the acceptance criterion held, and the rename broke the log
+
+Built on `chore/1034-chunk03-retire-v2-designators`, in a worktree (the live-install rule keeps
+`server.js` / `public/` work off the primary checkout). Two commits: the rename, and the findings
+batch. Reviewed cumulative (0 blocking, 3 warnings, 14 notes — all 17 dispositioned) then
+`verify-resolutions` (0 blocking, 0 warnings, 0 notes), which re-derived every warning from the
+tree and confirmed all three fixed.
+
+**The sweep's boundary, which is the whole of the acceptance criterion.** Five `V2` families live
+in this codebase and only one is vestigial. Retired: the wrap family — `_triggerWrapV2` /
+`_completeV2Wrap` / `_deriveV2WrapSummary`, five teardown log strings, and the comments that
+narrated the V1 removal. Left alone, because each names a genuine version of something with a
+genuine V1: the Prawduct V2 plugin (a `governed-vendored` V1 still exists as a live state),
+MED-2K9P v2, ClawBridge's `/v2/session/*`, and the store's `v1→v2` schema migration. Two reviewers
+verified that partition independently by grepping the whole tree.
+
+**The rename introduced a regression, and three reviewers found it separately.** Dropping the
+qualifier collapsed the pipeline teardown's log lines onto `completeWrap`'s: `Released document
+locks on wrap` and its warn twin became byte-identical across both paths, and `... during wrap
+teardown` is a strict superstring of `... during wrap`, so the shorter grep matched either. The
+irony is exact — the commit's own argument is that "pipeline" is the real distinction *because*
+`completeWrap` still exists beside it, and the log was the one place that distinction was
+observable. Both paths can touch one session in a single wrap (the race `/wrap/complete` answers
+409 `SESSION_CHANGED` for), so an operator triaging how a row ended could no longer tell which
+finalizer ran. Restored in the structured context rather than the message: every line in
+`_completePipelineWrap` carries `path: 'pipeline'`, every line in `completeWrap` carries
+`path: 'finalize'`.
+
+**The guard is derived, not enumerated.** It slices both function bodies and requires the field on
+every `log.*` call it finds, so a line added later is covered the moment it is written. Its first
+draft carried a third assertion — that the two paths still *share* a message — which mutation
+showed reds when someone makes the messages distinct, i.e. it forbade the better fix. Dropped. The
+verify pass re-implemented the parser independently and confirmed it finds all ten calls and is
+not vacuous.
+
+**`\b` does not match `_V2_`.** `EMPTY_V2_RESULT` survived the boundary-grep sweep for the same
+reason `wrapV2` does, and was found by reading the diff rather than by any search. Every surviving
+`wrapV2` is a retirement pin naming the real on-disk key and stays verbatim.
+
+**#1302 was closed by accident, not by work.** Chunk 01's findings commit `1788f14` contained the
+sentence "R-15 accepted, not **fixed**: #1302", and GitHub parsed `fixed: #1302` as a closing
+keyword — the second recorded instance of that hazard. This chunk ships comments pointing at #1302
+as the issue that retires the `wrapFinished` branches, so it was reopened before merge.

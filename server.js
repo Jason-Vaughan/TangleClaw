@@ -4667,9 +4667,8 @@ route('POST', '/api/sessions/:project/command', (_req, res, params, body) => {
 });
 
 // POST /api/sessions/:project/wrap — Trigger wrap skill
-// Body: { password?, options? } — `options` is V2-only and carries per-wrap
-// user choices the drawer collected on retry after a blocked step
-// (`{skipTests, prHandling}`). Legacy V1 path ignores it.
+// Body: { password?, options? } — `options` carries the per-wrap user choices
+// the drawer collected on retry after a blocked step (`{skipTests, prHandling}`).
 route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => {
   // Operator kill switch (incident 2026-07-16: wrap content steps re-fired
   // repeatedly into the session). Checked before anything else — while set,
@@ -4694,7 +4693,7 @@ route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => 
   if (!result.ok && result.code === 'WRAP_IN_PROGRESS') {
     return errorResponse(res, 409, result.error, 'WRAP_IN_PROGRESS');
   }
-  // V2 may return ok:false from the pipeline (a blocked step). That's not a
+  // The pipeline may return ok:false (a blocked step). That's not a
   // server error — it's an expected pipeline outcome the drawer renders.
   // Surface it with HTTP 200 + `pipelineResult` so the frontend can paint
   // per-step status and collect retry inputs.
@@ -4947,10 +4946,10 @@ route('POST', '/api/sessions/:project/wrap/complete', (_req, res, params, body) 
     // The caller's view is stale, not the server's state broken — a 500 here
     // reaches the page as a server fault, and its finalizer latches on that.
     //
-    // Classified by CODE. The prose match stayed for one release after the code
-    // landed and is gone now: there are two ways to be a stale view (the caller
-    // named a session that had moved on, or the right one ended mid-finalize),
-    // and a second sentence to grep is how the first one got missed.
+    // Classified by CODE, not by matching the error prose: there are two ways to
+    // be a stale view (the caller named a session that had moved on, or the right
+    // one ended mid-finalize), and a second sentence to grep is how the first one
+    // got missed.
     if (result.code === 'SESSION_CHANGED') {
       return errorResponse(res, 409, result.error, 'SESSION_CHANGED');
     }

@@ -9,11 +9,13 @@
  * `git commit` in the operator's repository — so reading a status wrote to the
  * operator's git history, and nothing about the request said mutate.
  *
- * The server now reports `wrapFinished` and changes nothing, which moves the
- * finalizing to this page: the same explicit POST the wrap-idle modal already
- * uses. That makes the CLIENT half load-bearing — it is the replacement for a
- * server-side action that was deleted — so it is tested here rather than left to
- * the server tests, which can no longer see it.
+ * The status read changes nothing, which moves the finalizing to this page: the
+ * same explicit POST the wrap-idle modal already uses. That makes the CLIENT half
+ * load-bearing — it is the replacement for a server-side action that was deleted
+ * — so it is tested here rather than left to the server tests, which can no
+ * longer see it. `GET /status` no longer sends `wrapFinished` at all (#1034), so
+ * this file guards a path only an un-restarted server can still reach; it retires
+ * with the branches it covers (#1302).
  *
  * The real functions are lifted out of `public/session.js` and run in a sandbox,
  * so these exercise the shipped code rather than a copy of it.

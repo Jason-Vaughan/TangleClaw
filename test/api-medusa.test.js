@@ -645,7 +645,7 @@ describe('Medusa teardown is wired into EVERY session-end path (MED-2K9P Chunk 0
     return src.slice(start, next === -1 ? undefined : next);
   }
 
-  for (const fn of ['killSession', '_completeV2Wrap', 'completeWrap']) {
+  for (const fn of ['killSession', '_completePipelineWrap', 'completeWrap']) {
     it(`${fn} tears down Medusa`, () => {
       assert.match(fnBody(sessionsSrc, fn), /_teardownMedusa\(/, `${fn} must call _teardownMedusa`);
     });
