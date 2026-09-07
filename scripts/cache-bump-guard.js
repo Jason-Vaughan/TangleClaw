@@ -120,8 +120,13 @@ const NAVIGATION_EXTENSIONS = new Set(['.html']);
  * cache-first and this script would keep exempting them forever with nothing
  * going red. So the premise is checked rather than assumed, in the same shape as
  * the `NETWORK_FIRST_PATHS` arm.
+ *
+ * Tolerant of whitespace and quote style, for the same reason `CACHE_NAME_LOOSE`
+ * is: a probe that pins formatting reds every PR the moment someone reformats a
+ * line, asserting a semantic change nobody made. A guard that cries wolf gets
+ * bypassed, and this one would cry it about the fetch handler.
  */
-const NAVIGATION_CONDITION = /event\.request\.mode === 'navigate'/;
+const NAVIGATION_CONDITION = /event\.request\.mode\s*===\s*['"]navigate['"]/;
 
 /**
  * Strip comments so a prose apostrophe cannot be read as a string delimiter.
@@ -204,10 +209,6 @@ function parseSwState(src) {
 /**
  * Decide whether a changed repository path is served cache-first.
  *
- * @param {string} repoPath - Path relative to the repository root, as `git diff
- *   --name-only` prints it.
- * @param {Set<string>} networkFirst - `NETWORK_FIRST_PATHS` from the HEAD
- *   `sw.js` — the worker that will be installed, so the set that will govern.
  * A file that is NEW in the diff is treated as changed, deliberately. A browser
  * has no cache entry for it, so the cache-first branch misses and fetches it
  * fresh — meaning a bump is not strictly required and this over-reports. Kept
@@ -216,6 +217,10 @@ function parseSwState(src) {
  * is adding assets anyway, and distinguishing the two needs `--name-status`
  * plus a rename-detection judgement that can itself be wrong.
  *
+ * @param {string} repoPath - Path relative to the repository root, as `git diff
+ *   --name-only` prints it.
+ * @param {Set<string>} networkFirst - `NETWORK_FIRST_PATHS` from the HEAD
+ *   `sw.js` — the worker that will be installed, so the set that will govern.
  * @returns {boolean} True when a stale copy of this file can be served
  *   indefinitely and only a `CACHE_NAME` bump evicts it.
  */
@@ -414,11 +419,14 @@ function main(argv) {
   let report;
   try {
     const mergeBase = git(['merge-base', base, head], repo);
-    // -c core.quotepath=false: git otherwise C-quotes any path with a non-ASCII
-    // or special character, and a quoted name matches no `public/...` prefix, so
-    // an asset with an accent in its name would be exempted in silence.
-    const changedPaths = git(['-c', 'core.quotepath=false', 'diff', '--name-only', mergeBase, head], repo)
-      .split('\n')
+    // `-z`, not `core.quotepath=false`. Both fix the accented filename, but the
+    // config only stops git C-quoting NON-ASCII bytes: a path containing a
+    // newline, a double quote or a backslash is still quoted and escaped, and a
+    // quoted name matches no `public/...` prefix — so it would be exempted in
+    // silence, which is the one outcome this guard must never produce. `-z`
+    // emits raw NUL-separated paths and forecloses the whole class.
+    const changedPaths = git(['diff', '-z', '--name-only', mergeBase, head], repo)
+      .split('\0')
       .filter(Boolean);
     // A deleted or not-yet-added sw.js reads as empty, which `evaluate` rejects
     // through its parse arms rather than treating as "no network-first paths".

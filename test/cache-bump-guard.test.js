@@ -258,6 +258,18 @@ describe('cache-bump-guard: arm 2 — the guard defends its own shape', () => {
     assert.equal(verdict.ok, true, verdict.message);
   });
 
+  it('PASSES a navigate condition that was merely reformatted', () => {
+    // The false-RED half. A probe that pins formatting reds every PR the moment
+    // someone rewraps or requotes that line, asserting a semantic change nobody
+    // made — the same defect CACHE_NAME_LOOSE's own JSDoc records this file
+    // paying for once already, on the sibling probe.
+    const headSw = REAL_SW.replace("event.request.mode === 'navigate'",
+      'event.request.mode\n      === "navigate"');
+    assert.ok(headSw !== REAL_SW, 'the fixture must actually reformat the condition');
+    const verdict = guard.evaluate({ baseSw: REAL_SW, headSw, changedPaths: ['public/sw.js'] });
+    assert.equal(verdict.ok, true, verdict.message);
+  });
+
   it('FAILS when NETWORK_FIRST_PATHS disappears', () => {
     const headSw = REAL_SW.replace('const NETWORK_FIRST_PATHS', 'const RENAMED_PATHS');
     const verdict = guard.evaluate({ baseSw: REAL_SW, headSw, changedPaths: ['public/sw.js'] });

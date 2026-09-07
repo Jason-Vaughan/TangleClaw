@@ -434,11 +434,12 @@ All notable changes to TangleClaw are documented in this file.
   most `public/*` assets cache-first, so a browser with an active service worker keeps handing out
   the copy it already holds until `CACHE_NAME` changes; ship one without a bump and the change is
   invisible to an operator who is remote on iOS with no hard-reload. It had recurred at #246, #271,
-  #427 and #623 — each closed by moving that one file into `NETWORK_FIRST_PATHS`, the other valid
-  remedy, so not one of the four is in the guard's scope today. That is the case FOR it rather than
-  against: a carve-out fixes the file someone already noticed, and the guard covers the ones nobody
-  has, recomputing the gated set from `sw.js` on every run so files added later are covered with no
-  list for anyone to maintain. The nine unit tests written to stop the recurrences were all
+  #427 and #623 — and not one of those four files is in the guard's scope today, because each has
+  since been carved into `NETWORK_FIRST_PATHS`. Not always as part of its own fix: `ui.js` and
+  `style.css` went network-first for #422, a year before #623 was closed by a v3-53 -> v3-54 bump
+  (`c753a6b`). That history is the case FOR the guard rather than against it — a carve-out fixes the
+  one file somebody already noticed, and the gated set is recomputed from `sw.js` on every run so it
+  keeps covering whatever is cache-first now, including files added long after this shipped. The nine unit tests written to stop the recurrences were all
   monotone floors (`>= 54`,
   `>= 49`, `>= 42`, `>= 12`, and five "not v3-3x" negative sets) — each pinning the bump that
   shipped with it, none able to fail for the NEXT miss. An equality pin would have failed every
