@@ -21,12 +21,10 @@ const path = require('node:path');
 
 describe('OpenClaw connection card — conditional Bridge Port row (#491)', () => {
   let src;
-  let sw;
 
   before(() => {
     const pub = path.join(__dirname, '..', 'public');
     src = fs.readFileSync(path.join(pub, 'ui.js'), 'utf8');
-    sw = fs.readFileSync(path.join(pub, 'sw.js'), 'utf8');
   });
 
   it('renders a Bridge Port row gated on conn.bridgePort', () => {
@@ -50,15 +48,5 @@ describe('OpenClaw connection card — conditional Bridge Port row (#491)', () =
 
   it('the row carries an explanatory tooltip', () => {
     assert.match(src, /<span class="oc-detail-value" title="ClawBridge port[^"]*">\$\{conn\.bridgePort\}/);
-  });
-
-  it('CACHE_NAME is bumped so active service workers pick up the new card', () => {
-    // Assert "at or past the generation that shipped this card" (v3-42), not the
-    // exact current value — an exact pin breaks on every later legitimate bump
-    // (this one snapped on the v3-43 loop-modal bump). Pattern per
-    // bridge-port-input.test.js.
-    assert.match(sw, /const CACHE_NAME = 'tangleclaw-v3-(\d+)';/);
-    const gen = Number(sw.match(/const CACHE_NAME = 'tangleclaw-v3-(\d+)';/)[1]);
-    assert.ok(gen >= 42, `SW cache generation must be ≥ 42 (got ${gen})`);
   });
 });

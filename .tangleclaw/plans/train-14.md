@@ -429,8 +429,17 @@ retrofitting its audit line second.
 - **Artifacts consumed:** `project-preferences.md` (Direction: no npm dependencies; ADR 0012 —
   an enforcement mechanism adds no installation step)
 - **Deliverables:** a check in `.github/workflows/test.yml` that diffs against the merge base and
-  fails when a file in `sw.js`'s `STATIC_ASSETS` changed while `CACHE_NAME` did not, naming the
-  offending assets. Git and Node stdlib only — ADR 0012 forecloses adding a tool, and the same
+  fails when a **cache-first** `public/*` asset changed while `CACHE_NAME` did not, naming the
+  offending assets.
+
+  [DECISION: the gated roster is the fetch handler's cache-first branch, not `STATIC_ASSETS` as
+  this entry and #625 both said | reading the handler shows precaching decides what is IN the cache
+  at install time, not which branch serves a request — `install` re-runs
+  `cache.addAll(STATIC_ASSETS)` on any `sw.js` change, so a precached asset is refreshed without a
+  bump, while a cache-first asset that is NOT precached (`logo.png`, `icons/*`) is populated by
+  `_cachePut` on first fetch and evicted by nothing but a generation change. `STATIC_ASSETS` minus
+  `NETWORK_FIRST_PATHS` is three paths, two of them already covered; it would gate the files
+  needing it least and miss every file for which the bump is the only remedy | user can override] Git and Node stdlib only — ADR 0012 forecloses adding a tool, and the same
   norm's no-build-step half forecloses #625's option 3 (deriving `CACHE_NAME` from asset content).
 
   **The asset list must be read from `sw.js`, not copied into the workflow.** A hand-maintained
@@ -443,9 +452,15 @@ retrofitting its audit line second.
   that demanded a bump for every `public/*` change would fire on files the bump does not gate,
   and a guard that cries wolf gets bypassed.
 
-  **The three monotone floors:** #625 says the assertion "can then be dropped or kept as
-  documentation." Decide it once, in one place, for all three sites — this is a family, and
-  leaving two of three is the shape that recurs in this repo ([[feedback_enumerate_the_guards_family]]).
+  **The monotone floors are NINE, not three.** The three this entry originally named
+  (`create-project-modal`, `bridge-port-input`, `master-drawer-frontend`) were what a bounded grep
+  window showed; a full sweep of `test/` adds `openclaw-cache` (`>= 12`), `paste-affordance`
+  (`>= 49`), `openclaw-bridge-port-row` (`>= 42`), `terminal-touch-scroll`, `master-pane-frontend`
+  and `terminal-drag-copy` (negative "not v3-3x" sets). Resolved together: eight deleted, because
+  the guard's monotonicity arm strictly subsumes them — a generation that never decreases can never
+  fall below one — and the ninth (`openclaw-cache`) converted to a FORM assertion, since the
+  `tangleclaw-v3-N` shape is what the guard parses and is the one part of this that is a property
+  of a single tree ([[feedback_enumerate_the_guards_family]], third instance).
 - **Tests:** the guard's own proof is a run against a constructed diff in both directions — a
   change to a precached asset without a bump FAILS, the same change with a bump PASSES. A check
   that has never been shown to go red is not a check ([[feedback_measure_against_the_real_shape]]).

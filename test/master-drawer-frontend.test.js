@@ -23,7 +23,6 @@ describe('Project Master drawer — session page (chunk G slice 3, #331)', () =>
   let html;
   let js;
   let css;
-  let sw;
   /** The session.js Project Master Drawer section, isolated so assertions
    *  about what the drawer code must NOT do (e.g. polling) don't trip on
    *  unrelated code. */
@@ -34,7 +33,6 @@ describe('Project Master drawer — session page (chunk G slice 3, #331)', () =>
     html = fs.readFileSync(path.join(pub, 'session.html'), 'utf8');
     js = fs.readFileSync(path.join(pub, 'session.js'), 'utf8');
     css = fs.readFileSync(path.join(pub, 'session.css'), 'utf8');
-    sw = fs.readFileSync(path.join(pub, 'sw.js'), 'utf8');
 
     const start = js.indexOf('── Project Master Drawer');
     const end = js.indexOf('── Terminal Setup ──');
@@ -172,14 +170,6 @@ describe('Project Master drawer — session page (chunk G slice 3, #331)', () =>
       assert.match(css, /\.master-dot\.live \{/);
       assert.match(css, /\.master-dot\.pending \{/);
       assert.match(css, /\.master-dot\.down \{/);
-    });
-
-    it('CACHE_NAME is bumped so active service workers surface the new shell', () => {
-      // Past the pre-#331-slice-3 generation; the exact current pin lives in
-      // test/bridge-port-input.test.js, which owns the latest bump (#489).
-      assert.match(sw, /const CACHE_NAME = 'tangleclaw-v3-\d+';/);
-      assert.ok(!/const CACHE_NAME = 'tangleclaw-v3-3[1234]';/.test(sw),
-        'cache generation must be past v3-34 (the pre-#331-slice-3 shell)');
     });
   });
 });

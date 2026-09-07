@@ -52,6 +52,18 @@ node --test --test-reporter=junit --test-reporter-destination=test-results.xml '
 node scripts/test-skip-audit.js test-results.xml
 ```
 
+### The service-worker cache guard
+
+`public/sw.js` serves most `public/*` assets cache-first, so a browser with an active service worker keeps handing out the copy it already has until `CACHE_NAME` changes. Ship a change to one of those files without bumping the generation and it is invisible to operators — who are typically remote, on a phone, with no hard-reload. It has recurred four times (#246, #271, #427, #623).
+
+CI decides this on the pull request, because "did a cache-first asset change" is a question about a diff and no reading of a single tree can answer it. If the check fails, it names the files:
+
+```bash
+node scripts/cache-bump-guard.js --base main
+```
+
+Two fixes are valid. Bump `CACHE_NAME` in `public/sw.js` — or, if the file should never be served from cache at all, add it to `NETWORK_FIRST_PATHS` instead. Prefer the carve-out for anything whose staleness is itself a bug: a bump tears down and reinstalls the worker in every browser, which behind a basic_auth gate once locked an operator out entirely (#710).
+
 ## Project Structure
 
 - `server.js` — HTTP server, API routes, reverse proxy, WebSocket upgrade

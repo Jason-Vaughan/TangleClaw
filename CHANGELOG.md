@@ -430,6 +430,29 @@ All notable changes to TangleClaw are documented in this file.
   and leaving leases in place for one boot is recoverable where deleting them is not.
 
 ### Internal
+- **The cache-bump guard fires on the next miss, not the last one (#625).** `public/sw.js` serves
+  most `public/*` assets cache-first, so a browser with an active service worker keeps handing out
+  the copy it already holds until `CACHE_NAME` changes; ship one without a bump and the change is
+  invisible to an operator who is remote on iOS with no hard-reload. It had recurred at #246, #271,
+  #427 and #623, and the nine unit tests written to stop it were all monotone floors (`>= 54`,
+  `>= 49`, `>= 42`, `>= 12`, and five "not v3-3x" negative sets) — each pinning the bump that
+  shipped with it, none able to fail for the NEXT miss. An equality pin would have failed every
+  legitimate future bump instead. The property is relational — *if a cache-first asset changed in
+  this diff, `CACHE_NAME` must have changed* — so `scripts/cache-bump-guard.js` runs it on the
+  pull request, where a diff exists, and names the offending files.
+  **The roster is the fetch handler's cache-first branch, not `STATIC_ASSETS`** — read out of
+  `sw.js` on every run, never copied into the workflow. Precaching decides what is in the cache at
+  install time, not which branch serves a request: `install` re-runs `cache.addAll(STATIC_ASSETS)`
+  on any `sw.js` change, so a precached asset is refreshed even without a bump, while a cache-first
+  asset that is *not* precached (`logo.png`, `icons/*`) enters the cache through `_cachePut` on
+  first fetch and nothing but a generation change evicts it. Keying on `STATIC_ASSETS` — three
+  paths, two of them already covered — would have gated the files needing it least and missed every
+  file for which the bump is the only remedy. Network-first paths and HTML are deliberately out of
+  scope: they reach the operator on the next reload, and a guard that cries wolf gets bypassed.
+  A second arm defends the guard's own shape, failing a `CACHE_NAME` that decreases or abandons the
+  `tangleclaw-v3-N` form the script parses. Monotonicity subsumes all nine floors — a generation
+  that never decreases can never fall below one — so eight were deleted and the ninth became a
+  form assertion, the one part of this that *is* a property of a single tree.
 - **ADR 0014 records the dual-key review for untrusted external PRs**, and was corrected by its own
   first application before another repository adopts it. Two sessions audit an external diff — a
   macro filter for supply-chain and payload categories, an independent micro filter for logic — and

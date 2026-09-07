@@ -35,3 +35,32 @@ jobs:
         # so a new environment-gated test cannot join the not-run set
         # unannounced. Writes "certified N of M" to the step summary.
         run: node scripts/test-skip-audit.js test-results.xml
+
+  # A separate job because it needs the whole history and the suite does not.
+  # `merge-base` cannot answer in the default depth-1 clone, and paying for a
+  # full fetch on the job that runs thousands of tests would tax every run for
+  # one step's benefit.
+  cache-bump:
+    # The property is "changed relative to the base", so it is only decidable on
+    # a pull request. A push to main has already passed this gate on the PR that
+    # produced it.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Guard the service-worker cache generation
+        # A public/* asset served cache-first keeps being served from a browser's
+        # existing cache until CACHE_NAME changes, so shipping one without a bump
+        # is invisible to an operator who is remote and has no hard-reload. It
+        # has recurred at #246, #271, #427 and #623. The property is relational,
+        # so only a diff can decide it — hence a CI step rather than a unit test.
+        env:
+          # The base commit as GitHub resolved it, passed through the environment
+          # rather than interpolated into the shell line.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/cache-bump-guard.js --base "$BASE_SHA"
