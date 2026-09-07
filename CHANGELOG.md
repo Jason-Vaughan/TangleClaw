@@ -116,6 +116,28 @@ All notable changes to TangleClaw are documented in this file.
   session's prime, and a wrong summary is worse than an absent one.
 
 ### Fixed
+- **The ttyd leak watchdog stops firing on damage its own restart caused (#1245).** ttyd 1.7.7 does
+  not reliably reap the `tmux attach` child it spawns per websocket; those children wedge in the
+  macOS kernel `E` state, where nothing but ttyd dying reclaims them, so a watcher kickstarts the
+  service when they pile up. **That mitigation was seeding its own next trigger.** A kickstart
+  blanks every open terminal iframe at once, they all reconnect together, and connect/disconnect
+  churn is exactly what leaks: on 2026-09-07 a *fresh* ttyd reached 22 wedged children within five
+  minutes of being restarted, and the gate fired again on the very next poll — 13 kickstarts in two
+  days, clustering at five and twenty minutes, each one blanking the operator's terminals. The
+  orphan gate is now held down for 15 minutes after a kickstart, so the post-restart reconnect burst
+  is counted as the cost of the restart rather than as a fresh leak. **The PTY-pool gate is never
+  held down** — pool exhaustion is the #94 incident, where every attach fails and the machine is
+  unusable, and observed pool ratios during this thrash were 0.084–0.115 against a 0.85 gate, so
+  suppressing it too would trade a papercut for the incident the watcher exists to prevent. A
+  suppressed kickstart says so at `warn` with its elapsed time and orphan count, and every tick now
+  carries `sinceLastKickstartMs`, which is what distinguishes "the kickstart reclaimed them and the
+  burst made more" from "the kickstart did not reclaim them" — previously the thrash could only be
+  inferred. `deploy/ttyd-attach.sh`'s no-session branch now `exec`s its `sleep` for the same reason
+  the attach has always been exec'd: a non-exec'd bash sitting there for 30 seconds is a second
+  process for ttyd to lose, and one of the 18 wedged processes observed was exactly that.
+  **This does not fix the leak**, which is ttyd's own and needs a version bump this machine cannot
+  safely take (the TCC grant is keyed to the versioned Cellar path); it bounds the damage the
+  mitigation was adding.
 - **A wedged wrap no longer blocks server restarts forever, or silences a project's wake nudges
   (#1314).** `lib/wrap-run-registry.js` has always known what a wedged run is — `STALE_RUN_MS`,
   30 minutes — but only `begin` applied it, so a run was recoverable for the next wrap and

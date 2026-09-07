@@ -103,6 +103,20 @@ describe('deploy/ttyd-attach.sh', () => {
     );
   });
 
+  // #1245 — ttyd does not reliably reap the child it spawns per websocket, and
+  // wedged children hold a /dev/ttys* slot until ttyd itself dies. Every path
+  // that ends this script must therefore leave ttyd exactly ONE process to
+  // reap, not a shell still holding one: of 18 wedged processes observed on
+  // 2026-09-07, one was a bash with its own tmux child.
+  it('every terminal branch execs, so no branch leaves a shell for ttyd to lose', () => {
+    // The no-session branch sits here for 30s per failed attach. As a plain
+    // `sleep` it was a live bash for all of it.
+    assert.match(script, /^\s*exec\s+sleep\s+30\s*$/m,
+      'the no-session branch must exec its sleep rather than fork it');
+    const forked = codeLines().filter((l) => /^\s*sleep\s+\d+\s*$/.test(l));
+    assert.deepEqual(forked, [], `every sleep must be exec'd, found: ${forked.join(' | ')}`);
+  });
+
   it('should NOT use the broken exec-or-exec pattern', () => {
     const hasExecOr = codeLines().some(l =>
       /exec\s+.*\|\|/.test(l)

@@ -319,6 +319,159 @@ not numeric ?Es
     });
   });
 
+  // #1245 — the orphan gate could fire on damage its own previous kickstart
+  // caused. A kickstart blanks every open terminal iframe at once, they all
+  // reconnect together, and connect/disconnect churn is what leaks: on
+  // 2026-09-07 a FRESH ttyd reached 22 wedged children within five minutes of
+  // being kickstarted, and the gate fired again on the very next poll. Each
+  // round blanks the operator's terminals, so the thrash is the user-visible
+  // half of this bug.
+  describe('_check — kickstart cooldown (#1245)', () => {
+    const ORPHANS_OVER = '  12345 ?Es\n'.repeat(25);
+
+    /**
+     * A runner whose pool reading is healthy and whose orphan count is over
+     * the gate — i.e. exactly the #1245 shape, never the #94 one.
+     * @returns {Function & {calls: Array}}
+     */
+    function leakyRunner() {
+      return makeRunner({
+        'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
+        'sysctl:-n': '511\n',
+        'sh:-c': '54\n', // ratio 0.106 — nowhere near the 0.85 pool gate
+        'ps:-A': ORPHANS_OVER,
+        'launchctl:kickstart': ''
+      });
+    }
+
+    /** Count kickstart invocations in a runner's call log. @returns {number} */
+    const kicks = (runner) => runner.calls.filter(
+      (c) => c.cmd === 'launchctl' && c.args[0] === 'kickstart'
+    ).length;
+
+    let fakeNow;
+    beforeEach(() => {
+      fakeNow = 1_000_000;
+      ttydWatcher._internal.now = () => fakeNow;
+    });
+
+    it('the orphan gate fires normally when no kickstart has happened yet', () => {
+      const runner = leakyRunner();
+      ttydWatcher._setRunner(runner);
+      const r = ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 });
+      assert.equal(r.action, 'kickstart');
+      assert.equal(kicks(runner), 1);
+    });
+
+    it('suppresses a second orphan kickstart inside the cooldown', () => {
+      const runner = leakyRunner();
+      ttydWatcher._setRunner(runner);
+      ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 });
+      assert.equal(kicks(runner), 1);
+
+      // The next poll, five minutes later — the exact 01:09 → 01:14 shape.
+      fakeNow += 5 * 60 * 1000;
+      const r = ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 });
+      assert.equal(r.action, 'suppressed');
+      assert.equal(r.orphans, 25, 'it still MEASURED the leak — it declined to act on it');
+      assert.equal(kicks(runner), 1, 'no second kickstart, so the terminals do not blank again');
+    });
+
+    it('fires again once the cooldown has elapsed', () => {
+      const runner = leakyRunner();
+      ttydWatcher._setRunner(runner);
+      ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 });
+
+      fakeNow += ttydWatcher.DEFAULT_KICKSTART_COOLDOWN_MS - 1;
+      assert.equal(
+        ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 }).action,
+        'suppressed', 'one millisecond short still holds');
+
+      fakeNow += 1;
+      const r = ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 });
+      assert.equal(r.action, 'kickstart', 'the cooldown bounds the thrash, it does not disable the gate');
+      assert.equal(kicks(runner), 2);
+    });
+
+    // THE ASYMMETRY, and the reason this change is safe. Pool exhaustion is the
+    // #94 incident — every attach fails and the box is unusable. Observed pool
+    // ratios during the #1245 thrash were 0.084–0.115 against a 0.85 gate, so
+    // the pool gate has never fired here and must keep its ability to fire on
+    // ANY tick. A cooldown that bound it too would trade a papercut for the
+    // incident the watcher exists to prevent.
+    it('the POOL gate still fires inside the cooldown', () => {
+      const runner = makeRunner({
+        'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
+        'sysctl:-n': '511\n',
+        'sh:-c': '54\n',
+        'ps:-A': ORPHANS_OVER,
+        'launchctl:kickstart': ''
+      });
+      ttydWatcher._setRunner(runner);
+      ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 });
+      assert.equal(kicks(runner), 1);
+
+      // Same tick spacing that was suppressed above — but now the pool is gone.
+      fakeNow += 5 * 60 * 1000;
+      const exhausted = makeRunner({
+        'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
+        'sysctl:-n': '511\n',
+        'sh:-c': '527\n', // the canonical #94 overflow
+        'ps:-A': ORPHANS_OVER,
+        'launchctl:kickstart': ''
+      });
+      ttydWatcher._setRunner(exhausted);
+      const r = ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 });
+      assert.equal(r.action, 'kickstart', 'pool exhaustion is never suppressed');
+      assert.equal(kicks(exhausted), 1);
+    });
+
+    it('reports the orphan count on the tick after a kickstart, so the reclaim is visible', () => {
+      // Nothing today tells "the kickstart reclaimed them and they came back"
+      // apart from "the kickstart did not reclaim them". The tick after says which.
+      const runner = leakyRunner();
+      ttydWatcher._setRunner(runner);
+      ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 });
+
+      fakeNow += 5 * 60 * 1000;
+      const r = ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 });
+      assert.equal(r.sinceLastKickstartMs, 5 * 60 * 1000);
+      assert.equal(r.orphans, 25);
+    });
+
+    it('a healthy tick after a kickstart is reported as ok, not suppressed', () => {
+      const runner = leakyRunner();
+      ttydWatcher._setRunner(runner);
+      ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 });
+
+      fakeNow += 60 * 1000;
+      ttydWatcher._setRunner(makeRunner({
+        'launchctl:list': LAUNCHCTL_OUTPUT_RUNNING,
+        'sysctl:-n': '511\n',
+        'sh:-c': '54\n',
+        'ps:-A': '  12345 Ss+\n'
+      }));
+      const r = ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 });
+      assert.equal(r.action, 'ok', 'suppressed means "would have fired"; this would not have');
+      assert.equal(r.orphans, 0);
+    });
+
+    it('_reset clears the cooldown, so one test cannot suppress the next', () => {
+      const runner = leakyRunner();
+      ttydWatcher._setRunner(runner);
+      ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 });
+
+      ttydWatcher._reset();
+      ttydWatcher._internal.now = () => fakeNow;
+      const fresh = leakyRunner();
+      ttydWatcher._setRunner(fresh);
+      fakeNow += 1000;
+      assert.equal(
+        ttydWatcher._check({ ttydLabel: 'com.tangleclaw.ttyd', ptyThresholdRatio: 0.85 }).action,
+        'kickstart');
+    });
+  });
+
   describe('_check', () => {
     it('kickstarts when PTY pool is exhausted past the threshold ratio', () => {
       const runner = makeRunner({

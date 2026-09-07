@@ -173,7 +173,94 @@ Deferred as #1321: nothing logs that a run crossed the threshold, so an operator
 why a restart was permitted or why nudges resumed. The clean fix makes a read mutate the entry,
 which is the property this chunk was careful to preserve — it deserves its own thought.
 
+---
+
+## Chunk 02 — The mitigation stops seeding its own next trigger (#1245)
+
+### What the investigation found (2026-09-07, this machine)
+
+The ttyd leak itself is NOT fixable from this repo — it is ttyd 1.7.7 failing to reap the
+`tmux attach` child it spawns per websocket, and those children wedge in the macOS kernel `E`
+state where nothing but ttyd dying reclaims them. The version bump that might fix it is deferred
+by Operator ruling (see the Scoping Ruling above). **This chunk does not claim to fix the leak.**
+
+Three things the investigation established, each of which narrows or corrects the issue:
+
+1. **"Does `deploy/ttyd-attach.sh` hold the child open?" — answered NO.** The script ends with
+   `exec tmux attach-session`, so ttyd's direct child IS `tmux attach`; there is no intermediate
+   bash for ttyd to lose track of. 17 of 18 wedged processes observed were direct `(tmux)` children
+   of ttyd. That hypothesis closes without code.
+
+2. **The `-W` hypothesis is a misreading of the flag.** `-W` is `--writable` and is already set; it
+   is not an idle timeout. The flags that bear on peer detection are `-P/--ping-interval`
+   (default 5s) and `-m/--max-clients` (unlimited); neither is configured, and neither addresses a
+   child that wedges AFTER a clean disconnect.
+
+3. **The mitigation thrashes, and that IS fixable here.** 13 kickstarts over two days, clustering
+   at 20 min and — once — **5 minutes**, which is one poll interval:
+
+   | time (UTC) | orphans | gap |
+   |---|---|---|
+   | 09-07T00:34 | 24 | — |
+   | 09-07T01:09 | 29 | 35 min |
+   | 09-07T01:14 | 22 | **5 min** |
+   | 09-07T01:34 | 21 | 20 min |
+
+   `_check` reads `pid` fresh every tick and `_countTtydOrphans(pid)` counts children of that
+   pid, so the 01:14 reading of 22 was against the NEW ttyd (pid 14240 → 67690 confirms the
+   restart happened). **A fresh ttyd accumulated 22 wedged children within five minutes.**
+
+   The mechanism is the mitigation's own side effect: a kickstart blanks every open terminal
+   iframe simultaneously, they all reconnect at once, and connect/disconnect churn is what leaks.
+   So the orphan gate can fire on damage its previous kickstart caused. Each round is user-visible
+   — every terminal blanks — which is the papercut #1245 names.
+
+### Confidence Check
+
+**Problem.** The orphan gate re-fires on the reconnect burst its own kickstart produced, so the
+operator's terminals blank two or three times in twenty minutes for one underlying leak.
+
+**Success.** A kickstart is followed by a settling period in which the ORPHAN gate will not
+re-fire; the PTY-pool gate is unaffected and still fires immediately, because pool exhaustion is
+the actual emergency. The log says plainly when a kickstart is being suppressed and why, and what
+the orphan count was on the tick after a kickstart, so the reclaim is visible.
+
+**Out of scope.** The leak itself; upgrading ttyd; `--max-clients`/`--ping-interval` tuning;
+changing the frontend's reconnect behaviour; the pool-ratio gate's threshold or logic.
+
+### Design decisions
+
+**D1 — The cooldown binds the ORPHAN gate only, never the pool gate.** Observed pool ratios are
+0.084–0.115 against a 0.85 threshold, so the pool gate has never fired here — it is the true
+safety net for actual exhaustion and must keep its ability to fire on any tick. Gating it too
+would trade a papercut for the #94 incident.
+
+**D2 — Suppression is logged at `warn`, not swallowed.** A gate that declines to act is exactly
+the thing an operator later needs to explain why terminals were blanking, or why they weren't.
+This is the same argument as #1321 and it applies with more force here, because the suppression is
+a decision rather than a measurement.
+
+**D3 — Report the post-kickstart orphan count.** Nothing today distinguishes "the kickstart
+reclaimed the children and they came back" from "the kickstart did not reclaim them". The tick
+after a kickstart now says which, which is what makes the thrash diagnosable rather than inferred.
+
+**D4 — `exec` the wrapper's no-session branch.** One of the 18 wedged processes was a `(bash)`
+holding a `(tmux)` child — the non-exec'd window. The `else` branch sits in `sleep 30` as a live
+bash for 30 seconds per failed attach. Small, in the same family, and correct regardless.
+
+### Done when
+
+- [ ] The orphan gate does not fire within the cooldown of a previous kickstart; the pool gate is
+      demonstrably unaffected.
+- [ ] A suppressed kickstart logs why, with the elapsed time and the orphan count.
+- [ ] The tick after a kickstart reports the observed orphan count.
+- [ ] `deploy/ttyd-attach.sh`'s no-session branch execs.
+- [ ] Every new branch mutation-checked against a green control.
+- [ ] Full suite green; evidence recorded.
+- [ ] `/prawduct:critic`; findings dispositioned in one pass.
+- [ ] CHANGELOG entry under `### Fixed`.
+
 ## Status
 
 - [x] Chunk 01 — #1314, the registry owns the staleness predicate
-- [ ] Chunk 02 — #1245, ttyd child leak (code-side branches only)
+- [ ] Chunk 02 — #1245, the mitigation stops seeding its own next trigger
