@@ -169,3 +169,13 @@ Also worth mentioning:
 ## License
 
 By contributing, you agree that your contributions will be licensed under the MIT License.
+
+## Security & Contribution Guidelines
+
+To protect the integrity of the project and the machines running it, all incoming Pull Requests are subject to a strict security audit. Please adhere to the following guidelines:
+
+1. **Zero-Dependency Policy:** TangleClaw is a strict zero-dependency project (ADR 0012). Any PR that adds a `package.json`, a lockfile, or any `node_modules` reference will be immediately rejected and closed.
+2. **Off-Limits Execution Vectors:** Unless explicitly requested by the maintainers for a specific issue, do not modify files in `data/hooks/`, `hooks/`, `scripts/`, `deploy/`, or `.github/workflows/`. PRs containing unexplained edits to these execution vectors are treated as malicious payloads and will result in a ban.
+3. **Audit Methodology:** Maintainers will review all PRs via raw text diffs. We do not checkout unknown branches locally or execute third-party code prior to a full audit.
+
+Thank you for respecting these boundaries and helping us keep the supply chain safe!
