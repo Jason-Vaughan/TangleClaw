@@ -279,6 +279,19 @@ function renderStatusDot(project) {
     return `<span class="status-dot wrapping" role="img"`
       + ` aria-label="Wrap running${stepText}" title="Wrap running${stepText}"></span>`;
   }
+  // A wrap that was claimed and never settled (#1314). The same pinwheel,
+  // stopped: the blades already carry "a wrap" without the spin, so freezing
+  // them says the wrap stopped moving in the one visual the operator already
+  // reads that way. Colour is not doing the work alone — the detail row below
+  // names it in words, which is also the only one of the two a touch operator
+  // can reach.
+  if (liveness === 'live' && tcSessionWrapStale(project)) {
+    const step = tcSessionWrapStep(project);
+    const stepText = step ? ` — ${esc(step)}` : '';
+    const label = `Wrap stalled${stepText}`;
+    return `<span class="status-dot wrap-stalled" role="img"`
+      + ` aria-label="${label}" title="${label}"></span>`;
+  }
   if (liveness === 'live') {
     return `<span class="status-dot active" title="Session active"></span>`;
   }
@@ -492,6 +505,16 @@ function renderSessionDetail(project) {
       return `<span class="detail-wrapping">Wrapping</span>`
         + (step ? ` — ${esc(step)}` : '')
         + (elapsed ? ` <span class="detail-remedy">${esc(elapsed)}</span>` : '');
+    }
+    // The wedged case says so in words. This row is the one surface with room
+    // to explain, and the one a touch operator can reach at all — so it, not
+    // the dot's tooltip, is what has to carry "this stopped" (#1314).
+    if (tcSessionWrapStale(project)) {
+      const step = tcSessionWrapStep(project);
+      const elapsed = tcSessionWrapElapsed(project);
+      return `<span class="detail-unknown">Wrap stalled</span>`
+        + (step ? ` — ${esc(step)}` : '')
+        + (elapsed ? ` <span class="detail-remedy">no progress for ${esc(elapsed)}</span>` : '');
     }
     return `Active since ${esc(project.session.startedAt || '')}`;
   }

@@ -11,11 +11,12 @@ All notable changes to TangleClaw are documented in this file.
   field, so the branch rendered nothing different and every test passed anyway. `GET
   /api/projects` now carries `session.wrapping`, sourced from `lib/wrap-run-registry.js` rather
   than the status column #1034 retired: a running pipeline lives in the registry and nowhere
-  else, where the column could outlive the process that set it. Three values, and the last two
-  are different answers — `{step, since}` while a run is going, `false` for **established**
-  that none is (the registry is process-local, so empty-after-restart is the truth), and `null`
-  when the read itself failed, named in `incomplete` beside `active` rather than folded into the
-  `false` that would claim an answer it never got. The dot is a fourth SHAPE, not a fourth
+  else, where the column could outlive the process that set it. Four values (the fourth added by
+  #1314 below), and the differences between them are the point — `{step, since, stale: false}`
+  while a run is going, `{..., stale: true}` for one that was claimed and never settled, `false`
+  for **established** that none is (the registry is process-local, so empty-after-restart is the
+  truth), and `null` when the read itself failed, named in `incomplete` beside `active` rather
+  than folded into the `false` that would claim an answer it never got. The dot is a fourth SHAPE, not a fourth
   colour: `prefers-reduced-motion` disables every animation globally and a screenshot has none
   either, so four frozen blades still read as a pinwheel. Unknown liveness outranks it — both
   reads are independent, and the unknown is the one carrying a remedy. The step and elapsed
@@ -115,6 +116,29 @@ All notable changes to TangleClaw are documented in this file.
   session's prime, and a wrong summary is worse than an absent one.
 
 ### Fixed
+- **A wedged wrap no longer blocks server restarts forever, or silences a project's wake nudges
+  (#1314).** `lib/wrap-run-registry.js` has always known what a wedged run is — `STALE_RUN_MS`,
+  30 minutes — but only `begin` applied it, so a run was recoverable for the next wrap and
+  permanent for everything that *asked* about it. One pipeline promise that never settled left
+  `POST /api/server/restart` answering 409 `WRAP_RESTART_BLOCKED` for the life of the process,
+  taking away the one restart control an operator who is not at the machine has, and left
+  `lib/medusa-wake.js` skipping every nudge for that project with `wrap-running` — failing closed
+  by design, so a permanently-true read was indistinguishable from a real wrap. Every reader now
+  asks one predicate, `_isLive`, rather than three consumers each reimplementing a check that
+  drifted. That is four readers, not the three the issue named: `subscribe` branched on the same
+  flag, so a stream opened on a wedged run would have hung its client forever instead of closing
+  with its replay. The writers deliberately keep asking the old question — `emit` and `finish`
+  mean "has this run settled?", so a wedged pipeline that finally completes can still record its
+  outcome instead of stranding the run with no result. A stale run is reported, never reaped:
+  `get` answers `running: false` with `stale: true` beside it, so the safe boolean is what every
+  consumer sees by default, including any added later that never hears staleness exists. The
+  fail postures are untouched and remain deliberately asymmetric — the restart gate and the wake
+  monitor fail closed, the dashboard fails open — because that split is action-versus-display.
+  The card gains the honest fourth state rather than the two lies available to it: a stalled
+  amber pinwheel, frozen where the running one spins, with the disclosure row saying "Wrap
+  stalled", the step it wedged on, and how long it has been that way — in words, because the
+  dot's discriminators are colour and the absence of motion, and both vanish under
+  `prefers-reduced-motion`, in a screenshot, and for a colour-blind operator.
 - **Session lookups resolved arbitrarily between two rows started in the same second.**
   `started_at` is second-resolution and none of the session orderings had a tiebreak, so SQLite
   decided — and it decided in favour of the OLDER row. `getActive` is what a wrap and a kill

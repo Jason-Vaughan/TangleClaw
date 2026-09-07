@@ -716,6 +716,33 @@ describe('medusa-wake — gates (each one blocks alone)', () => {
     assert.equal(world.injected.length, 1, 'the held nudge fires once the wrap is over');
   });
 
+  // #1314 — every test above stubs `_internal.wrapRunning`, so none of them can
+  // see what the real seam answers. That is the gap the bug lived in: the gate
+  // fails closed by design, so a permanently-true read is indistinguishable
+  // from a real wrap and the project silently stops being woken forever. This
+  // drives the REAL seam against the REAL registry.
+  it('the real wrap seam stops holding nudges once a run is wedged past STALE_RUN_MS', () => {
+    const registry = require('../lib/wrap-run-registry');
+    const realWrapRunning = wake._internal.wrapRunning;
+    const realNow = registry._internal.now;
+    let fakeNow = realNow();
+    registry._internal.now = () => fakeNow;
+    try {
+      registry._resetForTests();
+      wake._internal.wrapRunning = realWrapRunning;
+      registry.begin('wedged-project', 1);
+      assert.equal(realWrapRunning('wedged-project'), true, 'a live wrap still holds the nudge');
+
+      fakeNow += registry.STALE_RUN_MS;
+      assert.equal(realWrapRunning('wedged-project'), false,
+        'a wedged run must not withhold this project\'s nudges for the life of the process');
+    } finally {
+      registry._internal.now = realNow;
+      registry._resetForTests();
+      wake._internal.wrapRunning = realWrapRunning;
+    }
+  });
+
   it('holds the nudge when the wrap registry cannot be read', () => {
     // The gate withholds a nudge, so an unreadable registry is a reason to
     // withhold one — never a reason to send it. Reversing this is silent: the

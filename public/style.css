@@ -1711,6 +1711,30 @@ body {
     transparent 315deg 360deg);
   animation: spin 1.4s linear infinite;
 }
+/* A wrap that was claimed and never settled (#1314). Same pinwheel geometry as
+   `.status-dot.wrapping`, so the row never reflows between the two, but amber
+   and stopped.
+
+   Stopped is the point. The running dot's comment notes that the blades are the
+   state and the spin is only emphasis — which is exactly what makes a frozen
+   pinwheel the honest glyph for a wrap that stopped moving. It carries no
+   `animation`, so it looks identical under `prefers-reduced-motion` and in a
+   screenshot, where the running dot is also still. That is why the detail row
+   spells out "Wrap stalled": between those two contexts and colour blindness,
+   the dot alone cannot be the only thing saying it. */
+.status-dot.wrap-stalled {
+  width: 12px;
+  height: 12px;
+  background: conic-gradient(
+    #f0b860 0deg 45deg,
+    transparent 45deg 90deg,
+    #f0b860 90deg 135deg,
+    transparent 135deg 180deg,
+    #f0b860 180deg 225deg,
+    transparent 225deg 270deg,
+    #f0b860 270deg 315deg,
+    transparent 315deg 360deg);
+}
 /* The detail row's wrap label. Shares the muted-emphasis treatment the unknown
    row uses, because both are "this card is telling you something extra" rather
    than an error. */

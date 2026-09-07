@@ -217,6 +217,33 @@ describe('api wrap-run status + single-flight (#583)', () => {
       }
     });
 
+    // #1314 — the reason this gate needed the registry's own staleness test.
+    // `STALE_RUN_MS` was applied by `begin` alone, so a pipeline promise that
+    // never settled left this route answering 409 for the life of the process:
+    // the operator, who is usually not at this machine, permanently lost the
+    // one restart control they have.
+    it('lets the restart through once the running wrap is wedged past STALE_RUN_MS', async () => {
+      const realNow = wrapRunRegistry._internal.now;
+      const realDetect = serverInfo.detectRestartMechanism;
+      let fakeNow = realNow();
+      wrapRunRegistry._internal.now = () => fakeNow;
+      serverInfo.detectRestartMechanism = () => null;
+      try {
+        wrapRunRegistry.begin('wrap-run-test', 1);
+        const blocked = await request(server, 'POST', '/api/server/restart', {});
+        assert.equal(blocked.status, 409, 'a live wrap still blocks — the guard is not disabled');
+
+        fakeNow += wrapRunRegistry.STALE_RUN_MS;
+        const res = await request(server, 'POST', '/api/server/restart', {});
+        assert.equal(res.status, 501,
+          'the wedged run no longer blocks: the request reached mechanism detection (stubbed null)');
+      } finally {
+        wrapRunRegistry._internal.now = realNow;
+        serverInfo.detectRestartMechanism = realDetect;
+        wrapRunRegistry._resetForTests();
+      }
+    });
+
     it('{"force": true} bypasses the guard (proven via a stubbed null mechanism → 501, no exec)', async () => {
       wrapRunRegistry.begin('wrap-run-test', 1);
       const realDetect = serverInfo.detectRestartMechanism;
