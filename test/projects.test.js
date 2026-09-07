@@ -681,6 +681,26 @@ describe('projects', () => {
       assert.deepEqual(result.project.tags, ['node', 'active']);
     });
 
+    it('rejects tags that are not an array of strings', async () => {
+      const result = projects.createProject({
+        name: 'invalid-create-tags',
+        tags: 'not-an-array'
+      });
+
+      assert.equal(result.project, null);
+      assert.deepEqual(result.errors, ['tags must be an array of strings']);
+      assert.equal(
+        store.projects.getByName('invalid-create-tags'),
+        null,
+        'invalid tags must not create a project'
+      );
+      assert.equal(
+        fs.existsSync(path.join(projectsDir, 'invalid-create-tags')),
+        false,
+        'invalid tags must not create the project directory'
+      );
+    });
+
     it('skips git init when gitInit is false', async () => {
       const result = projects.createProject({
         name: 'no-git',
