@@ -145,6 +145,19 @@ All notable changes to TangleClaw are documented in this file.
   choice that no longer exists. Separately, `_transitionSession` briefly carried a guard against
   `status IN ()` being a SQLite syntax error — it is not one, SQLite reads it as the empty set, so
   the guard mutated green and was replaced by a comment recording what was actually verified.
+- **The wrap path no longer calls itself V2 (#1034).** `_triggerWrapV2`, `_completeV2Wrap` and
+  `_deriveV2WrapSummary` are now `_triggerWrapPipeline`, `_completePipelineWrap` and
+  `_derivePipelineWrapSummary`, and five server log lines drop the designator — `Failed to kill
+  tmux session during V2 wrap teardown` is now `... during wrap teardown`, and
+  `store.sessions.wrap failed in V2 lifecycle` is now `... in the wrap lifecycle` (an operator
+  grepping logs for the old strings will not find them). There is no V1 wrap to distinguish these
+  from: the NL-prompt-via-tmux flow and its `wrapV2` opt-out are long gone, so the marker named a
+  version axis that has one point on it. The comments that narrated that removal — in
+  `lib/sessions.js`, `lib/wrap-pipeline.js`, `lib/project-config.js`, `lib/wrap-steps/ai-content.js`
+  and `server.js` — now state what is true instead of what changed. Untouched are the four V2s that
+  are real versions of something with a real V1: the Prawduct V2 plugin, MED-2K9P v2, ClawBridge's
+  `/v2/session/*`, and the store's `v1→v2` migration. Also corrected: two comments still claiming in
+  the present tense that `GET /status` sends `wrapFinished`, which #1034 retired.
 
 ## [5.21.0] - 2026-09-06
 

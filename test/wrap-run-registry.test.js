@@ -2,7 +2,7 @@
 
 /*
  * #583 — wrap-run registry unit tests. The registry is the server-side
- * single-flight guard for V2 wraps plus the observable state behind
+ * single-flight guard for wraps plus the observable state behind
  * `GET /api/sessions/:project/wrap/status`. These tests pin the
  * lifecycle contract the incident exposed the absence of: one running
  * wrap per project, progress visible while running, the last result

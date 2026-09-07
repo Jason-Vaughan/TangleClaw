@@ -229,13 +229,13 @@ describe('api-sessions', () => {
     });
   });
 
-  describe('POST /api/sessions/:project/wrap response (V2 — #139 Chunk 10)', () => {
+  describe('POST /api/sessions/:project/wrap response (#139 Chunk 10)', () => {
     it('threads options from body to runWrapPipeline and surfaces pipelineResult', async () => {
       const project = store.projects.getByName('api-sess-test');
       const session = store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
-        tmuxSession: 'wrap-v2-options-test'
+        tmuxSession: 'wrap-pipeline-options-test'
       });
       // Stub the runner — Chunk 10's options-threading contract is what
       // we're pinning here, not the runner's internal behavior.
@@ -283,7 +283,7 @@ describe('api-sessions', () => {
       store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
-        tmuxSession: 'wrap-v2-blocked-test'
+        tmuxSession: 'wrap-pipeline-blocked-test'
       });
       const wrapPipelineMod = require('../lib/wrap-pipeline');
       const realRun = wrapPipelineMod.runWrapPipeline;
@@ -319,7 +319,7 @@ describe('api-sessions', () => {
       store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
-        tmuxSession: 'wrap-v2-threw-test'
+        tmuxSession: 'wrap-pipeline-threw-test'
       });
       const wrapPipelineMod = require('../lib/wrap-pipeline');
       const realRun = wrapPipelineMod.runWrapPipeline;
@@ -341,7 +341,7 @@ describe('api-sessions', () => {
       store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
-        tmuxSession: 'wrap-v2-prhandling-test'
+        tmuxSession: 'wrap-pipeline-prhandling-test'
       });
       const wrapPipelineMod = require('../lib/wrap-pipeline');
       const realRun = wrapPipelineMod.runWrapPipeline;
@@ -377,7 +377,7 @@ describe('api-sessions', () => {
       store.sessions.start({
         projectId: project.id,
         engineId: 'claude',
-        tmuxSession: 'wrap-v2-bad-options-test'
+        tmuxSession: 'wrap-pipeline-bad-options-test'
       });
       const wrapPipelineMod = require('../lib/wrap-pipeline');
       const realRun = wrapPipelineMod.runWrapPipeline;
