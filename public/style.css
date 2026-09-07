@@ -1711,6 +1711,13 @@ body {
     transparent 315deg 360deg);
   animation: spin 1.4s linear infinite;
 }
+/* The detail row's wrap label. Shares the muted-emphasis treatment the unknown
+   row uses, because both are "this card is telling you something extra" rather
+   than an error. */
+.detail-wrapping {
+  color: var(--primary);
+  font-weight: 600;
+}
 .status-dot-glyph {
   font-size: 9px;
   font-weight: 700;

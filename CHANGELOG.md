@@ -4,6 +4,24 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **A wrapping project's card now says so, with a spinning pinwheel (#1034).** For three and a
+  half months a wrap taking minutes looked exactly like an ordinary active session. The server
+  had a branch for it — `_liveSession` set a `status` field — but no frontend ever read that
+  field, so the branch rendered nothing different and every test passed anyway. `GET
+  /api/projects` now carries `session.wrapping`, sourced from `lib/wrap-run-registry.js` rather
+  than the status column #1034 retired: a running pipeline lives in the registry and nowhere
+  else, where the column could outlive the process that set it. Three values, and the last two
+  are different answers — `{step, since}` while a run is going, `false` for **established**
+  that none is (the registry is process-local, so empty-after-restart is the truth), and `null`
+  when the read itself failed, named in `incomplete` beside `active` rather than folded into the
+  `false` that would claim an answer it never got. The dot is a fourth SHAPE, not a fourth
+  colour: `prefers-reduced-motion` disables every animation globally and a screenshot has none
+  either, so four frozen blades still read as a pinwheel. Unknown liveness outranks it — both
+  reads are independent, and the unknown is the one carrying a remedy. The step and elapsed
+  appear in the card's disclosure row, not only in a `title`, because the primary client is
+  iPhone Safari and a tooltip there has no hover to open it.
+
 ### Changed
 - **The session lifecycle has an explicit vocabulary and an enforced transition map (#1034).**
   `sessions.status` lived as SQL string literals scattered across `lib/store.js` and
@@ -47,7 +65,9 @@ All notable changes to TangleClaw are documented in this file.
   acts on.
 - **`GET /api/sessions/:project/status` no longer reports `wrapping` or `wrapFinished`.** Both were
   sourced from the retired DB state; a session mid-wrap now answers as the ordinary active session
-  it is. `public/session.js` still branches on those fields — a tolerated dead branch that costs
+  it is. (This is the SESSION route, and it is not reversed by the dashboard pinwheel added above:
+  that reads `session.wrapping` on `GET /api/projects`, sourced from the run registry rather than
+  from any session status.) `public/session.js` still branches on those fields — a tolerated dead branch that costs
   nothing while a not-yet-restarted server may send them. **`POST /api/sessions/:project/wrap`'s
   `status: "wrapping"` is unchanged**: it never read the column, it names the pipeline the call
   just started, and `lib/wrap-run-registry.js` is where that lives.

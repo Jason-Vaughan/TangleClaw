@@ -1408,6 +1408,31 @@
   }
 
   /**
+   * How long the running wrap has been going, as short human text.
+   *
+   * `since` is the registry's `startedAt`, an epoch millisecond count from the
+   * SERVER's clock. Rendered as an elapsed duration rather than a wall-clock
+   * time precisely because of that: the operator is usually on a different
+   * device in a possibly different timezone, and "4m" needs no agreement about
+   * whose clock is whose, while "23:41" does.
+   *
+   * @param {object|null} project - An enriched project.
+   * @param {number} [now=Date.now()] - Injectable clock, so a test is not timing-dependent.
+   * @returns {string|null} e.g. `"4m"`, or null when there is no running wrap or no start.
+   */
+  function tcSessionWrapElapsed(project, now) {
+    if (!tcSessionWrapping(project)) return null;
+    const since = project.session.wrapping.since;
+    if (typeof since !== 'number' || !isFinite(since)) return null;
+    const seconds = Math.floor(((typeof now === 'number' ? now : Date.now()) - since) / 1000);
+    if (seconds < 0) return null;
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m`;
+    return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  }
+
+  /**
    * The degraded-read record for a project's session liveness.
    *
    * The remedy is specific to tmux and is NOT taken from any shared table: a
@@ -2318,6 +2343,7 @@
   global.tcSessionLiveness = tcSessionLiveness;
   global.tcSessionWrapping = tcSessionWrapping;
   global.tcSessionWrapStep = tcSessionWrapStep;
+  global.tcSessionWrapElapsed = tcSessionWrapElapsed;
   global.tcSessionRead = tcSessionRead;
   global.tcMasterRead = tcMasterRead;
   global.tcRulesUnknownHtml = tcRulesUnknownHtml;

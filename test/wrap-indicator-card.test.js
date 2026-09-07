@@ -317,6 +317,111 @@ describe('the card reports a running wrap from the run registry (#1034)', () => 
     });
   });
 
+  describe('the call site actually passes it', () => {
+    // Every assertion above calls `_liveSession` / `_wrapState` directly, so
+    // NONE of them notices if `enrichProject` stops handing the wrap state to
+    // the projection. That is this chunk's own failure mode one frame upstream:
+    // the payload builder stays perfect and the field silently goes undefined.
+    // Source-checked rather than executed because `enrichProject` needs a live
+    // store, tmux and the scanner child; the property here is small and exact.
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'projects.js'), 'utf8');
+    const body = (decl) => {
+      const start = src.indexOf(decl);
+      assert.notEqual(start, -1, `${decl} must exist`);
+      const open = src.indexOf('{', start);
+      let depth = 0;
+      for (let i = open; i < src.length; i++) {
+        if (src[i] === '{') depth++;
+        else if (src[i] === '}' && --depth === 0) return src.slice(open, i + 1);
+      }
+      assert.fail(`${decl} body must close`);
+    };
+
+    it('enrichProject reads the wrap state and passes it to BOTH projections', () => {
+      const enrich = body('async function enrichProject(project, facts, context)');
+      assert.match(enrich, /_wrapState\(project\.name\)/,
+        'enrichProject must read the wrap state');
+      assert.match(enrich, /_liveSession\(activeSession, wrapping\)/,
+        'the live projection must receive it — without this the pinwheel silently stops');
+      assert.match(enrich, /_unknownSession\(activeSession, verdict\.cause, wrapping\)/,
+        'and so must the unknown projection');
+    });
+
+    it('keys the registry on the same name the wrap pipeline registers under', () => {
+      // `lib/sessions.js` calls `wrapRunRegistry.begin(project.name, ...)`. A
+      // read keyed on anything else — the id, the path — answers "no wrap"
+      // forever, and every test that stubs the seam would still pass.
+      const sessions = fs.readFileSync(path.join(__dirname, '..', 'lib', 'sessions.js'), 'utf8');
+      assert.match(sessions, /wrapRunRegistry\.begin\(\s*project\.name/,
+        'the pipeline registers under project.name');
+      assert.match(body('function _wrapState(projectName)'), /_internal\.wrapRun\(projectName\)/);
+      assert.match(body('async function enrichProject(project, facts, context)'),
+        /_wrapState\(project\.name\)/, 'and the card reads under the same key');
+    });
+  });
+
+  describe('the pinwheel has a rule to render with', () => {
+    it('style.css defines .status-dot.wrapping', () => {
+      // Without this, deleting the CSS rule leaves every test green while a
+      // wrapping project renders as the bare no-session dot — markup with no
+      // style is not a feature.
+      const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+      assert.match(css, /\.status-dot\.wrapping\s*\{/, 'the wrapping dot needs a rule');
+      const rule = css.slice(css.indexOf('.status-dot.wrapping'));
+      assert.match(rule.slice(0, 400), /conic-gradient/, 'the blades are what make it a pinwheel');
+      assert.match(rule.slice(0, 400), /animation:\s*spin/, 'and it spins');
+    });
+
+    it('style.css defines the detail row label too', () => {
+      const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+      assert.match(css, /\.detail-wrapping\s*\{/);
+    });
+  });
+
+  describe('the step and the elapsed reach a surface a touch operator can read', () => {
+    // A `title` needs a hover and the ratified primary client is iPhone Safari,
+    // where there is none — so the tooltip alone put the registry's richer
+    // answer somewhere the operator can never reach.
+    let detail;
+
+    before(() => {
+      require('../public/api-helper.js');
+      detail = (project) => lift('function renderSessionDetail(project)', 'renderSessionDetail', {
+        esc,
+        tcSessionLiveness: globalThis.tcSessionLiveness,
+        tcSessionWrapping: globalThis.tcSessionWrapping,
+        tcSessionWrapStep: globalThis.tcSessionWrapStep,
+        tcSessionWrapElapsed: globalThis.tcSessionWrapElapsed,
+        tcSessionRead: globalThis.tcSessionRead
+      })(project);
+    });
+
+    it('names the step in the disclosure row, not only the tooltip', () => {
+      const html = detail({ session: { active: true, startedAt: 'x', wrapping: { step: 'changelog-update', since: Date.now() - 90000 } } });
+      assert.match(html, /Wrapping/);
+      assert.match(html, /changelog-update/);
+    });
+
+    it('falls back to the ordinary active line when nothing is wrapping', () => {
+      const html = detail({ session: { active: true, startedAt: '2026-09-06 12:00:00', wrapping: false } });
+      assert.match(html, /Active since/);
+      assert.doesNotMatch(html, /Wrapping/);
+    });
+
+    it('formats the elapsed against an injected clock, so it is not timing-dependent', () => {
+      const el = globalThis.tcSessionWrapElapsed;
+      const at = (ms) => el({ session: { active: true, wrapping: { step: null, since: 1000 } } }, 1000 + ms);
+      assert.equal(at(5000), '5s');
+      assert.equal(at(90 * 1000), '1m');
+      assert.equal(at(3 * 3600 * 1000 + 4 * 60 * 1000), '3h 4m');
+    });
+
+    it('reports no elapsed when the registry gave no start', () => {
+      assert.equal(globalThis.tcSessionWrapElapsed({ session: { active: true, wrapping: { step: 'x', since: null } } }), null);
+      assert.equal(globalThis.tcSessionWrapElapsed({ session: { active: true, wrapping: false } }), null);
+    });
+  });
+
   describe('wrapping stays orthogonal to liveness', () => {
     before(() => { require('../public/api-helper.js'); });
 

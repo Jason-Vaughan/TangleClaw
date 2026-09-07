@@ -481,6 +481,18 @@ function renderArchivedCard(project) {
 function renderSessionDetail(project) {
   const liveness = tcSessionLiveness(project);
   if (liveness === 'live') {
+    // The wrap's step and elapsed reach the operator HERE, not only in the dot's
+    // tooltip. A `title` needs a hover, and the ratified primary client is
+    // iPhone Safari, where there is none — so a tooltip is the one surface a
+    // touch operator can never reach. The unknown state already says its piece
+    // in this row for the same reason.
+    if (tcSessionWrapping(project)) {
+      const step = tcSessionWrapStep(project);
+      const elapsed = tcSessionWrapElapsed(project);
+      return `<span class="detail-wrapping">Wrapping</span>`
+        + (step ? ` — ${esc(step)}` : '')
+        + (elapsed ? ` <span class="detail-remedy">${esc(elapsed)}</span>` : '');
+    }
     return `Active since ${esc(project.session.startedAt || '')}`;
   }
   if (liveness === 'none') return 'No active session';
