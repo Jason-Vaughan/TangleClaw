@@ -120,4 +120,74 @@ describe('store.activity', () => {
       assert.ok('createdAt' in entry);
     });
   });
+
+  describe('retention (#869)', () => {
+    let originalRetention;
+    before(() => {
+      // Need a clean table for precise counting, but activity_log is 
+      // heavily appended by other tests. Best to just use specific event types.
+    });
+
+    after(() => {
+      store._setActivityLogRetention(500); // restore default
+    });
+
+    it('bounds a churny type at its cap while an older forensic row survives (per-type cap)', () => {
+      store._setActivityLogRetention(3);
+
+      // The forensic row (rare type)
+      store.activity.log({ eventType: 'wrap.auto_pr', detail: { id: 'forensic-1' } });
+
+      // The churny rows (volume exceeds cap)
+      store.activity.log({ eventType: 'port.leased', detail: { id: 'churn-1' } });
+      store.activity.log({ eventType: 'port.leased', detail: { id: 'churn-2' } });
+      store.activity.log({ eventType: 'port.leased', detail: { id: 'churn-3' } });
+      store.activity.log({ eventType: 'port.leased', detail: { id: 'churn-4' } }); // This triggers prune of churn-1
+
+      const forensic = store.activity.query({ eventType: 'wrap.auto_pr' });
+      assert.equal(forensic.length, 1, 'forensic type is untouched because it never hit the cap');
+      assert.equal(forensic[0].detail.id, 'forensic-1');
+
+      const churny = store.activity.query({ eventType: 'port.leased' }).sort((a, b) => b.id - a.id);
+      assert.equal(churny.length, 3, 'churny type is capped at 3');
+      
+      // Newest rows kept: churn-2, churn-3, churn-4
+      assert.equal(churny[0].detail.id, 'churn-4');
+      assert.equal(churny[1].detail.id, 'churn-3');
+      assert.equal(churny[2].detail.id, 'churn-2');
+    });
+
+    it('subjects NULL-project_id rows to the policy (Master footprint)', () => {
+      store._setActivityLogRetention(2);
+      
+      store.activity.log({ eventType: 'master.ping', detail: { n: 1 } });
+      store.activity.log({ eventType: 'master.ping', detail: { n: 2 } });
+      store.activity.log({ eventType: 'master.ping', detail: { n: 3 } });
+
+      const pings = store.activity.query({ eventType: 'master.ping' }).sort((a, b) => b.id - a.id);
+      assert.equal(pings.length, 2);
+      assert.equal(pings[0].detail.n, 3);
+      assert.equal(pings[1].detail.n, 2);
+      assert.equal(pings[0].projectId, null, 'row is a NULL-project row');
+    });
+
+    it('reports the first prune on a real table via activity.pruned', () => {
+      store._setActivityLogRetention(2);
+      
+      // Ensure we trigger a prune of a new type
+      store.activity.log({ eventType: 'test.report', detail: 1 });
+      store.activity.log({ eventType: 'test.report', detail: 2 });
+      
+      // Clear out any previous activity.pruned so we can measure just this one
+      // (not strictly necessary if we query carefully, but safe)
+      
+      store.activity.log({ eventType: 'test.report', detail: 3 }); // Triggers prune of 1 row
+      
+      const prunes = store.activity.query({ eventType: 'activity.pruned' });
+      // Might be more than 1 if earlier tests triggered it, but we can look for test.report
+      const reportPrune = prunes.find(p => p.detail && p.detail.prunedType === 'test.report');
+      assert.ok(reportPrune, 'prune was reported');
+      assert.equal(reportPrune.detail.count, 1);
+    });
+  });
 });
