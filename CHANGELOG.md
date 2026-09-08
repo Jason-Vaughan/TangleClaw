@@ -267,6 +267,27 @@ All notable changes to TangleClaw are documented in this file.
   independently fixed by **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in PR #1359;
   their bytes were not merged, per `CONTRIBUTING.md`.
 
+### Internal
+- **The remaining `node:assert` suites are on `node:assert/strict` (#1067).**
+  `test/condition-log.test.js`, `test/cache-bump-guard.test.js` and `test/wrap-step-pr-merge.test.js`
+  now require the strict binding, completing the testing-conventions norm's `Retroactivity: migrate`.
+
+  All three went green unchanged, and that is the result rather than a shortcut: under strict,
+  `assert.equal` is `===` and `assert.deepEqual` is `deepStrictEqual`, so a suite that passes after
+  the swap is a suite in which no assertion was relying on `==` coercion. The issue asked for exactly
+  that to be established rather than assumed, which is why it was sized as work instead of folded
+  into the ratification sweep.
+
+  **The issue's own count was stale, and the drift is the interesting part.** #1067 recorded
+  `wrap-step-pr-merge.test.js` as "the only 1 of 201" such files on 2026-08-01; by the time it was
+  worked there were three, the other two written after the norm was ratified. The norm has no
+  enforcement, so the set it describes regrows — filed as **#1377**, and deliberately not bundled
+  here, since the dual-key filters passed a conversion and not a new mechanism.
+
+  Reconstructed under ADR 0014 from #1067 rather than from the submitted patch, which converted one
+  of the three. Reported by **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in PR
+  #1357; their bytes were not merged, per `CONTRIBUTING.md`.
+
 ## [5.22.0] - 2026-09-07
 
 ### Added
