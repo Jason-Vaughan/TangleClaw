@@ -257,7 +257,11 @@ All notable changes to TangleClaw are documented in this file.
   `<repo>/.prawduct/backlog.md`, and repointing that would have turned a pointer that failed loudly
   into one that *resolves* onto a queue frozen at the 2026-08-20 GitHub Issues cut-over, where every
   archived item still parses as open — so it now names the live `/prawduct:backlog` route instead of
-  any file. And the sweep had missed the gitignored files entirely, which is where the pointers that
+  any file — and, once a PR reviewer pointed out that the rest of that document still counted the
+  frozen backlog as a live parallel queue and still made "reconcile the two queues" the session's
+  top-priority output, the whole premise was brought up to date rather than left half-corrected.
+  Its queue section now names the command to count the queue instead of carrying a number.
+  And the sweep had missed the gitignored files entirely, which is where the pointers that
   survive across sessions actually live: `.tangleclaw/memories/MEMORY.md` — the first file a session
   reads — named the **active** train's plan by the old path. Those are repointed on disk, so they
   are not in the commit. Deriving this check instead of enumerating the sites a third time is filed

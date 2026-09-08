@@ -101,7 +101,16 @@ session its backlog was `<repo>/.prawduct/backlog.md`. Before the rename that pa
 repointing it to the new directory would have made it *resolve* — onto a 68-entry queue frozen at
 the 2026-08-20 GitHub Issues cut-over, where every archived item still parses as open. A triage
 session would have groomed closed work, which is the exact failure the archive rule exists to
-prevent. That line now names the live route (`/prawduct:backlog`) instead of any file.
+prevent. That line now names the live route instead of any file — and not `/prawduct:backlog`, which
+resolves against the project it runs in and would hand that session its own empty backlog.
+
+The PR reviewer then caught that this was half a fix: the same document's queue section still
+counted the markdown backlog as a live parallel queue, "reconcile the two queues" was still listed
+as the session's highest-value output, and the "On the engine" rationale was still premised on the
+backlog being a file to read. Repointing one line while three others still commanded the grooming
+would have left the hazard intact and the change-log overclaiming. All four now describe the single
+GitHub Issues queue, and the queue section names the command to count it rather than carrying a
+number — the same reason the escape hatch stopped naming a directory.
 
 **The escape hatch is now relational, not merely re-pointed.** `docs/primary-checkout-guard.md`
 spells the sentinel as `<primary>/.prawduct/.allow-primary-write` and says to copy `<primary>` from

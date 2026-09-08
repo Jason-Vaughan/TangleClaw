@@ -18,7 +18,7 @@ Do not build.
 2. Engine: **Claude Code.** Any engine can do this job — see "On the engine" below.
 3. **Do NOT apply Prawduct onboarding** in that project (answer "Don't apply yet"). It is an
    analysis workspace with no product and no code; the scaffold governs nothing, and the one skill
-   it would add resolves against the wrong backlog (below).
+   it would add resolves against the wrong project's backlog (see "On the engine").
 4. Put both projects in a group with a **shared directory** — the group needs `sharedDir` set, or
    there is nowhere for the two sessions to exchange files.
 5. Paste everything under the line into the new session's first message.
@@ -27,15 +27,14 @@ Do not build.
 
 ## On the engine
 
-**Any engine can do this job.** An earlier version of this document argued for Claude on the
-grounds that reconciling the 68-entry Prawduct backlog needs `/prawduct:backlog`. That argument
-does not hold in this configuration: the skill resolves against the project it runs in, and this
-session runs from its own empty directory — so it would groom a new, empty backlog rather than
-TangleClaw's.
+**Any engine can do this job.** An earlier version argued for Claude because reconciling the
+Prawduct markdown backlog needed `/prawduct:backlog`. That argument is doubly dead: the
+reconciliation itself ended at the 2026-08-20 cut-over, and the skill resolves against the project
+it runs in anyway — from this session's own empty directory it would groom a new, empty backlog
+rather than TangleClaw's.
 
-Which means the backlog half is **read-and-propose**, not edit (see the paste block). Reading a
-markdown file and writing a proposal is engine-neutral. Claude is a fine default here; nothing
-about the work requires it.
+The work is now reading GitHub Issues through `gh` and writing a proposal, which is engine-neutral.
+Claude is a fine default; nothing about the job requires it.
 
 ---
 
@@ -67,8 +66,10 @@ You are running from **your own empty directory**, not the TangleClaw repo. Two 
 - **TangleClaw's own files are READ-ONLY to you, at an absolute path:**
   `/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder`. The v5 plan is
   `<that>/.tangleclaw/plans/v5-secure-baseline.md`. **The backlog is not a file** — it moved to
-  GitHub Issues at the 2026-08-20 cut-over, so reach it through `/prawduct:backlog` or
-  `prawduct-hook backlog list --repo Jason-Vaughan/TangleClaw`. `<that>/.prawduct/backlog.md` is
+  GitHub Issues at the 2026-08-20 cut-over. Reach it with
+  `prawduct-hook backlog list --repo Jason-Vaughan/TangleClaw`, or plain `gh issue list --repo …`
+  — **not** `/prawduct:backlog`, which resolves against the project it runs in and would hand you
+  this session's own empty backlog. `<that>/.prawduct/backlog.md` is
   frozen history: every item archived at the cut-over still parses as open there, so grooming it
   recommends work that already closed.
   Read them freely. **Never write there** — that repo belongs to the build session, and a write
@@ -88,40 +89,34 @@ You are running from **your own empty directory**, not the TangleClaw repo. Two 
 5. **Verify before you conclude.** A closed issue is not backlog. Check state
    (`gh issue view <N> --json state -q .state`) before treating anything as live work.
 
-### The queue, as of 2026-07-29
+### The queue
 
-| | |
-|---|---|
-| Open GitHub issues | **91** — 59 enhancement, 20 bug, 6 chore, 5 unlabeled |
-| Prawduct backlog entries | **68** (`/prawduct:backlog`) |
+**There is one queue: GitHub Issues on `Jason-Vaughan/TangleClaw`.** Count it yourself rather than
+reading a number here — `gh issue list --repo Jason-Vaughan/TangleClaw --state open --limit 500`,
+or `prawduct-hook backlog list --repo Jason-Vaughan/TangleClaw` for the same set through the
+adapter. A number written into a priming prompt is wrong by the time anyone pastes it.
 
-These are **two parallel queues** and nothing reconciles them today. Work can be tracked in one,
-both, or neither — and "both" is how the same thing gets planned twice.
+**This document used to describe two parallel queues, and that is over.** The Prawduct markdown
+backlog migrated to GitHub Issues on 2026-08-20; `.prawduct/backlog.md` now carries a
+frozen-history banner, and every item archived at the cut-over still parses as **open** in it. Do
+not read it, do not count it, and do not reconcile it against anything — a session that grooms it
+recommends work that closed weeks ago.
 
 ### What to produce
 
 In rough priority order. Get through as much as the session allows; depth beats coverage.
 
-1. **Reconcile the two queues.** Decide which is canonical for what, and say so explicitly. This
-   is the highest-value output even if you do nothing else. Where an item exists in both, link
-   them or collapse one. Where the Prawduct backlog holds something with no issue and it matters,
-   file the issue (you *can* write to GitHub — that is not the TangleClaw working tree).
-
-   **You cannot edit TangleClaw's backlog file, and must not.** Produce a proposed reconciliation
-   — item by item, with the action for each — and hand it to the build session to apply through
-   `/prawduct:backlog` from the repo, which is where that skill resolves correctly. Proposing is
-   your half; applying is theirs.
-2. **Bucket the open issues into release trains** — a candidate `v5.1`, `v5.2`, and a `later`
+1. **Bucket the open issues into release trains** — a candidate `v5.1`, `v5.2`, and a `later`
    pool. GitHub **milestones** are the right mechanism: they are visible, filterable, and survive
    sessions. A bucket is a claim about *what ships together*, not a priority score, so group by
    coherence — things a user would experience as one improvement.
-3. **Label the 5 unlabeled issues** and fix obviously wrong labels. Every issue carries a type.
-4. **Find and close duplicates.** Propose them to the operator first — closing someone's issue is
+2. **Label any unlabeled issues** and fix obviously wrong labels. Every issue carries a type.
+3. **Find and close duplicates.** Propose them to the operator first — closing someone's issue is
    their call — then execute the ones they approve.
-5. **Name the themes.** After reading the queue, say what it is actually *about*. Clusters worth
+4. **Name the themes.** After reading the queue, say what it is actually *about*. Clusters worth
    watching for: the settings-modal family (#755, #756, #758, #764, #768), upload UX (#769, #770),
    wrap UI (#771, #185, #197, #198), and test/coverage debt (#772). Themes make trains obvious.
-6. **Write the roadmap document** — the buckets, the reasoning, the open questions — into **your
+5. **Write the roadmap document** — the buckets, the reasoning, the open questions — into **your
    own** project at `post-v5-roadmap.md`, or the group's shared directory if one is set. Do **not**
    write it into the TangleClaw repo; rule 1 forbids it, and the build session will copy it across
    once v5 ships. Also publish it as a **hosted artifact** so the operator can read it from any
@@ -168,4 +163,9 @@ Report what you find. Recommend; let the operator decide what to act on.
   `TangleClaw` → `TangleClaw-Builder`, and replaced the `.prawduct/backlog.md` pointer with the
   live GitHub Issues route. The repoint alone would have been worse than the break it fixed: the
   old path failed loudly, while a working path onto the frozen backlog would have had a triage
-  session grooming items that closed at the 2026-08-20 cut-over.
+  session grooming items that closed at the 2026-08-20 cut-over. Closing that hazard properly then
+  took the rest of the file, which a PR reviewer caught still half-stale: the queue section counted
+  the backlog as a live parallel queue, "reconcile the two queues" was still the session's
+  top-priority output, and the engine rationale was still premised on the backlog being a markdown
+  file. All three now describe the single GitHub Issues queue, and the queue section names the
+  command to count it rather than carrying a number that goes stale between edits.
