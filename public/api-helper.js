@@ -2662,6 +2662,8 @@
     if (m.prevUnread === undefined) m.prevUnread = 0;
     if (m.workspaceId === undefined) m.workspaceId = null;
     if (m.lastError === undefined) m.lastError = null;
+    if (m.lastErrorCode === undefined) m.lastErrorCode = null;
+    if (m.bridge === undefined) m.bridge = null;
     if (m.shown === undefined) m.shown = false;
     if (m.loops === undefined) m.loops = [];
     if (m.loopsError === undefined) m.loopsError = null;
@@ -2681,6 +2683,45 @@
     }
 
     /**
+     * @type {Record<string, string>} What each listener failure means for the
+     * operator, keyed by the server's `lastErrorCode`.
+     *
+     * The raw `lastError` sentence says what this end observed; these say what it
+     * implies and what to do. #1130 was filed because the two were the same thing
+     * — an absent Bridge and a broken listener produced indistinguishable prose,
+     * and a published mapping from that prose to a bridge condition turned out not
+     * to hold across installs. Keyed on the code precisely so it cannot drift with
+     * the wording again.
+     */
+    const LISTENER_CODE_HELP = Object.assign(Object.create(null), {
+      CONNECT_FAILED: 'Nothing accepted the connection. The Bridge is probably not running, or is on a different port.',
+      SOCKET_OPEN_FAILED: 'The configured Bridge URL was rejected before a connection was attempted — check MEDUSA_BRIDGE_WS_URL.',
+      CLOSED_UNEXPECTEDLY: 'The connection was accepted and then dropped. Something is on the port; whether it is the Bridge is worth checking.',
+      HANDSHAKE_TIMEOUT: 'The Bridge accepted the connection but never completed registration — it may be starting up, or something other than the Bridge owns that port.',
+      BRIDGE_ERROR: 'The Bridge answered with an error. Its own logs will say why.',
+      BAD_FRAME: 'The Bridge sent something this version could not read — a version mismatch is likely.'
+    });
+
+    /**
+     * The extra sentence a failure earns, if any: the preflight's verdict when one
+     * was taken, else the meaning of the listener's own classified failure.
+     *
+     * Preferring the preflight is deliberate — it probed BOTH transports and can
+     * say "there is no Bridge here", which a listener that only ever tried the
+     * WebSocket cannot establish about the Bridge as a whole.
+     *
+     * @param {{lastErrorCode: (string|null), bridge: (object|null)}} st - State.
+     * @returns {string} A leading-space sentence, or ''.
+     */
+    function diagnosis(st) {
+      if (st.bridge && st.bridge.healthy === false) {
+        return ` ${st.bridge.detail}.${st.bridge.hint ? ` ${st.bridge.hint}` : ''}`;
+      }
+      const help = st.lastErrorCode && LISTENER_CODE_HELP[st.lastErrorCode];
+      return help ? ` ${help}` : '';
+    }
+
+    /**
      * Human-readable status text for the control's accessible label + tooltip.
      * This is the never-color-only source of truth for the listener state.
      * @param {{state: string, unread: number, lastError: (string|null)}} st - State.
@@ -2691,10 +2732,10 @@
       const blocked = sendBlocked(st) ? ', receive-only at this access level' : '';
       switch (st.state) {
         case 'listening': return `Medusa session comms: on, listening${unread}${blocked}. Click to disable.`;
-        case 'connecting': return `Medusa session comms: connecting${unread}${blocked}. Click to disable.`;
+        case 'connecting': return `Medusa session comms: connecting${unread}${blocked}.${diagnosis(st)} Click to disable.`;
         // The listener auto-reconnects with backoff while enabled, so "retry" is
         // automatic; a click here DISABLES it (toggle → off). Label the real action.
-        case 'error': return `Medusa session comms: error — ${st.lastError || 'cannot reach the bridge'}${unread}. Click to disable.`;
+        case 'error': return `Medusa session comms: error — ${st.lastError || 'cannot reach the bridge'}${unread}.${diagnosis(st)} Click to disable.`;
         default: return `Medusa session comms: off${unread}. Click to enable.`;
       }
     }
@@ -2711,8 +2752,8 @@
       const doing = {
         listening: 'On — listening for messages from your other TangleClaw sessions'
           + (st.unread > 0 ? ` (${st.unread} unread — click the badge to read)` : ''),
-        connecting: 'Connecting to the message bridge…',
-        error: `Enabled but can't reach the bridge — ${st.lastError || 'auto-retrying'}`
+        connecting: `Connecting to the message bridge…${diagnosis(st)}`,
+        error: `Enabled but can't reach the bridge — ${st.lastError || 'auto-retrying'}${diagnosis(st)}`
       }[st.state] || `Off — ${subject} can't send or receive session messages`;
       const action = st.state === 'off' ? `connect ${subject}` : 'disconnect';
       const blocked = sendBlocked(st) && st.state !== 'off'
@@ -2843,6 +2884,22 @@
       m.unread = data.unread || 0;
       m.workspaceId = data.workspaceId || null;
       m.lastError = data.lastError || null;
+      // NOT `api.lastErrorCode`, which lives on the api() function object in this
+      // same file and carries the last HTTP call's server error code. This one is
+      // the LISTENER's classification of why it is not listening. Two different
+      // failures, one name, one file — read the receiver, not the property.
+      m.lastErrorCode = data.lastErrorCode || null;
+      // Present only on a toggle-ON response, where a preflight actually ran.
+      // Taken when present for the same reason `loops` and `enabled` are: a status
+      // poll carries none, and blanking it would erase the diagnosis the operator
+      // was just given.
+      if ('bridge' in data) m.bridge = data.bridge || null;
+      // ...but a verdict is evidence with a shelf life. Once the listener is
+      // LISTENING the Bridge is demonstrably there, so a "no Bridge, install it"
+      // verdict from minutes ago is now disproven — and `diagnosis()` prefers the
+      // verdict over the live code, so keeping it would resurface a stale
+      // instruction indefinitely. Cleared on proof of the opposite.
+      if (m.state === 'listening') m.bridge = null;
       if ('loops' in data) m.loops = data.loops || [];
       if ('loopsError' in data) m.loopsError = data.loopsError || null;
       if ('outbound' in data) m.outbound = data.outbound || { allowed: true, reason: null };

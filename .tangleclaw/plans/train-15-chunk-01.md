@@ -116,7 +116,7 @@ gave: it is the cheapest and it de-risks the others by making the URL under test
 
 - [x] Car 1: The listener resolves its Bridge URL the way the HTTP side does (#1100)
 - [x] Car 2: A stalled handshake is a failure, not a wait (#1131)
-- [ ] Car 3: A missing Bridge names itself (#1130)
+- [x] Car 3: A missing Bridge names itself (#1130)
 
 Each car is one branch and one PR, per the train methodology's 1 car = 1 issue = 1 PR. Reviews are
 `chunk` per car, with a `cumulative` before the last merge.
@@ -221,20 +221,80 @@ probe and the reporter's install produced different strings for the same bridge 
    instead of a green toggle, and the condition "`medusaEnabled` is true and no Bridge is healthy"
    is reported rather than left to a log nobody tails.
 
-**Carried in from Car 2's review (not a Car 2 widening).** A Bridge that answers
+**Carried in from Car 2's review, and NOT built here — filed as #1364.** A Bridge that answers
 `register` and *then* goes silent is still unbounded: `heartbeat_ack` is tolerated but never
 required, so a Bridge that stops answering while the socket stays open leaves a listener reporting
-`listening` with nothing behind it. That is the same family as the classification this car builds —
-a surface asserting an unverified external fact — and it belongs here rather than in the handshake
-deadline, which bounds only the interval before `registered`.
+`listening` with nothing behind it. It is the same family as the classification this car builds —
+a surface asserting an unverified external fact — and it is genuinely this car's subject rather
+than #1131's, which bounds only the interval *before* `registered`.
 
-**Open questions this car answers before it builds — named, not assumed.** Whether the enable
-toggle **refuses** or **warns-and-proceeds** when the Bridge is absent (refusing is honest but
-strands an operator who is about to start Medusa; warning is recoverable but is the current
-behavior plus a sentence); which callers gate on the preflight, given that `startSession` has five
-production call sites; and where the standing warning surfaces. Each is a decision to record, not
-a detail to infer — and the master's listener (`lib/master.js:1971`, no `sessions` row) must be
-covered by whatever shape the warning takes.
+It is filed rather than built because it needs a decision this car did not take: **how many missed
+acknowledgement windows constitute a failure.** One is too twitchy for a loopback service that may
+pause for GC; the heartbeat is 20s, so two or three windows is a minute of silence. Deciding that
+inside a car already carrying five deliverables would have been the invented-requirement failure,
+so it goes to #1364 with the decision named. This paragraph is the record that it reached its
+owning car and left it as an issue rather than evaporating — the prior review accepted its
+deferral on "Car 3 is where it will be met", and this is what meeting it turned out to mean.
+
+**The three open questions, now ANSWERED — decisions, not inferences.**
+
+**1. The enable toggle proceeds and says why; it does not refuse.** Operator decision, 2026-09-08,
+against two alternatives that were put with their costs: refuse-when-absent (matches the
+reporter's literal ask for their case, but blocks the legitimate "enable now, start Medusa in a
+minute" flow) and refuse-unless-healthy (strictest, but a briefly restarting Bridge — or a
+preflight that itself times out — would block an operator whose Bridge is fine).
+
+The reasoning that decided it: **Car 2 already removed the lie.** A listener against an absent or
+stalled Bridge now reaches `error` with a named reason inside 10s instead of sitting green in
+`connecting` forever, so the preflight is no longer what stops the operator being misled. What it
+adds is *immediacy and guidance* — the verdict rides back on the toggle's own response, so the
+control can say "Bridge missing, here is how to install it" at the moment of the click rather than
+ten seconds later in different words. Refusing would also throw away the recovery Car 2 proved:
+a listener that is retrying registers by itself when the Bridge appears, and a refused toggle
+starts nothing to retry.
+
+**2. The three operator-initiated call sites gate on the preflight; the two automatic ones do
+not.** `startSession` has five production callers, and they divide cleanly on whether an operator
+is present to be told anything:
+
+| Call site | Trigger | Preflight? |
+|---|---|---|
+| `server.js:4540` | the operator's toggle | **yes** — has a response to carry the verdict |
+| `lib/projects.js:2446` | `medusaEnabled` project setting changed | **DESCOPED** — see below |
+| `lib/master.js:1971` | master enable / ensure | **DESCOPED** — see below |
+| `lib/sessions.js:3621` | `_maybeAutoStartMedusa` at session launch | no |
+| `lib/sessions.js:3682` | re-sync after a server restart | no |
+
+The two automatic paths have nobody to report to, and gating them would put an HTTP round-trip on
+every session launch and every boot — a cost paid by every install to serve a condition the
+standing warning already covers. They are not left unwatched; item 3 is what watches them.
+
+**DESCOPED after reading the call sites, stated rather than quietly narrowed.** The decision above
+named three preflight sites; **one shipped**. `syncMasterMedusa` and `_syncLiveMedusaListener` are
+synchronous helpers, and `syncMasterMedusa` alone has six callers including the boot path and two
+`live:false, enabled:false` teardown paths (`lib/master.js` 1818, 1923, 2002, 2404, 2433).
+Converting both to async would ripple through master ensure and kill to deliver a verdict **no
+surface currently renders** — the settings flip and the master enable have no control that would
+display a `bridge` block. That is cost with no reader, and building it would be gold-plating the
+decision rather than honouring it.
+
+What actually covers those paths is item 3: the standing condition fires whenever *any* listener is
+running against an unusable Bridge, whichever path started it, the master included. The gap that
+remains is narrow and named — an operator who flips the project setting or the master toggle gets
+the diagnosis from the health panel rather than at the moment of the click. Widening the preflight
+to those two sites is worth doing *with* the surface work that would render it, not before.
+
+**3. The standing warning is a new condition in `lib/system-health.js`, not a new mechanism.**
+That module already exists for exactly this (#345): `getHealth()` assembles `fired` / `clear` /
+`unknown` conditions carrying `title`, `detail` and `remediation`, and a panel renders them. Its
+three-state vocabulary is the reason it fits rather than merely being convenient — a preflight
+that cannot run reports **`unknown`**, which is what the architecture Direction requires of a read
+that could not be established, and what a two-state warning would have had to lie about.
+
+**The Project Master must be covered by it**, and this is the trap the `governed_by` block names:
+`lib/master.js:1971` starts a listener for a singleton with no `sessions` row, and it was the
+first listener the reporting install saw fail. A condition that iterates the sessions table would
+skip exactly that one.
 
 **Done when**
 - Every listener failure path sets a code, and the codes are pinned by tests that name the

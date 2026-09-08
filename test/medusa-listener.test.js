@@ -19,7 +19,8 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  MedusaListener, DEFAULT_MAX_INBOX, SYSTEM_MESSAGE_RETENTION, _setSystemMessageRetention
+  MedusaListener, DEFAULT_MAX_INBOX, SYSTEM_MESSAGE_RETENTION, _setSystemMessageRetention,
+  LISTENER_ERROR_CODES
 } = require('../lib/medusa-listener');
 const registry = require('../lib/medusa-registry');
 const logger = require('../lib/logger');
@@ -147,6 +148,146 @@ function makeFactory() {
  */
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+describe('every failure carries a machine-readable code (#1130)', () => {
+  // `lastError` is prose assembled at seven sites, and #1130 records the cost of
+  // having only that: a published lastError -> bridge-condition mapping drove an
+  // entirely wrong hypothesis, because two installs in the SAME bridge condition
+  // produced two different strings. Each case below names the CONDITION; the
+  // string is free to be reworded without reding these.
+
+  it('classifies a socket error as a failed connect', () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-1', backoffBaseMs: 5000, wsFactory: factory });
+    l.start();
+    sockets[0]._errorEvent('ECONNREFUSED');
+    assert.equal(l.lastErrorCode, LISTENER_ERROR_CODES.CONNECT_FAILED);
+    assert.equal(l.getStatus().lastErrorCode, LISTENER_ERROR_CODES.CONNECT_FAILED);
+    l.stop();
+  });
+
+  it('classifies an unexpected close distinctly from a failed connect', () => {
+    // The distinction #1130 is about: something ACCEPTED the connection and then
+    // dropped it, which is a different remedy from nothing being there at all.
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-1', backoffBaseMs: 5000, wsFactory: factory });
+    l.start();
+    sockets[0]._closeEvent(1006);
+    assert.equal(l.lastErrorCode, LISTENER_ERROR_CODES.CLOSED_UNEXPECTEDLY);
+    assert.notEqual(l.lastErrorCode, LISTENER_ERROR_CODES.CONNECT_FAILED);
+    l.stop();
+  });
+
+  it('classifies a stalled handshake', async () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({
+      workspaceId: 'ws-1', handshakeTimeoutMs: 20, backoffBaseMs: 5000, wsFactory: factory
+    });
+    l.start();
+    sockets[0]._open();
+    await waitForCode(l, LISTENER_ERROR_CODES.HANDSHAKE_TIMEOUT);
+    l.stop();
+  });
+
+  it('classifies an unreadable frame and a Bridge error frame separately', () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-1', backoffBaseMs: 5000, wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._rawMessage('{not json');
+    assert.equal(l.lastErrorCode, LISTENER_ERROR_CODES.BAD_FRAME);
+    sockets[0]._message({ type: 'error', message: 'workspace rejected' });
+    assert.equal(l.lastErrorCode, LISTENER_ERROR_CODES.BRIDGE_ERROR);
+    l.stop();
+  });
+
+  it('clears BOTH halves on a successful register — a stale code is a stale diagnosis', () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-1', backoffBaseMs: 5000, wsFactory: factory });
+    l.start();
+    sockets[0]._errorEvent('ECONNREFUSED');
+    assert.ok(l.lastErrorCode);
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-1' });
+    assert.equal(l.lastError, null);
+    assert.equal(l.lastErrorCode, null);
+    l.stop();
+  });
+
+  it('classifies a socket the factory refuses to build — the one code with no other driver', () => {
+    // Reachable but rare: Car 1's acceptance gate keeps most bad URLs from ever
+    // reaching the factory, so without this the member is declared and undriven,
+    // which is the "coverage that covers nothing" shape the vocabulary guards.
+    const l = new MedusaListener({
+      workspaceId: 'ws-1', backoffBaseMs: 5000,
+      wsFactory: () => { throw new Error('refused to construct'); }
+    });
+    l.start();
+    assert.equal(l.lastErrorCode, LISTENER_ERROR_CODES.SOCKET_OPEN_FAILED);
+    assert.equal(l.state, 'error');
+    l.stop();
+  });
+
+  it('a code recorded while still LISTENING does not claim the listener is down', () => {
+    // BRIDGE_ERROR and BAD_FRAME are recorded with the connection deliberately
+    // kept. A surface reading the code as "not listening" would report a healthy
+    // session as broken over one unreadable frame.
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-1', backoffBaseMs: 5000, wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-1' });
+    assert.equal(l.state, 'listening');
+    sockets[0]._message({ type: 'error', message: 'nope' });
+    assert.equal(l.lastErrorCode, LISTENER_ERROR_CODES.BRIDGE_ERROR);
+    assert.equal(l.state, 'listening', 'the connection is deliberately kept');
+    l.stop();
+  });
+
+  it('the frontend help table covers every declared code, and invents none', () => {
+    // A rename in LISTENER_ERROR_CODES without a row in LISTENER_CODE_HELP blanks
+    // the operator's help SILENTLY rather than failing — the same translated-field
+    // shape boundary-patterns.md records for `cause` and `git.incomplete`.
+    const helper = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
+    const table = helper.slice(helper.indexOf('const LISTENER_CODE_HELP'));
+    const body = table.slice(0, table.indexOf('});'));
+    const helpKeys = [...body.matchAll(/^\s{6}(\w+):/gm)].map((m) => m[1]).sort();
+    const declared = Object.keys(LISTENER_ERROR_CODES).sort();
+    assert.deepEqual(helpKeys, declared,
+      'LISTENER_CODE_HELP and LISTENER_ERROR_CODES must name exactly the same set');
+  });
+
+  it('every code the listener can set is a declared member', () => {
+    // Guards the drift this vocabulary exists to prevent: a seventh failure site
+    // added later with a literal string, or a typo, would not be in the frozen set.
+    const declared = new Set(Object.values(LISTENER_ERROR_CODES));
+    const source = fs.readFileSync(path.join(__dirname, '..', 'lib', 'medusa-listener.js'), 'utf8');
+    const used = [...source.matchAll(/_fail\(LISTENER_ERROR_CODES\.(\w+)/g)].map((m) => m[1]);
+    assert.ok(used.length >= 6, `expected the failure sites to route through _fail, found ${used.length}`);
+    for (const name of used) {
+      assert.ok(declared.has(LISTENER_ERROR_CODES[name]), `${name} is not a declared code`);
+    }
+    // And nothing sets the field outside its three legitimate writers: the
+    // constructor's initialiser, `_fail`, and `_clearFailure`. A fourth is a site
+    // that set the code without the sentence, which is the drift the owner exists
+    // to prevent.
+    const raw = [...source.matchAll(/this\.lastErrorCode = /g)].length;
+    assert.equal(raw, 3, 'lastErrorCode is written only by the constructor, _fail and _clearFailure');
+  });
+});
+
+/**
+ * Wait until the listener carries `code`, or fail.
+ * @param {object} l - The listener.
+ * @param {string} code - Expected `lastErrorCode`.
+ * @param {number} [capMs] - Generous ceiling.
+ * @returns {Promise<void>}
+ */
+async function waitForCode(l, code, capMs = 5000) {
+  const until = Date.now() + capMs;
+  while (l.lastErrorCode !== code && Date.now() < until) await delay(5);
+  assert.equal(l.lastErrorCode, code);
 }
 
 describe('the register handshake has a deadline (#1131)', () => {
@@ -734,11 +875,15 @@ describe('MedusaListener', () => {
     const { factory } = makeFactory();
     const l = new MedusaListener({ workspaceId: 'ws-9', wsFactory: factory });
     const status = l.getStatus();
-    assert.deepEqual(Object.keys(status).sort(), ['lastError', 'state', 'unread', 'workspaceId']);
+    assert.deepEqual(
+      Object.keys(status).sort(),
+      ['lastError', 'lastErrorCode', 'state', 'unread', 'workspaceId']
+    );
     assert.equal(status.state, 'off');
     assert.equal(status.workspaceId, 'ws-9');
     assert.equal(status.unread, 0);
     assert.equal(status.lastError, null);
+    assert.equal(status.lastErrorCode, null);
   });
 });
 

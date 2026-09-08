@@ -131,6 +131,75 @@ describe('tcCreateMedusaControl — renders from a status payload', () => {
     assert.match(w.el.medusaHeads.getAttribute('aria-label'), /error — ECONNREFUSED.*Click to disable/);
   });
 
+  it('a connecting state is no longer silent when a preflight verdict came with it (#1130)', () => {
+    // `connecting` was the state that said NOTHING — "Connecting to the message
+    // bridge…" and no more, which is exactly the reported "green toggle plus an
+    // endless generic reconnect loop". The preflight's verdict now lands there.
+    const ids = G.tcMedusaIds('');
+    const w = world(ids);
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    c.applyStatus({
+      state: 'connecting', unread: 0,
+      bridge: { healthy: false, code: 'BRIDGE_ABSENT', detail: 'Nothing answered at http://localhost:3009', hint: 'Install the Bridge' }
+    });
+    const label = w.el.medusaHeads.getAttribute('aria-label');
+    assert.match(label, /Nothing answered/);
+    assert.match(label, /Install the Bridge/);
+  });
+
+  it('an error with a classified code explains what the code MEANS, not just the raw sentence', () => {
+    const ids = G.tcMedusaIds('');
+    const w = world(ids);
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    c.applyStatus({
+      state: 'error', unread: 0,
+      lastError: 'Bridge did not complete the register handshake within 10000ms',
+      lastErrorCode: 'HANDSHAKE_TIMEOUT'
+    });
+    const label = w.el.medusaHeads.getAttribute('aria-label');
+    assert.match(label, /never completed registration/);
+  });
+
+  it('prefers the preflight verdict over the listener code — it probed both transports', () => {
+    // The listener only ever tried the WebSocket, so it cannot establish anything
+    // about the Bridge AS A WHOLE. The preflight can, so it wins.
+    const ids = G.tcMedusaIds('');
+    const w = world(ids);
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    c.applyStatus({
+      state: 'error', unread: 0, lastError: 'Socket error: refused', lastErrorCode: 'CONNECT_FAILED',
+      bridge: { healthy: false, code: 'BRIDGE_ABSENT', detail: 'Nothing answered anywhere', hint: 'Install it' }
+    });
+    const label = w.el.medusaHeads.getAttribute('aria-label');
+    assert.match(label, /Nothing answered anywhere/);
+    assert.doesNotMatch(label, /probably not running/, 'the listener-code prose must not also appear');
+  });
+
+  it('a preflight verdict is dropped once the listener proves the Bridge is there', () => {
+    // The verdict is evidence with a shelf life, and diagnosis() prefers it over
+    // the live code — so without this a disproven "install the Bridge" would
+    // resurface hours later, on a session that is demonstrably connected.
+    const ids = G.tcMedusaIds('');
+    const w = world(ids);
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    c.applyStatus({
+      state: 'connecting', unread: 0,
+      bridge: { healthy: false, code: 'BRIDGE_ABSENT', detail: 'Nothing answered', hint: 'Install the Bridge' }
+    });
+    assert.match(w.el.medusaHeads.getAttribute('aria-label'), /Install the Bridge/);
+    c.applyStatus({ state: 'listening', unread: 0 });
+    assert.equal(c.state.bridge, null, 'a connected listener disproves an absent-Bridge verdict');
+    assert.doesNotMatch(w.el.medusaHeads.getAttribute('aria-label'), /Install the Bridge/);
+  });
+
+  it('a healthy preflight adds nothing — no noise on the happy path', () => {
+    const ids = G.tcMedusaIds('');
+    const w = world(ids);
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    c.applyStatus({ state: 'listening', unread: 0, bridge: { healthy: true, detail: 'all good' } });
+    assert.doesNotMatch(w.el.medusaHeads.getAttribute('aria-label'), /all good/);
+  });
+
   it('drives the caller\'s own state object, so loop code reading it sees every update', () => {
     const ids = G.tcMedusaIds('');
     const w = world(ids);

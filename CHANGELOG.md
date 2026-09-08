@@ -5,6 +5,101 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **A missing Medusa Bridge names itself instead of looking like a TangleClaw listener defect
+  (#1130).** Field-reported: a host with **no Bridge at all** — nothing on 3009 or 3010, no Medusa
+  process, no checkout — still got a green enable toggle, a minted workspace id, three started
+  listeners and an endless 30s reconnect loop reporting `Connection closed (code 1006)`. In the
+  reporter's words, *"a green enabled toggle plus an endless generic reconnect loop makes an
+  external prerequisite look like a TangleClaw listener defect."*
+
+  **The diagnostic mapping this project published was wrong, and that is now fixed in the code
+  rather than the thread.** The 2026-08-21 note predicted `error` / `Socket error: … non-101` for
+  "nothing listening"; the reporter's install, with nothing listening, produced the *other* row.
+  This session reproduced the first row on another host — so two installs in the same bridge
+  condition give two different strings, and `lastError` alone cannot distinguish "no bridge" from
+  "bad bridge". Every listener failure now carries a **`lastErrorCode`** beside the prose
+  (`CONNECT_FAILED`, `CLOSED_UNEXPECTEDLY`, `HANDSHAKE_TIMEOUT`, `SOCKET_OPEN_FAILED`,
+  `BRIDGE_ERROR`, `BAD_FRAME`), set through a single owner so the two halves cannot drift at the
+  seven sites that can fail. The codes describe **what this end observed**, never what the Bridge's
+  state is — naming a remote cause from a local symptom is the misdiagnosis they exist to stop.
+
+  **A preflight probes both transports and classifies what is there.** `checkBridgeHealth()` checks
+  the Bridge's HTTP `/health` *and* the WebSocket port, because they fail independently and mean
+  different things: send and roster use HTTP while every listener uses the WebSocket, so reporting
+  "healthy" off one is the same unverified assertion this issue is about. Each verdict below carries an
+  operator-facing hint and each is reachable: `BRIDGE_OK`, `BRIDGE_ABSENT`, `BRIDGE_WS_ABSENT`,
+  `BRIDGE_HTTP_ABSENT`, `BRIDGE_UNHEALTHY`, plus the deadline case described further down. Answered-badly is deliberately not folded into absent —
+  absent means install or start something, unhealthy means read the logs of a service already
+  running. It never throws: a preflight that can fail is an outage of the thing it guards.
+
+  **The enable toggle proceeds and says why; it does not refuse** (operator decision, 2026-09-08,
+  against refuse-when-absent and refuse-unless-healthy). #1131 already removed the lie — a listener
+  now reaches `error` with a named reason inside 10s instead of sitting green in `connecting` — so
+  the preflight's job is immediacy and guidance, not a veto. Its verdict rides back on the toggle's
+  own response, so the control can say *"nothing answered at either port, here is how to install
+  it"* at the moment of the click. Refusing would also discard the recovery #1131 proved: a
+  retrying listener registers by itself when the Bridge appears, and a refused toggle starts
+  nothing to retry. The verdict is **omitted, not null**, on the way OFF — a null would read as
+  "we looked and found nothing" for a path that never looked.
+
+  **`connecting` was the state that said nothing, and it is where the reported experience lived.**
+  Both Medusa surfaces rendered `lastError` only in `error`; in `connecting` they read "Connecting
+  to the message bridge…" and no more. They now carry the preflight's verdict when one was taken,
+  and otherwise what the listener's classified code *means* for the operator — the preflight wins
+  when both exist, because it probed both transports and a listener that only ever tried the
+  WebSocket cannot establish anything about the Bridge as a whole.
+
+  **The standing condition is a new member of the existing health panel, not a new mechanism.**
+  `lib/system-health.js` already exists for recurring machine-wide conditions (#345), and its
+  three-state vocabulary is why it fits rather than merely being convenient: a probe that could not
+  run reports **`unknown`**, never `clear`. It fires only when something actually depends on the
+  Bridge — at least one listener running — because a condition that fires on every install is one
+  operators learn to ignore. That count comes from the listener map, **not the sessions table**:
+  the Project Master has no sessions row (ADR 0008) and was the first listener the reporting
+  install saw fail, so a sessions walk would skip exactly it.
+
+  **The HTTP status code is not the verdict.** Medusa answers **200 on both paths** — `hissing`
+  when well and, from its own `catch`, `{status:'degraded', error}` also with 200 (read in its
+  source, 2026-09-08). A preflight keying on `res.ok` therefore reported a degraded Bridge as
+  healthy and made `BRIDGE_UNHEALTHY` unreachable against a real Bridge, firing only for a
+  non-Bridge service on the port — where its "check the Bridge's logs" hint pointed at a Bridge
+  that was not running. The probe reads the producer's own `status` field, and the test fixtures
+  were rebuilt from the real response shapes: the earlier ones synthesized a 503 the Bridge never
+  sends, so they were green against the fixture rather than against the wire.
+
+  **A read we stopped is not a Bridge that is not there.** The 2s probe deadlines yield
+  `BRIDGE_UNKNOWN` rather than `BRIDGE_ABSENT` — telling an operator whose host is merely slow to
+  install software that is already installed is the same misdiagnosis this issue is about, and the
+  unfinished check is careful not to prescribe an install. The health panel carries that
+  distinction through: a timed-out probe renders `unknown`, never `fired`, because reporting a
+  definite negative about a check that did not finish is the same false certainty one layer up.
+
+  **The classification reaches the log, not only the API.** #1130 was misdiagnosed *from a log
+  line*, so a code nobody can `grep` for leaves the next diagnosis where that one started. Both the
+  preflight verdict and every listener failure log their code — on the transition only, so a
+  listener failing the same way for an hour is one line rather than hundreds (the log-flood shape
+  #956 and #1335 each narrowed once already).
+
+  **The probe is cached and single-flighted.** Two sequential 2s probes on every health poll and
+  every toggle is the cost pattern `system-health.js`'s own header warns about; concurrent callers
+  now share one in-flight probe, a verdict stays fresh for 5s, and moving the Bridge drops it. The
+  toggle also starts the listener *before* probing, so it spends that wall time connecting.
+
+  **A verdict is evidence with a shelf life.** Once a listener reaches `listening` the Bridge is
+  demonstrably there, so a "no Bridge, install it" verdict from minutes earlier is cleared rather
+  than left to resurface — the surfaces prefer the verdict over the live code, so a stale one would
+  have outlived its own disproof.
+
+  Left open and filed rather than built: a Bridge that registers and *then* goes silent still
+  leaves a listener claiming `listening` — `heartbeat_ack` is tolerated, never required (**#1364**).
+  It needs a decision this car did not take (how many missed windows are a failure).
+
+  **Descoped and said so rather than quietly narrowed:** the preflight ships on the operator's
+  toggle only. The project-setting and master-enable paths are synchronous helpers —
+  `syncMasterMedusa` alone has six callers including boot and two teardown paths — and converting
+  them would deliver a verdict no surface currently renders. Those paths are covered by the
+  standing condition instead; widening the preflight to them belongs with the surface work that
+  would show it.
 - **A Medusa listener no longer waits forever on a Bridge that accepts the connection and never
   answers (#1131).** The reconnect loop exists to survive a Bridge outage, and in the scenario that
   most needs it — the Bridge coming back — a field install never recovered without restarting

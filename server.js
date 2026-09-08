@@ -3514,8 +3514,8 @@ route('GET', '/api/system', (_req, res) => {
 });
 
 // GET /api/system/health — the machine-wide conditions the dashboard's system
-// health panel renders (#345): ttyd PTY leak, stale server, missing Full Disk
-// Access. Each condition is `fired` / `clear` / `unknown`; see lib/system-health.
+// health panel renders (#345) — every condition the detector list assembles.
+// Each is `fired` / `clear` / `unknown`; see lib/system-health for the roster.
 // Async because the Full Disk Access probe reads a directory in the scanner
 // child under a deadline — the one read that must never happen on this loop (#859).
 route('GET', '/api/system/health', async (_req, res) => {
@@ -4530,19 +4530,45 @@ function registerMedusaRoutes(prefix, resolve) {
   // Chunk 02). Body `{enabled}` sets the desired state explicitly (idempotent —
   // safe against double-clicks); omitted → flips the current state. Returns the
   // resulting status.
-  route('POST', `${prefix}/toggle`, (_req, res, params, body) => {
+  route('POST', `${prefix}/toggle`, async (_req, res, params, body) => {
     const r = resolve(params);
     if (refused(res, r, 'toggle Medusa for')) return;
     const { target } = r;
     const isOn = medusa.getStatus(target.sessionId).state !== 'off';
     const desired = (body && typeof body.enabled === 'boolean') ? body.enabled : !isOn;
+    // Preflight on the way ON, and it does NOT gate the toggle (#1130, operator
+    // decision 2026-09-08). The listener still starts and still retries, because a
+    // retrying listener registers by itself once the Bridge appears and a refused
+    // toggle starts nothing to retry. What the probe buys is the diagnosis: the
+    // verdict rides back on this response, so the control can say "no Bridge here,
+    // and here is how to fix it" at the moment of the click rather than leaving
+    // the operator to read a generic reconnect loop.
+    let bridge;
     if (desired) {
+      // Start FIRST, then probe: the listener spends the preflight's wall time
+      // connecting instead of waiting for it, and the verdict is a diagnosis
+      // rather than a gate (operator decision, 2026-09-08).
       medusa.startSession({ projectPath: target.projectPath, sessionId: target.sessionId, name: target.name });
+      try {
+        bridge = await medusa.checkBridgeHealth();
+      } catch (err) {
+        // prawduct:allow prawduct/broad-except -- checkBridgeHealth is documented and
+        // tested as never throwing, but the dispatcher turns any rejection into a
+        // 500, which would refuse a toggle whose listener has already started —
+        // arriving at refuse-when-absent by accident, the posture the 2026-09-08
+        // decision explicitly rejected. The diagnosis is optional; the toggle is not.
+        log.warn('Medusa Bridge preflight failed; toggling on without a verdict', {
+          session: target.sessionId, error: err.message
+        });
+      }
     } else {
       medusa.stopSession(target.sessionId);
     }
     if (typeof r.afterToggle === 'function') r.afterToggle(desired);
-    jsonResponse(res, 200, medusa.getStatus(target.sessionId));
+    // `bridge` is present only when one was taken. A `null` on the way OFF would
+    // read as "we looked and found nothing" for a path that never looked.
+    const status = medusa.getStatus(target.sessionId);
+    jsonResponse(res, 200, bridge ? { ...status, bridge } : status);
   });
 
   // GET <prefix>/messages — the received inbox (MED-2K9P Chunk 02). A pure

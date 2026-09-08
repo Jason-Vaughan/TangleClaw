@@ -371,7 +371,7 @@ describe('lib/system-health (#345)', () => {
   });
 
   describe('getHealth', () => {
-    it('returns all three conditions with a timestamp, one broken probe never hiding the others', async () => {
+    it('returns every condition with a timestamp, one broken probe never hiding the others', async () => {
       systemHealth._setProbes({
         ...DARWIN,
         measureLeak: async () => { throw new Error('ps gone'); },
@@ -385,7 +385,10 @@ describe('lib/system-health (#345)', () => {
       assert.deepEqual(health.conditions.map((c) => [c.id, c.state]), [
         ['ttyd-leak', 'unknown'],
         ['stale-server', 'fired'],
-        ['full-disk-access', 'clear']
+        ['full-disk-access', 'clear'],
+        // No listener is running in this process, so the Bridge is not required
+        // and the condition is measured-and-absent rather than unknown.
+        ['medusa-bridge', 'clear']
       ]);
       for (const c of health.conditions) {
         assert.equal(typeof c.title, 'string');
@@ -394,6 +397,85 @@ describe('lib/system-health (#345)', () => {
       }
     });
   });
+
+describe('the Medusa Bridge condition (#1130)', () => {
+  // Fires only when something DEPENDS on the Bridge. A condition that fires on
+  // every install is one operators learn to ignore, and a host that never enabled
+  // Medusa does not have a problem.
+
+  it('is clear when no listener is running, without probing at all', async () => {
+    let probed = false;
+    const c = await systemHealth.detectMedusaBridge({
+      medusaListenerCount: () => 0,
+      medusaBridgeHealth: async () => { probed = true; return { healthy: true }; }
+    });
+    assert.equal(c.state, systemHealth.STATE_CLEAR);
+    assert.equal(probed, false, 'a host with no listeners must not pay for a probe');
+  });
+
+  it('fires when listeners are running against an unusable Bridge, naming the code and the remedy', async () => {
+    const c = await systemHealth.detectMedusaBridge({
+      medusaListenerCount: () => 2,
+      medusaBridgeHealth: async () => ({
+        healthy: false, code: 'BRIDGE_ABSENT', detail: 'nothing answered anywhere',
+        hint: 'install it', httpUrl: 'http://localhost:3009'
+      })
+    });
+    assert.equal(c.state, systemHealth.STATE_FIRED);
+    assert.match(c.detail, /2 listener/);
+    assert.match(c.detail, /BRIDGE_ABSENT/);
+    assert.equal(c.hint, 'install it');
+    assert.match(c.remediation, /curl .*\/health/);
+  });
+
+  it('a probe that TIMED OUT is unknown, not fired — the panel must not assert a negative', async () => {
+    // One layer up from the ABSENT/UNKNOWN split inside the probe: reporting
+    // `fired` for a check that merely did not finish is the same false certainty,
+    // wearing the panel's vocabulary instead of the probe's.
+    const c = await systemHealth.detectMedusaBridge({
+      medusaListenerCount: () => 2,
+      medusaBridgeHealth: async () => ({
+        healthy: false, code: 'BRIDGE_UNKNOWN',
+        detail: 'the Bridge could not be checked within 2000ms',
+        hint: 'This is a check that did not finish, not a Bridge that is missing.',
+        httpUrl: 'http://localhost:3009'
+      })
+    });
+    assert.equal(c.state, systemHealth.STATE_UNKNOWN);
+    assert.notEqual(c.state, systemHealth.STATE_FIRED);
+    assert.doesNotMatch(c.detail, /not usable/, 'an unfinished check states no verdict about the Bridge');
+  });
+
+  it('reports UNKNOWN, never clear, when the probe itself could not be made', async () => {
+    // The three-state vocabulary is why this module was the right home: a probe
+    // that could not run has not said the Bridge is fine.
+    const c = await systemHealth.detectMedusaBridge({
+      medusaListenerCount: () => 1,
+      medusaBridgeHealth: async () => { throw new Error('probe exploded'); }
+    });
+    assert.equal(c.state, systemHealth.STATE_UNKNOWN);
+    assert.notEqual(c.state, systemHealth.STATE_CLEAR);
+    assert.match(c.detail, /probe exploded/);
+  });
+
+  it('reports UNKNOWN when even the listener count cannot be read', async () => {
+    const c = await systemHealth.detectMedusaBridge({
+      medusaListenerCount: () => { throw new Error('module gone'); }
+    });
+    assert.equal(c.state, systemHealth.STATE_UNKNOWN);
+  });
+
+  it('counts through the listener map, so the Project Master is covered', () => {
+    // ADR 0008: the master has no sessions row and was the first listener the
+    // install in #1130 saw fail. A sessions-table walk would skip exactly it.
+    const source = fs.readFileSync(path.join(__dirname, '..', 'lib', 'system-health.js'), 'utf8');
+    const fn = source.slice(source.indexOf('async function detectMedusaBridge'));
+    const body = fn.slice(0, fn.indexOf('\n}\n'));
+    assert.ok(!/store\.sessions|sessions\.getActive/.test(body),
+      'the condition must not iterate the sessions table — that is what skips the master');
+    assert.match(body, /medusaListenerCount/);
+  });
+});
 
   describe('GET /api/system/health', () => {
     const { createServer } = require('../server');
@@ -442,7 +524,7 @@ describe('lib/system-health (#345)', () => {
       await systemHealth._settleTtyd();
       const { status, data } = await get('/api/system/health');
       assert.equal(status, 200);
-      assert.deepEqual(data.conditions.map((c) => c.state), ['fired', 'clear', 'unknown']);
+      assert.deepEqual(data.conditions.map((c) => c.state), ['fired', 'clear', 'unknown', 'clear']);
       assert.equal(data.conditions[0].remediation, systemHealth.TTYD_REMEDIATION);
       assert.equal(data.conditions[2].hint, systemHealth.FDA_HINT);
     });
