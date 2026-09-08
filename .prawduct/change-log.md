@@ -90,7 +90,8 @@ to read — still named the **active** train-15 plan by the old absolute path, s
 first plan read would have been an ENOENT; `.prawduct/.session-handoff.md` named the same plan the
 same way, and `.prawduct/operator-verification.md` told the operator to `cd` into the old directory
 before arming the #798 guard. All three are repointed on disk, which is why they are not in this
-commit. `wrap-log.md` and `learnings.md` keep their occurrences: both are append-only narrative
+commit. `.tangleclaw/memories/wrap-log.md` and `.tangleclaw/memories/learnings.md` keep theirs: both are
+append-only narrative
 about what was true at the time. Also checked rather than assumed, because the rename could have
 taken the running install down with it: `~/Library/LaunchAgents/com.tangleclaw.server.plist` already
 carries the new `WorkingDirectory`, so launchd was never pointing at the moved directory.
