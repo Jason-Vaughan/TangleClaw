@@ -34,6 +34,47 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-08 — #1271 / #1048 / #1067: three clean-room reconstructions
+
+<!-- prawduct: type=fix | scope=cleanroom-1354-1359-1357 -->
+
+Post-plan work; own scope. Clean-room reconstructions under ADR 0014 of external PRs #1354, #1359
+and #1357 by @madhavanms2803-ui, each derived from its issue rather than the patch. Bundled on one
+branch at the operator's discretion (asked; they had no preference); `Fixes #N` closes all three at
+merge, so sharing gates costs nothing.
+
+**#1271 — hint text clipped instead of wrapping.** The three geometry facts were verified in
+`style.css` rather than taken from the issue: the toggles grid is `minmax(290px, 1fr)` with a 22px
+gap, and the settings modal is `max-width: 680px` with `overflow: hidden`. `overflow-wrap: anywhere`
+rather than `break-word` is the substance and not a preference — only `anywhere` reduces the
+MIN-CONTENT width, so the track can narrow to fit; `break-word` leaves the track resolving against
+the unbroken token and the tight two-column state would still overflow.
+
+The micro filter's finding on the submitted patch was its TEST, and that is why the reconstruction
+has a different one. Theirs was unanchored, and `.form-hint` also appears earlier as a descendant
+selector, so it matched the property anywhere later in the file. Demonstrated rather than asserted:
+with the declaration moved to `.form-error`, their regex still returns true while this one fails.
+
+**#1048 — CONFIRM_REQUIRED for a version that does not exist.** The gate counted a missing target as
+a weakening. The existence check is deliberately NOT hoisted, which is what the issue suggests:
+`store.sessionRules.restore` already throws NOT_FOUND and the route's catch maps it to 404, so a
+pre-check would put one rule in two places — and this gate must stay symmetric across every path
+that can alter a rule. Pinned in both directions, because a NOT_FOUND fix over-corrects into opening
+the gate: disabling `weakens` entirely fails the second test.
+
+**#1067 — the last non-strict suites.** All three converted green unchanged, which is itself the
+result: under strict, nothing was relying on `==` coercion. The issue's "only 1 of 201" was stale —
+two more had been written non-strict after the norm was ratified — so the norm's missing enforcement
+is filed as **#1377** and not bundled, per ADR 0014.
+
+**Verification.** Mutations confirmed red per fix: #1271 property removed, moved to `.form-error`,
+and `break-word` in-block; #1048 the old predicate and the gate disabled, failing one test in each
+direction. One mutation initially read green and was wrong — it had hit `.settings-warnings-text`
+rather than `.form-hint`. A surviving mutation is a claim about the mutation as much as the test.
+
+**Classification:** fix
+
+
 ## 2026-09-07 — #1335: the update checker's remaining durable states log on change, not on measurement
 
 <!-- prawduct: type=fix | scope=uc-1335 -->
