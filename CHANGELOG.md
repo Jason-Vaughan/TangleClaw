@@ -22,12 +22,33 @@ All notable changes to TangleClaw are documented in this file.
 
   **The loopback trust model constrains the override rather than being relaxed by it.** The WS path
   is unauthenticated at the workspace layer, so anything that can reach the port can register as
-  any workspace: a resolved host that is not `localhost`, `127.0.0.0/8` or `::1` is refused, the
-  default is used, and the refusal is logged **once per distinct value** rather than once per
-  session start. That refusal also applies to a *derived* URL, so a remote `MEDUSA_BRIDGE_HTTP_URL`
-  cannot smuggle a remote listener in through the derivation — deliberately stricter than the HTTP
-  side, and recorded as an asymmetry rather than an oversight. An unparseable value in either gate
-  falls back with a named log line instead of throwing.
+  any workspace, spoof a `from`, or drain another workspace's queue: a resolved host that is not
+  `localhost`, `127.0.0.0/8` or `::1` is refused and the default used. The check reads a parsed
+  `URL.hostname`, which is what makes `ws://localhost@evil.com:3010` and `ws://localhost.evil.com`
+  fail closed where a substring check would admit both. The refusal also applies to a *derived* URL,
+  so a remote `MEDUSA_BRIDGE_HTTP_URL` cannot smuggle a remote listener in through the derivation.
+
+  **That the HTTP gate is unguarded is a gap, not a reassurance.** `POST /messages/direct` and
+  `GET /workspaces` are equally unauthenticated and `from` comes from the request body, with
+  `A2A_SECRET` gating only the `/a2a/*` mesh TangleClaw never calls — so a remote HTTP base ships
+  spoofable traffic off loopback and leaves a **split install**, send and roster on the remote
+  Bridge while the listener falls back to loopback. The refusal line says exactly that rather than
+  leaving it to be inferred.
+
+  **Every refusal falls back rather than throwing, and each is named once per distinct value.** A
+  typo must not stop the Switchboard from starting, so the resolver refuses through a single owner
+  that logs the reason, the value and the gate — one owner rather than a line per site, because the
+  sites arrive one at a time and a per-site remedy leaves the newest one flooding on every session
+  start. The accepted set is validated by construction against what `new WebSocket` will take: a
+  non-`ws` scheme, a `#fragment` and a port past 65535 all parse as URLs, and all three would
+  otherwise be caught by the listener's factory-throw path and retried on the 30s backoff cap
+  **forever** — the one bad-input shape that never reached the documented default. A base with no
+  explicit port is refused too, since `+ 1` on a scheme default gives port 81 or 444: arithmetic on
+  a number the operator never chose.
+
+  **The listener's connection-outcome logs now name the URL they tried.** While it was a constant
+  their silence cost nothing; now that it is derived, an operator pointing at the wrong port would
+  have seen only generic reconnect churn — the wrong-cause diagnosis #1130 exists to remove.
 
   `docs/configuration-reference.md` documents both variables, the derivation and the loopback rule.
   Tests assert the URL the socket factory was actually asked for rather than the resolver's return

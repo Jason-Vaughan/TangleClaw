@@ -13,6 +13,7 @@ governed_by:
     dispositions:
       - "A dependency's failure degrades TangleClaw, never crashes it — its Retroactivity list names `Bridge → listener backoff` as an implemented isolation point → ENGAGED, and this chunk narrows that claim. The backoff is real but it is not a deadline: Car 3 reproduces a Bridge that accepts the WebSocket upgrade and never answers `register`, and the listener parks in `connecting` indefinitely with no error, no reconnect and no bound. `Bridge → listener backoff` is therefore true only for a Bridge that refuses or drops the connection, and false for one that accepts and stalls. Car 3 makes the named isolation point hold for both, so the Retroactivity line becomes accurate rather than aspirational."
       - "A read that could not be established reports null and names itself, never a plausible default → ENGAGED, and it is the whole of Car 2's second half. `lastError` is a free-text string assembled at four sites, so every consumer that wants to know WHY a listener is not listening must pattern-match English. #1130 records the cost directly: a published `lastError` → bridge-condition mapping drove a port-ownership hypothesis that was entirely wrong. Car 2 adds a classified code beside the prose in the same `SCAN_TIMEOUT`/`SCAN_CACHED` vocabulary the projects scan already speaks, so the two reads describe their failures the same way."
+      - "A read that could not be established reports null and names itself, never a plausible default → ENGAGED BY CAR 1 TOO, and disposed as a deliberate departure. Every refusal in `resolveBridgeWsUrl` returns `ws://localhost:3010`, which is exactly a plausible default: an operator whose override was rejected gets a listener reporting `listening` against an address they did not choose, indistinguishable through `getStatus()` from an unconfigured install. The alternative — refusing to start — is worse, because it turns a typo in an optional variable into a Switchboard that will not run. The departure is paid for two other ways: every refusal names its reason, its value and the gate that carried it in the log (the split-install case says the word SPLIT), and `docs/configuration-reference.md` states the fallback as the contract so it is documented rather than discovered. What remains unpaid is that no SURFACE reads it — recorded here so Car 3, which builds the classified-status surface, meets it as known work rather than rediscovering it."
       - "Bounded exception (#1180, chime idle detection) → inapplicable; no car touches idle detection."
   - artifact: observability-strategy
     dispositions:
@@ -37,7 +38,11 @@ last_validated: 2026-09-08
 
 ## Requirements Confidence
 
-**Level:** High for Cars 1 and 3, Medium for Car 2.
+**Level:** High for Car 1 (#1100) and Car 2 (#1131); **Medium for Car 3 (#1130)**.
+
+(Stated per car AND per issue rather than per position: the cars are ordered #1100 / #1131 / #1130,
+so a level attached to a position silently re-points the moment an order changes — which is how the
+first draft of this line called #1130 High in the header and Medium in the body.)
 
 **Why:** All three cars are filed issues with a stated mechanism, and each mechanism was
 re-verified against this repo's code before this plan was written rather than taken from the
@@ -142,8 +147,12 @@ Precedence, most specific first:
 records the WS path as unauthenticated at the workspace layer, so the URL must stay bound to
 loopback. A resolved host that is not loopback (`localhost`, `127.0.0.0/8`, `::1`) is **refused
 with a named log line and the default is used** — the override moves a port, never a host. This
-does not weaken the HTTP side or add validation to it; the asymmetry is deliberate and recorded,
-because the WS side is the unauthenticated one.
+does not weaken the HTTP side or add validation to it. **The asymmetry is a gap that is recorded,
+not a safety property**: `api-notes-medusa.md`'s Auth finding says TC's HTTP endpoints
+(`POST /messages/direct`, `GET /workspaces`) are equally unauthenticated and `from` is spoofable
+from the body, with `A2A_SECRET` gating only the `/a2a/*` mesh TC never calls. So the HTTP side is
+not the safer one — it is the unguarded one, and a remote HTTP base leaves a split install whose
+refusal line must say so.
 
 **Done when**
 - `MEDUSA_BRIDGE_WS_URL` set → listener constructed by `startSession` resolves to it.
