@@ -34,6 +34,38 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-08 — #1338: create and update hold one `tags` rule between them
+
+<!-- prawduct: type=fix | scope=tags-1338 -->
+
+Post-plan work; own scope, not a borrowed one. Clean-room reconstruction under ADR 0014 of external
+PR #1353 by @madhavanms2803-ui, derived from the issue rather than the patch.
+
+**The defect is the asymmetry.** `createProject` wrote `tags` unvalidated while `updateProject`
+refused the same value through `PROJECT_UPDATE_VALIDATORS`, so `POST` could establish a state that
+`PATCH` could not repair.
+
+**Mechanism verified, not repeated from the issue body.** `lib/store.js:2369` stringifies on write,
+`:6725` `_jsonParse`s on read, and `:2290` filters tags with `.includes` — substring matching once
+the value is a string rather than an array. That reader is the concrete harm and the issue does not
+name it; deriving from the requirement rather than transcribing the patch is what surfaced it.
+
+**Shape:** one `validateTagsShape` predicate called by both paths. A duplicated create-side check
+would have re-created the drift that produced the issue. The create-side call runs before the first
+`mkdirSync`, matching the create-time checks around it, so a refusal leaves nothing on disk.
+
+**Not done, deliberately:** the per-element rules stay open under #1287, and #1338's direction 1
+(run the validator table from `createProject`, which needs a context split) is outside the reviewed
+scope — ADR 0014's rule is that anything found beyond the reviewed change is filed, not bundled.
+
+**Verification.** Three mutations confirmed red against the new assertions: guard removed, element
+check dropped to `Array.isArray` alone, and guard fired on absence rather than key-presence — the
+last failing broadly, which is what shows the `!== undefined` key is load-bearing for every ordinary
+create. Suite green after.
+
+**Classification:** fix
+
+
 ## 2026-09-07 — #1335: the update checker's remaining durable states log on change, not on measurement
 
 <!-- prawduct: type=fix | scope=uc-1335 -->

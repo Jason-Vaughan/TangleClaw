@@ -225,6 +225,36 @@ All notable changes to TangleClaw are documented in this file.
   they have one: "this install cannot tell what it is running" is a real state on an unattended
   path and no input to the module produces it, so it is only observable by forcing it.
 
+- **`POST /api/projects` accepted a `tags` value that `PATCH` refused, and the project it created
+  could not be repaired by an edit (#1338).** `createProject` wrote `tags` with no verdict at all —
+  into `project.json` and on to `store.projects.create` — while `PROJECT_UPDATE_VALIDATORS` runs
+  only from `updateProject`. So `createProject({ tags: 'not-an-array' })` stored the string in both
+  places, and a later `PATCH` carrying that same shape was refused: the only route that could reach
+  the bad state was the one route that could not undo it.
+
+  **What the round trip costs, verified rather than restated.** `lib/store.js:2369` writes
+  `JSON.stringify(data.tags || [])` and `:6725` reads it back with `_jsonParse(row.tags, [])`, so a
+  string persists cleanly and returns a string where every reader expects `string[]`. The reader
+  that shows the consequence is `:2290` — tag filtering is `p.tags.includes(options.tag)`, which on
+  a string is **substring** matching rather than array membership, so a project tagged `production`
+  would answer a filter for `prod`.
+
+  **One predicate, two call sites — not a second copy of the rule.** Create and update now both call
+  `validateTagsShape`, because a create-side copy of the update-side check is precisely what lets the
+  two drift, which is the failure that produced this issue. The create-side call sits with the other
+  create-time shape checks and **before the first `mkdirSync`**, so a refusal leaves nothing on disk
+  — the property those checks already hold. A test asserts both paths refuse and accept the same
+  shapes, so either side growing a rule the other lacks fails.
+
+  The **per-element** rules — tag length, character set, a count cap, whether an empty string is a
+  tag — remain deliberately open under #1287 and are not invented here. #1338 also records a second
+  direction (running the validator table itself from `createProject`, which needs a context split);
+  that is the one that stops this recurring, and it is not attempted at this scope.
+
+  Reconstructed under ADR 0014 from #1338 rather than from the submitted patch. Reported and
+  independently fixed by **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in PR #1353,
+  whose analysis reached the same shape; their bytes were not merged, per `CONTRIBUTING.md`.
+
 ## [5.22.0] - 2026-09-07
 
 ### Added
