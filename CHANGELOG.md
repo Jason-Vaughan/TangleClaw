@@ -247,10 +247,12 @@ All notable changes to TangleClaw are documented in this file.
   unchanged. It does not prove the modal stopped clipping — this repo ships no headless browser by
   choice. The rule also lands on bare `.form-hint`, which is used well beyond the settings grid, and
   the min-content shrink that fixes the clipping is the same property that can narrow other
-  content-sized tracks. `VRF-1271-hint-wrapping` in `.prawduct/operator-verification.md` carries the
-  rendered check across all three grid states #1271 names, plus the two other `.form-hint`
-  consumers, and records the narrower retreat (scoping to `.settings-toggles-grid .form-hint`) if it
-  looks wrong.
+  content-sized tracks. `VRF-1271-hint-wrapping` carries the rendered check across all three
+  grid states #1271 names, plus the two other `.form-hint` consumers, and records the narrower
+  retreat (scoping to `.settings-toggles-grid .form-hint`) if it looks wrong. That checklist lives in
+  `.prawduct/operator-verification.md`, which is **gitignored** — it is local to the install and is
+  not in this repository, so a reader who cannot find the file is not looking at a check that was
+  skipped.
 
   Reconstructed under ADR 0014 from #1271 rather than from the submitted patch. Reported and
   independently fixed by **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in PR #1354;
