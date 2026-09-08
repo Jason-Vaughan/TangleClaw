@@ -716,7 +716,7 @@ describe('projects', () => {
       assert.deepEqual(result.errors, ['tags must be an array of strings']);
     });
 
-    it('create and update refuse and accept the SAME shapes (#1338)', async () => {
+    it('create and update refuse the SAME shapes (#1338)', async () => {
       // The regression this issue is really about is the two paths drifting.
       // Asserting them against a shared table fails if either side grows a rule
       // the other lacks — which a duplicated create-side check would allow and
@@ -728,6 +728,24 @@ describe('projects', () => {
         const updated = await projects.updateProject('new-project', { tags });
         assert.equal(updated.project, null, `update must refuse ${JSON.stringify(tags)}`);
         assert.deepEqual(created.errors, updated.errors, 'both paths give the same message');
+      }
+    });
+
+    it('create and update ACCEPT the same shapes (#1338)', async () => {
+      // The other half, and the one a refusal table cannot cover: a shared
+      // predicate drifts just as badly by growing an over-refusal on one side.
+      // Without this, a create path that started rejecting `[]` — the value the
+      // settings field sends when cleared — would pass a suite whose symmetry
+      // test only ever fed it bad input.
+      const accepted = [[], ['one'], ['a', 'b']];
+      for (const [i, tags] of accepted.entries()) {
+        const created = projects.createProject({ name: `sym-accept-${i}`, tags });
+        assert.ok(created.project, `create must accept ${JSON.stringify(tags)}`);
+        assert.deepEqual(created.project.tags, tags);
+
+        const updated = await projects.updateProject('new-project', { tags });
+        assert.ok(updated.project, `update must accept ${JSON.stringify(tags)}`);
+        assert.deepEqual(updated.project.tags, tags);
       }
     });
 

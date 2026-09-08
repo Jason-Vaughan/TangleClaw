@@ -243,8 +243,10 @@ All notable changes to TangleClaw are documented in this file.
   `validateTagsShape`, because a create-side copy of the update-side check is precisely what lets the
   two drift, which is the failure that produced this issue. The create-side call sits with the other
   create-time shape checks and **before the first `mkdirSync`**, so a refusal leaves nothing on disk
-  — the property those checks already hold. A test asserts both paths refuse and accept the same
-  shapes, so either side growing a rule the other lacks fails.
+  — the property those checks already hold. Two tests drive a shared table through both paths — one of
+  refused shapes and one of accepted ones — so either side growing a rule the other lacks fails.
+  Both halves are needed: a shared predicate drifts just as badly by growing an over-refusal, and a
+  refusal table alone cannot see that.
 
   **One behaviour change worth knowing:** `POST` with an explicit `"tags": null` now returns 400
   where it previously stored `[]`. That is the symmetry the fix is for — `PATCH` already refused it —
