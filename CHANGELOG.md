@@ -58,6 +58,40 @@ All notable changes to TangleClaw are documented in this file.
   the Project Master has no sessions row (ADR 0008) and was the first listener the reporting
   install saw fail, so a sessions walk would skip exactly it.
 
+  **The HTTP status code is not the verdict.** Medusa answers **200 on both paths** — `hissing`
+  when well and, from its own `catch`, `{status:'degraded', error}` also with 200 (read in its
+  source, 2026-09-08). A preflight keying on `res.ok` therefore reported a degraded Bridge as
+  healthy and made `BRIDGE_UNHEALTHY` unreachable against a real Bridge, firing only for a
+  non-Bridge service on the port — where its "check the Bridge's logs" hint pointed at a Bridge
+  that was not running. The probe reads the producer's own `status` field, and the test fixtures
+  were rebuilt from the real response shapes: the earlier ones synthesized a 503 the Bridge never
+  sends, so they were green against the fixture rather than against the wire.
+
+  **A read we stopped is not a Bridge that is not there.** The 2s probe deadlines now yield
+  `BRIDGE_UNKNOWN` rather than `BRIDGE_ABSENT` — telling an operator whose host is merely slow to
+  install software that is already installed is the same misdiagnosis this issue is about, and the
+  unfinished check is careful not to prescribe an install.
+
+  **The classification reaches the log, not only the API.** #1130 was misdiagnosed *from a log
+  line*, so a code nobody can `grep` for leaves the next diagnosis where that one started. Both the
+  preflight verdict and every listener failure log their code — on the transition only, so a
+  listener failing the same way for an hour is one line rather than hundreds (the log-flood shape
+  #956 and #1335 each narrowed once already).
+
+  **The probe is cached and single-flighted.** Two sequential 2s probes on every health poll and
+  every toggle is the cost pattern `system-health.js`'s own header warns about; concurrent callers
+  now share one in-flight probe, a verdict stays fresh for 5s, and moving the Bridge drops it. The
+  toggle also starts the listener *before* probing, so it spends that wall time connecting.
+
+  **A verdict is evidence with a shelf life.** Once a listener reaches `listening` the Bridge is
+  demonstrably there, so a "no Bridge, install it" verdict from minutes earlier is cleared rather
+  than left to resurface — the surfaces prefer the verdict over the live code, so a stale one would
+  have outlived its own disproof.
+
+  Left open and filed rather than built: a Bridge that registers and *then* goes silent still
+  leaves a listener claiming `listening` — `heartbeat_ack` is tolerated, never required (**#1364**).
+  It needs a decision this car did not take (how many missed windows are a failure).
+
   **Descoped and said so rather than quietly narrowed:** the preflight ships on the operator's
   toggle only. The project-setting and master-enable paths are synchronous helpers —
   `syncMasterMedusa` alone has six callers including boot and two teardown paths — and converting

@@ -215,6 +215,49 @@ describe('every failure carries a machine-readable code (#1130)', () => {
     l.stop();
   });
 
+  it('classifies a socket the factory refuses to build — the one code with no other driver', () => {
+    // Reachable but rare: Car 1's acceptance gate keeps most bad URLs from ever
+    // reaching the factory, so without this the member is declared and undriven,
+    // which is the "coverage that covers nothing" shape the vocabulary guards.
+    const l = new MedusaListener({
+      workspaceId: 'ws-1', backoffBaseMs: 5000,
+      wsFactory: () => { throw new Error('refused to construct'); }
+    });
+    l.start();
+    assert.equal(l.lastErrorCode, LISTENER_ERROR_CODES.SOCKET_OPEN_FAILED);
+    assert.equal(l.state, 'error');
+    l.stop();
+  });
+
+  it('a code recorded while still LISTENING does not claim the listener is down', () => {
+    // BRIDGE_ERROR and BAD_FRAME are recorded with the connection deliberately
+    // kept. A surface reading the code as "not listening" would report a healthy
+    // session as broken over one unreadable frame.
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({ workspaceId: 'ws-1', backoffBaseMs: 5000, wsFactory: factory });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-1' });
+    assert.equal(l.state, 'listening');
+    sockets[0]._message({ type: 'error', message: 'nope' });
+    assert.equal(l.lastErrorCode, LISTENER_ERROR_CODES.BRIDGE_ERROR);
+    assert.equal(l.state, 'listening', 'the connection is deliberately kept');
+    l.stop();
+  });
+
+  it('the frontend help table covers every declared code, and invents none', () => {
+    // A rename in LISTENER_ERROR_CODES without a row in LISTENER_CODE_HELP blanks
+    // the operator's help SILENTLY rather than failing — the same translated-field
+    // shape boundary-patterns.md records for `cause` and `git.incomplete`.
+    const helper = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
+    const table = helper.slice(helper.indexOf('const LISTENER_CODE_HELP'));
+    const body = table.slice(0, table.indexOf('});'));
+    const helpKeys = [...body.matchAll(/^\s{6}(\w+):/gm)].map((m) => m[1]).sort();
+    const declared = Object.keys(LISTENER_ERROR_CODES).sort();
+    assert.deepEqual(helpKeys, declared,
+      'LISTENER_CODE_HELP and LISTENER_ERROR_CODES must name exactly the same set');
+  });
+
   it('every code the listener can set is a declared member', () => {
     // Guards the drift this vocabulary exists to prevent: a seventh failure site
     // added later with a literal string, or a typo, would not be in the frozen set.

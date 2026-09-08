@@ -142,6 +142,7 @@ and the one-line fix (with a Copy button, since copying out of a phone terminal 
 | **Terminal (ttyd) PTY leak** | The macOS PTY pool is nearly full, or ttyd has accumulated leaked `tmux attach` clients — the cause of terminals that stop opening | `launchctl kickstart -k gui/$(id -u)/com.tangleclaw.ttyd` |
 | **Full Disk Access missing** | A read of `~/Documents` never answered — what a protected folder does when the `node` TangleClaw runs has no Full Disk Access | Grant Full Disk Access to that `node`, restart the server; or keep projects outside `~/Documents`, `~/Desktop`, `~/Downloads` |
 | **Server running old code** | The running process is older than the checkout on disk. On this page the stale-server banner already shows this with a Restart button, so the panel leaves it to the banner | Restart TangleClaw |
+| **Medusa Bridge reachable** | One or more sessions have Medusa enabled but the Bridge is not usable — nothing on either port, only one of its two transports answering, or the Bridge itself reporting `degraded`. Silent when no session has Medusa on, since no Bridge is required then | `curl -sS http://localhost:3009/health`, then start or install the Bridge (see `docs/configuration-reference.md` for pointing TangleClaw at a non-default port) |
 
 A row that begins **Could not check** means the measurement itself failed (ttyd not running under
 launchd, `~/Documents` absent, git unreadable) and says why. That is deliberately not hidden: a

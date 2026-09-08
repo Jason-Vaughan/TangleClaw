@@ -406,7 +406,8 @@ describe('the Medusa Bridge condition (#1130)', () => {
   it('is clear when no listener is running, without probing at all', async () => {
     let probed = false;
     const c = await systemHealth.detectMedusaBridge({
-      count: () => 0, check: async () => { probed = true; return { healthy: true }; }
+      medusaListenerCount: () => 0,
+      medusaBridgeHealth: async () => { probed = true; return { healthy: true }; }
     });
     assert.equal(c.state, systemHealth.STATE_CLEAR);
     assert.equal(probed, false, 'a host with no listeners must not pay for a probe');
@@ -414,8 +415,8 @@ describe('the Medusa Bridge condition (#1130)', () => {
 
   it('fires when listeners are running against an unusable Bridge, naming the code and the remedy', async () => {
     const c = await systemHealth.detectMedusaBridge({
-      count: () => 2,
-      check: async () => ({
+      medusaListenerCount: () => 2,
+      medusaBridgeHealth: async () => ({
         healthy: false, code: 'BRIDGE_ABSENT', detail: 'nothing answered anywhere',
         hint: 'install it', httpUrl: 'http://localhost:3009'
       })
@@ -431,7 +432,8 @@ describe('the Medusa Bridge condition (#1130)', () => {
     // The three-state vocabulary is why this module was the right home: a probe
     // that could not run has not said the Bridge is fine.
     const c = await systemHealth.detectMedusaBridge({
-      count: () => 1, check: async () => { throw new Error('probe exploded'); }
+      medusaListenerCount: () => 1,
+      medusaBridgeHealth: async () => { throw new Error('probe exploded'); }
     });
     assert.equal(c.state, systemHealth.STATE_UNKNOWN);
     assert.notEqual(c.state, systemHealth.STATE_CLEAR);
@@ -440,7 +442,7 @@ describe('the Medusa Bridge condition (#1130)', () => {
 
   it('reports UNKNOWN when even the listener count cannot be read', async () => {
     const c = await systemHealth.detectMedusaBridge({
-      count: () => { throw new Error('module gone'); }
+      medusaListenerCount: () => { throw new Error('module gone'); }
     });
     assert.equal(c.state, systemHealth.STATE_UNKNOWN);
   });
@@ -453,7 +455,7 @@ describe('the Medusa Bridge condition (#1130)', () => {
     const body = fn.slice(0, fn.indexOf('\n}\n'));
     assert.ok(!/store\.sessions|sessions\.getActive/.test(body),
       'the condition must not iterate the sessions table — that is what skips the master');
-    assert.match(body, /activeListenerCount/);
+    assert.match(body, /medusaListenerCount/);
   });
 });
 

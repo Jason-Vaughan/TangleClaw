@@ -2693,14 +2693,14 @@
      * to hold across installs. Keyed on the code precisely so it cannot drift with
      * the wording again.
      */
-    const LISTENER_CODE_HELP = {
+    const LISTENER_CODE_HELP = Object.assign(Object.create(null), {
       CONNECT_FAILED: 'Nothing accepted the connection. The Bridge is probably not running, or is on a different port.',
       SOCKET_OPEN_FAILED: 'The configured Bridge URL was rejected before a connection was attempted — check MEDUSA_BRIDGE_WS_URL.',
       CLOSED_UNEXPECTEDLY: 'The connection was accepted and then dropped. Something is on the port; whether it is the Bridge is worth checking.',
       HANDSHAKE_TIMEOUT: 'The Bridge accepted the connection but never completed registration — it may be starting up, or something other than the Bridge owns that port.',
       BRIDGE_ERROR: 'The Bridge answered with an error. Its own logs will say why.',
       BAD_FRAME: 'The Bridge sent something this version could not read — a version mismatch is likely.'
-    };
+    });
 
     /**
      * The extra sentence a failure earns, if any: the preflight's verdict when one
@@ -2884,12 +2884,22 @@
       m.unread = data.unread || 0;
       m.workspaceId = data.workspaceId || null;
       m.lastError = data.lastError || null;
+      // NOT `api.lastErrorCode`, which lives on the api() function object in this
+      // same file and carries the last HTTP call's server error code. This one is
+      // the LISTENER's classification of why it is not listening. Two different
+      // failures, one name, one file — read the receiver, not the property.
       m.lastErrorCode = data.lastErrorCode || null;
       // Present only on a toggle-ON response, where a preflight actually ran.
-      // Taken when present for the same reason `loops` and `enabled` are: a
-      // status poll carries none, and blanking it would erase the diagnosis the
-      // operator was just given.
+      // Taken when present for the same reason `loops` and `enabled` are: a status
+      // poll carries none, and blanking it would erase the diagnosis the operator
+      // was just given.
       if ('bridge' in data) m.bridge = data.bridge || null;
+      // ...but a verdict is evidence with a shelf life. Once the listener is
+      // LISTENING the Bridge is demonstrably there, so a "no Bridge, install it"
+      // verdict from minutes ago is now disproven — and `diagnosis()` prefers the
+      // verdict over the live code, so keeping it would resurface a stale
+      // instruction indefinitely. Cleared on proof of the opposite.
+      if (m.state === 'listening') m.bridge = null;
       if ('loops' in data) m.loops = data.loops || [];
       if ('loopsError' in data) m.loopsError = data.loopsError || null;
       if ('outbound' in data) m.outbound = data.outbound || { allowed: true, reason: null };

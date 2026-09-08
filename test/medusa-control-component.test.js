@@ -175,6 +175,23 @@ describe('tcCreateMedusaControl — renders from a status payload', () => {
     assert.doesNotMatch(label, /probably not running/, 'the listener-code prose must not also appear');
   });
 
+  it('a preflight verdict is dropped once the listener proves the Bridge is there', () => {
+    // The verdict is evidence with a shelf life, and diagnosis() prefers it over
+    // the live code — so without this a disproven "install the Bridge" would
+    // resurface hours later, on a session that is demonstrably connected.
+    const ids = G.tcMedusaIds('');
+    const w = world(ids);
+    const c = G.tcCreateMedusaControl({ doc: w.doc, api: w.api, apiBase: '/api/sessions/p/medusa', ids });
+    c.applyStatus({
+      state: 'connecting', unread: 0,
+      bridge: { healthy: false, code: 'BRIDGE_ABSENT', detail: 'Nothing answered', hint: 'Install the Bridge' }
+    });
+    assert.match(w.el.medusaHeads.getAttribute('aria-label'), /Install the Bridge/);
+    c.applyStatus({ state: 'listening', unread: 0 });
+    assert.equal(c.state.bridge, null, 'a connected listener disproves an absent-Bridge verdict');
+    assert.doesNotMatch(w.el.medusaHeads.getAttribute('aria-label'), /Install the Bridge/);
+  });
+
   it('a healthy preflight adds nothing — no noise on the happy path', () => {
     const ids = G.tcMedusaIds('');
     const w = world(ids);

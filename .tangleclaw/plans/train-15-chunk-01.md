@@ -221,12 +221,20 @@ probe and the reporter's install produced different strings for the same bridge 
    instead of a green toggle, and the condition "`medusaEnabled` is true and no Bridge is healthy"
    is reported rather than left to a log nobody tails.
 
-**Carried in from Car 2's review (not a Car 2 widening).** A Bridge that answers
+**Carried in from Car 2's review, and NOT built here — filed as #1364.** A Bridge that answers
 `register` and *then* goes silent is still unbounded: `heartbeat_ack` is tolerated but never
 required, so a Bridge that stops answering while the socket stays open leaves a listener reporting
-`listening` with nothing behind it. That is the same family as the classification this car builds —
-a surface asserting an unverified external fact — and it belongs here rather than in the handshake
-deadline, which bounds only the interval before `registered`.
+`listening` with nothing behind it. It is the same family as the classification this car builds —
+a surface asserting an unverified external fact — and it is genuinely this car's subject rather
+than #1131's, which bounds only the interval *before* `registered`.
+
+It is filed rather than built because it needs a decision this car did not take: **how many missed
+acknowledgement windows constitute a failure.** One is too twitchy for a loopback service that may
+pause for GC; the heartbeat is 20s, so two or three windows is a minute of silence. Deciding that
+inside a car already carrying five deliverables would have been the invented-requirement failure,
+so it goes to #1364 with the decision named. This paragraph is the record that it reached its
+owning car and left it as an issue rather than evaporating — the prior review accepted its
+deferral on "Car 3 is where it will be met", and this is what meeting it turned out to mean.
 
 **The three open questions, now ANSWERED — decisions, not inferences.**
 

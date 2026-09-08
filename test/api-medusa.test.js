@@ -200,14 +200,32 @@ describe('lib/medusa — service layer', () => {
     }
 
     /**
-     * A fake fetch for the Bridge health endpoint.
-     * @param {number|null} status - HTTP status, or null to throw (no answer).
+     * A fake `/health` built from what the Bridge ACTUALLY sends.
+     *
+     * Medusa answers **HTTP 200 on both paths** — `{status:'hissing'}` when well
+     * and, from its own catch, `{status:'degraded', error}` when not (read in
+     * `src/medusa/medusa-server.js`, 2026-09-08: `res.statusCode = 200` appears in
+     * both branches). An earlier version of this fixture returned 503 for the
+     * unhealthy case, which is a signal the producer never emits — so the code
+     * read `res.ok`, called a degraded Bridge healthy, and these tests passed
+     * against the fixture rather than against the wire.
+     *
+     * @param {'hissing'|'degraded'|'absent'|'timeout'|'unreadable'} kind - What to simulate.
      * @returns {typeof fetch} A fetch stand-in.
      */
-    function fetchImplThat(status) {
+    function fetchImplThat(kind) {
       return async () => {
-        if (status === null) throw Object.assign(new Error('connect'), { cause: { code: 'ECONNREFUSED' } });
-        return { ok: status >= 200 && status < 300, status, json: async () => ({ version: '1.0.0-rc2' }) };
+        if (kind === 'absent') throw Object.assign(new Error('connect'), { cause: { code: 'ECONNREFUSED' } });
+        if (kind === 'timeout') throw Object.assign(new Error('timed out'), { name: 'TimeoutError' });
+        if (kind === 'unreadable') {
+          return { ok: true, status: 200, json: async () => { throw new Error('not json'); } };
+        }
+        return {
+          ok: true, status: 200,
+          json: async () => (kind === 'hissing'
+            ? { status: 'hissing', version: '1.0.0-rc2' }
+            : { status: 'degraded', error: 'store unavailable' })
+        };
       };
     }
 
@@ -219,17 +237,18 @@ describe('lib/medusa — service layer', () => {
     // Both transports are probed because they fail INDEPENDENTLY and mean
     // different things: send/roster use HTTP, every listener uses the WebSocket.
     // Reporting healthy off one is the unverified assertion #1130 was filed about.
-    for (const [label, httpStatus, wsAccepting, code, healthy] of [
-      ['both answer and the Bridge is well', 200, true, 'BRIDGE_OK', true],
-      ['nothing is there at all', null, false, 'BRIDGE_ABSENT', false],
-      ['HTTP is up but the WS port is not', 200, false, 'BRIDGE_WS_ABSENT', false],
-      ['the WS port accepts but HTTP does not answer', null, true, 'BRIDGE_HTTP_ABSENT', false],
-      ['the Bridge answers and reports itself unwell', 503, true, 'BRIDGE_UNHEALTHY', false],
-      ['the Bridge answers unwell with its WS port also down', 503, false, 'BRIDGE_UNHEALTHY', false]
+    for (const [label, kind, ws, code, healthy] of [
+      ['both answer and the Bridge reports itself well', 'hissing', 'yes', 'BRIDGE_OK', true],
+      ['nothing is there at all', 'absent', 'no', 'BRIDGE_ABSENT', false],
+      ['HTTP is well but the WS port is not accepting', 'hissing', 'no', 'BRIDGE_WS_ABSENT', false],
+      ['the WS port accepts but HTTP does not answer', 'absent', 'yes', 'BRIDGE_HTTP_ABSENT', false],
+      ['the Bridge answers 200 and reports itself DEGRADED', 'degraded', 'yes', 'BRIDGE_UNHEALTHY', false],
+      ['the Bridge answers 200 in a shape we cannot read', 'unreadable', 'yes', 'BRIDGE_UNHEALTHY', false],
+      ['a probe deadline expired', 'timeout', 'yes', 'BRIDGE_UNKNOWN', false]
     ]) {
       it(`classifies: ${label}`, async () => {
         const r = await medusa.checkBridgeHealth({
-          fetchImpl: fetchImplThat(httpStatus), connectImpl: connectImplThat(wsAccepting)
+          fetchImpl: fetchImplThat(kind), connectImpl: connectImplThat(ws === 'yes')
         });
         assert.equal(r.code, code);
         assert.equal(r.healthy, healthy);
@@ -238,12 +257,35 @@ describe('lib/medusa — service layer', () => {
       });
     }
 
+    it('a 200 is NOT the verdict — the Bridge reports its own health in the body', async () => {
+      // The producer answers 200 on both paths, so reading res.ok would report a
+      // degraded Bridge as healthy and leave BRIDGE_UNHEALTHY unreachable against
+      // a real Bridge, firing only for a non-Bridge service on the port.
+      const r = await medusa.checkBridgeHealth({
+        fetchImpl: fetchImplThat('degraded'), connectImpl: connectImplThat(true)
+      });
+      assert.equal(r.code, 'BRIDGE_UNHEALTHY');
+      assert.match(r.detail, /degraded/);
+      assert.match(r.detail, /store unavailable/, 'the Bridge\'s own error reaches the operator');
+    });
+
+    it('a stopped read is UNKNOWN, never ABSENT — we imposed that deadline', async () => {
+      // Telling an operator whose host is merely slow to install software that is
+      // already there is the misdiagnosis this whole car is about.
+      const r = await medusa.checkBridgeHealth({
+        fetchImpl: fetchImplThat('timeout'), connectImpl: connectImplThat(true)
+      });
+      assert.equal(r.code, 'BRIDGE_UNKNOWN');
+      assert.notEqual(r.code, 'BRIDGE_ABSENT');
+      assert.doesNotMatch(r.hint, /[Ii]nstall/, 'an unfinished check must not prescribe an install');
+    });
+
     it('answered-badly is never reported as absent — the remedies differ', async () => {
       // ABSENT means install or start something; UNHEALTHY means read the logs of
       // a service that is already running. Collapsing them sends the operator to
       // reinstall a Bridge that is up.
       const unhealthy = await medusa.checkBridgeHealth({
-        fetchImpl: fetchImplThat(500), connectImpl: connectImplThat(false)
+        fetchImpl: fetchImplThat('degraded'), connectImpl: connectImplThat(false)
       });
       assert.equal(unhealthy.code, 'BRIDGE_UNHEALTHY');
       assert.notEqual(unhealthy.code, 'BRIDGE_ABSENT');
@@ -253,9 +295,12 @@ describe('lib/medusa — service layer', () => {
       // A vocabulary member nothing emits reads as coverage while covering
       // nothing; this pins that the frozen set and the reachable set agree.
       const produced = new Set();
-      for (const [httpStatus, wsAccepting] of [[200, true], [null, false], [200, false], [null, true], [503, true]]) {
+      for (const [kind, ws] of [
+        ['hissing', true], ['absent', false], ['hissing', false],
+        ['absent', true], ['degraded', true], ['timeout', true]
+      ]) {
         const r = await medusa.checkBridgeHealth({
-          fetchImpl: fetchImplThat(httpStatus), connectImpl: connectImplThat(wsAccepting)
+          fetchImpl: fetchImplThat(kind), connectImpl: connectImplThat(ws)
         });
         produced.add(r.code);
       }
@@ -265,7 +310,7 @@ describe('lib/medusa — service layer', () => {
     it('reads the WS half from the resolver, so an override moves the probe too', async () => {
       medusa._setBridgeHttpUrl('http://127.0.0.1:4009');
       const r = await medusa.checkBridgeHealth({
-        fetchImpl: fetchImplThat(200), connectImpl: connectImplThat(true)
+        fetchImpl: fetchImplThat('hissing'), connectImpl: connectImplThat(true)
       });
       assert.equal(r.wsUrl, 'ws://127.0.0.1:4010');
       assert.equal(r.httpUrl, 'http://127.0.0.1:4009');
@@ -278,6 +323,44 @@ describe('lib/medusa — service layer', () => {
       });
       assert.equal(r.code, 'BRIDGE_ABSENT');
       assert.equal(r.healthy, false);
+    });
+
+    it('serves a recent verdict and collapses concurrent callers onto one probe', async () => {
+      // Two sequential 2s probes run on every health poll AND every toggle; the
+      // health module's own header is where "ten tabs still cost one" is written.
+      medusa._resetBridgeProbe();
+      let probes = 0;
+      const realFetch = global.fetch;
+      global.fetch = async () => { probes += 1; return { ok: true, status: 200, json: async () => ({ status: 'hissing' }) }; };
+      const realConnect = require('node:net').connect;
+      try {
+        const [a, b] = await Promise.all([medusa.checkBridgeHealth(), medusa.checkBridgeHealth()]);
+        assert.equal(a, b, 'concurrent callers share one in-flight probe');
+        const c = await medusa.checkBridgeHealth();
+        assert.equal(c, a, 'a fresh verdict is reused');
+        assert.equal(probes, 1, `expected one probe for three calls, got ${probes}`);
+      } finally {
+        global.fetch = realFetch;
+        void realConnect;
+        medusa._resetBridgeProbe();
+      }
+    });
+
+    it('moving the Bridge drops the cached verdict about the old one', async () => {
+      medusa._resetBridgeProbe();
+      const realFetch = global.fetch;
+      let probes = 0;
+      global.fetch = async () => { probes += 1; return { ok: true, status: 200, json: async () => ({ status: 'hissing' }) }; };
+      try {
+        await medusa.checkBridgeHealth();
+        medusa._setBridgeHttpUrl('http://127.0.0.1:4009');
+        await medusa.checkBridgeHealth();
+        assert.equal(probes, 2, 'a verdict about the old URL must not answer for the new one');
+      } finally {
+        global.fetch = realFetch;
+        medusa._setBridgeHttpUrl();
+        medusa._resetBridgeProbe();
+      }
     });
 
     it('counts live listeners off the listener map, which is where the master lives too', () => {
