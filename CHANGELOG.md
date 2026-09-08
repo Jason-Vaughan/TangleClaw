@@ -44,6 +44,14 @@ All notable changes to TangleClaw are documented in this file.
   directions. A regression test therefore also pins the absent-then-present recovery that already
   worked, so the reported scenario cannot silently regress even though its filed mechanism was the
   wrong diagnosis.
+
+  **The operator sees the difference, because `connecting` is the state that says nothing.** Both
+  Medusa surfaces render `lastError` only in the `error` state — in `connecting` they read
+  "Connecting to the message bridge…" and nothing else, which is exactly the reporter's "green
+  toggle plus an endless generic reconnect loop". A stalled handshake sat in that state forever. It
+  now lands in `error`, where the control reads "Enabled but can't reach the bridge — Bridge did
+  not complete the register handshake within 10000ms".
+
 - **The Medusa listener resolves its Bridge URL the way the HTTP side does, so an install on
   non-default ports can move both halves (#1100).** `MEDUSA_BRIDGE_HTTP_URL` redirected send,
   roster and loops; the listener hardcoded `ws://localhost:3010` and consulted no environment.

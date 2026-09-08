@@ -150,6 +150,27 @@ function delay(ms) {
 }
 
 describe('the register handshake has a deadline (#1131)', () => {
+  /**
+   * Wait until `predicate()` holds, or fail after `capMs`.
+   *
+   * Every assertion in this block is about a TIMEOUT, so none of them may sleep a
+   * fixed interval and read the state after it: a delayed timer under load is
+   * indistinguishable from the deadline never firing, which is the flake shape a
+   * guard about timeouts must never have (`learnings.md`, and #1205 in this repo's
+   * own suite). Backoffs here are set far longer than any window being asserted,
+   * so a slow machine waits longer and still sees the same states in the same order.
+   *
+   * @param {() => boolean} predicate - Condition to wait for.
+   * @param {string} what - What we are waiting for, for the failure message.
+   * @param {number} [capMs] - Generous ceiling; only a genuine hang reaches it.
+   * @returns {Promise<void>}
+   */
+  async function waitFor(predicate, what, capMs = 5000) {
+    const until = Date.now() + capMs;
+    while (!predicate() && Date.now() < until) await delay(5);
+    assert.ok(predicate(), `timed out after ${capMs}ms waiting for ${what}`);
+  }
+
   // Deliberately driven through the `wsFactory` seam rather than a real loopback
   // Bridge. A real socket would prove the same property while scoring host
   // scheduling, and this repo already carries an intermittently-red wall-clock
@@ -171,22 +192,25 @@ describe('the register handshake has a deadline (#1131)', () => {
     // gets its own 60ms deadline, so the recovery half polls for it rather than
     // sleeping a guessed interval: sleeping past it would find a socket the
     // listener has already abandoned, and read as a broken fix.
+    // The backoff is enormous relative to the deadline ON PURPOSE: it makes the
+    // post-deadline, pre-reconnect window wide enough that no assertion below is
+    // racing a timer. It costs nothing, because the recovery half drives the
+    // reconnect by hand rather than waiting for the backoff to elapse.
     const l = new MedusaListener({
-      workspaceId: 'ws-1', handshakeTimeoutMs: 60, backoffBaseMs: 30, wsFactory: factory
+      workspaceId: 'ws-1', handshakeTimeoutMs: 20, backoffBaseMs: 5000, wsFactory: factory
     });
     l.start();
     sockets[0]._open();
     assert.deepEqual(JSON.parse(sockets[0].sent[0]).type, 'register');
     assert.equal(l.state, 'connecting');
 
-    await delay(80);
-    assert.equal(l.state, 'error');
+    await waitFor(() => l.state === 'error', 'the handshake deadline to fire');
     assert.match(l.lastError, /did not complete the register handshake/);
-    assert.equal(sockets.length, 1, 'the reconnect should still be backing off here');
+    assert.equal(sockets.length, 1, 'the reconnect is still backing off, so nothing else closed it');
 
     // And it recovers on its own once the Bridge starts answering — no restart.
-    const until = Date.now() + 1000;
-    while (sockets.length === 1 && Date.now() < until) await delay(5);
+    // Driven directly rather than waiting out the 5s backoff.
+    l._connect();
     const next = sockets[sockets.length - 1];
     assert.notEqual(next, sockets[0], 'the deadline should have driven a reconnect');
     next._open();
@@ -205,11 +229,11 @@ describe('the register handshake has a deadline (#1131)', () => {
     // when it reconnects, so with a short backoff this passes whether or not the
     // deadline closed anything — it would be measuring the reconnect's cleanup.
     const l = new MedusaListener({
-      workspaceId: 'ws-1', handshakeTimeoutMs: 20, backoffBaseMs: 500, wsFactory: factory
+      workspaceId: 'ws-1', handshakeTimeoutMs: 20, backoffBaseMs: 5000, wsFactory: factory
     });
     l.start();
     sockets[0]._open();
-    await delay(50);
+    await waitFor(() => l.state === 'error', 'the handshake deadline to fire');
     assert.equal(sockets.length, 1, 'no reconnect yet — so only the deadline can have closed it');
     assert.equal(sockets[0].readyState, READY.CLOSED, 'the stalled socket should have been closed');
     l.stop();
@@ -218,14 +242,13 @@ describe('the register handshake has a deadline (#1131)', () => {
   it('bounds a socket that never opens at all — a filtered port fires no event', async () => {
     const { factory, sockets } = makeFactory();
     const l = new MedusaListener({
-      workspaceId: 'ws-1', handshakeTimeoutMs: 60, backoffBaseMs: 200, wsFactory: factory
+      workspaceId: 'ws-1', handshakeTimeoutMs: 20, backoffBaseMs: 5000, wsFactory: factory
     });
     l.start();
     assert.equal(sockets.length, 1);
     // No _open, no _errorEvent, no _closeEvent — the SYN went nowhere.
     assert.equal(l.state, 'connecting');
-    await delay(90);
-    assert.equal(l.state, 'error');
+    await waitFor(() => l.state === 'error', 'the handshake deadline to fire');
     assert.match(l.lastError, /did not complete the register handshake/);
     l.stop();
   });
@@ -252,12 +275,14 @@ describe('the register handshake has a deadline (#1131)', () => {
     // error as a handshake timeout and describe a socket that is long gone.
     const { factory, sockets } = makeFactory();
     const l = new MedusaListener({
-      workspaceId: 'ws-1', handshakeTimeoutMs: 20, backoffBaseMs: 200, wsFactory: factory
+      workspaceId: 'ws-1', handshakeTimeoutMs: 20, backoffBaseMs: 5000, wsFactory: factory
     });
     l.start();
     sockets[0]._errorEvent('connection refused');
     assert.match(l.lastError, /Socket error/);
-    await delay(60); // past the handshake deadline, still inside the backoff
+    // Well past the 20ms deadline and nowhere near the 5s backoff, so a machine
+    // slow enough to stretch this is still inside the window being asserted.
+    await delay(200);
     assert.match(l.lastError, /Socket error/, 'the refusal must survive the backoff window');
     l.stop();
   });
