@@ -54,9 +54,16 @@ name it; deriving from the requirement rather than transcribing the patch is wha
 would have re-created the drift that produced the issue. The create-side call runs before the first
 `mkdirSync`, matching the create-time checks around it, so a refusal leaves nothing on disk.
 
-**Not done, deliberately:** the per-element rules stay open under #1287, and #1338's direction 1
-(run the validator table from `createProject`, which needs a context split) is outside the reviewed
-scope — ADR 0014's rule is that anything found beyond the reviewed change is filed, not bundled.
+**Not done, deliberately, and filed rather than deferred into prose.** The per-element rules and
+#1338's direction 1 (run the validator table from `createProject`; needs a context split) are both
+out of the reviewed scope, so per ADR 0014 they are filed: **#1374**. That the JSDoc originally
+cited #1287 for them — a CLOSED issue — is the finding three reviewers reached from three angles,
+and it is the same generational failure that produced #1338. **#1375** covers the rows already
+holding a bad value; this closes the door and repairs nothing behind it, and `public/ui.js:614`
+still throws on such a row.
+
+**One behaviour change:** `POST {"tags": null}` now 400s where it stored `[]` — symmetric with
+PATCH, and unreachable from the bundled client, which sends `[]` for an empty field.
 
 **Verification.** Three mutations confirmed red against the new assertions: guard removed, element
 check dropped to `Array.isArray` alone, and guard fired on absence rather than key-presence — the

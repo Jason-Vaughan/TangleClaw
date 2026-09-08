@@ -246,10 +246,19 @@ All notable changes to TangleClaw are documented in this file.
   — the property those checks already hold. A test asserts both paths refuse and accept the same
   shapes, so either side growing a rule the other lacks fails.
 
-  The **per-element** rules — tag length, character set, a count cap, whether an empty string is a
-  tag — remain deliberately open under #1287 and are not invented here. #1338 also records a second
-  direction (running the validator table itself from `createProject`, which needs a context split);
-  that is the one that stops this recurring, and it is not attempted at this scope.
+  **One behaviour change worth knowing:** `POST` with an explicit `"tags": null` now returns 400
+  where it previously stored `[]`. That is the symmetry the fix is for — `PATCH` already refused it —
+  and the bundled client never sends it, since `public/ui.js` builds tags as
+  `.split(',').map(trim).filter(Boolean)` and sends `[]` for an empty field.
+
+  **What is deferred, and where it is tracked.** The per-element rules — tag length, character set,
+  a count cap, whether an empty string is a tag — remain open, and #1338's own direction 1 (running
+  the validator table from `createProject`, which needs a context split) is the remedy its body
+  calls "the one that stops this recurring". Neither is attempted at this scope, and both are now
+  filed as **#1374** rather than left in the body of #1287, which is closed. A deferral whose only
+  record is a closed issue is how #1338 came to exist. Separately, **#1375** covers rows already
+  holding a bad value: this fix closed the door but repaired nothing behind it, and
+  `public/ui.js:614` still throws on such a row.
 
   Reconstructed under ADR 0014 from #1338 rather than from the submitted patch. Reported and
   independently fixed by **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in PR #1353,

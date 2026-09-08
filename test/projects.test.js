@@ -722,8 +722,8 @@ describe('projects', () => {
       // the other lacks — which a duplicated create-side check would allow and
       // is why there is one predicate rather than two.
       const refused = ['not-an-array', 42, ['ok', 42], null];
-      for (const tags of refused) {
-        const created = projects.createProject({ name: `sym-refuse-${refused.indexOf(tags)}`, tags });
+      for (const [i, tags] of refused.entries()) {
+        const created = projects.createProject({ name: `sym-refuse-${i}`, tags });
         assert.equal(created.project, null, `create must refuse ${JSON.stringify(tags)}`);
         const updated = await projects.updateProject('new-project', { tags });
         assert.equal(updated.project, null, `update must refuse ${JSON.stringify(tags)}`);
