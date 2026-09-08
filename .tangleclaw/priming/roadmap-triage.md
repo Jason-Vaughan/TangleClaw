@@ -65,7 +65,7 @@ You are running from **your own empty directory**, not the TangleClaw repo. Two 
   `--repo Jason-Vaughan/TangleClaw`, or run `gh repo set-default Jason-Vaughan/TangleClaw` once
   at the start and verify it took.
 - **TangleClaw's own files are READ-ONLY to you, at an absolute path:**
-  `/Users/jasonvaughan/Documents/Projects/TangleClaw`. The backlog you need is
+  `/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder`. The backlog you need is
   `<that>/.prawduct/backlog.md`; the v5 plan is `<that>/.tangleclaw/plans/v5-secure-baseline.md`.
   Read them freely. **Never write there** — that repo belongs to the build session, and a write
   from here lands in its working tree mid-build.
@@ -74,7 +74,7 @@ You are running from **your own empty directory**, not the TangleClaw repo. Two 
 
 1. **Never write into the TangleClaw repo, and never run any git command that moves `HEAD`
    there.** Read-only git (`log`, `show`, `status`, `diff`, `ls-files`) against it is fine, with
-   `-C /Users/jasonvaughan/Documents/Projects/TangleClaw`.
+   `-C /Users/jasonvaughan/Documents/Projects/TangleClaw-Builder`.
 2. **Do not write code.** No source edits, no fixes, however small or tempting. If you find a
    real bug, file or update an issue and move on.
 3. **Do not touch the v5 work** — the `v5-baseline` branch, `feat/710-*` branches, or anything

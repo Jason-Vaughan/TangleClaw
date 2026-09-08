@@ -225,6 +225,37 @@ All notable changes to TangleClaw are documented in this file.
   they have one: "this install cannot tell what it is running" is a real state on an unattended
   path and no input to the module produces it, so it is only observable by forcing it.
 
+- **The workspace rename to `TangleClaw-Builder` left stale absolute paths in operator-facing
+  instructions, including a documented escape hatch that silently could not work.** Renaming the
+  local checkout from `~/Documents/Projects/TangleClaw` to `~/Documents/Projects/TangleClaw-Builder`
+  did not touch the paths written into docs, priming prompts and plans, so several of them named a
+  directory that no longer exists.
+
+  The one that mattered: `docs/primary-checkout-guard.md` told the operator to
+  `touch ~/Documents/Projects/TangleClaw/.prawduct/.allow-primary-write` to disarm the
+  primary-checkout guard. That path is gone, so the `touch` created nothing the guard reads and the
+  paired `rm` removed nothing — the documented override would have appeared to be ignored, which is
+  precisely the failure mode the doc's own absolute-path warning three lines above exists to
+  prevent. The guard's **code** was never affected: it resolves the primary at run time and prints
+  the correct absolute path in every refusal, so the sentinel worked for anyone who copied the
+  message instead of the doc.
+
+  Also corrected: the operator-typed `cd` examples in `scripts/guard-primary-checkout.js` and its
+  test's explanatory comment (both illustrative — the test itself derives the path from its
+  fixture); the read-only path and `git -C` target in `.tangleclaw/priming/roadmap-triage.md`, which
+  point a *different* session at this repo; the plan pointer in
+  `.tangleclaw/plans/next-session-plan.md`; and the `PATCH /api/projects/TangleClaw` call in the v5
+  plan's "step 8 depends on turning this back on" warning, whose project is now named
+  `TangleClaw-Builder` in TangleClaw's own registry.
+
+  **Deliberately left alone**, because they are correct as written: every
+  `github.com/Jason-Vaughan/TangleClaw` and `--repo Jason-Vaughan/TangleClaw` reference — the
+  GitHub repository was **not** renamed, only the local directory; the `/path/to/TangleClaw` and
+  `/root/TangleClaw` placeholders in the user guide, setup guide and cleanroom scripts, which are
+  generic or container-internal; the synthetic `/Users/x/...TangleClaw` paths in test fixtures; and
+  every occurrence in `CHANGELOG.md`, `.prawduct/change-log.md` and archived plans, which are
+  history and must keep saying what was true at the time.
+
 ## [5.22.0] - 2026-09-07
 
 ### Added

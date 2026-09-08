@@ -89,9 +89,9 @@ TANGLECLAW_ALLOW_PRIMARY_WRITE=1 git checkout main
 # worktree's .prawduct is a directory of per-file symlinks — a relative `touch`
 # run from a worktree creates a file the guard never reads, and the paired `rm`
 # then leaves any real sentinel in place, disarmed and invisible.
-touch ~/Documents/Projects/TangleClaw/.prawduct/.allow-primary-write   # gitignored
+touch ~/Documents/Projects/TangleClaw-Builder/.prawduct/.allow-primary-write   # gitignored
 #   ... make the deliberate live edit ...
-rm ~/Documents/Projects/TangleClaw/.prawduct/.allow-primary-write
+rm ~/Documents/Projects/TangleClaw-Builder/.prawduct/.allow-primary-write
 ```
 
 Every refusal prints that absolute path, so the message can be copied rather than reconstructed.

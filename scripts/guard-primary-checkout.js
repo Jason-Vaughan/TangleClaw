@@ -235,7 +235,7 @@ function tokenize(s) {
 /**
  * Resolve a path as the shell would, expanding a leading `~`.
  *
- * `cd ~/Documents/Projects/TangleClaw` is the form an operator actually types,
+ * `cd ~/Documents/Projects/TangleClaw-Builder` is the form an operator actually types,
  * and it names the primary without ever containing the primary's resolved path.
  *
  * @param {string} p - Path as written in the command.
@@ -300,7 +300,7 @@ function cdTarget(arg, base) {
  *     replaced it: every worktree root is lexically prefixed by the primary
  *     (`<primary>/.claude/worktrees/<name>`), so `git -C <abs worktree> checkout`
  *     was refused with a message telling the actor to go where it already was —
- *     and `cd ~/…/TangleClaw && git checkout main` contains no resolved primary
+ *     and `cd ~/…/TangleClaw-Builder && git checkout main` contains no resolved primary
  *     path, so the case the scan existed for walked past it. Returning
  *     DIRECTORIES lets the caller ask `landsInPrimary`, which subtracts the
  *     worktree roots, exactly as the file-write arm does.
