@@ -185,17 +185,10 @@ describe('the register handshake has a deadline (#1131)', () => {
     // close, no error, and the reconnect loop is never entered — the listener
     // parks in `connecting` indefinitely.
     const { factory, sockets } = makeFactory();
-    // Two timing margins, both deliberate. The backoff (30ms) is longer than the
-    // deadline (60ms is longer still) so the `error` state is observable — with a
-    // short backoff the reconnect flips it to `connecting` before an assertion can
-    // read it, which says nothing about the deadline. And the REPLACEMENT socket
-    // gets its own 60ms deadline, so the recovery half polls for it rather than
-    // sleeping a guessed interval: sleeping past it would find a socket the
-    // listener has already abandoned, and read as a broken fix.
-    // The backoff is enormous relative to the deadline ON PURPOSE: it makes the
-    // post-deadline, pre-reconnect window wide enough that no assertion below is
-    // racing a timer. It costs nothing, because the recovery half drives the
-    // reconnect by hand rather than waiting for the backoff to elapse.
+    // The backoff is far longer than the deadline on purpose: it makes the window
+    // between the deadline firing and the reconnect wide enough that no assertion
+    // below is racing a timer. Recovery is a separate test, so nothing here needs
+    // the backoff to elapse.
     const l = new MedusaListener({
       workspaceId: 'ws-1', handshakeTimeoutMs: 20, backoffBaseMs: 5000, wsFactory: factory
     });
