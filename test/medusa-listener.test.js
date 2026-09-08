@@ -149,6 +149,205 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+describe('the register handshake has a deadline (#1131)', () => {
+  /**
+   * Wait until `predicate()` holds, or fail after `capMs`.
+   *
+   * Every assertion in this block is about a TIMEOUT, so none of them may sleep a
+   * fixed interval and read the state after it: a delayed timer under load is
+   * indistinguishable from the deadline never firing, which is the flake shape a
+   * guard about timeouts must never have (`learnings.md`, and #1205 in this repo's
+   * own suite). Backoffs here are set far longer than any window being asserted,
+   * so a slow machine waits longer and still sees the same states in the same order.
+   *
+   * @param {() => boolean} predicate - Condition to wait for.
+   * @param {string} what - What we are waiting for, for the failure message.
+   * @param {number} [capMs] - Generous ceiling; only a genuine hang reaches it.
+   * @returns {Promise<void>}
+   */
+  async function waitFor(predicate, what, capMs = 5000) {
+    const until = Date.now() + capMs;
+    while (!predicate() && Date.now() < until) await delay(5);
+    assert.ok(predicate(), `timed out after ${capMs}ms waiting for ${what}`);
+  }
+
+  // Deliberately driven through the `wsFactory` seam rather than a real loopback
+  // Bridge. A real socket would prove the same property while scoring host
+  // scheduling, and this repo already carries an intermittently-red wall-clock
+  // guard for exactly that reason (#1205). The seam asserts the mechanism
+  // deterministically; the real-network behaviour was confirmed by probe before
+  // this was written, and is recorded in the build plan rather than in a test
+  // that would flake on a loaded machine.
+
+  it('a Bridge that upgrades and never answers `register` fails instead of waiting forever', async () => {
+    // The defect: `_onOpen` sends the register frame and NOTHING else ever fires.
+    // The socket is open and healthy as far as the client is concerned, so no
+    // close, no error, and the reconnect loop is never entered — the listener
+    // parks in `connecting` indefinitely.
+    const { factory, sockets } = makeFactory();
+    // The backoff is far longer than the deadline on purpose: it makes the window
+    // between the deadline firing and the reconnect wide enough that no assertion
+    // below is racing a timer. Recovery is a separate test, so nothing here needs
+    // the backoff to elapse.
+    const l = new MedusaListener({
+      workspaceId: 'ws-1', handshakeTimeoutMs: 20, backoffBaseMs: 5000, wsFactory: factory
+    });
+    l.start();
+    sockets[0]._open();
+    assert.deepEqual(JSON.parse(sockets[0].sent[0]).type, 'register');
+    assert.equal(l.state, 'connecting');
+
+    await waitFor(() => l.state === 'error', 'the handshake deadline to fire');
+    assert.match(l.lastError, /did not complete the register handshake/);
+    assert.equal(sockets.length, 1, 'the reconnect is still backing off, so nothing else closed it');
+
+    // The HANDOFF is the property, and it is asserted on the timer rather than on
+    // a second socket: with a 5s backoff no socket has appeared yet, and calling
+    // `_connect()` by hand to conjure one would make the assertion true by the
+    // test's own action. Deleting `_scheduleReconnect()` from the deadline
+    // callback reds exactly this line and nothing else in the file.
+    assert.ok(l._reconnectTimer, 'the deadline must hand off to the reconnect path');
+    l.stop();
+  });
+
+  it('recovers on its own once the Bridge starts answering — no daemon restart', async () => {
+    // The other half of #1131's Done-when, split out so the reconnect can be the
+    // listener's OWN rather than one the test triggered. Timings are chosen so
+    // both waits are wide: the deadline (200ms) is long enough that the
+    // replacement socket has 200ms of headroom before its own deadline, and the
+    // backoff (20ms) is short enough that the automatic reconnect arrives
+    // promptly. Nothing here sleeps a guessed interval.
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({
+      workspaceId: 'ws-1', handshakeTimeoutMs: 200, backoffBaseMs: 20, wsFactory: factory
+    });
+    l.start();
+    sockets[0]._open(); // upgraded, and the Bridge never answers `register`
+
+    await waitFor(() => sockets.length > 1, 'the deadline to drive an automatic reconnect', 10000);
+    const next = sockets[sockets.length - 1];
+    assert.notEqual(next, sockets[0], 'the replacement socket must be a fresh one');
+
+    // The Bridge is healthy now.
+    next._open();
+    next._message({ type: 'registered', workspaceId: 'ws-1' });
+    assert.equal(l.state, 'listening');
+    assert.equal(l.lastError, null);
+    l.stop();
+  });
+
+  it('abandons the stalled socket rather than leaving it open and ignored', async () => {
+    // The socket may be perfectly healthy, so nothing else will ever end it. An
+    // abandoned-but-live socket keeps receiving frames the identity guard drops
+    // silently, which is a leak wearing the costume of a working connection.
+    const { factory, sockets } = makeFactory();
+    // The backoff MUST outlast this assertion. `_connect` closes the prior socket
+    // when it reconnects, so with a short backoff this passes whether or not the
+    // deadline closed anything — it would be measuring the reconnect's cleanup.
+    const l = new MedusaListener({
+      workspaceId: 'ws-1', handshakeTimeoutMs: 20, backoffBaseMs: 5000, wsFactory: factory
+    });
+    l.start();
+    sockets[0]._open();
+    await waitFor(() => l.state === 'error', 'the handshake deadline to fire');
+    assert.equal(sockets.length, 1, 'no reconnect yet — so only the deadline can have closed it');
+    assert.equal(sockets[0].readyState, READY.CLOSED, 'the stalled socket should have been closed');
+    l.stop();
+  });
+
+  it('bounds a socket that never opens at all — a filtered port fires no event', async () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({
+      workspaceId: 'ws-1', handshakeTimeoutMs: 20, backoffBaseMs: 5000, wsFactory: factory
+    });
+    l.start();
+    assert.equal(sockets.length, 1);
+    // No _open, no _errorEvent, no _closeEvent — the SYN went nowhere.
+    assert.equal(l.state, 'connecting');
+    await waitFor(() => l.state === 'error', 'the handshake deadline to fire');
+    assert.match(l.lastError, /did not complete the register handshake/);
+    l.stop();
+  });
+
+  it('never fires on a healthy register', async () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({
+      workspaceId: 'ws-1', handshakeTimeoutMs: 20, backoffBaseMs: 5, wsFactory: factory
+    });
+    l.start();
+    sockets[0]._open();
+    sockets[0]._message({ type: 'registered', workspaceId: 'ws-1' });
+    assert.equal(l.state, 'listening');
+    await delay(50); // well past the deadline
+    assert.equal(l.state, 'listening');
+    assert.equal(l.lastError, null);
+    assert.equal(sockets.length, 1, 'a listening socket should not have been replaced');
+    l.stop();
+  });
+
+  it('does not overwrite a truthful lastError while a reconnect is backing off', async () => {
+    // The deadline is armed per attempt. If a connection is REFUSED it must stay
+    // refused: an armed deadline expiring mid-backoff would relabel a socket
+    // error as a handshake timeout and describe a socket that is long gone.
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({
+      workspaceId: 'ws-1', handshakeTimeoutMs: 20, backoffBaseMs: 5000, wsFactory: factory
+    });
+    l.start();
+    sockets[0]._errorEvent('connection refused');
+    assert.match(l.lastError, /Socket error/);
+    // Well past the 20ms deadline and nowhere near the 5s backoff, so a machine
+    // slow enough to stretch this is still inside the window being asserted.
+    await delay(200);
+    assert.match(l.lastError, /Socket error/, 'the refusal must survive the backoff window');
+    l.stop();
+  });
+
+  it('stop() disarms the deadline AND a stopped listener stays off', async () => {
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({
+      workspaceId: 'ws-1', handshakeTimeoutMs: 20, backoffBaseMs: 5, wsFactory: factory
+    });
+    l.start();
+    sockets[0]._open();
+    l.stop();
+    // Asserted on the timer itself, not only on the outcome: the deadline's own
+    // `_intendedRunning` guard makes a LEAKED timer harmless, so the behavioural
+    // half below passes whether or not `_clearTimers` owns this timer. Only the
+    // field says whether stop() actually disarmed it.
+    assert.equal(l._handshakeTimer, null, 'stop() must disarm the handshake deadline');
+    await delay(40);
+    assert.equal(l.state, 'off');
+    assert.equal(sockets.length, 1, 'a stopped listener must not reconnect');
+  });
+
+  it('REGRESSION (#1131 as filed): an absent Bridge that later appears is registered without a restart', async () => {
+    // The mechanism the issue reported as broken. It was already correct — a
+    // live-loopback probe registered within 5ms of a healthy Bridge appearing —
+    // so this pins behaviour rather than fixing it: `_connect` builds a FRESH
+    // socket every attempt and no state survives a failure. Kept because the
+    // reported scenario must not silently regress just because its filed
+    // mechanism turned out to be the wrong diagnosis.
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({
+      workspaceId: 'ws-1', handshakeTimeoutMs: 500, backoffBaseMs: 5, wsFactory: factory
+    });
+    l.start();
+    for (let i = 0; i < 3; i++) {
+      sockets[sockets.length - 1]._errorEvent('ECONNREFUSED');
+      sockets[sockets.length - 1]._closeEvent(1006);
+      await delay(20);
+    }
+    assert.ok(sockets.length > 1, 'the reconnect loop should have built new sockets');
+    const healthy = sockets[sockets.length - 1];
+    healthy._open();
+    healthy._message({ type: 'registered', workspaceId: 'ws-1' });
+    assert.equal(l.state, 'listening');
+    assert.equal(l.lastError, null);
+    l.stop();
+  });
+});
+
 describe('connection-outcome logs name the URL that was tried (#1100)', () => {
   /**
    * Capture info-and-above while `fn` runs, restoring the quiet test posture.

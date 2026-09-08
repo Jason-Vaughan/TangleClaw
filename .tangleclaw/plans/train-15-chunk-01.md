@@ -11,8 +11,8 @@ depends_on:
 governed_by:
   - artifact: architecture
     dispositions:
-      - "A dependency's failure degrades TangleClaw, never crashes it — its Retroactivity list names `Bridge → listener backoff` as an implemented isolation point → ENGAGED, and this chunk narrows that claim. The backoff is real but it is not a deadline: Car 3 reproduces a Bridge that accepts the WebSocket upgrade and never answers `register`, and the listener parks in `connecting` indefinitely with no error, no reconnect and no bound. `Bridge → listener backoff` is therefore true only for a Bridge that refuses or drops the connection, and false for one that accepts and stalls. Car 3 makes the named isolation point hold for both, so the Retroactivity line becomes accurate rather than aspirational."
-      - "A read that could not be established reports null and names itself, never a plausible default → ENGAGED, and it is the whole of Car 2's second half. `lastError` is a free-text string assembled at four sites, so every consumer that wants to know WHY a listener is not listening must pattern-match English. #1130 records the cost directly: a published `lastError` → bridge-condition mapping drove a port-ownership hypothesis that was entirely wrong. Car 2 adds a classified code beside the prose in the same `SCAN_TIMEOUT`/`SCAN_CACHED` vocabulary the projects scan already speaks, so the two reads describe their failures the same way."
+      - "A dependency's failure degrades TangleClaw, never crashes it — its Retroactivity list names `Bridge → listener backoff` as an implemented isolation point → ENGAGED, and this chunk narrows that claim. The backoff is real but it is not a deadline: **Car 2 (#1131)** reproduces a Bridge that accepts the WebSocket upgrade and never answers `register`, and the listener parks in `connecting` indefinitely with no error, no reconnect and no bound. `Bridge → listener backoff` is therefore true only for a Bridge that refuses or drops the connection, and false for one that accepts and stalls. Car 2 makes the named isolation point hold for both, so the Retroactivity line becomes accurate rather than aspirational."
+      - "A read that could not be established reports null and names itself, never a plausible default → ENGAGED, and it is the whole of **Car 3's (#1130)** second half. `lastError` is a free-text string assembled at four sites, so every consumer that wants to know WHY a listener is not listening must pattern-match English. #1130 records the cost directly: a published `lastError` → bridge-condition mapping drove a port-ownership hypothesis that was entirely wrong. Car 3 adds a classified code beside the prose in the same `SCAN_TIMEOUT`/`SCAN_CACHED` vocabulary the projects scan already speaks, so the two reads describe their failures the same way."
       - "A read that could not be established reports null and names itself, never a plausible default → ENGAGED BY CAR 1 TOO, and disposed as a deliberate departure. Every refusal in `resolveBridgeWsUrl` returns `ws://localhost:3010`, which is exactly a plausible default: an operator whose override was rejected gets a listener reporting `listening` against an address they did not choose, indistinguishable through `getStatus()` from an unconfigured install. The alternative — refusing to start — is worse, because it turns a typo in an optional variable into a Switchboard that will not run. The departure is paid for two other ways: every refusal names its reason, its value and the gate that carried it in the log (the split-install case says the word SPLIT), and `docs/configuration-reference.md` states the fallback as the contract so it is documented rather than discovered. What remains unpaid is that no SURFACE reads it — recorded here so Car 3, which builds the classified-status surface, meets it as known work rather than rediscovering it."
       - "Bounded exception (#1180, chime idle detection) → inapplicable; no car touches idle detection."
   - artifact: observability-strategy
@@ -114,8 +114,8 @@ gave: it is the cheapest and it de-risks the others by making the URL under test
 
 ## Status
 
-- [ ] Car 1: The listener resolves its Bridge URL the way the HTTP side does (#1100)
-- [ ] Car 2: A stalled handshake is a failure, not a wait (#1131)
+- [x] Car 1: The listener resolves its Bridge URL the way the HTTP side does (#1100)
+- [x] Car 2: A stalled handshake is a failure, not a wait (#1131)
 - [ ] Car 3: A missing Bridge names itself (#1130)
 
 Each car is one branch and one PR, per the train methodology's 1 car = 1 issue = 1 PR. Reviews are
@@ -175,7 +175,7 @@ nothing reports a failure. See Requirements Confidence for the probe and for wha
 **Approach.** One deadline spanning the whole handshake — armed in `_connect()`, cleared in
 `_onRegistered()` — so it bounds both halves of the wait: a socket that never opens (a filtered
 port swallowing the SYN, which today also hangs forever) and a socket that opens and is never
-answered. On expiry: record the failure with its classification, force-close the socket, set
+answered. On expiry: record the failure with a named `lastError`, force-close the socket, set
 `error`, and enter the existing reconnect path, which the probes show recovers correctly once it
 is reached.
 
@@ -220,6 +220,13 @@ probe and the reporter's install produced different strings for the same bridge 
    hint; the enable path consults it and reports *Bridge unavailable* with installation guidance
    instead of a green toggle, and the condition "`medusaEnabled` is true and no Bridge is healthy"
    is reported rather than left to a log nobody tails.
+
+**Carried in from Car 2's review (not a Car 2 widening).** A Bridge that answers
+`register` and *then* goes silent is still unbounded: `heartbeat_ack` is tolerated but never
+required, so a Bridge that stops answering while the socket stays open leaves a listener reporting
+`listening` with nothing behind it. That is the same family as the classification this car builds —
+a surface asserting an unverified external fact — and it belongs here rather than in the handshake
+deadline, which bounds only the interval before `registered`.
 
 **Open questions this car answers before it builds — named, not assumed.** Whether the enable
 toggle **refuses** or **warns-and-proceeds** when the Bridge is absent (refusing is honest but
