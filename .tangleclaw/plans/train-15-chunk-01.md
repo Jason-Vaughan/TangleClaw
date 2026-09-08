@@ -114,7 +114,7 @@ gave: it is the cheapest and it de-risks the others by making the URL under test
 
 ## Status
 
-- [ ] Car 1: The listener resolves its Bridge URL the way the HTTP side does (#1100)
+- [x] Car 1: The listener resolves its Bridge URL the way the HTTP side does (#1100)
 - [ ] Car 2: A stalled handshake is a failure, not a wait (#1131)
 - [ ] Car 3: A missing Bridge names itself (#1130)
 

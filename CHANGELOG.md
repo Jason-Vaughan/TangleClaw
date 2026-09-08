@@ -5,6 +5,45 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **A Medusa listener no longer waits forever on a Bridge that accepts the connection and never
+  answers (#1131).** The reconnect loop exists to survive a Bridge outage, and in the scenario that
+  most needs it — the Bridge coming back — a field install never recovered without restarting
+  `com.tangleclaw.server`, which tears down every listener on the host to fix one.
+
+  **The filed mechanism was not the defect, and was disproven before any code was written.** The
+  issue and its investigation note both predict a poisoned socket or client object that the
+  reconnect path reuses. No such state exists: `_connect()` closes and nulls the prior socket,
+  builds a fresh one through `wsFactory` on every attempt, and gates every handler on a
+  socket-identity check. A live-loopback probe confirmed it — against a port where nothing was
+  listening, the listener failed five times with backoff and then registered **within 5ms** of a
+  healthy Bridge appearing. A fix aimed at rebuilding poisoned state would have shipped green tests
+  against a defect that is not there.
+
+  **What is real is that nothing bounded the handshake.** A second probe, differing in one
+  variable, reproduces the reported symptom: when the Bridge **accepts the WebSocket upgrade and
+  never answers `register`**, `_onOpen` sends the register frame and nothing else ever fires — no
+  close, no error, no reconnect — so the listener parks in `connecting` indefinitely. The backoff
+  loop is never entered because, from the listener's point of view, nothing has failed. That also
+  fits the field report better than the filed hypothesis, which had to explain why a retry that
+  demonstrably runs never recovers; a listener parked in `connecting` is not retrying at all.
+
+  A single deadline (`handshakeTimeoutMs`, default 10s) now spans the whole handshake — armed at
+  the connect attempt, cleared on `registered` — so it bounds **both** halves that can hang: a
+  socket that never opens (a filtered port swallowing the SYN, which hung just as silently) and one
+  that opens and is never answered. On expiry the socket is closed rather than abandoned, because
+  it may be perfectly healthy and nothing else will ever end it, and an abandoned-but-live socket
+  keeps receiving frames the identity guard drops silently. It is disarmed wherever an attempt
+  ends, so a mid-backoff expiry cannot relabel a truthful `Socket error` as a handshake timeout.
+  10s is sized against the two facts to hand: well inside one 20s heartbeat so it is the mechanism
+  that fires, and three orders of magnitude above the single-digit milliseconds a healthy loopback
+  Bridge actually takes.
+
+  **Stated precisely, because the board should not over-record it:** this is a reproduced defect on
+  the reported path, not a proven identity with the reporter's incident — their `lastError` read
+  `Connection closed (code 1006)`, so their socket also closed. The fix bounds the wait in both
+  directions. A regression test therefore also pins the absent-then-present recovery that already
+  worked, so the reported scenario cannot silently regress even though its filed mechanism was the
+  wrong diagnosis.
 - **The Medusa listener resolves its Bridge URL the way the HTTP side does, so an install on
   non-default ports can move both halves (#1100).** `MEDUSA_BRIDGE_HTTP_URL` redirected send,
   roster and loops; the listener hardcoded `ws://localhost:3010` and consulted no environment.
