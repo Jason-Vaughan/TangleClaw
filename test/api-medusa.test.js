@@ -19,6 +19,7 @@ const store = require('../lib/store');
 const medusa = require('../lib/medusa');
 const sessions = require('../lib/sessions');
 const tmux = require('../lib/tmux');
+const logger = require('../lib/logger');
 
 const OPEN = 1;
 const CONNECTING = 0;
@@ -177,6 +178,206 @@ describe('lib/medusa — service layer', () => {
   it('forgetSession is a safe no-op for an unknown session and never throws on a bad path', () => {
     assert.doesNotThrow(() => medusa.forgetSession({ projectPath: tempDir, sessionId: 'never-started' }));
     assert.doesNotThrow(() => medusa.forgetSession({ projectPath: '/no/such/dir', sessionId: 'x' }));
+  });
+
+  describe('Bridge WS URL resolution (#1100)', () => {
+    /**
+     * Start a listener and report the URL the socket factory was actually asked
+     * for. Asserting the RESOLVED url off the socket, rather than a resolver's
+     * return value, is what pins that `startSession` consults the resolver at
+     * all — the production callers pass no `bridgeUrl`, so a resolver nothing
+     * calls would keep every direct unit test green.
+     * @param {string} sid - Unique session id.
+     * @returns {string} The URL handed to the socket factory.
+     */
+    function urlFor(sid) {
+      let seen;
+      try {
+        medusa.startSession({
+          projectPath: tempDir, sessionId: sid, name: 'Ws Url',
+          wsFactory: (url) => { seen = url; return new FakeWS(url); }
+        });
+      } finally {
+        // The service holds listeners in a module-level Map, so a listener left
+        // behind by a throwing start leaks into every later test in this file.
+        medusa.stopSession(sid);
+      }
+      return seen;
+    }
+
+    afterEach(() => {
+      // Both no-arg: the WS seam defines `null` as "force derivation" and no
+      // argument as "reset to the env value" — on a host that really sets
+      // MEDUSA_BRIDGE_WS_URL, passing null would erase it for every later test.
+      medusa._setBridgeWsUrl();
+      medusa._setBridgeHttpUrl();
+    });
+
+    it('falls back to the documented loopback default when neither gate is set', () => {
+      medusa._setBridgeHttpUrl('http://localhost:3009');
+      assert.equal(urlFor('ws-url-default'), 'ws://localhost:3010');
+    });
+
+    it('derives host and port + 1 from the HTTP base, so one knob moves both gates', () => {
+      medusa._setBridgeHttpUrl('http://127.0.0.1:4009');
+      assert.equal(urlFor('ws-url-derived'), 'ws://127.0.0.1:4010');
+    });
+
+    it('honours an explicit WS override for an install whose WS port is not HTTP + 1', () => {
+      medusa._setBridgeHttpUrl('http://localhost:3009');
+      medusa._setBridgeWsUrl('ws://localhost:7777');
+      assert.equal(urlFor('ws-url-explicit'), 'ws://localhost:7777');
+    });
+
+    it('an explicit bridgeUrl still wins, preserving the test seam', () => {
+      medusa._setBridgeWsUrl('ws://localhost:7777');
+      let seen;
+      try {
+        medusa.startSession({
+          projectPath: tempDir, sessionId: 'ws-url-seam', name: 'Ws Url',
+          bridgeUrl: 'ws://localhost:8888',
+          wsFactory: (url) => { seen = url; return new FakeWS(url); }
+        });
+      } finally {
+        medusa.stopSession('ws-url-seam');
+      }
+      assert.equal(seen, 'ws://localhost:8888');
+    });
+
+    it('refuses a non-loopback WS override and uses the default — the WS path is unauthenticated', () => {
+      medusa._setBridgeWsUrl('ws://192.168.1.50:3010');
+      assert.equal(urlFor('ws-url-remote'), 'ws://localhost:3010');
+    });
+
+    it('refuses to DERIVE a non-loopback WS URL from a non-loopback HTTP base', () => {
+      // The HTTP side accepts a remote base; the WS side must not inherit it,
+      // which is the one place the two gates are deliberately asymmetric.
+      medusa._setBridgeHttpUrl('http://medusa.example.com:3009');
+      assert.equal(urlFor('ws-url-remote-derived'), 'ws://localhost:3010');
+    });
+
+    it('falls back rather than throwing when a gate holds an unparseable URL', () => {
+      medusa._setBridgeWsUrl('not-a-url');
+      assert.equal(urlFor('ws-url-garbage'), 'ws://localhost:3010');
+      medusa._setBridgeWsUrl(null);
+      medusa._setBridgeHttpUrl('also-not-a-url');
+      assert.equal(urlFor('ws-url-garbage-http'), 'ws://localhost:3010');
+    });
+
+    it('carries an IPv6 host through the derivation still bracketed', () => {
+      medusa._setBridgeHttpUrl('http://[::1]:3009');
+      assert.equal(urlFor('ws-url-ipv6'), 'ws://[::1]:3010');
+    });
+
+    // Every member here is a URL that passes a host check and then makes
+    // `new WebSocket` throw. The listener catches a factory throw and schedules a
+    // reconnect (`lib/medusa-listener.js` `_connect`), so without the acceptance
+    // gate each of these loops on an unreachable address at the 30s backoff cap
+    // forever — the one bad-input shape that never reaches the documented default.
+    for (const [label, gate, value] of [
+      ['a derived port past the range', 'http', 'http://localhost:65535'],
+      ['a fragment', 'ws', 'ws://localhost:3010/#x'],
+      ['a bare trailing hash', 'ws', 'ws://localhost:3010/#'],
+      ['a non-ws scheme', 'ws', 'ftp://localhost:3010']
+    ]) {
+      it(`refuses ${label} rather than retrying a URL the WebSocket client rejects`, () => {
+        if (gate === 'ws') medusa._setBridgeWsUrl(value);
+        else medusa._setBridgeHttpUrl(value);
+        assert.equal(urlFor(`ws-url-reject-${label.replace(/\W+/g, '-')}`), 'ws://localhost:3010');
+      });
+    }
+
+    it('the members above really are rejected by the WebSocket client', () => {
+      // Pins the premise the gate rests on. If a future Node accepts one of
+      // these, the gate is over-strict and this reds rather than passing quietly.
+      for (const bad of [
+        'ws://localhost:65536', 'ws://localhost:3010/#x', 'ws://localhost:3010/#', 'ftp://localhost:3010'
+      ]) {
+        assert.throws(() => new WebSocket(bad), undefined, `${bad} should be rejected`);
+      }
+    });
+
+    /**
+     * Capture info-and-above while `fn` runs, restoring the quiet test posture.
+     * @param {() => void} fn - Work to run while capturing.
+     * @returns {string[]} The captured lines.
+     */
+    function captureLog(fn) {
+      const lines = [];
+      logger.setLevel('info');
+      logger.setConsoleStream({ write: (line) => lines.push(line) });
+      try {
+        fn();
+      } finally {
+        logger.setConsoleStream(null);
+        logger.setLevel('error');
+      }
+      return lines;
+    }
+
+    it('names the rejected value in the log, exactly once for repeated resolutions', () => {
+      // The refusal is otherwise INVISIBLE: getStatus() reports a healthy
+      // listener on the default URL, indistinguishable from an unconfigured
+      // install, so this line is the whole of the operator's feedback. Two
+      // resolutions with no seam call between them — the seams clear the
+      // once-per-value cache — so a flood regression shows up as two lines.
+      medusa._setBridgeWsUrl('ws://192.168.1.50:3010');
+      const lines = captureLog(() => {
+        urlFor('ws-url-log-a');
+        urlFor('ws-url-log-b');
+      });
+      const refusals = lines.filter((l) => l.includes('Refusing a Medusa Bridge WS URL'));
+      assert.equal(refusals.length, 1, `expected one refusal line, got ${refusals.length}`);
+      assert.match(refusals[0], /192\.168\.1\.50/);
+      assert.match(refusals[0], /MEDUSA_BRIDGE_WS_URL/);
+      assert.match(refusals[0], /non-loopback/);
+    });
+
+    it('a different bad value gets its own line — the cache keys on the value, not on having reported', () => {
+      const lines = captureLog(() => {
+        medusa._setBridgeWsUrl('ws://192.168.1.50:3010');
+        urlFor('ws-url-log-c');
+        medusa._setBridgeWsUrl('ftp://localhost:3010');
+        urlFor('ws-url-log-d');
+      });
+      const refusals = lines.filter((l) => l.includes('Refusing a Medusa Bridge WS URL'));
+      assert.equal(refusals.length, 2);
+      assert.match(refusals[1], /bad-scheme/);
+    });
+
+    it('names the SPLIT install when a remote HTTP base forces the listener back to loopback', () => {
+      // send/roster/loops stay remote while the listener does not — the operator
+      // must not have to infer that from a bare "refused" line.
+      const lines = captureLog(() => {
+        medusa._setBridgeHttpUrl('http://medusa.example.com:3009');
+        urlFor('ws-url-log-split');
+      });
+      const refusals = lines.filter((l) => l.includes('Refusing a Medusa Bridge WS URL'));
+      assert.equal(refusals.length, 1);
+      assert.match(refusals[0], /SPLIT/);
+      assert.match(refusals[0], /non-loopback-http-base/);
+    });
+
+    it('reads the parsed hostname, so userinfo and suffix bypasses fail closed', () => {
+      // Both would be ACCEPTED by a naive substring or startsWith check on the
+      // raw string, and both point at a remote host on an unauthenticated path.
+      medusa._setBridgeWsUrl('ws://localhost@evil.com:3010');
+      assert.equal(urlFor('ws-url-userinfo'), 'ws://localhost:3010');
+      medusa._setBridgeWsUrl('ws://localhost.evil.com:3010');
+      assert.equal(urlFor('ws-url-suffix'), 'ws://localhost:3010');
+    });
+
+    it('maps an https base to wss, deriving from its explicit port', () => {
+      medusa._setBridgeHttpUrl('https://localhost:8443');
+      assert.equal(urlFor('ws-url-https'), 'wss://localhost:8444');
+    });
+
+    it('refuses to derive from a portless base rather than adding 1 to a scheme default', () => {
+      // `https://localhost` would give 444 and `http://localhost` 81 — ports no
+      // Medusa serves, from a number the operator never chose.
+      medusa._setBridgeHttpUrl('https://localhost');
+      assert.equal(urlFor('ws-url-portless'), 'ws://localhost:3010');
+    });
   });
 });
 

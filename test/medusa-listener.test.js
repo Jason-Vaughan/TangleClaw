@@ -22,6 +22,7 @@ const {
   MedusaListener, DEFAULT_MAX_INBOX, SYSTEM_MESSAGE_RETENTION, _setSystemMessageRetention
 } = require('../lib/medusa-listener');
 const registry = require('../lib/medusa-registry');
+const logger = require('../lib/logger');
 
 /** WebSocket readyState constants (subset used by the listener). */
 const READY = { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 };
@@ -147,6 +148,58 @@ function makeFactory() {
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+describe('connection-outcome logs name the URL that was tried (#1100)', () => {
+  /**
+   * Capture info-and-above while `fn` runs, restoring the quiet test posture.
+   * @param {() => void} fn - Work to run while capturing.
+   * @returns {string[]} The captured lines.
+   */
+  function captureLog(fn) {
+    const lines = [];
+    logger.setLevel('info');
+    logger.setConsoleStream({ write: (line) => lines.push(line) });
+    try {
+      fn();
+    } finally {
+      logger.setConsoleStream(null);
+      logger.setLevel('error');
+    }
+    return lines;
+  }
+
+  it('every outcome line carries bridgeUrl, so a URL pointing at nothing is diagnosable', () => {
+    // While the URL was a constant, its absence from these lines cost nothing —
+    // ws://localhost:3010 was the only value there could be. It is now derived
+    // (env, then port arithmetic, then a possible loopback fallback), so an
+    // operator aimed at the wrong port would otherwise see only generic
+    // reconnect churn: the wrong-cause diagnosis #1130 was filed about.
+    const { factory, sockets } = makeFactory();
+    const url = 'ws://localhost:4321';
+    const l = new MedusaListener({ bridgeUrl: url, workspaceId: 'ws-log', backoffBaseMs: 5, wsFactory: factory });
+    const lines = captureLog(() => {
+      l.start();
+      sockets[0]._open();
+      sockets[0]._message({ type: 'registered', workspaceId: 'ws-log' });
+      sockets[0]._errorEvent('nope');
+      sockets[0]._closeEvent(1006);
+    });
+    l.stop();
+
+    for (const marker of [
+      'Medusa socket open; registering',
+      'Medusa registered; listening',
+      'Medusa socket error',
+      'Medusa socket closed unexpectedly',
+      'Scheduling Medusa reconnect'
+    ]) {
+      const line = lines.find((x) => x.includes(marker));
+      assert.ok(line, `expected a line for ${marker}`);
+      assert.ok(line.includes(url), `${marker} should name the URL it tried`);
+    }
+  });
+});
+
 
 describe('MedusaListener', () => {
   it('sends the register frame first on open', () => {

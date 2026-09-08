@@ -5,6 +5,56 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **The Medusa listener resolves its Bridge URL the way the HTTP side does, so an install on
+  non-default ports can move both halves (#1100).** `MEDUSA_BRIDGE_HTTP_URL` redirected send,
+  roster and loops; the listener hardcoded `ws://localhost:3010` and consulted no environment.
+  `bridgeUrl` reached it only as a `startSession` option that **no production caller passes**
+  (`lib/master.js`, `lib/projects.js`, two sites in `lib/sessions.js`, `server.js`), so the default
+  was the only reachable value and the option was a test seam. An operator whose Medusa had moved
+  could redirect half the Switchboard and had no supported way to finish the job.
+
+  Resolution now lives in `lib/medusa.js` beside the HTTP base it must agree with, most specific
+  first: `MEDUSA_BRIDGE_WS_URL`, else derived from the live HTTP base (same host, port + 1,
+  `http`→`ws` / `https`→`wss`), else `ws://localhost:3010`. The derivation reads the module's
+  current `bridgeHttpUrl` rather than `process.env`, so the `_setBridgeHttpUrl` seam moves both
+  gates together and they cannot drift — one knob is correct for the common case, since Medusa
+  serves its WS on `protocolPort + 1`.
+
+  **The loopback trust model constrains the override rather than being relaxed by it.** The WS path
+  is unauthenticated at the workspace layer, so anything that can reach the port can register as
+  any workspace, spoof a `from`, or drain another workspace's queue: a resolved host that is not
+  `localhost`, `127.0.0.0/8` or `::1` is refused and the default used. The check reads a parsed
+  `URL.hostname`, which is what makes `ws://localhost@evil.com:3010` and `ws://localhost.evil.com`
+  fail closed where a substring check would admit both. The refusal also applies to a *derived* URL,
+  so a remote `MEDUSA_BRIDGE_HTTP_URL` cannot smuggle a remote listener in through the derivation.
+
+  **That the HTTP gate is unguarded is a gap, not a reassurance.** `POST /messages/direct` and
+  `GET /workspaces` are equally unauthenticated and `from` comes from the request body, with
+  `A2A_SECRET` gating only the `/a2a/*` mesh TangleClaw never calls — so a remote HTTP base ships
+  spoofable traffic off loopback and leaves a **split install**, send and roster on the remote
+  Bridge while the listener falls back to loopback. The refusal line says exactly that rather than
+  leaving it to be inferred.
+
+  **Every refusal falls back rather than throwing, and each is named once per distinct value.** A
+  typo must not stop the Switchboard from starting, so the resolver refuses through a single owner
+  that logs the reason, the value and the gate — one owner rather than a line per site, because the
+  sites arrive one at a time and a per-site remedy leaves the newest one flooding on every session
+  start. The accepted set is validated by construction against what `new WebSocket` will take: a
+  non-`ws` scheme, a `#fragment` (including a bare trailing `#`, which parses with an *empty* hash
+  and so slips a naive `hash` test) and a port past 65535 all parse as URLs, and all would
+  otherwise be caught by the listener's factory-throw path and retried on the 30s backoff cap
+  **forever** — the one bad-input shape that never reached the documented default. A base with no
+  explicit port is refused too, since `+ 1` on a scheme default gives port 81 or 444: arithmetic on
+  a number the operator never chose.
+
+  **The listener's connection-outcome logs now name the URL they tried.** While it was a constant
+  their silence cost nothing; now that it is derived, an operator pointing at the wrong port would
+  have seen only generic reconnect churn — the wrong-cause diagnosis #1130 exists to remove.
+
+  `docs/configuration-reference.md` documents both variables, the derivation and the loopback rule.
+  Tests assert the URL the socket factory was actually asked for rather than the resolver's return
+  value — the production callers pass no `bridgeUrl`, so a resolver nothing called would leave a
+  direct unit test green.
 
 - **The rest of the update-checker's log-flood family is narrowed to transitions (#1335).** #956
   fixed one member and the Critic on that chunk found three more in the same module, all the same

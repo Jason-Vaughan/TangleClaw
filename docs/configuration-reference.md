@@ -58,6 +58,59 @@ Overriding `HOME` instead is not supported and never was: it moves anything
 derived from the home directory, TangleClaw's and the operating system's alike,
 and an attempt to sandbox that way migrated the live database on 2026-07-20.
 
+### Pointing at a Medusa Bridge on non-default ports
+
+The Medusa Bridge is a host-local service TangleClaw talks to over two
+transports, and each has an environment override. They are read by the Node
+process only.
+
+| Variable | Default | What it sets |
+|---|---|---|
+| `MEDUSA_BRIDGE_HTTP_URL` | `http://localhost:3009` | The HTTP base used for send, roster and loops. |
+| `MEDUSA_BRIDGE_WS_URL` | derived, see below | The WebSocket URL each session listener registers against. |
+
+**One knob is usually enough.** Medusa serves its WebSocket on its HTTP port + 1
+(`medusa-server.js` uses `protocolPort + 1`), so with only `MEDUSA_BRIDGE_HTTP_URL`
+set the listener URL is derived from it: same host, port + 1, `http`→`ws` and
+`https`→`wss`. Setting the HTTP base to `http://localhost:4009` gives listeners
+`ws://localhost:4010` with nothing else to configure. `MEDUSA_BRIDGE_WS_URL` is
+for the installs where that relationship does not hold; when set, it wins.
+
+**A resolved WebSocket URL must be loopback.** The WS path is unauthenticated at
+the workspace layer — anything that can reach the port can register as any
+workspace, spoof a `from`, and drain another workspace's queue — so the override
+moves a *port*, not a host. A resolved host that is not `localhost`,
+`127.0.0.0/8` or `::1` is refused, the loopback default is used, and the refusal
+is logged once per distinct value, naming the value and the variable that carried
+it. To reach a Bridge on another machine, tunnel it to loopback.
+
+**The HTTP side is not guarded, and is not safer.** `MEDUSA_BRIDGE_HTTP_URL` will
+accept a remote base today. That is a gap, not a reassurance: the Bridge's HTTP
+endpoints TangleClaw uses (`POST /messages/direct`, `GET /workspaces`) are
+**equally unauthenticated**, and `from` is taken from the request body, so
+pointing the HTTP base at a remote host ships spoofable traffic off loopback. The
+Bridge's `A2A_SECRET` HMAC gates only its `/a2a/*` mesh layer, which TangleClaw
+never calls. The whole integration is trusted-local loopback; only one of the two
+gates currently enforces it.
+
+**A remote HTTP base therefore leaves a SPLIT install.** Send, roster and loops
+follow the remote base while the listener refuses to derive a remote URL and
+falls back to `ws://localhost:3010` — half the Switchboard pointing at each
+Bridge. The refusal log line says so in those words rather than leaving it to be
+inferred.
+
+**A base with no explicit port is refused rather than derived from.** `+ 1` on a
+scheme default would give `http://localhost` → port 81 and `https://localhost` →
+port 444: arithmetic on a number the operator never chose, and a port no Medusa
+serves. Give the HTTP base an explicit port, or set `MEDUSA_BRIDGE_WS_URL`.
+
+**Every refusal falls back rather than throwing**, so a typo cannot stop the
+Switchboard from starting — including a value the WebSocket client itself would
+reject (a `#fragment`, a non-`ws` scheme, a port past 65535), which would
+otherwise be retried on a reconnect loop forever. The cost is that the default is
+a normal-looking value for a read that did not succeed, so the log line is the
+operator's only signal that an override was ignored.
+
 ## Global Configuration (`config.json`)
 
 Auto-created on first run with defaults. Editable directly or via `PATCH /api/config`.
