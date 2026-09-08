@@ -208,11 +208,34 @@ describe('the register handshake has a deadline (#1131)', () => {
     assert.match(l.lastError, /did not complete the register handshake/);
     assert.equal(sockets.length, 1, 'the reconnect is still backing off, so nothing else closed it');
 
-    // And it recovers on its own once the Bridge starts answering — no restart.
-    // Driven directly rather than waiting out the 5s backoff.
-    l._connect();
+    // The HANDOFF is the property, and it is asserted on the timer rather than on
+    // a second socket: with a 5s backoff no socket has appeared yet, and calling
+    // `_connect()` by hand to conjure one would make the assertion true by the
+    // test's own action. Deleting `_scheduleReconnect()` from the deadline
+    // callback reds exactly this line and nothing else in the file.
+    assert.ok(l._reconnectTimer, 'the deadline must hand off to the reconnect path');
+    l.stop();
+  });
+
+  it('recovers on its own once the Bridge starts answering — no daemon restart', async () => {
+    // The other half of #1131's Done-when, split out so the reconnect can be the
+    // listener's OWN rather than one the test triggered. Timings are chosen so
+    // both waits are wide: the deadline (200ms) is long enough that the
+    // replacement socket has 200ms of headroom before its own deadline, and the
+    // backoff (20ms) is short enough that the automatic reconnect arrives
+    // promptly. Nothing here sleeps a guessed interval.
+    const { factory, sockets } = makeFactory();
+    const l = new MedusaListener({
+      workspaceId: 'ws-1', handshakeTimeoutMs: 200, backoffBaseMs: 20, wsFactory: factory
+    });
+    l.start();
+    sockets[0]._open(); // upgraded, and the Bridge never answers `register`
+
+    await waitFor(() => sockets.length > 1, 'the deadline to drive an automatic reconnect', 10000);
     const next = sockets[sockets.length - 1];
-    assert.notEqual(next, sockets[0], 'the deadline should have driven a reconnect');
+    assert.notEqual(next, sockets[0], 'the replacement socket must be a fresh one');
+
+    // The Bridge is healthy now.
     next._open();
     next._message({ type: 'registered', workspaceId: 'ws-1' });
     assert.equal(l.state, 'listening');
