@@ -3490,7 +3490,20 @@ route('POST', '/api/session-rules/:id/restore', (_req, res, params, body) => {
     if (refuseUnconfirmedBaselineEdit(existing, body.confirmBaselineEdit === true)) {
       const target = store.sessionRules.listVersions(Number(params.id))
         .find((v) => v.versionNo === Number(body.versionNo));
-      const weakens = !target || target.content !== existing.content || !target.enabled;
+      // #1048 — a versionNo that does not exist is NOT a weakening. It used to
+      // be treated as one (`!target ||`), so the caller was told to confirm an
+      // operation that could never succeed, and the misleading answer shadowed
+      // the accurate one.
+      //
+      // The existence check is deliberately NOT hoisted above this gate, which
+      // is what the issue suggests: `store.sessionRules.restore` already
+      // validates it and throws NOT_FOUND, which the catch below maps to 404.
+      // Pre-checking here would put the same rule in two places — and the gate
+      // must stay symmetric across every path that can alter a rule, so a
+      // second copy is the thing most likely to drift. Falling through gives
+      // the authoritative answer from the one owner of it.
+      const weakens = Boolean(target)
+        && (target.content !== existing.content || !target.enabled);
       if (weakens) {
         return errorResponse(res, 400,
           'This is a shipped Master boundary rule — restoring a version that changes or disables it requires confirmBaselineEdit: true (Restore defaults always recovers the baseline)',

@@ -246,6 +246,27 @@ All notable changes to TangleClaw are documented in this file.
   independently fixed by **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in PR #1354;
   their bytes were not merged, per `CONTRIBUTING.md`.
 
+- **Restoring a nonexistent version of a baseline Master rule said `CONFIRM_REQUIRED` instead of
+  `NOT_FOUND` (#1048).** The baseline-confirm gate ran before version existence was established, and
+  its predicate counted a missing target as a weakening (`!target || …`). The caller was told to
+  confirm an operation that could never succeed. Fail-closed, so nothing was at risk — but the
+  misleading answer shadowed the accurate one.
+
+  **The existence check is deliberately not hoisted**, which is what the issue suggests.
+  `store.sessionRules.restore` already validates the version and throws `NOT_FOUND`, which the
+  route's own catch maps to 404 — so a pre-check would put the same rule in two places, and this
+  gate's predicates must stay symmetric across every path that can alter a rule or the confirm
+  becomes bypassable. A second copy is exactly what drifts. The missing-target case now falls
+  through to the one owner of that answer.
+
+  Pinned in **both** directions: a version that does not exist gets 404, and a version that exists
+  and weakens still gets `CONFIRM_REQUIRED`. Without the second, dropping the gate entirely would
+  have passed the first.
+
+  Reconstructed under ADR 0014 from #1048 rather than from the submitted patch. Reported and
+  independently fixed by **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in PR #1359;
+  their bytes were not merged, per `CONTRIBUTING.md`.
+
 ## [5.22.0] - 2026-09-07
 
 ### Added
