@@ -130,7 +130,35 @@ decisions surfaced at the chunk that acts on them, not unknowns.
 - [x] Chunk 03: A durable failure is logged when it changes, not when it repeats (#956)
 - [x] Chunk 04: One broadcast per reader per quiet period, and a drain for what nobody reads (#1108)
 - [x] Chunk 05: The cache-bump guard fires on the next miss, not the last one (#625)
-- [ ] Chunk 06: The uploads module reads a project directory the way the scanner does (#889, uploads half)
+- [x] Chunk 06: The uploads module reads a project directory the way the scanner does (#889, uploads half)
+
+**Chunk 06 is done, and Train 14 is complete — all six cars.** Branch
+`fix/889-uploads-killable-reads`, three commits: the chunk, then two resolution rounds. Reviews:
+cumulative `rev-20260907T231201Z-5ad505de` (1 blocking, 9 warning, 16 note across three reviewers
+— 14 fixed, 12 accepted with recorded reasons), `rev-20260907T233725Z-c6dbcbf9` (1 blocking: the
+fix for the `_exists`/`_probe` finding was proven at the child and nowhere at the server), and
+`rev-20260907T234806Z-7523da69` — **0 blocking, 0 warning, 0 note**.
+
+**The blocking finding in round 1 was Chunk 05's own cache-bump guard gating Chunk 06**, which is
+the first time a guard this train built has stopped the next car. It was answered with the guard's
+*other* named remedy — `/history-drawer.js` into `NETWORK_FIRST_PATHS` — rather than the
+`CACHE_NAME` bump the finding prescribed: a bump evicts every operator's cache to deliver one file,
+and behind the `basic_auth` gate that locked the operator out of Chrome once (#710). The drawer is
+also the third instance of a lockstep pattern `public/sw.js` documents twice. Consequence worth
+knowing: the guard's own tests had named `/history-drawer.js` as their specimen of a cache-first
+asset, so reclassifying one file reddened four assertions about the guard. They now DERIVE a
+specimen from the real `sw.js` and assert at least one cache-first file still exists — which
+catches the guard going vacuous, a property naming a file could never hold.
+
+**Two mechanisms became shared rather than duplicated**, both found at review:
+`lib/staged-write.js` (the temp-then-rename + sweep that `lib/project-version-files.js` and
+`lib/uploads-fs.js` had byte-identical copies of) and `test/_eacces.js` (one convention for the
+eleven `chmod 000` fixtures, probing the capability rather than reading the uid, and skipping
+visibly against a new `skip-ledger.json` entry).
+
+**The #889 remainder is #1350**, with a re-derived census — 43 synchronous calls in
+`lib/projects.js`, not the 47 this plan carried; 32 route-reachable; `detectExistingProjects`
+proven to have no caller outside tests. A duplication found on the way is #1351.
 
 **Chunk 01 is done** — branch `fix/692-orphan-sweep-audit`, Critic `rev-20260906T203735Z-565f2547`
 (1 blocking, 8 warning, 10 note across three reviewers; 11 fixed in one pass, 8 accepted), then

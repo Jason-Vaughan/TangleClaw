@@ -9,6 +9,7 @@ const os = require('node:os');
 const { setLevel } = require('../lib/logger');
 const store = require('../lib/store');
 const { createServer } = require('../server');
+const { canForceRefusal } = require('./_eacces');
 
 setLevel('error');
 
@@ -123,5 +124,104 @@ describe('API /api/upload + /api/uploads', () => {
   it('GET /api/uploads should return 400 without project param', async () => {
     const res = await request(server, 'GET', '/api/uploads');
     assert.equal(res.status, 400);
+  });
+
+  describe('a directory that cannot be read is not a directory with nothing in it (#889)', () => {
+    const projDir = () => path.join(tmpDir, projectName);
+
+    it('GET /api/uploads names the refusal instead of reporting an empty list (needs a directory this process cannot read)', async (t) => {
+      if (!canForceRefusal()) { t.skip('this process can read a 000 directory'); return; }
+      const legacy = path.join(projDir(), '.uploads');
+      fs.chmodSync(legacy, 0o000);
+      try {
+        const res = await request(server, 'GET', `/api/uploads?project=${projectName}`);
+        assert.equal(res.status, 200, 'a refused directory is a partial answer, not a failed request');
+        assert.deepEqual(res.data.uploads, []);
+        // Without these the route says exactly what "nothing has been uploaded"
+        // says, and the operator is told their files are gone.
+        assert.ok(res.data.unreadable, 'the route must carry the reason');
+        assert.equal(res.data.unreadableCode, 'EACCES');
+        assert.equal(res.data.unreadableHint, null, 'the filesystem answered; this is not a TCC problem');
+      } finally {
+        fs.chmodSync(legacy, 0o755);
+      }
+    });
+
+    it('GET /api/uploads reports no failure when the project simply has no uploads', async () => {
+      const emptyProject = 'upload-empty-proj';
+      const dir = path.join(tmpDir, emptyProject);
+      fs.mkdirSync(dir, { recursive: true });
+      store.projects.create({ name: emptyProject, path: dir, engine: 'claude', tags: [], ports: {} });
+
+      const res = await request(server, 'GET', `/api/uploads?project=${emptyProject}`);
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.data.uploads, []);
+      assert.equal(res.data.unreadable, null, 'absence is not refusal');
+      assert.equal(res.data.unreadableCode, null);
+    });
+
+    it('the session drill-down carries the same distinction (needs a directory this process cannot read)', async (t) => {
+      if (!canForceRefusal()) { t.skip('this process can read a 000 directory'); return; }
+      const legacy = path.join(projDir(), '.uploads');
+      fs.chmodSync(legacy, 0o000);
+      try {
+        const res = await request(server, 'GET',
+          `/api/continuity/${projectName}/sessions/1`);
+        assert.equal(res.status, 200);
+        assert.ok(res.data.uploadsUnreadable,
+          'a session whose uploads could not be read must not look like one that has none');
+        assert.equal(res.data.uploadsUnreadableCode, 'EACCES');
+      } finally {
+        fs.chmodSync(legacy, 0o755);
+      }
+    });
+
+    it('POST /api/upload returns 500, not 400, when the project directory is there and refused (needs a directory this process cannot read)', async (t) => {
+      if (!canForceRefusal()) { t.skip('this process can read a 000 directory'); return; }
+      // The route is where this distinction is finally spent. A 400 says "Project
+      // directory not found on disk" — a specific claim about the operator's
+      // machine — so answering a permissions problem with it tells them their
+      // project was deleted. Asserted end to end through a real fork, because the
+      // collapse could be reintroduced at the child, at lib/uploads.js, or here,
+      // and only this test sees all three.
+      const refused = 'upload-refused-proj';
+      const parent = path.join(tmpDir, 'refused-parent');
+      const dir = path.join(parent, refused);
+      fs.mkdirSync(dir, { recursive: true });
+      store.projects.create({ name: refused, path: dir, engine: 'claude', tags: [], ports: {} });
+      fs.chmodSync(parent, 0o000);
+      try {
+        const res = await request(server, 'POST', '/api/upload', {
+          project: refused,
+          filename: 'test.txt',
+          data: Buffer.from('x').toString('base64')
+        });
+        assert.equal(res.status, 500,
+          'a directory that is there and refused is the server reporting its own limit');
+        assert.notEqual(res.status, 400, 'never the 400 that asserts the project was deleted');
+        assert.match(res.data.error, /may not read it/);
+      } finally {
+        fs.chmodSync(parent, 0o755);
+      }
+    });
+
+    it('POST /api/upload returns 400 when the project directory is gone from disk', async () => {
+      const gone = 'upload-gone-proj';
+      const dir = path.join(tmpDir, gone);
+      fs.mkdirSync(dir, { recursive: true });
+      store.projects.create({ name: gone, path: dir, engine: 'claude', tags: [], ports: {} });
+      fs.rmSync(dir, { recursive: true, force: true });
+
+      const res = await request(server, 'POST', '/api/upload', {
+        project: gone,
+        filename: 'test.txt',
+        data: Buffer.from('x').toString('base64')
+      });
+      assert.equal(res.status, 400);
+      // The check that produces this moved into the scanner child with the
+      // write; dropping it would have `recursive: true` rebuild the tree and
+      // report the upload as saved into a project the operator deleted.
+      assert.equal(fs.existsSync(dir), false, 'the project tree must not be recreated');
+    });
   });
 });

@@ -220,8 +220,22 @@ async function openHistorySession(sid) {
   }
 
   const uploads = (data.uploads || []);
-  const uploadsHtml = uploads.length
-    ? `<div class="history-section"><strong>Uploads (${uploads.length})</strong>${uploads.map((u) =>
+  // A refused directory renders as a notice, never as an absent section: a
+  // session whose uploads could not be read must not look like one that has
+  // none (#889).
+  //
+  // The sentence is deliberately about the PROJECT, not this session.
+  // `listUploads` walks the legacy pile and every session directory and reports
+  // the FIRST refusal it met, so the directory that refused may belong to another
+  // session entirely — this list would then be complete. Naming this session
+  // would be a more useful sentence and a sometimes-false one; "may be
+  // incomplete" is what the payload actually supports.
+  const uploadsUnreadable = data.uploadsUnreadable
+    ? `<div class="form-hint" style="color:var(--danger)">&#9888; Some of this project's uploads could not be read, so this list may be incomplete: ${esc(data.uploadsUnreadable)}${
+      data.uploadsUnreadableHint ? ` — ${esc(data.uploadsUnreadableHint)}` : ''}.</div>`
+    : '';
+  const uploadsHtml = (uploads.length || uploadsUnreadable)
+    ? `<div class="history-section"><strong>Uploads (${uploads.length})</strong>${uploadsUnreadable}${uploads.map((u) =>
         `<div class="form-hint">${esc(u.name || u.path || '')}</div>`).join('')}</div>`
     : '';
 

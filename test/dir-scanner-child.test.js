@@ -24,6 +24,7 @@ const path = require('node:path');
 const fsp = require('node:fs').promises;
 const { execFileSync } = require('node:child_process');
 const { initRepo } = require('./_temp-repo');
+const { canForceRefusal } = require('./_eacces');
 
 const { HANDLERS, PROJECT_MARKERS } = require('../lib/dir-scanner-child');
 
@@ -552,12 +553,12 @@ describe('dir-scanner child — projectFacts carries git and config (#884, chunk
       'the scanner child must not load lib/store.js, even after answering a real request');
   });
 
-  test('a directory that is there but unreadable is not reported as deleted', async () => {
+  test('a directory that is there but unreadable is not reported as deleted (needs a directory this process cannot read)', async (t) => {
     // THE MUTATION THIS CATCHES: routing this through `_exists`, which collapses
     // EACCES into `false`. That renders a directory the server may not traverse
     // as one the operator deleted — confidently wrong rather than merely absent,
     // and indistinguishable in the UI from a project they removed on purpose.
-    if (process.getuid && process.getuid() === 0) return; // root bypasses the check
+    if (!canForceRefusal()) { t.skip('this process can read a 000 directory'); return; }
     const locked = scratch('facts-locked');
     const inner = path.join(locked, 'project');
     fs.mkdirSync(inner, { recursive: true });
@@ -583,5 +584,129 @@ describe('dir-scanner child — probeDir (the health panel\'s Full Disk Access r
 
   test('rejects with ENOENT for a directory that is not there, so the caller can say "nothing to probe"', async () => {
     await assert.rejects(HANDLERS.probeDir({ dir: path.join(tmpRoot, 'probe-missing') }), { code: 'ENOENT' });
+  });
+});
+
+describe('dir-scanner child — uploads ops (#889)', () => {
+  test('listUploads answers with the project\'s uploads', async () => {
+    const dir = scratch('uploads-list');
+    const saved = await HANDLERS.saveUpload({
+      projectPath: dir,
+      filename: 'note.txt',
+      base64Data: Buffer.from('hello').toString('base64'),
+      sid: 3
+    });
+    assert.equal(saved.status, 'saved');
+
+    const listed = await HANDLERS.listUploads({ projectPath: dir });
+    assert.equal(listed.uploads.length, 1);
+    assert.equal(listed.uploads[0].name, saved.upload.name);
+    assert.equal(String(listed.uploads[0].session), '3');
+    assert.equal(listed.unreadable, null);
+  });
+
+  test('listUploads reports a refused directory on the SUCCESS value, keeping what it read (needs a directory this process cannot read)', async (t) => {
+    if (!canForceRefusal()) { t.skip('this process can read a 000 directory'); return; }
+    const dir = scratch('uploads-refused');
+    await HANDLERS.saveUpload({
+      projectPath: dir,
+      filename: 'legacy.txt',
+      base64Data: Buffer.from('a').toString('base64'),
+      sid: null
+    });
+    await HANDLERS.saveUpload({
+      projectPath: dir,
+      filename: 'session.txt',
+      base64Data: Buffer.from('b').toString('base64'),
+      sid: 12
+    });
+    const refused = path.join(dir, '.tangleclaw', 'continuity', 'sessions', '12', 'uploads');
+    fs.chmodSync(refused, 0o000);
+
+    try {
+      const listed = await HANDLERS.listUploads({ projectPath: dir });
+      // Failing the whole request would throw away the legacy upload in order to
+      // report the session directory — the contract this op is shaped around.
+      assert.equal(listed.uploads.length, 1, 'what was readable is still answered');
+      assert.equal(listed.code, 'EACCES');
+      assert.notEqual(listed.unreadable, null);
+    } finally {
+      fs.chmodSync(refused, 0o755);
+    }
+  });
+
+  test('exercising the uploads ops still loads no database into the child', () => {
+    // The roster in `.prawduct/artifacts/architecture.md` says a module reachable
+    // from this child may not reach the database by ANY path, deferred requires
+    // included — and it names `lib/uploads-fs.js` as a member. A roster entry is
+    // a claim; this is the only thing that checks it, and only a FRESH process
+    // can: the test runner loaded lib/store.js long before any assertion here.
+    //
+    // Both ops, because they pull different trees: the write reaches
+    // `lib/secret-scan.js` and `lib/staged-write.js`, the listing reaches
+    // `lib/continuity.js`. A probe that ran only one would cover half the roster.
+    const dir = scratch('uploads-dbprobe');
+    // The verdict is DELIMITED, and that is not decoration. `lib/uploads-fs.js`
+    // logs an unconditional info line per save (and a warn for a flagged one),
+    // and the logger's default sink is stdout — so reading the whole capture
+    // compares "<two log lines>false" against "false" and fails a healthy tree.
+    // Silencing the logger fixes today's lines; the marker means a future one
+    // cannot quietly turn this assertion back into a string comparison nobody
+    // meant to make.
+    const probe = 'require("./lib/logger").setLevel("error");'
+      + 'const c = require("./lib/dir-scanner-child.js");'
+      + `c.HANDLERS.saveUpload({ projectPath: ${JSON.stringify(dir)}, filename: "n.txt", `
+      + 'base64Data: Buffer.from("api_key=AKIAIOSFODNN7EXAMPLE").toString("base64"), sid: 1 })'
+      + `.then(() => c.HANDLERS.listUploads({ projectPath: ${JSON.stringify(dir)} }))`
+      + '.then(() => process.stdout.write("<<db:" + String('
+      + 'Object.keys(require.cache).some(k => k.endsWith("/lib/store.js"))) + ">>"))';
+    const out = execFileSync(process.execPath, ['-e', probe], {
+      cwd: path.join(__dirname, '..'), encoding: 'utf8'
+    });
+    const verdict = /<<db:(true|false)>>/.exec(out);
+    assert.ok(verdict, `the probe must reach its own verdict (stdout was: ${out})`);
+    assert.equal(verdict[1], 'false',
+      'the uploads ops must not drag lib/store.js into the process built to be killed');
+  });
+
+  test('saveUpload tells a REFUSED project directory apart from a deleted one (needs a directory this process cannot read)', async (t) => {
+    if (!canForceRefusal()) { t.skip('this process can read a 000 directory'); return; }
+    // THE MUTATION THIS CATCHES: guard with `_exists`, which collapses EACCES
+    // into false. The route turns 'project-missing' into a 400 asserting the
+    // operator's project is not on disk — so a directory they can see, whose
+    // permissions are merely wrong, is reported to them as deleted. That is the
+    // misdiagnosis this whole family of changes exists to remove, arriving
+    // inside the op that removed it.
+    const locked = scratch('uploads-refused-root');
+    const inner = path.join(locked, 'project');
+    fs.mkdirSync(inner, { recursive: true });
+    fs.chmodSync(locked, 0o000);
+    try {
+      const result = await HANDLERS.saveUpload({
+        projectPath: inner,
+        filename: 'note.txt',
+        base64Data: Buffer.from('x').toString('base64'),
+        sid: null
+      });
+      assert.equal(result.status, 'project-refused',
+        'a directory that is there and refuses is not a directory that was deleted');
+      assert.equal(result.code, 'EACCES');
+    } finally {
+      fs.chmodSync(locked, 0o755);
+    }
+  });
+
+  test('saveUpload reports a missing project directory instead of creating one', async () => {
+    const missing = path.join(tmpRoot, 'uploads-never-existed');
+    const result = await HANDLERS.saveUpload({
+      projectPath: missing,
+      filename: 'note.txt',
+      base64Data: Buffer.from('x').toString('base64'),
+      sid: null
+    });
+    assert.equal(result.status, 'project-missing');
+    // `recursive: true` would happily build the whole tree at a path the
+    // operator deleted, then report the upload as saved into it.
+    assert.equal(fs.existsSync(missing), false, 'the project tree must not be materialised');
   });
 });

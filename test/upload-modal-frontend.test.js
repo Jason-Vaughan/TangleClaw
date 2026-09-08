@@ -16,6 +16,8 @@ const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
+const uploadsFs = require('../lib/uploads-fs');
 
 describe('Upload modal — any file type + copyable history links (#338)', () => {
   let js;
@@ -62,6 +64,71 @@ describe('Upload modal — any file type + copyable history links (#338)', () =>
       // instead of calling `navigator.clipboard.writeText` directly.
       assert.match(js, /tcCopyToClipboard\(pathStr\)/);
       assert.match(js, /Upload path copied to clipboard/);
+    });
+  });
+
+  describe('the secret badge reads what the API sends and wears a class that exists (#343, #889)', () => {
+    it('branches on the flag field the uploads listing actually produces', () => {
+      // BUILD THE CONSUMER'S EXPECTATION FROM THE PRODUCER, never from a literal
+      // typed on this side: the badge read `u.secretMatches` and `m.rule`, which
+      // `listUploads` has never emitted, so it could not render for any upload
+      // and the flag-only scan was invisible on the one surface that shows it.
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-upload-badge-'));
+      try {
+        const saved = uploadsFs.saveUpload(tmp, 'creds.env',
+          Buffer.from('api_key=AKIAIOSFODNN7EXAMPLE\n').toString('base64'), 2);
+        assert.equal(saved.secretsFlagged, true, 'fixture precondition: a flagged upload');
+        const entry = uploadsFs.listUploads(tmp).uploads.find((u) => u.name === saved.name);
+
+        for (const field of ['secretsFlagged', 'secretTypes']) {
+          assert.ok(Object.hasOwn(entry, field), `producer emits ${field}`);
+          assert.ok(js.includes(`u.${field}`),
+            `the badge must read u.${field} — the field the listing emits`);
+        }
+        // The property is that the badge does not READ a field the payload
+        // lacks — not that the string is absent from the file, which a comment
+        // could redden for no behavioural reason.
+        assert.ok(!/\bu\.secretMatches\b/.test(js),
+          'the badge must not read a field the uploads payload does not carry');
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it('names a badge class that a stylesheet session.html actually loads', () => {
+      // The defect this pins is not a typo, it is a SCOPE error: `.badge-secret`
+      // was defined only in style.css, which session.html does not load, so the
+      // badge would have rendered unstyled even once its field name was fixed.
+      // Both halves are derived — the class from the renderer, the sheets from
+      // the page — so renaming either side keeps the assertion meaningful.
+      const emitted = [...js.matchAll(/class="([a-z-]*badge[a-z-]*)"/g)].map((m) => m[1]);
+      assert.ok(emitted.length > 0, 'the upload history renders at least one badge class');
+
+      const sheets = [...html.matchAll(/<link rel="stylesheet" href="\/([^"]+)"/g)].map((m) => m[1]);
+      assert.ok(sheets.length > 0, 'session.html loads at least one stylesheet');
+      const css = sheets
+        .map((f) => path.join(__dirname, '..', 'public', f))
+        .filter((f) => fs.existsSync(f))
+        .map((f) => fs.readFileSync(f, 'utf8'))
+        .join('\n');
+
+      for (const cls of emitted) {
+        assert.ok(new RegExp(`\\.${cls}\\s*[,{]`).test(css),
+          `.${cls} is emitted by session.js but defined in no stylesheet session.html loads`);
+      }
+    });
+  });
+
+  describe('an uploads directory that could not be read says so (#889)', () => {
+    it('renders a notice from the payload\'s unreadable fields instead of an empty history', () => {
+      // `GET /api/uploads` carries `unreadable` / `unreadableHint` for a refused
+      // read. Rendering nothing for that case is what told the operator their
+      // files were gone.
+      assert.match(js, /data\.unreadable/);
+      assert.match(js, /data\.unreadableHint/);
+      // The notice must survive the empty branch — that is the branch a refused
+      // directory lands in, and the one that used to blank the panel.
+      assert.match(js, /historyEl\.innerHTML\s*=\s*unreadableHtml\b/);
     });
   });
 });

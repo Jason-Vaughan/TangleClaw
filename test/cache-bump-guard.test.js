@@ -55,6 +55,38 @@ function withGeneration(src, generation) {
   return src.replace(/const CACHE_NAME = '[^']*';/, `const CACHE_NAME = 'tangleclaw-v3-${generation}';`);
 }
 
+/**
+ * A `public/` file that the PRODUCTION `sw.js` really serves cache-first.
+ *
+ * DERIVED, NOT NAMED. These fixtures need a specimen of the thing the guard
+ * gates, and naming one couples the guard's own tests to that file's
+ * classification: `/history-drawer.js` was the specimen until it legitimately
+ * became network-first (#889), and four assertions about the GUARD went red for
+ * a reason that had nothing to do with the guard. Deriving it means a
+ * reclassification moves the specimen instead of breaking the suite, and it
+ * makes the vacuity check below possible — if nothing under `public/` is
+ * cache-first any more, the guard can never fire and these tests would all pass
+ * while proving nothing.
+ *
+ * Sorted, so the choice is deterministic across filesystems.
+ *
+ * @returns {string} A repo-relative path the guard classifies as cache-first.
+ */
+function cacheFirstSpecimen() {
+  const { networkFirst } = guard.parseSwState(REAL_SW);
+  const candidates = fs.readdirSync(path.join(REPO_ROOT, 'public'), { withFileTypes: true })
+    .filter((e) => e.isFile())
+    .map((e) => `public/${e.name}`)
+    .filter((p) => guard.isCacheFirstAsset(p, networkFirst))
+    .sort();
+  assert.ok(candidates.length > 0,
+    'no file under public/ is served cache-first, so the guard can never fire — these tests '
+    + 'would pass while proving nothing');
+  return candidates[0];
+}
+
+const CACHE_FIRST = cacheFirstSpecimen();
+
 describe('cache-bump-guard: reading the roster out of the real sw.js', () => {
   it('parses the production CACHE_NAME and its generation', () => {
     const state = guard.parseSwState(REAL_SW);
@@ -75,8 +107,11 @@ describe('cache-bump-guard: reading the roster out of the real sw.js', () => {
     }
     assert.ok(networkFirst.has('/ui.js'), '/ui.js is network-first in production');
     assert.ok(networkFirst.has('/session.js'), '/session.js is network-first in production');
-    assert.ok(!networkFirst.has('/history-drawer.js'),
-      '/history-drawer.js is cache-first in production — the guard exists for files like it');
+    // Not "file X is cache-first" — that is a fact about X, and X may legitimately
+    // change sides. What must hold is that SOMETHING still is, or the guard is a
+    // check that can never fire.
+    assert.ok(!networkFirst.has(CACHE_FIRST.slice('public'.length)),
+      `${CACHE_FIRST} is cache-first in production — the guard exists for files like it`);
   });
 
   it('a COMMENT quoting a CACHE_NAME assignment cannot become the generation', () => {
@@ -92,10 +127,10 @@ describe('cache-bump-guard: reading the roster out of the real sw.js', () => {
     const verdict = guard.evaluate({
       baseSw: REAL_SW,
       headSw: poisoned,
-      changedPaths: ['public/sw.js', 'public/history-drawer.js']
+      changedPaths: ['public/sw.js', CACHE_FIRST]
     });
     assert.equal(verdict.ok, false, 'a comment must not be able to fake a bump');
-    assert.deepStrictEqual(verdict.offenders, ['public/history-drawer.js']);
+    assert.deepStrictEqual(verdict.offenders, [CACHE_FIRST]);
   });
 
   it('a COMMENT quoting the navigate condition cannot satisfy the navigate premise', () => {
@@ -171,11 +206,11 @@ describe('cache-bump-guard: arm 1 — the missed bump', () => {
     const verdict = guard.evaluate({
       baseSw: base,
       headSw: base,
-      changedPaths: ['public/history-drawer.js', 'lib/store.js']
+      changedPaths: [CACHE_FIRST, 'lib/store.js']
     });
     assert.equal(verdict.ok, false);
-    assert.deepStrictEqual(verdict.offenders, ['public/history-drawer.js']);
-    assert.match(verdict.message, /public\/history-drawer\.js/,
+    assert.deepStrictEqual(verdict.offenders, [CACHE_FIRST]);
+    assert.ok(verdict.message.includes(CACHE_FIRST),
       'the failure must name the offending asset, not just report a violation');
     assert.doesNotMatch(verdict.message, /lib\/store\.js/,
       'a file the worker never serves is not an offender');
@@ -186,7 +221,7 @@ describe('cache-bump-guard: arm 1 — the missed bump', () => {
     const verdict = guard.evaluate({
       baseSw: base,
       headSw: withGeneration(base, state.generation + 1),
-      changedPaths: ['public/history-drawer.js', 'public/sw.js']
+      changedPaths: [CACHE_FIRST, 'public/sw.js']
     });
     assert.equal(verdict.ok, true, verdict.message);
   });
@@ -206,10 +241,10 @@ describe('cache-bump-guard: arm 1 — the missed bump', () => {
     const verdict = guard.evaluate({
       baseSw: base,
       headSw: base,
-      changedPaths: ['public/manifest.json', 'public/history-drawer.js', 'public/logo.png']
+      changedPaths: ['public/manifest.json', CACHE_FIRST, 'public/logo.png']
     });
     assert.deepStrictEqual(verdict.offenders,
-      ['public/history-drawer.js', 'public/logo.png', 'public/manifest.json']);
+      ['public/logo.png', 'public/manifest.json', CACHE_FIRST].sort());
   });
 });
 
@@ -306,7 +341,7 @@ describe('cache-bump-guard: the CLI over a real git repository', () => {
     run('config', 'user.name', 'guard');
     fs.mkdirSync(path.join(dir, 'public'));
     fs.writeFileSync(path.join(dir, 'public', 'sw.js'), REAL_SW);
-    fs.writeFileSync(path.join(dir, 'public', 'history-drawer.js'), 'const drawer = 1;\n');
+    fs.writeFileSync(path.join(dir, CACHE_FIRST), 'const drawer = 1;\n');
     if (seed) seed(dir);
     run('add', '-A');
     run('commit', '-q', '-m', 'base');
@@ -335,12 +370,12 @@ describe('cache-bump-guard: the CLI over a real git repository', () => {
 
   it('exits 1 and names the asset when the branch forgot the bump', () => {
     const repo = makeRepo((dir) => {
-      fs.writeFileSync(path.join(dir, 'public', 'history-drawer.js'), 'const drawer = 2;\n');
+      fs.writeFileSync(path.join(dir, CACHE_FIRST), 'const drawer = 2;\n');
     });
     try {
       const { status, out } = runGuard(repo.dir, ['--base', 'main', '--head', 'topic']);
       assert.equal(status, 1, out);
-      assert.match(out, /public\/history-drawer\.js/);
+      assert.ok(out.includes(CACHE_FIRST));
     } finally {
       repo.cleanup();
     }
@@ -349,7 +384,7 @@ describe('cache-bump-guard: the CLI over a real git repository', () => {
   it('exits 0 when the same branch bumps CACHE_NAME', () => {
     const generation = guard.parseSwState(REAL_SW).generation;
     const repo = makeRepo((dir) => {
-      fs.writeFileSync(path.join(dir, 'public', 'history-drawer.js'), 'const drawer = 2;\n');
+      fs.writeFileSync(path.join(dir, CACHE_FIRST), 'const drawer = 2;\n');
       fs.writeFileSync(path.join(dir, 'public', 'sw.js'), withGeneration(REAL_SW, generation + 1));
     });
     try {
@@ -441,7 +476,7 @@ describe('cache-bump-guard: the CLI over a real git repository', () => {
     // and the roster size are what make a bad parse visible in a green run.
     const generation = guard.parseSwState(REAL_SW).generation;
     const repo = makeRepo((dir) => {
-      fs.writeFileSync(path.join(dir, 'public', 'history-drawer.js'), 'const drawer = 2;\n');
+      fs.writeFileSync(path.join(dir, CACHE_FIRST), 'const drawer = 2;\n');
       fs.writeFileSync(path.join(dir, 'public', 'sw.js'), withGeneration(REAL_SW, generation + 1));
     });
     try {

@@ -5,6 +5,107 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Uploads leave the event loop, and an unreadable uploads directory stops reporting itself as
+  an empty one (#889, uploads half).** `lib/uploads.js` made 11 synchronous filesystem calls on
+  paths the operator chose, all three of its consumers route-reachable (`POST /api/upload`,
+  `GET /api/uploads`, `GET /api/continuity/:project/sessions/:sid`). On a TCC-protected or
+  stalled-mount project directory those calls do not fail, they never return, and a synchronous
+  call cannot be interrupted by any deadline — one upload modal opened against such a project
+  wedges the whole server while `/api/health` keeps answering 200. `fs.promises` is not the fix
+  and is the documented trap: abandoning a promise does not cancel the syscall, so the libuv
+  threadpool thread is gone permanently and four of them end the process's ability to touch the
+  filesystem at all. The work therefore moved into the forked scanner child that already exists
+  to be killed (`lib/dir-scanner.js` → new `listUploads` and `saveUpload` ops), with a new
+  `lib/uploads-fs.js` holding the filesystem half. `lib/uploads.js` no longer imports `node:fs`,
+  which is the acceptance criterion in its strongest form. The **interactive** scanner, not the
+  polled one: all three consumers are things an operator pressed a button for, and answering a
+  click from the poll's five-minute remembered refusal would tell someone who has just granted
+  Full Disk Access that their uploads are still gone.
+
+  **The listing no longer lies about what it could not read.** `listUploads` opened with
+  `if (!fs.existsSync(uploadsDir)) return []`, which answers "nothing has been uploaded" and
+  "this directory refused to be read" with the same value — and both frontends render the empty
+  case as no uploads at all. Moving the hang without carrying that distinction would have kept
+  the lie, so `listUploads` now answers `{ uploads, unreadable, unreadableHint, unreadableCode }`:
+  a partial list stays a list, the first refusal is named with the filesystem's own errno, and the
+  supervisor's failures classify in the vocabulary already in use (`SCAN_TIMEOUT` / `SCAN_CACHED`
+  / `SCAN_ABORTED` / `SCAN_FAILED`). Only a `tcTimedOut` earns the Full Disk Access remedy — an
+  `EACCES` means the filesystem answered, and sending the operator to change a privacy setting
+  that was never the problem is the misdiagnosis the scanner exists to remove. Both surfaces
+  render the difference: the upload modal's Recent uploads panel and the session drill-down in the
+  history drawer.
+
+  **Both writers stage and rename**, because moving a write into a process the supervisor SIGKILLs
+  mid-syscall changes its contract: `writeFileSync` truncates the destination first, so a kill in
+  that window leaves a half-written upload the listing offers as a saved file, or a truncated
+  `_scan.json` that reads as "nothing was ever flagged" — losing every previous secret flag
+  silently. This inherits `projectFacts`'s rule rather than re-deciding it, and adds what a
+  directory the operator *reads* additionally needs: a fixed dotted staging prefix, excluded from
+  the listing by name, swept on each successful write for strays older than a minute.
+
+  **`POST /api/upload`'s `existsSync(project.path)` guard moved with the write rather than being
+  dropped.** It is a read of an operator-chosen path like any other — the one most likely to hang,
+  since a project on a stalled mount is exactly what it checks for — and dropping it would let
+  `mkdir(…, { recursive: true })` materialise a whole project tree at a path the operator deleted
+  and then report the upload as saved into it. The child answers `'saved'` or `'project-missing'`
+  as a value, because the route branches on it: one is the operator's to fix (400), the other is
+  the server reporting its own limit (500), and a thrown error flattens the two.
+
+  The save deadline is computed from the body cap rather than chosen beside it, so raising the cap
+  cannot produce uploads that are accepted and then killed for taking too long and reported as a
+  permissions problem.
+
+  **Found while editing the renderer, and fixed rather than left:** the upload history's
+  possible-secrets badge (#343) could not render for any upload. It branched on `u.secretMatches`
+  and read `m.rule`, neither of which `GET /api/uploads` has ever carried — the payload has
+  `secretsFlagged` and `secretTypes` — so the flag-only secret scan was invisible on the one
+  surface that shows it. Fixing the field exposed a second half: the badge named `secret-badge`,
+  which no stylesheet defines, while the real `.badge-secret` rule lived in `public/style.css`,
+  which `session.html` does not load. The rule moved to `public/shared-controls.css`, which both
+  pages load, so it now applies where it is used. `test/upload-modal-frontend.test.js` pins both
+  halves by deriving them — the field names from a real `listUploads` result, the stylesheets from
+  `session.html`'s own `<link>` tags — rather than from literals typed on the consumer's side.
+
+  **Review-driven, and each one worth naming.** The staged-write mechanism is now
+  `lib/staged-write.js`, shared with `lib/project-version-files.js` rather than reconstructed
+  beside it — the second child-side writer had rebuilt the first's sweep line for line, and a
+  partially-observable write is not a defect anyone spots by reading the code that has it, so one
+  copy is the only way it stays fixed. `saveUpload` probes the project directory with the child's
+  `_probe` rather than `_exists`: `_exists` collapses "not there" and "there and refused" into one
+  `false`, which would have answered a permissions problem with a 400 saying the operator's project
+  was deleted — the misdiagnosis this whole family of changes exists to remove, arriving inside the
+  op that removed it. A refused directory is now a 500 that says so. `lib/uploads.js` stops
+  re-exporting `uploadsDirFor`, which had no caller and was the only edge pulling the child-side
+  module, and `node:fs` with it, back into the server's require graph.
+
+  **`public/history-drawer.js` becomes network-first instead of taking a `CACHE_NAME` bump.** The
+  cache-bump guard (#625) correctly refused this branch: the drawer is cache-first and changed, so
+  an operator with an active service worker would keep the old one. Of the two remedies the guard
+  names, the bump evicts every operator's entire cache to deliver one file — and behind the Caddy
+  `basic_auth` gate that has cost an operator their browser session before (#710). The drawer is
+  also the third instance of a pattern `sw.js` already documents twice: a network-first `ui.js`
+  renders the card whose button calls into it, exactly the `session.js`/`wrap-drawer.js` skew.
+  Its own precache comment still described `ui.js` as cache-first, which stopped being true when
+  `ui.js` went network-first; that is corrected too. The guard's tests named `/history-drawer.js`
+  as their specimen of a cache-first asset, so a legitimate reclassification reddened four
+  assertions about the guard — they now DERIVE a specimen from the real `sw.js`, and assert that
+  at least one cache-first file still exists, which is the check that would catch the guard
+  becoming vacuous.
+
+  **The `project-refused` distinction is proven at the route, not only at the child.** The first
+  fix drew it in the scanner child and left the server's mapping untested, so collapsing
+  `lib/uploads.js` back to `project-missing` restored the whole misdiagnosis at the only surface
+  the operator reads — a 400 saying their project is not on disk. `POST /api/upload` now answers a
+  refused directory with a 500 that names it, asserted end to end through a real fork, and an
+  unrecognised child status is reported as the server's own limit with a log line rather than
+  silently acquiring the 400's meaning.
+
+  The remainder of #889 is filed as #1350 with a re-derived census: `lib/projects.js` holds **43**
+  synchronous calls, not the 47 the plan carried, **32 of them route-reachable**, plus the two
+  sites that need a different answer from "move the read" — `createProject`/`deleteProject`
+  create and destroy directories, where a child killed mid-`rmSync` leaves a half-deleted project,
+  and `detectExistingProjects` is proven to have no caller outside tests. The three-copy
+  duplication of the Full Disk Access remedy sentence is filed as #1351.
 - **`activity_log` is bounded per event type, so the rare forensic row is never the one deleted
   (#869).** The table was append-only with no TTL, no cap and no vacuum — 6,046 rows spanning
   2026-03-14 to 2026-09-07 on this install, growing for the life of the install. The measured

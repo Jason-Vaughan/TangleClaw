@@ -11,6 +11,12 @@
   ],
   "entries": [
     {
+      "id": "eacces-fixtures",
+      "match": "^.+ > .+ \\(needs a directory this process cannot read\\)$",
+      "why": "Stages a genuine EACCES with chmod 000 to exercise \"there, and refused\" rather than \"not there\" — the distinction the uploads and project-facts reads exist to draw (#889, #885). Root defeats the mode bits, so the refusal never happens and the assertion passes for the wrong reason; the Docker/Debian clean room runs as root. `test/_eacces.js#canForceRefusal` probes the capability rather than reading the uid, because CAP_DAC_OVERRIDE and permission-ignoring mounts defeat the fixture at an ordinary uid too.",
+      "runsWhere": "any host where the suite runs as a normal user — the operator's install, elkaholic, and the macOS VM clean room. Every title in the tier carries the suffix this pattern matches, so a new refusal fixture is covered without a new entry."
+    },
+    {
       "id": "engine-cli-launch-flags",
       "match": "^engine launch flags exist in the installed CLI \\(#731\\) > [a-z0-9-]+ > launch mode \"[^\"]+\" uses args the installed CLI accepts$",
       "why": "Probes TangleClaw's launch args against the real engine CLI's own parser; the runner has no engine installed.",

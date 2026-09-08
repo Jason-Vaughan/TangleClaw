@@ -5198,13 +5198,20 @@ route('GET', '/api/continuity/:project/sessions/:sid', async (req, res, params) 
     return errorResponse(res, 400, 'Invalid session id', 'BAD_REQUEST');
   }
   const session = continuity.listSessions(project.path).find((s) => s.sid === String(sid)) || null;
+  const uploadList = await uploads.listUploads(project.path);
   jsonResponse(res, 200, {
     sid: String(sid),
     session,
     summary: continuity.readWrapSummary(project.path, sid),
     transcript: _publicTranscriptMeta(continuity.readTranscriptMeta(project.path, sid)),
     // listUploads tags each entry with `session` (the <sid> dir name), not `sid`.
-    uploads: uploads.listUploads(project.path).filter((u) => String(u.session) === String(sid))
+    uploads: uploadList.uploads.filter((u) => String(u.session) === String(sid)),
+    // Carried even though this drill-down filters to one session: a directory
+    // that refused to be read is why the list is short, and dropping the reason
+    // here would render "no uploads" for a session that has them.
+    uploadsUnreadable: uploadList.unreadable,
+    uploadsUnreadableHint: uploadList.unreadableHint,
+    uploadsUnreadableCode: uploadList.unreadableCode
   });
 });
 
@@ -5276,25 +5283,38 @@ route('POST', '/api/upload', async (_req, res, _params, body) => {
     return errorResponse(res, 404, `Project "${body.project}" not found`, 'NOT_FOUND');
   }
 
-  if (!fs.existsSync(project.path)) {
-    return errorResponse(res, 400, 'Project directory not found on disk', 'BAD_REQUEST');
-  }
-
+  // Whether the project directory is still on disk is answered by the same
+  // child that performs the write. Do not add an `existsSync` here: it is a
+  // synchronous read of an operator-chosen path, and the most likely one to
+  // hang, because a project on a stalled mount is exactly the case it is for.
   try {
     // Route the upload into the active session's slot in the consolidated
     // store (CC-4); no active session → uploads.saveUpload falls back to the
     // legacy flat dir. `getActive` returns null when nothing is running.
     const active = store.sessions.getActive(project.id);
     const sid = active && active.id != null ? active.id : null;
-    const result = uploads.saveUpload(project.path, body.filename, body.data, sid);
-    jsonResponse(res, 201, result);
+    const result = await uploads.saveUpload(project.path, body.filename, body.data, sid);
+
+    if (result.status === 'project-missing') {
+      return errorResponse(res, 400, 'Project directory not found on disk', 'BAD_REQUEST');
+    }
+    if (result.status === 'unavailable') {
+      // Not a rejection of the file. The directory would not answer, which is
+      // the server's limitation to report, and the hint is the only thing that
+      // tells an operator on macOS what to change.
+      log.error('Upload failed', { error: result.unreadable, code: result.unreadableCode });
+      return errorResponse(res, 500, result.unreadableHint
+        ? `${result.unreadable} — ${result.unreadableHint}`
+        : result.unreadable, result.unreadableCode || 'INTERNAL_ERROR');
+    }
+    jsonResponse(res, 201, result.upload);
   } catch (err) {
     // #338 — any file type is accepted, so there is no "not allowed" rejection
     // path any more; a throw here is a genuine save failure.
     log.error('Upload failed', { error: err.message });
     return errorResponse(res, 500, err.message, 'INTERNAL_ERROR');
   }
-}, { maxBodySize: 15 * 1024 * 1024 });
+}, { maxBodySize: uploads.MAX_UPLOAD_BYTES });
 
 // GET /api/uploads — List uploads for a project
 route('GET', '/api/uploads', async (req, res) => {
@@ -5310,8 +5330,16 @@ route('GET', '/api/uploads', async (req, res) => {
     return errorResponse(res, 404, `Project "${query.project}" not found`, 'NOT_FOUND');
   }
 
-  const list = uploads.listUploads(project.path);
-  jsonResponse(res, 200, { uploads: list });
+  const list = await uploads.listUploads(project.path);
+  jsonResponse(res, 200, {
+    uploads: list.uploads,
+    // An empty `uploads` with `unreadable` set means "we could not look", which
+    // is not what "nothing has been uploaded" means. Both consumers render the
+    // difference; collapsing them here would put the lie back one layer down.
+    unreadable: list.unreadable,
+    unreadableHint: list.unreadableHint,
+    unreadableCode: list.unreadableCode
+  });
 });
 
 // GET /api/tmux/mouse/:session — effective value plus its source (#579):
