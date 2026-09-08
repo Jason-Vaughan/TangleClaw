@@ -63,7 +63,10 @@ holding a bad value; this closes the door and repairs nothing behind it, and `pu
 still throws on such a row.
 
 **One behaviour change:** `POST {"tags": null}` now 400s where it stored `[]` — symmetric with
-PATCH, and unreachable from the bundled client, which sends `[]` for an empty field.
+PATCH, and unreachable from the bundled client: `tcCreateProjectBody`
+(`public/api-helper.js:4130`) coerces with `String(data.tags || '').split(',')…`, so an empty field
+sends `[]`. Named precisely because the first draft of this entry credited `public/ui.js`, which is
+the settings/update call site, not the create one.
 
 **Verification.** Three mutations confirmed red against the new assertions: guard removed, element
 check dropped to `Array.isArray` alone, and guard fired on absence rather than key-presence — the

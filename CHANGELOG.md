@@ -248,8 +248,11 @@ All notable changes to TangleClaw are documented in this file.
 
   **One behaviour change worth knowing:** `POST` with an explicit `"tags": null` now returns 400
   where it previously stored `[]`. That is the symmetry the fix is for — `PATCH` already refused it —
-  and the bundled client never sends it, since `public/ui.js` builds tags as
-  `.split(',').map(trim).filter(Boolean)` and sends `[]` for an empty field.
+  and the bundled client never sends it: the create body is built by
+  `tcCreateProjectBody` (`public/api-helper.js:4130`) as
+  `String(data.tags || '').split(',').map(trim).filter(Boolean)`, which yields `[]` for an empty
+  field. (`public/ui.js:2172` builds the same shape for the settings/update path — a different call
+  site, and not the one that reaches `POST`.)
 
   **What is deferred, and where it is tracked.** The per-element rules — tag length, character set,
   a count cap, whether an empty string is a tag — remain open, and #1338's own direction 1 (running
