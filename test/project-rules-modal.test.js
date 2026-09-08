@@ -99,6 +99,13 @@ describe('Project Rules modal (CC-6, #381)', () => {
       assert.match(css, /\.project-rules-section\s*\{/);
       assert.match(css, /\.project-rules-block\s*\{/);
     });
+
+    it('allows long hint tokens to wrap within the settings grid', () => {
+      assert.match(
+        css,
+        /\.form-hint\s*\{[\s\S]*?overflow-wrap:\s*anywhere\s*;/
+      );
+    });
   });
 
   describe('#569 — proposal visibility in the rules list', () => {

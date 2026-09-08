@@ -2426,6 +2426,7 @@ body {
   font-size: 11px;
   color: var(--text-muted);
   margin-top: 4px;
+  overflow-wrap: anywhere;
 }
 /* A setting that takes effect only in PART says which part does not (ADR 0013,
    #1252). Distinct from `.form-hint`, which describes what the control does:
