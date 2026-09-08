@@ -728,6 +728,13 @@ describe('#716 measuring on demand', () => {
       assert.equal(debugLines.length, 3, 'each measurement is still recorded at debug');
     });
 
+    // THESE THREE ARE WHAT KEEPS #916 FROM REGRESSING, and they are behavioural.
+    // A source-level guard asserting the levels stood here and was deleted: it
+    // sliced across both reporters with an unbounded `[\s\S]*`, so demoting the
+    // recovery to `debug` left it GREEN — it matched the surviving `log.warn(`
+    // of the other reporter and spanned forward into the demoted call. Each test
+    // in this block runs at `info` via `captureAtInfo`, so a demotion makes the
+    // line vanish from the capture and the assertion fails. That is the guard.
     it('an unreadable running version warns once per episode, across BOTH check forms', async () => {
       // One family, one latch — the same property #956 established for the
       // offline case. The sync form is `update-applier`'s pre-flight, so two
@@ -767,19 +774,6 @@ describe('#716 measuring on demand', () => {
       assert.match(versionWarnings[1], /readable again/);
     });
 
-    it('every narrowed line keeps its level — #916 is narrowed, never reversed', () => {
-      // The half that must not regress. #916 exists because an install that had
-      // quietly stopped detecting releases left no trace an operator would find;
-      // moving any of these to `debug` to quieten it would reverse that ruling
-      // rather than narrow it.
-      const src = require('node:fs').readFileSync(
-        path.join(__dirname, '..', 'lib', 'update-checker.js'), 'utf8');
-      const reporters = src.slice(src.indexOf('function _reportVersionRead'),
-        src.indexOf('function _getCurrentVersion'));
-      assert.match(reporters, /log\.warn\([\s\S]*Could not read the running version/);
-      assert.match(reporters, /log\.warn\([\s\S]*readable again/);
-      assert.match(reporters, /log\.info\(`Update available/);
-    });
   });
 
   it('reports from BOTH failure paths, not just the one under test', async () => {

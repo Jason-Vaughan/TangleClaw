@@ -34,6 +34,54 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-07 — #1335: the update checker's remaining durable states log on change, not on measurement
+
+<!-- prawduct: type=fix | scope=uc-1335 -->
+
+Post-plan work: the end-of-train Quick Win after Train 14, whose plan is archived. Its own scope
+rather than a borrowed one — an archived roster cannot track new chunk ids.
+
+**What shipped.** Three log sites in `lib/update-checker.js` moved from once-per-measurement to
+once-per-change, completing the family #956 opened. `_reportAvailability` and `_reportVersionRead`
+join `_reportCheckOutcome`; after them every non-debug site in the module is transition-gated
+except one that reports an event rather than a state.
+
+The worst was the least obvious: `Update available` lives in `_buildStatus`, which runs on every
+measurement from four call sites, at `info` — the logger's default — so it did not need the level
+turned up to drown the log. It latches on WHICH release is waiting, not on a boolean, because an
+operator learning a newer release landed while they were still behind is the whole point of the
+line. The up-to-date path keeps its `debug` and gains no transition line of its own: clearing the
+latch silently is what lets a later "behind again" report.
+
+**One episode latch across both check forms**, because the sync form is `update-applier`'s
+pre-flight and per-path state is the flood returning by another door — the property #956 already
+established for the offline case.
+
+**Levels unchanged.** #916 is narrowed here, never reversed.
+
+**The Critic caught a vacuous guard I wrote for exactly that property, and it is the instructive
+part.** A source-level test asserted the three levels by regex over a slice spanning both
+reporters, with an unbounded `[\s\S]*`. Demoting the recovery warning to `debug` left it GREEN:
+the pattern matched the surviving `log.warn(` of the *other* reporter and spanned forward into the
+demoted call. Measured, not argued — the mutation was run. The guard was deleted rather than
+repaired, because the three behavioural tests in the same block each go red on the corresponding
+demotion (also measured), so the property was already owned and a source guard a neighbouring call
+can satisfy reads as caution while measuring nothing. The reason is written where the surviving
+tests are, so the deletion is not silent.
+
+This is the second instance this session of one class: an assertion whose *harness* never reaches
+its subject, which mutation testing cannot catch because reverting the code removes the damage
+alongside the fix. The rule is in `learnings.md`; this is its first recurrence past being written.
+
+**Artifact.** `observability-strategy.md` records the transition pattern DESCRIPTIVELY and says so
+— a Direction candidate for the operator, not a norm minted by the session that followed it. It
+also states why #1108's quiet-period window is a different mechanism and deliberately excluded.
+
+**Seam.** `_getCurrentVersion` gains an `_internal` entry beside the network ones; all three
+callers route through it, including `getCachedStatus`, which logs nothing and needed it for no
+behaviour of its own — a seam two of three callers use is one a later reader must check rather
+than trust.
+
 ## 2026-09-06 — #1034: the dashboard says a wrap is running, from the registry that knows
 
 <!-- prawduct: type=feature | scope=ses-5w9d -->
