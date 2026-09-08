@@ -65,8 +65,12 @@ You are running from **your own empty directory**, not the TangleClaw repo. Two 
   `--repo Jason-Vaughan/TangleClaw`, or run `gh repo set-default Jason-Vaughan/TangleClaw` once
   at the start and verify it took.
 - **TangleClaw's own files are READ-ONLY to you, at an absolute path:**
-  `/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder`. The backlog you need is
-  `<that>/.prawduct/backlog.md`; the v5 plan is `<that>/.tangleclaw/plans/v5-secure-baseline.md`.
+  `/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder`. The v5 plan is
+  `<that>/.tangleclaw/plans/v5-secure-baseline.md`. **The backlog is not a file** — it moved to
+  GitHub Issues at the 2026-08-20 cut-over, so reach it through `/prawduct:backlog` or
+  `prawduct-hook backlog list --repo Jason-Vaughan/TangleClaw`. `<that>/.prawduct/backlog.md` is
+  frozen history: every item archived at the cut-over still parses as open there, so grooming it
+  recommends work that already closed.
   Read them freely. **Never write there** — that repo belongs to the build session, and a write
   from here lands in its working tree mid-build.
 
@@ -160,3 +164,8 @@ Report what you find. Recommend; let the operator decide what to act on.
 ## Update history
 
 - **2026-07-29** — created. Queue at 91 open issues / 68 backlog entries; v5 chunk 2 in progress.
+- **2026-09-08** — repointed the read-only path and `git -C` target after the checkout was renamed
+  `TangleClaw` → `TangleClaw-Builder`, and replaced the `.prawduct/backlog.md` pointer with the
+  live GitHub Issues route. The repoint alone would have been worse than the break it fixed: the
+  old path failed loudly, while a working path onto the frozen backlog would have had a triage
+  session grooming items that closed at the 2026-08-20 cut-over.

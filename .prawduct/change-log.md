@@ -83,6 +83,32 @@ generic instructions to a stranger, not this machine. The `/root/TangleClaw` pat
 `CHANGELOG.md`, `.prawduct/change-log.md`, `.prawduct/artifacts/migration-scrub-decisions.md` and
 the archived plans, which are history and must keep saying what was true when written.
 
+**The untracked half, which the first sweep missed entirely and a Critic warning caught.** Grepping
+tracked files is not the same as finding the live pointers, because the pointers that survive across
+sessions are gitignored. `.tangleclaw/memories/MEMORY.md` — the first file CLAUDE.md tells a session
+to read — still named the **active** train-15 plan by the old absolute path, so the next session's
+first plan read would have been an ENOENT; `.prawduct/.session-handoff.md` named the same plan the
+same way, and `.prawduct/operator-verification.md` told the operator to `cd` into the old directory
+before arming the #798 guard. All three are repointed on disk, which is why they are not in this
+commit. `wrap-log.md` and `learnings.md` keep their occurrences: both are append-only narrative
+about what was true at the time. Also checked rather than assumed, because the rename could have
+taken the running install down with it: `~/Library/LaunchAgents/com.tangleclaw.server.plist` already
+carries the new `WorkingDirectory`, so launchd was never pointing at the moved directory.
+
+**One repoint would have been worse than the break it fixed.** `roadmap-triage.md` told a triage
+session its backlog was `<repo>/.prawduct/backlog.md`. Before the rename that path failed loudly;
+repointing it to the new directory would have made it *resolve* — onto a 68-entry queue frozen at
+the 2026-08-20 GitHub Issues cut-over, where every archived item still parses as open. A triage
+session would have groomed closed work, which is the exact failure the archive rule exists to
+prevent. That line now names the live route (`/prawduct:backlog`) instead of any file.
+
+**The escape hatch is now relational, not merely re-pointed.** `docs/primary-checkout-guard.md`
+spells the sentinel as `<primary>/.prawduct/.allow-primary-write` and says to copy `<primary>` from
+the refusal message, which prints it. The same goes for the illustrative `cd` comments in the guard
+script and its test, which now say `<checkout>`. A doc that re-enumerates the directory is correct
+until the next rename and then silently wrong again; this class has now cost two renames (#183 was
+the first), and **#1371** tracks deriving the check instead of extending the list a third time.
+
 **Two left as named debt rather than fixed here.** `.prawduct/backlog.md:150,160` carries `refs:`
 pointers to `<old path>/.claude/plans/switchboard-v2-autoinject-loop.md` — the plan file still
 exists at the new path, so the pointer is merely stale, but that file is frozen history with a

@@ -315,7 +315,7 @@ describe('#798 primary-checkout guard — Bash, working-tree-moving commands', (
   });
 
   it('refuses a `cd` to the primary written with a tilde', () => {
-    // `cd ~/Documents/Projects/TangleClaw-Builder && git checkout main` is the form an
+    // `cd ~/Documents/Projects/<checkout> && git checkout main` is the form an
     // operator types, and it never contains the RESOLVED primary path — so the
     // substring test this replaced walked straight past the very case it existed
     // for. `HOME` is set for the child rather than skipping when the fixture is
