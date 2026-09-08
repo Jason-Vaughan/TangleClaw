@@ -178,6 +178,90 @@ describe('lib/medusa — service layer', () => {
     assert.doesNotThrow(() => medusa.forgetSession({ projectPath: tempDir, sessionId: 'never-started' }));
     assert.doesNotThrow(() => medusa.forgetSession({ projectPath: '/no/such/dir', sessionId: 'x' }));
   });
+
+  describe('Bridge WS URL resolution (#1100)', () => {
+    /**
+     * Start a listener and report the URL the socket factory was actually asked
+     * for. Asserting the RESOLVED url off the socket, rather than a resolver's
+     * return value, is what pins that `startSession` consults the resolver at
+     * all — the production callers pass no `bridgeUrl`, so a resolver nothing
+     * calls would keep every direct unit test green.
+     * @param {string} sid - Unique session id.
+     * @returns {string} The URL handed to the socket factory.
+     */
+    function urlFor(sid) {
+      let seen;
+      medusa.startSession({
+        projectPath: tempDir, sessionId: sid, name: 'Ws Url',
+        wsFactory: (url) => { seen = url; return new FakeWS(url); }
+      });
+      medusa.stopSession(sid);
+      return seen;
+    }
+
+    afterEach(() => {
+      medusa._setBridgeWsUrl(null);
+      medusa._setBridgeHttpUrl();
+    });
+
+    it('falls back to the documented loopback default when neither gate is set', () => {
+      medusa._setBridgeHttpUrl('http://localhost:3009');
+      assert.equal(urlFor('ws-url-default'), 'ws://localhost:3010');
+    });
+
+    it('derives host and port + 1 from the HTTP base, so one knob moves both gates', () => {
+      medusa._setBridgeHttpUrl('http://127.0.0.1:4009');
+      assert.equal(urlFor('ws-url-derived'), 'ws://127.0.0.1:4010');
+    });
+
+    it('honours an explicit WS override for an install whose WS port is not HTTP + 1', () => {
+      medusa._setBridgeHttpUrl('http://localhost:3009');
+      medusa._setBridgeWsUrl('ws://localhost:7777');
+      assert.equal(urlFor('ws-url-explicit'), 'ws://localhost:7777');
+    });
+
+    it('an explicit bridgeUrl still wins, preserving the test seam', () => {
+      medusa._setBridgeWsUrl('ws://localhost:7777');
+      let seen;
+      medusa.startSession({
+        projectPath: tempDir, sessionId: 'ws-url-seam', name: 'Ws Url',
+        bridgeUrl: 'ws://localhost:8888',
+        wsFactory: (url) => { seen = url; return new FakeWS(url); }
+      });
+      medusa.stopSession('ws-url-seam');
+      assert.equal(seen, 'ws://localhost:8888');
+    });
+
+    it('refuses a non-loopback WS override and uses the default — the WS path is unauthenticated', () => {
+      medusa._setBridgeWsUrl('ws://192.168.1.50:3010');
+      assert.equal(urlFor('ws-url-remote'), 'ws://localhost:3010');
+    });
+
+    it('refuses to DERIVE a non-loopback WS URL from a non-loopback HTTP base', () => {
+      // The HTTP side accepts a remote base; the WS side must not inherit it,
+      // which is the one place the two gates are deliberately asymmetric.
+      medusa._setBridgeHttpUrl('http://medusa.example.com:3009');
+      assert.equal(urlFor('ws-url-remote-derived'), 'ws://localhost:3010');
+    });
+
+    it('falls back rather than throwing when a gate holds an unparseable URL', () => {
+      medusa._setBridgeWsUrl('not-a-url');
+      assert.equal(urlFor('ws-url-garbage'), 'ws://localhost:3010');
+      medusa._setBridgeWsUrl(null);
+      medusa._setBridgeHttpUrl('also-not-a-url');
+      assert.equal(urlFor('ws-url-garbage-http'), 'ws://localhost:3010');
+    });
+
+    it('brackets a bare IPv6 host exactly once and keeps an already-bracketed one intact', () => {
+      medusa._setBridgeHttpUrl('http://[::1]:3009');
+      assert.equal(urlFor('ws-url-ipv6'), 'ws://[::1]:3010');
+    });
+
+    it('maps an https base to wss, applying + 1 to the scheme default port', () => {
+      medusa._setBridgeHttpUrl('https://localhost');
+      assert.equal(urlFor('ws-url-https'), 'wss://localhost:444');
+    });
+  });
 });
 
 describe('API — GET /api/sessions/:project/medusa/status', () => {

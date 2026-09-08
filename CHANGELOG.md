@@ -5,6 +5,34 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **The Medusa listener resolves its Bridge URL the way the HTTP side does, so an install on
+  non-default ports can move both halves (#1100).** `MEDUSA_BRIDGE_HTTP_URL` redirected send,
+  roster and loops; the listener hardcoded `ws://localhost:3010` and consulted no environment.
+  `bridgeUrl` reached it only as a `startSession` option that **no production caller passes**
+  (`lib/master.js`, `lib/projects.js`, two sites in `lib/sessions.js`, `server.js`), so the default
+  was the only reachable value and the option was a test seam. An operator whose Medusa had moved
+  could redirect half the Switchboard and had no supported way to finish the job.
+
+  Resolution now lives in `lib/medusa.js` beside the HTTP base it must agree with, most specific
+  first: `MEDUSA_BRIDGE_WS_URL`, else derived from the live HTTP base (same host, port + 1,
+  `http`→`ws` / `https`→`wss`), else `ws://localhost:3010`. The derivation reads the module's
+  current `bridgeHttpUrl` rather than `process.env`, so the `_setBridgeHttpUrl` seam moves both
+  gates together and they cannot drift — one knob is correct for the common case, since Medusa
+  serves its WS on `protocolPort + 1`.
+
+  **The loopback trust model constrains the override rather than being relaxed by it.** The WS path
+  is unauthenticated at the workspace layer, so anything that can reach the port can register as
+  any workspace: a resolved host that is not `localhost`, `127.0.0.0/8` or `::1` is refused, the
+  default is used, and the refusal is logged **once per distinct value** rather than once per
+  session start. That refusal also applies to a *derived* URL, so a remote `MEDUSA_BRIDGE_HTTP_URL`
+  cannot smuggle a remote listener in through the derivation — deliberately stricter than the HTTP
+  side, and recorded as an asymmetry rather than an oversight. An unparseable value in either gate
+  falls back with a named log line instead of throwing.
+
+  `docs/configuration-reference.md` documents both variables, the derivation and the loopback rule.
+  Tests assert the URL the socket factory was actually asked for rather than the resolver's return
+  value — the production callers pass no `bridgeUrl`, so a resolver nothing called would leave a
+  direct unit test green.
 
 - **The rest of the update-checker's log-flood family is narrowed to transitions (#1335).** #956
   fixed one member and the Critic on that chunk found three more in the same module, all the same
