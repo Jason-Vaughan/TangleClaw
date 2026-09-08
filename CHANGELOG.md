@@ -225,6 +225,27 @@ All notable changes to TangleClaw are documented in this file.
   they have one: "this install cannot tell what it is running" is a real state on an unattended
   path and no input to the module produces it, so it is only observable by forcing it.
 
+- **Settings-modal hint text was clipped at the right edge instead of wrapping (#1271).** Hints carry
+  `<code>` paths — `package.json`, `<project-root>/FEATURES.md` — that the line-breaker treats as one
+  word. Three things compounded, none wrong alone: `.settings-toggles-grid` is
+  `repeat(auto-fit, minmax(290px, 1fr))` with a 22px gap, so two columns need 602px; the settings
+  modal is `max-width: 680px` with `overflow: hidden`; and `.form-hint` declared no wrapping rule at
+  all. Near the packing limit an unbreakable token overflowed its cell and the modal clipped it.
+
+  **`overflow-wrap: anywhere`, and the choice over `break-word` is the substance rather than a
+  preference.** Only `anywhere` reduces the **min-content** width, which is what lets a
+  `minmax(290px, 1fr)` track narrow enough to hold the token. `break-word` leaves the track resolving
+  against the unbroken word, so the tight two-column state — the state the bug is reported in — would
+  still overflow. The property is inherited, so the `<code>` children need no rule of their own.
+
+  The regression test is scoped **inside** the `.form-hint` block and anchored to the bare selector,
+  because `.master-access-option .form-hint` and `.history-scope .form-hint` also exist and neither
+  styles this text. Verified by mutation: moving the declaration to `.form-error` fails it.
+
+  Reconstructed under ADR 0014 from #1271 rather than from the submitted patch. Reported and
+  independently fixed by **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in PR #1354;
+  their bytes were not merged, per `CONTRIBUTING.md`.
+
 ## [5.22.0] - 2026-09-07
 
 ### Added
