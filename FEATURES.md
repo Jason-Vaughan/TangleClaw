@@ -379,3 +379,10 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 ## TODO (auto-stubbed 2026-09-07)
 
 - **TBD** — touched in this session: `test/terminal-touch-scroll.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-09-08)
+
+- **TBD** — touched in this session: `test/_eacces.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/history-drawer-uploads.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/uploads-fs.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/uploads.test.js`. <!-- describe -->
