@@ -24,9 +24,10 @@ All notable changes to TangleClaw are documented in this file.
 
   The two `Could not read current version` sites — the sync form is `update-applier`'s pre-flight —
   share **one** episode latch, so an outage seen first by one path is not announced again by the
-  other. Both keep their `warn` level: #916 is narrowed here, never reversed, and a structural test
-  pins that the levels stay where they are. Per-measurement detail stays at `debug`, the same
-  bargain #956 struck — narrowing the norm must not delete the evidence.
+  other. Both keep their `warn` level: #916 is narrowed here, never reversed, and the behavioural
+  tests pin it — each runs at `info`, so demoting any of these lines makes it vanish from the
+  capture and the assertion fails. Per-measurement detail stays at `debug`, the same bargain #956
+  struck — narrowing the norm must not delete the evidence.
 
   `_getCurrentVersion` gains an `_internal` seam alongside the network ones, for the same reason
   they have one: "this install cannot tell what it is running" is a real state on an unattended
