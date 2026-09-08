@@ -282,11 +282,13 @@ describe('#716 measuring on demand', () => {
   let realLsRemote;
   let realLsRemoteSync;
   let realGitRemote;
+  let realCurrentVersion;
 
   beforeEach(() => {
     realLsRemote = uc._internal.lsRemote;
     realLsRemoteSync = uc._internal.lsRemoteSync;
     realGitRemote = uc._internal.gitRemote;
+    realCurrentVersion = uc._internal.currentVersion;
     uc._reset();
   });
 
@@ -294,6 +296,10 @@ describe('#716 measuring on demand', () => {
     uc._internal.lsRemote = realLsRemote;
     uc._internal.lsRemoteSync = realLsRemoteSync;
     uc._internal.gitRemote = realGitRemote;
+    // Restored by ASSIGNMENT, never `delete`: removing the key strands the seam
+    // for every later test in the file, which fails them for a reason that has
+    // nothing to do with what they assert.
+    uc._internal.currentVersion = realCurrentVersion;
     uc._reset();
   });
 
@@ -649,6 +655,130 @@ describe('#716 measuring on demand', () => {
       const warnings = lines.warnings();
       assert.equal(warnings.length, 2);
       assert.match(warnings[1], /recovered/, 'either form can close the episode');
+    });
+  });
+
+  describe('the rest of the family: three more durable states (#1335)', () => {
+    /** Every `info` line this module emitted, in order. */
+    const infos = (lines) => lines.all().filter((l) => /\[INFO\].*\[update-checker\]/.test(l));
+
+    it('announces an available update once, not once per measurement', async () => {
+      // THE WORST MEMBER, and the least obvious: this lives in `_buildStatus`,
+      // which runs on EVERY measurement from four call sites, and it is at
+      // `info` — `lib/logger.js`'s default — so unlike a debug line it shows up
+      // without anyone turning the level up. The client's poll cadence equals
+      // AUTO_REFRESH_MIN_AGE_MS, so an install one release behind emitted this
+      // on nearly every tick.
+      //
+      // THE MUTATION: log unconditionally in `_reportAvailability` and this is
+      // ten lines, not one.
+      const lines = captureAtInfo();
+      try {
+        stubLsRemote(TAGS);
+        for (let i = 0; i < 10; i++) {
+          await new Promise((resolve) => uc.checkForUpdateAsync(resolve));
+        }
+      } finally {
+        lines.stop();
+      }
+      const available = infos(lines).filter((l) => /Update available/.test(l));
+      assert.equal(available.length, 1,
+        'ten measurements of one unchanged fact are one line');
+      assert.match(available[0], /v9\.9\.9/, 'and it names the release that is waiting');
+    });
+
+    it('announces AGAIN when a newer release appears — the version is the news', async () => {
+      // Keyed on the version rather than a boolean, because an operator still on
+      // an old release learning that a newer one landed is the whole point of
+      // the line. A boolean latch would swallow it.
+      //
+      // THE MUTATION: latch on a boolean and the second release is never
+      // announced.
+      const lines = captureAtInfo();
+      try {
+        stubLsRemote(TAGS);
+        await new Promise((resolve) => uc.checkForUpdateAsync(resolve));
+        stubLsRemote('2222\trefs/tags/v10.0.0\n');
+        await new Promise((resolve) => uc.checkForUpdateAsync(resolve));
+      } finally {
+        lines.stop();
+      }
+      const available = infos(lines).filter((l) => /Update available/.test(l));
+      assert.equal(available.length, 2, 'a different release is a different fact');
+      assert.match(available[1], /v10\.0\.0/);
+    });
+
+    it('keeps the per-measurement detail at debug rather than discarding it', () => {
+      // Same bargain #956 struck: narrowing the norm must not delete the
+      // evidence. Every measurement still records what it saw, one level down.
+      const logger = require('../lib/logger');
+      const lines = [];
+      logger.setConsoleStream({ write: (s) => lines.push(s) });
+      logger.setLevel('debug');
+      try {
+        stubLsRemoteSync(TAGS);
+        uc.checkForUpdate();
+        uc.checkForUpdate();
+        uc.checkForUpdate();
+      } finally {
+        logger.setConsoleStream(null);
+        logger.setLevel('error');
+      }
+      const debugLines = lines.filter((l) => /\[DEBUG\].*Update available/.test(l));
+      assert.equal(debugLines.length, 3, 'each measurement is still recorded at debug');
+    });
+
+    it('an unreadable running version warns once per episode, across BOTH check forms', async () => {
+      // One family, one latch — the same property #956 established for the
+      // offline case. The sync form is `update-applier`'s pre-flight, so two
+      // latches would announce one episode twice, once per path.
+      //
+      // THE MUTATION: give the two call sites their own latches and this is 2.
+      const lines = captureAtInfo();
+      try {
+        stubLsRemote(TAGS);
+        stubLsRemoteSync(TAGS);
+        uc._internal.currentVersion = () => null;
+        await new Promise((resolve) => uc.checkForUpdateAsync(resolve));
+        uc.checkForUpdate();
+        uc.checkForUpdate();
+      } finally {
+        lines.stop();
+      }
+      const unreadable = lines.warnings().filter((l) => /running version/.test(l));
+      assert.equal(unreadable.length, 1,
+        'three measurements of one unreadable version are one episode');
+    });
+
+    it('warns on the recovery, so the end of the episode is visible too', async () => {
+      const lines = captureAtInfo();
+      const readable = uc._internal.currentVersion;
+      try {
+        stubLsRemote(TAGS);
+        uc._internal.currentVersion = () => null;
+        await new Promise((resolve) => uc.checkForUpdateAsync(resolve));
+        uc._internal.currentVersion = readable;
+        await new Promise((resolve) => uc.checkForUpdateAsync(resolve));
+      } finally {
+        lines.stop();
+      }
+      const versionWarnings = lines.warnings().filter((l) => /running version/.test(l));
+      assert.equal(versionWarnings.length, 2, 'the episode opens and closes');
+      assert.match(versionWarnings[1], /readable again/);
+    });
+
+    it('every narrowed line keeps its level — #916 is narrowed, never reversed', () => {
+      // The half that must not regress. #916 exists because an install that had
+      // quietly stopped detecting releases left no trace an operator would find;
+      // moving any of these to `debug` to quieten it would reverse that ruling
+      // rather than narrow it.
+      const src = require('node:fs').readFileSync(
+        path.join(__dirname, '..', 'lib', 'update-checker.js'), 'utf8');
+      const reporters = src.slice(src.indexOf('function _reportVersionRead'),
+        src.indexOf('function _getCurrentVersion'));
+      assert.match(reporters, /log\.warn\([\s\S]*Could not read the running version/);
+      assert.match(reporters, /log\.warn\([\s\S]*readable again/);
+      assert.match(reporters, /log\.info\(`Update available/);
     });
   });
 

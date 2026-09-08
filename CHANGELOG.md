@@ -4,6 +4,34 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The rest of the update-checker's log-flood family is narrowed to transitions (#1335).** #956
+  fixed one member and the Critic on that chunk found three more in the same module, all the same
+  shape: a durable state logged once per *measurement* rather than once per *change*. The worst was
+  the least obvious — `Update available: vX → vY` lives in `_buildStatus`, which runs on **every**
+  measurement from four call sites, and it is at `info`, `lib/logger.js`'s default, so unlike a
+  debug line it shows up without anyone turning the level up. The client's poll cadence equals
+  `AUTO_REFRESH_MIN_AGE_MS`, so an install one release behind emitted it on nearly every tick.
+  "An update is available" stays true until the operator updates; repeating it says nothing the
+  first line did not.
+
+  It now latches on **which release is waiting** rather than on a boolean, so a newer release still
+  announces itself — an operator learning that a newer version landed while they were still behind
+  is the whole point of the line. The up-to-date path keeps its `debug` and gains no transition
+  line of its own: clearing the latch silently is what lets a later "behind again" report, while
+  announcing the recovery would add a visible line this module never had.
+
+  The two `Could not read current version` sites — the sync form is `update-applier`'s pre-flight —
+  share **one** episode latch, so an outage seen first by one path is not announced again by the
+  other. Both keep their `warn` level: #916 is narrowed here, never reversed, and a structural test
+  pins that the levels stay where they are. Per-measurement detail stays at `debug`, the same
+  bargain #956 struck — narrowing the norm must not delete the evidence.
+
+  `_getCurrentVersion` gains an `_internal` seam alongside the network ones, for the same reason
+  they have one: "this install cannot tell what it is running" is a real state on an unattended
+  path and no input to the module produces it, so it is only observable by forcing it.
+
 ## [5.22.0] - 2026-09-07
 
 ### Added
