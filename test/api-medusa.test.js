@@ -94,7 +94,7 @@ describe('lib/medusa — service layer', () => {
   });
 
   it('getStatus(null) and unknown session return an off status', () => {
-    const off = { state: 'off', workspaceId: null, unread: 0, lastError: null };
+    const off = { state: 'off', workspaceId: null, unread: 0, lastError: null, lastErrorCode: null };
     assert.deepEqual(medusa.getStatus(null), off);
     assert.deepEqual(medusa.getStatus('no-such-session'), off);
   });
@@ -150,7 +150,7 @@ describe('lib/medusa — service layer', () => {
     medusa.startSession({ projectPath: tempDir, sessionId: sid, name: 'Svc Three', wsFactory: (u) => new FakeWS(u) });
     assert.notEqual(medusa.getStatus(sid).state, 'off');
     medusa.stopSession(sid);
-    assert.deepEqual(medusa.getStatus(sid), { state: 'off', workspaceId: null, unread: 0, lastError: null });
+    assert.deepEqual(medusa.getStatus(sid), { state: 'off', workspaceId: null, unread: 0, lastError: null, lastErrorCode: null });
   });
 
   it('reuses the same workspace id across restarts (registry persistence)', () => {
@@ -168,7 +168,7 @@ describe('lib/medusa — service layer', () => {
     assert.notEqual(medusa.getStatus(sid).state, 'off');
     medusa.forgetSession({ projectPath: tempDir, sessionId: sid });
     // Listener stopped...
-    assert.deepEqual(medusa.getStatus(sid), { state: 'off', workspaceId: null, unread: 0, lastError: null });
+    assert.deepEqual(medusa.getStatus(sid), { state: 'off', workspaceId: null, unread: 0, lastError: null, lastErrorCode: null });
     // ...and the id forgotten — unlike stopSession, a fresh start mints a NEW id.
     const b = medusa.startSession({ projectPath: tempDir, sessionId: sid, name: 'Forget Me', wsFactory: (u) => new FakeWS(u) });
     started.push(sid);
@@ -178,6 +178,119 @@ describe('lib/medusa — service layer', () => {
   it('forgetSession is a safe no-op for an unknown session and never throws on a bad path', () => {
     assert.doesNotThrow(() => medusa.forgetSession({ projectPath: tempDir, sessionId: 'never-started' }));
     assert.doesNotThrow(() => medusa.forgetSession({ projectPath: '/no/such/dir', sessionId: 'x' }));
+  });
+
+  describe('Bridge preflight (#1130)', () => {
+    /**
+     * A fake `net.connect` whose socket answers one way.
+     * @param {boolean} accepting - Whether the port accepts.
+     * @returns {(opts: object) => object} A `net.connect` stand-in.
+     */
+    function connectImplThat(accepting) {
+      return () => {
+        const EventEmitter = require('node:events');
+        const socket = new EventEmitter();
+        socket.destroy = () => {};
+        setImmediate(() => {
+          if (accepting) socket.emit('connect');
+          else socket.emit('error', Object.assign(new Error('refused'), { code: 'ECONNREFUSED' }));
+        });
+        return socket;
+      };
+    }
+
+    /**
+     * A fake fetch for the Bridge health endpoint.
+     * @param {number|null} status - HTTP status, or null to throw (no answer).
+     * @returns {typeof fetch} A fetch stand-in.
+     */
+    function fetchImplThat(status) {
+      return async () => {
+        if (status === null) throw Object.assign(new Error('connect'), { cause: { code: 'ECONNREFUSED' } });
+        return { ok: status >= 200 && status < 300, status, json: async () => ({ version: '1.0.0-rc2' }) };
+      };
+    }
+
+    afterEach(() => {
+      medusa._setBridgeWsUrl();
+      medusa._setBridgeHttpUrl();
+    });
+
+    // Both transports are probed because they fail INDEPENDENTLY and mean
+    // different things: send/roster use HTTP, every listener uses the WebSocket.
+    // Reporting healthy off one is the unverified assertion #1130 was filed about.
+    for (const [label, httpStatus, wsAccepting, code, healthy] of [
+      ['both answer and the Bridge is well', 200, true, 'BRIDGE_OK', true],
+      ['nothing is there at all', null, false, 'BRIDGE_ABSENT', false],
+      ['HTTP is up but the WS port is not', 200, false, 'BRIDGE_WS_ABSENT', false],
+      ['the WS port accepts but HTTP does not answer', null, true, 'BRIDGE_HTTP_ABSENT', false],
+      ['the Bridge answers and reports itself unwell', 503, true, 'BRIDGE_UNHEALTHY', false],
+      ['the Bridge answers unwell with its WS port also down', 503, false, 'BRIDGE_UNHEALTHY', false]
+    ]) {
+      it(`classifies: ${label}`, async () => {
+        const r = await medusa.checkBridgeHealth({
+          fetchImpl: fetchImplThat(httpStatus), connectImpl: connectImplThat(wsAccepting)
+        });
+        assert.equal(r.code, code);
+        assert.equal(r.healthy, healthy);
+        assert.ok(r.detail, 'every verdict names what it saw');
+        if (!healthy) assert.ok(r.hint, 'every failure says what the operator can do');
+      });
+    }
+
+    it('answered-badly is never reported as absent — the remedies differ', async () => {
+      // ABSENT means install or start something; UNHEALTHY means read the logs of
+      // a service that is already running. Collapsing them sends the operator to
+      // reinstall a Bridge that is up.
+      const unhealthy = await medusa.checkBridgeHealth({
+        fetchImpl: fetchImplThat(500), connectImpl: connectImplThat(false)
+      });
+      assert.equal(unhealthy.code, 'BRIDGE_UNHEALTHY');
+      assert.notEqual(unhealthy.code, 'BRIDGE_ABSENT');
+    });
+
+    it('every declared code has a producer', async () => {
+      // A vocabulary member nothing emits reads as coverage while covering
+      // nothing; this pins that the frozen set and the reachable set agree.
+      const produced = new Set();
+      for (const [httpStatus, wsAccepting] of [[200, true], [null, false], [200, false], [null, true], [503, true]]) {
+        const r = await medusa.checkBridgeHealth({
+          fetchImpl: fetchImplThat(httpStatus), connectImpl: connectImplThat(wsAccepting)
+        });
+        produced.add(r.code);
+      }
+      assert.deepEqual([...produced].sort(), Object.values(medusa.BRIDGE_HEALTH_CODES).sort());
+    });
+
+    it('reads the WS half from the resolver, so an override moves the probe too', async () => {
+      medusa._setBridgeHttpUrl('http://127.0.0.1:4009');
+      const r = await medusa.checkBridgeHealth({
+        fetchImpl: fetchImplThat(200), connectImpl: connectImplThat(true)
+      });
+      assert.equal(r.wsUrl, 'ws://127.0.0.1:4010');
+      assert.equal(r.httpUrl, 'http://127.0.0.1:4009');
+    });
+
+    it('never throws — a preflight that can fail is an outage of the thing it guards', async () => {
+      const r = await medusa.checkBridgeHealth({
+        fetchImpl: async () => { throw new Error('boom'); },
+        connectImpl: () => { throw new Error('cannot even connect'); }
+      });
+      assert.equal(r.code, 'BRIDGE_ABSENT');
+      assert.equal(r.healthy, false);
+    });
+
+    it('counts live listeners off the listener map, which is where the master lives too', () => {
+      // ADR 0008: the Project Master has no sessions row, so a sessions-table walk
+      // would skip exactly the listener the reporting install saw fail first.
+      const before = medusa.activeListenerCount();
+      medusa.startSession({
+        projectPath: tempDir, sessionId: 'count-1', name: 'Counted', wsFactory: (u) => new FakeWS(u)
+      });
+      assert.equal(medusa.activeListenerCount(), before + 1);
+      medusa.stopSession('count-1');
+      assert.equal(medusa.activeListenerCount(), before);
+    });
   });
 
   describe('Bridge WS URL resolution (#1100)', () => {
@@ -438,7 +551,7 @@ describe('API — GET /api/sessions/:project/medusa/status', () => {
     // joined it in #820 (the DURABLE per-project opt-in, which gates whether
     // the control is shown at all — false here, since this project never set it).
     assert.deepEqual(data, {
-      state: 'off', workspaceId: null, unread: 0, lastError: null, loops: [],
+      state: 'off', workspaceId: null, unread: 0, lastError: null, lastErrorCode: null, loops: [],
       outbound: { allowed: true, reason: null }, enabled: false
     });
   });
@@ -545,7 +658,34 @@ describe('API — Medusa Chunk 02 routes (toggle / messages / read)', () => {
     assert.equal(medusa.getStatus(active.id).state, 'listening');
     const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: false });
     assert.equal(status, 200);
-    assert.deepEqual(data, { state: 'off', workspaceId: null, unread: 0, lastError: null });
+    assert.deepEqual(data, { state: 'off', workspaceId: null, unread: 0, lastError: null, lastErrorCode: null });
+  });
+
+  it('toggle {enabled:true} does NOT refuse when the Bridge is absent — it starts, and says why', async () => {
+    // The operator decision (2026-09-08): a retrying listener registers by itself
+    // once the Bridge appears, and a refused toggle starts nothing to retry. What
+    // the preflight buys is the diagnosis at the moment of the click, not a veto.
+    medusa._setBridgeHttpUrl('http://127.0.0.1:59991'); // nothing is listening there
+    try {
+      const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: true });
+      assert.equal(status, 200, 'the toggle must not refuse');
+      assert.notEqual(data.state, 'off', 'the listener must still have started');
+      assert.equal(data.bridge.healthy, false);
+      assert.equal(data.bridge.code, 'BRIDGE_ABSENT');
+      assert.ok(data.bridge.hint, 'and the operator is told what to do about it');
+    } finally {
+      medusa._setBridgeHttpUrl();
+      medusa.stopSession(active.id);
+    }
+  });
+
+  it('toggle {enabled:false} reports no verdict at all rather than a null one', async () => {
+    // A `bridge: null` would read as "we looked and found nothing" on a path that
+    // never looked — the same class of false report as the rest of this car.
+    seedListener();
+    const { status, data } = await req('/api/sessions/switchboard/medusa/toggle', 'POST', { enabled: false });
+    assert.equal(status, 200);
+    assert.ok(!('bridge' in data), 'a toggle-off carries no preflight verdict');
   });
 
   it('toggle {enabled:true} is idempotent against an already-listening session', async () => {

@@ -4530,19 +4530,31 @@ function registerMedusaRoutes(prefix, resolve) {
   // Chunk 02). Body `{enabled}` sets the desired state explicitly (idempotent —
   // safe against double-clicks); omitted → flips the current state. Returns the
   // resulting status.
-  route('POST', `${prefix}/toggle`, (_req, res, params, body) => {
+  route('POST', `${prefix}/toggle`, async (_req, res, params, body) => {
     const r = resolve(params);
     if (refused(res, r, 'toggle Medusa for')) return;
     const { target } = r;
     const isOn = medusa.getStatus(target.sessionId).state !== 'off';
     const desired = (body && typeof body.enabled === 'boolean') ? body.enabled : !isOn;
+    // Preflight on the way ON, and it does NOT gate the toggle (#1130, operator
+    // decision 2026-09-08). The listener still starts and still retries, because a
+    // retrying listener registers by itself once the Bridge appears and a refused
+    // toggle starts nothing to retry. What the probe buys is the diagnosis: the
+    // verdict rides back on this response, so the control can say "no Bridge here,
+    // and here is how to fix it" at the moment of the click rather than leaving
+    // the operator to read a generic reconnect loop.
+    let bridge;
     if (desired) {
+      bridge = await medusa.checkBridgeHealth();
       medusa.startSession({ projectPath: target.projectPath, sessionId: target.sessionId, name: target.name });
     } else {
       medusa.stopSession(target.sessionId);
     }
     if (typeof r.afterToggle === 'function') r.afterToggle(desired);
-    jsonResponse(res, 200, medusa.getStatus(target.sessionId));
+    // `bridge` is present only when one was taken. A `null` on the way OFF would
+    // read as "we looked and found nothing" for a path that never looked.
+    const status = medusa.getStatus(target.sessionId);
+    jsonResponse(res, 200, bridge ? { ...status, bridge } : status);
   });
 
   // GET <prefix>/messages — the received inbox (MED-2K9P Chunk 02). A pure
