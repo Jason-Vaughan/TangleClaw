@@ -277,6 +277,7 @@ describe('lib/medusa — service layer', () => {
     for (const [label, gate, value] of [
       ['a derived port past the range', 'http', 'http://localhost:65535'],
       ['a fragment', 'ws', 'ws://localhost:3010/#x'],
+      ['a bare trailing hash', 'ws', 'ws://localhost:3010/#'],
       ['a non-ws scheme', 'ws', 'ftp://localhost:3010']
     ]) {
       it(`refuses ${label} rather than retrying a URL the WebSocket client rejects`, () => {
@@ -289,7 +290,9 @@ describe('lib/medusa — service layer', () => {
     it('the members above really are rejected by the WebSocket client', () => {
       // Pins the premise the gate rests on. If a future Node accepts one of
       // these, the gate is over-strict and this reds rather than passing quietly.
-      for (const bad of ['ws://localhost:65536', 'ws://localhost:3010/#x', 'ftp://localhost:3010']) {
+      for (const bad of [
+        'ws://localhost:65536', 'ws://localhost:3010/#x', 'ws://localhost:3010/#', 'ftp://localhost:3010'
+      ]) {
         assert.throws(() => new WebSocket(bad), undefined, `${bad} should be rejected`);
       }
     });

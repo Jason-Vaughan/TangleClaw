@@ -40,7 +40,8 @@ All notable changes to TangleClaw are documented in this file.
   that logs the reason, the value and the gate — one owner rather than a line per site, because the
   sites arrive one at a time and a per-site remedy leaves the newest one flooding on every session
   start. The accepted set is validated by construction against what `new WebSocket` will take: a
-  non-`ws` scheme, a `#fragment` and a port past 65535 all parse as URLs, and all three would
+  non-`ws` scheme, a `#fragment` (including a bare trailing `#`, which parses with an *empty* hash
+  and so slips a naive `hash` test) and a port past 65535 all parse as URLs, and all would
   otherwise be caught by the listener's factory-throw path and retried on the 30s backoff cap
   **forever** — the one bad-input shape that never reached the documented default. A base with no
   explicit port is refused too, since `+ 1` on a scheme default gives port 81 or 444: arithmetic on
