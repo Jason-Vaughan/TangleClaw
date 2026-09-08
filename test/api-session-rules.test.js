@@ -272,6 +272,25 @@ describe('api/session-rules (#347/D1a)', () => {
       await request('DELETE', `/api/session-rules/${system.id}?confirm=true`);
     });
 
+    it('returns NOT_FOUND when restoring an unknown version of a baseline master rule', async () => {
+      const system = store.sessionRules.create({
+        content: 'missing-version boundary',
+        kind: 'master',
+        createdBy: 'system'
+      });
+
+      const missing = await request(
+        'POST',
+        `/api/session-rules/${system.id}/restore`,
+        { versionNo: 999999 }
+      );
+
+      assert.equal(missing.status, 404);
+      assert.equal(missing.data.code, 'NOT_FOUND');
+
+      await request('DELETE', `/api/session-rules/${system.id}?confirm=true`);
+    });
+
     it('POST /api/master/rules/restore-defaults replaces everything with the shipped baseline', async () => {
       const master = require('../lib/master');
       await request('POST', '/api/session-rules', { content: 'stray custom rule', kind: 'master' });

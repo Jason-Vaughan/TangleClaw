@@ -3490,7 +3490,7 @@ route('POST', '/api/session-rules/:id/restore', (_req, res, params, body) => {
     if (refuseUnconfirmedBaselineEdit(existing, body.confirmBaselineEdit === true)) {
       const target = store.sessionRules.listVersions(Number(params.id))
         .find((v) => v.versionNo === Number(body.versionNo));
-      const weakens = !target || target.content !== existing.content || !target.enabled;
+      const weakens = target && (target.content !== existing.content || !target.enabled);
       if (weakens) {
         return errorResponse(res, 400,
           'This is a shipped Master boundary rule — restoring a version that changes or disables it requires confirmBaselineEdit: true (Restore defaults always recovers the baseline)',
