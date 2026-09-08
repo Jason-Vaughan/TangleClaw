@@ -45,7 +45,13 @@ describe('settings hint wrapping (#1271)', () => {
     // If the grid or the modal ceiling changes, the reasoning in the CSS comment
     // stops describing the code. This fails loudly instead of leaving a stale
     // rationale next to a rule nobody can re-derive.
-    assert.match(css, /\.settings-toggles-grid\s*\{[^}]*minmax\(290px,\s*1fr\)/);
+    // All three participate: track floor, inter-column gap, and the modal
+    // ceiling they have to fit inside. Pinning only two lets a change to the
+    // third silently invalidate the rationale beside the rule.
+    const grid = css.match(/\.settings-toggles-grid\s*\{[^}]*\}/);
+    assert.ok(grid, 'the toggles grid rule must exist');
+    assert.match(grid[0], /minmax\(290px,\s*1fr\)/);
+    assert.match(grid[0], /gap:\s*0\s+22px/);
     assert.match(css, /\.modal-content\.settings-modal\s*\{[^}]*max-width:\s*680px/);
   });
 });

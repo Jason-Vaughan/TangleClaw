@@ -3490,10 +3490,9 @@ route('POST', '/api/session-rules/:id/restore', (_req, res, params, body) => {
     if (refuseUnconfirmedBaselineEdit(existing, body.confirmBaselineEdit === true)) {
       const target = store.sessionRules.listVersions(Number(params.id))
         .find((v) => v.versionNo === Number(body.versionNo));
-      // #1048 — a versionNo that does not exist is NOT a weakening. It used to
-      // be treated as one (`!target ||`), so the caller was told to confirm an
-      // operation that could never succeed, and the misleading answer shadowed
-      // the accurate one.
+      // #1048 — a versionNo that does not exist is NOT a weakening, so it must
+      // not answer CONFIRM_REQUIRED: that would tell the caller to confirm an
+      // operation that can never succeed, and shadow the accurate answer.
       //
       // The existence check is deliberately NOT hoisted above this gate, which
       // is what the issue suggests: `store.sessionRules.restore` already

@@ -2415,15 +2415,15 @@ body {
   color: var(--text-muted);
   margin-top: 4px;
   /* #1271 — hints carry <code> paths (`package.json`, `<project-root>/FEATURES.md`)
-     that the line-breaker sees as one word. `.settings-toggles-grid` is
-     `repeat(auto-fit, minmax(290px, 1fr))` with a 22px gap, so two columns need
-     602px inside a 680px modal that sets `overflow: hidden` — an unbreakable
-     token overflowed its cell and was clipped rather than wrapped.
+     that the line-breaker sees as one word. `.settings-toggles-grid` packs
+     `minmax(290px, 1fr)` tracks into a modal with a fixed ceiling and
+     `overflow: hidden`, so at two columns there is no slack: an unbreakable token
+     overflows its cell and is clipped rather than wrapped.
      `anywhere` rather than `break-word` deliberately: only `anywhere` shrinks the
-     MIN-CONTENT width, which is what lets the grid track narrow to fit. With
+     MIN-CONTENT width, which is what lets the track narrow to fit. With
      `break-word` the track still resolves against the unbroken token, so the
-     tight two-column state — the state the bug is reported in — would keep
-     overflowing. Inherited, so the <code> children need no rule of their own. */
+     tight two-column state keeps overflowing. Inherited, so the <code> children
+     need no rule of their own. */
   overflow-wrap: anywhere;
 }
 /* A setting that takes effect only in PART says which part does not (ADR 0013,

@@ -242,6 +242,16 @@ All notable changes to TangleClaw are documented in this file.
   because `.master-access-option .form-hint` and `.history-scope .form-hint` also exist and neither
   styles this text. Verified by mutation: moving the declaration to `.form-error` fails it.
 
+  **What the test cannot say, stated rather than implied:** it asserts stylesheet *text*, so it
+  proves the declaration is in the right block and that the geometry the rationale rests on is
+  unchanged. It does not prove the modal stopped clipping — this repo ships no headless browser by
+  choice. The rule also lands on bare `.form-hint`, which is used well beyond the settings grid, and
+  the min-content shrink that fixes the clipping is the same property that can narrow other
+  content-sized tracks. `VRF-1271-hint-wrapping` in `.prawduct/operator-verification.md` carries the
+  rendered check across all three grid states #1271 names, plus the two other `.form-hint`
+  consumers, and records the narrower retreat (scoping to `.settings-toggles-grid .form-hint`) if it
+  looks wrong.
+
   Reconstructed under ADR 0014 from #1271 rather than from the submitted patch. Reported and
   independently fixed by **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in PR #1354;
   their bytes were not merged, per `CONTRIBUTING.md`.
