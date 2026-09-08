@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.22.0] - 2026-09-07
+
 ### Added
 - **Uploads leave the event loop, and an unreadable uploads directory stops reporting itself as
   an empty one (#889, uploads half).** `lib/uploads.js` made 11 synchronous filesystem calls on
