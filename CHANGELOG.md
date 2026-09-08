@@ -26,9 +26,9 @@ All notable changes to TangleClaw are documented in this file.
   **A preflight probes both transports and classifies what is there.** `checkBridgeHealth()` checks
   the Bridge's HTTP `/health` *and* the WebSocket port, because they fail independently and mean
   different things: send and roster use HTTP while every listener uses the WebSocket, so reporting
-  "healthy" off one is the same unverified assertion this issue is about. Five verdicts, each with
-  an operator-facing hint and each reachable: `BRIDGE_OK`, `BRIDGE_ABSENT`, `BRIDGE_WS_ABSENT`,
-  `BRIDGE_HTTP_ABSENT`, `BRIDGE_UNHEALTHY`. Answered-badly is deliberately not folded into absent —
+  "healthy" off one is the same unverified assertion this issue is about. Each verdict below carries an
+  operator-facing hint and each is reachable: `BRIDGE_OK`, `BRIDGE_ABSENT`, `BRIDGE_WS_ABSENT`,
+  `BRIDGE_HTTP_ABSENT`, `BRIDGE_UNHEALTHY`, plus the deadline case described further down. Answered-badly is deliberately not folded into absent —
   absent means install or start something, unhealthy means read the logs of a service already
   running. It never throws: a preflight that can fail is an outage of the thing it guards.
 
