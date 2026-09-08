@@ -72,6 +72,23 @@ and `break-word` in-block; #1048 the old predicate and the gate disabled, failin
 direction. One mutation initially read green and was wrong — it had hit `.settings-warnings-text`
 rather than `.form-hint`. A surviving mutation is a claim about the mutation as much as the test.
 
+**Resolution round.** The cumulative pass returned 0 blocking / 2 warning. R-1: the #1271 test
+asserts stylesheet TEXT, so it cannot say the modal stopped clipping, and the rule lands on bare
+`.form-hint` — used well beyond the settings grid, where the same min-content shrink that fixes the
+clipping can narrow other content-sized tracks. `test-specs.md` names a manual checklist as the
+compensating control for that row, so `VRF-1271-hint-wrapping` now carries the rendered check across
+the three grid states #1271 names, the two constrained consumers, and the narrower retreat
+(`.settings-toggles-grid .form-hint`) if the blast radius reads wrong. R-8: the norm artifact still
+carried the residual this bundle closed, as a hand count — replaced relationally citing #1377, since
+that count going stale between filing and doing is the finding behind #1377. Two comments that
+narrated history were rewritten to describe the code, and a derived `602px` was dropped in favour of
+pinning the gap it came from.
+
+**Note on what ships.** The VRF entry and the norm-artifact correction live in
+`.prawduct/operator-verification.md` and `.prawduct/artifacts/project-preferences.md`, both
+UNTRACKED in this repo — so they are on this machine and not in the PR. Only this file, `CHANGELOG.md`
+and the code carry into the merge. Stated because the compensating control for #1271 is one of them.
+
 **Classification:** fix
 
 
