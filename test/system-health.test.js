@@ -428,6 +428,24 @@ describe('the Medusa Bridge condition (#1130)', () => {
     assert.match(c.remediation, /curl .*\/health/);
   });
 
+  it('a probe that TIMED OUT is unknown, not fired — the panel must not assert a negative', async () => {
+    // One layer up from the ABSENT/UNKNOWN split inside the probe: reporting
+    // `fired` for a check that merely did not finish is the same false certainty,
+    // wearing the panel's vocabulary instead of the probe's.
+    const c = await systemHealth.detectMedusaBridge({
+      medusaListenerCount: () => 2,
+      medusaBridgeHealth: async () => ({
+        healthy: false, code: 'BRIDGE_UNKNOWN',
+        detail: 'the Bridge could not be checked within 2000ms',
+        hint: 'This is a check that did not finish, not a Bridge that is missing.',
+        httpUrl: 'http://localhost:3009'
+      })
+    });
+    assert.equal(c.state, systemHealth.STATE_UNKNOWN);
+    assert.notEqual(c.state, systemHealth.STATE_FIRED);
+    assert.doesNotMatch(c.detail, /not usable/, 'an unfinished check states no verdict about the Bridge');
+  });
+
   it('reports UNKNOWN, never clear, when the probe itself could not be made', async () => {
     // The three-state vocabulary is why this module was the right home: a probe
     // that could not run has not said the Bridge is fine.

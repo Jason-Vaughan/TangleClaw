@@ -332,7 +332,18 @@ describe('lib/medusa — service layer', () => {
       let probes = 0;
       const realFetch = global.fetch;
       global.fetch = async () => { probes += 1; return { ok: true, status: 200, json: async () => ({ status: 'hissing' }) }; };
-      const realConnect = require('node:net').connect;
+      const net = require('node:net');
+      const realConnect = net.connect;
+      // Stub the WS half too: `_probeWsPort` reads `net.connect` at call time, so
+      // leaving it real makes a unit test open loopback sockets and, on a filtered
+      // host, pay a 2s deadline per call for nothing either assertion needs.
+      net.connect = () => {
+        const EventEmitter = require('node:events');
+        const socket = new EventEmitter();
+        socket.destroy = () => {};
+        setImmediate(() => socket.emit('connect'));
+        return socket;
+      };
       try {
         const [a, b] = await Promise.all([medusa.checkBridgeHealth(), medusa.checkBridgeHealth()]);
         assert.equal(a, b, 'concurrent callers share one in-flight probe');
@@ -341,7 +352,7 @@ describe('lib/medusa — service layer', () => {
         assert.equal(probes, 1, `expected one probe for three calls, got ${probes}`);
       } finally {
         global.fetch = realFetch;
-        void realConnect;
+        net.connect = realConnect;
         medusa._resetBridgeProbe();
       }
     });
@@ -351,6 +362,15 @@ describe('lib/medusa — service layer', () => {
       const realFetch = global.fetch;
       let probes = 0;
       global.fetch = async () => { probes += 1; return { ok: true, status: 200, json: async () => ({ status: 'hissing' }) }; };
+      const net = require('node:net');
+      const realConnect = net.connect;
+      net.connect = () => {
+        const EventEmitter = require('node:events');
+        const socket = new EventEmitter();
+        socket.destroy = () => {};
+        setImmediate(() => socket.emit('connect'));
+        return socket;
+      };
       try {
         await medusa.checkBridgeHealth();
         medusa._setBridgeHttpUrl('http://127.0.0.1:4009');
@@ -358,6 +378,7 @@ describe('lib/medusa — service layer', () => {
         assert.equal(probes, 2, 'a verdict about the old URL must not answer for the new one');
       } finally {
         global.fetch = realFetch;
+        net.connect = realConnect;
         medusa._setBridgeHttpUrl();
         medusa._resetBridgeProbe();
       }

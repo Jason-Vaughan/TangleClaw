@@ -67,10 +67,12 @@ All notable changes to TangleClaw are documented in this file.
   were rebuilt from the real response shapes: the earlier ones synthesized a 503 the Bridge never
   sends, so they were green against the fixture rather than against the wire.
 
-  **A read we stopped is not a Bridge that is not there.** The 2s probe deadlines now yield
+  **A read we stopped is not a Bridge that is not there.** The 2s probe deadlines yield
   `BRIDGE_UNKNOWN` rather than `BRIDGE_ABSENT` — telling an operator whose host is merely slow to
   install software that is already installed is the same misdiagnosis this issue is about, and the
-  unfinished check is careful not to prescribe an install.
+  unfinished check is careful not to prescribe an install. The health panel carries that
+  distinction through: a timed-out probe renders `unknown`, never `fired`, because reporting a
+  definite negative about a check that did not finish is the same false certainty one layer up.
 
   **The classification reaches the log, not only the API.** #1130 was misdiagnosed *from a log
   line*, so a code nobody can `grep` for leaves the next diagnosis where that one started. Both the
