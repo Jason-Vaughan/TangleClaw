@@ -34,6 +34,69 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-08 — the TangleClaw-Builder rename left stale absolute paths in operator instructions
+
+<!-- prawduct: type=fix | scope=rename-paths -->
+
+Post-plan work, no build plan and no issue: the fix landed in the same session the defect was found.
+Its own scope rather than a borrowed one — an archived roster cannot track new chunk ids.
+
+**What happened.** The operator renamed this workspace from `TangleClaw` to `TangleClaw-Builder`
+under a new nomenclature. The directory moved; the absolute paths written into docs, priming
+prompts and plans did not, so several of them name a directory that no longer exists.
+
+**The one that mattered.** `docs/primary-checkout-guard.md` told the operator to
+`touch ~/Documents/Projects/TangleClaw/.prawduct/.allow-primary-write` to disarm the
+primary-checkout guard, and to `rm` it after. That path is gone, so the `touch` created a file the
+guard never reads and the `rm` removed nothing — the documented override would have appeared simply
+to be ignored. That is the exact failure the doc's own warning three lines above exists to prevent:
+it explains that the path is absolute on purpose because a relative `touch` from a worktree creates
+a file the guard never reads. The warning was right and the example under it was wrong.
+
+**The guard's code was never affected**, and this is worth being precise about because it bounds the
+blast radius: `guard-primary-checkout.js` resolves the primary at run time (`located.primary`) and
+`overrideHint()` prints `path.join(primary, OVERRIDE_FILE)`, so every refusal names the correct
+absolute path. Anyone who copied the path out of the refusal message — which the doc tells them they
+can — was unaffected. Only a reader following the doc's literal example would have hit it.
+
+**Also repointed.** The operator-typed `cd` examples in `scripts/guard-primary-checkout.js` and the
+matching comment in `test/primary-checkout-guard.test.js` (both illustrative; the test derives its
+path from `path.basename(fx.primary)`). The read-only path and `git -C` target in
+`.tangleclaw/priming/roadmap-triage.md`, which aim a *different* session at this repo and so would
+have sent it looking for a directory that is not there. The plan pointer in
+`.tangleclaw/plans/next-session-plan.md`. The `PATCH /api/projects/TangleClaw` call in
+`v5-secure-baseline.md`'s "step 8 depends on turning this back on" warning — TangleClaw's own
+registry now calls this project `TangleClaw-Builder` (id 14, verified against `GET /api/projects`),
+so that curl would no longer address anything. Its hosted mirror
+(`claude.ai/code/artifact/b6bc71e7-…`) was republished in the same turn, per that plan's own
+keep-the-two-in-sync rule. And the Medusa endpoints in `CLAUDE.md`, which TangleClaw had already
+regenerated under the new workspace name at session launch.
+
+**What was deliberately left alone, and why each is correct as written.** Every
+`Jason-Vaughan/TangleClaw` reference: the **GitHub repository was not renamed**, only the local
+directory — confirmed against `git remote -v`, not assumed, because repointing those would have
+broken every `gh --repo` invocation in the priming prompt and the backlog header. The
+`/path/to/TangleClaw` placeholders in `docs/user-guide.md` and `docs/setup-guide.md`, which are
+generic instructions to a stranger, not this machine. The `/root/TangleClaw` paths in
+`deploy/cleanroom/`, which are inside a Docker container. The synthetic `/Users/x/…` and
+`/Users/someone/…` paths in the test fixtures, which are fixtures. And every occurrence in
+`CHANGELOG.md`, `.prawduct/change-log.md`, `.prawduct/artifacts/migration-scrub-decisions.md` and
+the archived plans, which are history and must keep saying what was true when written.
+
+**Two left as named debt rather than fixed here.** `.prawduct/backlog.md:150,160` carries `refs:`
+pointers to `<old path>/.claude/plans/switchboard-v2-autoinject-loop.md` — the plan file still
+exists at the new path, so the pointer is merely stale, but that file is frozen history with a
+do-not-edit banner and backlog items route through `/prawduct:backlog`, so hand-editing it here
+would break two conventions to fix one dangling link. `deploy/VRF-auth-1-cutover.md:751` carries
+`rm -rf ~/Documents/Projects/TangleClaw` in a completed cutover doc; it is history, and repointing an
+`rm -rf` at the live checkout is not a change to make mechanically.
+
+**Verification.** Full suite green after the change: 8538 tests, 8537 pass, 1 skipped, 0 fail.
+`node --test test/primary-checkout-guard.test.js` alone: 71/71.
+
+**Classification:** fix
+
+
 ## 2026-09-07 — #1335: the update checker's remaining durable states log on change, not on measurement
 
 <!-- prawduct: type=fix | scope=uc-1335 -->
