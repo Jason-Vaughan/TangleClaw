@@ -3028,7 +3028,15 @@ function renderImportBanner(importable) {
     const conflictNote = p.conflicts.length > 0
       ? ` <span style="color:var(--error)">⚠ conflict on port${p.conflicts.length > 1 ? 's' : ''} ${p.conflicts.join(', ')}</span>`
       : '';
-    const escapedName = esc(JSON.stringify(JSON.stringify(p.name)));
+    // #1383 — the two buttons below take DIFFERENT argument shapes, so they
+    // cannot share one encoding. `importLeaseProjects` calls `JSON.parse` on
+    // what it receives, so its argument must arrive as a JSON string and is
+    // stringified twice. `ignoreLeaseProject` takes the RAW name and puts it
+    // straight into the ignore set, so it is stringified ONCE — a second pass
+    // handed it the name wrapped in literal quote characters, which never
+    // matched the canonical name and left Ignore doing nothing at all, on
+    // every install.
+    const escapedName = esc(JSON.stringify(p.name));
     return `<div class="import-banner-item">
       <strong>${esc(p.name)}</strong> — ports: ${portList}${conflictNote}
       <button class="btn btn-primary btn-small" onclick="importLeaseProjects(${esc(JSON.stringify(JSON.stringify([p.name])))})">Import</button>

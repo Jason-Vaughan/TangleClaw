@@ -34,6 +34,31 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-09 — #1383: the import banner's Ignore button had never worked
+
+<!-- prawduct: type=fix | scope=ignore-1383 -->
+
+Post-plan work; own scope. Found by the operator clicking the button I had just told them was the
+answer, and reporting that nothing happened. I checked rather than assuming user error; they were
+right.
+
+**One expression, two contracts.** `public/ui.js` computed a single `escapedName` for both banner
+buttons. `importLeaseProjects` JSON.parses its argument, so double-stringify is correct there;
+`ignoreLeaseProject` takes the raw name, so it is wrong there. The ignore set therefore stored the
+name wrapped in literal quotes and `checkPortImports` never matched it. Same class as #1338 —
+one rule serving two call sites whose requirements differ — which is why the test pins BOTH sides.
+
+**Mutations.** Restoring the original double-stringify fails 2 of 3; applying the single stringify to
+the Import call site as well also fails 2 of 3. The second is the point: the obvious wrong fix is to
+"make them consistent", and that breaks Import instead.
+
+**Why it shipped.** Zero test coverage on the banner — the grep returns nothing. The new tests
+evaluate the real template out of the shipped file and decode the rendered `onclick` as a browser
+would, so they fail on behaviour rather than on spelling.
+
+**Classification:** fix
+
+
 ## 2026-09-08 — #1271 / #1048 / #1067: three clean-room reconstructions
 
 <!-- prawduct: type=fix | scope=cleanroom-1354-1359-1357 -->
