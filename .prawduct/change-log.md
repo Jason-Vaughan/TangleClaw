@@ -34,6 +34,44 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-08 — #1338: create and update hold one `tags` rule between them
+
+<!-- prawduct: type=fix | scope=tags-1338 -->
+
+Post-plan work; own scope, not a borrowed one. Clean-room reconstruction under ADR 0014 of external
+PR #1353 by @madhavanms2803-ui, derived from the issue rather than the patch.
+
+**The defect is the asymmetry.** `createProject` wrote `tags` unvalidated while `updateProject`
+refused the same value through `PROJECT_UPDATE_VALIDATORS`, so `POST` could establish a state that
+`PATCH` could not repair.
+
+**Mechanism verified, not repeated from the issue body.** `lib/store.js:2369` stringifies on write,
+`:6725` `_jsonParse`s on read, and `:2290` filters tags with `.includes` — substring matching once
+the value is a string rather than an array. That reader is the concrete harm and the issue does not
+name it; deriving from the requirement rather than transcribing the patch is what surfaced it.
+
+**Shape:** one `validateTagsShape` predicate called by both paths. A duplicated create-side check
+would have re-created the drift that produced the issue. The create-side call runs before the first
+`mkdirSync`, matching the create-time checks around it, so a refusal leaves nothing on disk.
+
+**Not done, deliberately, and filed rather than deferred into prose.** The per-element rules and
+#1338's direction 1 (run the validator table from `createProject`; needs a context split) are both
+out of the reviewed scope, so per ADR 0014 they are filed: **#1374**. That the JSDoc originally
+cited #1287 for them — a CLOSED issue — is the finding three reviewers reached from three angles,
+and it is the same generational failure that produced #1338. **#1375** covers the rows already
+holding a bad value; this closes the door and repairs nothing behind it, and `public/ui.js:614`
+still throws on such a row.
+
+**One behaviour change:** `POST {"tags": null}` now 400s where it stored `[]` — symmetric with
+PATCH, and unreachable from the bundled client: `tcCreateProjectBody`
+(`public/api-helper.js:4130`) coerces with `String(data.tags || '').split(',')…`, so an empty field
+sends `[]`. Named precisely because the first draft of this entry credited `public/ui.js`, which is
+the settings/update call site, not the create one.
+
+**Verification.** Three mutations confirmed red against the new assertions: guard removed, element
+check dropped to `Array.isArray` alone, and guard fired on absence rather than key-presence — the
+last failing broadly, which is what shows the `!== undefined` key is load-bearing for every ordinary
+create. Suite green after.
 ## 2026-09-08 — the TangleClaw-Builder rename left stale absolute paths in operator instructions
 
 <!-- prawduct: type=fix | scope=rename-paths -->
