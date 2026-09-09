@@ -633,7 +633,7 @@ cached at session launch, so it took effect immediately with no relaunch.
 > **⚠ STEP 8 DEPENDS ON TURNING THIS BACK ON.** If it stays `false`, v5 finishes and silently never
 > ships. Flip `versionBumpEnabled` back to `true` for TangleClaw before the release wrap. Reversal is
 > a checkbox in project settings, or
-> `curl -X PATCH http://localhost:3102/api/projects/TangleClaw -H 'Content-Type: application/json' -d '{"versionBumpEnabled": true}'`.
+> `curl -X PATCH http://localhost:3102/api/projects/TangleClaw-Builder -H 'Content-Type: application/json' -d '{"versionBumpEnabled": true}'`.
 
 **2. Install freeze — the `main` branch question.** `README.md:153` instructs a bare
 `git clone https://github.com/Jason-Vaughan/TangleClaw.git` with **no tag and no branch pin**, so a
