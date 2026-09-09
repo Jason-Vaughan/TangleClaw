@@ -28,7 +28,10 @@ All notable changes to TangleClaw are documented in this file.
   `getIgnoredLeaseProjects`, `_canonicalProjectName` and `checkPortImports` are lifted out of the
   shipped `landing.js` and driven end to end, with the name the consumer is handed **decoded off the
   rendered button** rather than typed into the test — so the two halves really are asserted against
-  each other. The remaining seam is the test's own `esc`, still a private copy rather than lifted. Five mutations confirmed red across the surface.
+  each other. The remaining seam is the test's own `esc`, still a private copy rather than lifted.
+  Six mutations confirmed red across the surface — including the one that proves the loop closed:
+  reintroducing the original bug failed two tests before the consumer was wired to the producer, and
+  three after.
 
   **Worth stating with it:** with Ignore broken, the only non-destructive control on that banner did
   not work. The other button releases the lease outright for an owner that has no project directory
