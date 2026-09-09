@@ -279,6 +279,49 @@ All notable changes to TangleClaw are documented in this file.
   independently fixed by **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in PR #1359;
   their bytes were not merged, per `CONTRIBUTING.md`.
 
+- **`POST /api/projects` accepted a `tags` value that `PATCH` refused, and the project it created
+  could not be repaired by an edit (#1338).** `createProject` wrote `tags` with no verdict at all —
+  into `project.json` and on to `store.projects.create` — while `PROJECT_UPDATE_VALIDATORS` runs
+  only from `updateProject`. So `createProject({ tags: 'not-an-array' })` stored the string in both
+  places, and a later `PATCH` carrying that same shape was refused: the only route that could reach
+  the bad state was the one route that could not undo it.
+
+  **What the round trip costs, verified rather than restated.** `lib/store.js:2369` writes
+  `JSON.stringify(data.tags || [])` and `:6725` reads it back with `_jsonParse(row.tags, [])`, so a
+  string persists cleanly and returns a string where every reader expects `string[]`. The reader
+  that shows the consequence is `:2290` — tag filtering is `p.tags.includes(options.tag)`, which on
+  a string is **substring** matching rather than array membership, so a project tagged `production`
+  would answer a filter for `prod`.
+
+  **One predicate, two call sites — not a second copy of the rule.** Create and update now both call
+  `validateTagsShape`, because a create-side copy of the update-side check is precisely what lets the
+  two drift, which is the failure that produced this issue. The create-side call sits with the other
+  create-time shape checks and **before the first `mkdirSync`**, so a refusal leaves nothing on disk
+  — the property those checks already hold. Two tests drive a shared table through both paths — one of
+  refused shapes and one of accepted ones — so either side growing a rule the other lacks fails.
+  Both halves are needed: a shared predicate drifts just as badly by growing an over-refusal, and a
+  refusal table alone cannot see that.
+
+  **One behaviour change worth knowing:** `POST` with an explicit `"tags": null` now returns 400
+  where it previously stored `[]`. That is the symmetry the fix is for — `PATCH` already refused it —
+  and the bundled client never sends it: the create body is built by
+  `tcCreateProjectBody` (`public/api-helper.js:4130`) as
+  `String(data.tags || '').split(',').map(trim).filter(Boolean)`, which yields `[]` for an empty
+  field. (`public/ui.js:2172` builds the same shape for the settings/update path — a different call
+  site, and not the one that reaches `POST`.)
+
+  **What is deferred, and where it is tracked.** The per-element rules — tag length, character set,
+  a count cap, whether an empty string is a tag — remain open, and #1338's own direction 1 (running
+  the validator table from `createProject`, which needs a context split) is the remedy its body
+  calls "the one that stops this recurring". Neither is attempted at this scope, and both are now
+  filed as **#1374** rather than left in the body of #1287, which is closed. A deferral whose only
+  record is a closed issue is how #1338 came to exist. Separately, **#1375** covers rows already
+  holding a bad value: this fix closed the door but repaired nothing behind it, and
+  `public/ui.js:614` still throws on such a row.
+
+  Reconstructed under ADR 0014 from #1338 rather than from the submitted patch. Reported and
+  independently fixed by **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in PR #1353,
+  whose analysis reached the same shape; their bytes were not merged, per `CONTRIBUTING.md`.
 - **The workspace rename to `TangleClaw-Builder` left stale absolute paths in operator-facing
   instructions, including a documented escape hatch that silently could not work.** Renaming the
   local checkout from `~/Documents/Projects/TangleClaw` to `~/Documents/Projects/TangleClaw-Builder`

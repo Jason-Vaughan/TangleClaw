@@ -681,6 +681,86 @@ describe('projects', () => {
       assert.deepEqual(result.project.tags, ['node', 'active']);
     });
 
+    it('refuses a non-array tags on CREATE, the half #1287 left open (#1338)', async () => {
+      // The defect is the ASYMMETRY, so the assertion is about both paths, not
+      // one: the same value `updateProject` already refused was accepted here,
+      // which left a project that no PATCH carrying the same shape could repair.
+      const result = projects.createProject({
+        name: 'invalid-create-tags',
+        tags: 'not-an-array'
+      });
+
+      assert.equal(result.project, null);
+      assert.deepEqual(result.errors, ['tags must be an array of strings']);
+      assert.equal(
+        store.projects.getByName('invalid-create-tags'), null,
+        'the refused create never reached storage'
+      );
+      assert.equal(
+        fs.existsSync(path.join(projectsDir, 'invalid-create-tags')), false,
+        'the refusal runs before the first mkdir, so it leaves nothing on disk'
+      );
+    });
+
+    it('refuses an array holding a non-string tag on CREATE', async () => {
+      // `Array.isArray` alone passes `[1, 2]` — the same wrong type one level
+      // down, and the mutation that catches a shape check stopping at the
+      // container. Pinned on the create path as well as the update path,
+      // because one predicate serving two callers is the fix's whole shape.
+      const result = projects.createProject({
+        name: 'invalid-create-tag-element',
+        tags: ['ok', 42]
+      });
+
+      assert.equal(result.project, null);
+      assert.deepEqual(result.errors, ['tags must be an array of strings']);
+    });
+
+    it('create and update refuse the SAME shapes (#1338)', async () => {
+      // The regression this issue is really about is the two paths drifting.
+      // Asserting them against a shared table fails if either side grows a rule
+      // the other lacks — which a duplicated create-side check would allow and
+      // is why there is one predicate rather than two.
+      const refused = ['not-an-array', 42, ['ok', 42], null];
+      for (const [i, tags] of refused.entries()) {
+        const created = projects.createProject({ name: `sym-refuse-${i}`, tags });
+        assert.equal(created.project, null, `create must refuse ${JSON.stringify(tags)}`);
+        const updated = await projects.updateProject('new-project', { tags });
+        assert.equal(updated.project, null, `update must refuse ${JSON.stringify(tags)}`);
+        assert.deepEqual(created.errors, updated.errors, 'both paths give the same message');
+      }
+    });
+
+    it('create and update ACCEPT the same shapes (#1338)', async () => {
+      // The other half, and the one a refusal table cannot cover: a shared
+      // predicate drifts just as badly by growing an over-refusal on one side.
+      // Without this, a create path that started rejecting `[]` — the value the
+      // settings field sends when cleared — would pass a suite whose symmetry
+      // test only ever fed it bad input.
+      const accepted = [[], ['one'], ['a', 'b']];
+      for (const [i, tags] of accepted.entries()) {
+        const created = projects.createProject({ name: `sym-accept-${i}`, tags });
+        assert.ok(created.project, `create must accept ${JSON.stringify(tags)}`);
+        assert.deepEqual(created.project.tags, tags);
+
+        const updated = await projects.updateProject('new-project', { tags });
+        assert.ok(updated.project, `update must accept ${JSON.stringify(tags)}`);
+        assert.deepEqual(updated.project.tags, tags);
+      }
+    });
+
+    it('omitting tags entirely still creates, and lands as an array', async () => {
+      // The guard keys on `!== undefined`, matching the update table's
+      // key-presence rule. A guard that fired on absence would refuse every
+      // ordinary create, and the default has to survive the round trip that
+      // #1287 showed is where a bad type actually shows up.
+      const result = projects.createProject({ name: 'no-tags-at-all' });
+
+      assert.ok(result.project);
+      assert.deepEqual(result.project.tags, []);
+      assert.ok(Array.isArray(store.projects.getByName('no-tags-at-all').tags));
+    });
+
     it('skips git init when gitInit is false', async () => {
       const result = projects.createProject({
         name: 'no-git',
