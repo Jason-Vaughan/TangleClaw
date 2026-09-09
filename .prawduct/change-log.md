@@ -34,6 +34,51 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-08 — #1383: the import banner's Ignore button had never worked
+
+<!-- prawduct: type=fix | scope=ignore-1383 -->
+
+Post-plan work; own scope. Found by the operator clicking the button I had just told them was the
+answer, and reporting that nothing happened. I checked rather than assuming user error; they were
+right.
+
+**One expression, two contracts.** `public/ui.js` computed a single `escapedName` for both banner
+buttons. `importLeaseProjects` JSON.parses its argument, so double-stringify is correct there;
+`ignoreLeaseProject` takes the raw name, so it is wrong there. The ignore set therefore stored the
+name wrapped in literal quotes and `checkPortImports` never matched it. Same class as #1338 —
+one rule serving two call sites whose requirements differ — which is why the test pins BOTH sides.
+
+**Mutations — counted deliberately as a list, not a number.** Restoring the original
+double-stringify fails; single-stringifying the Import argument fails; single-stringifying **Import
+All** — which sits outside the per-item template and which the first tests could not reach (R-1) —
+fails; and on the consumer side, storing the name double-encoded in `ignoreLeaseProject`, or dropping
+the ignore filter from `checkPortImports`, each fail (R-13). The first of those was then re-run
+before and after the consumer was wired to the producer — two failures became three, which is the
+evidence the loop closed and not a sixth mutation. Stating it as a count made the two records
+disagree; the list is the honest form, the same call this branch already made on the #1384 site
+count. The producer and the consumer are now
+asserted against each other rather than against typed literals, using the repo's own `liftFunction`
+construction so the shipped code is what runs, and the name handed to the consumer is DECODED OFF
+THE RENDERED BUTTON rather than typed — the PR reviewer caught that the first version passed a
+literal, which asserted the consumer against my expectation of the producer rather than against the
+producer. That was the same sentence I had already softened once; this time it was made true instead.
+One seam remains: the test's `esc` is a private copy rather than lifted, a pre-existing class the
+Critic dispositioned as outside this fix.
+
+**Why it shipped.** Zero test coverage on the banner — the grep returns nothing. The new tests
+evaluate the real template out of the shipped file and decode the rendered `onclick` as a browser
+would, so they fail on behaviour rather than on spelling.
+
+**Found while reviewing this, filed not bundled:** **#1384** — inline handlers throughout
+`public/ui.js` interpolate into a SINGLE-quoted JS string (`onclick="fn('${esc(x)}')"`). `esc` maps `'` to `&#39;`,
+the parser decodes it back, and the string closes early. `togglePortGroup('${esc(project)}')` takes a
+port-lease project name, which is operator free text, so a project named `O'Brien` kills the
+port-group toggle today. Same family as this fix — an encoding correct for one context used where the
+contract differs — and verified by rendering it rather than by reading it.
+
+**Classification:** fix
+
+
 ## 2026-09-08 — #1271 / #1048 / #1067: three clean-room reconstructions
 
 <!-- prawduct: type=fix | scope=cleanroom-1354-1359-1357 -->

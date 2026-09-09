@@ -5,6 +5,41 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **The port-lease import banner's Ignore button had never worked, on any install (#1383).** Clicking
+  it did nothing: the banner returned immediately and on every reload. Reported by the operator, who
+  was told the button was the answer and found it wasn't.
+
+  `public/ui.js` built **one** escaped value and fed it to both buttons, which take different
+  argument shapes. `importLeaseProjects` calls `JSON.parse` on what it receives, so its argument must
+  arrive as a JSON string — stringified twice, correctly. `ignoreLeaseProject` takes the **raw** name
+  and puts it straight into the ignore set, so the same double pass handed it the name wrapped in
+  literal quote characters. `checkPortImports` then compared the canonical `homebrew` against a stored
+  `"homebrew"` and never matched. Measured live before the fix: `localStorage` held
+  `["\"Homebrew\""]` with the banner still on screen.
+
+  **Why it shipped: nothing tested the banner.** A grep for `importBanner`, `ignoreLeaseProject` or
+  `checkPortImports` across `test/` returned nothing at all. The new suite asserts the **round trip**
+  — each rendered `onclick` is decoded the way a browser would and the argument the handler actually
+  receives is compared against what that handler expects — rather than pattern-matching the source,
+  because a source-text assertion passes on any encoding that merely looks different, which is the
+  mistake that let this through. It pins the Import side and **Import All** separately, so the obvious
+  wrong fix — applying the single stringify to every call site to "make them consistent" — fails at
+  whichever one it is applied to. And it executes the **consumer** as well: `ignoreLeaseProject`,
+  `getIgnoredLeaseProjects`, `_canonicalProjectName` and `checkPortImports` are lifted out of the
+  shipped `landing.js` and driven end to end, with the name the consumer is handed **decoded off the
+  rendered button** rather than typed into the test — so the two halves really are asserted against
+  each other. The remaining seam is the test's own `esc`, still a private copy rather than lifted.
+  Every arm was mutation-checked — the original bug, single-stringifying Import, single-stringifying
+  Import All, and on the consumer side storing the name double-encoded or dropping the ignore filter.
+  The one that proves the loop closed is the first re-run before and after the wiring: reintroducing
+  the original bug failed two tests when the consumer took a typed literal, and three once it took
+  the producer's output.
+
+  **Worth stating with it:** with Ignore broken, the only non-destructive control on that banner did
+  not work. The other button releases the lease outright for an owner that has no project directory
+  (#1381), so an operator meeting a legitimately non-project port owner had a choice between losing a
+  correct registration and a banner that never went away.
+
 - **A missing Medusa Bridge names itself instead of looking like a TangleClaw listener defect
   (#1130).** Field-reported: a host with **no Bridge at all** — nothing on 3009 or 3010, no Medusa
   process, no checkout — still got a green enable toggle, a minted workspace id, three started
