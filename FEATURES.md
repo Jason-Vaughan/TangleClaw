@@ -386,3 +386,8 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - **TBD** — touched in this session: `test/history-drawer-uploads.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/uploads-fs.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/uploads.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-09-08)
+
+- **TBD** — touched in this session: `test/import-banner-buttons.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/settings-hint-wrapping.test.js`. <!-- describe -->
