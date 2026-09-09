@@ -3036,11 +3036,11 @@ function renderImportBanner(importable) {
     // handed it the name wrapped in literal quote characters, which never
     // matched the canonical name and left Ignore doing nothing at all, on
     // every install.
-    const escapedName = esc(JSON.stringify(p.name));
+    const ignoreArg = esc(JSON.stringify(p.name));
     return `<div class="import-banner-item">
       <strong>${esc(p.name)}</strong> — ports: ${portList}${conflictNote}
       <button class="btn btn-primary btn-small" onclick="importLeaseProjects(${esc(JSON.stringify(JSON.stringify([p.name])))})">Import</button>
-      <button class="btn btn-small" onclick="ignoreLeaseProject(${escapedName})">Ignore</button>
+      <button class="btn btn-small" onclick="ignoreLeaseProject(${ignoreArg})">Ignore</button>
     </div>`;
   }).join('');
 

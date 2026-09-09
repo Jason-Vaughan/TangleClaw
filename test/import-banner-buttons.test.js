@@ -149,16 +149,24 @@ describe('port-lease import banner buttons (#1383)', () => {
       return { api, rendered };
     };
 
-    // The name the FIXED button actually sends suppresses the banner.
+    // The name the FIXED button actually sends suppresses the banner — and that
+    // name is DECODED OFF THE RENDERED BUTTON, not typed here. Typing it would
+    // assert the consumer against my expectation of the producer rather than
+    // against the producer itself, which is the loop this test exists to close.
+    const sent = argumentOf(
+      onclicks('Homebrew').find(o => o.startsWith('ignoreLeaseProject('))
+    );
     const good = make();
-    good.api.ignoreLeaseProject('Homebrew');
+    good.api.ignoreLeaseProject(sent);
     good.rendered.length = 0;
     good.api.checkPortImports();
     assert.equal(good.rendered.length, 0, 'ignoring the raw name must suppress the banner');
 
-    // The name the BROKEN button sent does not — this is the defect, pinned.
+    // The value the BROKEN producer emitted does not match — the defect, pinned.
+    // Built by applying the old double pass, so it tracks the real bug shape
+    // rather than a hand-written approximation of it.
     const bad = make();
-    bad.api.ignoreLeaseProject('"Homebrew"');
+    bad.api.ignoreLeaseProject(JSON.stringify(sent));
     bad.rendered.length = 0;
     bad.api.checkPortImports();
     assert.equal(bad.rendered.length, 1, 'a quote-wrapped name must NOT match — that was the bug');

@@ -54,9 +54,12 @@ All** — which sits outside the per-item template and which the first tests cou
 fails; and on the consumer side, storing the name double-encoded in `ignoreLeaseProject`, or dropping
 the ignore filter from `checkPortImports`, each fail (R-13). The producer and the consumer are now
 asserted against each other rather than against typed literals, using the repo's own `liftFunction`
-construction so the shipped code is what runs. One honest limit: the test's `esc` is still a private
-copy rather than lifted, so the CONTRACT is asserted against the shipped code while the escaper is
-not — a pre-existing class the Critic dispositioned as outside this fix.
+construction so the shipped code is what runs, and the name handed to the consumer is DECODED OFF
+THE RENDERED BUTTON rather than typed — the PR reviewer caught that the first version passed a
+literal, which asserted the consumer against my expectation of the producer rather than against the
+producer. That was the same sentence I had already softened once; this time it was made true instead.
+One seam remains: the test's `esc` is a private copy rather than lifted, a pre-existing class the
+Critic dispositioned as outside this fix.
 
 **Why it shipped.** Zero test coverage on the banner — the grep returns nothing. The new tests
 evaluate the real template out of the shipped file and decode the rendered `onclick` as a browser

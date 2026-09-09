@@ -26,8 +26,9 @@ All notable changes to TangleClaw are documented in this file.
   wrong fix — applying the single stringify to every call site to "make them consistent" — fails at
   whichever one it is applied to. And it executes the **consumer** as well: `ignoreLeaseProject`,
   `getIgnoredLeaseProjects`, `_canonicalProjectName` and `checkPortImports` are lifted out of the
-  shipped `landing.js` and driven end to end, so the two halves are asserted against each other
-  rather than against a literal someone typed. Five mutations confirmed red across the surface.
+  shipped `landing.js` and driven end to end, with the name the consumer is handed **decoded off the
+  rendered button** rather than typed into the test — so the two halves really are asserted against
+  each other. The remaining seam is the test's own `esc`, still a private copy rather than lifted. Five mutations confirmed red across the surface.
 
   **Worth stating with it:** with Ignore broken, the only non-destructive control on that banner did
   not work. The other button releases the lease outright for an owner that has no project directory
