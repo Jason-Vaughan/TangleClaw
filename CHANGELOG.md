@@ -225,6 +225,56 @@ All notable changes to TangleClaw are documented in this file.
   they have one: "this install cannot tell what it is running" is a real state on an unattended
   path and no input to the module produces it, so it is only observable by forcing it.
 
+- **The workspace rename to `TangleClaw-Builder` left stale absolute paths in operator-facing
+  instructions, including a documented escape hatch that silently could not work.** Renaming the
+  local checkout from `~/Documents/Projects/TangleClaw` to `~/Documents/Projects/TangleClaw-Builder`
+  did not touch the paths written into docs, priming prompts and plans, so several of them named a
+  directory that no longer exists.
+
+  The one that mattered: `docs/primary-checkout-guard.md` told the operator to
+  `touch ~/Documents/Projects/TangleClaw/.prawduct/.allow-primary-write` to disarm the
+  primary-checkout guard. That path is gone, so the `touch` created nothing the guard reads and the
+  paired `rm` removed nothing — the documented override would have appeared to be ignored, which is
+  precisely the failure mode the doc's own absolute-path warning three lines above exists to
+  prevent. The guard's **code** was never affected: it resolves the primary at run time and prints
+  the correct absolute path in every refusal, so the sentinel worked for anyone who copied the
+  message instead of the doc.
+
+  Also corrected: the operator-typed `cd` examples in `scripts/guard-primary-checkout.js` and its
+  test's explanatory comment (both illustrative — the test itself derives the path from its
+  fixture); the read-only path and `git -C` target in `.tangleclaw/priming/roadmap-triage.md`, which
+  point a *different* session at this repo; the plan pointer in
+  `.tangleclaw/plans/next-session-plan.md`; and the `PATCH /api/projects/TangleClaw` call in the v5
+  plan's "step 8 depends on turning this back on" warning, whose project is now named
+  `TangleClaw-Builder` in TangleClaw's own registry.
+
+  **A Critic pass then found that repointing was the wrong fix in three places, and those are
+  corrected here too.** The escape hatch is now *relational* rather than respelled — the doc says
+  `touch <primary>/.prawduct/.allow-primary-write` and tells the reader to copy `<primary>` from the
+  refusal message, which prints it, so the example cannot go stale at the next rename the way it
+  just did; the illustrative `cd` comments say `<checkout>` for the same reason. The triage priming
+  prompt's backlog pointer was **replaced, not repointed**: it named
+  `<repo>/.prawduct/backlog.md`, and repointing that would have turned a pointer that failed loudly
+  into one that *resolves* onto a queue frozen at the 2026-08-20 GitHub Issues cut-over, where every
+  archived item still parses as open — so it now names the live `/prawduct:backlog` route instead of
+  any file — and, once a PR reviewer pointed out that the rest of that document still counted the
+  frozen backlog as a live parallel queue and still made "reconcile the two queues" the session's
+  top-priority output, the whole premise was brought up to date rather than left half-corrected.
+  Its queue section now names the command to count the queue instead of carrying a number.
+  And the sweep had missed the gitignored files entirely, which is where the pointers that
+  survive across sessions actually live: `.tangleclaw/memories/MEMORY.md` — the first file a session
+  reads — named the **active** train's plan by the old path. Those are repointed on disk, so they
+  are not in the commit. Deriving this check instead of enumerating the sites a third time is filed
+  as **#1371**.
+
+  **Deliberately left alone**, because they are correct as written: every
+  `github.com/Jason-Vaughan/TangleClaw` and `--repo Jason-Vaughan/TangleClaw` reference — the
+  GitHub repository was **not** renamed, only the local directory; the `/path/to/TangleClaw` and
+  `/root/TangleClaw` placeholders in the user guide, setup guide and cleanroom scripts, which are
+  generic or container-internal; the synthetic `/Users/x/...TangleClaw` paths in test fixtures; and
+  every occurrence in `CHANGELOG.md`, `.prawduct/change-log.md` and archived plans, which are
+  history and must keep saying what was true at the time.
+
 ## [5.22.0] - 2026-09-07
 
 ### Added

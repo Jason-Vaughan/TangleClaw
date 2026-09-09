@@ -1,7 +1,7 @@
 # Next session — pick-up plan (rewritten 2026-07-29)
 
 **The governing plan is now the v5 Secure Baseline.** Read
-`/Users/jasonvaughan/Documents/Projects/TangleClaw/.tangleclaw/plans/v5-secure-baseline.md`
+`/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder/.tangleclaw/plans/v5-secure-baseline.md`
 first — it carries the scope, work classification, and execution order. This file is the short
 pointer plus the hard-won traps worth keeping.
 
