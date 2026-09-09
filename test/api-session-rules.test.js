@@ -272,6 +272,51 @@ describe('api/session-rules (#347/D1a)', () => {
       await request('DELETE', `/api/session-rules/${system.id}?confirm=true`);
     });
 
+    it('answers NOT_FOUND, not CONFIRM_REQUIRED, for a versionNo that does not exist (#1048)', async () => {
+      // The baseline-confirm gate fired before the version-existence check, so
+      // the caller was told to confirm an operation that could never succeed —
+      // fail-closed, but the misleading answer shadowed the accurate one.
+      const system = store.sessionRules.create({
+        content: 'missing-version boundary',
+        kind: 'master',
+        createdBy: 'system'
+      });
+
+      const missing = await request(
+        'POST', `/api/session-rules/${system.id}/restore`, { versionNo: 999999 }
+      );
+      assert.equal(missing.status, 404);
+      assert.equal(missing.data.code, 'NOT_FOUND');
+
+      await request('DELETE', `/api/session-rules/${system.id}?confirm=true`);
+    });
+
+    it('still refuses a real weakening version without confirmation (#1048 did not open the gate)', async () => {
+      // The half a NOT_FOUND fix could break by widening the fall-through: the
+      // gate must still fire for a version that EXISTS and weakens. Without
+      // this, dropping the whole `weakens` branch would pass the test above.
+      const system = store.sessionRules.create({
+        content: 'boundary original',
+        kind: 'master',
+        createdBy: 'system'
+      });
+      await request('PUT', `/api/session-rules/${system.id}`, {
+        content: 'boundary edited', confirmBaselineEdit: true
+      });
+
+      const versions = store.sessionRules.listVersions(system.id);
+      const original = versions.find((v) => v.content === 'boundary original');
+      assert.ok(original, 'the pre-edit snapshot must be in the version history');
+
+      const refused = await request(
+        'POST', `/api/session-rules/${system.id}/restore`, { versionNo: original.versionNo }
+      );
+      assert.equal(refused.status, 400);
+      assert.equal(refused.data.code, 'CONFIRM_REQUIRED');
+
+      await request('DELETE', `/api/session-rules/${system.id}?confirm=true`);
+    });
+
     it('POST /api/master/rules/restore-defaults replaces everything with the shipped baseline', async () => {
       const master = require('../lib/master');
       await request('POST', '/api/session-rules', { content: 'stray custom rule', kind: 'master' });

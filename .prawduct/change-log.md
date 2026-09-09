@@ -34,6 +34,60 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-08 — #1271 / #1048 / #1067: three clean-room reconstructions
+
+<!-- prawduct: type=fix | scope=cleanroom-1354-1359-1357 -->
+
+Post-plan work; own scope. Clean-room reconstructions under ADR 0014 of external PRs #1354, #1359
+and #1357 by @madhavanms2803-ui, each derived from its issue rather than the patch. Bundled on one
+branch at the operator's discretion (asked; they had no preference); `Fixes #N` closes all three at
+merge, so sharing gates costs nothing.
+
+**#1271 — hint text clipped instead of wrapping.** The three geometry facts were verified in
+`style.css` rather than taken from the issue: the toggles grid is `minmax(290px, 1fr)` with a 22px
+gap, and the settings modal is `max-width: 680px` with `overflow: hidden`. `overflow-wrap: anywhere`
+rather than `break-word` is the substance and not a preference — only `anywhere` reduces the
+MIN-CONTENT width, so the track can narrow to fit; `break-word` leaves the track resolving against
+the unbroken token and the tight two-column state would still overflow.
+
+The micro filter's finding on the submitted patch was its TEST, and that is why the reconstruction
+has a different one. Theirs was unanchored, and `.form-hint` also appears earlier as a descendant
+selector, so it matched the property anywhere later in the file. Demonstrated rather than asserted:
+with the declaration moved to `.form-error`, their regex still returns true while this one fails.
+
+**#1048 — CONFIRM_REQUIRED for a version that does not exist.** The gate counted a missing target as
+a weakening. The existence check is deliberately NOT hoisted, which is what the issue suggests:
+`store.sessionRules.restore` already throws NOT_FOUND and the route's catch maps it to 404, so a
+pre-check would put one rule in two places — and this gate must stay symmetric across every path
+that can alter a rule. Pinned in both directions, because a NOT_FOUND fix over-corrects into opening
+the gate: disabling `weakens` entirely fails the second test.
+
+**#1067 — the last non-strict suites.** All three converted green unchanged, which is itself the
+result: under strict, nothing was relying on `==` coercion. The issue's "only 1 of 201" was stale —
+two more had been written non-strict after the norm was ratified — so the norm's missing enforcement
+is filed as **#1377** and not bundled, per ADR 0014.
+
+**Verification.** Mutations confirmed red per fix: #1271 property removed, moved to `.form-error`,
+and `break-word` in-block; #1048 the old predicate and the gate disabled, failing one test in each
+direction. One mutation initially read green and was wrong — it had hit `.settings-warnings-text`
+rather than `.form-hint`. A surviving mutation is a claim about the mutation as much as the test.
+
+**Resolution round.** The cumulative pass returned 0 blocking / 2 warning. R-1: the #1271 test
+asserts stylesheet TEXT, so it cannot say the modal stopped clipping, and the rule lands on bare
+`.form-hint` — used well beyond the settings grid, where the same min-content shrink that fixes the
+clipping can narrow other content-sized tracks. `test-specs.md` names a manual checklist as the
+compensating control for that row, so `VRF-1271-hint-wrapping` now carries the rendered check across
+the three grid states #1271 names, the two constrained consumers, and the narrower retreat
+(`.settings-toggles-grid .form-hint`) if the blast radius reads wrong. R-8: the norm artifact still
+carried the residual this bundle closed, as a hand count — replaced relationally citing #1377, since
+that count going stale between filing and doing is the finding behind #1377. Two comments that
+narrated history were rewritten to describe the code, and a derived `602px` was dropped in favour of
+pinning the gap it came from.
+
+**Note on what ships.** The VRF entry and the norm-artifact correction live in
+`.prawduct/operator-verification.md` and `.prawduct/artifacts/project-preferences.md`, both
+UNTRACKED in this repo — so they are on this machine and not in the PR. Only this file, `CHANGELOG.md`
+and the code carry into the merge. Stated because the compensating control for #1271 is one of them.
 ## 2026-09-08 — #1338: create and update hold one `tags` rule between them
 
 <!-- prawduct: type=fix | scope=tags-1338 -->

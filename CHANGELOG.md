@@ -225,6 +225,60 @@ All notable changes to TangleClaw are documented in this file.
   they have one: "this install cannot tell what it is running" is a real state on an unattended
   path and no input to the module produces it, so it is only observable by forcing it.
 
+- **Settings-modal hint text was clipped at the right edge instead of wrapping (#1271).** Hints carry
+  `<code>` paths — `package.json`, `<project-root>/FEATURES.md` — that the line-breaker treats as one
+  word. Three things compounded, none wrong alone: `.settings-toggles-grid` is
+  `repeat(auto-fit, minmax(290px, 1fr))` with a 22px gap, so two columns need 602px; the settings
+  modal is `max-width: 680px` with `overflow: hidden`; and `.form-hint` declared no wrapping rule at
+  all. Near the packing limit an unbreakable token overflowed its cell and the modal clipped it.
+
+  **`overflow-wrap: anywhere`, and the choice over `break-word` is the substance rather than a
+  preference.** Only `anywhere` reduces the **min-content** width, which is what lets a
+  `minmax(290px, 1fr)` track narrow enough to hold the token. `break-word` leaves the track resolving
+  against the unbroken word, so the tight two-column state — the state the bug is reported in — would
+  still overflow. The property is inherited, so the `<code>` children need no rule of their own.
+
+  The regression test is scoped **inside** the `.form-hint` block and anchored to the bare selector,
+  because `.master-access-option .form-hint` and `.history-scope .form-hint` also exist and neither
+  styles this text. Verified by mutation: moving the declaration to `.form-error` fails it.
+
+  **What the test cannot say, stated rather than implied:** it asserts stylesheet *text*, so it
+  proves the declaration is in the right block and that the geometry the rationale rests on is
+  unchanged. It does not prove the modal stopped clipping — this repo ships no headless browser by
+  choice. The rule also lands on bare `.form-hint`, which is used well beyond the settings grid, and
+  the min-content shrink that fixes the clipping is the same property that can narrow other
+  content-sized tracks. `VRF-1271-hint-wrapping` carries the rendered check across all three
+  grid states #1271 names, plus the two other `.form-hint` consumers, and records the narrower
+  retreat (scoping to `.settings-toggles-grid .form-hint`) if it looks wrong. That checklist lives in
+  `.prawduct/operator-verification.md`, which is **gitignored** — it is local to the install and is
+  not in this repository, so a reader who cannot find the file is not looking at a check that was
+  skipped.
+
+  Reconstructed under ADR 0014 from #1271 rather than from the submitted patch. Reported and
+  independently fixed by **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in PR #1354;
+  their bytes were not merged, per `CONTRIBUTING.md`.
+
+- **Restoring a nonexistent version of a baseline Master rule said `CONFIRM_REQUIRED` instead of
+  `NOT_FOUND` (#1048).** The baseline-confirm gate ran before version existence was established, and
+  its predicate counted a missing target as a weakening (`!target || …`). The caller was told to
+  confirm an operation that could never succeed. Fail-closed, so nothing was at risk — but the
+  misleading answer shadowed the accurate one.
+
+  **The existence check is deliberately not hoisted**, which is what the issue suggests.
+  `store.sessionRules.restore` already validates the version and throws `NOT_FOUND`, which the
+  route's own catch maps to 404 — so a pre-check would put the same rule in two places, and this
+  gate's predicates must stay symmetric across every path that can alter a rule or the confirm
+  becomes bypassable. A second copy is exactly what drifts. The missing-target case now falls
+  through to the one owner of that answer.
+
+  Pinned in **both** directions: a version that does not exist gets 404, and a version that exists
+  and weakens still gets `CONFIRM_REQUIRED`. Without the second, dropping the gate entirely would
+  have passed the first.
+
+  Reconstructed under ADR 0014 from #1048 rather than from the submitted patch. Reported and
+  independently fixed by **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in PR #1359;
+  their bytes were not merged, per `CONTRIBUTING.md`.
+
 - **`POST /api/projects` accepted a `tags` value that `PATCH` refused, and the project it created
   could not be repaired by an edit (#1338).** `createProject` wrote `tags` with no verdict at all —
   into `project.json` and on to `store.projects.create` — while `PROJECT_UPDATE_VALIDATORS` runs
@@ -317,6 +371,27 @@ All notable changes to TangleClaw are documented in this file.
   generic or container-internal; the synthetic `/Users/x/...TangleClaw` paths in test fixtures; and
   every occurrence in `CHANGELOG.md`, `.prawduct/change-log.md` and archived plans, which are
   history and must keep saying what was true at the time.
+
+### Internal
+- **The remaining `node:assert` suites are on `node:assert/strict` (#1067).**
+  `test/condition-log.test.js`, `test/cache-bump-guard.test.js` and `test/wrap-step-pr-merge.test.js`
+  now require the strict binding, completing the testing-conventions norm's `Retroactivity: migrate`.
+
+  All three went green unchanged, and that is the result rather than a shortcut: under strict,
+  `assert.equal` is `===` and `assert.deepEqual` is `deepStrictEqual`, so a suite that passes after
+  the swap is a suite in which no assertion was relying on `==` coercion. The issue asked for exactly
+  that to be established rather than assumed, which is why it was sized as work instead of folded
+  into the ratification sweep.
+
+  **The issue's own count was stale, and the drift is the interesting part.** #1067 recorded
+  `wrap-step-pr-merge.test.js` as "the only 1 of 201" such files on 2026-08-01; by the time it was
+  worked there were three, the other two written after the norm was ratified. The norm has no
+  enforcement, so the set it describes regrows — filed as **#1377**, and deliberately not bundled
+  here, since the dual-key filters passed a conversion and not a new mechanism.
+
+  Reconstructed under ADR 0014 from #1067 rather than from the submitted patch, which converted one
+  of the three. Reported by **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in PR
+  #1357; their bytes were not merged, per `CONTRIBUTING.md`.
 
 ## [5.22.0] - 2026-09-07
 
