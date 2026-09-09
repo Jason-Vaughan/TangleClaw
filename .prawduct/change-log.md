@@ -48,11 +48,15 @@ buttons. `importLeaseProjects` JSON.parses its argument, so double-stringify is 
 name wrapped in literal quotes and `checkPortImports` never matched it. Same class as #1338 —
 one rule serving two call sites whose requirements differ — which is why the test pins BOTH sides.
 
-**Mutations, five, after the Critic pass widened the surface.** Restoring the original
+**Mutations — counted deliberately as a list, not a number.** Restoring the original
 double-stringify fails; single-stringifying the Import argument fails; single-stringifying **Import
 All** — which sits outside the per-item template and which the first tests could not reach (R-1) —
 fails; and on the consumer side, storing the name double-encoded in `ignoreLeaseProject`, or dropping
-the ignore filter from `checkPortImports`, each fail (R-13). The producer and the consumer are now
+the ignore filter from `checkPortImports`, each fail (R-13). The first of those was then re-run
+before and after the consumer was wired to the producer — two failures became three, which is the
+evidence the loop closed and not a sixth mutation. Stating it as a count made the two records
+disagree; the list is the honest form, the same call this branch already made on the #1384 site
+count. The producer and the consumer are now
 asserted against each other rather than against typed literals, using the repo's own `liftFunction`
 construction so the shipped code is what runs, and the name handed to the consumer is DECODED OFF
 THE RENDERED BUTTON rather than typed — the PR reviewer caught that the first version passed a
