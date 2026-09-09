@@ -215,10 +215,10 @@ You can exchange messages with other TangleClaw sessions. TangleClaw already run
 
 | | |
 |---|---|
-| inbox | `GET http://localhost:3102/api/sessions/TangleClaw/medusa/messages` |
-| mark handled | `POST http://localhost:3102/api/sessions/TangleClaw/medusa/read` — `{"ids": ["<id>", ...]}`; they leave the inbox |
-| send (initiate or respond) | `POST http://localhost:3102/api/sessions/TangleClaw/medusa/send` — `{"to": "<workspace-id>", "message": "..."}` |
-| peers | `GET http://localhost:3102/api/sessions/TangleClaw/medusa/roster` |
+| inbox | `GET http://localhost:3102/api/sessions/TangleClaw-Builder/medusa/messages` |
+| mark handled | `POST http://localhost:3102/api/sessions/TangleClaw-Builder/medusa/read` — `{"ids": ["<id>", ...]}`; they leave the inbox |
+| send (initiate or respond) | `POST http://localhost:3102/api/sessions/TangleClaw-Builder/medusa/send` — `{"to": "<workspace-id>", "message": "..."}` |
+| peers | `GET http://localhost:3102/api/sessions/TangleClaw-Builder/medusa/roster` |
 
 **The initiator closes an exchange**, so a message you do not answer leaves the sender blocked. Reply over the same channel rather than printing into your own pane — the sender cannot see your pane.
 
