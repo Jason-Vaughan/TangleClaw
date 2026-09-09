@@ -34,7 +34,7 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
-## 2026-09-09 — #1383: the import banner's Ignore button had never worked
+## 2026-09-08 — #1383: the import banner's Ignore button had never worked
 
 <!-- prawduct: type=fix | scope=ignore-1383 -->
 
@@ -48,13 +48,24 @@ buttons. `importLeaseProjects` JSON.parses its argument, so double-stringify is 
 name wrapped in literal quotes and `checkPortImports` never matched it. Same class as #1338 —
 one rule serving two call sites whose requirements differ — which is why the test pins BOTH sides.
 
-**Mutations.** Restoring the original double-stringify fails 2 of 3; applying the single stringify to
-the Import call site as well also fails 2 of 3. The second is the point: the obvious wrong fix is to
-"make them consistent", and that breaks Import instead.
+**Mutations, five, after the Critic pass widened the surface.** Restoring the original
+double-stringify fails; single-stringifying the Import argument fails; single-stringifying **Import
+All** — which sits outside the per-item template and which the first tests could not reach (R-1) —
+fails; and on the consumer side, storing the name double-encoded in `ignoreLeaseProject`, or dropping
+the ignore filter from `checkPortImports`, each fail (R-13). The producer and the consumer are now
+asserted against each other rather than against typed literals, using the repo's own `liftFunction`
+construction so the shipped code is what runs.
 
 **Why it shipped.** Zero test coverage on the banner — the grep returns nothing. The new tests
 evaluate the real template out of the shipped file and decode the rendered `onclick` as a browser
 would, so they fail on behaviour rather than on spelling.
+
+**Found while reviewing this, filed not bundled:** **#1384** — 14 inline handlers in `public/ui.js`
+interpolate into a SINGLE-quoted JS string (`onclick="fn('${esc(x)}')"`). `esc` maps `'` to `&#39;`,
+the parser decodes it back, and the string closes early. `togglePortGroup('${esc(project)}')` takes a
+port-lease project name, which is operator free text, so a project named `O'Brien` kills the
+port-group toggle today. Same family as this fix — an encoding correct for one context used where the
+contract differs — and verified by rendering it rather than by reading it.
 
 **Classification:** fix
 

@@ -21,6 +21,28 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+/**
+ * Slice a function declaration out of source text by brace-matching.
+ * Same construction as `liftFunction` in test/landing-unreachable-state.test.js —
+ * the point is to execute the SHIPPED code rather than a copy of it, so a change
+ * to the page cannot leave this suite passing against a stale duplicate.
+ *
+ * @param {string} src - File source text.
+ * @param {string} decl - Declaration head, e.g. `function foo(`.
+ * @returns {string} The declaration through its balanced closing brace.
+ */
+function liftFunction(src, decl) {
+  const start = src.indexOf(decl);
+  assert.notEqual(start, -1, `${decl} must exist`);
+  const bodyStart = src.indexOf('{', start);
+  let depth = 0;
+  for (let i = bodyStart; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+  }
+  assert.fail(`${decl} body must close`);
+}
+
 /** Reverse `esc()` in public/landing.js — what the HTML parser does to an attribute value. */
 function unescapeHtml(s) {
   return s.replace(/&quot;/g, '"').replace(/&#39;/g, "'")
@@ -74,6 +96,72 @@ describe('port-lease import banner buttons (#1383)', () => {
     const imp = onclicks('Homebrew').find(o => o.startsWith('importLeaseProjects('));
     assert.ok(imp, 'the Import button must exist');
     assert.deepEqual(JSON.parse(argumentOf(imp)), ['Homebrew']);
+  });
+
+  it('Import All carries the same contract as Import (#1383 R-1)', () => {
+    // Import All lives outside the per-item template, so the first two tests do
+    // not reach it. Without this, the wrong follow-up the change-log anticipates
+    // — "make the encodings consistent" — could be applied there and ship green
+    // while Import All silently no-ops.
+    const ui = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
+    const m = ui.match(/onclick="importLeaseProjects\((\$\{[^}]*\}[^"]*?)\)">Import All/);
+    assert.ok(m, 'the Import All button must still be findable');
+
+    const allNames = ['Homebrew', "Odd\"Name"];
+    const attr = new Function('esc', 'allNames', 'return `' + m[1] + '`;')(esc, allNames);
+    // `attr` is the raw attribute text; decode it as the parser would, then read
+    // the argument the handler receives.
+    assert.deepEqual(JSON.parse(argumentOf('importLeaseProjects(' + unescapeHtml(attr) + ')')), allNames);
+  });
+
+  it('the CONSUMER side accepts what the button sends, end to end (#1383 R-13)', () => {
+    // The producer tests above pin what the button emits. This one executes the
+    // SHIPPED consumer — ignoreLeaseProject, getIgnoredLeaseProjects,
+    // _canonicalProjectName and checkPortImports lifted out of landing.js — so
+    // the two halves are asserted against each other rather than against a
+    // literal I typed. Without it, the same encoding error reintroduced on the
+    // consumer side reopens #1383 with this suite still green.
+    const landing = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
+    const src = [
+      liftFunction(landing, 'function _canonicalProjectName('),
+      liftFunction(landing, 'function getIgnoredLeaseProjects('),
+      liftFunction(landing, 'function ignoreLeaseProject('),
+      liftFunction(landing, 'function checkPortImports(')
+    ].join('\n');
+
+    const make = () => {
+      const store = new Map();
+      const rendered = [];
+      const scope = new Function('localStorage', 'document', 'state', 'renderImportBanner', `
+        ${src}
+        return { ignoreLeaseProject, checkPortImports, getIgnoredLeaseProjects };
+      `);
+      const api = scope(
+        { getItem: k => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, v) },
+        { getElementById: () => null },
+        {
+          ports: [{ port: 5432, project: 'Homebrew', service: 'postgresql@14' }],
+          projects: [{ name: 'TangleClaw-Builder' }],
+          openclawConnections: []
+        },
+        (importable) => rendered.push(importable)
+      );
+      return { api, rendered };
+    };
+
+    // The name the FIXED button actually sends suppresses the banner.
+    const good = make();
+    good.api.ignoreLeaseProject('Homebrew');
+    good.rendered.length = 0;
+    good.api.checkPortImports();
+    assert.equal(good.rendered.length, 0, 'ignoring the raw name must suppress the banner');
+
+    // The name the BROKEN button sent does not — this is the defect, pinned.
+    const bad = make();
+    bad.api.ignoreLeaseProject('"Homebrew"');
+    bad.rendered.length = 0;
+    bad.api.checkPortImports();
+    assert.equal(bad.rendered.length, 1, 'a quote-wrapped name must NOT match — that was the bug');
   });
 
   it('a name carrying quotes survives both round trips intact', () => {
