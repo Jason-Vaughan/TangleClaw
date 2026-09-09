@@ -422,7 +422,6 @@ All notable changes to TangleClaw are documented in this file.
   of the three. Reported by **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in PR
   #1357; their bytes were not merged, per `CONTRIBUTING.md`.
 
-
 ## [5.22.0] - 2026-09-07
 
 ### Added

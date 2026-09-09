@@ -69,7 +69,7 @@ describe('port-lease import banner buttons (#1383)', () => {
     // so the assertions below run over the bytes that reach the browser.
     const body = ui.slice(start, end + ".join('')".length) + '; return details;';
     render = new Function('importable', 'esc', `
-      ${body.replace('const details =', 'const details =')}
+      ${body}
     `);
   });
 

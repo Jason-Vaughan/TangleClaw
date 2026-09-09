@@ -54,14 +54,16 @@ All** — which sits outside the per-item template and which the first tests cou
 fails; and on the consumer side, storing the name double-encoded in `ignoreLeaseProject`, or dropping
 the ignore filter from `checkPortImports`, each fail (R-13). The producer and the consumer are now
 asserted against each other rather than against typed literals, using the repo's own `liftFunction`
-construction so the shipped code is what runs.
+construction so the shipped code is what runs. One honest limit: the test's `esc` is still a private
+copy rather than lifted, so the CONTRACT is asserted against the shipped code while the escaper is
+not — a pre-existing class the Critic dispositioned as outside this fix.
 
 **Why it shipped.** Zero test coverage on the banner — the grep returns nothing. The new tests
 evaluate the real template out of the shipped file and decode the rendered `onclick` as a browser
 would, so they fail on behaviour rather than on spelling.
 
-**Found while reviewing this, filed not bundled:** **#1384** — 14 inline handlers in `public/ui.js`
-interpolate into a SINGLE-quoted JS string (`onclick="fn('${esc(x)}')"`). `esc` maps `'` to `&#39;`,
+**Found while reviewing this, filed not bundled:** **#1384** — inline handlers throughout
+`public/ui.js` interpolate into a SINGLE-quoted JS string (`onclick="fn('${esc(x)}')"`). `esc` maps `'` to `&#39;`,
 the parser decodes it back, and the string closes early. `togglePortGroup('${esc(project)}')` takes a
 port-lease project name, which is operator free text, so a project named `O'Brien` kills the
 port-group toggle today. Same family as this fix — an encoding correct for one context used where the
