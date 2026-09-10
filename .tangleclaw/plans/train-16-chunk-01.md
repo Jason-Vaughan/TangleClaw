@@ -35,7 +35,36 @@ HTTPS listener is not pinned to h1, keyed on the listen address.
 see "What the audit already found"). The root cause of Chrome's h2/h3 WebSocket abort, which #848
 also homes but does not ask this chunk to solve.
 
-## [DECISION PENDING — operator] How far does #846 go?
+## [DECIDED 2026-09-10 — delegated to builder + coordinator] How far does #846 go?
+
+**The operator deferred this**, stating they lack the context to rule on Caddy generator drift and
+asking the builder and coordinator to reach consensus. Consensus reached: **build the check, as its
+own chunk, and let #846 close as the instance fix it already is.**
+
+Four points, sent to the coordinator and awaiting only their confirmation:
+
+1. **Build it.** The ledger is five and instance six is otherwise inevitable.
+2. **Never parse Caddyfile text.** Run `caddy adapt` on the live and generated files and compare the
+   JSON. Caddy's parser is then the parser. This is not a preference — writing THIS chunk's
+   fifty-line extractor, I reproduced the defect class three times (line-wise match dropping
+   `format`/`level`; matching the global-options logger; taking the per-site block while dropping a
+   global one). A hand-rolled parser inside the audit is instance six living in the thing built to
+   prevent it.
+3. **Diff PROPERTIES, not documents.** The live gate is a `(tcauth)` snippet plus `handle` blocks;
+   the generator emits `@protected not path_regexp` with an inline `basic_auth`. Same intent,
+   different JSON — so whole-document equality reports drift on every boot on the one install that
+   matters, and a check that cries wolf daily trains the operator to dismiss the real one. Three
+   security properties instead: every proxying site has a gate (catches `:3250`); the HTTPS listener
+   is pinned to h1, **keyed on the listen address** (catches #845's population); no site proxies to
+   an upstream config does not know (catches the next hand-added project service).
+4. **Honest not-measured.** `caddy` absent or `adapt` failing reports "not measured", never "clean" —
+   `architecture.md` § Direction binds a dependency's failure to degrade TC, not crash it, and a
+   check claiming clean when it did not run is worse than no check.
+
+Scope: **its own issue and chunk, not this one.** Chunk 01 is committed and reviewed; bolting a
+subsystem onto it re-opens everything already graded.
+
+## [SUPERSEDED — kept for the reasoning] How far does #846 go?
 
 `/prawduct:learnings` returned a ratified rule: *a generator whose output is a hand-edited live
 file WILL diverge repeatedly — treat the third occurrence as a class defect and fix the audit, not
@@ -108,7 +137,7 @@ assembly, via `caddy adapt`) against the operator's live file took minutes and s
 - **#848's detection snippet is already stale.** It keys on the server name `srv1`; the live file
   grew a listener and `:8443` is now `srv2`. Server names are positional — key on `listen`.
 
-## [RULING OWED — operator] This chunk departs from a recorded decision
+## [RULING DELEGATED 2026-09-10] This chunk departs from a recorded decision
 
 `deploy/INGRESS.md` records a decision of **2026-08-03** that access logging is deliberately NOT
 generator-owned, in the words "it is not a bug to be fixed by teaching the generator to emit one".
@@ -116,7 +145,11 @@ That is branch 2 of the two-branch decision #846's own body sets out. C1 impleme
 shape and so departs from it.
 
 The decision reserved its own re-argument to the operator ("a decision for the operator, not a side
-effect of this fix"), so it is **amended in place, not replaced**, and the ruling is outstanding.
+effect of this fix"), so it is **amended in place, not replaced**. The operator has since deferred
+the #846 decision to the builder and coordinator, citing a lack of context on Caddy generator drift,
+so the re-argument falls to that consensus — which ratifies the narrow departure below and is
+recorded above. Coordinator confirmation is the last outstanding step; the operator's reservation is
+discharged by their own delegation, not by assumption.
 
 What shipped is narrower than what the decision refused, and the residual argument still holds: the
 key defaults to `null`, so TangleClaw never creates a log on a machine whose operator did not ask

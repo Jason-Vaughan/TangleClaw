@@ -259,8 +259,10 @@ the generator reproduces the live file in full — see the parity caveat below.
 > balance enough to revisit #846 is a decision for the operator, not a side effect of
 > this fix.
 >
-> **AMENDED 2026-09-10 — the generator CAN now emit a log, and the decision above is
-> awaiting the operator's ruling.** `buildCaddyfileContent` gained an `accessLogPath`
+> **AMENDED 2026-09-10 — the generator CAN now emit a log. The decision above reserved its
+> re-argument to the operator, who has since DELEGATED the #846 decision to the builder and
+> coordinator, citing a lack of context on Caddy generator drift; the narrow departure below is
+> that consensus, not an assumption about what they would have said.** `buildCaddyfileContent` gained an `accessLogPath`
 > option and `config.caddyAccessLogPath` (#846, Train 16 Chunk 01). This is a departure
 > from the decision recorded above, and it is written here rather than quietly replacing
 > it, because that decision reserved the re-argument to the operator.
@@ -273,9 +275,9 @@ the generator reproduces the live file in full — see the parity caveat below.
 > the emitted `log` directive is Caddy's own, which rotates by default. So the change
 > preserves an existing audit trail across a cutover; it does not start one.
 >
-> **What is still the operator's call:** whether the generator should own access logging at
-> all, and if so whether it should default ON for remote-reachable sites — which is branch 1
-> of #846's own two-branch decision, and the half this does not take.
+> **Still not taken:** whether access logging should default ON for remote-reachable sites, which
+> is the rest of branch 1 of #846's own two-branch decision. Adoption-only is deliberately the
+> smaller step — it preserves what an operator built and starts nothing they did not ask for.
 >
 > **Note for anyone rostering #846 from GitHub:** the 2026-08-03 decision lives only in this
 > file. Issue #846 is still OPEN with no comment recording it, so the issue reads as an
