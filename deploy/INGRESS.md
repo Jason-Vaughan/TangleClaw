@@ -259,14 +259,15 @@ the generator reproduces the live file in full — see the parity caveat below.
 > balance enough to revisit #846 is a decision for the operator, not a side effect of
 > this fix.
 >
-> **AMENDED 2026-09-10 — the generator CAN now emit a log. The decision above reserved its
-> re-argument to the operator, who has since DELEGATED the #846 decision to the builder and
-> coordinator, citing a lack of context on Caddy generator drift. The narrow departure below is the
-> builder's position under that delegation; the coordinator has not yet confirmed it, so it is one
-> party of two — not an assumption about the operator, and not yet a ratified consensus.** `buildCaddyfileContent` gained an `accessLogPath`
-> option and `config.caddyAccessLogPath` (#846, Train 16 Chunk 01). This is a departure
-> from the decision recorded above, and it is written here rather than quietly replacing
-> it, because that decision reserved the re-argument to the operator.
+> **AMENDED 2026-09-10 — the generator CAN now emit a log.** `buildCaddyfileContent` gained an
+> `accessLogPath` option and the config gained `caddyAccessLogPath` (#846, Train 16 Chunk 01).
+>
+> This departs from the decision recorded above, and is written here rather than quietly
+> replacing it, because that decision reserved its own re-argument to the operator. The operator
+> has since **delegated** the #846 decision to the builder and coordinator, citing a lack of
+> context on Caddy generator drift; both parties ratified the departure on 2026-09-10. So the
+> reservation is discharged by the operator's own delegation — not by an assumption about what
+> they would have said.
 >
 > **What shipped is narrower than what the decision refused.** The key defaults to `null`,
 > so a fresh install still emits no log block — TangleClaw does not create a log on a
@@ -279,6 +280,12 @@ the generator reproduces the live file in full — see the parity caveat below.
 > **Still not taken:** whether access logging should default ON for remote-reachable sites, which
 > is the rest of branch 1 of #846's own two-branch decision. Adoption-only is deliberately the
 > smaller step — it preserves what an operator built and starts nothing they did not ask for.
+>
+> **The class question was answered separately and is tracked as #1394.** Four instance-fixes to
+> this generator preceded this one, so the same consensus ratified building a divergence check that
+> compares the live Caddyfile against the generated one — over `caddy adapt` JSON rather than a
+> second Caddyfile parser, on named security properties rather than whole-document equality, and
+> reporting "not measured" rather than "clean" when `caddy` is unavailable.
 >
 > **Note for anyone rostering #846 from GitHub:** the 2026-08-03 decision lives only in this
 > file. Issue #846 is still OPEN with no comment recording it, so the issue reads as an

@@ -44,13 +44,20 @@ All notable changes to TangleClaw are documented in this file.
   way, which is #846's own outcome reached quietly. The cutover warns before it writes, while
   the block still exists.
 
+  The class question this raises — four instance-fixes to the same generator preceded this one — is
+  answered separately and tracked as **#1394**: a divergence check comparing the live Caddyfile
+  against the generated one over `caddy adapt` JSON rather than a second Caddyfile parser, on named
+  security properties rather than whole-document equality. Building it as a text parser was rejected
+  on the evidence of this very change, whose extractor reproduced the drift-defect class three times
+  before it was right.
+
   **This departs from a decision recorded in `deploy/INGRESS.md` on 2026-08-03** that access
-  logging is deliberately not generator-owned. That decision reserved its own re-argument to
-  the operator, so it is amended in place rather than replaced, and the half it refused —
-  whether the generator should own logging at all, and default it on for remote-reachable
-  sites — is still open. Worth noting for whoever reads #846 next: the decision lives only in
-  `INGRESS.md`; the issue is still OPEN with no comment recording it, so it reads from GitHub
-  as an unfixed bug.
+  logging is deliberately not generator-owned. That decision reserved its own re-argument to the
+  operator, who has since delegated the #846 decision; both parties ratified this narrow departure
+  on 2026-09-10, and the decision is amended in place rather than replaced. Still not taken:
+  whether logging should default ON for remote-reachable sites. Worth noting for whoever reads
+  #846 next: the 2026-08-03 decision lives only in `INGRESS.md`; the issue carries no comment
+  recording it, so it reads from GitHub as an unfixed bug.
 
 ### Fixed
 - **Four of the eight wrap-summary sections were never captured, on every wrap and every engine

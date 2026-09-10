@@ -41,7 +41,7 @@ also homes but does not ask this chunk to solve.
 asking the builder and coordinator to reach consensus. Consensus reached: **build the check, as its
 own chunk, and let #846 close as the instance fix it already is.**
 
-Four points, sent to the coordinator and awaiting only their confirmation:
+Four points, **confirmed by the coordinator 2026-09-10 and filed as #1394 (Train 16 Chunk 04)**:
 
 1. **Build it.** The ledger is five and instance six is otherwise inevitable.
 2. **Never parse Caddyfile text.** Run `caddy adapt` on the live and generated files and compare the
@@ -61,8 +61,9 @@ Four points, sent to the coordinator and awaiting only their confirmation:
    `architecture.md` § Direction binds a dependency's failure to degrade TC, not crash it, and a
    check claiming clean when it did not run is worse than no check.
 
-Scope: **its own issue and chunk, not this one.** Chunk 01 is committed and reviewed; bolting a
-subsystem onto it re-opens everything already graded.
+Scope: **its own issue and chunk, not this one** — filed as **#1394**, rostered as Train 16
+Chunk 04. Chunk 01 is committed and reviewed; bolting a subsystem onto it re-opens everything
+already graded.
 
 ## [SUPERSEDED — kept for the reasoning] How far does #846 go?
 
@@ -148,8 +149,8 @@ The decision reserved its own re-argument to the operator ("a decision for the o
 effect of this fix"), so it is **amended in place, not replaced**. The operator has since deferred
 the #846 decision to the builder and coordinator, citing a lack of context on Caddy generator drift,
 so the re-argument falls to that consensus — which ratifies the narrow departure below and is
-recorded above. Coordinator confirmation is the last outstanding step; the operator's reservation is
-discharged by their own delegation, not by assumption.
+recorded above. **Both parties confirmed 2026-09-10**; the operator's reservation is discharged by
+their own delegation, not by assumption.
 
 What shipped is narrower than what the decision refused, and the residual argument still holds: the
 key defaults to `null`, so TangleClaw never creates a log on a machine whose operator did not ask
