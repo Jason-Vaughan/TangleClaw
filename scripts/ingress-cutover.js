@@ -542,11 +542,18 @@ function main() {
       }
     } else {
       const adoption = caddy.adoptCredentialIntoConfig({ requireCaddyMode: false });
+      if (adoption.accessLogUnreadable) {
+        // Said before the write, because afterwards the log is already gone and
+        // the file that explained it has been replaced.
+        process.stdout.write(
+          'WARNING: the live Caddyfile has a `log` block this tool cannot reproduce, so it will '
+          + 'NOT survive this cutover. Reproducible shape: one per-site `log { output file '
+          + '<absolute path> }` and nothing else. Back the block up and re-add it after, or set '
+          + '`caddyAccessLogPath` in config to a plain destination.\n'
+        );
+      }
       if (adoption.changed) {
-        const parts = [];
-        if (adoption.adopted) parts.push(`basic_auth credential (user: ${adoption.user})`);
-        if (adoption.remoteHttp) parts.push('remote HTTP catch-all preserved');
-        if (adoption.tailnetHost) parts.push(`tailnet HTTPS site preserved (${adoption.tailnetHost})`);
+        const parts = caddy.describeAdoption(adoption);
         process.stdout.write(`Adopted live Caddyfile state into config: ${parts.join(', ')}.\n`);
         Object.assign(config, store.config.load()); // refresh the in-memory copy the plan reads
       }

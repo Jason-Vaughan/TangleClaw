@@ -35,6 +35,15 @@ All notable changes to TangleClaw are documented in this file.
   would re-emit a log stripped of the rest, which is the same silent drop this change exists to
   end. The first cut of this fix matched `output file` line-wise and had exactly that defect.
 
+  Scope is read too, not just shape. A `log` block in Caddy's **global options** is the
+  default-logger setting, not per-site access logging — adopting its path would persist it and
+  re-emit it as one log per site while the global logger vanished. Its presence is a refusal,
+  even alongside per-site blocks. And a `log` block that cannot be adopted is now *reported*
+  rather than passed over: four distinct refusals all yield "no path", which was
+  indistinguishable from "this file has no log" — after which a cutover emits nothing either
+  way, which is #846's own outcome reached quietly. The cutover warns before it writes, while
+  the block still exists.
+
   **This departs from a decision recorded in `deploy/INGRESS.md` on 2026-08-03** that access
   logging is deliberately not generator-owned. That decision reserved its own re-argument to
   the operator, so it is amended in place rather than replaced, and the half it refused —

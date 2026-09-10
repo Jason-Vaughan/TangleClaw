@@ -395,6 +395,32 @@ describe('auth credential durability (#397 / 2026-07-03 lockout)', () => {
       assert.equal(config.caddyTailnetHost, undefined);
     });
 
+    it('names every shape it adopts, including one adopted alone (#846)', () => {
+      // The cutover's report used to enumerate the result's fields by hand, so a
+      // newly-adopted shape had to be added in a second place. The access log was
+      // the member that was forgotten: on the boot where credential, catch-all
+      // and tailnet host are already in config and the log is the ONLY thing
+      // adopted, the operator read "Adopted live Caddyfile state into config: ."
+      assert.deepEqual(
+        caddy.describeAdoption({ changed: true, accessLogPath: '/l.log' }),
+        ['access log preserved (/l.log)'],
+        'a lone adoption must still name itself'
+      );
+      assert.deepEqual(
+        caddy.describeAdoption({
+          adopted: true, user: 'jason', remoteHttp: true,
+          tailnetHost: 'box.tail1234.ts.net', accessLogPath: '/l.log'
+        }),
+        [
+          'basic_auth credential (user: jason)',
+          'remote HTTP catch-all preserved',
+          'tailnet HTTPS site preserved (box.tail1234.ts.net)',
+          'access log preserved (/l.log)'
+        ]
+      );
+      assert.deepEqual(caddy.describeAdoption({}), [], 'nothing adopted, nothing claimed');
+    });
+
     it('is the ONLY adoption implementation — the cutover script delegates instead of mirroring it', () => {
       const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ingress-cutover.js'), 'utf8');
       assert.ok(

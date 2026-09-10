@@ -284,6 +284,48 @@ describe('caddy', () => {
         assert.equal(caddy.extractAccessLogPath(site('\t\toutput file /a.log')), '/a.log');
       });
 
+      it('refuses the GLOBAL options logger, which is a different setting', () => {
+        // Caddy's documented way to configure the DEFAULT logger is a `log` block
+        // at global scope. It is not per-site access logging: adopting its path
+        // would persist it and re-emit it as N per-site logs while the global
+        // logger vanished. Nesting cannot distinguish the two — the generated
+        // global block already nests `servers :8443 { … }` — so scope is tracked.
+        const global = '{\n\thttps_port 8443\n\tlog {\n\t\toutput file /g.log\n\t}\n}\n\n'
+          + 'localhost {\n\treverse_proxy 127.0.0.1:3102\n}\n';
+        assert.equal(caddy.extractAccessLogPath(global), null,
+          'the default-logger setting is not a per-site access log');
+
+        // And its mere PRESENCE is a refusal even when a per-site block also
+        // exists: re-emitting only the per-site one drops the global logger,
+        // which is the same silent loss by another route.
+        const both = '{\n\tlog {\n\t\toutput file /g.log\n\t}\n}\n\n'
+          + 'localhost {\n\tlog {\n\t\toutput file /s.log\n\t}\n}\n';
+        assert.equal(caddy.extractAccessLogPath(both), null,
+          'a file carrying both arrangements cannot be reduced to one path');
+
+        // The positive that stops the two above passing vacuously.
+        const siteOnly = '{\n\thttps_port 8443\n}\n\nlocalhost {\n\tlog {\n\t\toutput file /s.log\n\t}\n}\n';
+        assert.equal(caddy.extractAccessLogPath(siteOnly), '/s.log');
+      });
+
+      it('reports a log block it could NOT adopt, instead of looking like no log', () => {
+        // Four distinct refusals all return null, and silence makes them
+        // indistinguishable from "this file has no access log" — after which the
+        // next cutover emits nothing either way. That is #846's own outcome,
+        // reached quietly, so adoption names it for the caller that reports.
+        const unreadable = 'x {\n\tlog {\n\t\toutput file /a.log\n\t\tformat json\n\t}\n}\n';
+        const cfg = {};
+        const r = caddy.computeCaddyfileAdoption(cfg, unreadable);
+        assert.equal(r.accessLogUnreadable, true, 'a refusal must be visible');
+        assert.equal(cfg.caddyAccessLogPath, undefined, 'and must adopt nothing');
+
+        // A file with genuinely no log is NOT flagged — otherwise the flag means
+        // nothing and every ordinary install reports a problem it does not have.
+        const none = 'x {\n\treverse_proxy 127.0.0.1:3102\n}\n';
+        const r2 = caddy.computeCaddyfileAdoption({}, none);
+        assert.notEqual(r2.accessLogUnreadable, true);
+      });
+
       it('refuses to recover an ambiguous or unemittable path', () => {
         assert.equal(caddy.extractAccessLogPath('a {\n\tlog {\n\t\toutput file /a.log\n\t}\n}\n'
           + 'b {\n\tlog {\n\t\toutput file /b.log\n\t}\n}\n'), null,
