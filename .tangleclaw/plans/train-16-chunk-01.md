@@ -162,6 +162,18 @@ sites.
 #846 is still OPEN with zero comments, so from GitHub it reads as an unfixed bug — which is how
 the coordinator rostered it. Whichever way the ruling lands, it belongs on the issue.
 
+## Off-chunk work carried by this branch
+
+**ADR 0015 — TangleClaw owns authentication** (`docs/adr/0015-tangleclaw-owns-authentication.md`,
+Proposed, not built). It is unrelated to #846 and rode this branch because the operator asked for it
+mid-chunk after twice questioning whether Caddy is the right fit. Recorded here so the chunk's plan
+accounts for every file it shipped.
+
+The short version: Caddy `basic_auth` was chosen on 2026-06-24 with multi-user named as the condition
+for revisiting it, and #1149 met that condition. The ADR answers ADR 0004's by-name rejection of
+in-process Node auth rather than stepping around it. **It gates #804** — that issue derives the
+"a credential is mandatory here" predicate, and the ADR changes what the predicate means.
+
 ## Verification
 
 Suite green on `269cdba0` before this chunk, and green after it — the totals live in the
