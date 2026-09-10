@@ -266,14 +266,39 @@ describe('caddy', () => {
         assert.equal(caddy.buildCaddyfileContent(derived), out);
       });
 
+      it('refuses a log block carrying anything beyond the destination', () => {
+        // The trap this fix nearly walked into. A line-wise match for
+        // `output file …` reads these as bare blocks, so adoption would store
+        // the path and the next cutover would re-emit a log stripped of
+        // `format`/`level`/`roll_size` — silently dropping a hand edit, which is
+        // the exact failure #846 exists to end, reintroduced inside its own fix.
+        const site = (inner) => `x {\n\tlog {\n${inner}\n\t}\n}\n`;
+        assert.equal(caddy.extractAccessLogPath(site('\t\toutput file /a.log\n\t\tformat json')), null,
+          'a formatted log is not reproducible from a path alone');
+        assert.equal(caddy.extractAccessLogPath(site('\t\toutput file /a.log\n\t\tlevel ERROR')), null,
+          'a level-filtered log is not reproducible from a path alone');
+        assert.equal(
+          caddy.extractAccessLogPath('x {\n\tlog {\n\t\toutput file /a.log {\n\t\t\troll_size 10mb\n\t\t}\n\t}\n}\n'),
+          null, 'a destination with its own rotation block is not reproducible either');
+        // The positive that keeps the three above from passing vacuously.
+        assert.equal(caddy.extractAccessLogPath(site('\t\toutput file /a.log')), '/a.log');
+      });
+
       it('refuses to recover an ambiguous or unemittable path', () => {
         assert.equal(caddy.extractAccessLogPath('a {\n\tlog {\n\t\toutput file /a.log\n\t}\n}\n'
           + 'b {\n\tlog {\n\t\toutput file /b.log\n\t}\n}\n'), null,
         'two destinations cannot collapse into one config value');
-        assert.equal(caddy.extractAccessLogPath('# output file /commented.log\n'), null,
+        assert.equal(caddy.extractAccessLogPath('a {\n\t# log {\n\t#\toutput file /commented.log\n\t# }\n}\n'), null,
           'a documented example is not configuration');
-        assert.equal(caddy.extractAccessLogPath('a {\n\t\toutput file relative.log\n}\n'), null,
+        assert.equal(caddy.extractAccessLogPath('a {\n\tlog {\n\t\toutput file relative.log\n\t}\n}\n'), null,
           'a path the generator would refuse to write must not be adopted');
+        // An UNTERMINATED log block — the depth never returns to zero, so there is
+        // no block to read. Whole-file brace validity is deliberately not checked
+        // here: `caddy validate` owns that, and this function's contract is the
+        // log block alone (a file whose outer site block is unclosed still has a
+        // readable, balanced `log { … }` inside it).
+        assert.equal(caddy.extractAccessLogPath('a {\n\tlog {\n\t\toutput file /a.log\n'), null,
+          'a log block that runs off the end of the file is not readable');
       });
 
       it('adopts the live file\'s log path into config, and never overwrites one', () => {

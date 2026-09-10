@@ -29,6 +29,12 @@ All notable changes to TangleClaw are documented in this file.
   upstream vouches for its shape, and a relative path would put the audit trail wherever
   Caddy's working directory happens to be.
 
+  A `log` block is read as a **block**, and only one whose sole directive is the destination is
+  accepted. A block that also carries `format json`, `level ERROR`, or a destination with its own
+  `{ roll_size … }` is refused outright rather than partially recovered — adopting just the path
+  would re-emit a log stripped of the rest, which is the same silent drop this change exists to
+  end. The first cut of this fix matched `output file` line-wise and had exactly that defect.
+
   **This departs from a decision recorded in `deploy/INGRESS.md` on 2026-08-03** that access
   logging is deliberately not generator-owned. That decision reserved its own re-argument to
   the operator, so it is amended in place rather than replaced, and the half it refused —
