@@ -102,7 +102,7 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
       const shape = defaultPipeline.wrapShape();
       assert.equal(shape.command, null);
       assert.deepStrictEqual(shape.steps, defaultPipeline.steps().map((s) => s.id));
-      assert.deepStrictEqual(shape.captureFields, ['summary', 'nextSteps', 'learnings']);
+      assert.deepStrictEqual(shape.captureFields, ['summary', 'nextSteps', 'learnings', 'delta', 'openThreads', 'decisions', 'pointers']);
     });
   });
 
