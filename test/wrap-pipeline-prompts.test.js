@@ -62,7 +62,7 @@ describe('wrap pipeline ai-content prompts', () => {
     assert.match(step.prompt, /## Result/);
   });
 
-  it('memory-update prompt instructs the three required heading blocks', () => {
+  it('memory-update prompt instructs the seven required heading blocks', () => {
     const step = getAiContentStep('memory-update');
     assert.ok(
       step.prompt.length >= MIN_PROMPT_CHARS,
@@ -76,7 +76,7 @@ describe('wrap pipeline ai-content prompts', () => {
     assert.match(step.prompt, /## NextSteps/);
     assert.match(step.prompt, /## Learnings/);
 
-    assert.deepEqual(step.captureFields, ['summary', 'nextSteps', 'learnings']);
+    assert.deepEqual(step.captureFields, ['summary', 'nextSteps', 'learnings', 'delta', 'openThreads', 'decisions', 'pointers']);
 
     // #287: the structured block is parsed from a FILE, not the pane —
     // `capture-pane -p` strips the literal `##` the TUI renders away, so
