@@ -111,6 +111,12 @@ but is inert until a caddy cutover passes the credential through. Single admin, 
 - **In-process Node auth (Better Auth / hand-rolled scrypt).** Rejected for the same reason as in
   ADR 0003: every surface (HTTP, WS, ttyd, gateway) is hand-wired, so it becomes roll-your-own auth
   across four transports — the footgun the single-ingress model exists to avoid.
+  **Revisited 2026-09-10 by ADR 0015**, which proposes this mechanism and must answer this
+  objection rather than skip it — see its "Answering ADR 0004's rejection" section. The short of
+  it: the four transports are no longer four doors. TangleClaw internally proxies ttyd and the
+  OpenClaw gateway, so the generated Caddyfile carries a single upstream and all four surfaces
+  enter through TangleClaw's own request path. That does not make the objection void — the
+  WebSocket upgrade still needs deliberate handling — but "four transports" now overstates it.
 - **Default admin credentials seeded on first boot.** Rejected: a shipped default password is the
   classic appliance vulnerability. Forced setup with no default is strictly safer and barely costs
   the operator anything (one wizard step they must complete anyway).

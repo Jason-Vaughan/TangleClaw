@@ -322,6 +322,18 @@ describe('caddy', () => {
           'a bcrypt-shaped value must not reach the log verbatim');
       });
 
+      it('keeps a status flag OUT of the phrases and IN the log payload', () => {
+        // The two readers differ by exactly one set, on purpose. A phrase list
+        // whose sentences all read "<x> preserved" would be lying about a flag
+        // that means "we saw something we could NOT preserve"; a structured log
+        // is precisely where that belongs. Unifying the two exclusion lists —
+        // the obvious reading of "they differ by one member" — breaks this.
+        assert.deepEqual(caddy.describeAdoption({ accessLogUnreadable: true }), [],
+          'a refusal is not a preserved shape');
+        assert.equal(caddy.adoptionLogPayload({ accessLogUnreadable: true }).accessLogUnreadable, true,
+          'but the log must still carry it');
+      });
+
       it('scrubs the UNLISTED shape it names, not just the listed ones', () => {
         // The fallback that fixes silent adoption also forwards an unvetted value
         // to stdout — the cutover report an operator pastes into an issue, which

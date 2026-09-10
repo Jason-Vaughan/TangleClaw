@@ -295,6 +295,30 @@ describe('auth credential durability (#397 / 2026-07-03 lockout)', () => {
       assert.match(warned, /will NOT survive a cutover/);
     });
 
+    it('WARNS even when something else adopted successfully (#846)', () => {
+      // The case two independent reviewers found: gating the warning on a PURE
+      // decline made it vanish on exactly the install it was written for — one
+      // that adopts a credential or tailnet host AND carries a log block we
+      // cannot reproduce. The refusal became a field on an INFO line reading
+      // "Adopted live Caddyfile state into config", which reads as success. The
+      // earlier test pre-adopted everything to force the decline path, so this
+      // combination was the one shape it could not see.
+      setConfig({ ingressMode: 'caddy' });   // nothing pre-adopted this time
+      fs.writeFileSync(caddy.getCaddyfilePath(),
+        'localhost {\n\tlog {\n\t\toutput file /l.log\n\t\tformat json\n\t}\n'
+        + '\treverse_proxy 127.0.0.1:3102\n}\n\n'
+        + `${TAILNET_HOST} {\n\ttls /c/c.pem /c/k.pem\n\tbasic_auth {\n\t\tjason ${HASH_A}\n\t}\n`
+        + '\treverse_proxy 127.0.0.1:3102\n}\n');
+
+      const lines = captureLog(() => {
+        const r = caddy.adoptCredentialIntoConfig();
+        assert.equal(r.changed, true, 'something else MUST adopt — that is the whole point');
+        assert.equal(r.accessLogUnreadable, true);
+      });
+      assert.match(lines.join('\n'), /cannot reproduce/,
+        'a successful adoption must not swallow the refusal riding alongside it');
+    });
+
     it('stays SILENT at boot when the file simply has no log', () => {
       // Without this, the assertion above would also pass on an emitter that
       // warned unconditionally — which would train the operator to ignore it.

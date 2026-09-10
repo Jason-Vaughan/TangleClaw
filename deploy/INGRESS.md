@@ -251,10 +251,15 @@ writes a timestamped backup but still replaces the file, discarding every other
 hand edit it carries. For a hand-edited Caddyfile, regenerating is only safe once
 the generator reproduces the live file in full — see the parity caveat below.
 
-> **Access logging is deliberately NOT generator-owned (#846, decided 2026-08-03).**
-> The generator emits no `log { … }` block under any option, so a cutover onto a
-> Caddyfile that carries one by hand **ends Caddy access logging** — this is a real
-> loss, and it is not a bug to be fixed by teaching the generator to emit one.
+> **SUPERSEDED 2026-09-10 — read the amendment at the end of this block before acting on it.**
+> The decision below stood from 2026-08-03 until the operator delegated its re-argument; it is kept
+> in full because the amendment only makes sense against it, and because its residual argument still
+> governs what shipped.
+>
+> ~~**Access logging is deliberately NOT generator-owned (#846, decided 2026-08-03).**~~
+> The generator emitted no `log { … }` block under any option, so a cutover onto a
+> Caddyfile that carried one by hand **ended Caddy access logging** — a real
+> loss, and (as argued at the time) not a bug to be fixed by teaching the generator to emit one.
 >
 > The reason is that an ingress log is not free. As originally argued:
 > `~/.tangleclaw/logs/ingress-cutover.log` itself grew without rotation and could capture a

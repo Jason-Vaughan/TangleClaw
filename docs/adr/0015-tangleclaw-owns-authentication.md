@@ -83,6 +83,39 @@ know the principal to authorize anything, it should also be what established it.
 TLS termination, the h1 pin, the tailnet/LAN/public site shapes, ACME. All of it stays. Caddy is a
 good reverse proxy and this ADR does not dispute that — it disputes only that the gate belongs there.
 
+## Answering ADR 0004's rejection
+
+ADR 0004 did not merely prefer Caddy — it **rejected this mechanism by name**: "In-process Node auth
+(Better Auth / hand-rolled scrypt). Rejected … every surface (HTTP, WS, ttyd, gateway) is hand-wired,
+so it becomes roll-your-own auth across four transports — the footgun the single-ingress model exists
+to avoid."
+
+That objection was correct and must be answered, not stepped around.
+
+**What changed: the four transports are no longer four doors.** TangleClaw internally proxies ttyd
+and the OpenClaw gateway — `lib/caddy.js` states it plainly, which is why the generated Caddyfile
+carries a single `reverse_proxy 127.0.0.1:<serverPort>` and not four. All four surfaces therefore
+enter through TangleClaw's own request path, so a session check at that entry is one gate covering
+four paths, not four gates. The "single-ingress model" ADR 0004 wanted to preserve is preserved; what
+moves is *which process* holds it.
+
+**What the objection still gets right**, and this ADR does not pretend otherwise:
+
+- **The WebSocket upgrade is genuinely separate.** Three WS routes exist and an upgrade request must
+  be authenticated before the socket is established, not after. This is the single most likely place
+  to get it wrong, and it is open question 1 rather than a solved problem.
+- **`/openclaw-direct/*` carries its own gateway token** and is deliberately exempt from the current
+  gate (`AUTH_BYPASS_PATHS`). Two auth systems on adjacent paths is exactly the complexity ADR 0004
+  feared. `isCaddyAuthBypassPath` already models the boundary, so the seam exists — but it must be
+  moved deliberately, not inherited.
+- **"Roll-your-own auth" remains the real cost.** ADR 0009's threat model is arbitrary code
+  execution as the operator. Session fixation, CSRF on state-changing routes and cookie flags become
+  TangleClaw's to get right. The mitigation is scope, not confidence: sessions and password
+  verification only, with recovery staying a terminal tool outside the gate.
+
+The claim here is not that ADR 0004 was wrong. It is that its rejection rested on a topology that has
+since changed, and on a requirement — one operator — that #1149 retires.
+
 ## Consequences
 
 **Enables**
