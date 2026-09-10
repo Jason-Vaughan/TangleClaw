@@ -445,6 +445,22 @@ All notable changes to TangleClaw are documented in this file.
   history and must keep saying what was true at the time.
 
 ### Internal
+- **One definition now answers "does this step capture?" (#1379 follow-up).** Adding
+  `optionalCaptureFields` left three sites outside `lib/wrap-steps/ai-content.js` still spelling the
+  predicate `Array.isArray(step.captureFields) && length > 0`, which became half the contract the
+  moment a step could declare only optional fields. All three Critic reviewers found it
+  independently. The sharp one was `test/wrap-default-pipeline.test.js`'s "declares captureFields ⇒
+  declares captureFile" guard: it *skipped* an optional-only step, so such a step could ship with no
+  parse source, fall through to the TUI-stripped pane read and capture nothing — #1379's own silent
+  shape walking past the guard built for it. `lib/wrap-pipeline.js:_planAiContentPrompts` would also
+  have left such a step out of the operator's webui "step N of M" denominator while the runner
+  prompted it.
+
+  `_hasCaptureContract` is exported from the handler and every capability-deciding site calls it;
+  `.captureFields` was grepped across `lib/` and `test/` to confirm the remaining readers only pass
+  the value through. Nothing was reachable today — no shipped step is optional-only — so this is
+  closed by construction for the next one rather than as a live bug.
+
 - **The remaining `node:assert` suites are on `node:assert/strict` (#1067).**
   `test/condition-log.test.js`, `test/cache-bump-guard.test.js` and `test/wrap-step-pr-merge.test.js`
   now require the strict binding, completing the testing-conventions norm's `Retroactivity: migrate`.
