@@ -18,6 +18,7 @@ const os = require('node:os');
 
 const store = require('../lib/store');
 const caddy = require('../lib/caddy');
+const logger = require('../lib/logger');
 const cutover = require('../scripts/ingress-cutover');
 
 const DEPLOY_DIR = path.join(__dirname, '..', 'deploy');
@@ -249,6 +250,65 @@ describe('auth credential durability (#397 / 2026-07-03 lockout)', () => {
       Object.assign(config, patch);
       store.config.save(config);
     }
+
+    /**
+     * Capture info-and-above while `fn` runs, restoring the quiet test posture.
+     * @param {() => void} fn - Work to run while capturing.
+     * @returns {string[]} The captured lines.
+     */
+    function captureLog(fn) {
+      const lines = [];
+      logger.setLevel('info');
+      logger.setConsoleStream({ write: (line) => lines.push(line) });
+      try { fn(); } finally {
+        logger.setConsoleStream(null);
+        logger.setLevel('error');
+      }
+      return lines;
+    }
+
+    it('WARNS at boot about a log block it cannot reproduce (#846)', () => {
+      // The emitter, not the plumbing beneath it. A pure decline persists
+      // nothing, so it never reaches the `changed` branch that logs — boot said
+      // nothing at all, and the operator learned their audit trail was doomed
+      // only if they happened to run a cutover. Deleting this warning left the
+      // whole suite green until this test existed.
+      setConfig({
+        ingressMode: 'caddy',
+        basicAuthUser: 'jason', basicAuthHash: HASH_A, authEnabled: true,
+        caddyRemoteHttp: true, caddyTailnetHost: TAILNET_HOST
+      });
+      // Everything else already adopted, so the ONLY thing left is a log block
+      // that cannot be reproduced — `format json` alongside the destination.
+      fs.writeFileSync(caddy.getCaddyfilePath(),
+        'localhost {\n\tlog {\n\t\toutput file /l.log\n\t\tformat json\n\t}\n'
+        + '\treverse_proxy 127.0.0.1:3102\n}\n');
+
+      const lines = captureLog(() => {
+        const r = caddy.adoptCredentialIntoConfig();
+        assert.equal(r.changed, false, 'nothing adoptable — this is the decline path');
+        assert.equal(r.accessLogUnreadable, true);
+      });
+      const warned = lines.join('\n');
+      assert.match(warned, /cannot reproduce/,
+        'a decline the operator is never told about is the bug itself');
+      assert.match(warned, /will NOT survive a cutover/);
+    });
+
+    it('stays SILENT at boot when the file simply has no log', () => {
+      // Without this, the assertion above would also pass on an emitter that
+      // warned unconditionally — which would train the operator to ignore it.
+      setConfig({
+        ingressMode: 'caddy',
+        basicAuthUser: 'jason', basicAuthHash: HASH_A, authEnabled: true,
+        caddyRemoteHttp: true, caddyTailnetHost: TAILNET_HOST
+      });
+      fs.writeFileSync(caddy.getCaddyfilePath(),
+        'localhost {\n\treverse_proxy 127.0.0.1:3102\n}\n');
+      const lines = captureLog(() => caddy.adoptCredentialIntoConfig());
+      assert.ok(!lines.join('\n').includes('cannot reproduce'),
+        'a file with no log must not warn about one');
+    });
 
     it('adopts the live credential + remote-HTTP shape into config (read-only on the file)', () => {
       setConfig({ ingressMode: 'caddy' });

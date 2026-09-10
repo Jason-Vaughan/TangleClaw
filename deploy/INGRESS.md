@@ -150,7 +150,7 @@ The `basic_auth` credential is canonical in **config** (`basicAuthUser` +
   boot and before a cutover writes, since a log dropped in silence is the
   failure #846 was filed for.
 
-All four shapes are adopted by the same pass, so a hand-maintained Caddyfile
+Every shape above is adopted by the same pass, so a hand-maintained Caddyfile
 becomes reproducible one shape at a time rather than all-or-nothing. What no
 adoption pass can recover, it says so about — it never guesses.
 

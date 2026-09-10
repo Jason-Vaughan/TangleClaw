@@ -322,6 +322,20 @@ describe('caddy', () => {
           'a bcrypt-shaped value must not reach the log verbatim');
       });
 
+      it('scrubs the UNLISTED shape it names, not just the listed ones', () => {
+        // The fallback that fixes silent adoption also forwards an unvetted value
+        // to stdout — the cutover report an operator pastes into an issue, which
+        // is exactly where #821 leaked a bcrypt hash. The scrub was applied to
+        // the sibling payload first and missed here; deleting it left the suite
+        // green, which is why this assertion exists rather than the reasoning.
+        const [phrase] = caddy.describeAdoption({
+          someFutureShape: '$2a$14$abcdefghijklmnopqrstuvABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ab'
+        });
+        assert.ok(!phrase.includes('abcdefghijklmnopqrstuv'),
+          'an unlisted value reaches an operator-pasted report — it must be redacted there too');
+        assert.match(phrase, /^someFutureShape preserved \(/, 'and must still be NAMED');
+      });
+
       it('names a shape it adopts even when nobody added a phrase for it', () => {
         // describeAdoption used to hand-list its phrases, so a newly-adopted
         // shape would be adopted SILENTLY — the class this branch exists to
