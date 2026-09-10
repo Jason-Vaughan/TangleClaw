@@ -376,18 +376,10 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
   the status vocabulary has retired `wrapping` (#1034), but `public/session.js` still carries them
   for a server that has not restarted; the test retires **with** them under #1302, never before.
 
-## TODO (auto-stubbed 2026-09-07)
-
-- **TBD** — touched in this session: `test/terminal-touch-scroll.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-09-08)
-
-- **TBD** — touched in this session: `test/_eacces.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/history-drawer-uploads.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/uploads-fs.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/uploads.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-09-08)
-
-- **TBD** — touched in this session: `test/import-banner-buttons.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/settings-hint-wrapping.test.js`. <!-- describe -->
+- `test/terminal-touch-scroll.test.js` — #443: terminal touch-scroll was dead on iOS on BOTH surfaces (session page + Master pane). Pins the two defects in the old per-page shims — listeners bound to `.xterm-viewport` while xterm paints and hit-tests on the later, positioned `.xterm-screen`, and the shim's own preventDefault — so a fix that repairs one surface and not the other fails.
+- `test/_eacces.js` — a shared helper, not a suite: answers whether this process can still read a directory it has removed its own permission from. Several tests stage a genuine `EACCES` with `chmod 000` to exercise "there, and refused" rather than "not there" — the distinction the uploads and project-facts reads exist to draw — and root defeats that, so the helper lets those tests skip honestly instead of passing for the wrong reason.
+- `test/history-drawer-uploads.test.js` — #889's history-drawer half of the honest uploads empty state. Sibling to `test/upload-modal-frontend.test.js`, and deliberately separate: this surface reads the prefixed field names (`uploadsUnreadable`) that the continuity session payload returns, so a fix applied to one set of names leaves the other reading a stale shape.
+- `test/uploads-fs.test.js` — `lib/uploads-fs.js` head-on: `saveUpload` / `listUploads` / `listDir` plus the scan-manifest read and record, against a real temp tree. This is where the filesystem work lives after it had to leave the event loop.
+- `test/uploads.test.js` — #889's server-facing half: the delegation to the scanner child, and the vocabulary a caller sees when that delegation fails. The routes are exercised end to end through a real fork in `test/api-uploads.test.js`; this covers what is only observable at the seam.
+- `test/import-banner-buttons.test.js` — #1383, asserted as a ROUND TRIP: each rendered `onclick` is decoded the way a browser would and the argument the handler actually receives is compared against what that handler expects, rather than pattern-matching the source (which passes on any encoding that merely looks different). Import and Import All are pinned separately so the obvious wrong fix — one stringify everywhere to "make them consistent" — fails at whichever site it is applied to, and it drives the real consumer (`ignoreLeaseProject` through `checkPortImports`) as well as the producer.
+- `test/settings-hint-wrapping.test.js` — #1271: settings-modal hint text clipped at the right edge instead of wrapping. Source-level CSS assertions in the house pattern for frontend regressions, scoped to the `.form-hint` block on purpose — an unanchored search for the property across a 3000-line stylesheet passes on a rule belonging to something else.
