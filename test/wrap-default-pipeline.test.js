@@ -10,6 +10,7 @@ const { setLevel } = require('../lib/logger');
 setLevel('error');
 
 const defaultPipeline = require('../lib/wrap-default-pipeline');
+const aiContent = require('../lib/wrap-steps/ai-content');
 const wrapStepOverrides = require('../lib/wrap-step-overrides');
 
 describe('wrap-default-pipeline — the code-owned pipeline', () => {
@@ -60,12 +61,27 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
     }
   });
 
-  it('a step declaring captureFields also declares captureFile (the parse source)', () => {
+  it('a step declaring ANY capture field also declares captureFile (the parse source)', () => {
+    // Through the handler's own predicate, so an optional-only step cannot slip
+    // past: keyed on `captureFields` alone this guard SKIPPED such a step, which
+    // could then ship with no `captureFile`, fall through to the TUI-stripped
+    // pane parse, match nothing and block nothing — #1379's exact silent shape
+    // walking past the guard built to catch it.
     for (const step of defaultPipeline.steps()) {
-      if (!Array.isArray(step.captureFields)) continue;
+      if (!aiContent._hasCaptureContract(step)) continue;
       assert.equal(typeof step.captureFile, 'string',
-        `${step.id} declares captureFields but no captureFile — the fields would be unparseable`);
+        `${step.id} declares capture fields but no captureFile — the fields would be unparseable`);
     }
+  });
+
+  it('the captureFile guard covers a step whose fields are ALL optional', () => {
+    // The guard above reads the shipped pipeline, where every capturing step
+    // happens to declare required fields too — so it would pass today even if
+    // it were still blind to optional-only steps. Drive the predicate directly
+    // with the shape the new key enables.
+    assert.equal(aiContent._hasCaptureContract({ optionalCaptureFields: ['delta'] }), true);
+    assert.equal(aiContent._hasCaptureContract({ captureFields: [], optionalCaptureFields: [] }), false);
+    assert.equal(aiContent._hasCaptureContract({}), false);
   });
 
   // #645 — the gate that verifies changelog-update must be satisfiable by the

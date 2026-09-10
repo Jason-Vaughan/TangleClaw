@@ -25,6 +25,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const wrapDefaultPipeline = require('../lib/wrap-default-pipeline');
+const aiContent = require('../lib/wrap-steps/ai-content');
 
 const MIN_PROMPT_CHARS = 200;
 
@@ -62,7 +63,7 @@ describe('wrap pipeline ai-content prompts', () => {
     assert.match(step.prompt, /## Result/);
   });
 
-  it('memory-update prompt instructs the seven required heading blocks', () => {
+  it('memory-update prompt instructs three required and four optional heading blocks', () => {
     const step = getAiContentStep('memory-update');
     assert.ok(
       step.prompt.length >= MIN_PROMPT_CHARS,
@@ -75,8 +76,26 @@ describe('wrap pipeline ai-content prompts', () => {
     assert.match(step.prompt, /## Summary/);
     assert.match(step.prompt, /## NextSteps/);
     assert.match(step.prompt, /## Learnings/);
+    assert.match(step.prompt, /## Delta/);
+    assert.match(step.prompt, /## OpenThreads/);
+    assert.match(step.prompt, /## Decisions/);
+    assert.match(step.prompt, /## Pointers/);
 
-    assert.deepEqual(step.captureFields, ['summary', 'nextSteps', 'learnings', 'delta', 'openThreads', 'decisions', 'pointers']);
+    // The split is the point, so pin which side each field is on rather than
+    // the combined set: only these three may halt a wrap. Moving one of the
+    // four judgment sections into `captureFields` would make a model that
+    // omitted a block fail the whole wrap, which `wrap-direction.md`
+    // § Direction (2) forbids — "never hard-fails the wrap for lacking a
+    // single engine's feature" (#1379, #1389).
+    assert.deepEqual(step.captureFields, ['summary', 'nextSteps', 'learnings']);
+    assert.deepEqual(step.optionalCaptureFields, ['delta', 'openThreads', 'decisions', 'pointers']);
+
+    // The prompt must SAY which blocks are required, or a model has no way to
+    // prioritize when it is running short — and must forbid padding, since a
+    // fabricated section is worse than the honest flag it replaces.
+    assert.match(step.prompt, /REQUIRED/);
+    assert.match(step.prompt, /WANTED/);
+    assert.match(step.prompt, /not captured/);
 
     // #287: the structured block is parsed from a FILE, not the pane —
     // `capture-pane -p` strips the literal `##` the TUI renders away, so
@@ -102,7 +121,9 @@ describe('wrap pipeline ai-content prompts', () => {
     const aiSteps = wrapDefaultPipeline.steps().filter((s) => s.kind === 'ai-content');
     assert.ok(aiSteps.length > 0, 'the pipeline should declare ai-content steps');
     for (const step of aiSteps) {
-      const hasCaptureFields = Array.isArray(step.captureFields) && step.captureFields.length > 0;
+      // Any capture contract counts, required or optional — a step that captures
+      // only optional fields still has a parseable protocol.
+      const hasCaptureFields = aiContent._hasCaptureContract(step);
       const hasResultTail = /## Result/.test(step.prompt);
       assert.ok(
         hasCaptureFields || hasResultTail,
@@ -117,8 +138,13 @@ describe('wrap pipeline ai-content prompts — drift guards', () => {
     // Add `risks` to captureFields without adding `## Risks` to the prompt and
     // every wrap silently blocks with "Required captureField missing."
     for (const step of wrapDefaultPipeline.steps()) {
-      if (step.kind !== 'ai-content' || !Array.isArray(step.captureFields)) continue;
-      for (const field of step.captureFields) {
+      if (step.kind !== 'ai-content') continue;
+      // Both lists: an optional field the prompt never mentions is worse than a
+      // required one, because it fails silently — the AI is never asked, the
+      // parser finds nothing, and the section it feeds stays flagged forever
+      // with no error anywhere. That is #1379's exact shape.
+      const declared = [...(step.captureFields || []), ...(step.optionalCaptureFields || [])];
+      for (const field of declared) {
         const heading = `## ${field.charAt(0).toUpperCase()}${field.slice(1)}`;
         assert.ok(
           step.prompt.includes(heading),
@@ -135,7 +161,10 @@ describe('wrap pipeline ai-content prompts — drift guards', () => {
     for (const step of wrapDefaultPipeline.steps()) {
       if (step.kind !== 'ai-content') continue;
       const matches = [...step.prompt.matchAll(/^## (\w[\w-]*)/gm)].map((m) => m[1]);
-      const expected = new Set((step.captureFields || []).map((f) => f.toLowerCase()));
+      const expected = new Set([
+        ...(step.captureFields || []),
+        ...(step.optionalCaptureFields || [])
+      ].map((f) => f.toLowerCase()));
       for (const heading of matches) {
         const norm = heading.toLowerCase();
         if (norm === 'result') continue; // free-form tail convention

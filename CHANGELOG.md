@@ -5,6 +5,43 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **Four of the eight wrap-summary sections were never captured, on every wrap and every engine
+  (#1379, #1389).** `Delta`, `Open threads`, `Decisions` and `Pointers` rendered `_⚠ not captured_`
+  in every `.tangleclaw/continuity/wraps/<sid>.md` ever written. The renderer, the honest-flag and
+  the per-project section selection (CC-6) were all built; the wrap prompt simply never asked the
+  AI for those four, and `_resolveCapturedFields` never read them. Reported with a correct
+  mechanism and six reproducing wrap files by GURULifeline, whose diagnosis this fix follows.
+
+  The four are now asked for and captured. They are **wanted, not required**: `ai-content` steps
+  gained `optionalCaptureFields`, parsed and staged exactly like `captureFields` but never able to
+  block. A wrap whose model writes only `## Summary` / `## NextSteps` / `## Learnings` still
+  completes, with the four sections honest-flagged — the outcome `wrap-direction.md` § Direction
+  requires, since a step "never hard-fails the wrap for lacking a single engine's feature" (2) and
+  a gate may block only where failure is silent or destructive (3). A missing judgment section is
+  neither: it renders a visible marker and loses nothing.
+
+  The first attempt (#1389) added all four to `captureFields` — the blocking list — which turned a
+  cosmetic gap into a hard stop for any model that omitted one of seven blocks, weaker engines
+  first. The two lists are now pinned to opposite sides in `test/wrap-pipeline-prompts.test.js` so
+  moving one back fails.
+
+  **Why the union is parsed rather than just shortening the required list:** `_parseFields` matches
+  a `## Heading` only against names it was handed, so a field in neither list is not optional but
+  invisible — and worse than dropped, since an unmatched heading is appended to whichever section
+  is still open, bleeding its text into the previous one. That behaviour is now pinned.
+
+  `Delta` stays AI-authored: `continuity-contract.md` defines it as "decisions + why · shipped/merged
+  · deferred", not a file list. The git-derived file set is the `files:` frontmatter stamp and the
+  index's `## Map`, which are separate artifacts.
+
+  **An absent optional section now says so.** `output.uncapturedOptional` names the wanted fields
+  that did not arrive, with a matching log line at the capture site. Making the gap normal removed
+  the only thing separating "the model omitted the block" from "the wiring broke again" — and the
+  wiring being broken, silently, on every wrap and every engine is precisely how #1379 survived
+  until an outside user reported it.
+
+  Reported-by: GURULifeline
+
 - **The port-lease import banner's Ignore button had never worked, on any install (#1383).** Clicking
   it did nothing: the banner returned immediately and on every reload. Reported by the operator, who
   was told the button was the answer and found it wasn't.
