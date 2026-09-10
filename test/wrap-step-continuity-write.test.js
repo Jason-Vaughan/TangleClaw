@@ -194,6 +194,58 @@ describe('continuity-write wrap step (CC-1)', () => {
     assert.match(rawSummary, /## Delta\n_⚠ not captured_/);
   });
 
+  it('fills all four judgment sections when memory-update captured them (#1379)', async () => {
+    // The end-to-end complement to the parser-level cases below: this drives
+    // the REAL `run()`, so the `sections{}` map inside it — the production
+    // mapping from `captured.openThreads` to the `'Open threads'` section name
+    // — is what gets exercised. Asserting that mapping from a hand-built
+    // sections object in the test would only re-check the test's own copy.
+    const res = await step.run(ctxWithSession(
+      { id: 77, engineId: 'claude' },
+      [{ stepId: 'memory-update', status: 'done', output: { parsedFields: {
+        summary: 'Split the capture contract.',
+        nextSteps: '- ship it',
+        learnings: 'a heading nobody declared is swallowed by the section above it',
+        delta: 'made the four judgment fields optional',
+        openThreads: 'ADR 0002 amendment still owed',
+        decisions: 'optional fields never gate a wrap',
+        pointers: 'lib/wrap-steps/ai-content.js'
+      } } }]
+    ));
+    assert.equal(res.ok, true);
+    assert.equal(res.output.wrapSummaryWritten, true);
+
+    const summary = continuity.readWrapSummary(project.path, 77);
+    assert.equal(summary.sections['Delta'], 'made the four judgment fields optional');
+    assert.equal(summary.sections['Open threads'], 'ADR 0002 amendment still owed');
+    assert.equal(summary.sections['Decisions'], 'optional fields never gate a wrap');
+    assert.equal(summary.sections['Pointers'], 'lib/wrap-steps/ai-content.js');
+
+    const raw = fs.readFileSync(continuity.wrapSummaryPath(project.path, 77), 'utf8');
+    assert.ok(!raw.includes('not captured'), `no section should be flagged, got:\n${raw}`);
+  });
+
+  it('leaves the four flagged when memory-update captured only the core three (#1379)', async () => {
+    // Same call, degraded input: the wrap must still succeed. This is the
+    // behaviour `wrap-direction.md` § Direction (2) requires and that gating
+    // the four on `captureFields` removed.
+    const res = await step.run(ctxWithSession(
+      { id: 78, engineId: 'claude' },
+      [{ stepId: 'memory-update', status: 'done', output: { parsedFields: {
+        summary: 'Split the capture contract.',
+        nextSteps: '- ship it',
+        learnings: 'none'
+      } } }]
+    ));
+    assert.equal(res.ok, true);
+    assert.equal(res.output.wrapSummaryWritten, true);
+
+    const raw = fs.readFileSync(continuity.wrapSummaryPath(project.path, 78), 'utf8');
+    const flagged = [...raw.matchAll(/^## (.+)\n_⚠ not captured_$/gm)].map((m) => m[1]);
+    assert.deepEqual(flagged.sort(), ['Decisions', 'Delta', 'Open threads', 'Pointers']);
+    assert.match(raw, /## Where we are\nSplit the capture contract\./);
+  });
+
   it('honors a project-configured wrapSections selection (CC-6, #381)', async () => {
     // Persist a per-project wrap-section override: only Where we are + Freshness
     // (Next action is forced in regardless). The step should read project.json
@@ -548,5 +600,126 @@ describe('continuity-write wrap step (CC-1)', () => {
     } finally {
       transcript.snapshot = origSnapshot;
     }
+  });
+});
+
+// #1379 — the four judgment sections, end to end across the step boundary.
+//
+// `ai-content` (producer) and `continuity-write` (consumer) meet at literal key
+// names: the pipeline declares `openThreads`, the prompt writes `## OpenThreads`,
+// the consumer reads `pf.openThreads`, and the renderer keys `'Open threads'`.
+// Four spellings of one concept, in three files, with nothing tying them
+// together — which is exactly how these sections came to be permanently empty.
+//
+// So these cases run the REAL producer into the REAL consumer, with the fixture
+// derived from the SHIPPED prompt rather than hand-typed. A fixture written from
+// the consumer's assumption would test the consumer against itself and stay green
+// through the very drift it is meant to catch.
+describe('continuity-write ← ai-content: judgment sections cross the step boundary (#1379)', () => {
+  const aic = require('../lib/wrap-steps/ai-content');
+  const wrapDefaultPipeline = require('../lib/wrap-default-pipeline');
+
+  const memoryUpdate = () => wrapDefaultPipeline.steps().find((s) => s.id === 'memory-update');
+
+  // The `## Heading` literals the shipped prompt actually instructs, in order.
+  const promptHeadings = () => [...memoryUpdate().prompt.matchAll(/^## (\w[\w-]*)/gm)]
+    .map((m) => m[1])
+    .filter((h) => h.toLowerCase() !== 'result');
+
+  // What the AI writes to `.tangleclaw/.wrap-summary.md`, built from those
+  // literals so a prompt rename carries the fixture with it.
+  const aiWroteFile = (headings) => headings.map((h) => `## ${h}\nbody of ${h}`).join('\n\n');
+
+  const parseAsHandler = (fileBody) => {
+    const step_ = memoryUpdate();
+    return aic._parseFields(fileBody, aic._resolveCaptureContract(step_).all);
+  };
+
+  it('every heading the prompt instructs is one the handler parses and the consumer reads', () => {
+    const headings = promptHeadings();
+    assert.equal(headings.length, 7, 'three required + four judgment blocks');
+
+    const parsed = parseAsHandler(aiWroteFile(headings));
+    const captured = step._resolveCapturedFields([
+      { stepId: 'memory-update', status: 'done', output: { parsedFields: parsed } }
+    ]);
+
+    // Not a spot-check of one field: every judgment section the consumer
+    // exposes must have arrived with content.
+    assert.equal(captured.currentState, 'body of Summary');
+    assert.equal(captured.nextAction, 'body of NextSteps');
+    assert.equal(captured.learnings, 'body of Learnings');
+    assert.equal(captured.delta, 'body of Delta');
+    assert.equal(captured.openThreads, 'body of OpenThreads');
+    assert.equal(captured.decisions, 'body of Decisions');
+    assert.equal(captured.pointers, 'body of Pointers');
+  });
+
+  it('renders all eight sections filled — none left flagged (the bug, inverted)', () => {
+    const captured = step._resolveCapturedFields([
+      {
+        stepId: 'memory-update',
+        status: 'done',
+        output: { parsedFields: parseAsHandler(aiWroteFile(promptHeadings())) }
+      }
+    ]);
+
+    const doc = continuity.renderWrapSummary({
+      meta: { session: 1 },
+      sections: {
+        'Where we are': captured.currentState,
+        'Next action': captured.nextAction,
+        'Landmines': captured.learnings,
+        'Delta': captured.delta,
+        'Open threads': captured.openThreads,
+        'Decisions': captured.decisions,
+        'Pointers': captured.pointers,
+        'Freshness': '- sha: abc'
+      }
+    });
+
+    assert.ok(!doc.includes('not captured'),
+      `every section should be filled, got:\n${doc}`);
+    // Each judgment section carries ITS OWN body — a mapping that crossed two
+    // sections' wires would still satisfy a mere "no flags" assertion.
+    assert.match(doc, /## Delta\nbody of Delta/);
+    assert.match(doc, /## Open threads\nbody of OpenThreads/);
+    assert.match(doc, /## Decisions\nbody of Decisions/);
+    assert.match(doc, /## Pointers\nbody of Pointers/);
+  });
+
+  it('a core-only wrap still renders, with exactly the four judgment sections flagged', () => {
+    // The degraded case `wrap-direction.md` § Direction (2) requires to work:
+    // a weaker model wrote only what it was required to, and the wrap completes.
+    const coreOnly = ['Summary', 'NextSteps', 'Learnings'];
+    const captured = step._resolveCapturedFields([
+      {
+        stepId: 'memory-update',
+        status: 'done',
+        output: { parsedFields: parseAsHandler(aiWroteFile(coreOnly)) }
+      }
+    ]);
+
+    assert.equal(captured.currentState, 'body of Summary');
+    assert.equal(captured.delta, '');
+    assert.equal(captured.pointers, '');
+
+    const doc = continuity.renderWrapSummary({
+      meta: { session: 2 },
+      sections: {
+        'Where we are': captured.currentState,
+        'Next action': captured.nextAction,
+        'Landmines': captured.learnings,
+        'Delta': captured.delta,
+        'Open threads': captured.openThreads,
+        'Decisions': captured.decisions,
+        'Pointers': captured.pointers,
+        'Freshness': '- sha: abc'
+      }
+    });
+
+    const flagged = [...doc.matchAll(/^## (.+)\n_⚠ not captured_$/gm)].map((m) => m[1]);
+    assert.deepEqual(flagged.sort(), ['Decisions', 'Delta', 'Open threads', 'Pointers']);
+    assert.match(doc, /## Where we are\nbody of Summary/, 'the captured sections still render');
   });
 });

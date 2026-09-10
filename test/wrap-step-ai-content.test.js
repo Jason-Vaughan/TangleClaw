@@ -1239,3 +1239,243 @@ describe('wrap-step ai-content — #672 file-settle completion (busy pane cannot
     assert.equal(res.status, 'done', 'a short pane must not re-block a file-settled step');
   });
 });
+
+// #1379 / #1389 — `optionalCaptureFields`: a step may WANT a field without
+// REQUIRING it. Four wrap-summary sections (Delta / Open threads / Decisions /
+// Pointers) rendered `_⚠ not captured_` on every wrap because nothing asked
+// the AI for them. The first fix asked, but by adding all four to
+// `captureFields` — the blocking list — so a model that omitted one block
+// failed the whole wrap. `wrap-direction.md` § Direction (2) forbids exactly
+// that ("never hard-fails the wrap for lacking a single engine's feature") and
+// (3) lets a gate block only where failure is silent or destructive. A missing
+// judgment section is neither: it renders a visible flag and loses nothing.
+describe('wrap-step ai-content — optionalCaptureFields (#1379)', () => {
+  // All seven blocks, as a cooperating AI writes them.
+  const FULL_BLOCK = [
+    '## Summary', 'Split the capture contract.', '',
+    '## NextSteps', '- ship it', '',
+    '## Learnings', '- none', '',
+    '## Delta', '- decided to split required from wanted', '',
+    '## OpenThreads', '- none', '',
+    '## Decisions', '- optional fields never gate', '',
+    '## Pointers', '- lib/wrap-steps/ai-content.js'
+  ].join('\n');
+
+  // The same session from a model that answered only what it was required to.
+  const CORE_ONLY_BLOCK = [
+    '## Summary', 'Split the capture contract.', '',
+    '## NextSteps', '- ship it', '',
+    '## Learnings', '- none'
+  ].join('\n');
+
+  describe('_resolveCaptureContract', () => {
+    it('unions both lists for parsing while gating on captureFields alone', () => {
+      const { required, all } = aic._resolveCaptureContract({
+        captureFields: ['summary'],
+        optionalCaptureFields: ['delta']
+      });
+      assert.deepEqual(required, ['summary']);
+      assert.deepEqual(all, ['summary', 'delta']);
+    });
+
+    it('deduplicates a field named in both lists, keeping it required', () => {
+      // A field in both is a declaration bug, but resolving it to "required
+      // twice in `all`" would make `_parseFields` match it twice and the
+      // second pass overwrite the first with an empty tail.
+      const { required, all } = aic._resolveCaptureContract({
+        captureFields: ['summary'],
+        optionalCaptureFields: ['summary', 'delta']
+      });
+      assert.deepEqual(required, ['summary']);
+      assert.deepEqual(all, ['summary', 'delta']);
+    });
+
+    it('tolerates either list being absent or malformed', () => {
+      assert.deepEqual(aic._resolveCaptureContract({}), { required: [], all: [] });
+      assert.deepEqual(aic._resolveCaptureContract({ captureFields: ['a'] }), { required: ['a'], all: ['a'] });
+      assert.deepEqual(aic._resolveCaptureContract({ optionalCaptureFields: ['b'] }), { required: [], all: ['b'] });
+      assert.deepEqual(aic._resolveCaptureContract({ captureFields: 'nope' }), { required: [], all: [] });
+    });
+  });
+
+  describe('tmux path', () => {
+    let saved;
+    beforeEach(() => {
+      saved = { ...aic._internal };
+      aic._internal.sendKeys = () => {};
+      aic._internal.sleep = async () => {};
+      aic._internal.detectIdle = () => ({ idle: true, lastOutputAge: 20000 });
+      aic._internal.capturePane = () => ({ lines: ['rendered, no hashes'] });
+      aic._internal.captureFileExists = () => false;
+      aic._internal.removeCaptureFile = () => {};
+    });
+    afterEach(() => { Object.assign(aic._internal, saved); });
+
+    const ctx = (overrides = {}) => ({
+      project: { name: 'proj', path: '/tmp/proj' },
+      session: { tmuxSession: 'sess' },
+      step: {
+        id: 'memory-update',
+        kind: 'ai-content',
+        prompt: 'write the block',
+        captureFields: ['summary', 'nextSteps', 'learnings'],
+        optionalCaptureFields: ['delta', 'openThreads', 'decisions', 'pointers'],
+        captureFile: '.tangleclaw/.wrap-summary.md',
+        ...overrides
+      },
+      previousResults: [],
+      staged: {}
+    });
+
+    it('captures the optional fields when the AI writes them', async () => {
+      aic._internal.readCaptureFile = () => FULL_BLOCK;
+      const c = ctx();
+      const res = await aic.run(c);
+
+      assert.equal(res.ok, true);
+      assert.equal(res.status, 'done');
+      assert.equal(res.output.parsedFields.delta, '- decided to split required from wanted');
+      assert.equal(res.output.parsedFields.decisions, '- optional fields never gate');
+      assert.equal(res.output.parsedFields.pointers, '- lib/wrap-steps/ai-content.js');
+      assert.equal(c.staged['memory-update'].parsedFields.openThreads, '- none');
+    });
+
+    it('COMPLETES when the AI writes only the three required blocks', async () => {
+      // The regression this whole change exists for: before the split this
+      // returned ok:false with four blockers and halted the wrap at a step
+      // marked `blocker: true`, so nothing after it ran — including `commit`.
+      aic._internal.readCaptureFile = () => CORE_ONLY_BLOCK;
+      const res = await aic.run(ctx());
+
+      assert.equal(res.ok, true, 'a missing judgment section must never halt the wrap');
+      assert.equal(res.status, 'done');
+      assert.deepEqual(res.blockers, []);
+      assert.equal(res.output.parsedFields.summary, 'Split the capture contract.');
+      // Absent, not empty-string: the renderer flags a section it has no key for.
+      assert.equal(res.output.parsedFields.delta, undefined);
+      assert.equal(res.output.parsedFields.pointers, undefined);
+    });
+
+    it('still BLOCKS when a required field is missing, naming only that field', async () => {
+      // The guard that must not soften. `## Learnings` omitted, all four
+      // optional blocks present — so a wrong fix that gated on the union, or
+      // on nothing, both fail here.
+      aic._internal.readCaptureFile = () => FULL_BLOCK.replace('## Learnings\n- none\n\n', '');
+      const res = await aic.run(ctx());
+
+      assert.equal(res.ok, false);
+      assert.equal(res.status, 'blocked');
+      assert.deepEqual(res.blockers, ['Required captureField "learnings" missing or empty in AI response']);
+    });
+
+    it('blocks on a required field that is present but EMPTY', async () => {
+      aic._internal.readCaptureFile = () => FULL_BLOCK.replace('Split the capture contract.', '');
+      const res = await aic.run(ctx());
+      assert.equal(res.ok, false);
+      assert.match(res.blockers[0], /"summary" missing or empty/);
+    });
+
+    it('a field in NEITHER list is unparseable AND contaminates the section before it', async () => {
+      // Why the union is load-bearing rather than cosmetic, and why "just
+      // shorten captureFields" — the obvious smaller fix — is worse than
+      // leaving #1379 alone. `_parseFields` matches a heading only against
+      // names it was handed; an unmatched `## Heading` line is not skipped, it
+      // is appended to whichever section is open. So dropping a field from
+      // both lists does not merely lose it: its heading and body get swallowed
+      // into the preceding declared section, which then renders that garbage
+      // into the wrap summary as if the AI had written it there.
+      aic._internal.readCaptureFile = () => FULL_BLOCK;
+      const res = await aic.run(ctx({ optionalCaptureFields: ['delta'] }));
+
+      assert.equal(res.ok, true);
+      assert.equal(res.output.parsedFields.decisions, undefined,
+        'undeclared heading is invisible to the parser');
+      assert.match(res.output.parsedFields.delta, /^- decided to split required from wanted/);
+      assert.match(res.output.parsedFields.delta, /## Decisions/,
+        'and its content bleeds into the last declared section rather than being dropped');
+    });
+
+    it('clears a stale captureFile for a step whose contract is ENTIRELY optional (#840)', async () => {
+      // The arm gate asks "does this step have a capture contract?". Keyed to
+      // `captureFields` alone it answers no here, and the run would inherit the
+      // previous session's file.
+      let existsCalls = 0;
+      const removed = [];
+      aic._internal.captureFileExists = () => { existsCalls += 1; return existsCalls === 1; };
+      aic._internal.removeCaptureFile = (_p, rel) => { removed.push(rel); };
+      aic._internal.readCaptureFile = () => '## Delta\n- something\n';
+
+      let removedBeforeSend = null;
+      aic._internal.sendKeys = () => { removedBeforeSend = removed.length; };
+
+      const res = await aic.run(ctx({ captureFields: [], optionalCaptureFields: ['delta'] }));
+
+      assert.equal(res.ok, true);
+      assert.equal(removedBeforeSend, 1, 'the stale file must be gone before the prompt goes out');
+    });
+  });
+
+  describe('gateway path — the same contract over ClawBridge', () => {
+    let saved;
+    beforeEach(() => {
+      saved = { ...aic._internal };
+      aic._internal.sleep = async () => {};
+      aic._internal.now = () => 0;
+      aic._internal.getBridgeContext = () => ({ localPort: 4567, token: 'tok', project: 'proj' });
+      aic._internal.listWrapRules = () => [];
+      aic._internal.bridgeClearCaptureFile = async () => (
+        { ok: false, content: null, bytes: null, consumed: false, path: null, status: 404, error: 'not found' });
+      aic._internal.bridgeSend = async () => ({ ok: true, accepted: true, state: 'running' });
+      aic._internal.bridgeGetStatus = async () => ({ ok: true, inputReady: true, state: 'running' });
+    });
+    afterEach(() => { Object.assign(aic._internal, saved); });
+
+    const ctx = (overrides = {}) => ({
+      project: { name: 'proj', path: '/tmp/proj' },
+      session: { sessionMode: 'webui', tmuxSession: null, engineId: 'openclaw:abc' },
+      step: {
+        id: 'memory-update',
+        kind: 'ai-content',
+        prompt: 'wrap please',
+        captureFields: ['summary', 'nextSteps', 'learnings'],
+        optionalCaptureFields: ['delta', 'openThreads', 'decisions', 'pointers'],
+        captureFile: '.tangleclaw/.wrap-summary.md',
+        ...overrides
+      },
+      previousResults: [],
+      staged: {},
+      options: {}
+    });
+
+    it('captures the optional fields when the AI writes them', async () => {
+      aic._internal.bridgeGetFile = async () => ({ ok: true, content: FULL_BLOCK, consumed: true });
+      const res = await aic._runGatewayCapture(ctx());
+
+      assert.equal(res.ok, true);
+      assert.equal(res.output.parsedFields.delta, '- decided to split required from wanted');
+      assert.equal(res.output.parsedFields.pointers, '- lib/wrap-steps/ai-content.js');
+    });
+
+    it('COMPLETES when the AI writes only the three required blocks', async () => {
+      // Same assertion as the tmux case on purpose. The two transports gate in
+      // separate functions, and a guard fixed on one side only is this repo's
+      // recurring shape — so each side is pinned against its own runner.
+      aic._internal.bridgeGetFile = async () => ({ ok: true, content: CORE_ONLY_BLOCK, consumed: true });
+      const res = await aic._runGatewayCapture(ctx());
+
+      assert.equal(res.ok, true);
+      assert.deepEqual(res.blockers, []);
+      assert.equal(res.output.parsedFields.delta, undefined);
+    });
+
+    it('still BLOCKS when a required field is missing', async () => {
+      aic._internal.bridgeGetFile = async () => (
+        { ok: true, content: FULL_BLOCK.replace('## NextSteps\n- ship it\n\n', ''), consumed: true });
+      const res = await aic._runGatewayCapture(ctx());
+
+      assert.equal(res.ok, false);
+      assert.equal(res.status, 'blocked');
+      assert.deepEqual(res.blockers, ['Required captureField "nextSteps" missing or empty in AI response']);
+    });
+  });
+});
