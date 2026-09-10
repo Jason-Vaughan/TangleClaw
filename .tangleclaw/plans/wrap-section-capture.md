@@ -134,11 +134,11 @@ The four prompt bullets are rewritten to the contract's definitions above. `5739
 
 ## Chunks
 
-- [ ] **C1 — `optionalCaptureFields` in the step handler.** `lib/wrap-steps/ai-content.js`: parse
+- [x] **C1 — `optionalCaptureFields` in the step handler.** `lib/wrap-steps/ai-content.js`: parse
   the union, validate the core, at **both** sites (tmux `:874`, gateway `:1158`). Module docstring
   updated. Tests: optional-absent completes; optional-present captured; core-absent still blocks;
   each asserted on both transports.
-- [ ] **C2 — Pipeline + continuity wiring.** `lib/wrap-default-pipeline.js`: move the four to
+- [x] **C2 — Pipeline + continuity wiring.** `lib/wrap-default-pipeline.js`: move the four to
   `optionalCaptureFields`, rewrite their prompt bullets to the contract definitions.
   `lib/wrap-steps/continuity-write.js`: `_resolveCapturedFields` reads the four and its JSDoc
   matches what it returns; the `sections{}` map passes them through. Tests: a `parsedFields`
@@ -150,7 +150,7 @@ The four prompt bullets are rewritten to the contract's definitions above. `5739
   the consumer against itself (Train 13 chunk 03 learning; [[feedback_measure_against_the_real_shape]]).
   At least one case drives real `ai-content` output — parsed from a real `.wrap-summary.md` body —
   into real `continuity-write`, so a spelling drift between the two fails rather than passes.
-- [ ] **C3 — Records.** `CHANGELOG.md` under `### Fixed` with a `Reported-by` credit; ADR 0002
+- [x] **C3 — Records.** `CHANGELOG.md` under `### Fixed` with a `Reported-by` credit; ADR 0002
   amended for the new step key.
 
 ## Boundary investigation

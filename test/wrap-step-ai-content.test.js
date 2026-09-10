@@ -1481,6 +1481,28 @@ describe('wrap-step ai-content — optionalCaptureFields (#1379)', () => {
       assert.deepEqual(res.blockers, ['Required captureField "nextSteps" missing or empty in AI response']);
     });
 
+    it('does NOT skip a step whose capture contract is entirely optional', async () => {
+      // The gateway's "no structured-capture contract → honest skip" branch is
+      // union-keyed now. Keyed on `captureFields` alone it would skip an
+      // optional-only step outright — the step would never prompt over the
+      // bridge, and Slice A would flag its sections with a reason that was not
+      // the real one.
+      aic._internal.bridgeGetFile = async () => (
+        { ok: true, content: '## Delta\n- something moved\n', consumed: true });
+      const res = await aic._runGatewayCapture(ctx({ captureFields: [], optionalCaptureFields: ['delta'] }));
+
+      assert.equal(res.ok, true);
+      assert.equal(res.status, 'done', 'an all-optional contract is a real contract over the bridge');
+      assert.equal(res.output.parsedFields.delta, '- something moved');
+    });
+
+    it('still honestly skips a step with NO capture contract at all', async () => {
+      // The branch's real purpose, pinned so widening it did not delete it.
+      const res = await aic._runGatewayCapture(ctx({ captureFields: [], optionalCaptureFields: [] }));
+      assert.equal(res.ok, true);
+      assert.equal(res.status, 'skipped');
+    });
+
     it('names the uncaptured optional fields on output, like the tmux path', async () => {
       aic._internal.bridgeGetFile = async () => ({ ok: true, content: CORE_ONLY_BLOCK, consumed: true });
       const res = await aic._runGatewayCapture(ctx());
