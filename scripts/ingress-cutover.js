@@ -536,22 +536,24 @@ function main() {
     // HTTPS site) into config where config lacks them, so the regenerated file
     // re-emits the SAME hash + sites instead of losing them. Dry-run reports
     // without mutating config.
+    // Warned on BOTH paths, and before either writes. The dry run is where an
+    // operator decides whether to go ahead, so a warning only the real run
+    // prints arrives after the decision it should have informed. Probed against
+    // a throwaway config so nothing is mutated on the dry-run path.
+    if (caddy.computeCaddyfileAdoption({}, ctx.existingCaddyfileText || '').accessLogUnreadable) {
+      process.stdout.write(
+        'WARNING: the live Caddyfile has a `log` block this tool cannot reproduce, so it will '
+        + 'NOT survive a cutover. Reproducible shape: one per-site `log { output file '
+        + '<absolute path> }` and nothing else. Back the block up and re-add it after, or set '
+        + '`caddyAccessLogPath` in config to a plain destination.\n'
+      );
+    }
     if (dryRun) {
       if (applyDryRunAdoptionPreview(config, ctx.existingCaddyfileText)) {
         process.stdout.write('NOTE: would ADOPT the live Caddyfile\'s basic_auth credential / ingress shapes into config (#397/#434 durability) — plan below previews the post-adoption state\n');
       }
     } else {
       const adoption = caddy.adoptCredentialIntoConfig({ requireCaddyMode: false });
-      if (adoption.accessLogUnreadable) {
-        // Said before the write, because afterwards the log is already gone and
-        // the file that explained it has been replaced.
-        process.stdout.write(
-          'WARNING: the live Caddyfile has a `log` block this tool cannot reproduce, so it will '
-          + 'NOT survive this cutover. Reproducible shape: one per-site `log { output file '
-          + '<absolute path> }` and nothing else. Back the block up and re-add it after, or set '
-          + '`caddyAccessLogPath` in config to a plain destination.\n'
-        );
-      }
       if (adoption.changed) {
         const parts = caddy.describeAdoption(adoption);
         process.stdout.write(`Adopted live Caddyfile state into config: ${parts.join(', ')}.\n`);

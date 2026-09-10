@@ -261,8 +261,9 @@ the generator reproduces the live file in full — see the parity caveat below.
 >
 > **AMENDED 2026-09-10 — the generator CAN now emit a log. The decision above reserved its
 > re-argument to the operator, who has since DELEGATED the #846 decision to the builder and
-> coordinator, citing a lack of context on Caddy generator drift; the narrow departure below is
-> that consensus, not an assumption about what they would have said.** `buildCaddyfileContent` gained an `accessLogPath`
+> coordinator, citing a lack of context on Caddy generator drift. The narrow departure below is the
+> builder's position under that delegation; the coordinator has not yet confirmed it, so it is one
+> party of two — not an assumption about the operator, and not yet a ratified consensus.** `buildCaddyfileContent` gained an `accessLogPath`
 > option and `config.caddyAccessLogPath` (#846, Train 16 Chunk 01). This is a departure
 > from the decision recorded above, and it is written here rather than quietly replacing
 > it, because that decision reserved the re-argument to the operator.

@@ -163,7 +163,8 @@ the coordinator rostered it. Whichever way the ruling lands, it belongs on the i
 
 ## Verification
 
-Suite baseline before this chunk: 8580 pass / 0 fail / 1 skipped on `269cdba0`.
+Suite green on `269cdba0` before this chunk, and green after it — the totals live in the
+evidence store (`prawduct-hook test-status`), never copied into prose where they go stale.
 
 Mutation checks this chunk owes, per the project's recurring family-enumeration defect: flip the
 `accessLogPath` argument **at the cutover call site** and watch a test go red — a test of

@@ -326,6 +326,31 @@ describe('caddy', () => {
         assert.notEqual(r2.accessLogUnreadable, true);
       });
 
+      it('refuses an INDENTED global options block too', () => {
+        // The scope check keys on a brace-only line; requiring column 0 would let
+        // an indented global block read as a site and re-open the confusion the
+        // scope tracking exists to prevent. `caddy fmt` normalises this, so the
+        // shape is unusual — which is exactly why nothing else would catch it.
+        const indented = '\t{\n\t\tlog {\n\t\t\toutput file /g.log\n\t\t}\n\t}\n\n'
+          + 'localhost {\n\treverse_proxy 127.0.0.1:3102\n}\n';
+        assert.equal(caddy.extractAccessLogPath(indented), null);
+      });
+
+      it('names a decline in the adoption log payload, without it being hand-added', () => {
+        // The hand-kept payload had already forgotten a member: `accessLogPath`
+        // was added to it in one commit and `accessLogUnreadable` was born
+        // missing from it in the same commit. Deriving from the result's keys is
+        // what stops the next shape being forgotten too.
+        const declined = caddy.adoptionLogPayload({ adopted: false, changed: false, accessLogUnreadable: true });
+        assert.equal(declined.accessLogUnreadable, true, 'a decline must reach the log payload');
+        const adopted = caddy.adoptionLogPayload({
+          adopted: true, user: 'jason', changed: true, tailnetHost: 'box.tail1234.ts.net', accessLogPath: '/l.log'
+        });
+        assert.deepEqual(adopted, {
+          credential: true, user: 'jason', tailnetHost: 'box.tail1234.ts.net', accessLogPath: '/l.log'
+        }, 'call-describing keys stay out; every shape key comes through');
+      });
+
       it('refuses to recover an ambiguous or unemittable path', () => {
         assert.equal(caddy.extractAccessLogPath('a {\n\tlog {\n\t\toutput file /a.log\n\t}\n}\n'
           + 'b {\n\tlog {\n\t\toutput file /b.log\n\t}\n}\n'), null,
