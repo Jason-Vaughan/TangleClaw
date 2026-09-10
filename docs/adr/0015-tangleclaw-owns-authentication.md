@@ -117,6 +117,7 @@ good reverse proxy and this ADR does not dispute that — it disputes only that 
 3. **What happens to `authEnabled`?** Under ADR 0009 the unprotected state is a deliberate opt-out.
    That survives, but it stops meaning "no Caddy gate" and starts meaning "no TangleClaw session
    required" — which is a clearer thing to explain in the wizard than the current coupling.
-4. **Ordering against Train 16 Chunk 02.** #804 derives the "a credential is mandatory here"
-   predicate from three call sites. This ADR changes what that predicate means, so Chunk 02 should
-   follow it rather than precede it.
+4. **Ordering against #804.** That issue derives the "a credential is mandatory here" predicate
+   from three call sites, and this ADR changes what the predicate *means*, so #804 should follow it
+   rather than precede it. (Named by issue deliberately: it sits in a Train 16 chunk whose number
+   moves, and `train-16-chunk-01.md` has an unrelated internal C2.)

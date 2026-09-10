@@ -544,6 +544,15 @@ All notable changes to TangleClaw are documented in this file.
   Reconstructed under ADR 0014 from #1067 rather than from the submitted patch, which converted one
   of the three. Reported by **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in PR
   #1357; their bytes were not merged, per `CONTRIBUTING.md`.
+- **ADR 0015 — TangleClaw owns authentication (proposed, not built).** Records the decision to move
+  the login out of Caddy `basic_auth` and into TangleClaw on scrypt sessions, using the stdlib
+  `hashPassword`/`verifyPassword` pair already shipped at `lib/projects.js`. Not a reversal of the
+  2026-06-24 Path A choice: that decision's own rationale named multi-user as the condition for
+  revisiting it, and #1149 met the condition. One shared credential in a generated Caddyfile has no
+  principal to attach a membership, a role, or an audit row to — and TangleClaw launches shells, so
+  a system that cannot attribute one to a person is a shared account rather than a multi-user one.
+  ADR 0004's status is amended to point at it. The build's security cost is argued in the ADR rather
+  than around it.
 
 ## [5.22.0] - 2026-09-07
 
