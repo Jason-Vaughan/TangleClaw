@@ -1279,9 +1279,12 @@ describe('wrap-step ai-content — optionalCaptureFields (#1379)', () => {
     });
 
     it('deduplicates a field named in both lists, keeping it required', () => {
-      // A field in both is a declaration bug, but resolving it to "required
-      // twice in `all`" would make `_parseFields` match it twice and the
-      // second pass overwrite the first with an empty tail.
+      // A field in both lists is a declaration bug. `_parseFields` matches with
+      // `.find()`, so a duplicate would not actually double-parse — the reason
+      // to collapse it is that `all` is handed onward as a set of names: it
+      // feeds `wrapShape()`'s union (a repeated name there is published to the
+      // wrap payload) and `_uncapturedOptional`, which would otherwise report
+      // the same field twice.
       const { required, all } = aic._resolveCaptureContract({
         captureFields: ['summary'],
         optionalCaptureFields: ['summary', 'delta']
@@ -1476,6 +1479,76 @@ describe('wrap-step ai-content — optionalCaptureFields (#1379)', () => {
       assert.equal(res.ok, false);
       assert.equal(res.status, 'blocked');
       assert.deepEqual(res.blockers, ['Required captureField "nextSteps" missing or empty in AI response']);
+    });
+
+    it('names the uncaptured optional fields on output, like the tmux path', async () => {
+      aic._internal.bridgeGetFile = async () => ({ ok: true, content: CORE_ONLY_BLOCK, consumed: true });
+      const res = await aic._runGatewayCapture(ctx());
+      assert.deepEqual(res.output.uncapturedOptional, ['delta', 'openThreads', 'decisions', 'pointers']);
+    });
+  });
+
+  describe('reporting the gap', () => {
+    // An absent optional section is now a NORMAL outcome, which removes the
+    // only thing that distinguished it from a broken one. #1379 ran on every
+    // wrap and every engine unnoticed; the server has to say when a wanted
+    // block did not arrive, or the next wiring break looks identical to a
+    // model exercising judgment.
+    let saved;
+    beforeEach(() => {
+      saved = { ...aic._internal };
+      aic._internal.sendKeys = () => {};
+      aic._internal.sleep = async () => {};
+      aic._internal.detectIdle = () => ({ idle: true, lastOutputAge: 20000 });
+      aic._internal.capturePane = () => ({ lines: ['rendered'] });
+      aic._internal.captureFileExists = () => false;
+      aic._internal.removeCaptureFile = () => {};
+    });
+    afterEach(() => { Object.assign(aic._internal, saved); });
+
+    const ctx = () => ({
+      project: { name: 'proj', path: '/tmp/proj' },
+      session: { tmuxSession: 'sess' },
+      step: {
+        id: 'memory-update',
+        kind: 'ai-content',
+        prompt: 'write the block',
+        captureFields: ['summary', 'nextSteps', 'learnings'],
+        optionalCaptureFields: ['delta', 'openThreads', 'decisions', 'pointers'],
+        captureFile: '.tangleclaw/.wrap-summary.md'
+      },
+      previousResults: [],
+      staged: {}
+    });
+
+    it('names every optional field that did not arrive', async () => {
+      aic._internal.readCaptureFile = () => CORE_ONLY_BLOCK;
+      const res = await aic.run(ctx());
+      assert.deepEqual(res.output.uncapturedOptional, ['delta', 'openThreads', 'decisions', 'pointers']);
+    });
+
+    it('names only the ones missing when the AI supplied some', async () => {
+      // The partial case is the one a count cannot express — "captured 5
+      // fields" says nothing about WHICH two are absent.
+      const partial = CORE_ONLY_BLOCK + '\n\n## Delta\n- something moved\n\n## Pointers\n- a file';
+      aic._internal.readCaptureFile = () => partial;
+      const res = await aic.run(ctx());
+      assert.deepEqual(res.output.uncapturedOptional, ['openThreads', 'decisions']);
+    });
+
+    it('reports an empty list when everything was captured', async () => {
+      aic._internal.readCaptureFile = () => FULL_BLOCK;
+      const res = await aic.run(ctx());
+      assert.deepEqual(res.output.uncapturedOptional, []);
+    });
+
+    it('an optional field present but WHITESPACE-ONLY counts as uncaptured', async () => {
+      // `_parseFields` trims, so a heading with a blank body yields '' — which
+      // must read as absent, not as content, or the renderer prints an empty
+      // section instead of the honest flag.
+      aic._internal.readCaptureFile = () => FULL_BLOCK.replace('- decided to split required from wanted', '   ');
+      const res = await aic.run(ctx());
+      assert.deepEqual(res.output.uncapturedOptional, ['delta']);
     });
   });
 });

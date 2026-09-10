@@ -25,6 +25,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const wrapDefaultPipeline = require('../lib/wrap-default-pipeline');
+const aiContent = require('../lib/wrap-steps/ai-content');
 
 const MIN_PROMPT_CHARS = 200;
 
@@ -120,7 +121,9 @@ describe('wrap pipeline ai-content prompts', () => {
     const aiSteps = wrapDefaultPipeline.steps().filter((s) => s.kind === 'ai-content');
     assert.ok(aiSteps.length > 0, 'the pipeline should declare ai-content steps');
     for (const step of aiSteps) {
-      const hasCaptureFields = Array.isArray(step.captureFields) && step.captureFields.length > 0;
+      // Any capture contract counts, required or optional — a step that captures
+      // only optional fields still has a parseable protocol.
+      const hasCaptureFields = aiContent._hasCaptureContract(step);
       const hasResultTail = /## Result/.test(step.prompt);
       assert.ok(
         hasCaptureFields || hasResultTail,

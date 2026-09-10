@@ -34,6 +34,46 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-10 — #1379: the four wrap judgment sections are wanted, not required
+
+<!-- prawduct: type=fix | scope=wrap-section-capture -->
+
+`Delta`, `Open threads`, `Decisions` and `Pointers` rendered `_⚠ not captured_` in every
+per-session wrap summary ever written, on every engine. Reported by GURULifeline with a correct
+mechanism and six reproducing files. The renderer, the honest-flag and CC-6's per-project section
+selection were all built; nothing ever asked the AI for those four.
+
+#1389 closed it by adding all four to `memory-update`'s `captureFields` — the blocking list — so
+a model that omitted any of seven blocks failed the whole wrap. That departs from
+`wrap-direction.md` § Direction (2), "never hard-fails the wrap for lacking a single engine's
+feature", and (3), which permits a blocking gate only where failure is silent or destructive. A
+judgment section the AI skipped is neither.
+
+`ai-content` steps gain `optionalCaptureFields`: unioned with `captureFields` before parsing,
+staged identically, never able to gate. The union is the load-bearing half — `_parseFields`
+matches a heading only against names it was handed, and an unmatched heading is appended to
+whichever section is still open, so merely shortening the required list would have lost the
+sections AND bled their text into the section above.
+
+`Delta` stays AI-authored: `continuity-contract.md` defines it as "decisions + why ·
+shipped/merged · deferred", not a file list. A mechanical `Delta` was proposed and rejected on
+that reading.
+
+**What the Critic caught, and it was the interesting part.** All three reviewers independently
+found the same class: the change centralized the capture contract but converted only the sites
+inside `ai-content.js`. `lib/wrap-pipeline.js:_planAiContentPrompts` still asked
+`captureFields.length > 0`, so an optional-only step would prompt over the gateway while being
+absent from the operator's `step N of M` denominator — and `test/wrap-default-pipeline.test.js`'s
+"declares captureFields ⇒ declares captureFile" guard *skipped* such a step, letting #1379's exact
+silent shape walk past the guard built for it. Closed by exporting `_hasCaptureContract` and
+routing every capability-deciding site through it. The plan's boundary section had claimed every
+consumer was enumerated; it had enumerated the descriptive readers and never grepped for the
+deciding ones.
+
+Also from the review: an absent optional field now reports itself
+(`output.uncapturedOptional` + a log line), because making the gap normal removed the only signal
+distinguishing it from a broken wiring — which is how #1379 survived unnoticed in the first place.
+
 ## 2026-09-08 — #1383: the import banner's Ignore button had never worked
 
 <!-- prawduct: type=fix | scope=ignore-1383 -->

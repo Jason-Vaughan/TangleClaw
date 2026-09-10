@@ -153,6 +153,40 @@ The four prompt bullets are rewritten to the contract's definitions above. `5739
 - [ ] **C3 — Records.** `CHANGELOG.md` under `### Fixed` with a `Reported-by` credit; ADR 0002
   amended for the new step key.
 
+## Boundary investigation
+
+`optionalCaptureFields` adds a key to the `ai-content` step spec — a contract surface. Every
+consumer was enumerated and checked rather than reasoned about:
+
+- **`wrapShape().captureFields`** (`lib/wrap-default-pipeline.js`) — the only path by which capture
+  field names leave the pipeline. Its consumers are `lib/sessions.js:2359` (the wrap HTTP payload
+  and `autoCompleteWrap`) and `server.js:4860`, which forwards it. Now reports the union, so the
+  payload publishes the same seven names `origin/main` already does — no consumer sees a change.
+- **`lib/wrap-pipeline.js:_planAiContentPrompts`** — the webui prompt roster. **This one was
+  missed on the first pass, and all three Critic reviewers found it independently.** It asked
+  "does this step capture?" as `captureFields.length > 0`, which became half the contract the
+  moment a step could declare only optional fields: the handler would prompt such a step while
+  the roster left it out of the operator's `step N of M` denominator. Closed by construction —
+  `_hasCaptureContract` is exported from the handler and the roster calls it, so one definition
+  serves both. Two pipeline guards had the same shape and were converted with it
+  (`test/wrap-default-pipeline.test.js`'s captureFile pin, which would have SKIPPED an
+  optional-only step, and `test/wrap-pipeline-prompts.test.js`'s parseable-protocol check).
+- **`lib/wrap-step-overrides.js`** — `resolveStep` spreads the base step, so the new key survives
+  resolution; the allow-list is closed, so a project override cannot reach it. Both confirmed by
+  invoking `resolveStep` directly, with and without an override.
+- **`lib/wrap-steps/index-describe.js`** — the other caller of `aiContent.run`. It delegates with
+  no capture fields at all, so `_resolveCaptureContract` returns two empty lists and it stays on
+  the ≥20-char response path, unchanged.
+- **`lib/skills.js`** — the `wrapShapeFromTemplate` shim ADR 0002 describes no longer exists
+  (deleted with the methodology layer, #538), so the template-side union it documents has no
+  live code. The ADR text is historical, not a surface to update.
+
+One consumer required a change (`_planAiContentPrompts`), and the first version of this section
+claimed none did. The claim was the defect: I enumerated the consumers of `wrapShape()` — the
+descriptive path — and never grepped `\.captureFields` for sites deciding a *capability*. The
+grep is now the check, and `_hasCaptureContract` is what those sites call, so the next one is a
+compile-time question rather than a memory test.
+
 ## Done when
 
 Suite green, `/prawduct:critic` run with blocking findings resolved, all three Status boxes ticked.

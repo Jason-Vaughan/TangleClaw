@@ -4052,4 +4052,38 @@ describe('_planAiContentPrompts — the content-prompt denominator (#627)', () =
     const plan = wrapPipeline._planAiContentPrompts(baseSteps(), null, {}, null);
     assert.deepEqual(plan, ['changelog-update', 'learnings-capture', 'memory-update']);
   });
+
+  it('a webui step whose capture contract is ALL optional is still counted (#1379)', () => {
+    // The roster and `_runGatewayCapture` must answer "does this step capture?"
+    // the same way. The handler asks `_hasCaptureContract`, which counts
+    // optional fields; a roster asking `captureFields.length > 0` would drop
+    // this step from the denominator while the wrap went on prompting it, so
+    // the operator's "step N of M" and every later ordinal would be short by
+    // one. Driven with a synthetic step because the shipped pipeline has no
+    // optional-only member yet — which is exactly why the drift would ship
+    // unnoticed.
+    const steps = baseSteps().concat([{
+      id: 'judgment-only',
+      kind: 'ai-content',
+      prompt: 'write the judgment blocks',
+      optionalCaptureFields: ['delta'],
+      captureFile: '.tangleclaw/.wrap-summary.md'
+    }]);
+    const plan = wrapPipeline._planAiContentPrompts(steps, null, {}, { sessionMode: 'webui' });
+    assert.deepEqual(plan, ['memory-update', 'judgment-only']);
+  });
+
+  it('a webui step with capture fields but NO captureFile is still excluded', () => {
+    // The other half of the predicate, pinned so widening it to optional
+    // fields did not quietly drop the captureFile requirement: over the bridge
+    // there is no file to read back, so such a step honestly skips.
+    const steps = baseSteps().concat([{
+      id: 'no-file',
+      kind: 'ai-content',
+      prompt: 'write something',
+      optionalCaptureFields: ['delta']
+    }]);
+    const plan = wrapPipeline._planAiContentPrompts(steps, null, {}, { sessionMode: 'webui' });
+    assert.deepEqual(plan, ['memory-update']);
+  });
 });

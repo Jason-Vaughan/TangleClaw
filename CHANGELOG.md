@@ -34,6 +34,12 @@ All notable changes to TangleClaw are documented in this file.
   · deferred", not a file list. The git-derived file set is the `files:` frontmatter stamp and the
   index's `## Map`, which are separate artifacts.
 
+  **An absent optional section now says so.** `output.uncapturedOptional` names the wanted fields
+  that did not arrive, with a matching log line at the capture site. Making the gap normal removed
+  the only thing separating "the model omitted the block" from "the wiring broke again" — and the
+  wiring being broken, silently, on every wrap and every engine is precisely how #1379 survived
+  until an outside user reported it.
+
   Reported-by: GURULifeline
 
 - **The port-lease import banner's Ignore button had never worked, on any install (#1383).** Clicking
