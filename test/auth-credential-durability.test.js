@@ -384,7 +384,11 @@ describe('auth credential durability (#397 / 2026-07-03 lockout)', () => {
     it('skips a tailnet host equal to publicDomain (that site is the ACME block\'s job)', () => {
       const config = {
         publicDomain: TAILNET_HOST,
-        basicAuthUser: 'ops', basicAuthHash: HASH_B, caddyRemoteHttp: true
+        basicAuthUser: 'ops', basicAuthHash: HASH_B, caddyRemoteHttp: true,
+        // The fixture models the real live file, which carries an access log.
+        // Preset so this test still measures the tailnet/publicDomain rule
+        // alone rather than incidentally adopting the log (#846).
+        caddyAccessLogPath: '/already/set.log'
       };
       const result = caddy.computeCaddyfileAdoption(config, liveTailnetCaddyfile());
       assert.equal(result.changed, false);
@@ -514,7 +518,8 @@ describe('auth credential durability (#397 / 2026-07-03 lockout)', () => {
       setConfig({
         ingressMode: 'caddy', authEnabled: true,
         basicAuthUser: 'jason', basicAuthHash: HASH_A,
-        caddyRemoteHttp: true, caddyTailnetHost: 'other.tail0000.ts.net'
+        caddyRemoteHttp: true, caddyTailnetHost: 'other.tail0000.ts.net',
+        caddyAccessLogPath: '/already/set.log'
       });
       fs.writeFileSync(caddy.getCaddyfilePath(), liveTailnetCaddyfile());
 
@@ -527,7 +532,8 @@ describe('auth credential durability (#397 / 2026-07-03 lockout)', () => {
       setConfig({
         ingressMode: 'caddy', authEnabled: true,
         basicAuthUser: 'jason', basicAuthHash: HASH_A,
-        caddyRemoteHttp: true, publicDomain: TAILNET_HOST
+        caddyRemoteHttp: true, publicDomain: TAILNET_HOST,
+        caddyAccessLogPath: '/already/set.log'
       });
       fs.writeFileSync(caddy.getCaddyfilePath(), liveTailnetCaddyfile());
 
@@ -618,7 +624,10 @@ describe('extractGeneratedCaddyfileOptions — reading a generated file back int
       certPath: '/c/cert.pem',
       keyPath: '/c/key.pem',
       httpsPort: 9443,
-      httpPort: 9080
+      httpPort: 9080,
+      // #846 — recovered too, so the byte round-trip stays total. null is the
+      // value for "this file carries no access log", not a recovery failure.
+      accessLogPath: null
     });
   });
 

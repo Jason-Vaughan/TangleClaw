@@ -319,6 +319,29 @@ describe('ingress-cutover', () => {
       assert.match(plan.caddyfile.content, /https_port 8443/);
       assert.match(plan.caddyfile.content, /tls \/c\/cert\.pem \/c\/key\.pem/);
     });
+    // #846 — the CALL SITE is the thing under test, not `buildCaddyfileContent`.
+    // The generator gaining an `accessLogPath` option changes nothing until the
+    // cutover actually passes it, and a unit test of the generator stays green
+    // while the caller hands it null — which is how the live tailnet site lost
+    // its audit trail in the first place. This test reddens when the argument at
+    // `scripts/ingress-cutover.js` is dropped, which a generator test cannot do.
+    it('carries config.caddyAccessLogPath into the generated Caddyfile (#846)', () => {
+      const logged = cutover.planCutover('caddy', makeCtx({
+        config: { caddyAccessLogPath: '/Users/test/.tangleclaw/logs/caddy.access.log' }
+      }));
+      assert.match(logged.caddyfile.content, /^\tlog \{$/m,
+        'the cutover must pass the configured log path, not drop it');
+      assert.match(logged.caddyfile.content,
+        /^\t\toutput file \/Users\/test\/\.tangleclaw\/logs\/caddy\.access\.log$/m);
+    });
+
+    it('emits no log block when no path is configured (#846)', () => {
+      // The paired negative: without it the assertion above would also pass on a
+      // call site that hardcoded a path, which is a different bug with the same
+      // green test.
+      assert.ok(!plan.caddyfile.content.includes('log {'));
+    });
+
     it('binds ttyd to the Unix socket via --interface', () => {
       const ttyd = plan.plists.find((f) => f.path.endsWith('com.tangleclaw.ttyd.plist'));
       assert.match(ttyd.content, /<string>--interface<\/string>/);

@@ -190,6 +190,106 @@ describe('caddy', () => {
       });
     });
 
+    // #846 — the live tailnet site carried `log { output file … }` that the
+    // generator could not emit under ANY option, so a cutover regenerated a file
+    // with no logging at all and silently ended the remote-facing site's audit
+    // trail. Same failure shape as the h1 pin (#845): a hand edit the generator
+    // cannot reproduce.
+    describe('access log (#846)', () => {
+      const HASH = '$2a$14$abcdefghijklmnopqrstuv';
+      const gated = { ...opts, basicAuthUser: 'tcadmin', basicAuthHash: HASH };
+      const LOG = '/Users/x/.tangleclaw/logs/caddy.access.log';
+
+      it('emits a log block on every site that reaches the upstream', () => {
+        const out = caddy.buildCaddyfileContent({
+          ...gated, accessLogPath: LOG, tailnetHost: 'box.tail1234.ts.net', remoteHttpCatchAll: true
+        });
+        // localhost + tailnet + http:// catch-all = three proxying sites.
+        assert.equal((out.match(/^\t\toutput file /gm) || []).length, 3,
+          'every proxying site must carry the audit trail — one with a hole is not an audit trail');
+        assert.match(out, /^\tlog \{$/m);
+      });
+
+      it('does NOT log the pure redirect block', () => {
+        // The redirect never reaches the upstream, so it answers no question the
+        // access log exists to answer. Asserted on the block itself, not a count,
+        // so adding a fourth proxying site later cannot make this pass vacuously.
+        const out = caddy.buildCaddyfileContent({
+          ...gated, accessLogPath: LOG, tailnetHost: 'box.tail1234.ts.net'
+        });
+        const redirect = out.slice(out.indexOf('http://box.tail1234.ts.net {'));
+        const blockEnd = redirect.indexOf('\n}');
+        assert.ok(!redirect.slice(0, blockEnd).includes('log {'),
+          'a block that only redirects must not open a log');
+      });
+
+      it('emits nothing when no path is configured', () => {
+        const out = caddy.buildCaddyfileContent(gated);
+        assert.ok(!out.includes('log {'), 'absent config must emit no log block');
+      });
+
+      it('refuses a path that could restructure the Caddyfile, or that is relative', () => {
+        // Written verbatim inside a directive, and it arrives by ADOPTION from a
+        // hand-edited file — nothing upstream vouches for its shape. A relative
+        // path is refused separately: Caddy would resolve it against its own
+        // working directory, so the operator would believe an audit trail was
+        // being kept somewhere nobody chose.
+        for (const hostile of [
+          '/var/log/a b.log', '/var/log/x"y.log', '/var/log/e{vil}.log',
+          '/var/log/a#b.log', '/var/log/back\\slash.log', 'relative/path.log', 'caddy.access.log'
+        ]) {
+          assert.throws(
+            () => caddy.buildCaddyfileContent({ ...gated, accessLogPath: hostile }),
+            /accessLogPath must be an absolute path/,
+            `must refuse ${JSON.stringify(hostile)}`
+          );
+        }
+      });
+
+      it('round-trips: what is emitted is recovered, byte for byte', () => {
+        // `lib/admin-credential.js` proves recovery is TOTAL by rebuilding from
+        // the extracted options and comparing bytes. An option the extractor
+        // cannot read back turns adding a credential into a refusal for every
+        // install that has an access log — so emit and recover must stay paired.
+        const out = caddy.buildCaddyfileContent({ ...opts, accessLogPath: LOG });
+        assert.equal(caddy.extractAccessLogPath(out), LOG);
+        const derived = caddy.extractGeneratedCaddyfileOptions(out);
+        assert.equal(derived.accessLogPath, LOG, 'the recoverer must model the option');
+        assert.equal(caddy.buildCaddyfileContent(derived), out, 'rebuild must be byte-identical');
+      });
+
+      it('round-trips a file with NO log the same way', () => {
+        const out = caddy.buildCaddyfileContent(opts);
+        assert.equal(caddy.extractAccessLogPath(out), null);
+        const derived = caddy.extractGeneratedCaddyfileOptions(out);
+        assert.equal(derived.accessLogPath, null, 'absence is a value, not a recovery failure');
+        assert.equal(caddy.buildCaddyfileContent(derived), out);
+      });
+
+      it('refuses to recover an ambiguous or unemittable path', () => {
+        assert.equal(caddy.extractAccessLogPath('a {\n\tlog {\n\t\toutput file /a.log\n\t}\n}\n'
+          + 'b {\n\tlog {\n\t\toutput file /b.log\n\t}\n}\n'), null,
+        'two destinations cannot collapse into one config value');
+        assert.equal(caddy.extractAccessLogPath('# output file /commented.log\n'), null,
+          'a documented example is not configuration');
+        assert.equal(caddy.extractAccessLogPath('a {\n\t\toutput file relative.log\n}\n'), null,
+          'a path the generator would refuse to write must not be adopted');
+      });
+
+      it('adopts the live file\'s log path into config, and never overwrites one', () => {
+        const live = 'x {\n\tlog {\n\t\toutput file ' + LOG + '\n\t}\n\treverse_proxy 127.0.0.1:3102\n}\n';
+        const fresh = {};
+        const r = caddy.computeCaddyfileAdoption(fresh, live);
+        assert.equal(fresh.caddyAccessLogPath, LOG);
+        assert.equal(r.accessLogPath, LOG);
+        assert.equal(r.changed, true);
+
+        const held = { caddyAccessLogPath: '/already/chosen.log' };
+        caddy.computeCaddyfileAdoption(held, live);
+        assert.equal(held.caddyAccessLogPath, '/already/chosen.log', 'config is never overwritten');
+      });
+    });
+
     // Everything interpolated into a site block is shape-checked, not just the
     // hostname. basicAuthUser arrives from the UNAUTHENTICATED
     // POST /api/setup/complete, which only trims it — and setup now writes AND

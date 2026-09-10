@@ -154,6 +154,10 @@ function planCutover(target, ctx) {
       // #434 — preserve the tailnet HTTPS site + http→https redirect (adopted
       // from the live file or set explicitly). Generator enforces gate-required.
       tailnetHost: config.caddyTailnetHost || null,
+      // #846 — preserve the access log (adopted from the live file or set
+      // explicitly). Without this the cutover regenerated a file with no `log`
+      // block at all, silently ending the remote-facing site's audit trail.
+      accessLogPath: config.caddyAccessLogPath || null,
       // #863 — the machine's own mDNS name, so the dashboard answers to
       // something other than `localhost`. Without it the generated Caddyfile has
       // exactly one site and every other address fails the TLS handshake, which

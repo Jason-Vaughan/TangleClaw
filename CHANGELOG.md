@@ -4,6 +4,39 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **A cutover no longer ends the access logging an operator set up by hand (#846).**
+  `buildCaddyfileContent` gained an `accessLogPath` option and the config gained
+  `caddyAccessLogPath`, so a generated Caddyfile can carry `log { output file … }` on every
+  site that reaches the upstream. Before this the generator emitted no log block under any
+  option, so regenerating a Caddyfile that carried one by hand silently ended the only access
+  logging on the remote-facing site.
+
+  The key defaults to `null` — a fresh install still emits nothing. It is populated only by
+  **adoption from a live Caddyfile that already carries a log**, the same durability pattern
+  #397 used for the `basic_auth` credential and #434 for the tailnet site: read the shape out
+  of the file, persist it to config, and re-emit it on the next cutover. Verified against the
+  operator's own live Caddyfile, which round-trips its
+  `~/.tangleclaw/logs/caddy.access.log` destination where a cutover previously emitted no log
+  block at all.
+
+  Emit and recover are pinned together on purpose. `lib/admin-credential.js` proves recovery
+  is total by rebuilding from the extracted options and comparing bytes, so an option the
+  extractor could not read back would turn adding a credential into a refusal on every install
+  that has a log. `extractGeneratedCaddyfileOptions` therefore recovers it too, and treats its
+  absence as a value rather than a failure. The path is refused unless absolute and free of
+  Caddyfile structural characters — it arrives by adoption from a hand-edited file, so nothing
+  upstream vouches for its shape, and a relative path would put the audit trail wherever
+  Caddy's working directory happens to be.
+
+  **This departs from a decision recorded in `deploy/INGRESS.md` on 2026-08-03** that access
+  logging is deliberately not generator-owned. That decision reserved its own re-argument to
+  the operator, so it is amended in place rather than replaced, and the half it refused —
+  whether the generator should own logging at all, and default it on for remote-reachable
+  sites — is still open. Worth noting for whoever reads #846 next: the decision lives only in
+  `INGRESS.md`; the issue is still OPEN with no comment recording it, so it reads from GitHub
+  as an unfixed bug.
+
 ### Fixed
 - **Four of the eight wrap-summary sections were never captured, on every wrap and every engine
   (#1379, #1389).** `Delta`, `Open threads`, `Decisions` and `Pointers` rendered `_⚠ not captured_`
