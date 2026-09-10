@@ -88,7 +88,7 @@ reading both.
 
 ## Chunks
 
-### Chunk 01: The generator can emit, recover and adopt an access log
+### Chunk C1: The generator can emit, recover and adopt an access log
 
 - [x] **C1 — The generator can emit, recover and adopt an access log.** Follows the pattern #397
       used for the credential and #434 for the tailnet host, at every site that models the
@@ -117,7 +117,7 @@ reading both.
       re-emitted a log stripped of the rest. That is #846's own failure shape reintroduced inside
       its fix. The extractor now walks the block and refuses anything it cannot reproduce.
 
-### Chunk 02: The live file is diffed against what the generator would write
+### Chunk C2: The live file is diffed against what the generator would write
 
 - [ ] **C2 — The live file is diffed against what the generator would write.** NOT STARTED —
       gated on the decision above.

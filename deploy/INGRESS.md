@@ -137,6 +137,22 @@ The `basic_auth` credential is canonical in **config** (`basicAuthUser` +
   Basic-Auth-gated plain-HTTP catch-all for WireGuard/Tailscale remote access,
   plus `auto_https disable_redirects`. The generator refuses to emit the
   catch-all without a credential — an ungated one would be an open door.
+- **Tailnet HTTPS site** — `caddyTailnetHost` (#434, adopted from a live file
+  carrying exactly one tls-bearing FQDN site that isn't `publicDomain`). Gated
+  for the same reason as the catch-all: the generator refuses it without a
+  credential.
+- **Access log** — `caddyAccessLogPath` (#846, adopted from a live per-site
+  `log { output file <absolute path> }`). Unlike the shapes above it needs no
+  credential, because a log opens no door. It is refused rather than partially
+  adopted whenever the block carries anything else — `format`, `level`, a
+  destination with its own `{ roll_size … }`, a logger in the global options
+  block, or two sites naming different files — and the refusal is reported at
+  boot and before a cutover writes, since a log dropped in silence is the
+  failure #846 was filed for.
+
+All four shapes are adopted by the same pass, so a hand-maintained Caddyfile
+becomes reproducible one shape at a time rather than all-or-nothing. What no
+adoption pass can recover, it says so about — it never guesses.
 
 ## HTTP/1.1 pin on the HTTPS listener
 

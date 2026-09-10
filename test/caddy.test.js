@@ -284,6 +284,52 @@ describe('caddy', () => {
         assert.equal(caddy.extractAccessLogPath(site('\t\toutput file /a.log')), '/a.log');
       });
 
+      it('flags EVERY unadoptable log shape, including ones the parser refuses', () => {
+        // The defect two reviewers found independently: "is there a log block"
+        // was answered in three places and the third disagreed. A legal
+        // `log { # audit trail` was seen by the parser and missed by the
+        // fallback — so the parser refused it, nothing flagged it, nothing
+        // warned, and the log died on the next cutover. One walk now answers
+        // both, and these are the shapes that walk must not lose.
+        const unadoptable = {
+          'trailing comment on the open brace': 'x {\n\tlog { # audit trail\n\t\toutput file /a.log\n\t\tformat json\n\t}\n}\n',
+          'bare log directive': 'x {\n\tlog\n\treverse_proxy 127.0.0.1:1\n}\n',
+          'named logger': 'x {\n\tlog audit {\n\t\toutput file /a.log\n\t}\n}\n',
+          'global-options logger': '{\n\tlog {\n\t\toutput file /g.log\n\t}\n}\n\nx {\n\treverse_proxy 127.0.0.1:1\n}\n'
+        };
+        for (const [name, text] of Object.entries(unadoptable)) {
+          const scan = caddy.scanAccessLog(text);
+          assert.equal(scan.path, null, `${name}: must not be adopted`);
+          assert.equal(scan.sawLogDirective, true, `${name}: must still be REPORTED`);
+          assert.equal(caddy.computeCaddyfileAdoption({}, text).accessLogUnreadable, true,
+            `${name}: a refusal the operator is never told about is the bug itself`);
+        }
+        // The negative that stops all of the above passing vacuously.
+        const clean = 'x {\n\treverse_proxy 127.0.0.1:1\n}\n';
+        assert.equal(caddy.scanAccessLog(clean).sawLogDirective, false);
+        assert.notEqual(caddy.computeCaddyfileAdoption({}, clean).accessLogUnreadable, true);
+      });
+
+      it('scrubs a hash-shaped value out of the adoption log payload', () => {
+        // The payload derives its KEY SET from the result so a new shape is
+        // still reported — which also means an unknown future value reaches a
+        // logger that does not redact. observability-strategy.md § Direction
+        // puts redaction on the producer; #821 is the precedent.
+        const out = caddy.adoptionLogPayload({
+          tailnetHost: '$2a$14$abcdefghijklmnopqrstuvABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ab'
+        });
+        assert.ok(!out.tailnetHost.includes('abcdefghijklmnopqrstuv'),
+          'a bcrypt-shaped value must not reach the log verbatim');
+      });
+
+      it('names a shape it adopts even when nobody added a phrase for it', () => {
+        // describeAdoption used to hand-list its phrases, so a newly-adopted
+        // shape would be adopted SILENTLY — the class this branch exists to
+        // close, in the reporting layer instead of the parsing one.
+        assert.deepEqual(caddy.describeAdoption({ someFutureShape: 'v' }),
+          ['someFutureShape preserved (v)']);
+      });
+
       it('refuses the GLOBAL options logger, which is a different setting', () => {
         // Caddy's documented way to configure the DEFAULT logger is a `log` block
         // at global scope. It is not per-site access logging: adopting its path

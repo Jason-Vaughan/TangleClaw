@@ -35,6 +35,15 @@ All notable changes to TangleClaw are documented in this file.
   would re-emit a log stripped of the rest, which is the same silent drop this change exists to
   end. The first cut of this fix matched `output file` line-wise and had exactly that defect.
 
+  One walk answers both questions the file is asked — what the destination is, and whether a `log`
+  directive is present at all — because they were briefly separate regexes that disagreed. The
+  parser stripped comments before matching; the "is there a log" fallback tested raw content, so a
+  legal `log { # audit trail` was seen by one and missed by the other: the block was refused, the
+  refusal was never flagged, nothing warned, and the log died on the next cutover. The presence
+  check is deliberately broader than what can be adopted — it counts the bare `log` directive and
+  the named-logger form too — because its question is "would a cutover destroy logging the operator
+  set up", and for every shape this cannot re-emit the answer is yes.
+
   Scope is read too, not just shape. A `log` block in Caddy's **global options** is the
   default-logger setting, not per-site access logging — adopting its path would persist it and
   re-emit it as one log per site while the global logger vanished. Its presence is a refusal,

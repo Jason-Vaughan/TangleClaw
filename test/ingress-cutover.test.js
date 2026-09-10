@@ -325,6 +325,24 @@ describe('ingress-cutover', () => {
     // while the caller hands it null — which is how the live tailnet site lost
     // its audit trail in the first place. This test reddens when the argument at
     // `scripts/ingress-cutover.js` is dropped, which a generator test cannot do.
+    // R-2: the warning and the decline branch were both deletable with the suite
+    // green — including re-burying the warning inside the non-dry-run branch,
+    // which is the exact defect the hoist fixed. The plumbing beneath them was
+    // covered; the surfaces an operator actually sees were not.
+    it('warns about an unreproducible log block on BOTH cutover paths (#846)', () => {
+      // Pinned at the source, using this file's existing CUTOVER_SRC idiom,
+      // because the warning lives in main() — which drives launchctl and writes
+      // plists, so invoking it in a unit test is not proportionate.
+      const hoisted = CUTOVER_SRC.indexOf('accessLogUnreadable');
+      const dryRunBranch = CUTOVER_SRC.indexOf('if (dryRun) {');
+      assert.ok(hoisted > 0, 'the cutover must consult the unreadable flag');
+      assert.ok(hoisted < dryRunBranch,
+        'the warning must sit ABOVE the dry-run branch — the dry run is where the operator '
+        + 'decides, so a warning only the real run prints arrives after the decision');
+      assert.match(CUTOVER_SRC, /NOT survive a cutover/,
+        'the warning must say the log will not survive, not merely that it was skipped');
+    });
+
     it('carries config.caddyAccessLogPath into the generated Caddyfile (#846)', () => {
       const logged = cutover.planCutover('caddy', makeCtx({
         config: { caddyAccessLogPath: '/Users/test/.tangleclaw/logs/caddy.access.log' }
