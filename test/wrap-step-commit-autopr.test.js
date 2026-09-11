@@ -468,57 +468,89 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
         'auto-merge armed means the PR exists and will land — not stranded');
     });
 
-    it('bounds the persisted error the way the sibling push site bounds it', () => {
-      const long = 'x'.repeat(500);
-      assert.equal(commitStep._truncateForRecord(long).length, 201, '200 chars plus the ellipsis');
-      assert.match(commitStep._truncateForRecord(long), /…$/);
-      assert.equal(commitStep._truncateForRecord('short'), 'short');
-      assert.equal(commitStep._truncateForRecord(null), null);
+    it('redacts the push credential in EVERY sink, log line included', async () => {
+      // One stderr string reaches three sinks — this log line, the
+      // `activity_log` row, and the wrap result — so a guard that checks only
+      // the row passes while the log file holds the credential in the clear.
+      // That is why this case asserts what the LOGGER actually wrote.
+      //
+      // Assembled, never a contiguous literal — a secret-shaped string in a
+      // tracked file is blocked by GitHub push protection (#377).
+      const token = `gh${'o'}_notarealtokenvalue`;
+      interceptExec({
+        push: {
+          exitCode: 128,
+          stdout: '',
+          stderr: `fatal: unable to access 'https://${token}@github.com/example/sandbox.git/': 403`
+        }
+      });
+
+      const logged = await captureLogs('warn', async () => {
+        await commitStep.run(buildContext());
+      });
+
+      assert.ok(!logged.includes(token), 'the token must not reach the log file');
+      assert.match(logged, /\/\/\*\*\*@github\.com/, 'the host survives; the credential does not');
+
+      const row = autoPrRows()[0];
+      assert.ok(!row.detail.error.includes(token), 'nor the activity_log row');
+      assert.match(row.detail.error, /403/, 'the diagnostic value survives in both');
     });
 
-    it('strips a credential embedded in a remote URL before persisting it', () => {
-      // A failed `git push` echoes the remote. These rows are served over
-      // GET /api/activity, and a bare `user:password@` matches none of
-      // secret-scan's patterns — so truncation alone would have stored it.
-      const out = commitStep._truncateForRecord(
-        "fatal: could not read from 'https://jason:hunter2@github.com/x/y.git'"
-      );
-      assert.doesNotMatch(out, /hunter2/, 'the password must not reach the database');
-      assert.match(out, /\/\/\*\*\*@github\.com/);
-      assert.match(out, /could not read from/, 'the diagnostic value must survive redaction');
+    it('redacts it in the wrap result the operator reads, not only in storage', async () => {
+      // `output.autoPr.error` is rendered in the wrap drawer. It is built from
+      // the same stderr and is a third sink; the producer-side redaction is
+      // what makes all three safe at once.
+      const token = `gh${'o'}_notarealtokenvalue`;
+      interceptExec({
+        push: {
+          exitCode: 128,
+          stdout: '',
+          stderr: `fatal: unable to access 'https://${token}@github.com/example/sandbox.git/': 403`
+        }
+      });
+
+      const result = await commitStep.run(buildContext());
+      const err = result.output.autoPr.error;
+      assert.ok(!err.includes(token), 'the operator-facing string must not carry the token either');
+      assert.match(err, /\/\/\*\*\*@github\.com/);
     });
 
-    it('strips the password-LESS token form GitHub actually tells people to use', () => {
-      // `https://<token>@host` carries no colon. A strip that required one
-      // missed the single most likely credential in a push error, and
-      // secret-scan only knows ghp_/github_pat_ — not gho_/ghs_/ghu_/ghr_,
-      // and nothing at all for GitLab, Bitbucket or self-hosted forges.
-      const out = commitStep._truncateForRecord(
-        "remote: error\nfatal: unable to access 'https://gho_notarealtoken@gitlab.example.com/x/y.git/'"
-      );
-      assert.doesNotMatch(out, /gho_notarealtoken/, 'the token must not reach the database');
-      assert.match(out, /\/\/\*\*\*@gitlab\.example\.com/);
+    it('redacts a credential echoed by `gh pr merge`, the third producer', async () => {
+      // Found by mutation: reverting this site alone reddened NOTHING, because
+      // the push and create cases above never reach it. Three producers feed
+      // one field, so the guard has to name all three.
+      const token = `gh${'o'}_notarealtokenvalue`;
+      interceptExec({
+        'gh-merge': {
+          exitCode: 1,
+          stdout: '',
+          stderr: `failed to merge: remote 'https://${token}@github.com/example/sandbox.git' rejected`
+        }
+      });
+
+      const result = await commitStep.run(buildContext());
+      const err = result.output.autoPr.error;
+      assert.ok(!err.includes(token), 'the token must not reach the operator or the log');
+      assert.match(err, /\/\/\*\*\*@github\.com/);
     });
 
-    it('leaves a credential-free URL alone — the strip cannot over-match', () => {
-      const url = "fatal: could not read from 'https://github.com/x/y.git'";
-      assert.equal(commitStep._truncateForRecord(url), url);
-    });
+    it('redacts a credential echoed by `gh pr create`, not just by push', async () => {
+      // Enumerating the family rather than sampling it: three remote producers
+      // feed the same fields, and a guard covering only the push site is the
+      // sampled guard the #749 learning names.
+      const token = `gh${'o'}_notarealtokenvalue`;
+      interceptExec({
+        'gh-create': {
+          exitCode: 1,
+          stdout: '',
+          stderr: `failed to create: remote 'https://${token}@github.com/example/sandbox.git' rejected`
+        }
+      });
 
-    it('erases a harmless userinfo too, and that is the deliberate trade', () => {
-      // `ssh://git@host` loses the `git`. Documented as intended rather than
-      // narrowed: the host and the error text carry the diagnostic value, and
-      // preserving a username is not worth a pattern that misses a token.
-      const out = commitStep._truncateForRecord("fatal: 'ssh://git@github.com/x/y.git' not found");
-      assert.match(out, /\/\/\*\*\*@github\.com/);
-      assert.match(out, /not found/, 'the diagnostic text still survives');
-    });
-
-    it('replaces — never truncates — text still matching a known secret pattern', () => {
-      const out = commitStep._truncateForRecord(`remote: rejected, token ghp_${'a'.repeat(36)}`);
-      assert.match(out, /^\[redacted — github-token detected/,
-        'a truncated secret is still a secret, so the text is replaced wholesale');
-      assert.doesNotMatch(out, /ghp_/);
+      const result = await commitStep.run(buildContext());
+      assert.ok(!result.output.autoPr.error.includes(token));
+      assert.match(result.output.autoPr.error, /\/\/\*\*\*@github\.com/);
     });
 
     it('the opt-out logs at info: it pushes nothing, so nothing is stranded', async () => {

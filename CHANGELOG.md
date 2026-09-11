@@ -68,6 +68,33 @@ All notable changes to TangleClaw are documented in this file.
   #846 next: the 2026-08-03 decision lives only in `INGRESS.md`; the issue carries no comment
   recording it, so it reads from GitHub as an unfixed bug.
 
+### Security
+- **A failed `git push` could write a credential into the log file (#870).** `lib/wrap-steps/commit.js`
+  built its auto-PR error text straight from `git`/`gh` stderr and passed it to `log.warn` unredacted,
+  while the `activity_log` row thirty-five lines below redacted the identical string. `git push`
+  echoes the remote it could not reach, and a remote can be `https://<token>@host` — the form
+  GitHub's own PAT-over-HTTPS instructions produce — so a push failure on a tokenised remote put
+  that token into `~/.tangleclaw/logs/tangleclaw.log` in the clear, across three rotated files.
+  This is what `observability-strategy.md` § Direction already forbids ("no log line at any level
+  may contain an API key/token") and what its #821 amendment names the remedy for.
+
+  **Redaction moved to the producers**, so no sink has to remember and a sink added later inherits
+  the guarantee. The pass that lived beside one recorder is now
+  `lib/wrap-steps/_remote-output.js`, applied wherever a string is built from the stderr of a
+  remote-touching command: the `git push`, `gh pr create` and `gh pr merge` failure sites in
+  `commit.js`, `_ensurePushed` and `enqueueAutoMerge` in `pr-merge.js`, and `listOpenPrs` in
+  `pr-check.js`. The `activity_log` row keeps its own pass — the Direction permits a reporter to
+  add one, and that row is served over `GET /api/activity`, so it should not depend on every
+  present and future producer having remembered. The log line gained one for the same reason.
+
+  Local-only `git` (`status`, `add`, `checkout`, `commit`, `rev-parse`) is deliberately untouched:
+  it reaches no network and carries no credential.
+
+  #870 was filed as a chore on the finding that `pr-merge.js`'s text has no durable sink — true of
+  the file it examined, and the reason the leak in the sibling went unnoticed. Each of the six
+  producers is pinned by a guard that reddens when that site alone is reverted; the `gh pr merge`
+  site had no such guard until a mutation check found the gap.
+
 ### Fixed
 - **Four of the eight wrap-summary sections were never captured, on every wrap and every engine
   (#1379, #1389).** `Delta`, `Open threads`, `Decisions` and `Pointers` rendered `_⚠ not captured_`
