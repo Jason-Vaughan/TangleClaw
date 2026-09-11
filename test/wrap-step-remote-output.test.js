@@ -22,7 +22,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { redactRemoteOutput, reasonFromFailure, MAX_CHARS } = require('../lib/wrap-steps/_remote-output');
+const { redactRemoteOutput, detailFromFailure, reasonFromFailure, MAX_CHARS } = require('../lib/wrap-steps/_remote-output');
 
 // Assembled, never written contiguously — see the header note.
 const GH_CLASSIC = `gh${'p'}_${'a'.repeat(36)}`;
@@ -123,5 +123,37 @@ test('_remote-output: reasonFromFailure assembles and redacts together', async (
 
   await t.test('trims, so a trailing newline does not eat a character of the cap', () => {
     assert.equal(reasonFromFailure({ stderr: '  boom  \n', stdout: '', exitCode: 1 }), 'boom');
+  });
+
+  await t.test('trims BEFORE choosing, so a blank stderr does not discard stdout', () => {
+    // A command that writes a bare newline to stderr and its real message to
+    // stdout has said nothing on stderr. Choosing the untrimmed stderr — truthy
+    // because it is a newline — would throw the message away.
+    assert.equal(reasonFromFailure({ stderr: '\n', stdout: 'the real message', exitCode: 1 }),
+      'the real message');
+  });
+});
+
+test('_remote-output: detailFromFailure is the same text without the fallback', async (t) => {
+  await t.test('returns empty when the command printed nothing', () => {
+    // Its callers compose `<outcome>: <detail>` and omit the separator on an
+    // empty detail. An `exit N` fallback here would print the exit code twice,
+    // because the outcome half already names it.
+    assert.equal(detailFromFailure({ stderr: '', stdout: '', exitCode: 1 }), '');
+    assert.equal(detailFromFailure({ stderr: '  \n', stdout: '', exitCode: 1 }), '');
+  });
+
+  await t.test('otherwise matches reasonFromFailure exactly', () => {
+    const res = { stderr: 'boom', stdout: 'ignored', exitCode: 1 };
+    assert.equal(detailFromFailure(res), reasonFromFailure(res));
+  });
+
+  await t.test('redacts the same way', () => {
+    const out = detailFromFailure({
+      stderr: `fatal: unable to access 'https://${GH_OAUTH}@github.com/x/y.git/'`,
+      stdout: '',
+      exitCode: 128
+    });
+    assert.doesNotMatch(out, new RegExp(GH_OAUTH));
   });
 });
