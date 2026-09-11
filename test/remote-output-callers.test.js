@@ -69,6 +69,22 @@ describe('remote-output redaction reaches every caller outside lib/wrap-steps (#
     beforeEach(() => { saved = ci._internal.exec; ci.clearCache(); });
     afterEach(() => { ci._internal.exec = saved; ci.clearCache(); });
 
+    it('keeps the command and exit code when the whole message is redacted', async () => {
+      // A wholesale replacement is truthy, so `safe || <fallback>` returns a
+      // bare `[redacted — …]` and takes the command name and exit code away
+      // with the secret. The operator is then told nothing failed in
+      // particular. Assembled at runtime (#377).
+      const flagged = `remote: rejected, token gh${'p'}_${'a'.repeat(36)}`;
+      ci._internal.exec = async (file) => (file === 'git'
+        ? { exitCode: 0, stdout: 'https://github.com/x/y.git\n', stderr: '', error: null }
+        : { exitCode: 4, stdout: '', stderr: flagged, error: null });
+      const result = await ci.refresh('/tmp/nonexistent-flagged', { force: true });
+
+      assert.ok(!result.reason.includes('gh' + 'p_'), 'the secret is still replaced wholesale');
+      assert.match(result.reason, /\(exit 4\)/, 'and the exit code still says what happened');
+      assert.match(result.reason, /gh/, 'and which command it was');
+    });
+
     it('redacts the reason a failed `gh run list` produces', async () => {
       // The origin probe must SUCCEED or the flow short-circuits on "no origin
       // remote" and never reaches the `gh` failure this case is about — a

@@ -237,7 +237,7 @@ function wiredCommand(settings) {
 function pinnedScript(command) {
   // Read by STRUCTURE, not by re-parsing shell quoting. `guardCommand` emits
   // exactly `node <word> || true`, so the word is whatever sits between them,
-  // and `unshellWord` — the quoter's own inverse — turns it back into a path.
+  // and `firstWord` — the quoter's own inverse — turns it back into a path.
   // A regex that hunts for quotes has to know every quoting style the generator
   // has ever used, and silently mis-reads the one it was not taught: that is
   // how a correctly-wired install came back STALE when the quoting changed.

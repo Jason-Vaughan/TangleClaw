@@ -28,7 +28,7 @@ const { redactRemoteOutput, detailFromFailure, reasonFromFailure, MAX_CHARS, RED
 const GH_CLASSIC = `gh${'p'}_${'a'.repeat(36)}`;
 const GH_OAUTH = `gh${'o'}_notarealtokenvalue`;
 
-test('_remote-output: bounding', async (t) => {
+test('remote-output: bounding', async (t) => {
   await t.test('caps over-long text and marks that it was cut', () => {
     const long = 'x'.repeat(500);
     assert.equal(redactRemoteOutput(long).length, MAX_CHARS + 1, 'the cap plus the ellipsis');
@@ -46,7 +46,7 @@ test('_remote-output: bounding', async (t) => {
   });
 });
 
-test('_remote-output: credential stripping', async (t) => {
+test('remote-output: credential stripping', async (t) => {
   await t.test('strips a credential embedded in a remote URL', () => {
     // A failed `git push` echoes the remote. A bare `user:password@` matches
     // none of secret-scan's patterns, so the structural strip — not the
@@ -97,7 +97,7 @@ test('_remote-output: credential stripping', async (t) => {
   });
 });
 
-test('_remote-output: reasonFromFailure assembles and redacts together', async (t) => {
+test('remote-output: reasonFromFailure assembles and redacts together', async (t) => {
   await t.test('prefers stderr, falls back to stdout, then to the exit code', () => {
     assert.equal(reasonFromFailure({ stderr: 'e', stdout: 'o', exitCode: 1 }), 'e');
     assert.equal(reasonFromFailure({ stderr: '', stdout: 'o', exitCode: 1 }), 'o');
@@ -152,7 +152,7 @@ test('_remote-output: reasonFromFailure assembles and redacts together', async (
   });
 });
 
-test('_remote-output: detailFromFailure is the same text without the fallback', async (t) => {
+test('remote-output: detailFromFailure is the same text without the fallback', async (t) => {
   await t.test('returns empty when the command printed nothing', () => {
     // Its callers compose `<outcome>: <detail>` and omit the separator on an
     // empty detail. An `exit N` fallback here would print the exit code twice,
