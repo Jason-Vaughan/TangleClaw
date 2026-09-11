@@ -1,6 +1,6 @@
 ---
 scope: train-16-chunk-03
-lifecycle: active
+lifecycle: completed
 ---
 
 # Train 16 Chunk 03 — Two invariants get one owner each
