@@ -31,6 +31,8 @@ const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 
 const engines = require('../lib/engines');
+const { shellWord, firstWord } = require('../lib/shell-word');
+const { guardCommand, pinnedScript, GUARD_REL } = require('../scripts/install-primary-guard');
 
 // Every character that breaks one of the quoting styles, in one directory name:
 // a space (breaks bare), `$` and a backtick (survive single quotes only), a
@@ -171,14 +173,86 @@ describe('the quoting change is safe for installs written before it (#1062)', ()
   });
 });
 
-describe('_shellWord (#1062)', () => {
+describe('the OTHER generator of a hooks[].command is in the same family (#1062)', () => {
+  it('the primary-checkout guard survives a hostile checkout path too', () => {
+    // Found by review: this generator lives in `scripts/`, so a sweep scoped to
+    // `lib/` missed it while it carried the identical double-quoted defect.
+    // The family is "generates a hooks[].command", not "lives in lib".
+    const primary = path.join(os.tmpdir(), HOSTILE);
+    const cmd = guardCommand(primary);
+
+    // `node <path> || true` with a path that does not resolve exits 0 via the
+    // `|| true`, so run the argv through a shell that just echoes it instead.
+    const echoed = execFileSync('/bin/sh', ['-c', cmd.replace(/^node /, 'printf %s ').replace(/ \|\| true$/, '')],
+      { encoding: 'utf8' });
+    assert.ok(echoed.startsWith(primary),
+      `the guard path must reach node whole, got ${echoed}`);
+    assert.ok(!echoed.includes(os.homedir()), '`$HOME` in the path must not have expanded');
+  });
+});
+
+describe('the guard command round-trips through its own reader (#1062)', () => {
+  // The generator and the reader are two halves of ONE invariant, in one file,
+  // and changing the quoting broke the reader while leaving the writer correct:
+  // `--check` then called a freshly-wired install STALE. A test of either half
+  // alone cannot see that.
+  for (const [label, dir] of [
+    ['a hostile path', path.join(os.tmpdir(), HOSTILE)],
+    ['an ordinary path', '/opt/tangleclaw'],
+    ['a path with a single quote', "/opt/it's"]
+  ]) {
+    it(`reads back what it wrote for ${label}`, () => {
+      const cmd = guardCommand(dir);
+      assert.equal(pinnedScript(cmd), path.join(dir, GUARD_REL));
+    });
+  }
+
+  it('still reads the double-quoted form already wired on existing machines', () => {
+    // Those entries live in gitignored settings files that nothing migrates, so
+    // the reader has to keep understanding them or it reports a working install
+    // as broken.
+    const legacy = `node "${path.join('/opt/tangleclaw', GUARD_REL)}" || true`;
+    assert.equal(pinnedScript(legacy), path.join('/opt/tangleclaw', GUARD_REL));
+  });
+
+  it('reads nothing out of a command that invokes something else', () => {
+    // The falsifying half: a reader that returned the first word regardless
+    // would pass every case above while reporting a foreign hook as the guard.
+    assert.equal(pinnedScript('node /somewhere/else.js || true'), null);
+    assert.equal(pinnedScript(''), null);
+  });
+});
+
+describe('shellWord round-trips through firstWord (#1062)', () => {
+  // The property that makes the reader trustworthy: whatever the quoter emits,
+  // the reader returns unchanged. Asserted over the same hostile set, because a
+  // quoter and a reader that disagree on ONE character is exactly what turned a
+  // freshly-wired guard into a STALE report.
+  for (const [label, value] of [
+    ['a space', 'a b'],
+    ['a variable reference', '$HOME'],
+    ['a backtick', '`id`'],
+    ['a double quote', 'a"b'],
+    ['a backslash', 'a\\b'],
+    ['a single quote', "it's"],
+    ['two single quotes', "it's o'clock"],
+    ['all of them', HOSTILE],
+    ['nothing at all', '']
+  ]) {
+    it(`survives ${label}`, () => {
+      assert.equal(firstWord(shellWord(value)), value);
+    });
+  }
+});
+
+describe('shellWord (#1062)', () => {
   /**
    * Round-trip a value through the quoter and a real shell.
    * @param {string} value - The value to quote
    * @returns {string} What the shell passed to the command
    */
   function roundTrip(value) {
-    const cmd = `printf %s ${engines._shellWord(value)}`;
+    const cmd = `printf %s ${shellWord(value)}`;
     return execFileSync('/bin/sh', ['-c', cmd], { encoding: 'utf8' });
   }
 

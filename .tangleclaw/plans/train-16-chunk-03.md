@@ -129,7 +129,7 @@ one, and removing it would make the row depend on every producer being right for
       Two further mutations pin the layering: reverting the producer alone, or the log's own pass
       alone, each stays green because the other still covers it; reverting BOTH reddens the log
       assertion. That is the property the Direction asks for — at least one pass always applies.
-      The relocated assertions moved to `test/wrap-step-remote-output.test.js` with the function;
+      The relocated assertions moved to `test/remote-output.test.js` with the function;
       they are the same contract under a new owner, not a weakened one.
 
 ### Chunk C2: The placeholder resolver owns shell safety
@@ -184,6 +184,49 @@ The project's standing defect is a test that passes because it never exercised t
 - **C2** — drop the escaping inside the resolver and watch a test go red **through
   `_buildBaselineHooks`**, not only through a direct call to the resolver. The hostile characters
   must reach `sh`.
+
+## [POST-REVIEW 2026-09-11] The sweep was scoped by directory, not by the property
+
+`rev-20260911T193806Z-b30dd7d0` — 0 blocking, 9 warning, 8 note. **All three reviewers
+independently found the same thing**, which is the finding worth keeping:
+
+**C1's sweep enumerated `lib/wrap-steps/` while its docstring, CHANGELOG and FEATURES entry all
+stated the guarantee as repo-wide.** Five callers outside that glob still built text from failed
+`git`/`gh` output with no pass — `wrap-pr-status`, `ci-status`, `update-checker`, `update-applier`,
+`behind-origin` — and TWO of them logged it, the exact end state #870 closed. This is the chunk's
+own "a sweep's conclusion may never be stated more broadly than its own file glob" correction
+arriving from the other direction: the conclusion was narrow, the sentence was not.
+
+Fixed by scope rather than by patch: the helper moved to `lib/remote-output.js`, because a module
+whose contract is a PROPERTY cannot sit inside one of the directories that holds it. All five
+callers now redact, each pinned by a guard that reddens when that site alone is reverted. Reading
+`behind-origin` for the fix found a sixth site the review had not named — the same file builds three
+reasons and only `gitFetch` reaches a remote.
+
+**C2 had the identical shape.** `scripts/install-primary-guard.js#guardCommand` is the only other
+generator of a `hooks[].command` and carried the same double-quoted defect; it was missed because it
+lives in `scripts/`. The quoter moved to `lib/shell-word.js` and both generators share it.
+
+**And fixing that exposed a coupling neither half's tests could see.** The same file READS the wired
+command back to report what is installed, with a regex that hunted for double quotes — so changing
+the generator made `--check` call a freshly-wired install STALE. Generator and reader are two halves
+of one invariant. The reader now parses with `firstWord`, the quoter's own inverse, and a test
+round-trips the pair over the hostile set. Writing that inverse turned up one more: `shellWord`
+emits `'` → `'\''`, so the reader had to understand a backslash escape outside quotes or it was not
+actually an inverse — a path containing an apostrophe lost the apostrophe.
+
+Also fixed from the review: a wholesale redaction was taking the exit code away with the secret, so
+a standalone reason read only `[redacted — …]`; the `_autoPrCloseLoop` JSDoc left floating by the
+deletion; `data-model.md`'s pointer at the deleted `_truncateForRecord`; `prime-delivery-direction.md`'s
+claim that hooks are replaced wholesale, which #752 stopped being true; and the undocumented `dir`
+parameter.
+
+**Accepted, not fixed:** three further byte-identical single-quote escapers remain
+(`tmux.js#_escapeArg`, `openclaw-approve.js#shellQuote`, `wrap-steps/lint.js#_shellQuote`, plus an
+inline one in `git.js`). None is defective — they are duplication, not a bug — and rewiring three
+working call sites with their own test surfaces is a refactor of its own, not a finding-fix. Filed
+rather than folded in. Likewise `guardCommand`'s `|| true`, which makes a guard failure silent: a
+real question about that guard's behaviour, and nothing to do with quoting.
 
 ## Verification
 

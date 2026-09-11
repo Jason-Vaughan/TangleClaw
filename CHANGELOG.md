@@ -79,11 +79,15 @@ All notable changes to TangleClaw are documented in this file.
   may contain an API key/token") and what its #821 amendment names the remedy for.
 
   **Redaction moved to the producers**, so no sink has to remember and a sink added later inherits
-  the guarantee. The pass that lived beside one recorder is now
-  `lib/wrap-steps/_remote-output.js`, applied wherever a string is built from the stderr of a
-  remote-touching command: the `git push`, `gh pr create` and `gh pr merge` failure sites in
-  `commit.js`, `_ensurePushed` and `enqueueAutoMerge` in `pr-merge.js`, and `listOpenPrs` in
-  `pr-check.js`. The `activity_log` row keeps its own pass — the Direction permits a reporter to
+  the guarantee. The pass that lived beside one recorder is now `lib/remote-output.js`, applied
+  wherever a string is built from the stderr of a remote-touching command: the `git push`,
+  `gh pr create` and `gh pr merge` failure sites in `wrap-steps/commit.js`, `_ensurePushed` and
+  `enqueueAutoMerge` in `wrap-steps/pr-merge.js`, `listOpenPrs` in `wrap-steps/pr-check.js`, and —
+  found on review — `wrap-pr-status.js`, `ci-status.js`, `update-checker.js`, `update-applier.js`
+  and `behind-origin.js`. The first pass enumerated the `lib/wrap-steps/` directory while stating
+  the guarantee as repo-wide; five callers outside it were still unredacted, two of them logging.
+  The helper now sits in `lib/` because its scope is a property, not a directory. A wholesale
+  replacement keeps the exit code beside it, so a redacted reason still says what failed. The `activity_log` row keeps its own pass — the Direction permits a reporter to
   add one, and that row is served over `GET /api/activity`, so it should not depend on every
   present and future producer having remembered. The log line gained one for the same reason.
 
@@ -113,6 +117,13 @@ All notable changes to TangleClaw are documented in this file.
   Installs configured before this keep working — hook ownership matches on the script's
   `data/hooks/` path and has never looked at quoting, so an existing double-quoted entry is still
   recognised and replaced rather than preserved beside the new one. A test now pins that.
+
+  `scripts/install-primary-guard.js#guardCommand` — the only other generator of a
+  `hooks[].command` — carried the same double-quoted defect and was outside the sweep, so the
+  quoter moved to `lib/shell-word.js` and both generators share it. That file also reads the
+  command back to report what is wired, and the two are halves of one invariant: the reader hunted
+  for double quotes, so it called a freshly-wired install STALE. It parses with `firstWord`, the
+  quoter's own inverse, and a test round-trips the pair.
 
   The guards for this were **consolidated, and made capable of failing**. Several asserted the
   command matched `/^"/` — true of `"$HOME/x"`, which still expands — so they passed against the

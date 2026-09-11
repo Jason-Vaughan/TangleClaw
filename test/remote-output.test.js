@@ -4,15 +4,15 @@
  * Tests for `lib/wrap-steps/_remote-output.js` — the shared redaction every
  * wrap step applies to the text a failed REMOTE `git`/`gh` command prints.
  *
- * Most of these assertions were written against `commit.js`'s private
- * `_truncateForRecord` and moved here with the function. They are the same
- * contract; what changed is who owns it. The move is the point of the change:
- * the redaction used to live beside ONE recorder, and the log line thirty-five
- * lines above that recorder passed the identical string through unredacted to
+ * The redaction belongs to whatever BUILDS the string, not to whatever records
+ * it. When it lived beside one recorder, the log line above that recorder
+ * passed the identical string through unredacted to
  * `~/.tangleclaw/logs/tangleclaw.log`. `observability-strategy.md` § Direction
  * forbids that ("no log line at any level may contain an API key/token"), and
- * its #821 amendment names the remedy this module implements — the producer of
- * text that can embed a secret owns the redaction.
+ * its #821 amendment states the rule this module implements.
+ *
+ * `test/remote-output-callers.test.js` holds the other half of the contract:
+ * that every caller with the property actually calls this.
  *
  * Every token-shaped literal below is ASSEMBLED AT RUNTIME from split parts.
  * A contiguous secret-shaped literal in a tracked file is blocked by GitHub
@@ -22,7 +22,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { redactRemoteOutput, detailFromFailure, reasonFromFailure, MAX_CHARS } = require('../lib/wrap-steps/_remote-output');
+const { redactRemoteOutput, detailFromFailure, reasonFromFailure, MAX_CHARS } = require('../lib/remote-output');
 
 // Assembled, never written contiguously — see the header note.
 const GH_CLASSIC = `gh${'p'}_${'a'.repeat(36)}`;
