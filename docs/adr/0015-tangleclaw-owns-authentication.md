@@ -1,6 +1,6 @@
 # ADR 0015: TangleClaw owns authentication — the gate moves out of Caddy
 
-**Status:** Proposed (2026-09-10). Operator-approved for exploration; not built.
+**Status:** **Accepted (2026-09-11, operator-ratified in-pane).** Not built. The operator accepted the cost explicitly — 1-2 trains of work — for the RBAC, per-project scoping and usage-limit capability `basic_auth` structurally cannot provide.
 **Source issues:** #1149 (v6 multi-user architecture), #803 (the wizard's opt-out), #1055.
 **Supersedes, conditionally:** ADR 0004 / `auth-2-authelia-gate.md`'s Path A choice — on the exact
 condition that choice named for itself.
@@ -50,6 +50,78 @@ system that cannot attribute a shell to a person is not multi-user; it is a shar
    request is that Caddy already did." `caddy hash-password` has no verify mode and Node has no
    bcrypt, so there can be no current-password field on a change form, and the credential route must
    refuse whenever no gate is in force.
+
+## Two tiers, and only one of them is a security boundary
+
+**Added 2026-09-11 from the operator's own framing, which reshapes this ADR's scope.** Their words:
+
+> "we DO want to prevent hostile access… i do want us to be able to lockdown a tangleclaw system
+> from auth vs non auth, and then a light layer for resource defaults is something i'm not worried
+> about."
+
+And their statement of intent, which is the clearest description of the product:
+
+> "i'm the so called 'admin' who can add another resource user for example 'rosie' and i can limit
+> what resources she has access to, create a UN/PW for her, which has a key for the front door and
+> sets up what options i want her to be able to access once she's inside the house. and i can say
+> for example, they can only see their own projects, or we could have a project that we're
+> collaborating on that we both see."
+
+**Tier 1 — the front door. The security boundary; full rigor.** Authenticated vs not, on **any**
+ingress mode. This is what this ADR is for. Today the credential takes effect only in caddy mode
+(`lib/store.js:133` — "the gate lives at Caddy"), so a direct-mode install has no login at all.
+Closing that is the priority.
+
+**Tier 2 — "resource defaults". A light layer, explicitly NOT a security boundary.** Which
+engines/models a user may reach, cost caps, which projects they see. It is a guardrail against
+expense and clutter among trusted people — not containment.
+
+**The dependency runs one way:** tier 2 needs identity, so tier 1 comes first. After that they share
+no mechanism and can be built independently. **Tier 2 never gates a release** — a half-built engine
+filter leaves nothing insecure, because the door still holds.
+
+### Four rulings that constrain the build
+
+1. **"Resource defaults" are CONSTRAINTS, not overridable.** The name says default; the requirement
+   is that the other engines are "not available in the ui for her". A user who can switch off the
+   default controls no costs. Read cold, "resource defaults" invites the overridable version, which
+   loses the point entirely.
+2. **"Only see their own projects" is a UI FILTER, not a wall.** A user with a terminal can `cd ..`
+   into another project. The goal is tidiness and cost control among trusted people, not secrecy.
+   Recorded because it is the sentence most likely to be misremembered later as a real boundary.
+3. **Shared projects are a MEMBERSHIP, not a per-user field.** "A project we're both on" is a
+   relationship, so `project_members` rather than `users.allowedProjects`. Cheap now, a migration
+   later; it is the one piece of #1149's model worth taking immediately.
+4. **Tier 2 is a guardrail, not containment — say so wherever it is surfaced.** A terminal user can
+   invoke any CLI by hand. The permission governs what TangleClaw *launches for them*.
+
+### Requirements (the operator's, verbatim where it matters)
+
+> "like lets say i want user A to have access as an ADMIN and user B to just have access to their
+> own projects and or certain LLMs or certain usage limits…"
+
+1. Granular RBAC — Admin vs User.
+2. Per-project scoping.
+3. LLM usage limits.
+4. Per-**user** rights and limits, not only per-role: "each user might have different rights or
+   limits". So a role is a *default*, not the answer.
+5. Per-user **model/engine** access — *which* LLMs, distinct from *how much*. This is why a
+   permission check's resource dimension is polymorphic (projects **and** engines), and why the
+   check signature should carry a typed resource from the first call site rather than hardcoding
+   "resource = project".
+6. Per-user **harness type** (local `ttyd` vs a remote harness) — **future scope, not first train.**
+   It makes hosted clients conceivable but does not by itself make them safe; see below.
+
+### Out of scope, deliberately
+
+**Hosted clients / multi-tenancy.** This follows from the operator's own architecture rather than
+from a limitation: if tier 2 is not a security boundary, everyone past the front door is trusted.
+That works for a partner, a collaborator, or a vetted contributor, and is incompatible with
+strangers. Requirement 6 would close the *direct* path (no local shell) but not the *indirect* one —
+`PUT /api/rules/global` (`server.js`) writes rules that TangleClaw injects into the engine config a
+**trusted** session then reads and obeys, and `_buildBaselineHooks` (`lib/engines.js`) writes shell
+command strings. Hosting strangers therefore requires auditing and default-denying every
+host-affecting route, which is a different product tier and needs its own ADR.
 
 ## Decision
 
@@ -140,6 +212,21 @@ since changed, and on a requirement — one operator — that #1149 retires.
   currently exempted in the generated Caddyfile (`AUTH_BYPASS_PATHS`). They become TangleClaw's to
   enforce, and `isCaddyAuthBypassPath` already models them — one definition, moved, not duplicated.
 
+## Answered since this ADR was written (2026-09-11)
+
+- **Who the users are:** collaborators, and trusted people the operator adds (their example: a
+  partner given an Aider-only account to control spend). Not hosted strangers — see Out of scope.
+- **Usage limits, enforce or report:** a setting, recommended values `warn` /
+  `block_next_turn` (default) / `hard_stop`, evaluated at **turn boundaries**. Never kill mid-turn:
+  an agent interrupted mid-edit leaves a broken tree and a half-written file, trading a cost
+  overrun for corrupted work. "Let it finish" means finish the *turn*, not the session.
+- **Delegation:** a user may grant access to their own resources. Two rules from day one — a user
+  can never grant a right they do not themselves hold (else delegation is a privilege-escalation
+  path), and granted access is **not** re-grantable (cap at one hop, or "who can reach this
+  project?" needs a graph walk and revocation becomes a cascade).
+- **Can a non-admin start a session:** yes, on their own projects. Which is exactly why tier 2 is
+  documented as a guardrail rather than containment — the session is a shell as the host's OS user.
+
 ## Open questions for the build
 
 1. **Cookie or bearer token?** The dashboard is same-origin; ttyd and the OpenClaw gateway are
@@ -154,3 +241,8 @@ since changed, and on a requirement — one operator — that #1149 retires.
    from three call sites, and this ADR changes what the predicate *means*, so #804 should follow it
    rather than precede it. (Named by issue deliberately: it sits in a Train 16 chunk whose number
    moves, and `train-16-chunk-01.md` has an unrelated internal C2.)
+5. **Does tier 2 need permission machinery at all?** If it is not a security boundary, the honest
+   shape may be per-user *preferences* — a field for which engines a user sees, and a UI that
+   filters on it — rather than a permission resolver with grants, revocations and delegation. Decide
+   before building tier 2; the elaborate version is justified only if tier 2 later becomes a real
+   authorization boundary.
