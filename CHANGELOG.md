@@ -96,6 +96,32 @@ All notable changes to TangleClaw are documented in this file.
   site had no such guard until a mutation check found the gap.
 
 ### Fixed
+- **A hook command broke on `$`, a backtick, a quote or a backslash in the install path (#1062).**
+  `_buildBaselineHooks` wrapped each emitted command in double quotes at the call site. Double
+  quotes stop word-splitting on a space but not expansion — `$HOME` and `` `id` `` in a directory
+  name were substituted by the shell before the hook ran, and a literal `"` or `\` broke the
+  quoting outright. All six characters are legal in a macOS directory name, and the operator
+  chooses where TangleClaw is installed.
+
+  **Quoting moved into `_resolveHookPlaceholders`**, which now substitutes the install path as a
+  single-quoted shell word — the only quoting that is total, since nothing expands or escapes
+  inside it. The emission sites carry a bare `{{TANGLECLAW_DIR}}` and no quotes of their own, so a
+  third hook added later is safe without its author knowing the rule. That is the fix #759 needed:
+  there, a new hook was added WITH quoting and a comment explaining the hazard, while the site
+  fifteen lines above it stayed unquoted.
+
+  Installs configured before this keep working — hook ownership matches on the script's
+  `data/hooks/` path and has never looked at quoting, so an existing double-quoted entry is still
+  recognised and replaced rather than preserved beside the new one. A test now pins that.
+
+  The guards for this were **consolidated, and made capable of failing**. Several asserted the
+  command matched `/^"/` — true of `"$HOME/x"`, which still expands — so they passed against the
+  defect. They are replaced by `test/engines-hook-shell-safety.test.js`, which runs every command
+  the producer emits through a real `/bin/sh` from an install directory containing all six
+  characters and asserts what the script actually received. The #759 space guard was substituting
+  the placeholder with a hand-written `String.replace` rather than calling the resolver, so it had
+  stopped testing the code under it; it now goes through the real one.
+
 - **Four of the eight wrap-summary sections were never captured, on every wrap and every engine
   (#1379, #1389).** `Delta`, `Open threads`, `Decisions` and `Pointers` rendered `_⚠ not captured_`
   in every `.tangleclaw/continuity/wraps/<sid>.md` ever written. The renderer, the honest-flag and

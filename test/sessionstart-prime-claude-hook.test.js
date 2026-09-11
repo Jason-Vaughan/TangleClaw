@@ -187,7 +187,11 @@ describe('#759 hook commands survive a TangleClaw path containing a space', () =
     assert.ok(commands.length >= 2, `expected prime + rules commands, got ${commands.length}`);
 
     for (const raw of commands) {
-      const command = raw.replace(/\{\{TANGLECLAW_DIR\}\}/g, dir);
+      // Resolved by the PRODUCER, not by a hand-written replace. Substituting
+      // the placeholder here re-implemented half of what is under test, so
+      // this guard stayed green while the resolver's own quoting changed
+      // underneath it — a fixture must be built from what its reader reads.
+      const command = engines._resolveHookPlaceholders(raw, dir);
       // Exactly how the engine runs it: hand the string to a shell.
       execFileSync('/bin/sh', ['-c', command], { stdio: ['pipe', 'pipe', 'pipe'] });
     }
@@ -198,7 +202,7 @@ describe('#759 hook commands survive a TangleClaw path containing a space', () =
     const hooks = engines._buildBaselineHooks({ silentPrime: true }, PROFILE, 0);
     const commands = allCommands(hooks);
     assert.equal(commands.length, 1, 'with no rule shards, only the prime hook is emitted');
-    const command = commands[0].replace(/\{\{TANGLECLAW_DIR\}\}/g, dir);
+    const command = engines._resolveHookPlaceholders(commands[0], dir);
     assert.match(command, /sessionstart-prime-claude\.sh/);
     execFileSync('/bin/sh', ['-c', command], { stdio: ['pipe', 'pipe', 'pipe'] });
   });

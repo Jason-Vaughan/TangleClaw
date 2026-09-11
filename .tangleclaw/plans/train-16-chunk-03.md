@@ -134,7 +134,7 @@ one, and removing it would make the row depend on every producer being right for
 
 ### Chunk C2: The placeholder resolver owns shell safety
 
-- [ ] **C2 — `_resolveHookPlaceholders` escapes what it substitutes, so no call site restates it.**
+- [x] **C2 — `_resolveHookPlaceholders` escapes what it substitutes, so no call site restates it.**
       Per #1062's stated direction. What makes this safe to do *inside the resolver* rather than
       behind a separate quoting helper: `_resolveHooksObject` has exactly one caller, and its input
       comes only from `_buildBaselineHooks` — the template-declared-hooks path is dead since the
@@ -149,6 +149,28 @@ one, and removing it would make the row depend on every producer being right for
       argument with no expansion — asserted against a real `sh` invocation, not a string comparison,
       because a string comparison would pass against whatever quoting the implementation happens to
       choose.
+      **DONE 2026-09-11.** Suite green. Single-quoting chosen over escaping inside double quotes:
+      it is the only quoting that is total, and it is the only option that lets the emission sites
+      carry NO quotes, which is what actually moves the invariant. Two mutations run red — the
+      resolver substituting bare, and the resolver substituting double-quoted, i.e. the form that
+      shipped.
+      **Eleven existing assertions had to be rewritten, and that is the finding.** Several matched
+      on the command starting with a double quote, or on a double-quoted script path — both true of
+      a double-quoted string carrying a variable reference, which still expands — so they passed
+      against the defect, the same way the `endsWith(...)` assertions did in #759. They are replaced by `test/engines-hook-shell-safety.test.js`, which runs every
+      command the producer emits through a real `/bin/sh` from a directory carrying all six hostile
+      characters and asserts what the script RECEIVED.
+      **The #759 guard had stopped testing its subject.** It resolved the placeholder with a
+      hand-written `String.replace` instead of calling `_resolveHookPlaceholders`, so it
+      reimplemented the very thing under test and stayed green while the resolver changed beneath
+      it. It now calls the real one. The two files are kept apart deliberately: #759's enters at
+      `_resolveHookPlaceholders`, this chunk's at `_resolveHooksObject` — the write path — and one
+      call site is not the family.
+      **Migration checked, not assumed.** Every install configured before this carries the
+      double-quoted form on disk. Ownership is a substring match on the script's `data/hooks/`
+      path and never looked at quoting, so the old entry is still recognised and replaced instead
+      of preserved beside the new one — which would have given every existing project two prime
+      hooks. Nothing proved that; a test does now.
 
 ## The mutation checks this chunk owes
 
