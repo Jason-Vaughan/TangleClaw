@@ -566,6 +566,16 @@ All notable changes to TangleClaw are documented in this file.
   deliberately out of scope — a consequence of the tier split, since everyone past the front door is
   trusted.
 
+  **Corrected the same day:** several passages still argued the ADR from *authorization* — the
+  capability table's "roles / authorization" row, the case against caddy-security, and the
+  requirements' framing — which contradicted the tier split sitting above them. Tier 2 is not a
+  weaker authorization layer, it is not authorization at all: it decides what TangleClaw *offers* a
+  user, never what they may *reach*. Four consequences are now stated so it cannot drift back — a
+  tier-2 check protects nothing, bypassing one is not a vulnerability, it needs no grants or
+  revocations or resolver, and no security decision is ever made there. The case against
+  caddy-security was re-argued on the ground that actually carries it: it gates at the proxy, and a
+  direct-mode install has no proxy.
+
 ## [5.22.0] - 2026-09-07
 
 ### Added

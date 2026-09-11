@@ -1,6 +1,6 @@
 # ADR 0015: TangleClaw owns authentication — the gate moves out of Caddy
 
-**Status:** **Accepted (2026-09-11, operator-ratified in-pane).** Not built. The operator accepted the cost explicitly — 1-2 trains of work — for the RBAC, per-project scoping and usage-limit capability `basic_auth` structurally cannot provide.
+**Status:** **Accepted (2026-09-11, operator-ratified in-pane).** Not built. The operator accepted the cost explicitly — 1-2 trains of work — to get a front door that works on any ingress mode, and a principal to hang per-user resource defaults on. `basic_auth` can provide neither: it is one shared credential, and it exists only in caddy mode.
 **Source issues:** #1149 (v6 multi-user architecture), #803 (the wizard's opt-out), #1055.
 **Supersedes, conditionally:** ADR 0004 / `auth-2-authelia-gate.md`'s Path A choice — on the exact
 condition that choice named for itself.
@@ -21,6 +21,11 @@ decision recorded its own expiry in its fourth rationale bullet:
 model — `User → Membership → Workspace → Project → Session → Agent` — plus request identity,
 authorization, resource scoping and auditability.
 
+**This ADR takes the identity half of that model and not the authorization half** — see the tier
+split below. #1149 describes a full access-control system; what the operator asked for is a front
+door plus per-user resource defaults. Where this ADR and #1149 disagree on scope, this ADR is the
+narrower and is the one being built.
+
 This ADR is not a reversal. It is the upgrade the 2026-06-24 decision reserved.
 
 ### What `basic_auth` structurally cannot do
@@ -28,16 +33,22 @@ This ADR is not a reversal. It is the upgrade the 2026-06-24 decision reserved.
 One shared credential in a generated file. Not "does not yet" — cannot, without becoming a different
 mechanism:
 
-| Requirement (#1149) | Under `basic_auth` |
-|---|---|
-| Per-person accounts | One credential for everyone |
-| Revoke one person | Change the password for everyone |
-| Roles / authorization | No principal to attach them to |
-| Logout, session expiry | Browsers cache Basic credentials per origin; there is no logout |
-| Audit "who launched this shell" | Every request is the same username |
+| Requirement | Tier | Under `basic_auth` |
+|---|---|---|
+| Per-person accounts | 1 | One credential for everyone |
+| Revoke one person | 1 | Change the password for everyone |
+| Logout, session expiry | 1 | Browsers cache Basic credentials per origin; there is no logout |
+| Know *who* is asking | 1 | Every request is the same username |
+| Per-user resource defaults | 2 | Nothing to attach them to |
 
-The audit row is the sharpest one. TangleClaw launches agent sessions with shell access. A multi-user
-system that cannot attribute a shell to a person is not multi-user; it is a shared account.
+**Every row that justifies this ADR is tier 1.** The tier-2 row is included only to show why it
+needs tier 1 first: resource defaults have to hang on a principal, and `basic_auth` has none. It is
+not itself an argument for moving the gate.
+
+The fourth row is the sharpest. TangleClaw launches agent sessions with shell access, and a system
+that cannot tell one person from another is not multi-user; it is a shared account. Note what that
+row does **not** claim — an audit trail of who did what is a capability identity *enables*, not a
+control this ADR commits to building.
 
 ### Two costs already being paid
 
@@ -76,6 +87,21 @@ Closing that is the priority.
 engines/models a user may reach, cost caps, which projects they see. It is a guardrail against
 expense and clutter among trusted people — not containment.
 
+**Tier 2 is not authorization, and the ADR means that literally.** It is not a weaker authorization
+layer, not authorization deferred, not authorization with a smaller threat model. It decides what
+TangleClaw *offers* a user, and nothing about what they may *reach*. Four things follow, and they
+are what stop this drifting back into an access-control system:
+
+- **A tier-2 check never protects anything.** If removing one lets a user do something, that thing
+  was relying on tier 2 for security and the reliance is the bug — the fix belongs in tier 1.
+- **Bypassing tier 2 is not a vulnerability.** A user with a terminal can invoke any CLI by hand.
+  That is expected and documented, not a hole to close.
+- **It needs no authorization vocabulary.** No grants, no revocations, no delegation, no
+  principal/action/resource triple, no resolver. Those were designed here while tier 2 was still
+  believed to be a boundary, and they are over-built for a preferences layer (see open question 5).
+- **It may not be the place any security decision is made.** If a route needs to refuse someone,
+  it refuses at tier 1 against identity — never by reading a resource default.
+
 **The dependency runs one way:** tier 2 needs identity, so tier 1 comes first. After that they share
 no mechanism and can be built independently. **Tier 2 never gates a release** — a half-built engine
 filter leaves nothing insecure, because the door still holds.
@@ -93,22 +119,25 @@ filter leaves nothing insecure, because the door still holds.
    relationship, so `project_members` rather than `users.allowedProjects`. Cheap now, a migration
    later; it is the one piece of #1149's model worth taking immediately.
 4. **Tier 2 is a guardrail, not containment — say so wherever it is surfaced.** A terminal user can
-   invoke any CLI by hand. The permission governs what TangleClaw *launches for them*.
+   invoke any CLI by hand. A resource default governs what TangleClaw *offers and launches for
+   them*, never what they are able to reach.
 
 ### Requirements (the operator's, verbatim where it matters)
 
 > "like lets say i want user A to have access as an ADMIN and user B to just have access to their
 > own projects and or certain LLMs or certain usage limits…"
 
-1. Granular RBAC — Admin vs User.
+1. Granular RBAC — Admin vs User. **(Operator's word. In this ADR's terms it is tier 2 —
+   "Admin" means the person who adds users and sets their resource defaults, not a privilege level
+   that gates access. The only genuine tier-1 distinction is authenticated vs not.)**
 2. Per-project scoping.
 3. LLM usage limits.
 4. Per-**user** rights and limits, not only per-role: "each user might have different rights or
    limits". So a role is a *default*, not the answer.
-5. Per-user **model/engine** access — *which* LLMs, distinct from *how much*. This is why a
-   permission check's resource dimension is polymorphic (projects **and** engines), and why the
-   check signature should carry a typed resource from the first call site rather than hardcoding
-   "resource = project".
+5. Per-user **model/engine** access — *which* LLMs, distinct from *how much*. The design point it
+   carries: a user's resource defaults cover more than one KIND of thing (projects **and** engines,
+   probably more later), so whatever record holds them should not be shaped as "a list of projects"
+   with engines bolted on afterwards. That is a data-shape observation, not a permission-model one.
 6. Per-user **harness type** (local `ttyd` vs a remote harness) — **future scope, not first train.**
    It makes hosted clients conceivable but does not by itself make them safe; see below.
 
@@ -144,11 +173,19 @@ cost and the reason it lost in June.
 
 ### Why not Path B (caddy-security) now that multi-user is real
 
-It would deliver sessions and multi-user, but it puts **identity in the proxy** while #1149 puts
-authorization in TangleClaw's data model. Memberships, workspace scoping and per-resource permissions
-have to live where the resources are. A proxy that separately decides who may knock is then a second
-source of truth about identity, and this project has a standing position on those. If TangleClaw must
-know the principal to authorize anything, it should also be what established it.
+It would deliver sessions and multi-user, but it gates **at the proxy** — and tier 1's requirement is
+a front door on **any ingress mode**. A direct-mode install has no proxy, so Path B cannot protect
+the population this ADR exists for. That alone settles it.
+
+Two supporting reasons. A proxy that establishes identity is a second source of truth about who the
+caller is, and this project has a standing position on those. And tier 2 needs a principal to hang
+resource defaults on, which means TangleClaw has to know the user regardless — so having something
+else establish that identity buys a dependency and no capability.
+
+**Note this argument deliberately does not rest on authorization.** An earlier draft argued that
+#1149 puts authorization in TangleClaw's data model and the proxy therefore cannot own it. That
+reasoning is retired: tier 2 is not authorization, so it cannot carry an argument about where
+authorization belongs. The ingress-mode argument above is the real one and it is stronger.
 
 ### What Caddy keeps
 
@@ -241,8 +278,8 @@ since changed, and on a requirement — one operator — that #1149 retires.
    from three call sites, and this ADR changes what the predicate *means*, so #804 should follow it
    rather than precede it. (Named by issue deliberately: it sits in a Train 16 chunk whose number
    moves, and `train-16-chunk-01.md` has an unrelated internal C2.)
-5. **Does tier 2 need permission machinery at all?** If it is not a security boundary, the honest
-   shape may be per-user *preferences* — a field for which engines a user sees, and a UI that
-   filters on it — rather than a permission resolver with grants, revocations and delegation. Decide
-   before building tier 2; the elaborate version is justified only if tier 2 later becomes a real
-   authorization boundary.
+5. **What shape does tier 2 actually take?** Not *whether* it is authorization — it is not, and the
+   tier split settles that. The open part is construction: a per-user preferences record (a field
+   for which engines a user sees, and a UI that filters on it) is almost certainly enough, and the
+   permission resolver with grants, revocations and delegation sketched during design is over-built
+   for it. Decide before building tier 2, and default to the simpler shape.
