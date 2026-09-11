@@ -4,6 +4,70 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **A cutover no longer ends the access logging an operator set up by hand (#846).**
+  `buildCaddyfileContent` gained an `accessLogPath` option and the config gained
+  `caddyAccessLogPath`, so a generated Caddyfile can carry `log { output file … }` on every
+  site that reaches the upstream. Before this the generator emitted no log block under any
+  option, so regenerating a Caddyfile that carried one by hand silently ended the only access
+  logging on the remote-facing site.
+
+  The key defaults to `null` — a fresh install still emits nothing. It is populated only by
+  **adoption from a live Caddyfile that already carries a log**, the same durability pattern
+  #397 used for the `basic_auth` credential and #434 for the tailnet site: read the shape out
+  of the file, persist it to config, and re-emit it on the next cutover. Verified against the
+  operator's own live Caddyfile, which round-trips its
+  `~/.tangleclaw/logs/caddy.access.log` destination where a cutover previously emitted no log
+  block at all.
+
+  Emit and recover are pinned together on purpose. `lib/admin-credential.js` proves recovery
+  is total by rebuilding from the extracted options and comparing bytes, so an option the
+  extractor could not read back would turn adding a credential into a refusal on every install
+  that has a log. `extractGeneratedCaddyfileOptions` therefore recovers it too, and treats its
+  absence as a value rather than a failure. The path is refused unless absolute and free of
+  Caddyfile structural characters — it arrives by adoption from a hand-edited file, so nothing
+  upstream vouches for its shape, and a relative path would put the audit trail wherever
+  Caddy's working directory happens to be.
+
+  A `log` block is read as a **block**, and only one whose sole directive is the destination is
+  accepted. A block that also carries `format json`, `level ERROR`, or a destination with its own
+  `{ roll_size … }` is refused outright rather than partially recovered — adopting just the path
+  would re-emit a log stripped of the rest, which is the same silent drop this change exists to
+  end. The first cut of this fix matched `output file` line-wise and had exactly that defect.
+
+  One walk answers both questions the file is asked — what the destination is, and whether a `log`
+  directive is present at all — because they were briefly separate regexes that disagreed. The
+  parser stripped comments before matching; the "is there a log" fallback tested raw content, so a
+  legal `log { # audit trail` was seen by one and missed by the other: the block was refused, the
+  refusal was never flagged, nothing warned, and the log died on the next cutover. The presence
+  check is deliberately broader than what can be adopted — it counts the bare `log` directive and
+  the named-logger form too — because its question is "would a cutover destroy logging the operator
+  set up", and for every shape this cannot re-emit the answer is yes.
+
+  Scope is read too, not just shape. A `log` block in Caddy's **global options** is the
+  default-logger setting, not per-site access logging — adopting its path would persist it and
+  re-emit it as one log per site while the global logger vanished. Its presence is a refusal,
+  even alongside per-site blocks. And a `log` block that cannot be adopted is now *reported*
+  rather than passed over: four distinct refusals all yield "no path", which was
+  indistinguishable from "this file has no log" — after which a cutover emits nothing either
+  way, which is #846's own outcome reached quietly. The cutover warns before it writes, while
+  the block still exists.
+
+  The class question this raises — four instance-fixes to the same generator preceded this one — is
+  answered separately and tracked as **#1394**: a divergence check comparing the live Caddyfile
+  against the generated one over `caddy adapt` JSON rather than a second Caddyfile parser, on named
+  security properties rather than whole-document equality. Building it as a text parser was rejected
+  on the evidence of this very change, whose extractor reproduced the drift-defect class three times
+  before it was right.
+
+  **This departs from a decision recorded in `deploy/INGRESS.md` on 2026-08-03** that access
+  logging is deliberately not generator-owned. That decision reserved its own re-argument to the
+  operator, who has since delegated the #846 decision; both parties ratified this narrow departure
+  on 2026-09-10, and the decision is amended in place rather than replaced. Still not taken:
+  whether logging should default ON for remote-reachable sites. Worth noting for whoever reads
+  #846 next: the 2026-08-03 decision lives only in `INGRESS.md`; the issue carries no comment
+  recording it, so it reads from GitHub as an unfixed bug.
+
 ### Fixed
 - **Four of the eight wrap-summary sections were never captured, on every wrap and every engine
   (#1379, #1389).** `Delta`, `Open threads`, `Decisions` and `Pointers` rendered `_⚠ not captured_`
@@ -480,6 +544,15 @@ All notable changes to TangleClaw are documented in this file.
   Reconstructed under ADR 0014 from #1067 rather than from the submitted patch, which converted one
   of the three. Reported by **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in PR
   #1357; their bytes were not merged, per `CONTRIBUTING.md`.
+- **ADR 0015 — TangleClaw owns authentication (proposed, not built).** Records the decision to move
+  the login out of Caddy `basic_auth` and into TangleClaw on scrypt sessions, using the stdlib
+  `hashPassword`/`verifyPassword` pair already shipped at `lib/projects.js`. Not a reversal of the
+  2026-06-24 Path A choice: that decision's own rationale named multi-user as the condition for
+  revisiting it, and #1149 met the condition. One shared credential in a generated Caddyfile has no
+  principal to attach a membership, a role, or an audit row to — and TangleClaw launches shells, so
+  a system that cannot attribute one to a person is a shared account rather than a multi-user one.
+  ADR 0004's status is amended to point at it. The build's security cost is argued in the ADR rather
+  than around it.
 
 ## [5.22.0] - 2026-09-07
 

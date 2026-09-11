@@ -18,6 +18,7 @@ const os = require('node:os');
 
 const store = require('../lib/store');
 const caddy = require('../lib/caddy');
+const logger = require('../lib/logger');
 const cutover = require('../scripts/ingress-cutover');
 
 const DEPLOY_DIR = path.join(__dirname, '..', 'deploy');
@@ -250,6 +251,89 @@ describe('auth credential durability (#397 / 2026-07-03 lockout)', () => {
       store.config.save(config);
     }
 
+    /**
+     * Capture info-and-above while `fn` runs, restoring the quiet test posture.
+     * @param {() => void} fn - Work to run while capturing.
+     * @returns {string[]} The captured lines.
+     */
+    function captureLog(fn) {
+      const lines = [];
+      logger.setLevel('info');
+      logger.setConsoleStream({ write: (line) => lines.push(line) });
+      try { fn(); } finally {
+        logger.setConsoleStream(null);
+        logger.setLevel('error');
+      }
+      return lines;
+    }
+
+    it('WARNS at boot about a log block it cannot reproduce (#846)', () => {
+      // The emitter, not the plumbing beneath it. A pure decline persists
+      // nothing, so it never reaches the `changed` branch that logs — boot said
+      // nothing at all, and the operator learned their audit trail was doomed
+      // only if they happened to run a cutover. Deleting this warning left the
+      // whole suite green until this test existed.
+      setConfig({
+        ingressMode: 'caddy',
+        basicAuthUser: 'jason', basicAuthHash: HASH_A, authEnabled: true,
+        caddyRemoteHttp: true, caddyTailnetHost: TAILNET_HOST
+      });
+      // Everything else already adopted, so the ONLY thing left is a log block
+      // that cannot be reproduced — `format json` alongside the destination.
+      fs.writeFileSync(caddy.getCaddyfilePath(),
+        'localhost {\n\tlog {\n\t\toutput file /l.log\n\t\tformat json\n\t}\n'
+        + '\treverse_proxy 127.0.0.1:3102\n}\n');
+
+      const lines = captureLog(() => {
+        const r = caddy.adoptCredentialIntoConfig();
+        assert.equal(r.changed, false, 'nothing adoptable — this is the decline path');
+        assert.equal(r.accessLogUnreadable, true);
+      });
+      const warned = lines.join('\n');
+      assert.match(warned, /cannot reproduce/,
+        'a decline the operator is never told about is the bug itself');
+      assert.match(warned, /will NOT survive a cutover/);
+    });
+
+    it('WARNS even when something else adopted successfully (#846)', () => {
+      // The case two independent reviewers found: gating the warning on a PURE
+      // decline made it vanish on exactly the install it was written for — one
+      // that adopts a credential or tailnet host AND carries a log block we
+      // cannot reproduce. The refusal became a field on an INFO line reading
+      // "Adopted live Caddyfile state into config", which reads as success. The
+      // earlier test pre-adopted everything to force the decline path, so this
+      // combination was the one shape it could not see.
+      setConfig({ ingressMode: 'caddy' });   // nothing pre-adopted this time
+      fs.writeFileSync(caddy.getCaddyfilePath(),
+        'localhost {\n\tlog {\n\t\toutput file /l.log\n\t\tformat json\n\t}\n'
+        + '\treverse_proxy 127.0.0.1:3102\n}\n\n'
+        + `${TAILNET_HOST} {\n\ttls /c/c.pem /c/k.pem\n\tbasic_auth {\n\t\tjason ${HASH_A}\n\t}\n`
+        + '\treverse_proxy 127.0.0.1:3102\n}\n');
+
+      const lines = captureLog(() => {
+        const r = caddy.adoptCredentialIntoConfig();
+        assert.equal(r.changed, true, 'something else MUST adopt — that is the whole point');
+        assert.equal(r.accessLogUnreadable, true);
+      });
+      assert.match(lines.join('\n'), /cannot reproduce/,
+        'a successful adoption must not swallow the refusal riding alongside it');
+    });
+
+    it('stays SILENT at boot when the file simply has no log', () => {
+      // Without this, the assertion above would also pass on an emitter that
+      // warned unconditionally — which would train the operator to ignore it.
+      setConfig({
+        ingressMode: 'caddy',
+        basicAuthUser: 'jason', basicAuthHash: HASH_A, authEnabled: true,
+        caddyRemoteHttp: true, caddyTailnetHost: TAILNET_HOST
+      });
+      fs.writeFileSync(caddy.getCaddyfilePath(),
+        'localhost {\n\treverse_proxy 127.0.0.1:3102\n}\n');
+      const lines = captureLog(() => caddy.adoptCredentialIntoConfig());
+      assert.ok(!lines.join('\n').includes('cannot reproduce'),
+        'a file with no log must not warn about one');
+    });
+
     it('adopts the live credential + remote-HTTP shape into config (read-only on the file)', () => {
       setConfig({ ingressMode: 'caddy' });
       const caddyfilePath = caddy.getCaddyfilePath();
@@ -384,11 +468,41 @@ describe('auth credential durability (#397 / 2026-07-03 lockout)', () => {
     it('skips a tailnet host equal to publicDomain (that site is the ACME block\'s job)', () => {
       const config = {
         publicDomain: TAILNET_HOST,
-        basicAuthUser: 'ops', basicAuthHash: HASH_B, caddyRemoteHttp: true
+        basicAuthUser: 'ops', basicAuthHash: HASH_B, caddyRemoteHttp: true,
+        // The fixture models the real live file, which carries an access log.
+        // Preset so this test still measures the tailnet/publicDomain rule
+        // alone rather than incidentally adopting the log (#846).
+        caddyAccessLogPath: '/already/set.log'
       };
       const result = caddy.computeCaddyfileAdoption(config, liveTailnetCaddyfile());
       assert.equal(result.changed, false);
       assert.equal(config.caddyTailnetHost, undefined);
+    });
+
+    it('names every shape it adopts, including one adopted alone (#846)', () => {
+      // The cutover's report used to enumerate the result's fields by hand, so a
+      // newly-adopted shape had to be added in a second place. The access log was
+      // the member that was forgotten: on the boot where credential, catch-all
+      // and tailnet host are already in config and the log is the ONLY thing
+      // adopted, the operator read "Adopted live Caddyfile state into config: ."
+      assert.deepEqual(
+        caddy.describeAdoption({ changed: true, accessLogPath: '/l.log' }),
+        ['access log preserved (/l.log)'],
+        'a lone adoption must still name itself'
+      );
+      assert.deepEqual(
+        caddy.describeAdoption({
+          adopted: true, user: 'jason', remoteHttp: true,
+          tailnetHost: 'box.tail1234.ts.net', accessLogPath: '/l.log'
+        }),
+        [
+          'basic_auth credential (user: jason)',
+          'remote HTTP catch-all preserved',
+          'tailnet HTTPS site preserved (box.tail1234.ts.net)',
+          'access log preserved (/l.log)'
+        ]
+      );
+      assert.deepEqual(caddy.describeAdoption({}), [], 'nothing adopted, nothing claimed');
     });
 
     it('is the ONLY adoption implementation — the cutover script delegates instead of mirroring it', () => {
@@ -514,7 +628,8 @@ describe('auth credential durability (#397 / 2026-07-03 lockout)', () => {
       setConfig({
         ingressMode: 'caddy', authEnabled: true,
         basicAuthUser: 'jason', basicAuthHash: HASH_A,
-        caddyRemoteHttp: true, caddyTailnetHost: 'other.tail0000.ts.net'
+        caddyRemoteHttp: true, caddyTailnetHost: 'other.tail0000.ts.net',
+        caddyAccessLogPath: '/already/set.log'
       });
       fs.writeFileSync(caddy.getCaddyfilePath(), liveTailnetCaddyfile());
 
@@ -527,7 +642,8 @@ describe('auth credential durability (#397 / 2026-07-03 lockout)', () => {
       setConfig({
         ingressMode: 'caddy', authEnabled: true,
         basicAuthUser: 'jason', basicAuthHash: HASH_A,
-        caddyRemoteHttp: true, publicDomain: TAILNET_HOST
+        caddyRemoteHttp: true, publicDomain: TAILNET_HOST,
+        caddyAccessLogPath: '/already/set.log'
       });
       fs.writeFileSync(caddy.getCaddyfilePath(), liveTailnetCaddyfile());
 
@@ -618,7 +734,10 @@ describe('extractGeneratedCaddyfileOptions — reading a generated file back int
       certPath: '/c/cert.pem',
       keyPath: '/c/key.pem',
       httpsPort: 9443,
-      httpPort: 9080
+      httpPort: 9080,
+      // #846 — recovered too, so the byte round-trip stays total. null is the
+      // value for "this file carries no access log", not a recovery failure.
+      accessLogPath: null
     });
   });
 

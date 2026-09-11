@@ -137,6 +137,22 @@ The `basic_auth` credential is canonical in **config** (`basicAuthUser` +
   Basic-Auth-gated plain-HTTP catch-all for WireGuard/Tailscale remote access,
   plus `auto_https disable_redirects`. The generator refuses to emit the
   catch-all without a credential — an ungated one would be an open door.
+- **Tailnet HTTPS site** — `caddyTailnetHost` (#434, adopted from a live file
+  carrying exactly one tls-bearing FQDN site that isn't `publicDomain`). Gated
+  for the same reason as the catch-all: the generator refuses it without a
+  credential.
+- **Access log** — `caddyAccessLogPath` (#846, adopted from a live per-site
+  `log { output file <absolute path> }`). Unlike the shapes above it needs no
+  credential, because a log opens no door. It is refused rather than partially
+  adopted whenever the block carries anything else — `format`, `level`, a
+  destination with its own `{ roll_size … }`, a logger in the global options
+  block, or two sites naming different files — and the refusal is reported at
+  boot and before a cutover writes, since a log dropped in silence is the
+  failure #846 was filed for.
+
+Every shape above is adopted by the same pass, so a hand-maintained Caddyfile
+becomes reproducible one shape at a time rather than all-or-nothing. What no
+adoption pass can recover, it says so about — it never guesses.
 
 ## HTTP/1.1 pin on the HTTPS listener
 
@@ -235,10 +251,15 @@ writes a timestamped backup but still replaces the file, discarding every other
 hand edit it carries. For a hand-edited Caddyfile, regenerating is only safe once
 the generator reproduces the live file in full — see the parity caveat below.
 
-> **Access logging is deliberately NOT generator-owned (#846, decided 2026-08-03).**
-> The generator emits no `log { … }` block under any option, so a cutover onto a
-> Caddyfile that carries one by hand **ends Caddy access logging** — this is a real
-> loss, and it is not a bug to be fixed by teaching the generator to emit one.
+> **SUPERSEDED 2026-09-10 — read the amendment at the end of this block before acting on it.**
+> The decision below stood from 2026-08-03 until the operator delegated its re-argument; it is kept
+> in full because the amendment only makes sense against it, and because its residual argument still
+> governs what shipped.
+>
+> ~~**Access logging is deliberately NOT generator-owned (#846, decided 2026-08-03).**~~
+> The generator emitted no `log { … }` block under any option, so a cutover onto a
+> Caddyfile that carried one by hand **ended Caddy access logging** — a real
+> loss, and (as argued at the time) not a bug to be fixed by teaching the generator to emit one.
 >
 > The reason is that an ingress log is not free. As originally argued:
 > `~/.tangleclaw/logs/ingress-cutover.log` itself grew without rotation and could capture a
@@ -259,9 +280,43 @@ the generator reproduces the live file in full — see the parity caveat below.
 > balance enough to revisit #846 is a decision for the operator, not a side effect of
 > this fix.
 >
-> **If you want access logging, add the block by hand and own its rotation** — see
-> Caddy's `log` directive. Re-read this before any cutover on a machine that has one:
-> back the block up first, and re-add it afterwards.
+> **AMENDED 2026-09-10 — the generator CAN now emit a log.** `buildCaddyfileContent` gained an
+> `accessLogPath` option and the config gained `caddyAccessLogPath` (#846, Train 16 Chunk 01).
+>
+> This departs from the decision recorded above, and is written here rather than quietly
+> replacing it, because that decision reserved its own re-argument to the operator. The operator
+> has since **delegated** the #846 decision to the builder and coordinator, citing a lack of
+> context on Caddy generator drift; both parties ratified the departure on 2026-09-10. So the
+> reservation is discharged by the operator's own delegation — not by an assumption about what
+> they would have said.
+>
+> **What shipped is narrower than what the decision refused.** The key defaults to `null`,
+> so a fresh install still emits no log block — TangleClaw does not create a log on a
+> machine whose operator never asked for one, which is the residual argument above and it
+> still holds. The value is populated only by *adoption from a live Caddyfile that already
+> carries a log block*, i.e. by an operator who added one by hand. Rotation stays Caddy's:
+> the emitted `log` directive is Caddy's own, which rotates by default. So the change
+> preserves an existing audit trail across a cutover; it does not start one.
+>
+> **Still not taken:** whether access logging should default ON for remote-reachable sites, which
+> is the rest of branch 1 of #846's own two-branch decision. Adoption-only is deliberately the
+> smaller step — it preserves what an operator built and starts nothing they did not ask for.
+>
+> **The class question was answered separately and is tracked as #1394.** Four instance-fixes to
+> this generator preceded this one, so the same consensus ratified building a divergence check that
+> compares the live Caddyfile against the generated one — over `caddy adapt` JSON rather than a
+> second Caddyfile parser, on named security properties rather than whole-document equality, and
+> reporting "not measured" rather than "clean" when `caddy` is unavailable.
+>
+> **Note for anyone rostering #846 from GitHub:** the 2026-08-03 decision lives only in this
+> file. Issue #846 is still OPEN with no comment recording it, so the issue reads as an
+> unfixed bug while the project's answer was "deliberately not a bug". Whichever way the
+> ruling lands, it belongs on the issue.
+>
+> **If you want access logging on an install that has none, add the block by hand and own its
+> rotation** — see Caddy's `log` directive. A cutover now preserves a block it can read back,
+> so the back-up-and-re-add dance is no longer required for the shapes
+> `extractAccessLogPath` recognises (one unanimous, absolute destination).
 >
 > **Audit generator/deployment parity by *diffing* a generated file against the live
 > one** — build the content from live config using the cutover's own option assembly

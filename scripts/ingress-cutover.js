@@ -154,6 +154,10 @@ function planCutover(target, ctx) {
       // #434 — preserve the tailnet HTTPS site + http→https redirect (adopted
       // from the live file or set explicitly). Generator enforces gate-required.
       tailnetHost: config.caddyTailnetHost || null,
+      // #846 — preserve the access log (adopted from the live file or set
+      // explicitly). Without this the cutover regenerated a file with no `log`
+      // block at all, silently ending the remote-facing site's audit trail.
+      accessLogPath: config.caddyAccessLogPath || null,
       // #863 — the machine's own mDNS name, so the dashboard answers to
       // something other than `localhost`. Without it the generated Caddyfile has
       // exactly one site and every other address fails the TLS handshake, which
@@ -532,6 +536,18 @@ function main() {
     // HTTPS site) into config where config lacks them, so the regenerated file
     // re-emits the SAME hash + sites instead of losing them. Dry-run reports
     // without mutating config.
+    // Warned on BOTH paths, and before either writes. The dry run is where an
+    // operator decides whether to go ahead, so a warning only the real run
+    // prints arrives after the decision it should have informed. Probed against
+    // a throwaway config so nothing is mutated on the dry-run path.
+    if (caddy.computeCaddyfileAdoption({}, ctx.existingCaddyfileText || '').accessLogUnreadable) {
+      process.stdout.write(
+        'WARNING: the live Caddyfile has a `log` block this tool cannot reproduce, so it will '
+        + 'NOT survive a cutover. Reproducible shape: one per-site `log { output file '
+        + '<absolute path> }` and nothing else. Back the block up and re-add it after, or set '
+        + '`caddyAccessLogPath` in config to a plain destination.\n'
+      );
+    }
     if (dryRun) {
       if (applyDryRunAdoptionPreview(config, ctx.existingCaddyfileText)) {
         process.stdout.write('NOTE: would ADOPT the live Caddyfile\'s basic_auth credential / ingress shapes into config (#397/#434 durability) — plan below previews the post-adoption state\n');
@@ -539,10 +555,7 @@ function main() {
     } else {
       const adoption = caddy.adoptCredentialIntoConfig({ requireCaddyMode: false });
       if (adoption.changed) {
-        const parts = [];
-        if (adoption.adopted) parts.push(`basic_auth credential (user: ${adoption.user})`);
-        if (adoption.remoteHttp) parts.push('remote HTTP catch-all preserved');
-        if (adoption.tailnetHost) parts.push(`tailnet HTTPS site preserved (${adoption.tailnetHost})`);
+        const parts = caddy.describeAdoption(adoption);
         process.stdout.write(`Adopted live Caddyfile state into config: ${parts.join(', ')}.\n`);
         Object.assign(config, store.config.load()); // refresh the in-memory copy the plan reads
       }

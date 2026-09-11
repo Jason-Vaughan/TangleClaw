@@ -964,6 +964,20 @@ describe('createGate refuses a file it cannot reproduce', () => {
     });
     assert.equal(cred.canCreateGate(CADDY_CFG, plain, 'jason').allowed, true);
   });
+
+  it('still allows a file carrying an access log (#846)', () => {
+    // This layer proves recovery is total by rebuilding and comparing BYTES, so
+    // every option the generator gains must also be recoverable or adding a
+    // first login starts refusing installs that have one. Asserted HERE, at the
+    // layer whose refusal the operator would actually hit, not only at the
+    // build∘extract identity in caddy.test.js.
+    const logged = caddy.buildCaddyfileContent({
+      serverPort: 3102, certPath, keyPath, httpsPort: 9443, httpPort: 9080,
+      accessLogPath: '/Users/test/.tangleclaw/logs/caddy.access.log'
+    });
+    assert.match(logged, /^\t\toutput file /m, 'fixture must actually carry the log');
+    assert.equal(cred.canCreateGate(CADDY_CFG, logged, 'jason').allowed, true);
+  });
 });
 
 describe('createGate will not gate an install nothing is gating', () => {

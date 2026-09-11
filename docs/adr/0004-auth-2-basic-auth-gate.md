@@ -1,6 +1,6 @@
 # ADR 0004: Authentication Gate — Caddy `basic_auth`, Forced Setup, Break-Glass Recovery
 
-**Status:** Accepted (2026-06-27, AUTH-2 / #1). Ships behind the `authEnabled` config flag (default `false`) and is only live once an operator cuts over to caddy ingress — inert on existing installs.
+**Status:** Accepted (2026-06-27, AUTH-2 / #1). **Conditionally superseded by ADR 0015 (proposed 2026-09-10)** — this ADR's Path A choice named multi-user as the condition under which it should be revisited, and #1149 met it; 0015 moves the gate into TangleClaw and leaves Caddy as the TLS terminator. Ships behind the `authEnabled` config flag (default `false`) and is only live once an operator cuts over to caddy ingress — inert on existing installs.
 **Source issue:** #1 — Add user authentication (AUTH track). **Chunks:** #403 (slice 1), #404 (slice 2a), #405 (slice 2b), #406 (slice 3), this ADR (slice 4).
 **Research:** `.claude/plans/auth-research-2026-06-16.md` (deep-research, adversarially verified); live AUTH-1 cutover finding (`VRF-auth-1-cutover`, 2026-06-24) that the operator runs on a hand-edited Caddyfile.
 **Builds on:** ADR 0003 (single Caddy ingress). AUTH-2 puts the auth gate *in* that ingress. **Consumed by:** AUTH-3 (TC reads the proxy identity → owner/#347).
@@ -111,6 +111,12 @@ but is inert until a caddy cutover passes the credential through. Single admin, 
 - **In-process Node auth (Better Auth / hand-rolled scrypt).** Rejected for the same reason as in
   ADR 0003: every surface (HTTP, WS, ttyd, gateway) is hand-wired, so it becomes roll-your-own auth
   across four transports — the footgun the single-ingress model exists to avoid.
+  **Revisited 2026-09-10 by ADR 0015**, which proposes this mechanism and must answer this
+  objection rather than skip it — see its "Answering ADR 0004's rejection" section. The short of
+  it: the four transports are no longer four doors. TangleClaw internally proxies ttyd and the
+  OpenClaw gateway, so the generated Caddyfile carries a single upstream and all four surfaces
+  enter through TangleClaw's own request path. That does not make the objection void — the
+  WebSocket upgrade still needs deliberate handling — but "four transports" now overstates it.
 - **Default admin credentials seeded on first boot.** Rejected: a shipped default password is the
   classic appliance vulnerability. Forced setup with no default is strictly safer and barely costs
   the operator anything (one wizard step they must complete anyway).

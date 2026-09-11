@@ -190,6 +190,270 @@ describe('caddy', () => {
       });
     });
 
+    // #846 — the live tailnet site carried `log { output file … }` that the
+    // generator could not emit under ANY option, so a cutover regenerated a file
+    // with no logging at all and silently ended the remote-facing site's audit
+    // trail. Same failure shape as the h1 pin (#845): a hand edit the generator
+    // cannot reproduce.
+    describe('access log (#846)', () => {
+      const HASH = '$2a$14$abcdefghijklmnopqrstuv';
+      const gated = { ...opts, basicAuthUser: 'tcadmin', basicAuthHash: HASH };
+      const LOG = '/Users/x/.tangleclaw/logs/caddy.access.log';
+
+      it('emits a log block on every site that reaches the upstream', () => {
+        const out = caddy.buildCaddyfileContent({
+          ...gated, accessLogPath: LOG, tailnetHost: 'box.tail1234.ts.net', remoteHttpCatchAll: true
+        });
+        // localhost + tailnet + http:// catch-all = three proxying sites.
+        assert.equal((out.match(/^\t\toutput file /gm) || []).length, 3,
+          'every proxying site must carry the audit trail — one with a hole is not an audit trail');
+        assert.match(out, /^\tlog \{$/m);
+      });
+
+      it('does NOT log the pure redirect block', () => {
+        // The redirect never reaches the upstream, so it answers no question the
+        // access log exists to answer. Asserted on the block itself, not a count,
+        // so adding a fourth proxying site later cannot make this pass vacuously.
+        const out = caddy.buildCaddyfileContent({
+          ...gated, accessLogPath: LOG, tailnetHost: 'box.tail1234.ts.net'
+        });
+        const redirect = out.slice(out.indexOf('http://box.tail1234.ts.net {'));
+        const blockEnd = redirect.indexOf('\n}');
+        assert.ok(!redirect.slice(0, blockEnd).includes('log {'),
+          'a block that only redirects must not open a log');
+      });
+
+      it('emits nothing when no path is configured', () => {
+        const out = caddy.buildCaddyfileContent(gated);
+        assert.ok(!out.includes('log {'), 'absent config must emit no log block');
+      });
+
+      it('refuses a path that could restructure the Caddyfile, or that is relative', () => {
+        // Written verbatim inside a directive, and it arrives by ADOPTION from a
+        // hand-edited file — nothing upstream vouches for its shape. A relative
+        // path is refused separately: Caddy would resolve it against its own
+        // working directory, so the operator would believe an audit trail was
+        // being kept somewhere nobody chose.
+        for (const hostile of [
+          '/var/log/a b.log', '/var/log/x"y.log', '/var/log/e{vil}.log',
+          '/var/log/a#b.log', '/var/log/back\\slash.log', 'relative/path.log', 'caddy.access.log'
+        ]) {
+          assert.throws(
+            () => caddy.buildCaddyfileContent({ ...gated, accessLogPath: hostile }),
+            /accessLogPath must be an absolute path/,
+            `must refuse ${JSON.stringify(hostile)}`
+          );
+        }
+      });
+
+      it('round-trips: what is emitted is recovered, byte for byte', () => {
+        // `lib/admin-credential.js` proves recovery is TOTAL by rebuilding from
+        // the extracted options and comparing bytes. An option the extractor
+        // cannot read back turns adding a credential into a refusal for every
+        // install that has an access log — so emit and recover must stay paired.
+        const out = caddy.buildCaddyfileContent({ ...opts, accessLogPath: LOG });
+        assert.equal(caddy.extractAccessLogPath(out), LOG);
+        const derived = caddy.extractGeneratedCaddyfileOptions(out);
+        assert.equal(derived.accessLogPath, LOG, 'the recoverer must model the option');
+        assert.equal(caddy.buildCaddyfileContent(derived), out, 'rebuild must be byte-identical');
+      });
+
+      it('round-trips a file with NO log the same way', () => {
+        const out = caddy.buildCaddyfileContent(opts);
+        assert.equal(caddy.extractAccessLogPath(out), null);
+        const derived = caddy.extractGeneratedCaddyfileOptions(out);
+        assert.equal(derived.accessLogPath, null, 'absence is a value, not a recovery failure');
+        assert.equal(caddy.buildCaddyfileContent(derived), out);
+      });
+
+      it('refuses a log block carrying anything beyond the destination', () => {
+        // The trap this fix nearly walked into. A line-wise match for
+        // `output file …` reads these as bare blocks, so adoption would store
+        // the path and the next cutover would re-emit a log stripped of
+        // `format`/`level`/`roll_size` — silently dropping a hand edit, which is
+        // the exact failure #846 exists to end, reintroduced inside its own fix.
+        const site = (inner) => `x {\n\tlog {\n${inner}\n\t}\n}\n`;
+        assert.equal(caddy.extractAccessLogPath(site('\t\toutput file /a.log\n\t\tformat json')), null,
+          'a formatted log is not reproducible from a path alone');
+        assert.equal(caddy.extractAccessLogPath(site('\t\toutput file /a.log\n\t\tlevel ERROR')), null,
+          'a level-filtered log is not reproducible from a path alone');
+        assert.equal(
+          caddy.extractAccessLogPath('x {\n\tlog {\n\t\toutput file /a.log {\n\t\t\troll_size 10mb\n\t\t}\n\t}\n}\n'),
+          null, 'a destination with its own rotation block is not reproducible either');
+        // The positive that keeps the three above from passing vacuously.
+        assert.equal(caddy.extractAccessLogPath(site('\t\toutput file /a.log')), '/a.log');
+      });
+
+      it('flags EVERY unadoptable log shape, including ones the parser refuses', () => {
+        // The defect two reviewers found independently: "is there a log block"
+        // was answered in three places and the third disagreed. A legal
+        // `log { # audit trail` was seen by the parser and missed by the
+        // fallback — so the parser refused it, nothing flagged it, nothing
+        // warned, and the log died on the next cutover. One walk now answers
+        // both, and these are the shapes that walk must not lose.
+        const unadoptable = {
+          'trailing comment on the open brace': 'x {\n\tlog { # audit trail\n\t\toutput file /a.log\n\t\tformat json\n\t}\n}\n',
+          'bare log directive': 'x {\n\tlog\n\treverse_proxy 127.0.0.1:1\n}\n',
+          'named logger': 'x {\n\tlog audit {\n\t\toutput file /a.log\n\t}\n}\n',
+          'global-options logger': '{\n\tlog {\n\t\toutput file /g.log\n\t}\n}\n\nx {\n\treverse_proxy 127.0.0.1:1\n}\n'
+        };
+        for (const [name, text] of Object.entries(unadoptable)) {
+          const scan = caddy.scanAccessLog(text);
+          assert.equal(scan.path, null, `${name}: must not be adopted`);
+          assert.equal(scan.sawLogDirective, true, `${name}: must still be REPORTED`);
+          assert.equal(caddy.computeCaddyfileAdoption({}, text).accessLogUnreadable, true,
+            `${name}: a refusal the operator is never told about is the bug itself`);
+        }
+        // The negative that stops all of the above passing vacuously.
+        const clean = 'x {\n\treverse_proxy 127.0.0.1:1\n}\n';
+        assert.equal(caddy.scanAccessLog(clean).sawLogDirective, false);
+        assert.notEqual(caddy.computeCaddyfileAdoption({}, clean).accessLogUnreadable, true);
+      });
+
+      it('scrubs a hash-shaped value out of the adoption log payload', () => {
+        // The payload derives its KEY SET from the result so a new shape is
+        // still reported — which also means an unknown future value reaches a
+        // logger that does not redact. observability-strategy.md § Direction
+        // puts redaction on the producer; #821 is the precedent.
+        const out = caddy.adoptionLogPayload({
+          tailnetHost: '$2a$14$abcdefghijklmnopqrstuvABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ab'
+        });
+        assert.ok(!out.tailnetHost.includes('abcdefghijklmnopqrstuv'),
+          'a bcrypt-shaped value must not reach the log verbatim');
+      });
+
+      it('keeps a status flag OUT of the phrases and IN the log payload', () => {
+        // The two readers differ by exactly one set, on purpose. A phrase list
+        // whose sentences all read "<x> preserved" would be lying about a flag
+        // that means "we saw something we could NOT preserve"; a structured log
+        // is precisely where that belongs. Unifying the two exclusion lists —
+        // the obvious reading of "they differ by one member" — breaks this.
+        assert.deepEqual(caddy.describeAdoption({ accessLogUnreadable: true }), [],
+          'a refusal is not a preserved shape');
+        assert.equal(caddy.adoptionLogPayload({ accessLogUnreadable: true }).accessLogUnreadable, true,
+          'but the log must still carry it');
+      });
+
+      it('scrubs the UNLISTED shape it names, not just the listed ones', () => {
+        // The fallback that fixes silent adoption also forwards an unvetted value
+        // to stdout — the cutover report an operator pastes into an issue, which
+        // is exactly where #821 leaked a bcrypt hash. The scrub was applied to
+        // the sibling payload first and missed here; deleting it left the suite
+        // green, which is why this assertion exists rather than the reasoning.
+        const [phrase] = caddy.describeAdoption({
+          someFutureShape: '$2a$14$abcdefghijklmnopqrstuvABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ab'
+        });
+        assert.ok(!phrase.includes('abcdefghijklmnopqrstuv'),
+          'an unlisted value reaches an operator-pasted report — it must be redacted there too');
+        assert.match(phrase, /^someFutureShape preserved \(/, 'and must still be NAMED');
+      });
+
+      it('names a shape it adopts even when nobody added a phrase for it', () => {
+        // describeAdoption used to hand-list its phrases, so a newly-adopted
+        // shape would be adopted SILENTLY — the class this branch exists to
+        // close, in the reporting layer instead of the parsing one.
+        assert.deepEqual(caddy.describeAdoption({ someFutureShape: 'v' }),
+          ['someFutureShape preserved (v)']);
+      });
+
+      it('refuses the GLOBAL options logger, which is a different setting', () => {
+        // Caddy's documented way to configure the DEFAULT logger is a `log` block
+        // at global scope. It is not per-site access logging: adopting its path
+        // would persist it and re-emit it as N per-site logs while the global
+        // logger vanished. Nesting cannot distinguish the two — the generated
+        // global block already nests `servers :8443 { … }` — so scope is tracked.
+        const global = '{\n\thttps_port 8443\n\tlog {\n\t\toutput file /g.log\n\t}\n}\n\n'
+          + 'localhost {\n\treverse_proxy 127.0.0.1:3102\n}\n';
+        assert.equal(caddy.extractAccessLogPath(global), null,
+          'the default-logger setting is not a per-site access log');
+
+        // And its mere PRESENCE is a refusal even when a per-site block also
+        // exists: re-emitting only the per-site one drops the global logger,
+        // which is the same silent loss by another route.
+        const both = '{\n\tlog {\n\t\toutput file /g.log\n\t}\n}\n\n'
+          + 'localhost {\n\tlog {\n\t\toutput file /s.log\n\t}\n}\n';
+        assert.equal(caddy.extractAccessLogPath(both), null,
+          'a file carrying both arrangements cannot be reduced to one path');
+
+        // The positive that stops the two above passing vacuously.
+        const siteOnly = '{\n\thttps_port 8443\n}\n\nlocalhost {\n\tlog {\n\t\toutput file /s.log\n\t}\n}\n';
+        assert.equal(caddy.extractAccessLogPath(siteOnly), '/s.log');
+      });
+
+      it('reports a log block it could NOT adopt, instead of looking like no log', () => {
+        // Four distinct refusals all return null, and silence makes them
+        // indistinguishable from "this file has no access log" — after which the
+        // next cutover emits nothing either way. That is #846's own outcome,
+        // reached quietly, so adoption names it for the caller that reports.
+        const unreadable = 'x {\n\tlog {\n\t\toutput file /a.log\n\t\tformat json\n\t}\n}\n';
+        const cfg = {};
+        const r = caddy.computeCaddyfileAdoption(cfg, unreadable);
+        assert.equal(r.accessLogUnreadable, true, 'a refusal must be visible');
+        assert.equal(cfg.caddyAccessLogPath, undefined, 'and must adopt nothing');
+
+        // A file with genuinely no log is NOT flagged — otherwise the flag means
+        // nothing and every ordinary install reports a problem it does not have.
+        const none = 'x {\n\treverse_proxy 127.0.0.1:3102\n}\n';
+        const r2 = caddy.computeCaddyfileAdoption({}, none);
+        assert.notEqual(r2.accessLogUnreadable, true);
+      });
+
+      it('refuses an INDENTED global options block too', () => {
+        // The scope check keys on a brace-only line; requiring column 0 would let
+        // an indented global block read as a site and re-open the confusion the
+        // scope tracking exists to prevent. `caddy fmt` normalises this, so the
+        // shape is unusual — which is exactly why nothing else would catch it.
+        const indented = '\t{\n\t\tlog {\n\t\t\toutput file /g.log\n\t\t}\n\t}\n\n'
+          + 'localhost {\n\treverse_proxy 127.0.0.1:3102\n}\n';
+        assert.equal(caddy.extractAccessLogPath(indented), null);
+      });
+
+      it('names a decline in the adoption log payload, without it being hand-added', () => {
+        // The hand-kept payload had already forgotten a member: `accessLogPath`
+        // was added to it in one commit and `accessLogUnreadable` was born
+        // missing from it in the same commit. Deriving from the result's keys is
+        // what stops the next shape being forgotten too.
+        const declined = caddy.adoptionLogPayload({ adopted: false, changed: false, accessLogUnreadable: true });
+        assert.equal(declined.accessLogUnreadable, true, 'a decline must reach the log payload');
+        const adopted = caddy.adoptionLogPayload({
+          adopted: true, user: 'jason', changed: true, tailnetHost: 'box.tail1234.ts.net', accessLogPath: '/l.log'
+        });
+        assert.deepEqual(adopted, {
+          credential: true, user: 'jason', tailnetHost: 'box.tail1234.ts.net', accessLogPath: '/l.log'
+        }, 'call-describing keys stay out; every shape key comes through');
+      });
+
+      it('refuses to recover an ambiguous or unemittable path', () => {
+        assert.equal(caddy.extractAccessLogPath('a {\n\tlog {\n\t\toutput file /a.log\n\t}\n}\n'
+          + 'b {\n\tlog {\n\t\toutput file /b.log\n\t}\n}\n'), null,
+        'two destinations cannot collapse into one config value');
+        assert.equal(caddy.extractAccessLogPath('a {\n\t# log {\n\t#\toutput file /commented.log\n\t# }\n}\n'), null,
+          'a documented example is not configuration');
+        assert.equal(caddy.extractAccessLogPath('a {\n\tlog {\n\t\toutput file relative.log\n\t}\n}\n'), null,
+          'a path the generator would refuse to write must not be adopted');
+        // An UNTERMINATED log block — the depth never returns to zero, so there is
+        // no block to read. Whole-file brace validity is deliberately not checked
+        // here: `caddy validate` owns that, and this function's contract is the
+        // log block alone (a file whose outer site block is unclosed still has a
+        // readable, balanced `log { … }` inside it).
+        assert.equal(caddy.extractAccessLogPath('a {\n\tlog {\n\t\toutput file /a.log\n'), null,
+          'a log block that runs off the end of the file is not readable');
+      });
+
+      it('adopts the live file\'s log path into config, and never overwrites one', () => {
+        const live = 'x {\n\tlog {\n\t\toutput file ' + LOG + '\n\t}\n\treverse_proxy 127.0.0.1:3102\n}\n';
+        const fresh = {};
+        const r = caddy.computeCaddyfileAdoption(fresh, live);
+        assert.equal(fresh.caddyAccessLogPath, LOG);
+        assert.equal(r.accessLogPath, LOG);
+        assert.equal(r.changed, true);
+
+        const held = { caddyAccessLogPath: '/already/chosen.log' };
+        caddy.computeCaddyfileAdoption(held, live);
+        assert.equal(held.caddyAccessLogPath, '/already/chosen.log', 'config is never overwritten');
+      });
+    });
+
     // Everything interpolated into a site block is shape-checked, not just the
     // hostname. basicAuthUser arrives from the UNAUTHENTICATED
     // POST /api/setup/complete, which only trims it — and setup now writes AND
