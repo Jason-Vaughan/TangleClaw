@@ -544,7 +544,7 @@ All notable changes to TangleClaw are documented in this file.
   Reconstructed under ADR 0014 from #1067 rather than from the submitted patch, which converted one
   of the three. Reported by **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in PR
   #1357; their bytes were not merged, per `CONTRIBUTING.md`.
-- **ADR 0015 — TangleClaw owns authentication (proposed, not built).** Records the decision to move
+- **ADR 0015 — TangleClaw owns authentication (ACCEPTED 2026-09-11, not built).** Records the decision to move
   the login out of Caddy `basic_auth` and into TangleClaw on scrypt sessions, using the stdlib
   `hashPassword`/`verifyPassword` pair already shipped at `lib/projects.js`. Not a reversal of the
   2026-06-24 Path A choice: that decision's own rationale named multi-user as the condition for
@@ -553,6 +553,18 @@ All notable changes to TangleClaw are documented in this file.
   a system that cannot attribute one to a person is a shared account rather than a multi-user one.
   ADR 0004's status is amended to point at it. The build's security cost is argued in the ADR rather
   than around it.
+
+  **Accepted and scoped 2026-09-11.** The ADR now carries the operator's own two-tier framing, which
+  is the part that governs the build: **tier 1, the front door** — authenticated vs not, on any
+  ingress mode, full rigor, and the reason this matters is that the credential currently takes
+  effect only in caddy mode, so a direct-mode install has no login at all; and **tier 2, "resource
+  defaults"** — which engines and models a user may reach, cost caps, which projects they see —
+  explicitly *not* a security boundary, built separately, and never gating a release. Six
+  requirements and four rulings are recorded with them, including that resource defaults are
+  constraints rather than overridable, that "only see their own projects" is a UI filter rather than
+  a wall, and that shared projects are a membership rather than a per-user field. Hosted clients are
+  deliberately out of scope — a consequence of the tier split, since everyone past the front door is
+  trusted.
 
 ## [5.22.0] - 2026-09-07
 

@@ -1,6 +1,6 @@
 ---
 scope: train-16-chunk-01
-lifecycle: active
+lifecycle: completed
 ---
 
 # Train 16 Chunk 01 — The generator can reproduce the live file, and says so when it can't
@@ -119,7 +119,10 @@ reading both.
 
 ### Chunk C2: The live file is diffed against what the generator would write
 
-- [ ] **C2 — The live file is diffed against what the generator would write.** NOT STARTED —
+- [x] **C2 — MOVED OUT, not built here.** Promoted to its own issue (**#1394**) and chunk after the
+      builder/coordinator consensus, because it is a new subsystem rather than a car on this chunk.
+      Ticked because nothing is outstanding *in this plan*; the work lives on #1394. Original
+      framing kept below for its reasoning. — was: NOT STARTED,
       gated on the decision above.
 
 ## What the audit already found, before it was built
