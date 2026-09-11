@@ -228,6 +228,28 @@ working call sites with their own test surfaces is a refactor of its own, not a 
 rather than folded in. Likewise `guardCommand`'s `|| true`, which makes a guard failure silent: a
 real question about that guard's behaviour, and nothing to do with quoting.
 
+## [POST-VERIFY 2026-09-11] The finding-fix was the one line no test could see
+
+`rev-20260911T200331Z-9d76ef8d` closed 13 of the 14 fixes and raised **one blocking finding against
+a fix from the round before it**: the branch added for R-14 — keeping the exit code beside a
+wholesale redaction — was reachable from no test. `REDACTED_PREFIX` appeared in the module and in no
+test file; every scanner-hit assertion targeted `redactRemoteOutput`, which does not carry the
+branch. Deleting the two lines left the suite green with the reviewed defect restored exactly as
+filed. **Confirmed by mutation before fixing**, not taken on trust.
+
+This is the project's standing "a finding-fix is new code" rule, and the reason it keeps recurring
+is visible here: a fix written to satisfy a review is the code least likely to be mutated, because
+it feels already-reviewed. It is the opposite — it is the newest code on the branch.
+
+Pinned now by a falsifying PAIR, since one case cannot tell the branch from an unconditional
+append: a scanner-flagged stderr must carry both the `[redacted` prefix and `(exit 128)`, and
+ordinary text must carry no exit code at all. Both mutations run red.
+
+Also batched in, per the review's instruction to decide everything in one pass: exact-sentence
+assertions for the silent-exit and killed-push paths (the substring matches that stood could not see
+a trailing `: exit N`, which is the R-1 defect's actual shape), `test/remote-output-callers.test.js`
+added to the FEATURES suite index, the test header's stale pre-move path, and a CHANGELOG run-on.
+
 ## Verification
 
 Suite green before and after; totals live in the evidence store (`prawduct-hook test-status`),

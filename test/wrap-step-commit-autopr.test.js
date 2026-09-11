@@ -265,6 +265,30 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
     assert.match(currentBranch(), /^wrap\//, 'failed push keeps HEAD on the wrap branch for manual rescue');
   });
 
+  it('a SILENT push failure composes one sentence, with the exit code stated once', async () => {
+    // Exact-equal, not a substring match: the defect this pins is a TRAILING
+    // artifact — a shared helper whose "nothing was printed" fallback is
+    // `exit N` renders `git push failed (exit 128): exit 128`, because the
+    // outcome half already names the code. Every substring assertion in this
+    // file passes against that.
+    interceptExec({ push: { exitCode: 128, stdout: '', stderr: '' } });
+    const result = await commitStep.run(buildContext());
+
+    assert.equal(result.output.autoPr.error, 'git push failed (exit 128)');
+  });
+
+  it('a KILLED push says it was stopped, and asserts no exit code at all', async () => {
+    // A stopped command never exited, so naming an exit code for it is the
+    // conflation #894/#897 removed from this text. The shared helper's fallback
+    // would put it back.
+    interceptExec({ push: { exitCode: 124, stdout: '', stderr: '', timedOut: true, error: 'timed out after 120000ms' } });
+    const result = await commitStep.run(buildContext());
+    const { error } = result.output.autoPr;
+
+    assert.match(error, /^git push did not finish and was stopped \(/);
+    assert.doesNotMatch(error, /exit \d/, 'a command that never exited has no exit code');
+  });
+
   it('gh unavailable: branch still pushed, PR skipped with remediation naming the manual command', async () => {
     interceptExec({ 'gh-version': { exitCode: 127, stdout: '', stderr: 'command not found: gh\n' } });
     const result = await commitStep.run(buildContext());

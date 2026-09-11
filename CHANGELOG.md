@@ -87,9 +87,11 @@ All notable changes to TangleClaw are documented in this file.
   and `behind-origin.js`. The first pass enumerated the `lib/wrap-steps/` directory while stating
   the guarantee as repo-wide; five callers outside it were still unredacted, two of them logging.
   The helper now sits in `lib/` because its scope is a property, not a directory. A wholesale
-  replacement keeps the exit code beside it, so a redacted reason still says what failed. The `activity_log` row keeps its own pass — the Direction permits a reporter to
-  add one, and that row is served over `GET /api/activity`, so it should not depend on every
-  present and future producer having remembered. The log line gained one for the same reason.
+  replacement keeps the exit code beside it, so a redacted reason still says what failed.
+
+  The `activity_log` row keeps its own pass — the Direction permits a reporter to add one, and that
+  row is served over `GET /api/activity`, so it should not depend on every present and future
+  producer having remembered. The log line gained one for the same reason.
 
   Local-only `git` (`status`, `add`, `checkout`, `commit`, `rev-parse`) is deliberately untouched:
   it reaches no network and carries no credential.

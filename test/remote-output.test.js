@@ -1,8 +1,8 @@
 'use strict';
 
 /*
- * Tests for `lib/wrap-steps/_remote-output.js` — the shared redaction every
- * wrap step applies to the text a failed REMOTE `git`/`gh` command prints.
+ * Tests for `lib/remote-output.js` — the shared redaction every caller applies
+ * to the text a failed REMOTE `git`/`gh` command prints.
  *
  * The redaction belongs to whatever BUILDS the string, not to whatever records
  * it. When it lived beside one recorder, the log line above that recorder
@@ -22,7 +22,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { redactRemoteOutput, detailFromFailure, reasonFromFailure, MAX_CHARS } = require('../lib/remote-output');
+const { redactRemoteOutput, detailFromFailure, reasonFromFailure, MAX_CHARS, REDACTED_PREFIX } = require('../lib/remote-output');
 
 // Assembled, never written contiguously — see the header note.
 const GH_CLASSIC = `gh${'p'}_${'a'.repeat(36)}`;
@@ -123,6 +123,24 @@ test('_remote-output: reasonFromFailure assembles and redacts together', async (
 
   await t.test('trims, so a trailing newline does not eat a character of the cap', () => {
     assert.equal(reasonFromFailure({ stderr: '  boom  \n', stdout: '', exitCode: 1 }), 'boom');
+  });
+
+  await t.test('keeps the exit code beside a wholesale redaction', () => {
+    // A scanner hit replaces the ENTIRE string, which takes the exit code with
+    // the secret. Here the redacted text is the WHOLE explanation — unlike
+    // `commit.js`, which keeps its own `(exit N)` prefix — so without this the
+    // operator reads "[redacted — …]" and learns nothing about what failed.
+    // The exit code is not a credential.
+    const out = reasonFromFailure({ stderr: `remote: rejected, token ${GH_CLASSIC}`, stdout: '', exitCode: 128 });
+    assert.ok(out.startsWith(REDACTED_PREFIX), 'the secret is still replaced wholesale');
+    assert.match(out, /\(exit 128\)$/, 'and the exit code still says what happened');
+    assert.doesNotMatch(out, /gh[p]_/);
+  });
+
+  await t.test('does NOT append an exit code to text that was not redacted', () => {
+    // The falsifying half: a version that always appended would pass the case
+    // above while doubling the exit code onto every ordinary message.
+    assert.equal(reasonFromFailure({ stderr: 'boom', stdout: '', exitCode: 128 }), 'boom');
   });
 
   await t.test('trims BEFORE choosing, so a blank stderr does not discard stdout', () => {
