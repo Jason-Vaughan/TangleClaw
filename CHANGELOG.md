@@ -5,6 +5,104 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Added
+- **TangleClaw now notices when the live Caddyfile has lost a security property (#1394).**
+  `lib/caddy-drift.js` compares the live file against the one the generator would write and
+  reports four properties: every proxying site has a gate; the HTTPS listener negotiates the
+  protocols the baseline pins; no site dials an upstream TangleClaw does not generate; and no
+  site fronts a port whose PortHub lease declares a narrower `reach` than a Caddy-served site
+  provides. Run against the operator's own live file it names the hand-added `:3250` block on
+  all three of the properties that block actually breaks, and nothing else.
+
+  The sixth drift incident is what settles the design: the exposed block was **hand-added**,
+  and `lib/caddy.js` has no code path that could emit a second upstream. No generator change
+  could have prevented it, so the check — not a feature — is the only mechanism that can ever
+  see the next one.
+
+  **Caddy's parser is the only parser.** Both sides go through `caddy adapt`; every property
+  is read off the JSON. **Properties are diffed, never documents** — and not only to avoid
+  cosmetic noise. The live file states its gate as one route holding
+  `[authentication, reverse_proxy]`; the generator states the same gate as an `authentication`
+  route behind a `not path_regexp` matcher followed by a separate unmatched `reverse_proxy`.
+  A walk asking "was this proxy gated in its own handler chain" reports **the generator's own
+  output as ungated**. Sites are keyed by listen address and host, never by server name:
+  `caddy adapt` numbers servers itself, and adding the one hand-written block moved the HTTPS
+  listener from `srv1` to `srv2`.
+
+  **An unrun check is never clean, all the way to the screen.** Every property answers `holds`,
+  `diverged` or `not-measured`; a missing `caddy`, an unreadable Caddyfile, an ungated config, or
+  an unreadable PortHub produces the third. The banner is derived from the PROPERTIES and not from
+  the flat findings list, which carries divergences only — deriving it from that list made an
+  all-holds result and a result with an unmeasurable property indistinguishable, so an unrun
+  property reached the operator as silence while the boot log called the file clean. Reachable on
+  an ordinary install: an ungated config leaves the gate property permanently unmeasurable. Silence
+  now means one thing only — the check ran and every property held.
+
+  Nothing blocks or rewrites — the operator hand-edits deliberately and has twice affirmed that
+  this particular block is fine.
+
+  Scope stated rather than implied: P1 checks gate **presence**, not gate **breadth**. A
+  hand-widened bypass matcher leaves the site gated and is not reported. The first
+  implementation did compare matchers and fired on three correctly gated sites, because
+  deciding which of two matcher sets admits more requests is Caddy's matcher algebra rather
+  than a set comparison. Filed as #1403 instead of approximated. `scanAccessLog` and
+  `extractTailnetHost` are likewise **not** retired by this: they serve adoption, which unlike
+  this check may not degrade to "not measured" without re-opening #846.
+
+  The operator reads it in the browser, not in a boot log — they are almost never sitting at
+  this machine. Measured once at boot in caddy mode only, deferred past `listen` because it
+  spawns `caddy adapt` twice, and carried on `/api/server-info` as `caddyDriftNotice` beside
+  `bindNotice`/`ttydNotice`. Rendered as a **banner** rather than a dash-bar chip: that chip
+  truncates at 42ch and puts the rest in a hover tooltip, and the operator reads this on a
+  phone, so the findings — which are the whole deliverable — would be unreachable. A check that
+  could not run renders too, because "TangleClaw did not look" and "TangleClaw looked and found
+  nothing" are different facts.
+
+  Credentials never reach a report — `caddy adapt` embeds the bcrypt hash verbatim, so raw
+  adapt JSON is never logged, every reason and finding passes `redactHashes`, and the baseline
+  is adapted through a 0600 file in a 0700 directory removed in a `finally`. Design:
+  `docs/caddy-drift-check.md`. Tests: `test/caddy-drift.test.js` — the property layer runs
+  against committed real `caddy adapt` output so CI, which has no `caddy`, still covers the
+  logic; the integration layer skips honestly and re-derives every fixture so a Caddy release
+  cannot leave the snapshot describing a Caddy nobody runs.
+- **ADR 0014 now says which reading of its live-serving category governs (#1373).** The ADR
+  supported two, a few paragraphs apart and pointing opposite ways: its Decision item says the
+  Coordinator "rejects on four categories" and the Communication table carries a dedicated
+  *Rejected — security trip* row, while the paragraph below calls the omission of `public/**`
+  from `CONTRIBUTING.md` a recorded decision *"because forbidding the UI surface would block
+  every legitimate UI contribution for no gain when reconstruction already covers it"* — which
+  only holds if such a PR proceeds.
+
+  The second reading governs, as ruled on 2026-09-08 when four external PRs arrived and two of
+  them (#1354 `public/style.css`, #1359 `server.js`) touched enumerated live-serving paths. What
+  the ADR protects is that a contributor's bytes never *execute* on the machine serving the live
+  install, and clean-room reconstruction satisfies that completely; rejecting instead would block
+  every UI contribution and add no protection. A live-surface PR is therefore **flagged, never
+  refused**. The ruling had lived only in a Medusa exchange, which nothing reads, so the next
+  session would have met the same fork against the same text.
+
+  The *Rejected — security trip* row is reconciled — reachable from three of the four categories,
+  not the live-serving one — and the asymmetry the ADR required this repo to decide before first
+  use, after two uses without deciding, is settled by being dissolved: under the governing reading
+  there is no unpublished rejection rule on that surface, because that surface does not reject.
+
+- **A PortHub lease now records how far its service is meant to reach (#1394).** New `reach`
+  field on the lease — `loopback` | `tailnet` | `lan`, defaulting to `loopback` — accepted by
+  `POST /api/ports/lease` and reported by `GET /api/ports`. A service that binds `127.0.0.1`
+  is already stating its intent; nothing wrote it where another process could read it, so a
+  proxy fronting that port was indistinguishable from a deliberate exposure.
+
+  `loopback` is the default because it is the weakest claim: a lease that never said otherwise
+  must not be read as permission to expose the port, and existing rows backfill to it for the
+  same reason. Replace semantics, matching every sibling field — a renewal that stops
+  restating a wider reach narrows the record back, which over-reports rather than hiding a
+  real exposure. `store.LEASE_REACHES` is the single owner of the vocabulary, driving the
+  CHECK constraint, the validator and the HTTP error text together.
+
+  Schema v34→v35. The `ALTER` is conditional because `_createTables` runs *before* migrations
+  and creates a missing table at the current shape, so any install whose `port_leases` table
+  is absent and whose version is past the v7→v8 rebuild arrives with the column already
+  present — an unconditional `ALTER` aborts the whole upgrade. The postcondition runs on both
+  paths, so the skip can never mean the constraint is missing.
 - **A cutover no longer ends the access logging an operator set up by hand (#846).**
   `buildCaddyfileContent` gained an `accessLogPath` option and the config gained
   `caddyAccessLogPath`, so a generated Caddyfile can carry `log { output file … }` on every

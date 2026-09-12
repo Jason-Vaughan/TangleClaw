@@ -34,6 +34,68 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-12 — #1394, #1373: the Caddyfile finally gets a mechanism that can see a hand-edit
+
+<!-- prawduct: type=feature | scope=train-16-chunk-04 -->
+
+Train 16 Chunk 04.
+
+`lib/caddy-drift.js` compares the live Caddyfile against the one the generator would write and
+reports four security properties: every proxying site has a gate, the HTTPS listener negotiates the
+pinned protocols, no site dials an upstream TangleClaw does not generate, and no site fronts a port
+whose PortHub lease declares a narrower `reach`. Run against the operator's real live file it names
+the hand-added `:3250` block on all three properties that block actually breaks, and nothing else.
+
+The sixth drift incident is what settles the design rather than merely motivating it: the exposed
+block was HAND-ADDED, and `lib/caddy.js` has no code path that could emit a second upstream. No
+generator change could have prevented it, so a check — not a feature — is the only thing that can
+ever see the next one.
+
+Three shape decisions, each load-bearing:
+
+- **Caddy's parser is the only parser.** Both sides go through `caddy adapt`; every property is read
+  off the JSON. No new text walking.
+- **Properties are diffed, never documents** — and not only to avoid cosmetic noise. The live file
+  states its gate as one route holding `[authentication, reverse_proxy]`; the generator states the
+  SAME gate as an `authentication` route behind a `not path_regexp` matcher followed by a separate
+  unmatched `reverse_proxy`. A walk asking "was this proxy gated in its own handler chain" reports
+  the GENERATOR'S OWN OUTPUT as ungated. Sites are keyed by listen address and host, never by server
+  name: `caddy adapt` numbers servers itself, and the hand-added block moved the HTTPS listener from
+  `srv1` to `srv2`.
+- **An unrun check is never clean, all the way to the screen.** Every property answers `holds`,
+  `diverged` or `not-measured`. The Critic's blocking finding was that the operator-facing notice
+  derived from the divergence-only findings list, so an unmeasurable property arrived as silence
+  while the boot log called the file clean — reachable via an ungated config or an unreadable
+  PortHub. The notice now derives from the properties and renders the unmeasured ones by name.
+
+Supporting work: the PortHub lease gained `reach` (`loopback|tailnet|lan`, schema v34→v35) so the
+fourth property has something to cross-reference; surfaced at boot in caddy mode only, on
+`/api/server-info` as `caddyDriftNotice`, and rendered as a dashboard BANNER rather than a dash-bar
+chip — that chip truncates at 42ch behind a hover tooltip and the operator reads this on a phone,
+where the findings would be unreachable.
+
+Scope stated rather than implied: P1 checks gate PRESENCE, not breadth, and asks its question per
+SITE — a hand-widened bypass matcher and an ungated path-scoped block beside a real gate both read as
+holding. Both are #1403, filed rather than approximated because comparing matcher sets is Caddy's
+matcher algebra and an approximation fired on three correctly gated sites. `scanAccessLog` and
+`extractTailnetHost` are NOT retired by this: they serve adoption, which unlike this check may not
+degrade to "not measured" without re-opening #846.
+
+A real upgrade-aborting defect was found and fixed en route: `_createTables` runs BEFORE migrations
+and creates a missing table at the current shape, so any install whose `port_leases` table was absent
+and whose version was past the v7→v8 rebuild hit v34→v35 with the column already present and the
+unconditional `ALTER` aborted the whole upgrade. Caught by an unrelated existing test.
+
+The two caddy-gated tests are declared in `test/skip-ledger.json`, which CI enforces: nothing joins
+the not-run set unannounced. They were missed on the first push and reddened CI — the fourth recorded
+instance of this repo's host-plumbing divergence class, and the sharpest, because the guard I broke
+enforces the same principle the feature ships (an unrun check must not read as a passing one).
+
+#1373 amends ADR 0014 to record which reading of its live-serving category governs: a PR touching
+`public/**` or `server.js` is flagged, never refused, because the protection is that a contributor's
+bytes never EXECUTE on the machine serving the live install and clean-room reconstruction delivers
+that. The ruling had lived only in a Medusa exchange, which nothing reads.
+
 ## 2026-09-11 — #870, #1062: two invariants get one owner each, and the sweep was the defect
 
 <!-- prawduct: type=fix | scope=train-16-chunk-03 -->

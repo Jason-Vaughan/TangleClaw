@@ -447,4 +447,168 @@ describe('store.portLeases', () => {
     const row = db.prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1').get();
     assert.equal(row.version, store.CURRENT_SCHEMA_VERSION);
   });
+
+  describe('reach — how far the service is MEANT to be reachable (#1394)', () => {
+    it('defaults to loopback, the weakest claim', () => {
+      const lease = store.portLeases.lease({ port: 3250, project: 'TangleBrain', service: 'gui' });
+      assert.equal(lease.reach, 'loopback');
+      assert.equal(store.portLeases.get(3250).reach, 'loopback');
+    });
+
+    it('round-trips every declared reach', () => {
+      for (const reach of store.LEASE_REACHES) {
+        const lease = store.portLeases.lease({
+          port: 3300, project: 'P', service: 's', reach
+        });
+        assert.equal(lease.reach, reach);
+        assert.equal(store.portLeases.get(3300).reach, reach);
+      }
+    });
+
+    it('rejects an unknown reach by name, and says which values exist', () => {
+      assert.throws(
+        () => store.portLeases.lease({ port: 3301, project: 'P', service: 's', reach: 'world' }),
+        (err) => {
+          assert.equal(err.code, 'BAD_REQUEST');
+          for (const reach of store.LEASE_REACHES) {
+            assert.ok(err.message.includes(reach), `error should name ${reach}`);
+          }
+          return true;
+        }
+      );
+      assert.equal(store.portLeases.get(3301), null, 'the bad lease left no row behind');
+    });
+
+    it('a renewal that omits reach narrows back to loopback', () => {
+      store.portLeases.lease({ port: 3302, project: 'P', service: 's', reach: 'tailnet' });
+      assert.equal(store.portLeases.get(3302).reach, 'tailnet');
+
+      // Replace semantics, deliberately: a caller that stops declaring a wide
+      // reach has stopped claiming it. The divergence check over-reports on a
+      // stale-narrow value and would MISS an exposure on a stale-wide one.
+      store.portLeases.lease({ port: 3302, project: 'P', service: 's' });
+      assert.equal(store.portLeases.get(3302).reach, 'loopback');
+    });
+
+    it('list and getByProject carry reach too, not just get', () => {
+      store.portLeases.lease({ port: 3303, project: 'Reachy', service: 's', reach: 'lan' });
+      assert.equal(store.portLeases.list({ project: 'Reachy' })[0].reach, 'lan');
+      assert.equal(store.portLeases.getByProject('Reachy')[0].reach, 'lan');
+    });
+  });
+});
+
+describe('#1394 — schema v34→v35 on a REAL old DB', () => {
+  it('backfills existing leases to loopback and enforces the CHECK afterwards', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-v35-mig-'));
+    const prevBase = store._getBasePath();
+    try {
+      const { DatabaseSync } = require('node:sqlite');
+      const dbPath = path.join(tmpDir, 'tangleclaw.db');
+      const seed = new DatabaseSync(dbPath);
+      seed.exec(`
+        CREATE TABLE schema_version (
+          version INTEGER PRIMARY KEY,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO schema_version (version) VALUES (34);
+        CREATE TABLE port_leases (
+          host        TEXT NOT NULL DEFAULT 'localhost',
+          port        INTEGER NOT NULL,
+          project     TEXT NOT NULL,
+          service     TEXT NOT NULL,
+          status      TEXT NOT NULL DEFAULT 'active'
+                      CHECK(status IN ('active','expired','permanent')),
+          permanent   INTEGER NOT NULL DEFAULT 0,
+          ttl_ms      INTEGER,
+          expires_at  TEXT,
+          last_heartbeat TEXT,
+          description TEXT,
+          auto_renew  INTEGER NOT NULL DEFAULT 0,
+          created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (host, port)
+        );
+        INSERT INTO port_leases (host, port, project, service, status, permanent)
+        VALUES ('localhost', 3250, 'TangleBrain', 'tanglebrain-gui', 'permanent', 1);
+      `);
+      seed.close();
+
+      // Precondition: the v34 table really has no reach column, or the
+      // assertions below prove nothing about what the migration did.
+      const pre = new DatabaseSync(dbPath);
+      const preCols = pre.prepare('PRAGMA table_info(port_leases)').all().map((c) => c.name);
+      assert.ok(!preCols.includes('reach'), 'fixture precondition: v34 has no reach column');
+      pre.close();
+
+      store.close();
+      store._setBasePath(tmpDir);
+      store.init();
+
+      const lease = store.portLeases.get(3250);
+      assert.equal(lease.project, 'TangleBrain', 'the pre-existing lease survives');
+      assert.equal(lease.reach, 'loopback',
+        'a lease that predates the field never claimed a wide reach, so it reads as the narrowest');
+
+      // The CHECK is really on the column, not just in the validator above it.
+      const db = store.getDb();
+      assert.throws(
+        () => db.prepare(
+          "INSERT INTO port_leases (host, port, project, service, reach) VALUES ('localhost', 9, 'P', 's', 'world')"
+        ).run(),
+        /CHECK constraint failed/,
+        'the migration added the constraint, not just the column'
+      );
+    } finally {
+      try { store.close(); } catch { /* already closed */ }
+      store._setBasePath(prevBase);
+      store.init();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  // `_createTables` runs BEFORE the migrations and creates a MISSING table at
+  // the current shape, reach included — so a DB whose port_leases table is
+  // absent reaches v34→v35 with the column already there, and an unconditional
+  // ALTER aborts the whole upgrade with "duplicate column name".
+  //
+  // The seed version matters and is not arbitrary: it must be >= 8. Below that,
+  // the v7→v8 migration rebuilds port_leases from scratch at the v8 shape,
+  // stripping reach again, and the duplicate never happens — a fixture seeded
+  // at v1 passes this test against the broken code.
+  it('upgrades an install whose port_leases table is absent (seeded past the v8 rebuild)', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-v35-nopl-'));
+    const prevBase = store._getBasePath();
+    try {
+      const { DatabaseSync } = require('node:sqlite');
+      const seed = new DatabaseSync(path.join(tmpDir, 'tangleclaw.db'));
+      seed.exec(`
+        CREATE TABLE schema_version (
+          version INTEGER PRIMARY KEY,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO schema_version (version) VALUES (20);
+      `);
+      seed.close();
+
+      store.close();
+      store._setBasePath(tmpDir);
+      assert.doesNotThrow(() => store.init(), 'the upgrade must not abort on a duplicate column');
+
+      const lease = store.portLeases.lease({ port: 3400, project: 'P', service: 's' });
+      assert.equal(lease.reach, 'loopback');
+      // The constraint has to be real on this path too, not only on the ALTER path.
+      assert.throws(
+        () => store.getDb().prepare(
+          "INSERT INTO port_leases (host, port, project, service, reach) VALUES ('localhost', 8, 'P', 's', 'world')"
+        ).run(),
+        /CHECK constraint failed/
+      );
+    } finally {
+      try { store.close(); } catch { /* already closed */ }
+      store._setBasePath(prevBase);
+      store.init();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

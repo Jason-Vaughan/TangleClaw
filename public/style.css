@@ -223,6 +223,22 @@ body {
   border-radius: 3px;
   font-size: 12px;
 }
+/* Caddyfile divergence variant (#1394). Amber like the base banner - a
+   hand-edit is usually deliberate, so this reports rather than alarms, and the
+   stale-server banner stays the one that reads as urgent. The findings list is
+   the point of the banner, so it wraps instead of truncating: a path or a port
+   must reach the end of the line on a phone. */
+.caddy-drift-banner { align-items: flex-start; }
+.caddy-drift-findings {
+  margin: 6px 0 0 0;
+  padding-left: 18px;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+.caddy-drift-findings li { margin: 2px 0; }
+/* A property that could not be checked reads as a weaker statement than one
+   that diverged, without disappearing - it is still on the list. */
+.caddy-drift-unmeasured { opacity: 0.75; font-style: italic; }
 .orphan-banner-text { flex: 1; }
 /* Settings-save warnings (#1148): one warning per line, and a plist path must
    wrap rather than push the Dismiss button off a phone screen. */

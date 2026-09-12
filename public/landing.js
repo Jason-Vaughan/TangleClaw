@@ -217,6 +217,7 @@ async function loadServerInfo() {
   renderAuthStatus(data.authStatus);
   renderBindNotice(data.bindNotice);
   renderBindNotice(data.ttydNotice, 'ttydNotice');
+  renderCaddyDriftBanner(data.caddyDriftNotice);
 
   // The version label is written on every tick, not only when something looks
   // wrong. It was previously set once at page load, so a restart this page did
@@ -582,6 +583,54 @@ function renderBindNotice(notice, elementId) {
     el.textContent = '';
     el.classList.add('hidden');
   }
+}
+
+/**
+ * Show or hide the Caddyfile divergence banner (#1394).
+ *
+ * A banner and not a dash-bar chip: the chip truncates at 42ch behind a hover
+ * tooltip, and the operator reads this on a phone, where there is no hover. The
+ * findings are the whole deliverable — a summary the operator cannot expand
+ * tells them something is wrong and refuses to say what.
+ *
+ * Renders a "could not check" state as well as a "found something" one. On an
+ * install where a Caddyfile is expected, "TangleClaw did not look" and
+ * "TangleClaw looked and found nothing" are different facts, and showing
+ * nothing for both is exactly the collapse this check exists to prevent.
+ *
+ * State-driven like the other banners: it mirrors the latest `/api/server-info`
+ * poll. No dismiss control and no timer — the measurement is taken at boot, so
+ * it clears when the operator fixes the file and restarts.
+ *
+ * Findings are server-authored strings describing the live Caddyfile, and they
+ * are escaped: a hostname in that file is operator-controlled text arriving at
+ * innerHTML.
+ *
+ * @param {{message: string, severity: string, findings: string[],
+ *   unmeasured: string[]}|null|undefined} notice
+ */
+function renderCaddyDriftBanner(notice) {
+  const banner = document.getElementById('caddyDriftBanner');
+  const textEl = document.getElementById('caddyDriftBannerText');
+  if (!banner || !textEl) return;
+
+  const message = notice && typeof notice.message === 'string' ? notice.message : null;
+  if (!message) {
+    textEl.textContent = '';
+    banner.classList.add('hidden');
+    return;
+  }
+  const findings = Array.isArray(notice.findings) ? notice.findings : [];
+  // Properties that could NOT be checked are rendered beside the ones that
+  // diverged, never dropped. A check that did not run and a check that found
+  // nothing are different facts, and a banner that shows only divergences turns
+  // the first into the second.
+  const unmeasured = Array.isArray(notice.unmeasured) ? notice.unmeasured : [];
+  const items = findings.map((f) => `<li>${esc(f)}</li>`)
+    .concat(unmeasured.map((u) => `<li class="caddy-drift-unmeasured">not checked: ${esc(u)}</li>`));
+  const list = items.length ? `<ul class="caddy-drift-findings">${items.join('')}</ul>` : '';
+  textEl.innerHTML = `⚠ <strong>${esc(message)}</strong>${list}`;
+  banner.classList.remove('hidden');
 }
 
 /**

@@ -4,7 +4,7 @@
     "`scripts/test-skip-audit.js` reads this after every CI suite run. A skipped test whose",
     "full path (`suite > suite > test`) matches no `match` pattern here FAILS the run. Adding",
     "an environment-gated test means adding an entry: `why` it cannot run on the runner, and",
-    "`runsWhere` it does run — an entry with no such place is a test nothing ever executes.",
+    "`runsWhere` it does run \u2014 an entry with no such place is a test nothing ever executes.",
     "Patterns are anchored regexes over the path. Match the tier, not one test, so a sibling",
     "test in the same tier is covered without a new entry, and keep them narrow enough that a",
     "test outside the tier is not."
@@ -13,14 +13,14 @@
     {
       "id": "eacces-fixtures",
       "match": "^.+ > .+ \\(needs a directory this process cannot read\\)$",
-      "why": "Stages a genuine EACCES with chmod 000 to exercise \"there, and refused\" rather than \"not there\" — the distinction the uploads and project-facts reads exist to draw (#889, #885). Root defeats the mode bits, so the refusal never happens and the assertion passes for the wrong reason; the Docker/Debian clean room runs as root. `test/_eacces.js#canForceRefusal` probes the capability rather than reading the uid, because CAP_DAC_OVERRIDE and permission-ignoring mounts defeat the fixture at an ordinary uid too.",
-      "runsWhere": "any host where the suite runs as a normal user — the operator's install, elkaholic, and the macOS VM clean room. Every title in the tier carries the suffix this pattern matches, so a new refusal fixture is covered without a new entry."
+      "why": "Stages a genuine EACCES with chmod 000 to exercise \"there, and refused\" rather than \"not there\" \u2014 the distinction the uploads and project-facts reads exist to draw (#889, #885). Root defeats the mode bits, so the refusal never happens and the assertion passes for the wrong reason; the Docker/Debian clean room runs as root. `test/_eacces.js#canForceRefusal` probes the capability rather than reading the uid, because CAP_DAC_OVERRIDE and permission-ignoring mounts defeat the fixture at an ordinary uid too.",
+      "runsWhere": "any host where the suite runs as a normal user \u2014 the operator's install, elkaholic, and the macOS VM clean room. Every title in the tier carries the suffix this pattern matches, so a new refusal fixture is covered without a new entry."
     },
     {
       "id": "engine-cli-launch-flags",
       "match": "^engine launch flags exist in the installed CLI \\(#731\\) > [a-z0-9-]+ > launch mode \"[^\"]+\" uses args the installed CLI accepts$",
       "why": "Probes TangleClaw's launch args against the real engine CLI's own parser; the runner has no engine installed.",
-      "runsWhere": "any developer or operator machine with the engine installed — this is where an upstream flag removal (the recorded codex --full-auto learning) surfaces; a self-hosted runner with the engines would run them per PR (#844 option 2, an operator decision)."
+      "runsWhere": "any developer or operator machine with the engine installed \u2014 this is where an upstream flag removal (the recorded codex --full-auto learning) surfaces; a self-hosted runner with the engines would run them per PR (#844 option 2, an operator decision)."
     },
     {
       "id": "engine-cli-probe-summary",
@@ -30,7 +30,7 @@
     },
     {
       "id": "prawduct-upstream-drift",
-      "match": "^C1 — per-project plugin migration \\(#262\\) > engines\\.PRAWDUCT_INSTALL_REFERENCE > matches the installed plugin’s INSTALL_REFERENCE \\(skipped when not installed\\)$",
+      "match": "^C1 \u2014 per-project plugin migration \\(#262\\) > engines\\.PRAWDUCT_INSTALL_REFERENCE > matches the installed plugin\u2019s INSTALL_REFERENCE \\(skipped when not installed\\)$",
       "why": "Compares TangleClaw's install reference with the INSTALLED prawduct plugin's source under ~/.claude; the runner has no plugin checkout.",
       "runsWhere": "developer machines with prawduct installed, and the scheduled upstream-drift workflow (#835), which fails rather than skips when the checkout is absent."
     },
@@ -44,7 +44,7 @@
       "id": "host-pty-pool-darwin",
       "match": "^ttyd-watcher > production runner smoke test \\(darwin only\\) > (_isPtyPoolExhausted|_countTtydZombies) returns .* against the real host shell$",
       "why": "Exercises the production BSD pgrep/sysctl path for the recurring PTY-exhaustion class (#94, #144, #380); the runner is Linux.",
-      "runsWhere": "every macOS developer machine — the platform the watcher ships on."
+      "runsWhere": "every macOS developer machine \u2014 the platform the watcher ships on."
     },
     {
       "id": "local-vs-utc-date",
@@ -57,6 +57,18 @@
       "match": "^projects > updateProject > .* > allows a case-only self-rename at the DB-validator level .*$",
       "why": "A case-only directory rename is unobservable on a case-insensitive filesystem (macOS APFS default). Skips locally, RUNS on the Linux runner; listed so a case-insensitive CI host would not read as an unknown skip.",
       "runsWhere": "the ubuntu runner and any case-sensitive filesystem; the cross-rename tests beside it exercise the same gate everywhere."
+    },
+    {
+      "id": "caddy-adapt-absent",
+      "match": "^caddy-drift \u2014 against real caddy$",
+      "why": "Shells out to `caddy adapt` on real Caddyfiles \u2014 the fixture-freshness re-derivation, the end-to-end run against the hand-edited fixture, the clean run against the generator's own output, and the temp-file cleanup check. The runner has no caddy binary. The PROPERTY layer of this suite is deliberately fixture-driven and DOES run here, so the logic that decides what counts as drift is covered on CI; only the parts that need Caddy's own parser skip.",
+      "runsWhere": "any developer or operator machine with caddy installed \u2014 where it also re-derives test/fixtures/caddy-adapt-*.json and fails if a Caddy release changed the JSON shape, which is the check that stops the committed fixtures describing a Caddy nobody runs."
+    },
+    {
+      "id": "caddy-adapt-absent-redaction",
+      "match": "^caddy-drift \u2014 credentials never reach a report > redacts the bcrypt hash out of an adapt failure$",
+      "why": "Needs a real `caddy adapt` PARSE FAILURE to produce the stderr that quotes the offending Caddyfile line \u2014 that line can be `basic_auth <user> <hash>`, which is the only way a credential enters text nobody wrote by hand (#821). A stub cannot generate it, so there is nothing to redact without the binary. The sibling case in the same describe (`redacts findings on the way out`) needs no caddy and runs here.",
+      "runsWhere": "any developer or operator machine with caddy installed \u2014 including the live install, whose Caddyfile carries a real hash."
     }
   ]
 }

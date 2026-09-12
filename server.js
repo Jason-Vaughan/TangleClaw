@@ -290,6 +290,7 @@ const tunnelMonitor = require('./lib/tunnel-monitor');
 const net = require('node:net');
 const httpsSetup = require('./lib/https-setup');
 const caddy = require('./lib/caddy');
+const caddyDrift = require('./lib/caddy-drift');
 const ingressProvision = require('./lib/ingress-provision');
 const adminCredential = require('./lib/admin-credential');
 const ttydWatcher = require('./lib/ttyd-watcher');
@@ -3722,7 +3723,11 @@ route('POST', '/api/ports/lease', (_req, res, _params, body) => {
       ttlMs: body.ttl || null,
       description: body.description || null,
       autoRenew: body.autoRenew || false,
-      force: body.force === true
+      force: body.force === true,
+      // Passed through unvalidated on purpose: `store.portLeases.lease` owns
+      // the vocabulary and throws BAD_REQUEST naming the legal values, so a
+      // second check here could only drift from it.
+      reach: body.reach
     });
     jsonResponse(res, 201, lease);
   } catch (err) {
@@ -7950,6 +7955,53 @@ if (require.main === module) {
     log.warn(bindNotice.message, { setting: bindNotice.setting, severity: bindNotice.severity });
   }
   serverInfo.setBindNotice(bindNotice);
+
+  // #1394 — compare the live Caddyfile against the one the generator would
+  // write, and report the security properties it does not hold.
+  //
+  // Caddy-mode only: in direct mode TangleClaw is not behind a Caddyfile, so
+  // there is nothing it owns to have drifted.
+  //
+  // Deferred past listen with setImmediate because it spawns `caddy adapt`
+  // twice, and delaying the socket by a subprocess pair to answer a question
+  // nobody is waiting on is the wrong trade. Measured once, at boot, and
+  // carried on /api/server-info — re-running it per poll would spawn two
+  // processes on the route the dashboard polls continuously.
+  if (config.ingressMode === 'caddy') {
+    setImmediate(() => {
+      try {
+        const leases = (() => {
+          try {
+            return store.portLeases.list();
+          } catch (err) {
+            // Null, not []: an empty list would read as "no lease declares a
+            // narrow reach" and turn an unanswered PortHub into a clean bill.
+            log.warn('Could not read port leases for the Caddyfile drift check', { error: err.message });
+            return null;
+          }
+        })();
+        const result = caddyDrift.checkCaddyDrift({ config, leases });
+        const notice = caddyDrift.describeDrift(result);
+        serverInfo.setCaddyDriftNotice(notice);
+        if (notice) {
+          log.warn(notice.message, { setting: notice.setting, severity: notice.severity, findings: notice.findings });
+        } else {
+          log.info('Live Caddyfile holds every security property TangleClaw generates');
+        }
+      } catch (err) {
+        // The check is diagnostic. A fault in it must never take the server
+        // down, but it must also not leave the dashboard implying a clean file.
+        // Redacted on the way in, not trusted to arrive clean: this path can
+        // carry a `caddy adapt` stderr string, which quotes the offending
+        // Caddyfile line — and that line can be `basic_auth <user> <hash>`.
+        const reason = caddy.redactHashes(`the check itself failed: ${err.message}`);
+        log.warn('Caddyfile drift check failed to run', { error: reason });
+        serverInfo.setCaddyDriftNotice(caddyDrift.describeDrift({
+          measured: false, reason, findings: []
+        }));
+      }
+    });
+  }
 
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {

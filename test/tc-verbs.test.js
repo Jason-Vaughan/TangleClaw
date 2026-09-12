@@ -128,12 +128,21 @@ describe('tc verb roster (lib/tc-verbs)', () => {
       assert.ok(!/#7 other.*← your project/.test(out), 'only the caller\'s project is marked');
     });
 
-    it('ports: empty names the registration route; leases render project + service', () => {
+    it('ports: empty names the registration route; leases render project + service + reach', () => {
       assert.match(renderPorts({ leases: [] }), /No ports are currently leased/);
       const out = renderPorts({
         leases: [{ port: 3200, host: 'localhost', project: 'p1', service: 'dev', permanent: true }]
       });
-      assert.match(out, /3200 — p1 \(dev\) \[permanent\]/);
+      assert.match(out, /3200 — p1 \(dev\) reach:loopback \[permanent\]/);
+
+      // #1394 — the agent reading this is the party that DECLARES reach, so it
+      // is shown for every lease including the default. A field only visible
+      // once it is non-default is a field nobody learns exists.
+      assert.match(out, /reach declares how far a service is MEANT to be reachable/);
+      const wide = renderPorts({
+        leases: [{ port: 3250, host: 'localhost', project: 'p2', service: 'gui', reach: 'tailnet' }]
+      });
+      assert.match(wide, /3250 — p2 \(gui\) reach:tailnet/);
     });
 
     it('docs / learnings: absence is an answer, presence lists the rows', () => {

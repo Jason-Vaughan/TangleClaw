@@ -1,0 +1,274 @@
+{
+  "admin": {
+    "disabled": true
+  },
+  "apps": {
+    "http": {
+      "http_port": 8080,
+      "https_port": 8443,
+      "servers": {
+        "srv0": {
+          "listen": [
+            ":3250"
+          ],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": [
+                    "fixture-box.tailnet-example.ts.net"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "upstreams": [
+                            {
+                              "dial": "127.0.0.1:3250"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            }
+          ],
+          "automatic_https": {
+            "disable_redirects": true
+          }
+        },
+        "srv1": {
+          "listen": [
+            ":8080"
+          ],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": [
+                    "fixture-box.tailnet-example.ts.net"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "handle": [
+                        {
+                          "handler": "static_response",
+                          "headers": {
+                            "Location": [
+                              "https://fixture-box.tailnet-example.ts.net:8443{http.request.uri}"
+                            ]
+                          },
+                          "status_code": 302
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            }
+          ],
+          "automatic_https": {
+            "disable_redirects": true
+          }
+        },
+        "srv2": {
+          "listen": [
+            ":8443"
+          ],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": [
+                    "fixture-box.tailnet-example.ts.net"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "handle": [
+                        {
+                          "handler": "authentication",
+                          "providers": {
+                            "http_basic": {
+                              "accounts": [
+                                {
+                                  "password": "$2a$14$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU",
+                                  "username": "fixture"
+                                }
+                              ],
+                              "hash": {
+                                "algorithm": "bcrypt"
+                              },
+                              "hash_cache": {}
+                            }
+                          }
+                        }
+                      ],
+                      "match": [
+                        {
+                          "not": [
+                            {
+                              "path_regexp": {
+                                "pattern": "^(/api/health|/openclaw-direct/.*|/manifest\\.json)$"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "headers": {
+                            "request": {
+                              "set": {
+                                "X-Auth-User": [
+                                  "{http.auth.user.id}"
+                                ]
+                              }
+                            }
+                          },
+                          "upstreams": [
+                            {
+                              "dial": "127.0.0.1:3102"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "match": [
+                {
+                  "host": [
+                    "localhost"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "handle": [
+                        {
+                          "handler": "authentication",
+                          "providers": {
+                            "http_basic": {
+                              "accounts": [
+                                {
+                                  "password": "$2a$14$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU",
+                                  "username": "fixture"
+                                }
+                              ],
+                              "hash": {
+                                "algorithm": "bcrypt"
+                              },
+                              "hash_cache": {}
+                            }
+                          }
+                        }
+                      ],
+                      "match": [
+                        {
+                          "not": [
+                            {
+                              "path_regexp": {
+                                "pattern": "^(/api/health|/openclaw-direct/.*|/manifest\\.json)$"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "headers": {
+                            "request": {
+                              "set": {
+                                "X-Auth-User": [
+                                  "{http.auth.user.id}"
+                                ]
+                              }
+                            }
+                          },
+                          "upstreams": [
+                            {
+                              "dial": "127.0.0.1:3102"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            }
+          ],
+          "tls_connection_policies": [
+            {
+              "match": {
+                "sni": [
+                  "fixture-box.tailnet-example.ts.net",
+                  "localhost"
+                ]
+              },
+              "certificate_selection": {
+                "any_tag": [
+                  "cert0"
+                ]
+              }
+            },
+            {}
+          ],
+          "automatic_https": {
+            "disable_redirects": true
+          },
+          "protocols": [
+            "h1"
+          ]
+        }
+      }
+    },
+    "tls": {
+      "certificates": {
+        "load_files": [
+          {
+            "certificate": "/fixtures/cert.pem",
+            "key": "/fixtures/key.pem",
+            "tags": [
+              "cert0"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
