@@ -178,7 +178,7 @@ fails any auto-stub section older than 14 days.
   on libuv's threadpool, which fs and dns share — a concurrency cap, not a lockout.
 
   **The WebSocket upgrade is gated too** (#1419). `server.js#handleUpgrade` asks
-  `server.js#_upgradeVerdict` after its Origin and served-Host guards and before any branch opens
+  `authGate#evaluateUpgrade` after its Origin and served-Host guards and before any branch opens
   an upstream socket, so `/terminal/*` (a `--writable` ttyd), `/openclaw/*` and `/openclaw-direct/*`
   are refused with a `401` before ttyd or a gateway is ever dialled. Both gates resolve who is
   asking through one helper, `server.js#_gateIdentity` (session token, session lookup, browser shape,

@@ -105,6 +105,23 @@ describe('server', () => {
       assert.ok(socket.destroyed, 'Socket should be destroyed for /api/health');
     });
 
+    it('closes, rather than throws, on a Host header the URL parser rejects', () => {
+      // Runs before every guard, so a caller with no session controls it — and a
+      // throw in the 'upgrade' listener strands the socket open.
+      const socket = mockSocket();
+      const req = { url: '/terminal/ws', headers: { host: 'a b', upgrade: 'websocket', connection: 'Upgrade' } };
+      assert.doesNotThrow(() => handleUpgrade(req, socket, Buffer.alloc(0)));
+      assert.ok(socket.destroyed, 'an unparseable target must close the socket');
+    });
+
+    for (const prefix of ['/openclaw-direct', '/openclaw']) {
+      it(`closes, rather than throws, on invalid percent-encoding in a ${prefix} segment`, () => {
+        const socket = mockSocket();
+        assert.doesNotThrow(() => handleUpgrade(mockReq(`${prefix}/%E0/ws`), socket, Buffer.alloc(0)));
+        assert.ok(socket.destroyed, 'a segment that cannot be decoded names no connection');
+      });
+    }
+
     it('should not destroy socket for /terminal/ws path', () => {
       const socket = mockSocket();
       handleUpgrade(mockReq('/terminal/ws'), socket, Buffer.alloc(0));

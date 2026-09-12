@@ -6643,6 +6643,23 @@ const UPGRADE_UNAUTHORIZED_RESPONSE =
   'HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n';
 
 /**
+ * Whether a request carries the markers only a browser sends.
+ *
+ * One definition for every guard that asks. A browser cannot suppress
+ * `Sec-Fetch-Site` from script and always sends `Origin` on a WebSocket
+ * handshake, so a page cannot disguise itself as the CLI; `curl`, scripts and
+ * the agent-facing API send neither. The three request-shape guards in
+ * `handleRequest` and the machine-client carve-out both read this, so a change
+ * to what counts as a browser cannot reach one and miss the other.
+ *
+ * @param {http.IncomingMessage} req
+ * @returns {boolean}
+ */
+function _looksLikeBrowser(req) {
+  return req.headers['sec-fetch-site'] !== undefined || req.headers.origin !== undefined;
+}
+
+/**
  * Who is asking, as TangleClaw's session gate needs to know it — resolved ONCE,
  * here, for both transports.
  *
@@ -6666,8 +6683,7 @@ const UPGRADE_UNAUTHORIZED_RESPONSE =
  * @param {http.IncomingMessage} req
  * @param {import('net').Socket|undefined} socket - The connection; `req.socket` when absent
  * @param {string} pathname - For the log line only
- * @returns {{ sessionToken: string|null, session: object|null,
- *   browserShaped: boolean, machineClient: boolean }}
+ * @returns {{ sessionToken: string|null, session: object|null, machineClient: boolean }}
  */
 function _gateIdentity(req, socket, pathname) {
   const sessionToken = authSession.tokenFromRequest(req);
@@ -6682,11 +6698,7 @@ function _gateIdentity(req, socket, pathname) {
       session = null;
     }
   }
-  // The same discriminator the three request-shape guards in `handleRequest`
-  // use: a browser cannot suppress `Sec-Fetch-Site` from script, and always
-  // sends `Origin` on a WebSocket handshake.
-  const browserShaped = req.headers['sec-fetch-site'] !== undefined
-    || req.headers.origin !== undefined;
+  const browserShaped = _looksLikeBrowser(req);
   const conn = socket || req.socket;
   const machineClient = authGate.isMachineClient({
     // `isLoopbackRemote` is `lib/admin-credential.js`'s, reused because
@@ -6695,7 +6707,24 @@ function _gateIdentity(req, socket, pathname) {
     browserShaped,
     hasSessionCookie: sessionToken !== null
   });
-  return { sessionToken, session, browserShaped, machineClient };
+  return { sessionToken, session, machineClient };
+}
+
+/**
+ * Percent-decode one path segment of an upgrade target, or `null` when it is
+ * not valid percent-encoding (`%E0`). `decodeURIComponent` throws on that, and
+ * in the 'upgrade' listener a throw strands the socket; the callers treat
+ * `null` as "no such connection", which closes it.
+ *
+ * @param {string} segment - Raw path segment
+ * @returns {string|null}
+ */
+function _decodeUpgradeSegment(segment) {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -6710,7 +6739,20 @@ function _gateIdentity(req, socket, pathname) {
  * @param {Buffer} head
  */
 function handleUpgrade(req, socket, head) {
-  const urlObj = reqUrl(req);
+  // Everything below runs inside the server's 'upgrade' listener, where a throw
+  // is caught by no request handler: it reaches the process-level logger and
+  // leaves the client's socket open. `reqUrl` throws on a Host header `new URL`
+  // cannot parse (`Host: a b`), and it runs before any guard — so a caller with
+  // no session at all controls whether it throws. Such a request names no
+  // target this server could answer, so it is closed.
+  let urlObj;
+  try {
+    urlObj = reqUrl(req);
+  } catch (err) {
+    log.warn('Refused a WebSocket upgrade with an unparseable target', { error: err.message });
+    socket.destroy();
+    return;
+  }
 
   // The cross-site guard comes first, and it is the sharper half of this path.
   //
@@ -6805,8 +6847,8 @@ function handleUpgrade(req, socket, head) {
   if (urlObj.pathname.startsWith('/openclaw-direct/')) {
     const parts = urlObj.pathname.split('/'); // ['', 'openclaw-direct', connId, ...rest]
     if (parts.length >= 3 && parts[2]) {
-      const connId = decodeURIComponent(parts[2]);
-      const resolved = resolveOpenclawPortDirect(connId);
+      const connId = _decodeUpgradeSegment(parts[2]);
+      const resolved = connId === null ? null : resolveOpenclawPortDirect(connId);
       if (!resolved) {
         socket.destroy();
         return;
@@ -6843,8 +6885,8 @@ function handleUpgrade(req, socket, head) {
   if (urlObj.pathname.startsWith('/openclaw/')) {
     const parts = urlObj.pathname.split('/'); // ['', 'openclaw', project, ...rest]
     if (parts.length >= 3 && parts[2]) {
-      const ocProject = decodeURIComponent(parts[2]);
-      const resolved = resolveOpenclawPort(ocProject);
+      const ocProject = _decodeUpgradeSegment(parts[2]);
+      const resolved = ocProject === null ? null : resolveOpenclawPort(ocProject);
       if (!resolved) {
         socket.destroy();
         return;
@@ -7070,8 +7112,7 @@ async function handleRequest(req, res) {
   // a proxy rewrite). This costs the guard nothing — a rebound page IS a
   // browser, and a browser cannot suppress `Sec-Fetch-Site` from script, so the
   // attack always carries the marker that brings it back into scope.
-  const looksLikeBrowser = req.headers['sec-fetch-site'] !== undefined
-    || req.headers.origin !== undefined;
+  const looksLikeBrowser = _looksLikeBrowser(req);
   if (CSRF_UNSAFE_METHODS.has(method) && looksLikeBrowser) {
     // #860 — a browser-shaped write that carries a BODY must declare JSON.
     //

@@ -198,9 +198,10 @@ The ADR names this "the single most likely place to get it wrong."
   `server.js#_gateIdentity`). Left by #1419: in caddy mode an off-box, non-browser request to that
   path passes Caddy's exemption and reaches TangleClaw from loopback in the machine-client shape,
   so it is let through with the gateway token injected — bounded only by the connection's UUID.
-- Update `docs/openclaw-setup.md`'s "Blank iframe" troubleshooting `curl` of
-  `/openclaw-direct/<connId>/chat`: with the gate armed it now meets the login challenge, which an
-  operator would read as a proxy fault.
+- Re-check `docs/openclaw-setup.md`'s "Blank iframe" troubleshooting `curl` of
+  `/openclaw-direct/<connId>/chat` once `isMachineClient` changes. Run on the server today it passes
+  as a machine client (loopback, no browser markers, no cookie); whatever the carve-out becomes
+  decides whether that command meets the login challenge and needs a session.
 
 **Issues:** #1420 (cutover + migration), closes #1055.
 
