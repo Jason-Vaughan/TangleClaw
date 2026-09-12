@@ -389,3 +389,7 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/uploads.test.js` — #889's server-facing half: the delegation to the scanner child, and the vocabulary a caller sees when that delegation fails. The routes are exercised end to end through a real fork in `test/api-uploads.test.js`; this covers what is only observable at the seam.
 - `test/import-banner-buttons.test.js` — #1383, asserted as a ROUND TRIP: each rendered `onclick` is decoded the way a browser would and the argument the handler actually receives is compared against what that handler expects, rather than pattern-matching the source (which passes on any encoding that merely looks different). Import and Import All are pinned separately so the obvious wrong fix — one stringify everywhere to "make them consistent" — fails at whichever site it is applied to, and it drives the real consumer (`ignoreLeaseProject` through `checkPortImports`) as well as the producer.
 - `test/settings-hint-wrapping.test.js` — #1271: settings-modal hint text clipped at the right edge instead of wrapping. Source-level CSS assertions in the house pattern for frontend regressions, scoped to the `.form-hint` block on purpose — an unanchored search for the property across a 3000-line stylesheet passes on a rule belonging to something else.
+
+## TODO (auto-stubbed 2026-09-11)
+
+- **TBD** — touched in this session: `test/wrap-step-killed-vs-failed.test.js`. <!-- describe -->
