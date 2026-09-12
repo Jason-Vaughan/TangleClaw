@@ -127,8 +127,6 @@ verify, and per ADR 0009 it must not degrade to no gate meanwhile.
 - One owner for scrypt hash/verify. The primitives already exist at `lib/projects.js`
   guarding project deletion; extract to `lib/password.js` rather than writing a second copy —
   the same "derive it once" habit as #804 and #1399.
-- `scripts/reset-admin.js` learns to create/reset a user in the new store. Recovery stays outside
-  the gate (ADR 0009 rule 5, unchanged).
 
 Nothing is gated. Nothing changes for the operator. Fully revertible.
 **Issues:** #1416 (addendum), #1417 (store).

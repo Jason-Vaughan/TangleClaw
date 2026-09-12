@@ -97,8 +97,8 @@ fails any auto-stub section older than 14 days.
   truncates silently, so a corrupt stored hash used to raise instead of answering false (same guard
   and same reason as `lib/service-token.js#_safeEqual`). The table is `users` at schema v36 with a
   UNIQUE `username` and `disabled_at` for revocation, no `role` column by ADR 0015's tier split;
-  `store.users` (`#create`, `#getByName`, `#exists`, `#setPassword`, `#verify`, `#disable`,
-  `#enable`, `#list`) is the API both the coming session gate and the break-glass reset tool call.
+  `store.users` (`#create`, `#getByName`, `#setPassword`, `#verify`, `#disable`, `#enable`,
+  `#list`) is the API both the coming session gate and the break-glass reset tool call.
   `#verify` answers `null` identically for wrong password, unknown user and disabled account AND
   spends the same scrypt cost on all three — it compares against a module-level `ABSENT_USER_HASH`
   on the no-row and disabled paths, because an early return there is a username oracle by timing
