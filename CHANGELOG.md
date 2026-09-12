@@ -703,6 +703,14 @@ All notable changes to TangleClaw are documented in this file.
   documented why; `lib/password.js` now does the same, with five regression cases that all go red
   when the guard is removed.
 
+  `store.users.verify` pays the same scrypt cost on a missing account, a disabled account and a
+  wrong password. Returning early when there is no row is a username oracle by *timing* even though
+  the return value is identical, and a login route is exactly where that gets sampled — so the
+  no-row and disabled paths compare against a throwaway `ABSENT_USER_HASH` that nothing can ever
+  match. Failed checks log at `warn`: the default level is info, so at `debug` a remote operator
+  reading the log file could not answer "why can't Rosie log in" or see repeated failures against a
+  door that fronts a writable shell.
+
   The `users` table deliberately has no `role` column. ADR 0015 is explicit that the only genuine
   tier-1 distinction is authenticated or not, and that "admin" names a tier-2 preferences concept —
   a role column added before anything reads it would be a security-shaped field that gates nothing.

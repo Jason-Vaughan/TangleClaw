@@ -16,7 +16,8 @@ gates a release.
 **Build Tier 1 Auth now; do not finish Train 16 first.**
 
 The reason is not sequencing tidiness. **A direct-mode install has no login at all today**
-(`lib/store.js:133` — "The gate lives at Caddy, so these only take effect in caddy ingress mode").
+(`lib/store.js`, on `basicAuthUser`/`basicAuthHash`: "The gate lives at Caddy, so these only take
+effect in caddy ingress mode").
 That is a live gap in shipped software, and this project now has several outside installers. It
 outranks everything on Train 16's remainder.
 
@@ -107,9 +108,9 @@ both land in one PR that changes nothing an operator can see.*
 steps, and getting one wrong means rebuilding a later chunk:
 
 - **OQ1 — cookie or bearer token?** Blocks chunks 02 *and* 03. The WebSocket upgrade path is the
-  deciding constraint and it must be checked against `server.js:6353`, not assumed.
+  deciding constraint and it must be checked against `server.js#handleUpgrade`, not assumed.
 - **OQ2 — does `X-Auth-User` survive?** `lib/auth-identity.js` is a whole module built on Caddy
-  populating that header (`lib/caddy.js:276`). Blocks chunk 04.
+  populating that header (`lib/caddy.js`). Blocks chunk 04.
 - **OQ3 — what does `authEnabled` mean afterwards?** Under ADR 0009 it is a deliberate opt-out; it
   stops meaning "no Caddy gate" and starts meaning "no TangleClaw session". Blocks chunk 04 and the
   wizard copy.
@@ -123,7 +124,7 @@ verify, and per ADR 0009 it must not degrade to no gate meanwhile.
 
 - `users` table, schema **v35 → v36**. No `users` table exists today (`lib/store.js`,
   `CURRENT_SCHEMA_VERSION = 35`).
-- One owner for scrypt hash/verify. The primitives already exist at `lib/projects.js:59-77`
+- One owner for scrypt hash/verify. The primitives already exist at `lib/projects.js`
   guarding project deletion; extract to `lib/password.js` rather than writing a second copy —
   the same "derive it once" habit as #804 and #1399.
 - `scripts/reset-admin.js` learns to create/reset a user in the new store. Recovery stays outside
@@ -135,13 +136,26 @@ Nothing is gated. Nothing changes for the operator. Fully revertible.
 ### Chunk 02 — Sessions and the HTTP gate
 
 - `lib/auth-session.js`: token generation, expiry, **rotation on login** (session fixation),
-  logout. Cookie flags per chunk 00's ruling.
+  logout. Cookie flags per **ADR 0016** (`HttpOnly` always, `Secure` when https, `SameSite=Lax`).
 - The gate at TangleClaw's own request entry, reusing the **existing** bypass definition —
-  `isCaddyAuthBypassPath` / `AUTH_BYPASS_PATHS` (`lib/caddy.js:134,222`). ADR 0015: "one
-  definition, moved, not duplicated." The fail-closed parity guard at `server.js:6913` already
+  `isCaddyAuthBypassPath` / `AUTH_BYPASS_PATHS` (`lib/caddy.js`). ADR 0015: "one
+  definition, moved, not duplicated." The fail-closed parity guard in `server.js#handleRequest` already
   depends on it and must keep working.
 - Login page, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`.
 - CSRF on state-changing routes.
+
+- **`scripts/reset-admin.js` gains its store-backed mode here.** Moved out of chunk 01 during that
+  chunk's build: reset-admin is today the *Caddy* break-glass tool (bcrypt, Caddyfile patch,
+  validate, reload), and a store-backed recovery path for a door not installed until this chunk
+  could not be verified end to end. It lands with the gate it recovers, which is also what
+  satisfies ADR 0009 rule 5 (recovery is a terminal tool outside the gate). `store.users.enable`
+  exists for this caller — un-revoking an account the operator disabled is recovery, and a
+  `disable` with no `enable` is a one-way door.
+- **Password policy**: the set-password and login surfaces apply `caddy.validateAdminPassword`
+  (min 12, denylist, no username match, no control chars) — ADR 0016. The store deliberately
+  enforces only non-empty, so without this the new door is weaker than the one it replaces.
+- **Async scrypt**: the login route uses `crypto.scrypt`, not `scryptSync`, or states why not.
+  `scryptSync` blocks the single-threaded server for tens of milliseconds per attempt — ADR 0016.
 
 Caddy's `basic_auth` is **still up** through this chunk — two gates in series, which is
 inconvenient but never open. The cutover is chunk 04.
@@ -151,8 +165,7 @@ inconvenient but never open. The cutover is chunk 04.
 
 The ADR names this "the single most likely place to get it wrong."
 
-- Authenticate the upgrade **before** the socket is established, at `server.js:6353`
-  (`handleUpgrade`). It already carries the same-origin and served-Host guards (#864); the session
+- Authenticate the upgrade **before** the socket is established, in `server.js#handleUpgrade`. It already carries the same-origin and served-Host guards (#864); the session
   check joins them rather than replacing them.
 - `/terminal/*` proxies to a `--writable` ttyd — that socket is a shell.
 - Decide `/openclaw-direct/*`: it carries its own gateway token and is currently exempt. ADR 0015

@@ -93,6 +93,51 @@ describe('store.users — the tier-1 principal (ADR 0015, #1417)', () => {
       assert.equal(store.users.verify('rosie', 'correct-horse'), null);
     });
 
+    // The return value was never the whole oracle. An early return on the
+    // no-row path costs nothing while a wrong password pays a full scrypt, so
+    // the two are distinguishable by response time on a login route. This
+    // pins the equalisation: remove the ABSENT_USER_HASH comparison and the
+    // unknown-user case gets dramatically cheaper than the wrong-password one.
+    it('spends comparable work on unknown, disabled and wrong-password', () => {
+      store.users.create('disabled-one', 'pw');
+      store.users.disable('disabled-one');
+
+      /**
+       * Median elapsed ms over several calls, so one scheduling hiccup does not
+       * decide the assertion.
+       * @param {() => unknown} fn - The call to time
+       * @returns {number} Median milliseconds
+       */
+      function medianMs(fn) {
+        const runs = [];
+        for (let i = 0; i < 7; i += 1) {
+          const t0 = process.hrtime.bigint();
+          fn();
+          runs.push(Number(process.hrtime.bigint() - t0) / 1e6);
+        }
+        return runs.sort((a, b) => a - b)[3];
+      }
+
+      const wrongPassword = medianMs(() => store.users.verify('rosie', 'nope'));
+      const unknownUser = medianMs(() => store.users.verify('nobody-at-all', 'nope'));
+      const disabledUser = medianMs(() => store.users.verify('disabled-one', 'nope'));
+
+      // A loose band on purpose: this asserts "the scrypt cost is paid on every
+      // path", not a constant-time guarantee, which a GC pause would flake.
+      // Before the fix the unknown-user path was ~0ms against tens of ms.
+      assert.ok(unknownUser > wrongPassword / 4,
+        `unknown-user ${unknownUser.toFixed(1)}ms must not be trivially faster `
+        + `than wrong-password ${wrongPassword.toFixed(1)}ms`);
+      assert.ok(disabledUser > wrongPassword / 4,
+        `disabled ${disabledUser.toFixed(1)}ms must not be trivially faster `
+        + `than wrong-password ${wrongPassword.toFixed(1)}ms`);
+    });
+
+    it('treats usernames as case-sensitive, matching the credential it replaces', () => {
+      assert.equal(store.users.verify('Rosie', 'correct-horse'), null);
+      assert.ok(store.users.verify('rosie', 'correct-horse'));
+    });
+
     it('does not throw when the stored hash is corrupt', () => {
       store.getDb().prepare('UPDATE users SET password_hash = ? WHERE username = ?')
         .run('deadbeef:short', 'rosie');
@@ -140,7 +185,8 @@ describe('store.users — the tier-1 principal (ADR 0015, #1417)', () => {
     it('keeps the account rather than deleting it', () => {
       store.users.disable('rosie');
       assert.ok(store.users.getByName('rosie'), 'a revoked account stays explicable');
-      assert.equal(store.users.exists('rosie'), true);
+      assert.throws(() => store.users.create('rosie', 'pw'), /already exists/,
+        'and the name stays taken, so it cannot be silently re-registered');
     });
 
     it('is idempotent — a second call reports no change', () => {
@@ -175,6 +221,52 @@ describe('store.users — the tier-1 principal (ADR 0015, #1417)', () => {
       assert.equal(rows.length, 1);
       assert.ok(rows[0].disabled_at);
     });
+  });
+});
+
+describe('the credential database is owner-only (#1417)', () => {
+  it('init narrows tangleclaw.db to 0600 even under a permissive umask', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-dbmode-'));
+    const prevBase = store._getBasePath();
+    const prevUmask = process.umask(0o000);
+    try {
+      store.close();
+      store._setBasePath(tmpDir);
+      store.init();
+
+      const mode = fs.statSync(path.join(tmpDir, 'tangleclaw.db')).mode & 0o777;
+      assert.equal(mode, 0o600,
+        'the file holds password hashes — group/world read means an offline attack');
+    } finally {
+      process.umask(prevUmask);
+      store.close();
+      store._setBasePath(prevBase);
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('re-narrows a database that already exists too open', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-dbmode-existing-'));
+    const prevBase = store._getBasePath();
+    try {
+      store.close();
+      store._setBasePath(tmpDir);
+      store.init();
+      store.close();
+
+      // An install that predates the chmod. Widen it, then boot again.
+      const dbPath = path.join(tmpDir, 'tangleclaw.db');
+      fs.chmodSync(dbPath, 0o644);
+      assert.equal(fs.statSync(dbPath).mode & 0o777, 0o644, 'fixture precondition');
+
+      store.init();
+      assert.equal(fs.statSync(dbPath).mode & 0o777, 0o600,
+        'narrowing must run on every init, not only on create');
+    } finally {
+      store.close();
+      store._setBasePath(prevBase);
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 

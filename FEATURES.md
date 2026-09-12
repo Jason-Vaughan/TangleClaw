@@ -99,8 +99,14 @@ fails any auto-stub section older than 14 days.
   UNIQUE `username` and `disabled_at` for revocation, no `role` column by ADR 0015's tier split;
   `store.users` (`#create`, `#getByName`, `#exists`, `#setPassword`, `#verify`, `#disable`,
   `#enable`, `#list`) is the API both the coming session gate and the break-glass reset tool call.
-  `#verify` answers `null` identically for wrong password, unknown user and disabled account so no
-  caller can build a username oracle, and `#list` never returns hashes. The v35→v36 migration's own
+  `#verify` answers `null` identically for wrong password, unknown user and disabled account AND
+  spends the same scrypt cost on all three — it compares against a module-level `ABSENT_USER_HASH`
+  on the no-row and disabled paths, because an early return there is a username oracle by timing
+  even when the return value is identical. Failures log at `warn`, not `debug`: the default level is
+  info, so a debug line would mean a remote operator reading the log file could not see repeated
+  failures against a door that fronts a writable shell. `#list` never returns hashes. There is no
+  `exists` verb on purpose — it invites check-then-act where `#create`'s narrow UNIQUE-constraint
+  refusal is race-free. Usernames are case-sensitive, matching the Caddy credential being replaced. The v35→v36 migration's own
   CREATE is a no-op — `_createTables` runs first — so the block exists for its postcondition, which
   refuses to advance `schema_version` over a `users` table whose username is not UNIQUE. Decisions:
   `docs/adr/0016-tier-1-auth-build-decisions.md`. Tests: `test/password.test.js`,

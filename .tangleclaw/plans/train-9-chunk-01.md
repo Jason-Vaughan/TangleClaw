@@ -15,7 +15,7 @@ will run in one.
 ## Confidence check
 
 **Problem.** ADR 0015 is Accepted and unbuilt. A direct-mode TangleClaw install has no login at
-all: `lib/store.js:133` says the credential only takes effect in caddy ingress mode, so
+all: `lib/store.js` says the credential only takes effect in caddy ingress mode, so
 `basicAuthUser`/`basicAuthHash` in a direct-mode config enforce nothing. Before any of that can be
 fixed, three of the ADR's open questions have to be decided, and there is nowhere to put a user.
 
@@ -51,7 +51,7 @@ Not dropped — moved one chunk, with the seam named.
 
 ### 2. A real defect in the primitives being extracted
 
-`lib/projects.js:77`:
+`lib/projects.js#verifyPassword`:
 
 ```js
 return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(derived, 'hex'));
@@ -62,7 +62,7 @@ comes from the stored string, and `Buffer.from(x, 'hex')` silently truncates at 
 pair — so a corrupt, truncated or hand-edited stored value makes `verifyPassword` **throw instead of
 returning false**.
 
-This repo already knows the hazard and solved it once: `lib/service-token.js:103-114` guards length
+This repo already knows the hazard and solved it once: `lib/service-token.js#_safeEqual` guards length
 first and documents why ("token length is not the secret"). The project-delete path it currently
 guards turns this into a 500; on the login path it is a crash on a malformed row.
 
@@ -78,10 +78,10 @@ shared.
 
 An addendum to ADR 0015, answering with reasoning:
 
-- **OQ1 — cookie or bearer.** Must be checked against `server.js:6353` (`handleUpgrade`), not
+- **OQ1 — cookie or bearer.** Must be checked against `server.js#handleUpgrade` (`handleUpgrade`), not
   assumed from the same-origin dashboard. Binds chunks 02 and 03.
 - **OQ2 — `X-Auth-User` / AUTH-3.** `lib/auth-identity.js` exists to reason about a header
-  `lib/caddy.js:276` populates. Say what it becomes.
+  `lib/caddy.js` populates. Say what it becomes.
 - **OQ3 — `authEnabled`.** From "no Caddy gate" to "no TangleClaw session required", preserving
   ADR 0009's deliberate opt-out.
 - **The migration mechanism.** bcrypt `basicAuthHash` → scrypt, forced once, with no window in
@@ -102,7 +102,7 @@ a migration for no benefit.
 Columns: `id`, `username` (UNIQUE), `password_hash`, `created_at`, `disabled_at` (NULL = active).
 Salt lives inside `password_hash` in the existing `salt:hash` format, so no separate column.
 
-Follows the v34→v35 pattern at `lib/store.js:1899` exactly: conditional `ALTER`/`CREATE` because
+Follows the v34→v35 pattern at `lib/store.js` exactly: conditional `ALTER`/`CREATE` because
 `_createTables` runs before migrations, a `BEGIN IMMEDIATE` transaction, an explicit **postcondition**
 read back from `sqlite_master` before `schema_version` advances, and `ROLLBACK` on failure.
 
@@ -113,10 +113,24 @@ split exists to prevent. It arrives with tier 2 or not at all.
 
 ### 01d — Store-layer user operations (#1417)
 
-`createUser`, `getUserByName`, `setUserPassword`, `verifyUser`, `listUsers`, `disableUser`. Called by
-chunk 02's gate and chunk 02's reset-admin mode. No HTTP surface.
+Namespaced under `store.users`, so the verb names read against the noun. Every verb traces to a
+named caller, because an unjustified verb on the auth surface costs a re-audit at every review:
+
+| Verb | Who calls it |
+|---|---|
+| `create`, `setPassword`, `verify`, `getByName` | chunk 02's gate, and reset-admin's store mode |
+| `disable` | ADR 0015's "revoke one person" row, verbatim |
+| `enable` | reset-admin — un-revoking is recovery, and `disable` with no `enable` is a one-way door |
+| `list` | the reset tool's account listing |
+
+No HTTP surface. No `exists` helper: it invites check-then-act where `create`'s narrow
+UNIQUE-constraint refusal is already the race-free answer.
 
 ### 01e — Tests, CHANGELOG, FEATURES
+
+CHANGELOG lands under **`### Internal`**, not `### Added`. The chunk ships dark, so by CLAUDE.md's
+user-visible-impact test nothing here is a feature an operator would notice next session — and the
+subsection is what the version-bump step reads, so the choice is not cosmetic.
 
 ---
 
@@ -125,7 +139,7 @@ chunk 02's gate and chunk 02's reset-admin mode. No HTTP surface.
 - **Migration v35→v36** on a populated DB: existing rows untouched, `users` present, postcondition
   fires. Mutate the postcondition and watch it go red.
 - **The length-guard regression**: a truncated / odd-length / non-hex stored hash returns `false`
-  and does not throw. This test must fail against today's `lib/projects.js:77` — verify that it
+  and does not throw. This test must fail against today's `lib/projects.js#verifyPassword` — verify that it
   does before fixing.
 - **Round trip**: hash, verify correct, reject wrong, reject empty, reject malformed.
 - **`lib/projects.js` behavior preserved**: the project-delete guard's existing tests pass unchanged
@@ -137,8 +151,31 @@ chunk 02's gate and chunk 02's reset-admin mode. No HTTP surface.
 
 ## Status
 
-- [ ] **01a — ADR 0016.** OQ1/OQ2/OQ3 + migration mechanism, each with reasoning.
-- [ ] **01b — `lib/password.js`.** Extracted, length-guarded, `lib/projects.js` calls it.
-- [ ] **01c — `users` table, v35→v36.** Conditional DDL, transaction, postcondition, no `role`.
-- [ ] **01d — Store-layer user operations.** No HTTP surface.
-- [ ] **01e — Tests, CHANGELOG (`### Added`), FEATURES.md.**
+- [x] **01a — ADR 0016.** OQ1/OQ2/OQ3 + migration mechanism, each with reasoning.
+- [x] **01b — `lib/password.js`.** Extracted, length-guarded, `lib/projects.js` calls it.
+- [x] **01c — `users` table, v35→v36.** Conditional DDL, transaction, postcondition, no `role`.
+- [x] **01d — Store-layer user operations.** No HTTP surface.
+- [x] **01e — Tests, CHANGELOG (`### Internal`), FEATURES.md.**
+
+---
+
+## Critic record
+
+`rev-20260912T060801Z-f613a0c1` — cumulative, 3 reviewers, over commit `f77e1fc9`.
+**0 blocking, 12 warnings, 14 notes.** All 26 dispositioned in one pass
+(`prawduct-hook render-dispositions --review rev-20260912T060801Z-f613a0c1`); 16 fixed in one
+follow-up commit, 10 accepted with reasons.
+
+The sharpest finding was one this session's own scrub half-missed. I checked that `store.users.verify`
+returns `null` identically on all three failures and wrote that down as an anti-oracle guarantee in
+two shipped places. The Critic found the other half: the no-row and disabled paths returned
+**without paying scrypt**, so the three were distinguishable by response time even though the value
+matched — and chunk 02's author would have built `POST /api/auth/login` on the JSDoc's promise.
+The return value was never the whole oracle. Fixed by comparing against `ABSENT_USER_HASH` on both
+early paths, with a timing test that reds when the comparison is removed.
+
+Second-sharpest was structural rather than technical: recording the `reset-admin` scope correction
+in THIS file was the right instinct and the wrong location, because this file archives when the
+chunk ships. The durable artifacts — the train plan's chunk 02 bullets, and ADR 0016 — now carry it,
+along with the password-policy owner and the async-scrypt decision, none of which were in #1418 when
+it was filed.

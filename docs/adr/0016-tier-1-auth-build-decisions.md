@@ -161,6 +161,31 @@ cutover (#1420) and is a precondition of merging it, not a follow-up.
 
 ---
 
+## Two things the store layer deliberately does not decide, and chunk 02 must
+
+Recorded here rather than left to be noticed, because both are the kind of gap that ships as a
+silent weakening at the cutover.
+
+**Password policy has an owner: `caddy.validateAdminPassword`.** It enforces a 12-character
+minimum, a weak-password denylist, no username match and no control characters, and it is live at
+three call sites today for the bcrypt credential this train replaces. `store.users.create` and
+`setPassword` require only a non-empty string — a defensible store-layer choice, since the store is
+not where policy belongs. **So the set-password screen and any password-change surface apply
+`caddy.validateAdminPassword`.** Without that line written down, the tier-1 door ships accepting a
+one-character password where the Caddy door demanded twelve, and nobody would have decided that.
+
+**`crypto.scryptSync` blocks the event loop, and a login route is not a project-delete prompt.**
+At Node's defaults each call costs tens of milliseconds on a single-threaded server. That was
+irrelevant guarding a rare deletion; on `POST /api/auth/login` a burst of attempts stalls every
+other request, including the dashboard the operator is trying to reach. The store keeps the
+synchronous call because its callers are rare and its tests are simpler for it; **the login route
+uses the async `crypto.scrypt`**, or states why it does not. Note this interacts with the timing
+equalisation in `store.users.verify`, which deliberately spends the same scrypt cost on a missing
+account as on a wrong password — the cost is the feature, so the fix is to stop blocking, never to
+stop paying.
+
+---
+
 ## Consequences
 
 - #1418 builds against a decided cookie shape, and #1419 inherits it rather than choosing again.
@@ -168,4 +193,8 @@ cutover (#1420) and is a precondition of merging it, not a follow-up.
   proxying, on both WebSocket paths.
 - #1420 gains the migration state machine above, and `lib/auth-identity.js`'s inversion.
 - #804 (chunk 05) is confirmed as post-cutover work, per ADR 0015 OQ4.
+- #1418 (chunk 02) gains three things that were not in it when it was filed: the password-policy
+  owner above, the async-scrypt decision above, and `scripts/reset-admin.js`'s store-backed mode,
+  which moved out of chunk 01 because a recovery path for a door that is not installed yet cannot
+  be verified end to end.
 - Nothing here touches tier 2. ADR 0015 OQ5 remains open and is deliberately not answered.

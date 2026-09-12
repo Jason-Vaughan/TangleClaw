@@ -266,6 +266,12 @@ since changed, and on a requirement — one operator — that #1149 retires.
 
 ## Open questions for the build
 
+> **OQ1, OQ2, OQ3 and the migration mechanism were answered on 2026-09-11 by
+> [ADR 0016](0016-tier-1-auth-build-decisions.md), at the start of the Train 9 build.** They are
+> left below as written, because the reasoning that follows is why they were open. Read 0016 for
+> what was decided. **OQ4** is settled (#804 is chunk 05). **OQ5 is still open** and is deliberately
+> not answered by 0016.
+
 1. **Cookie or bearer token?** The dashboard is same-origin; ttyd and the OpenClaw gateway are
    proxied through TangleClaw, so a cookie likely covers all three. Confirm against the WebSocket
    upgrade path before committing.
