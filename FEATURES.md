@@ -145,10 +145,19 @@ fails any auto-stub section older than 14 days.
   asking — and ahead of every route, proxy and static branch, so `/terminal/*` (a writable shell)
   and `/openclaw/*` (the operator's gateway token) are gated by the perimeter rather than by a
   per-branch check that a sibling could miss. `#isGateActive` takes a config THUNK so the cheap
-  account query runs first: an install with no accounts pays no file I/O per request, and the config
-  read is deliberately un-memoised so `authEnabled: false` takes effect on the next request for an
-  operator recovering from a bad gate. Both of its reads fail toward NOT enforcing, which is safe
-  precisely because this door is additive. CSRF is evaluated AHEAD of the exemption list so
+  account query runs first: an install with no accounts pays no file I/O per request. The config
+  read IS memoised, keyed on the file's mtime and size (`server.js#_gateConfig`) — which keeps the
+  property that matters, that `authEnabled: false` takes effect on the next request for an operator
+  recovering from a bad gate, because that edit changes both.
+  **Its two reads fail OPEN while the gate is dormant and CLOSED once it has been armed**, and that
+  asymmetry is the contract, not an accident: before arming, refusing everything would take the
+  dashboard away from the operator on the failure they need it to diagnose, and gates nothing that
+  is not already gated; after arming, the install is relying on this door, so a transient store or
+  config error must not silently remove it. `_everArmed` (per-process) is the discriminator, a
+  READABLE `authEnabled: false` stays the recovery lever, and `server.js#_gateConfig` therefore
+  THROWS rather than returning null — routing it through the null-swallowing loader once made the
+  fail-closed branch unreachable. **A #1420 builder replacing this predicate must carry the
+  asymmetry over**; preserving fail-open on a read error while removing Caddy reinstates the bypass. CSRF is evaluated AHEAD of the exemption list so
   `/api/auth/logout` is protected despite being exempt, and `/api/auth/login` is exempt because its
   authority is the password, not the cookie — without that a browser holding a live session cannot
   submit the login form. **`#isMachineClient` carves the fleet out**: a loopback socket + no
