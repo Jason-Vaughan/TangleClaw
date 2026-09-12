@@ -685,6 +685,49 @@ All notable changes to TangleClaw are documented in this file.
   history and must keep saying what was true at the time.
 
 ### Internal
+- **TangleClaw now has somewhere to put a user, and one owner for its password hashing
+  (#1416, #1417).** First chunk of the Tier 1 auth build (ADR 0015). It ships dark on purpose:
+  a `users` table at schema v36, a `store.users` API, and `lib/password.js` — no route, no gate,
+  no login, nothing an operator can see. The gate is chunk 02.
+
+  `hashPassword`/`verifyPassword` moved out of `lib/projects.js`, where they had been guarding
+  project deletion, because a second copy of a hash function on the auth path is a security defect
+  rather than a duplication one. `lib/projects.js` re-exports them, so every existing
+  `projects.hashPassword` caller is unchanged.
+
+  **The move surfaced a real bug in what was being moved.** `crypto.timingSafeEqual` throws on
+  unequal buffer lengths and `Buffer.from(str, 'hex')` truncates silently at the first invalid
+  pair, so a corrupt, truncated or non-hex stored hash made `verifyPassword` raise a `RangeError`
+  instead of answering `false` — a 500 on the delete-confirmation path, and a crash serving a
+  malformed row once it is the login path. `lib/service-token.js` had already solved this once and
+  documented why; `lib/password.js` now does the same, with five regression cases that all go red
+  when the guard is removed.
+
+  The `users` table deliberately has no `role` column. ADR 0015 is explicit that the only genuine
+  tier-1 distinction is authenticated or not, and that "admin" names a tier-2 preferences concept —
+  a role column added before anything reads it would be a security-shaped field that gates nothing.
+
+  The v35→v36 migration's own `CREATE` is a no-op on every path, because `_createTables` runs
+  before migrations and already carries the table. What the migration block is for is the
+  postcondition: it reads the shape back out of `sqlite_master` and refuses to advance
+  `schema_version` over a `users` table whose `username` is not UNIQUE, because a login table that
+  accepts duplicates is an authentication bug rather than a tidiness one.
+
+- **ADR 0016 answers the three ADR 0015 open questions that block code (#1416).** Cookie, not
+  bearer — a browser cannot set a header on a WebSocket handshake, so the alternative is a
+  credential in a query string or in `Sec-WebSocket-Protocol`, and the upgrade path decides it
+  rather than the dashboard. `X-Auth-User` becomes internal-only and `lib/auth-identity.js`'s job
+  inverts from interpreting the header to refusing it inbound. `authEnabled` keeps its name and
+  changes what it names, from "a Caddy gate is generated" to "a TangleClaw session is required" —
+  which is the first time it will mean the same thing in direct mode as in caddy mode. Plus the
+  bcrypt→scrypt migration shape: a forced set with the gate still closed, never a silent
+  conversion.
+
+  Writing it found a requirement chunk 03 did not have when it was filed: both WebSocket proxies
+  forward request headers upstream, so a session cookie would reach ttyd and the OpenClaw gateway.
+  `_openclawWsRequestLines` already strips `authorization` for exactly this reason (#470); the
+  cookie needs the same treatment.
+
 - **One definition now answers "does this step capture?" (#1379 follow-up).** Adding
   `optionalCaptureFields` left three sites outside `lib/wrap-steps/ai-content.js` still spelling the
   predicate `Array.isArray(step.captureFields) && length > 0`, which became half the contract the
