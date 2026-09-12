@@ -8,7 +8,7 @@ will run in one.
 **Critic mode:** chunk
 **Size:** medium
 **Train plan:** `.tangleclaw/plans/train-9-tier1-auth-chunking.md`
-**Baseline:** suite green at `b1b482cb` — 8747 tests, 0 fail, exit 0.
+**Baseline:** suite green at `b1b482cb` (0 fail, exit 0); evidence in `.prawduct/.test-evidence.json`.
 
 ---
 
@@ -21,12 +21,23 @@ fixed, three of the ADR's open questions have to be decided, and there is nowher
 
 **Success.** (1) An addendum answers OQ1/OQ2/OQ3 and the migration mechanism, with reasoning, so
 chunks 02-04 build against decisions rather than guesses. (2) TangleClaw has a `users` table and a
-single owner for scrypt hash/verify, exercised by tests, with **no operator-visible change** — no
-route, no gate, no login. This PR can merge into the live install and nothing behaves differently.
+single owner for scrypt hash/verify, exercised by tests, with **no change to any behaviour an
+operator drives** — no route, no gate, no login.
+
+**One exception, added during the build and called out because it is the only thing here that
+touches a running install:** the database file is narrowed to 0600 on every boot (01f below). That
+is a deliberate consequence of putting password hashes in it, not a dark-ship violation — but a
+future session reading this plan must not conclude the chunk changed nothing on disk.
 
 **Out of scope.** Sessions, cookies, login routes, CSRF, the WebSocket upgrade, removing Caddy's
 gate, the bcrypt→scrypt migration *build* (decided here, built in chunk 04), and every tier-2
 concept (resource defaults, `project_members`, engine filtering, usage limits).
+
+**Requirements confidence: HIGH.** ADR 0015 is operator-ratified and states the tier-1 requirement
+directly; this chunk builds only its store half, and the three questions that were genuinely open
+are answered in 01a before any of it is used. The one inference carried: that the `salt:hash` format
+already persisted for `config.deletePassword` is worth keeping rather than migrating — vetoable, and
+its cost is recorded as a chunk-02 note (the format carries no algorithm tag).
 
 ---
 
@@ -156,6 +167,11 @@ subsection is what the version-bump step reads, so the choice is not cosmetic.
 - [x] **01c — `users` table, v35→v36.** Conditional DDL, transaction, postcondition, no `role`.
 - [x] **01d — Store-layer user operations.** No HTTP surface.
 - [x] **01e — Tests, CHANGELOG (`### Internal`), FEATURES.md.**
+- [x] **01f — `tangleclaw.db` narrowed to 0600 on every boot.** Added mid-build as a Critic
+      finding-fix: the file is created at the process umask and this chunk is what first put
+      password hashes in it. `_tightenDbPermissions` owns both the repair and the report, because
+      `_checkPermissions` runs before the database is opened. Two tests (fresh init under
+      `umask 000`; re-narrowing an existing 0644 file).
 
 ---
 

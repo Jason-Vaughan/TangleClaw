@@ -24,8 +24,9 @@ decisions rather than build steps:
 Plus the migration mechanism, which 0015 describes as a constraint ("cannot be converted silently",
 "must not degrade to no gate meanwhile") without saying how it is met.
 
-OQ4 (ordering #804 after the cutover) and OQ5 (tier 2's shape) are already settled by 0015 itself
-and by the train plan, and are not reopened here.
+OQ4 (ordering #804 after the cutover) is settled by 0015 itself and by the train plan. **OQ5 (tier
+2's shape) stays open** — it is not this ADR's to answer, and 0015 says to decide it before building
+tier 2, defaulting to the simpler shape.
 
 ---
 
@@ -193,6 +194,24 @@ stop paying.
   proxying, on both WebSocket paths.
 - #1420 gains the migration state machine above, and `lib/auth-identity.js`'s inversion.
 - #804 (chunk 05) is confirmed as post-cutover work, per ADR 0015 OQ4.
+**Three more things the store hands chunk 02, recorded so they are decisions and not surprises:**
+
+- **The stored format `salt:hash` carries no algorithm or cost tag.** Raising the KDF cost later
+  therefore invalidates every existing hash, and the failure surfaces as `reason: 'bad password'` —
+  indistinguishable from a real one. Kept as-is because it is already persisted for
+  `config.deletePassword` and changing it now would be a migration for no present benefit. The exit
+  is a prefixed format (`scrypt$N$r$p$salt$hash`) introduced the first time a parameter changes,
+  with the unprefixed form read as today's defaults.
+- **`store.users.getByName` returns the hash.** `list()` was deliberately made hash-free and the
+  reason written down; that reasoning stops one verb short. `getByName` exists for the caller about
+  to verify a password, so `GET /api/auth/me` — already on chunk 02's list — must build its response
+  from the session, never from this row.
+- **`verify` is synchronous and this ADR sends the login route to async scrypt.** Those cannot both
+  be true at the route. Chunk 02 either gives `store.users` an async sibling that keeps the
+  `_absentUserHashValue()` equalisation in its one owner, or accepts the block and says why. It must
+  NOT re-implement the equalisation at the route: the equal cost is the anti-timing-oracle fix, so
+  the answer to blocking is to stop blocking, never to stop paying.
+
 - #1418 (chunk 02) gains three things that were not in it when it was filed: the password-policy
   owner above, the async-scrypt decision above, and `scripts/reset-admin.js`'s store-backed mode,
   which moved out of chunk 01 because a recovery path for a door that is not installed yet cannot

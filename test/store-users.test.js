@@ -95,42 +95,41 @@ describe('store.users — the tier-1 principal (ADR 0015, #1417)', () => {
 
     // The return value was never the whole oracle. An early return on the
     // no-row path costs nothing while a wrong password pays a full scrypt, so
-    // the two are distinguishable by response time on a login route. This
-    // pins the equalisation: remove the ABSENT_USER_HASH comparison and the
-    // unknown-user case gets dramatically cheaper than the wrong-password one.
-    it('spends comparable work on unknown, disabled and wrong-password', () => {
+    // the two are distinguishable by response time on a login route.
+    //
+    // COUNTED, not timed. An earlier version of this test compared elapsed
+    // medians, which scores the CI runner's scheduler rather than the code and
+    // is the shape that has already reddened this repo's main three times. The
+    // thing actually meant is countable: a scrypt comparison is PERFORMED on
+    // every failure path. Spying the `lib/password.js` seam reds on exactly the
+    // same mutation with no dependence on wall clock.
+    it('performs a scrypt comparison on unknown, disabled and wrong-password alike', () => {
       store.users.create('disabled-one', 'pw');
       store.users.disable('disabled-one');
 
+      const passwordLib = require('../lib/password');
+      const real = passwordLib.verifyPassword;
       /**
-       * Median elapsed ms over several calls, so one scheduling hiccup does not
-       * decide the assertion.
-       * @param {() => unknown} fn - The call to time
-       * @returns {number} Median milliseconds
+       * Count verifyPassword calls made by one store.users.verify call.
+       * @param {string} user - Username to attempt
+       * @returns {number} How many comparisons were performed
        */
-      function medianMs(fn) {
-        const runs = [];
-        for (let i = 0; i < 7; i += 1) {
-          const t0 = process.hrtime.bigint();
-          fn();
-          runs.push(Number(process.hrtime.bigint() - t0) / 1e6);
+      function comparisonsFor(user) {
+        let calls = 0;
+        passwordLib.verifyPassword = (...args) => { calls += 1; return real(...args); };
+        try {
+          store.users.verify(user, 'definitely-wrong');
+        } finally {
+          passwordLib.verifyPassword = real;
         }
-        return runs.sort((a, b) => a - b)[3];
+        return calls;
       }
 
-      const wrongPassword = medianMs(() => store.users.verify('rosie', 'nope'));
-      const unknownUser = medianMs(() => store.users.verify('nobody-at-all', 'nope'));
-      const disabledUser = medianMs(() => store.users.verify('disabled-one', 'nope'));
-
-      // A loose band on purpose: this asserts "the scrypt cost is paid on every
-      // path", not a constant-time guarantee, which a GC pause would flake.
-      // Before the fix the unknown-user path was ~0ms against tens of ms.
-      assert.ok(unknownUser > wrongPassword / 4,
-        `unknown-user ${unknownUser.toFixed(1)}ms must not be trivially faster `
-        + `than wrong-password ${wrongPassword.toFixed(1)}ms`);
-      assert.ok(disabledUser > wrongPassword / 4,
-        `disabled ${disabledUser.toFixed(1)}ms must not be trivially faster `
-        + `than wrong-password ${wrongPassword.toFixed(1)}ms`);
+      assert.equal(comparisonsFor('rosie'), 1, 'baseline: a wrong password pays one comparison');
+      assert.equal(comparisonsFor('nobody-at-all'), 1,
+        'an unknown account must pay the same comparison, or the miss is free and the timing leaks');
+      assert.equal(comparisonsFor('disabled-one'), 1,
+        'a disabled account must pay it too');
     });
 
     it('treats usernames as case-sensitive, matching the credential it replaces', () => {
@@ -143,6 +142,54 @@ describe('store.users — the tier-1 principal (ADR 0015, #1417)', () => {
         .run('deadbeef:short', 'rosie');
       assert.doesNotThrow(() => store.users.verify('rosie', 'correct-horse'));
       assert.equal(store.users.verify('rosie', 'correct-horse'), null);
+    });
+  });
+
+  describe('the failure log is itself a contract', () => {
+    const logger = require('../lib/logger');
+
+    /**
+     * Capture the log lines one call produces, at the default info level.
+     * @param {() => unknown} fn - The call to run
+     * @returns {string[]} Captured lines
+     */
+    function linesFrom(fn) {
+      const lines = [];
+      const prevLevel = logger.getLevel();
+      logger.setLevel('info');
+      logger.setConsoleStream({ write: (line) => lines.push(line) });
+      try {
+        fn();
+      } finally {
+        logger.setConsoleStream(null);
+        logger.setLevel(prevLevel);
+      }
+      return lines;
+    }
+
+    // Flip warn to debug and a default install records nothing at all, while
+    // the JSDoc, the CHANGELOG and FEATURES.md all still promise the operator
+    // can see repeated failures. The level is the claim.
+    it('records a failed check at a level a default install actually keeps', () => {
+      store.users.create('rosie', 'correct-horse');
+      const lines = linesFrom(() => store.users.verify('rosie', 'wrong'));
+      assert.ok(lines.some((l) => /User verify failed/.test(l)),
+        'a failed credential check must reach a default-level log');
+      assert.ok(lines.some((l) => /WARN/i.test(l) && /User verify failed/.test(l)),
+        'and at warn — at debug the remote operator reading the log file sees nothing');
+    });
+
+    // The sharper mutation: swap `null` for the caller's string and the
+    // credential log becomes a password sink, because the unknown-account
+    // branch is exactly where someone typed their password into the name field.
+    it('never writes the attempted name for an unknown account', () => {
+      const typedByMistake = 'hunter2-this-is-actually-my-password';
+      const lines = linesFrom(() => store.users.verify(typedByMistake, 'x'));
+      assert.ok(lines.some((l) => /no such user/.test(l)), 'the reason is still recorded');
+      for (const line of lines) {
+        assert.ok(!line.includes(typedByMistake),
+          'an unrecognised name is attacker- or typo-supplied and must not be logged');
+      }
     });
   });
 

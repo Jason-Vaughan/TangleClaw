@@ -7,11 +7,15 @@ const projects = require('../lib/projects');
 
 describe('lib/password — scrypt hash and verify (ADR 0015)', () => {
   describe('hashPassword', () => {
+    // Literals, not `password.SALT_BYTES * 2`. Deriving the expectation from the
+    // constant under test means changing the constant changes the assertion with
+    // it, and the stored format — already persisted on every live install for
+    // `config.deletePassword` — silently stops being pinned by anything.
     it('produces salt:hash in hex, 16-byte salt and 64-byte key', () => {
       const hashed = password.hashPassword('test123');
       const [salt, hash] = hashed.split(':');
-      assert.equal(salt.length, password.SALT_BYTES * 2);
-      assert.equal(hash.length, password.KEY_BYTES * 2);
+      assert.equal(salt.length, 32, '16-byte salt, hex');
+      assert.equal(hash.length, 128, '64-byte key, hex');
       assert.match(hashed, /^[0-9a-f]+:[0-9a-f]+$/);
     });
 

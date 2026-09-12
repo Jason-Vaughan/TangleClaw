@@ -711,6 +711,13 @@ All notable changes to TangleClaw are documented in this file.
   reading the log file could not answer "why can't Rosie log in" or see repeated failures against a
   door that fronts a writable shell.
 
+  **The one thing here that touches an existing install: `tangleclaw.db` is narrowed from 0644 to
+  0600 on every boot, not only on create.** `new DatabaseSync` created it at the process umask —
+  world-readable on a default macOS account — and nothing checked it, while `config.json` beside it
+  is checked. That was survivable while the file held project metadata and stopped being survivable
+  when it started holding password hashes. If a backup agent, a second local account or a container
+  volume mount was reading that file as a non-owner, this is the change that stopped it.
+
   The `users` table deliberately has no `role` column. ADR 0015 is explicit that the only genuine
   tier-1 distinction is authenticated or not, and that "admin" names a tier-2 preferences concept —
   a role column added before anything reads it would be a security-shaped field that gates nothing.

@@ -159,8 +159,9 @@ host-affecting route, which is a different product tier and needs its own ADR.
 Sessions are established by TangleClaw against a user store TangleClaw owns, using **scrypt** from
 Node's standard library.
 
-**This adds no dependency.** TangleClaw already ships the primitives, at `lib/projects.js:59-77`,
-today guarding project deletion:
+**This adds no dependency.** TangleClaw already ships the primitives — when this was written they
+sat in `lib/projects.js` guarding project deletion; the Train 9 build moved them to their own owner,
+`lib/password.js`:
 
 ```js
 crypto.scryptSync(password, salt, 64)  // hash, random per-user salt
