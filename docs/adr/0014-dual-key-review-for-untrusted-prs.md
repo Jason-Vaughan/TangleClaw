@@ -23,7 +23,7 @@ We establish a **Dual-Key (Two-Person) Review** mechanism for all untrusted exte
 
    In **this** repository those categories resolve to: `package.json` and lockfiles; `data/hooks/`, `hooks/`, `scripts/`, `deploy/`, `.github/workflows/`; and `public/**` and `server.js` — the last because this clone *is* the live install, which is a property of this deployment and not a general rule. **A repo that mirrors these literal paths instead of re-deriving them gets a checklist that reads as authoritative while naming files it does not have.**
 
-   **The live-serving-surface category does NOT reject. Ruled 2026-09-08, recorded here 2026-09-12 (#1373).**
+   **The live-serving-surface category does NOT reject. Ruled by the Coordinator session over Medusa on 2026-09-08, recorded here 2026-09-12 (#1373, which carries the provenance in full).**
    The text above supported two readings and pointed both ways. One: item 1 says the Coordinator
    "rejects on four categories", and the Communication table below carries a dedicated *Rejected —
    security trip* row, so a live-surface touch is a rejection. Two: the paragraph that follows calls

@@ -187,10 +187,9 @@ describe('#1394 describeDrift — silence is only ever earned', () => {
   });
 
   it('redacts a hash out of what it emits, without the test doing the redacting', () => {
-    // R-2: the previous version of this check called redactHashes in its own
-    // body and asserted on its own output, so deleting the redaction from the
-    // module left it green. Every string below is asserted as describeDrift
-    // RETURNED it.
+    // Every string below is asserted as describeDrift RETURNED it. A guard that
+    // calls redactHashes in its own body and asserts on its own output is a
+    // tautology: the module can stop redacting and the assertion still passes.
     const hash = '$2a$14$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU';
 
     const unrun = drift.describeDrift({
