@@ -353,14 +353,16 @@ let _gateConfigCache = null;
  * would have read as "not enforcing", cached on mtime+size and re-served, which
  * is an authentication bypass for as long as the file stays unreadable.
  *
- * A MISSING file is deliberately not a failure: `store.config.load()` answers
- * with `DEFAULT_CONFIG` there, which really is a successful read of nothing.
- * Only an unreadable or unparseable file raises, and only that should close the
- * gate.
- *
- * A failed `stat` also throws rather than degrading, for the same reason: not
- * being able to tell whether the file changed is a read failure, not a reading
- * of it.
+ * A failed `stat` throws too, including ENOENT — so a MISSING `config.json` also
+ * closes an armed gate. That is a deliberate departure from the review note
+ * that asked for the missing case to stay fail-open, and the reason is that
+ * `store.config.load()`'s answer there is `DEFAULT_CONFIG`, whose `authEnabled`
+ * is false: honouring it would mean deleting one file silently un-gates an
+ * armed install, which is the same bypass this whole guard exists to close,
+ * reached by a different route. On an armed install the file existing is a
+ * precondition — the gate cannot have armed without reading `authEnabled: true`
+ * out of it — so this costs nothing real, and `authEnabled: false` in a file
+ * that IS readable remains the recovery lever.
  *
  * Nothing is cached on the failure path, so recovery takes effect on the next
  * request rather than being pinned by a cached verdict.

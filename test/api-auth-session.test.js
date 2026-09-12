@@ -525,9 +525,34 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
       }
     });
 
-    it('and recovers on the very next request once the file is readable again', async () => {
-      // The other half: fail-closed must not be sticky, or fixing the file
-      // would not fix the install.
+    it('also stays gated when config.json is MISSING, not just unparseable', async () => {
+      // A deliberate departure from the review note that asked for the missing
+      // case to stay fail-open, pinned here because it is a CHOICE now and not
+      // an accident of an unguarded stat. `store.config.load()` answers a
+      // missing file with DEFAULT_CONFIG, whose authEnabled is false — so
+      // honouring it would mean deleting one file silently un-gates an armed
+      // install, the same bypass reached by another route.
+      const armed = await send('GET', '/api/config');
+      assert.equal(armed.statusCode, 401, 'precondition: the gate is armed');
+
+      const cfgPath = store._getConfigPath();
+      const good = fs.readFileSync(cfgPath, 'utf8');
+      fs.unlinkSync(cfgPath);
+      try {
+        const res = await send('GET', '/api/config');
+        assert.equal(res.statusCode, 401,
+          'deleting the config must not un-gate an armed install');
+      } finally {
+        fs.writeFileSync(cfgPath, good);
+      }
+    });
+
+    it('does not PIN the failure verdict — the recovery lever still works after one', async () => {
+      // The other half: fail-closed must not be sticky. The cache keys on
+      // mtime+size, so what this proves is that a cached refusal does not
+      // outlive the corrupt file — it restores the file AND flips authEnabled,
+      // because that switch is the documented way out and it is the thing that
+      // must still work.
       await send('GET', '/api/config');
       const cfgPath = store._getConfigPath();
       const good = fs.readFileSync(cfgPath, 'utf8');
