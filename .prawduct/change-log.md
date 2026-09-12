@@ -34,6 +34,33 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-12 — #1419: the WebSocket upgrade gets the session gate, and /openclaw-direct/* loses an exemption it never earned
+
+<!-- prawduct: type=feature | scope=train-9-chunk-03 -->
+
+Train 9 Chunk 03.
+
+**Why.** With TangleClaw's gate armed, `GET /terminal/x` was refused while a WebSocket upgrade to the
+same prefix still connected — and `/terminal/*` proxies to a `--writable` ttyd. A gate on HTTP with
+an open upgrade path is not a gate.
+
+**What.** `server.js#handleUpgrade` runs the session gate after its Origin and served-Host guards
+and before any branch dials an upstream (401 on refusal). Both gates resolve their inputs through
+one helper, `server.js#_gateIdentity`; the upgrade verdict, `authGate#evaluateUpgrade`, takes no
+path so no HTTP exemption list can reach a shell socket. TangleClaw's cookies are stripped from both
+forwarded handshakes (ADR 0016 OQ1). `/openclaw-direct/*` now needs a session at TangleClaw's gate
+(`authGate#isGateBypassPath`): its exemption rested on "the gateway enforces its own token", but
+TangleClaw injects that token, so the check was passed for whoever asked — the exemption was only
+ever a Basic prompt-loop fix (#472), and Caddy keeps it until #1420. `POST /api/auth/login` caps
+in-flight scrypt at two (carried from #1418's review).
+
+**Left for #1420**, on the issue and in the train plan: in caddy mode an off-box non-browser request
+to `/openclaw-direct/*` still passes as a machine client, bounded by the connection UUID.
+
+**Review.** Critic `rev-20260912T211742Z-8d3d6069` — 0 blocking, 4 warnings fixed in `e9abef5f`;
+verify-resolutions clean.
+
+
 ## 2026-09-12 — #1416, #1417: TangleClaw gets somewhere to put a user, and the three answers the gate needed
 
 <!-- prawduct: type=feature | scope=train-9-chunk-01 -->
