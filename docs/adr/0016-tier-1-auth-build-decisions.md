@@ -218,3 +218,20 @@ stop paying.
   which moved out of chunk 01 because a recovery path for a door that is not installed yet cannot
   be verified end to end.
 - Nothing here touches tier 2. ADR 0015 OQ5 remains open and is deliberately not answered.
+
+## Recorded during #1419 — the `/openclaw-direct/*` seam
+
+ADR 0015 said this seam "must be moved deliberately, not inherited", and #1419 was the place to
+decide it. **Decision: TangleClaw's session gate does not honour Caddy's `/openclaw-direct/*`
+exemption; the path needs a session once the gate is armed, on HTTP and on the WebSocket upgrade.**
+
+The exemption's recorded reason — the gateway enforces its own token — does not hold for the path
+as built: `server.js#_openclawProxyHeaders` and `#_openclawWsRequestLines` drop the caller's
+`Authorization` and inject the stored gateway token, so the gateway's check is satisfied by
+TangleClaw on the caller's behalf. What the exemption really fixed was a `basic_auth` prompt loop
+(#472), and a session cookie does not ride `Authorization`, so tier 1 does not have that loop.
+Caddy keeps the exemption while `basic_auth` exists; #1420 removes both together.
+
+Mechanism: `lib/auth-gate.js#isGateBypassPath` — Caddy's list minus that prefix, on the same
+canonical path, so it can never exempt anything Caddy's list does not. The WebSocket verdict,
+`#evaluateUpgrade`, takes no path at all, so no HTTP exemption reaches an upgrade.

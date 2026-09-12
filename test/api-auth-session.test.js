@@ -7,7 +7,10 @@ const path = require('node:path');
 const os = require('node:os');
 const store = require('../lib/store');
 const authSession = require('../lib/auth-session');
-const { handleRequest } = require('../server');
+const net = require('node:net');
+const { PassThrough } = require('node:stream');
+const { handleRequest, handleUpgrade } = require('../server');
+const authGate = require('../lib/auth-gate');
 
 // The gate and its three routes driven through the REAL request handler.
 //
@@ -349,6 +352,106 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
     });
   });
 
+  describe('POST /api/auth/login in-flight cap (#1419)', () => {
+    // The pool the verifications run on is shared with fs and dns, so an
+    // unbounded burst of anonymous logins starves the whole server. The stub
+    // holds each verification open until the case releases it, which is the
+    // only way to put requests genuinely IN FLIGHT at the same time.
+    let realVerify;
+    let pending;
+
+    beforeEach(() => {
+      store.users.create('rosie', PASSWORD);
+      realVerify = store.users.verifyAsync;
+      pending = [];
+      store.users.verifyAsync = (username, password) => new Promise((resolve, reject) => {
+        pending.push({ release: () => realVerify.call(store.users, username, password).then(resolve, reject),
+          fail: () => reject(new Error('scrypt exploded')) });
+      });
+    });
+
+    const restore = () => { store.users.verifyAsync = realVerify; };
+    const tick = () => new Promise((r) => setImmediate(r));
+
+    it('refuses with 503 and Retry-After once two verifications are in flight', async () => {
+      try {
+        const first = send('POST', '/api/auth/login', { body: { username: 'rosie', password: PASSWORD } });
+        const second = send('POST', '/api/auth/login', { body: { username: 'rosie', password: PASSWORD } });
+        await tick();
+        assert.equal(pending.length, 2, 'precondition: both verifications are running');
+        const thirdP = send('POST', '/api/auth/login', { body: { username: 'rosie', password: PASSWORD } });
+        await tick();
+        // Checked BEFORE awaiting the third response: without the cap it would
+        // be parked in the stub, and awaiting it would hang instead of failing.
+        assert.equal(pending.length, 2, 'the third request must not have started a verification');
+        const third = await thirdP;
+        assert.equal(third.statusCode, 503);
+        assert.equal(third.headers['retry-after'], '1');
+        assert.match(third.body, /LOGIN_BUSY/);
+        pending.forEach((p) => p.release());
+        assert.equal((await first).statusCode, 200);
+        assert.equal((await second).statusCode, 200);
+      } finally {
+        // Release anything still parked, so a failed assertion cannot leave a
+        // request pending and hang the file instead of reporting.
+        pending.forEach((p) => p.release());
+        restore();
+      }
+    });
+
+    it('frees the slot when a verification completes', async () => {
+      try {
+        const a = send('POST', '/api/auth/login', { body: { username: 'rosie', password: PASSWORD } });
+        const b = send('POST', '/api/auth/login', { body: { username: 'rosie', password: 'wrong-password-xx' } });
+        await tick();
+        pending.forEach((p) => p.release());
+        await a; await b;
+        const c = send('POST', '/api/auth/login', { body: { username: 'rosie', password: PASSWORD } });
+        await tick();
+        assert.equal(pending.length, 3, 'a new verification must be admitted');
+        pending[2].release();
+        assert.equal((await c).statusCode, 200);
+      } finally {
+        pending.forEach((p) => p.release());
+        restore();
+      }
+    });
+
+    it('frees the slot when a verification THROWS — no leaked slot, no permanent refusal', async () => {
+      try {
+        for (let i = 0; i < 2; i++) {
+          const r = send('POST', '/api/auth/login', { body: { username: 'rosie', password: PASSWORD } });
+          await tick();
+          pending[pending.length - 1].fail();
+          await r;
+        }
+        const next = send('POST', '/api/auth/login', { body: { username: 'rosie', password: PASSWORD } });
+        await tick();
+        assert.equal(pending.length, 3, 'two thrown verifications must not have used up the cap');
+        pending[2].release();
+        assert.equal((await next).statusCode, 200);
+      } finally {
+        pending.forEach((p) => p.release());
+        restore();
+      }
+    });
+
+    it('does not count a malformed request against the cap', async () => {
+      try {
+        const a = send('POST', '/api/auth/login', { body: { username: 'rosie', password: PASSWORD } });
+        const b = send('POST', '/api/auth/login', { body: { username: 'rosie', password: PASSWORD } });
+        await tick();
+        const bad = await send('POST', '/api/auth/login', { body: { username: '' } });
+        assert.equal(bad.statusCode, 401, 'refused as a bad credential, not as busy');
+        pending.forEach((p) => p.release());
+        await a; await b;
+      } finally {
+        pending.forEach((p) => p.release());
+        restore();
+      }
+    });
+  });
+
   describe('an authenticated session', () => {
     beforeEach(armGate);
 
@@ -626,6 +729,244 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
     it('a NON-loopback request is gated, machine-shaped or not', async () => {
       const res = await send('GET', '/api/config', { machine: true, remoteAddress: '10.0.0.5' });
       assert.equal(res.statusCode, 401, 'the carve-out is local processes only');
+    });
+  });
+
+  describe('the WebSocket upgrade (#1419)', () => {
+    // `handleRequest` never sees an upgrade, so everything above says nothing
+    // about this path. `/terminal/*` proxies to a --writable ttyd: a shell.
+    //
+    // `net.connect` is replaced for the duration of each case, and it is the
+    // assertion that matters: "refused BEFORE the socket exists" means the
+    // upstream connection was never opened, which a check on the client socket
+    // alone cannot show — the unknown-connection branches destroy that socket
+    // too, so a destroyed socket is green with the gate deleted.
+    let realConnect;
+    let connects;
+
+    beforeEach(() => {
+      realConnect = net.connect;
+      connects = [];
+      net.connect = (...args) => {
+        const cb = typeof args[args.length - 1] === 'function' ? args.pop() : null;
+        const upstream = new PassThrough();
+        upstream.written = '';
+        upstream.write = (chunk) => { upstream.written += String(chunk); return true; };
+        connects.push({ args, upstream });
+        // Async, as a real connect is: the branch assigns `proxySocket` from
+        // the return value before its callback may reference it.
+        if (cb) process.nextTick(cb);
+        return upstream;
+      };
+    });
+
+    // `after`-style restore per case, so a failing assertion cannot leave the
+    // stub installed for the rest of the file.
+    const restore = () => { net.connect = realConnect; };
+
+    /**
+     * Drive one upgrade through the real `handleUpgrade`.
+     * @param {string} url
+     * @param {object} [opts]
+     * @param {string} [opts.cookie]
+     * @param {string|null} [opts.origin] - Defaults to a same-host browser Origin; null sends none
+     * @param {string} [opts.host]
+     * @param {string} [opts.remoteAddress]
+     * @returns {Promise<{written: string, destroyed: boolean}>}
+     */
+    async function upgrade(url, opts = {}) {
+      const headers = {
+        host: opts.host || 'localhost:3102',
+        upgrade: 'websocket', connection: 'Upgrade',
+        'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==', 'sec-websocket-version': '13'
+      };
+      const origin = opts.origin === undefined ? 'http://localhost:3102' : opts.origin;
+      if (origin !== null) headers.origin = origin;
+      if (opts.cookie) headers.cookie = opts.cookie;
+      const socket = new PassThrough();
+      socket.remoteAddress = opts.remoteAddress || '127.0.0.1';
+      socket.written = '';
+      socket.destroyed = false;
+      const origDestroy = socket.destroy.bind(socket);
+      socket.destroy = () => { socket.destroyed = true; origDestroy(); };
+      const origEnd = socket.end.bind(socket);
+      socket.end = (chunk, cb) => { if (chunk) socket.written += String(chunk); return origEnd(cb); };
+      handleUpgrade({ url, method: 'GET', headers, socket }, socket, Buffer.alloc(0));
+      await new Promise((r) => setImmediate(r));
+      return socket;
+    }
+
+    const REFUSED = /^HTTP\/1\.1 401 Unauthorized\r\n/;
+
+    describe('with the gate armed', () => {
+      beforeEach(armGate);
+
+      for (const url of ['/terminal/ws', '/openclaw/proj/ws', '/openclaw-direct/c1/ws']) {
+        it(`refuses an unauthenticated browser upgrade to ${url} before any upstream socket`, async () => {
+          try {
+            const s = await upgrade(url);
+            assert.match(s.written, REFUSED);
+            assert.equal(connects.length, 0, 'no upstream connection may be opened');
+            assert.equal(s.destroyed, true);
+          } finally { restore(); }
+        });
+      }
+
+      it('opens the terminal for a live session, with our cookies stripped from what ttyd receives', async () => {
+        try {
+          const { cookie } = await login();
+          const s = await upgrade('/terminal/ws', { cookie: `ttyd_pref=1; ${cookie}` });
+          assert.doesNotMatch(s.written, REFUSED);
+          assert.equal(connects.length, 1, 'the ttyd connection must be opened');
+          const sent = connects[0].upstream.written;
+          assert.match(sent, /^GET \/ws HTTP\/1\.1\r\n/);
+          assert.match(sent, /\r\ncookie: ttyd_pref=1\r\n/);
+          assert.equal(sent.includes(authSession.SESSION_COOKIE), false,
+            'the session cookie must not reach a --writable ttyd');
+          assert.equal(sent.includes(authSession.CSRF_COOKIE), false);
+        } finally { restore(); }
+      });
+
+      it('opens /openclaw-direct for a live session, token injected and our cookies stripped', async () => {
+        try {
+          const conn = store.openclawConnections.create({
+            name: 'ws-gate-test', host: 'gw.example', sshUser: 'u', sshKeyPath: '/k',
+            gatewayToken: 'gw-token-1419', localPort: 18999
+          });
+          const { cookie } = await login();
+          const s = await upgrade(`/openclaw-direct/${conn.id}/ws`, { cookie });
+          assert.doesNotMatch(s.written, REFUSED);
+          assert.equal(connects.length, 1);
+          assert.deepEqual(connects[0].args, [18999, '127.0.0.1']);
+          const sent = connects[0].upstream.written;
+          assert.match(sent, /\r\nauthorization: Bearer gw-token-1419\r\n/);
+          assert.equal(/\r\ncookie:/i.test(sent), false, 'only our cookies were sent, so none may remain');
+        } finally { restore(); }
+      });
+
+      it('refuses /openclaw-direct WITHOUT a session even for a real connection — the token is injected by us', async () => {
+        // The test that makes the exemption decision visible: this connection
+        // resolves, so without the gate the upstream would open and TangleClaw
+        // would hand the gateway its token on an anonymous caller's behalf.
+        try {
+          const conn = store.openclawConnections.create({
+            name: 'ws-gate-test-2', host: 'gw.example', sshUser: 'u', sshKeyPath: '/k',
+            gatewayToken: 'gw-token-1419', localPort: 18998
+          });
+          const s = await upgrade(`/openclaw-direct/${conn.id}/ws`);
+          assert.match(s.written, REFUSED);
+          assert.equal(connects.length, 0);
+        } finally { restore(); }
+      });
+
+      it('refuses a garbage session cookie', async () => {
+        try {
+          const s = await upgrade('/terminal/ws', { cookie: `${authSession.SESSION_COOKIE}=${'f'.repeat(64)}` });
+          assert.match(s.written, REFUSED);
+          assert.equal(connects.length, 0);
+        } finally { restore(); }
+      });
+
+      it('refuses when the session lookup THROWS — fail closed on the path to a shell', async () => {
+        const realResolve = store.authSessions.resolve;
+        try {
+          const { cookie } = await login();
+          store.authSessions.resolve = () => { throw new Error('SQLITE_BUSY'); };
+          const s = await upgrade('/terminal/ws', { cookie });
+          assert.match(s.written, REFUSED);
+          assert.equal(connects.length, 0);
+        } finally {
+          store.authSessions.resolve = realResolve;
+          restore();
+        }
+      });
+
+      it('still destroys a CROSS-SITE upgrade that carries a valid session — the Origin guard runs first', async () => {
+        // The cookie rides the attack too, so the session gate must not be what
+        // decides it: the guard refuses silently, before any 401 is written.
+        try {
+          const { cookie } = await login();
+          const s = await upgrade('/terminal/ws', { cookie, origin: 'https://evil.example' });
+          assert.equal(s.destroyed, true);
+          assert.equal(s.written, '', 'refused by the Origin guard, not by the session gate');
+          assert.equal(connects.length, 0);
+        } finally { restore(); }
+      });
+
+      it('still destroys a REBOUND upgrade (#864) that carries a valid session', async () => {
+        try {
+          const { cookie } = await login();
+          const s = await upgrade('/terminal/ws', {
+            cookie, host: 'evil.example:3102', origin: 'http://evil.example:3102'
+          });
+          assert.equal(s.destroyed, true);
+          assert.equal(s.written, '');
+          assert.equal(connects.length, 0);
+        } finally { restore(); }
+      });
+
+      it('lets the fleet\'s shape through, by the same carve-out HTTP uses', async () => {
+        // Loopback, no Origin, no Sec-Fetch-Site, no cookie. Deliberate, and
+        // bounded the way the HTTP carve-out is — see lib/auth-gate.js.
+        try {
+          const s = await upgrade('/terminal/ws', { origin: null });
+          assert.doesNotMatch(s.written, REFUSED);
+          assert.equal(connects.length, 1);
+        } finally { restore(); }
+      });
+
+      it('refuses a machine-shaped upgrade from OFF the box', async () => {
+        try {
+          const s = await upgrade('/terminal/ws', { origin: null, remoteAddress: '10.0.0.5' });
+          assert.match(s.written, REFUSED);
+          assert.equal(connects.length, 0);
+        } finally { restore(); }
+      });
+
+      it('refuses a cookie-bearing, Origin-less loopback upgrade whose session is dead', async () => {
+        // A cookie makes it a person, not the fleet — dropping Origin must not
+        // turn an expired session into a machine client.
+        try {
+          const s = await upgrade('/terminal/ws', {
+            origin: null, cookie: `${authSession.SESSION_COOKIE}=${'a'.repeat(64)}`
+          });
+          assert.match(s.written, REFUSED);
+          assert.equal(connects.length, 0);
+        } finally { restore(); }
+      });
+    });
+
+    describe('with the gate dormant', () => {
+      it('opens the terminal exactly as before — no account, nothing to log in to', async () => {
+        try {
+          setAuthEnabled(true); // the caddy-mode shape: switch on, zero accounts
+          const s = await upgrade('/terminal/ws');
+          assert.doesNotMatch(s.written, REFUSED);
+          assert.equal(connects.length, 1);
+        } finally { restore(); }
+      });
+    });
+  });
+
+  describe('/openclaw-direct/* over HTTP (#1419)', () => {
+    beforeEach(armGate);
+
+    it('is gated for a browser with no session — its exemption is Caddy\'s, not the gate\'s', async () => {
+      const res = await send('GET', '/openclaw-direct/c1/chat?session=main');
+      assert.equal(res.statusCode, 401);
+    });
+
+    it('is gated on a normalisation variant too', async () => {
+      const res = await send('GET', '//openclaw-direct/c1/chat');
+      assert.equal(res.statusCode, 401);
+    });
+
+    it('reaches the proxy for a live session', async () => {
+      const { cookie } = await login();
+      const res = await send('GET', '/openclaw-direct/nonexistent/chat', { cookie });
+      // Unknown connection → the proxy's own 404, which proves the gate let it through.
+      assert.equal(res.statusCode, 404);
+      assert.match(res.body, /OpenClaw connection not found/);
     });
   });
 });

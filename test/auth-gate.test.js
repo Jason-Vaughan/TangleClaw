@@ -224,6 +224,42 @@ describe('lib/auth-gate — the front-door verdict (#1418, ADR 0015/0016)', () =
     });
   });
 
+  describe('isGateBypassPath — Caddy\'s exemptions, minus the one TangleClaw\'s gate cannot honour (#1419)', () => {
+    it('keeps the credential-less exemptions', () => {
+      for (const p of ['/api/health', '/manifest.json']) {
+        assert.equal(authGate.isGateBypassPath(p), true, `${p} must stay exempt`);
+      }
+    });
+
+    it('does NOT exempt /openclaw-direct/*, although Caddy still does', () => {
+      // TangleClaw injects the gateway token on this proxy, so "the gateway
+      // enforces its own auth" is satisfied BY TANGLECLAW for whoever asked.
+      // Caddy's exemption exists for the Basic prompt loop (#472), which a
+      // session cookie does not have.
+      assert.equal(caddy.isCaddyAuthBypassPath('/openclaw-direct/x'), true,
+        'precondition: Caddy still bypasses it while basic_auth is up');
+      assert.equal(authGate.isGateBypassPath('/openclaw-direct/x'), false);
+      assert.equal(authGate.isGateBypassPath('/openclaw-direct/abc/chat?session=main'), false);
+    });
+
+    it('refuses the exemption on every normalisation variant, not just the plain spelling', () => {
+      // The #472/#473 leak class: the router and a Set disagree about what a
+      // path is. Each of these IS `/openclaw-direct/...` to Caddy's canonicaliser.
+      for (const p of ['//openclaw-direct/x', '/openclaw-direct//x', '/x/../openclaw-direct/y',
+        '/openclaw-direct%2Fx', '/%6Fpenclaw-direct/x']) {
+        assert.equal(caddy.isCaddyAuthBypassPath(p), true, `precondition: Caddy bypasses ${p}`);
+        assert.equal(authGate.isGateBypassPath(p), false, `${p} must not be exempt at the gate`);
+      }
+    });
+
+    it('never exempts a path Caddy does not', () => {
+      for (const p of ['/', '/api/config', '/terminal/ws', '/openclaw/p/x', '/login']) {
+        assert.equal(caddy.isCaddyAuthBypassPath(p), false, `precondition: ${p}`);
+        assert.equal(authGate.isGateBypassPath(p), false, p);
+      }
+    });
+  });
+
   describe('evaluate', () => {
     const base = {
       method: 'GET', rawUrl: '/', pathname: '/',
@@ -278,6 +314,12 @@ describe('lib/auth-gate — the front-door verdict (#1418, ADR 0015/0016)', () =
         ev({ session: SESSION, rawUrl: '/terminal/x', pathname: '/terminal/x' }),
         { action: 'allow' }
       );
+    });
+
+    it('gates /openclaw-direct/* — its exemption is Caddy\'s, not the gate\'s (#1419)', () => {
+      const p = '/openclaw-direct/abc/chat';
+      assert.deepEqual(ev({ rawUrl: p, pathname: p }), { action: 'challenge', as: 'html' });
+      assert.deepEqual(ev({ rawUrl: p, pathname: p, session: SESSION }), { action: 'allow' });
     });
 
     it('gates the proxy prefixes, which are not routes', () => {
@@ -384,6 +426,43 @@ describe('lib/auth-gate — the front-door verdict (#1418, ADR 0015/0016)', () =
           { action: 'refuse-csrf' }
         );
       });
+    });
+  });
+
+  describe('evaluateUpgrade — the WebSocket handshake (#1419)', () => {
+    const base = { gateActive: true, session: null, machineClient: false };
+    const ev = (over) => authGate.evaluateUpgrade({ ...base, ...over });
+    const SESSION = { csrfToken: 'tok', username: 'rosie' };
+
+    it('allows every upgrade when the gate is not active', () => {
+      assert.deepEqual(ev({ gateActive: false }), { action: 'allow' });
+    });
+
+    it('refuses an upgrade with no session', () => {
+      // `/terminal/*` proxies to a --writable ttyd: that socket is a shell.
+      assert.deepEqual(ev({}), { action: 'refuse' });
+    });
+
+    it('allows an upgrade that carries a live session', () => {
+      assert.deepEqual(ev({ session: SESSION }), { action: 'allow' });
+    });
+
+    it('allows the fleet by the same carve-out HTTP uses', () => {
+      assert.deepEqual(ev({ machineClient: true }), { action: 'allow' });
+    });
+
+    it('takes no path — so no HTTP exemption list can ever open a shell socket', () => {
+      // `evaluate` carries the bypass list and the login surface; neither is a
+      // WebSocket route. Asserted on the signature, because a path argument is
+      // what would let a future list addition reach the upgrade verdict.
+      for (const rawUrl of ['/api/health', '/manifest.json', '/login', '/openclaw-direct/x']) {
+        assert.deepEqual(ev({ rawUrl, pathname: rawUrl }), { action: 'refuse' }, rawUrl);
+      }
+    });
+
+    it('opens only on a gateActive that is exactly false', () => {
+      // A verdict computed from a thrown or absent value must not open.
+      assert.deepEqual(ev({ gateActive: undefined }), { action: 'refuse' });
     });
   });
 });

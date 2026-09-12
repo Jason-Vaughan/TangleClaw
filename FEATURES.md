@@ -119,7 +119,8 @@ fails any auto-stub section older than 14 days.
   `#tokenFromRequest`, `#isSecureRequest`, `#serializeCookie`, `#clearCookie`,
   `#serializeCsrfCookie`, `#clearCsrfCookie`, `#csrfTokenMatches`) — no database handle, no request,
   so the cookie rules are testable without a server. `lib/auth-gate.js` is the verdict
-  (`#isGateActive`, `#isLoginSurfacePath`, `#evaluate`), returning a decision object rather than
+  (`#isGateActive`, `#isLoginSurfacePath`, `#isGateBypassPath`, `#isMachineClient`, `#evaluate`,
+  `#evaluateUpgrade`), returning a decision object rather than
   touching a response. `store.authSessions` is the persistence (`#create`, `#resolve`, `#destroy`,
   `#destroyForUser`, `#sweepExpired`, `#anyLoginableUser`) over the `auth_sessions` table at schema
   v37 — named `auth_sessions` because `sessions` is already the tmux/AI table the product is about.
@@ -165,17 +166,30 @@ fails any auto-stub section older than 14 days.
   switchboard, none of which can hold a cookie, and all of which the gate would otherwise refuse
   the moment an account exists. It opens nothing — those callers already reach TangleClaw only over
   loopback — and #1420 must revisit it once Caddy no longer fronts the remote path. The session
-  cookie is stripped before proxying on both HTTP proxy paths
-  (`authSession#stripOwnCookiesFromHeaders`, applied in `proxyToTtyd` and `_openclawProxyHeaders`);
-  the two WebSocket paths are #1419's. Dashboard side: `public/api-helper.js#tcCsrfToken`/`#tcWithCsrf`, applied
+  cookie is stripped before proxying on every path that copies request headers to an upstream
+  (`authSession#stripOwnCookiesFromHeaders`, applied in `proxyToTtyd`, `_openclawProxyHeaders`,
+  `_openclawWsRequestLines` and the `/terminal` branch of `handleUpgrade`). Dashboard side: `public/api-helper.js#tcCsrfToken`/`#tcWithCsrf`, applied
   inside `api()` because that is the one choke-point every write already goes through, bodyless ones
   included. Revocation reaches live sessions — `users.disable` and `users.setPassword` destroy them,
   and `#resolve` re-checks `disabled_at` every request. The login route uses
   `password.verifyPasswordAsync` via `store.users.verifyAsync`, keeping the equal-cost comparison
-  that denies the username timing oracle. **The gate covers HTTP only — `server.js#handleUpgrade`
-  is NOT session-checked yet (#1419)**, so with the gate armed a `/terminal/*` WebSocket upgrade
-  still establishes while the HTTP GET beside it is refused; not a regression, but the one place
-  the perimeter is not yet continuous. Tests: `test/auth-session.test.js`,
+  that denies the username timing oracle, and admits at most two verifications at once
+  (`MAX_CONCURRENT_LOGIN_VERIFICATIONS`, a 503 + `Retry-After` above it) because async scrypt runs
+  on libuv's threadpool, which fs and dns share — a concurrency cap, not a lockout.
+
+  **The WebSocket upgrade is gated too** (#1419). `server.js#handleUpgrade` asks
+  `server.js#_upgradeVerdict` after its Origin and served-Host guards and before any branch opens
+  an upstream socket, so `/terminal/*` (a `--writable` ttyd), `/openclaw/*` and `/openclaw-direct/*`
+  are refused with a `401` before ttyd or a gateway is ever dialled. It is built from the HTTP
+  gate's parts — the same `#isGateActive` through the same throwing thunk, the same session lookup,
+  the same `#isMachineClient` carve-out — so the two transports cannot disagree about who is let in,
+  and #1420 revisits one carve-out, not two. The verdict is its own function, `#evaluateUpgrade`,
+  which takes NO path: the HTTP exemption lists are not WebSocket routes, and routing a handshake
+  through them would let a future list addition open a shell socket. **`/openclaw-direct/*` is
+  gated on both transports** (`#isGateBypassPath` is Caddy's list minus that prefix): TangleClaw
+  injects the gateway token on that proxy, so "the gateway enforces its own auth" was satisfied by
+  TangleClaw for anyone who asked; Caddy keeps its exemption only for the `basic_auth` prompt loop
+  (#472), which a cookie does not have. Tests: `test/auth-session.test.js`,
   `test/auth-gate.test.js`, `test/store-auth-sessions.test.js`, `test/api-auth-session.test.js`,
   `test/reset-admin-store.test.js`, `test/frontend-csrf.test.js`.
 - **Auth: Caddy ingress + proxy identity** (AUTH-1/AUTH-3) — `lib/caddy.js` generates the integrity-stamped Caddyfile for the auth-gated ingress; `lib/auth-identity.js` resolves proxy-authenticated request identity (`X-Auth-User` → `currentUser` on `/api/server-info`). Drift surfacing: `docs/auth-status-surfacing.md` (AUTH-2K9D).

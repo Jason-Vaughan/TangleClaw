@@ -719,6 +719,30 @@ describe('server', () => {
         assert.equal(lines[lines.length - 1], '');
         assert.equal(lines[lines.length - 2], '');
       });
+
+      it("strips TangleClaw's cookies from the handshake, and keeps the gateway's own (#1419)", () => {
+        const lines = _openclawWsRequestLines(
+          { cookie: `gw_sid=theirs; ${authSession.SESSION_COOKIE}=ours; ${authSession.CSRF_COOKIE}=tok` },
+          '/ws', 5001, TOKEN
+        );
+        assert.ok(lines.includes('cookie: gw_sid=theirs'), lines.join('\n'));
+        assert.equal(lines.some((l) => l.includes('ours') || l.includes('=tok')), false,
+          'neither of our cookie values may reach the gateway');
+      });
+
+      it('drops the Cookie line entirely when only ours were present', () => {
+        const lines = _openclawWsRequestLines(
+          { cookie: `${authSession.SESSION_COOKIE}=ours` }, '/ws', 5001, TOKEN);
+        assert.equal(lines.some((l) => l.toLowerCase().startsWith('cookie:')), false);
+      });
+    });
+
+    it('HTTP and WS paths agree on the Cookie outcome (symmetry, #1419)', () => {
+      const cookie = `gw_sid=theirs; ${authSession.SESSION_COOKIE}=ours`;
+      const http = _openclawProxyHeaders({ cookie }, 5001, TOKEN);
+      const wsLine = _openclawWsRequestLines({ cookie }, '/ws', 5001, TOKEN)
+        .find((l) => l.toLowerCase().startsWith('cookie:'));
+      assert.equal(`cookie: ${http.cookie}`, wsLine);
     });
 
     it('HTTP and WS paths agree on the Authorization outcome (symmetry, #470)', () => {
