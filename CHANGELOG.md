@@ -5,6 +5,67 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Added
+- **TangleClaw now notices when the live Caddyfile has lost a security property (#1394).**
+  `lib/caddy-drift.js` compares the live file against the one the generator would write and
+  reports four properties: every proxying site has a gate; the HTTPS listener negotiates the
+  protocols the baseline pins; no site dials an upstream TangleClaw does not generate; and no
+  site fronts a port whose PortHub lease declares a narrower `reach` than a Caddy-served site
+  provides. Run against the operator's own live file it names the hand-added `:3250` block on
+  all three of the properties that block actually breaks, and nothing else.
+
+  The sixth drift incident is what settles the design: the exposed block was **hand-added**,
+  and `lib/caddy.js` has no code path that could emit a second upstream. No generator change
+  could have prevented it, so the check — not a feature — is the only mechanism that can ever
+  see the next one.
+
+  **Caddy's parser is the only parser.** Both sides go through `caddy adapt`; every property
+  is read off the JSON. **Properties are diffed, never documents** — and not only to avoid
+  cosmetic noise. The live file states its gate as one route holding
+  `[authentication, reverse_proxy]`; the generator states the same gate as an `authentication`
+  route behind a `not path_regexp` matcher followed by a separate unmatched `reverse_proxy`.
+  A walk asking "was this proxy gated in its own handler chain" reports **the generator's own
+  output as ungated**. Sites are keyed by listen address and host, never by server name:
+  `caddy adapt` numbers servers itself, and adding the one hand-written block moved the HTTPS
+  listener from `srv1` to `srv2`.
+
+  **An unrun check is never clean.** Every property answers `holds`, `diverged` or
+  `not-measured`; a missing `caddy`, an unreadable Caddyfile, an ungated config, or an absent
+  PortHub lease produces the third. Nothing blocks or rewrites — the operator hand-edits
+  deliberately and has twice affirmed that this particular block is fine.
+
+  Scope stated rather than implied: P1 checks gate **presence**, not gate **breadth**. A
+  hand-widened bypass matcher leaves the site gated and is not reported. The first
+  implementation did compare matchers and fired on three correctly gated sites, because
+  deciding which of two matcher sets admits more requests is Caddy's matcher algebra rather
+  than a set comparison. Filed as #1403 instead of approximated. `scanAccessLog` and
+  `extractTailnetHost` are likewise **not** retired by this: they serve adoption, which unlike
+  this check may not degrade to "not measured" without re-opening #846.
+
+  Credentials never reach a report — `caddy adapt` embeds the bcrypt hash verbatim, so raw
+  adapt JSON is never logged, every reason and finding passes `redactHashes`, and the baseline
+  is adapted through a 0600 file in a 0700 directory removed in a `finally`. Design:
+  `docs/caddy-drift-check.md`. Tests: `test/caddy-drift.test.js` — the property layer runs
+  against committed real `caddy adapt` output so CI, which has no `caddy`, still covers the
+  logic; the integration layer skips honestly and re-derives every fixture so a Caddy release
+  cannot leave the snapshot describing a Caddy nobody runs.
+- **A PortHub lease now records how far its service is meant to reach (#1394).** New `reach`
+  field on the lease — `loopback` | `tailnet` | `lan`, defaulting to `loopback` — accepted by
+  `POST /api/ports/lease` and reported by `GET /api/ports`. A service that binds `127.0.0.1`
+  is already stating its intent; nothing wrote it where another process could read it, so a
+  proxy fronting that port was indistinguishable from a deliberate exposure.
+
+  `loopback` is the default because it is the weakest claim: a lease that never said otherwise
+  must not be read as permission to expose the port, and existing rows backfill to it for the
+  same reason. Replace semantics, matching every sibling field — a renewal that stops
+  restating a wider reach narrows the record back, which over-reports rather than hiding a
+  real exposure. `store.LEASE_REACHES` is the single owner of the vocabulary, driving the
+  CHECK constraint, the validator and the HTTP error text together.
+
+  Schema v34→v35. The `ALTER` is conditional because `_createTables` runs *before* migrations
+  and creates a missing table at the current shape, so any install whose `port_leases` table
+  is absent and whose version is past the v7→v8 rebuild arrives with the column already
+  present — an unconditional `ALTER` aborts the whole upgrade. The postcondition runs on both
+  paths, so the skip can never mean the constraint is missing.
 - **A cutover no longer ends the access logging an operator set up by hand (#846).**
   `buildCaddyfileContent` gained an `accessLogPath` option and the config gained
   `caddyAccessLogPath`, so a generated Caddyfile can carry `log { output file … }` on every

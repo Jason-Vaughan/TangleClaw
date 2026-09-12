@@ -100,13 +100,31 @@ no timer (#98/#268).
 **D8 — Reports, never blocks.** The `:3250` block is a deliberate operator choice, affirmed twice.
 Neutral wording names the missing property; it does not attribute a mistake.
 
+**D9 — P1 checks gate PRESENCE, not gate BREADTH. Scope stated, not silently dropped.**
+
+The first implementation also compared the live gate's matcher signature against the baseline's and
+reported any difference. Run against the real live Caddyfile it produced three findings on three
+CORRECTLY GATED sites — the exact false-positive class the issue's "diff properties, not documents"
+requirement exists to prevent, and my own D1 forbids (report weaker, never merely different).
+
+The cause is structural, not a bug in the comparison. The live file states its gate as one route
+holding `[authentication, reverse_proxy]`; the generator states the same gate as a route matching
+`not path_regexp ^(bypass)$` carrying `authentication`, followed by an unmatched `reverse_proxy`.
+Deciding which of two matcher sets admits more requests means reimplementing Caddy's matcher
+algebra, which is a different and much larger piece of work than this issue asks for.
+
+The issue's stated property is "Every site that proxies has a gate." That is what ships. Drift in
+the BREADTH of a gate — a hand-widened bypass regexp — is **not covered** and is filed as its own
+issue rather than approximated. Recorded here because a reader of the shipped check would otherwise
+reasonably assume it catches a widened bypass. Filed as #1403.
+
 ---
 
 ## The four properties
 
 | # | Property | Measured from | Degrades to `not-measured` when |
 |---|---|---|---|
-| P1 | No route reverse-proxies without a gate that the baseline does not also leave ungated | route handler chain per listener | adapt unavailable |
+| P1 | No proxying site lacks a gate the baseline does not also omit (presence, not breadth — D9) | gates + proxies per site, keyed by listen address and host | adapt unavailable, or config generates no gate at all |
 | P2 | The HTTPS listener negotiates `h1` only | `servers[].protocols` keyed by listen address = `httpsPort` | adapt unavailable, or no listener on `httpsPort` |
 | P3 | No upstream `dial` target outside the set the baseline dials | `reverse_proxy.upstreams[].dial` | adapt unavailable |
 | P4 | No site fronts a port whose PortHub lease declares a narrower `reach` | P3's dial set × `port_leases.reach` | adapt unavailable, PortHub unreachable, or the lease has no `reach` |
