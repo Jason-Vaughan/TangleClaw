@@ -299,6 +299,8 @@ const ttydBind = require('./lib/ttyd-bind');
 const wrapSentinel = require('./lib/wrap-sentinel');
 const medusaWake = require('./lib/medusa-wake');
 const authIdentity = require('./lib/auth-identity');
+const authSession = require('./lib/auth-session');
+const authGate = require('./lib/auth-gate');
 const sessionOwnership = require('./lib/session-ownership');
 const planDocs = require('./lib/plan-docs');
 const serviceToken = require('./lib/service-token');
@@ -321,6 +323,60 @@ const CSRF_UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  */
 function _loadConfigOrNull() {
   try { return store.config.load(); } catch { return null; }
+}
+
+let _gateConfigCache = null;
+
+/**
+ * Config for the auth gate, cached on the config file's mtime and size.
+ *
+ * `store.config.load()` is an `existsSync` + `readFileSync` + `JSON.parse` with
+ * no cache of its own. The gate asks for config on **every request of a gated
+ * install** — every static asset, every dashboard poll — so an uncached read
+ * puts synchronous disk I/O and a JSON parse on the event loop of the server
+ * this chunk moved to async scrypt specifically to keep responsive.
+ *
+ * Keyed on `mtimeMs` + `size` rather than on a TTL, which is what preserves the
+ * property the un-cached version was written for: an operator locked out by a
+ * misconfigured gate recovers by setting `authEnabled: false`, and that edit
+ * changes both, so it takes effect on the very next request. A `stat` is one
+ * syscall against a read-plus-parse. Same construction as `_servedHostsCache`
+ * a few lines below, which exists because an uncached per-request read of this
+ * kind was already a problem here once.
+ *
+ * **THIS THUNK THROWS, and that is the contract.** `_loadConfigOrNull` turns
+ * every failure into `null`, which is the right answer for the Host guard and
+ * the wrong one here: `isGateActive` distinguishes a READ FAILURE (fail CLOSED
+ * once the gate has been armed) from a successful read of nothing (fail open),
+ * and routing the gate through the null-swallowing loader made the fail-closed
+ * branch unreachable — a corrupt `config.json` on an armed direct-mode install
+ * would have read as "not enforcing", cached on mtime+size and re-served, which
+ * is an authentication bypass for as long as the file stays unreadable.
+ *
+ * A failed `stat` throws too, including ENOENT — so a MISSING `config.json` also
+ * closes an armed gate. That is a deliberate departure from the review note
+ * that asked for the missing case to stay fail-open, and the reason is that
+ * `store.config.load()`'s answer there is `DEFAULT_CONFIG`, whose `authEnabled`
+ * is false: honouring it would mean deleting one file silently un-gates an
+ * armed install, which is the same bypass this whole guard exists to close,
+ * reached by a different route. On an armed install the file existing is a
+ * precondition — the gate cannot have armed without reading `authEnabled: true`
+ * out of it — so this costs nothing real, and `authEnabled: false` in a file
+ * that IS readable remains the recovery lever.
+ *
+ * Nothing is cached on the failure path, so recovery takes effect on the next
+ * request rather than being pinned by a cached verdict.
+ *
+ * @returns {object} The loaded config
+ * @throws {Error} If the config file cannot be read or parsed
+ */
+function _gateConfig() {
+  const st = fs.statSync(store._getConfigPath());
+  const key = `${st.mtimeMs}:${st.size}`;
+  if (_gateConfigCache && _gateConfigCache.key === key) return _gateConfigCache.value;
+  const value = store.config.load();
+  _gateConfigCache = { key, value };
+  return value;
 }
 
 let _servedHostsCache = null;
@@ -715,6 +771,69 @@ function serveStatic(res, pathname) {
   return true;
 }
 
+// The login document, read once. Memoised because it is served on the refusal
+// path of every unauthenticated request — a brute-force attempt would otherwise
+// be a synchronous disk read per attempt on the event loop.
+//
+// Memoising a file this server also ships means an edit needs a restart to take
+// effect. That is the same contract every other module in this process has
+// (nothing here is hot-reloaded) and it is the safer half of the trade: the
+// alternative re-reads a file on the one path an attacker controls the rate of.
+let _loginPageHtml = null;
+
+/**
+ * Serve the login page.
+ *
+ * Falls back to a minimal inline document if the file cannot be read. That
+ * fallback is not politeness: this is what a locked-out operator is looking at,
+ * and answering a partial deployment with a stack trace or an empty 500 would
+ * leave them with no way to tell "I typed the wrong address" from "the door is
+ * broken".
+ *
+ * @param {http.ServerResponse} res
+ * @param {number} status - 200 for a direct visit, 401 for a refusal
+ * @returns {void}
+ */
+function _serveLoginPage(res, status) {
+  let body = _loginPageHtml;
+  if (body === null) {
+    try {
+      body = fs.readFileSync(path.join(PUBLIC_DIR, 'login.html'), 'utf8');
+      // Memoised ONLY on success. Caching the fallback would freeze a transient
+      // read failure — a half-finished self-update, a momentary EMFILE — into
+      // the login page for the rest of the process's life, and the operator
+      // would be looking at the degraded document long after the file came
+      // back. The failure path re-reads, which is the one path where the extra
+      // syscall is worth more than the saving.
+      _loginPageHtml = body;
+    } catch (err) {
+      log.error('Login page could not be read', { error: err.message });
+      body = '<!DOCTYPE html><meta charset="utf-8"><title>Sign in</title>'
+        + '<p>TangleClaw needs you to sign in, but its login page is missing from '
+        + 'this install. Post a username and password to <code>/api/auth/login</code>, '
+        + 'or run <code>node scripts/reset-admin.js --store --user &lt;name&gt;</code> '
+        + 'at a terminal on this machine.</p>';
+    }
+  }
+  res.writeHead(status, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': Buffer.byteLength(body),
+    // Never cached, by any cache, at any layer. A login page held in a shared
+    // cache is served to the next person to ask, and a login page held in the
+    // browser's is served back to someone who has since signed in.
+    'Cache-Control': 'no-store, must-revalidate',
+    'X-Content-Type-Options': 'nosniff',
+    // The page is entirely self-contained, so it can afford the tightest policy
+    // this server writes: its own inline style and script, and nothing else —
+    // no image, no font, no connect target beyond same-origin for the login
+    // POST, and no frame ancestor, so it cannot be framed for clickjacking.
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; "
+      + "script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; "
+      + "base-uri 'none'; frame-ancestors 'none'"
+  });
+  res.end(body);
+}
+
 /**
  * Send a complete HTML document.
  * @param {http.ServerResponse} res
@@ -955,12 +1074,18 @@ route('GET', '/api/server-info', (_req, res) => {
   // AUTH-3: surface the proxy-authenticated user so the dashboard can show
   // "Logged in as <user>". Null unless the Caddy basic_auth gate is live (the
   // trust gate is in lib/auth-identity — a direct-mode header is never honored).
-  info.currentUser = authIdentity.resolveRequestUser(_req.headers, cfg);
+  // Two sources, in the order that makes the answer honest. TangleClaw's own
+  // session is preferred when there is one (#1418): it is identity this server
+  // established itself, and it is the ONLY source in direct mode, where no
+  // proxy sets `X-Auth-User`. The AUTH-3 proxy header remains the answer for a
+  // caddy-mode install that has not armed TangleClaw's gate.
+  info.currentUser = (_req.tcSession && _req.tcSession.username)
+    || authIdentity.resolveRequestUser(_req.headers, cfg);
   // AUTH-2K9D: surface whether the configured auth gate is actually enforcing, so
   // the dashboard can warn on a config-vs-live mismatch ('configured-inert' in
   // direct mode, 'configured-no-identity' when caddy is up but no identity
   // arrives). Surfacing only — never enforces. See docs/auth-status-surfacing.md.
-  info.authStatus = authIdentity.resolveAuthStatus(_req.headers, cfg);
+  info.authStatus = authIdentity.resolveAuthStatus(_req.headers, cfg, _req.tcGateActive === true);
   // #227: is the local clone behind origin/main? Cached answer, never waits on
   // the network — a stale cache starts one background fetch for the next poll.
   // `enabled: false` when the operator turned the check off in config.
@@ -1676,6 +1801,117 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
 // basic_auth in caddy mode / localhost-only in direct mode, like the rest of
 // /api), deliberately OUTSIDE the M2M-gated path set — a service caller holding
 // the token must not be able to reveal or rotate its own gate credential.
+
+// ── TangleClaw's own session routes (#1418) ──
+//
+// These three are TangleClaw's login, distinct from the `/api/auth/credential`
+// pair below them, which manages the CADDY basic_auth credential. The two live
+// side by side for one more train: chunk 04 (#1420) removes Caddy's gate and
+// with it the reason for that pair. Until then a reader needs to know which
+// door a route is about, so: `/api/auth/login|logout|me` are TangleClaw's own
+// (scrypt, a session cookie), `/api/auth/credential` is Caddy's (bcrypt, a
+// Caddyfile).
+
+// POST /api/auth/login — exchange a username and password for a session.
+//
+// Exempt from the gate (`lib/auth-gate.js` LOGIN_SURFACE_PATHS) because it is
+// how a person stops being unauthenticated.
+route('POST', '/api/auth/login', async (req, res, _params, body) => {
+  // parseBody resolves null for an empty request, so reading fields off `body`
+  // directly would throw a 500 for what is simply a malformed request.
+  const payload = body || {};
+  const username = typeof payload.username === 'string' ? payload.username : '';
+  const password = typeof payload.password === 'string' ? payload.password : '';
+
+  // ONE message and ONE code for every failure — no account, wrong password,
+  // disabled account. The store already equalises the TIMING of those three
+  // (`users.verifyAsync` spends the same scrypt cost on all of them); saying
+  // which one happened in the response would hand back through the body
+  // exactly the username oracle that equalisation exists to deny. The operator
+  // gets the distinction in the log, at warn, where `store.users` writes it.
+  const deny = () => errorResponse(res, 401,
+    'That username and password did not match.', 'INVALID_CREDENTIALS');
+
+  // Validated for PRESENCE only, never against `validateAdminPassword`. Policy
+  // belongs where a password is SET, not where one is checked: running the
+  // rules here would refuse a login before verifying it, so an account whose
+  // password predates a policy change could never sign in to change it — and
+  // the refusal message would state a live credential's shape to whoever asked.
+  if (!username || !password) return deny();
+
+  // Async scrypt, per ADR 0016. `scryptSync` costs tens of milliseconds and
+  // this is a route anyone can knock on: a burst of attempts on the sync
+  // version stalls every other request, including the dashboard the operator is
+  // trying to reach. The equal-cost comparison inside `verifyAsync` is kept —
+  // that cost is the anti-timing-oracle fix, so the answer to blocking is to
+  // stop blocking, never to stop paying.
+  const user = await store.users.verifyAsync(username, password);
+  if (!user) return deny();
+
+  // Session fixation: the session the request ARRIVED with is destroyed and a
+  // brand-new token is minted. `store.authSessions.create` has no way to adopt
+  // a caller-supplied id, so the rotation is structural rather than a step that
+  // could be forgotten — but an attacker-planted cookie must also not survive
+  // as a second live session, which is what this destroy is for.
+  const arriving = authSession.tokenFromRequest(req);
+  if (arriving) store.authSessions.destroy(arriving);
+
+  const session = store.authSessions.create(user);
+  const secure = authSession.isSecureRequest(req);
+  res.setHeader('Set-Cookie', [
+    authSession.serializeCookie(session.token, { secure }),
+    authSession.serializeCsrfCookie(session.csrfToken, { secure })
+  ]);
+  jsonResponse(res, 200, { username: user.username, csrfToken: session.csrfToken });
+});
+
+// POST /api/auth/logout — end this session.
+//
+// Answers 200 whether or not a session was found. A logout that 404s on an
+// already-expired cookie tells the caller nothing useful and leaves the cookie
+// sitting in the browser; clearing it unconditionally is both simpler and the
+// behaviour every client wants. The CSRF check still applies when a session
+// DOES resolve — `lib/auth-gate.js` runs it ahead of the exemption list for
+// exactly this route.
+route('POST', '/api/auth/logout', (req, res) => {
+  const token = authSession.tokenFromRequest(req);
+  if (token) store.authSessions.destroy(token);
+  const secure = authSession.isSecureRequest(req);
+  res.setHeader('Set-Cookie', [
+    authSession.clearCookie({ secure }),
+    authSession.clearCsrfCookie({ secure })
+  ]);
+  jsonResponse(res, 200, { ok: true });
+});
+
+// GET /api/auth/me — who this request is, and whether a login is required.
+//
+// Built from the SESSION and never from the user row. ADR 0016 records why:
+// `store.users.getByName` returns the password hash, because its only caller is
+// the one about to verify a password against it. A route that answered from
+// that row would be one careless spread away from serving a credential.
+//
+// Answers 200 with `authenticated: false` rather than 401 when the gate is off,
+// because "no login is required here" is a successful answer to the question
+// the dashboard is asking. When the gate IS on, an unauthenticated caller never
+// reaches this handler — the gate challenges first.
+route('GET', '/api/auth/me', (req, res) => {
+  const session = req.tcSession;
+  // Both branches read the verdict `handleRequest` already reached, never a
+  // fresh one: one request, one answer.
+  const gateActive = req.tcGateActive === true;
+  if (!session) {
+    return jsonResponse(res, 200, {
+      authenticated: false, gateActive, username: null, csrfToken: null
+    });
+  }
+  jsonResponse(res, 200, {
+    authenticated: true,
+    gateActive,
+    username: session.username,
+    csrfToken: session.csrfToken
+  });
+});
 
 // GET /api/auth/credential — what the settings surface may offer, and why not.
 //
@@ -6189,7 +6425,12 @@ function _stripFrameBlockers(headers) {
  * @returns {object}
  */
 function _openclawProxyHeaders(headers, localPort, gatewayToken) {
-  const out = { ...headers, host: `127.0.0.1:${localPort}` };
+  // Same rule as the Authorization strip below, for the same reason and one
+  // chunk later: TangleClaw's session cookie is ours and the gateway — which
+  // may be a REMOTE host at the far end of a tunnel — has no use for it
+  // (ADR 0016 OQ1). Only our two cookies are removed; the gateway sets its own
+  // through this proxy and those must survive.
+  const out = { ...authSession.stripOwnCookiesFromHeaders(headers), host: `127.0.0.1:${localPort}` };
   const localOrigin = `http://127.0.0.1:${localPort}`;
   if (out.origin) out.origin = localOrigin;
   if (out.referer) out.referer = localOrigin + '/';
@@ -6287,8 +6528,13 @@ function proxyToTtyd(req, res, pathname) {
   const reqOptions = {
     path: targetPath + (req.url.includes('?') ? '?' + req.url.split('?')[1] : ''),
     method: req.method,
+    // TangleClaw's own session cookie is stripped before it reaches ttyd
+    // (ADR 0016 OQ1). ttyd has no use for it, and `/terminal/*` fronts a
+    // `--writable` shell — a credential that travels further than it is needed
+    // is the #470 class of bug. Only OUR cookies go; anything else the browser
+    // sent is the upstream's business.
     headers: {
-      ...req.headers,
+      ...authSession.stripOwnCookiesFromHeaders(req.headers),
       host: target.hostHeader
     }
   };
@@ -6353,6 +6599,22 @@ function _isSameOriginUpgrade(origin, host) {
 function handleUpgrade(req, socket, head) {
   const urlObj = reqUrl(req);
 
+  // ⚠ THE SESSION GATE IS NOT HERE YET. #1418 gates HTTP; #1419 gates this.
+  //
+  // Stated at the top of the function rather than left to be discovered,
+  // because the asymmetry is genuinely surprising: with TangleClaw's own gate
+  // armed, `GET /terminal/x` is refused with a login page while a WebSocket
+  // upgrade to the same prefix still establishes. `/terminal/*` proxies to a
+  // `--writable` ttyd, so that socket is a shell.
+  //
+  // It is not a regression — in caddy mode Caddy's `basic_auth` is still in
+  // front of this path, and in direct mode the upgrade was already reachable
+  // before #1418 existed — but it IS a gap between what an operator will
+  // reasonably believe after arming the gate and what is true. #1419 closes it,
+  // in the same chunk that strips the session cookie before proxying (ADR 0016
+  // OQ1), because both are consequences of the cookie decision and splitting
+  // them would ship the cookie to ttyd with nothing reading it.
+  //
   // The cross-site guard has to be here too, and this is the sharper half.
   //
   // WebSockets are NOT subject to the same-origin policy: any page can open one
@@ -6734,6 +6996,106 @@ async function handleRequest(req, res) {
       return errorResponse(res, 403,
         'This server does not answer to that host name.', 'HOST_NOT_SERVED');
     }
+  }
+
+  // ── TangleClaw's own front door (#1418, ADR 0015/0016) ──
+  //
+  // Placed HERE, and the position is load-bearing in both directions.
+  //
+  // AFTER the three guards above (cross-site, JSON-body, served-Host) because
+  // those refuse a request on what it IS, before any question of who is asking
+  // — a cross-site write from an authenticated browser is still a cross-site
+  // write, and running the session lookup first would spend a database read on
+  // a request that was always going to be refused.
+  //
+  // BEFORE every route branch, proxy branch and static-file branch, because
+  // "the perimeter is the gate" is this server's model (see the /plans/ comment
+  // below) and a gate that sits inside one branch leaves every sibling open —
+  // which is the exact defect the CSRF guard above had to be moved out of
+  // `/api/` to fix. `/terminal/*` proxies to a writable shell and
+  // `/openclaw/*` carries the operator's gateway token; neither is a route, and
+  // both are gated by standing here.
+  //
+  // The session is resolved for EVERY request once the gate is live, including
+  // ones it then waves through, because the CSRF check needs it and because
+  // `/api/auth/me` answers from it.
+  let tcSession = null;
+  const gateActive = authGate.isGateActive(_gateConfig, store.authSessions);
+  if (gateActive) {
+    const sessionToken = authSession.tokenFromRequest(req);
+    if (sessionToken) {
+      // Guarded for the reason the module header states and this line used to
+      // ignore: `resolve` runs two prepared statements and can delete a row, so
+      // a store fault (SQLITE_BUSY against a concurrent `reset-admin.js` on the
+      // same file, a disk error, a closed handle) threw straight out of
+      // `handleRequest`. That is passed directly to `http.createServer` and the
+      // route try/catch is further down inside the `/api/` branch, so the throw
+      // became a rejected promise the process-level handler only LOGS — the
+      // response was never written and the browser hung to its own timeout.
+      //
+      // An unreadable session is treated as NO session, which challenges. That
+      // is the fail-closed direction, and it is safe to choose here in a way it
+      // is not in `isGateActive`: the gate is already known to be armed, and a
+      // challenge still leaves `/login` and the login route reachable, so the
+      // operator is not locked out by it.
+      try {
+        tcSession = store.authSessions.resolve(sessionToken);
+      } catch (err) {
+        log.error('Session lookup failed — treating the request as unauthenticated', {
+          method, path: pathname, error: err.message
+        });
+        tcSession = null;
+      }
+    }
+    const verdict = authGate.evaluate({
+      method,
+      rawUrl: req.url,
+      pathname,
+      gateActive,
+      session: tcSession,
+      submittedCsrf: authSession.csrfTokenFromRequest(req),
+      // The fleet carve-out (#1418 Critic R-1). `isLoopbackRemote` is
+      // `lib/admin-credential.js`'s, reused because `POST /api/auth/credential`
+      // already authorises on exactly this predicate; `looksLikeBrowser` is the
+      // same discriminator the three guards above use.
+      machineClient: authGate.isMachineClient({
+        loopback: adminCredential.isLoopbackRemote(req.socket && req.socket.remoteAddress),
+        browserShaped: looksLikeBrowser,
+        hasSessionCookie: sessionToken !== null
+      })
+    });
+    if (verdict.action === 'refuse-csrf') {
+      log.warn('Refused session-authenticated write with no valid CSRF token', {
+        method, path: pathname, username: tcSession.username
+      });
+      return errorResponse(res, 403,
+        'This request is missing a valid CSRF token.', 'CSRF_TOKEN_INVALID');
+    }
+    if (verdict.action === 'challenge') {
+      log.info('Unauthenticated request refused', { method, path: pathname });
+      if (verdict.as === 'json') {
+        return errorResponse(res, 401, 'Sign in to continue.', 'UNAUTHENTICATED');
+      }
+      // 401, not 200: a login page served as a success tells caches and uptime
+      // monitors the request worked. The body is the page a person needs.
+      return _serveLoginPage(res, 401);
+    }
+  }
+  // Readable by the routes below, which must never re-derive identity: ADR 0016
+  // records that `users.getByName` returns the password hash, so anything
+  // asking "who is this" reads the session and not the user row.
+  req.tcSession = tcSession;
+  // Carried beside the session so a route reads THIS request's decision rather
+  // than asking again. `/api/auth/me` recomputed it, which was both a second
+  // config read and a seam where the two answers could one day disagree.
+  req.tcGateActive = gateActive;
+
+  // The login page itself, on the one path `lib/auth-gate.js` exempts for it.
+  // Served whether or not the gate is live, so an operator who has not created
+  // an account yet still gets an honest page rather than a 404 — and so the
+  // path does not blink into existence at the moment the gate turns on.
+  if (method === 'GET' && pathname === '/login') {
+    return _serveLoginPage(res, 200);
   }
 
   // API routes
@@ -7617,6 +7979,21 @@ if (require.main === module) {
   // Initialize store (needed for config before PID check)
   store.init();
   const config = store.config.load();
+
+  // Clear out sessions nobody is coming back for (#1418). At boot rather than
+  // on a timer because `authSessions.resolve` already deletes an expired row the
+  // moment it meets one, so the rows this catches are only those from browsers
+  // that closed for good — a housekeeping problem in a tiny table, not a
+  // security one. (Not a prohibition: #98/#268 ban timer-driven UI lifecycle,
+  // which says nothing about server-side reaping, and this file already runs
+  // `_lockExpiryInterval`.)
+  try {
+    store.authSessions.sweepExpired();
+  } catch (err) {
+    // Never fatal. A failed sweep leaves dead rows in a small table; refusing
+    // to boot over it would turn a tidiness problem into an outage.
+    log.warn('Expired-session sweep failed', { error: err.message });
+  }
 
   // PID file guard — prevent duplicate instances
   const existingPid = pidfile.check();

@@ -5,6 +5,65 @@ All notable changes to TangleClaw are documented in this file.
 ## [Unreleased]
 
 ### Added
+- **TangleClaw has its own login (#1418).** Until now the only gate was Caddy's `basic_auth`, which
+  exists in caddy ingress mode only — a direct-mode install had no login at all, and `lib/store.js`
+  said so in a comment rather than fixing it. TangleClaw now authenticates requests itself, on every
+  ingress mode: `POST /api/auth/login` verifies a username and password against the `users` table
+  from #1417 and issues an `HttpOnly` session cookie; `GET /api/auth/me` reports who you are;
+  `POST /api/auth/logout` destroys the session server-side. Sessions live in a new `auth_sessions`
+  table (schema v36 → v37) which stores a **SHA-256 of the token, never the token** — a database
+  backup is not a bag of live credentials. `public/login.html` is one self-contained document,
+  because every path that must answer before anyone is logged in is a hole in the gate.
+
+  **The gate is dormant until an operator creates an account**, and that is the decision that keeps
+  this from locking anyone out. Every caddy-mode install carries `authEnabled: true` with a *bcrypt*
+  `basicAuthHash` and zero user rows, so a gate that activated on `authEnabled` alone would demand a
+  session it had no account to issue. Dormant is not open: in caddy mode Caddy's `basic_auth` is
+  untouched and still in front, and in direct mode the install is exactly as ungated as it already
+  was — only now it is fixable. `node scripts/reset-admin.js --store --user <name>` creates or
+  resets the account, at a terminal on the machine, per ADR 0009 rule 5.
+
+  **The machine clients on the loopback listener are outside this door, by scope.** `bin/tc`, the
+  PortHub surface every project on this machine leases through, shared-docs, and the agent
+  switchboard all reach TangleClaw over loopback with no cookie and no way to be handed one — so a
+  session gate in front of them would refuse the whole fleet the moment an account exists. A
+  request that is on a loopback socket, carries no `Sec-Fetch-Site`/`Origin`, and sends no session
+  cookie is treated as a machine client and passes. It opens nothing that was not already open:
+  those callers reach TangleClaw only over loopback, which is the perimeter ADR 0009 gives them,
+  and AUTH-4's service-token gate still runs below this one unchanged. Tier 1 is the door a
+  *person* walks through. **#1420 must revisit this** — once Caddy is gone, a loopback socket no
+  longer implies a local process.
+
+  **A per-session CSRF token** joins the three request-shape guards from #860/#864. It is minted with
+  the session, stored on the session row, and echoed by the dashboard in `X-CSRF-Token`; the
+  comparison is against the row, so an attacker who can plant a cookie still cannot satisfy it. It
+  applies only to requests carrying a live session, so a sessionless caller is never refused for
+  CSRF. It runs *ahead of* the gate's exemption list so logout is protected, and exempts login,
+  whose authority is the password rather than the cookie.
+
+  **The session cookie is stripped before proxying** to ttyd and to the OpenClaw gateway on all three
+  HTTP proxy paths (`proxyToTtyd`, plus `_openclawProxyHeaders`, which serves both `/openclaw/*` and
+  `/openclaw-direct/*`) — only TangleClaw's own two cookies, so the gateway's own survive. ADR 0016
+  named two sites and the family is five; the two WebSocket ones are #1419's, with the rest of the
+  upgrade gate.
+
+  **Revocation now reaches live sessions.** `users.disable` and `users.setPassword` both destroy the
+  account's sessions, and the resolve path re-checks `disabled_at` on every request — without that,
+  "revoke one person", the capability ADR 0015 exists to provide, would not take effect until the
+  cookie expired up to 30 days later. The login route uses async `crypto.scrypt` per ADR 0016,
+  keeping the equal-cost comparison that denies the username timing oracle: the answer to blocking
+  is to stop blocking, never to stop paying.
+
+  Caddy's `basic_auth` stays up through this change — two gates in series, inconvenient but never
+  open. The cutover is #1420.
+
+  **What this does NOT yet cover, said plainly because the asymmetry is surprising: the WebSocket
+  upgrade.** With the gate armed, `GET /terminal/x` is refused with a login page while a WebSocket
+  upgrade to the same prefix still establishes, and `/terminal/*` proxies to a `--writable` ttyd —
+  that socket is a shell. It is not a regression (Caddy still fronts it in caddy mode, and in direct
+  mode it was already reachable), but it is a gap between what an operator will reasonably believe
+  after arming the gate and what is true. #1419 closes it, together with stripping the session
+  cookie before proxying.
 - **TangleClaw now notices when the live Caddyfile has lost a security property (#1394).**
   `lib/caddy-drift.js` compares the live file against the one the generator would write and
   reports four properties: every proxying site has a gate; the HTTPS listener negotiates the

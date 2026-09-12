@@ -54,6 +54,46 @@ describe('auth-identity.resolveAuthStatus (AUTH-2K9D)', () => {
     assert.equal(resolveAuthStatus({}, { ingressMode: 'direct' }), 'off');
   });
 
+  describe("TangleClaw's own gate answers first (#1418)", () => {
+    // The defect: a gated DIRECT-mode install was told "auth enabled but direct
+    // mode is not enforcing it — run the Caddy cutover", denying a live gate and
+    // naming a remedy the operator does not need. Reachable by the shipped path:
+    // the wizard writes authEnabled:true in direct mode, and
+    // `reset-admin.js --store` arms the gate.
+    it("returns 'live' in DIRECT mode when TangleClaw's gate is active", () => {
+      assert.equal(
+        resolveAuthStatus({}, { ingressMode: 'direct', authEnabled: true }, true), 'live');
+    });
+
+    it("returns 'live' in caddy mode when TangleClaw's gate is active, with no proxy identity", () => {
+      assert.equal(
+        resolveAuthStatus({}, { ingressMode: 'caddy', authEnabled: true }, true), 'live');
+    });
+
+    it('still returns off when authEnabled is false, however armed the gate', () => {
+      // `authEnabled` is the master switch for both doors; it cannot be
+      // overridden by the second argument.
+      assert.equal(
+        resolveAuthStatus({}, { ingressMode: 'direct', authEnabled: false }, true), 'off');
+    });
+
+    it('defaults to false, so every pre-existing caller keeps its answer', () => {
+      assert.equal(
+        resolveAuthStatus({}, { ingressMode: 'direct', authEnabled: true }), 'configured-inert');
+      assert.equal(
+        resolveAuthStatus({}, { ingressMode: 'direct', authEnabled: true }, undefined),
+        'configured-inert');
+    });
+
+    it('requires exactly true — a truthy value does not silence the warning', () => {
+      for (const v of [1, 'yes', {}]) {
+        assert.equal(
+          resolveAuthStatus({}, { ingressMode: 'direct', authEnabled: true }, v),
+          'configured-inert', `tcGateActive=${JSON.stringify(v)} must not read as active`);
+      }
+    });
+  });
+
   it("returns 'configured-inert' when authEnabled is true in direct mode (AUTH-2)", () => {
     // The flag is settable-but-inert: no in-process gate enforces it.
     assert.equal(resolveAuthStatus({}, { ingressMode: 'direct', authEnabled: true }), 'configured-inert');

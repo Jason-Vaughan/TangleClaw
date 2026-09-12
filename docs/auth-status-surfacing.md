@@ -25,7 +25,8 @@ Derived from config `{authEnabled, ingressMode}` and the request-resolved `curre
 |---|---|---|---|
 | `off` | `authEnabled` falsy | Auth not configured (expected) | none |
 | `live` | `authEnabled` && `ingressMode='caddy'` && `currentUser` present | Gate enforcing, identity flowing | existing 👤 chip |
-| `configured-inert` | `authEnabled` && `ingressMode !== 'caddy'` (i.e. direct or any non-caddy mode) | AUTH-2: config claims auth, no gate enforces it | ⚠ warning |
+| `live` | `authEnabled` && TangleClaw's own session gate is active (#1418) | TangleClaw enforces the login in-process, on ANY ingress mode. Checked FIRST — it is true whatever Caddy is doing | none |
+| `configured-inert` | `authEnabled` && TangleClaw's gate NOT active && `ingressMode !== 'caddy'` | AUTH-2: config claims auth, no gate enforces it | ⚠ warning |
 | `configured-no-identity` | `authEnabled` && `ingressMode='caddy'` && `currentUser` null && `x-forwarded-for` present | AUTH-3: request traversed Caddy but no identity arrived (missing `header_up`) | ⚠ warning |
 | `configured-bypassed` | `authEnabled` && `ingressMode='caddy'` && `currentUser` null && no `x-forwarded-for` | AUTH-5N2J: request hit TC's loopback bind directly without traversing Caddy — gate health unknowable from this request | none |
 
@@ -55,6 +56,7 @@ Derivation lives in a small pure helper (e.g. `authIdentity.resolveAuthStatus(he
 `public/landing.js` `loadServerInfo` already polls `/api/server-info` and calls `renderAuthUser(data.currentUser)`. Extend that path to also render a **warning chip** next to the existing login chip when `authStatus` is `configured-inert` or `configured-no-identity`:
 
 - `configured-inert` → `⚠ Auth enabled but direct mode isn't enforcing it — run the Caddy cutover to activate the gate.`
+  Since #1418 this no longer fires merely because the mode is direct: TangleClaw's own gate returns `live` first, so this warning now means what it says — **nothing** is enforcing. On a direct-mode install the cheaper remedy is `node scripts/reset-admin.js --store --user <name>`, which arms TangleClaw's own gate without a Caddy cutover.
 - `configured-no-identity` → `⚠ Auth gate is up but no identity is arriving — the live Caddyfile may be missing 'header_up X-Auth-User'.`
 
 **State-driven, not a notification** — the chip reflects the latest poll and self-clears when the state resolves (cutover runs / header fixed). **No dismiss control and no timer** (per the no-UI-timers rule): there is nothing to auto-dismiss and nothing to hide — the indicator is a live mirror of server state, so removing the cause removes the chip on the next poll.
