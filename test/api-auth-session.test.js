@@ -490,6 +490,57 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
     });
   });
 
+  describe('an armed gate fails CLOSED on a corrupt config — through the PRODUCTION thunk', () => {
+    // The first version of this guard was unreachable, and the suite could not
+    // see it: `isGateActive`'s fail-closed branch waits for its config thunk to
+    // THROW, while the real caller routed through a loader that swallowed every
+    // failure into `null` — so a corrupt config.json on an armed install read
+    // as "not enforcing", got cached on mtime+size, and re-served. An
+    // authentication bypass for as long as the file stayed unreadable.
+    //
+    // The old test synthesized `() => { throw }`, an input the real caller
+    // could not produce. This one corrupts the actual file and drives
+    // `handleRequest`, so nothing between the disk and the verdict is
+    // imagined.
+    beforeEach(armGate);
+
+    it('challenges a browser when config.json is present but unparseable', async () => {
+      // Arm it for real first: the fail-closed answer is deliberately
+      // conditional on this process having served a gated request.
+      const armed = await send('GET', '/api/config');
+      assert.equal(armed.statusCode, 401, 'precondition: the gate is armed');
+
+      const cfgPath = store._getConfigPath();
+      const good = fs.readFileSync(cfgPath, 'utf8');
+      // Written with a different byte length AND a new mtime, so the cache key
+      // genuinely changes — a fixture that left either alone would be served
+      // the cached verdict and prove nothing.
+      fs.writeFileSync(cfgPath, '{ this is not json at all, at all }');
+      try {
+        const res = await send('GET', '/api/config');
+        assert.equal(res.statusCode, 401,
+          'an armed install must stay gated when its config cannot be read');
+      } finally {
+        fs.writeFileSync(cfgPath, good);
+      }
+    });
+
+    it('and recovers on the very next request once the file is readable again', async () => {
+      // The other half: fail-closed must not be sticky, or fixing the file
+      // would not fix the install.
+      await send('GET', '/api/config');
+      const cfgPath = store._getConfigPath();
+      const good = fs.readFileSync(cfgPath, 'utf8');
+      fs.writeFileSync(cfgPath, '{ broken');
+      await send('GET', '/api/config');
+      fs.writeFileSync(cfgPath, good);
+      setAuthEnabled(false);
+      const res = await send('GET', '/api/config');
+      assert.notEqual(res.statusCode, 401,
+        'authEnabled:false must still be the recovery lever after a read failure');
+    });
+  });
+
   describe('the fleet keeps working when the gate is armed', () => {
     // The defect this block exists for: the gate sits ahead of
     // `serviceToken.requiresServiceToken`, so without a carve-out the moment an

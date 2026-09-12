@@ -344,21 +344,35 @@ let _gateConfigCache = null;
  * a few lines below, which exists because an uncached per-request read of this
  * kind was already a problem here once.
  *
- * Falls back to an uncached read if the `stat` fails, so an unreadable or
- * just-deleted config behaves exactly as it did before this cache existed.
+ * **THIS THUNK THROWS, and that is the contract.** `_loadConfigOrNull` turns
+ * every failure into `null`, which is the right answer for the Host guard and
+ * the wrong one here: `isGateActive` distinguishes a READ FAILURE (fail CLOSED
+ * once the gate has been armed) from a successful read of nothing (fail open),
+ * and routing the gate through the null-swallowing loader made the fail-closed
+ * branch unreachable — a corrupt `config.json` on an armed direct-mode install
+ * would have read as "not enforcing", cached on mtime+size and re-served, which
+ * is an authentication bypass for as long as the file stays unreadable.
  *
- * @returns {object|null} The config, or null if it cannot be read
+ * A MISSING file is deliberately not a failure: `store.config.load()` answers
+ * with `DEFAULT_CONFIG` there, which really is a successful read of nothing.
+ * Only an unreadable or unparseable file raises, and only that should close the
+ * gate.
+ *
+ * A failed `stat` also throws rather than degrading, for the same reason: not
+ * being able to tell whether the file changed is a read failure, not a reading
+ * of it.
+ *
+ * Nothing is cached on the failure path, so recovery takes effect on the next
+ * request rather than being pinned by a cached verdict.
+ *
+ * @returns {object} The loaded config
+ * @throws {Error} If the config file cannot be read or parsed
  */
 function _gateConfig() {
-  let key;
-  try {
-    const st = fs.statSync(store._getConfigPath());
-    key = `${st.mtimeMs}:${st.size}`;
-  } catch {
-    return _loadConfigOrNull();
-  }
+  const st = fs.statSync(store._getConfigPath());
+  const key = `${st.mtimeMs}:${st.size}`;
   if (_gateConfigCache && _gateConfigCache.key === key) return _gateConfigCache.value;
-  const value = _loadConfigOrNull();
+  const value = store.config.load();
   _gateConfigCache = { key, value };
   return value;
 }

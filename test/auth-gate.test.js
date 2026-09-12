@@ -67,6 +67,8 @@ describe('lib/auth-gate — the front-door verdict (#1418, ADR 0015/0016)', () =
     it('does not enforce when config reads back as null', () => {
       // A SUCCESSFUL read of nothing — not an error — so this answer is
       // unconditional and does not depend on whether the gate was ever armed.
+      // This is NOT the corrupt-file case: the production thunk throws there,
+      // and the fail-closed block below drives that through the real one.
       assert.equal(authGate.isGateActive(() => null, sessions(true)), false);
       authGate.isGateActive(() => ({ authEnabled: true }), sessions(true)); // arm it
       assert.equal(authGate.isGateActive(() => null, sessions(true)), false);

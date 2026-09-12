@@ -41,9 +41,11 @@ All notable changes to TangleClaw are documented in this file.
   CSRF. It runs *ahead of* the gate's exemption list so logout is protected, and exempts login,
   whose authority is the password rather than the cookie.
 
-  **The session cookie is stripped before proxying** to ttyd and to the OpenClaw gateway on both
-  HTTP proxy paths — only TangleClaw's own two cookies, so the gateway's survive. The two WebSocket
-  paths are #1419's, with the rest of the upgrade gate.
+  **The session cookie is stripped before proxying** to ttyd and to the OpenClaw gateway on all three
+  HTTP proxy paths (`proxyToTtyd`, plus `_openclawProxyHeaders`, which serves both `/openclaw/*` and
+  `/openclaw-direct/*`) — only TangleClaw's own two cookies, so the gateway's own survive. ADR 0016
+  named two sites and the family is five; the two WebSocket ones are #1419's, with the rest of the
+  upgrade gate.
 
   **Revocation now reaches live sessions.** `users.disable` and `users.setPassword` both destroy the
   account's sessions, and the resolve path re-checks `disabled_at` on every request — without that,
