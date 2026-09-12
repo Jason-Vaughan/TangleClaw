@@ -109,6 +109,38 @@ describe('API /api/ports', () => {
     assert.equal(status, 400);
   });
 
+  // #1394 — the divergence check reads `reach` off the lease to tell a
+  // deliberate exposure from an accidental one, so it has to survive the wire.
+  it('POST /api/ports/lease round-trips reach, and GET reports it', async () => {
+    const posted = await request(server, 'POST', '/api/ports/lease', {
+      port: 5010, project: 'ReachProject', service: 'gui', reach: 'tailnet'
+    });
+    assert.equal(posted.status, 201);
+    assert.equal(posted.data.reach, 'tailnet');
+
+    const listed = await request(server, 'GET', '/api/ports');
+    const lease = listed.data.leases.find((l) => l.port === 5010);
+    assert.equal(lease.reach, 'tailnet', 'the listing is where another process reads it');
+  });
+
+  it('POST /api/ports/lease defaults reach to loopback, the weakest claim', async () => {
+    const { status, data } = await request(server, 'POST', '/api/ports/lease', {
+      port: 5011, project: 'QuietProject', service: 'db'
+    });
+    assert.equal(status, 201);
+    assert.equal(data.reach, 'loopback');
+  });
+
+  it('POST /api/ports/lease rejects an unknown reach with 400, naming the legal values', async () => {
+    const { status, data } = await request(server, 'POST', '/api/ports/lease', {
+      port: 5012, project: 'BadProject', service: 'x', reach: 'world'
+    });
+    assert.equal(status, 400);
+    for (const reach of store.LEASE_REACHES) {
+      assert.ok(data.error.includes(reach), `the 400 should name ${reach}`);
+    }
+  });
+
   // #613 — the API used to upsert unconditionally, so a lease request for a
   // port another project owned silently replaced the owner with a 201. The
   // documented contract said "never overwrite another project's lease"; it was

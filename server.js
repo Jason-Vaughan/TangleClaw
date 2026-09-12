@@ -3722,7 +3722,11 @@ route('POST', '/api/ports/lease', (_req, res, _params, body) => {
       ttlMs: body.ttl || null,
       description: body.description || null,
       autoRenew: body.autoRenew || false,
-      force: body.force === true
+      force: body.force === true,
+      // Passed through unvalidated on purpose: `store.portLeases.lease` owns
+      // the vocabulary and throws BAD_REQUEST naming the legal values, so a
+      // second check here could only drift from it.
+      reach: body.reach
     });
     jsonResponse(res, 201, lease);
   } catch (err) {
