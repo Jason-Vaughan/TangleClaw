@@ -133,11 +133,11 @@ reasonably assume it catches a widened bypass. Filed as #1403.
 
 ## Status
 
-- [ ] **04a — `reach` on the PortHub lease.** Schema v34→v35 (F5), `registerPort` option,
+- [x] **04a — `reach` on the PortHub lease.** Schema v34→v35 (F5), `registerPort` option,
       `/api/ports/lease` passthrough, `getLeases` exposure. Tests: migration backfills existing
       rows to `loopback`; CHECK rejects an unknown value; an old lease reads `loopback`;
       round-trip through the HTTP API.
-- [ ] **04b — `lib/caddy-drift.js`.** `adaptCaddyfile(path)` / `adaptCaddyfileContent(text)`,
+- [x] **04b — `lib/caddy-drift.js`.** `adaptCaddyfile(path)` / `adaptCaddyfileContent(text)`,
       `summarizeConfig` to reduce adapt JSON to sites and listeners, and one checker per property
       (`checkGates`, `checkHttpsProtocols`, `checkUpstreams`, `checkLeaseReach`) each returning
       `{ status, findings }` where status is `holds | diverged | not-measured`; `checkCaddyDrift`
@@ -146,13 +146,37 @@ reasonably assume it catches a widened bypass. Filed as #1403.
       operator-facing strings are plural per property.) Tests built from the REAL live Caddyfile shape, with
       the `:3250` block as the divergence fixture and TC's own generated output as the must-stay-
       clean fixture (F2). Mutation-check each property: break it, watch it go red.
-- [ ] **04c — Wiring + surfacing.** Boot-time run, `serverInfo.setCaddyDriftNotice`,
+- [x] **04c — Wiring + surfacing.** Boot-time run, `serverInfo.setCaddyDriftNotice`,
       `/api/server-info` field, dashboard notice in `public/landing.js` + `public/style.css`.
-- [ ] **04d — Docs + #1373.** `docs/caddy-drift-check.md`; FEATURES.md entry; CHANGELOG.
+- [x] **04d — Docs + #1373.** `docs/caddy-drift-check.md`; FEATURES.md entry; CHANGELOG.
       Separately: amend `docs/adr/0014-dual-key-review-for-untrusted-prs.md` to record that
       reading (b) governs the live-serving category, reconcile the "Rejected — security trip"
       table row, and state the published-boundary asymmetry decision the ADR says must be made
       before first use (it has now been used twice without it).
+
+### Critic record
+
+`cumulative` rev-20260912T033048Z-bf760c55 — 1 blocking, 9 warnings, 12 notes. All fixed or
+accepted in one pass (`cba84ec6`). `verify-resolutions` then returned **0 blocking, 0 warning,
+0 note**, verifying all ten from the tree.
+
+The blocking one is worth keeping here: `describeDrift` derived the operator notice from the
+divergence-only `findings` list, so a `not-measured` property with nothing diverged returned null —
+silence, plus a boot log calling the file clean. The tri-state was built through four checkers,
+tested on every one of them, and asserted in D4, the module JSDoc and the design doc; it was thrown
+away at the single surface that reaches a human. **A property modeled mid-pipeline is only real if
+something asserts it at the EXIT.**
+
+Two observations deliberately NOT actioned, recorded so they read as decisions:
+
+- **`tc ports` keeps a literal `loopback|tailnet|lan` in its help text** rather than joining
+  `store.LEASE_REACHES`. `lib/tc-verbs.js` is dependency-free and `lib/store.js` requires
+  `node:sqlite` at module scope, which prints an ExperimentalWarning to stderr on load — the import
+  would put a Node warning in front of an agent on every `tc` verb. Verified, not assumed. A third
+  prose copy of three words costs less; the reasoning is inline at the call site.
+- **`checkLeaseReach` drops its `unmeasured` reasons when any dial diverged.** The property still
+  reports DIVERGED, so nothing reads as clean; only the unattributable-dial detail is lost, and
+  carrying both would need a third field on every property's return shape.
 
 **Tick after the Critic, not before** — the last tick disarms the Stop gates.
 
