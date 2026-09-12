@@ -744,6 +744,19 @@ All notable changes to TangleClaw are documented in this file.
   history and must keep saying what was true at the time.
 
 ### Internal
+- **Two records of the auth gate were corrected to match the gate (#1418).** Both described
+  behaviour that a finding-fix inside the same chunk had already changed, and in each case the
+  false half was the actionable one. `FEATURES.md` said `isGateActive`'s reads "fail toward NOT
+  enforcing" — true when written, false since they were made to fail *closed* once the gate is
+  armed — two lines above the instruction that chunk 04 must replace that predicate, so the next
+  builder would have preserved fail-open while removing Caddy and reinstated the bypass the fix
+  closed. It also called the config read un-memoised; it is memoised on mtime and size.
+  `server.js#_gateConfig`'s own JSDoc separately contradicted itself about the missing-file case.
+  No behaviour changed. Recorded because three instances of this shape landed on one branch, which
+  is a pattern rather than an oversight, and it is now a rule in `learnings.md`: a fix that flips a
+  direction, a default or an error path is not done when the tests pass — grep the *tracked*
+  records for the sentence describing the old behaviour, since gitignored artifacts reach nobody.
+
 - **TangleClaw now has somewhere to put a user, and one owner for its password hashing
   (#1416, #1417).** First chunk of the Tier 1 auth build (ADR 0015). It ships dark on purpose:
   a `users` table at schema v36, a `store.users` API, and `lib/password.js` — no route, no gate,
