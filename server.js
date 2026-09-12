@@ -741,19 +741,26 @@ let _loginPageHtml = null;
  * @returns {void}
  */
 function _serveLoginPage(res, status) {
-  if (_loginPageHtml === null) {
+  let body = _loginPageHtml;
+  if (body === null) {
     try {
-      _loginPageHtml = fs.readFileSync(path.join(PUBLIC_DIR, 'login.html'), 'utf8');
+      body = fs.readFileSync(path.join(PUBLIC_DIR, 'login.html'), 'utf8');
+      // Memoised ONLY on success. Caching the fallback would freeze a transient
+      // read failure — a half-finished self-update, a momentary EMFILE — into
+      // the login page for the rest of the process's life, and the operator
+      // would be looking at the degraded document long after the file came
+      // back. The failure path re-reads, which is the one path where the extra
+      // syscall is worth more than the saving.
+      _loginPageHtml = body;
     } catch (err) {
       log.error('Login page could not be read', { error: err.message });
-      _loginPageHtml = '<!DOCTYPE html><meta charset="utf-8"><title>Sign in</title>'
+      body = '<!DOCTYPE html><meta charset="utf-8"><title>Sign in</title>'
         + '<p>TangleClaw needs you to sign in, but its login page is missing from '
         + 'this install. Post a username and password to <code>/api/auth/login</code>, '
-        + 'or run <code>node scripts/reset-admin.js --store</code> at a terminal on '
-        + 'this machine.</p>';
+        + 'or run <code>node scripts/reset-admin.js --store --user &lt;name&gt;</code> '
+        + 'at a terminal on this machine.</p>';
     }
   }
-  const body = _loginPageHtml;
   res.writeHead(status, {
     'Content-Type': 'text/html; charset=utf-8',
     'Content-Length': Buffer.byteLength(body),
@@ -6522,6 +6529,22 @@ function _isSameOriginUpgrade(origin, host) {
 function handleUpgrade(req, socket, head) {
   const urlObj = reqUrl(req);
 
+  // ⚠ THE SESSION GATE IS NOT HERE YET. #1418 gates HTTP; #1419 gates this.
+  //
+  // Stated at the top of the function rather than left to be discovered,
+  // because the asymmetry is genuinely surprising: with TangleClaw's own gate
+  // armed, `GET /terminal/x` is refused with a login page while a WebSocket
+  // upgrade to the same prefix still establishes. `/terminal/*` proxies to a
+  // `--writable` ttyd, so that socket is a shell.
+  //
+  // It is not a regression — in caddy mode Caddy's `basic_auth` is still in
+  // front of this path, and in direct mode the upgrade was already reachable
+  // before #1418 existed — but it IS a gap between what an operator will
+  // reasonably believe after arming the gate and what is true. #1419 closes it,
+  // in the same chunk that strips the session cookie before proxying (ADR 0016
+  // OQ1), because both are consequences of the cookie decision and splitting
+  // them would ship the cookie to ttyd with nothing reading it.
+  //
   // The cross-site guard has to be here too, and this is the sharper half.
   //
   // WebSockets are NOT subject to the same-origin policy: any page can open one

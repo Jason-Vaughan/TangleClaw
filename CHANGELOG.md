@@ -39,6 +39,14 @@ All notable changes to TangleClaw are documented in this file.
 
   Caddy's `basic_auth` stays up through this change — two gates in series, inconvenient but never
   open. The cutover is #1420.
+
+  **What this does NOT yet cover, said plainly because the asymmetry is surprising: the WebSocket
+  upgrade.** With the gate armed, `GET /terminal/x` is refused with a login page while a WebSocket
+  upgrade to the same prefix still establishes, and `/terminal/*` proxies to a `--writable` ttyd —
+  that socket is a shell. It is not a regression (Caddy still fronts it in caddy mode, and in direct
+  mode it was already reachable), but it is a gap between what an operator will reasonably believe
+  after arming the gate and what is true. #1419 closes it, together with stripping the session
+  cookie before proxying.
 - **TangleClaw now notices when the live Caddyfile has lost a security property (#1394).**
   `lib/caddy-drift.js` compares the live file against the one the generator would write and
   reports four properties: every proxying site has a gate; the HTTPS listener negotiates the

@@ -156,7 +156,10 @@ fails any auto-stub section older than 14 days.
   included. Revocation reaches live sessions — `users.disable` and `users.setPassword` destroy them,
   and `#resolve` re-checks `disabled_at` every request. The login route uses
   `password.verifyPasswordAsync` via `store.users.verifyAsync`, keeping the equal-cost comparison
-  that denies the username timing oracle. Tests: `test/auth-session.test.js`,
+  that denies the username timing oracle. **The gate covers HTTP only — `server.js#handleUpgrade`
+  is NOT session-checked yet (#1419)**, so with the gate armed a `/terminal/*` WebSocket upgrade
+  still establishes while the HTTP GET beside it is refused; not a regression, but the one place
+  the perimeter is not yet continuous. Tests: `test/auth-session.test.js`,
   `test/auth-gate.test.js`, `test/store-auth-sessions.test.js`, `test/api-auth-session.test.js`,
   `test/reset-admin-store.test.js`, `test/frontend-csrf.test.js`.
 - **Auth: Caddy ingress + proxy identity** (AUTH-1/AUTH-3) — `lib/caddy.js` generates the integrity-stamped Caddyfile for the auth-gated ingress; `lib/auth-identity.js` resolves proxy-authenticated request identity (`X-Auth-User` → `currentUser` on `/api/server-info`). Drift surfacing: `docs/auth-status-surfacing.md` (AUTH-2K9D).
