@@ -1325,6 +1325,17 @@ describe('#867 — stranded-wrap classification agrees with the server', () => {
     assert.deepEqual(stranded, ['stranded — gh unavailable']);
   });
 
+  it('an ai-content row says when its capture was reused by a Retry, not freshly written (#1404)', () => {
+    const { deriveDetail } = loadHelpers();
+    const fresh = deriveDetail({ kind: 'ai-content', status: 'done', output: { capturedText: 'x', parsedFields: { summary: 's' } } });
+    const reused = deriveDetail({ kind: 'ai-content', status: 'done', output: { capturedText: 'x', parsedFields: { summary: 's' }, resumed: true } });
+    assert.equal(fresh, 'captured 1 field');
+    assert.match(reused, /^captured 1 field · reused from the blocked wrap, not re-asked$/,
+      'reused content lands in the commit; the row must not read as if it was just written');
+    assert.match(deriveDetail({ kind: 'ai-content', status: 'done', output: { capturedText: 'edit done', resumed: true } }),
+      /^captured · reused/);
+  });
+
   it('the commit row names the branch as left behind, not merely skipped', () => {
     const { deriveDetail } = loadHelpers();
     const line = deriveDetail({

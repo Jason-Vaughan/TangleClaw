@@ -280,7 +280,9 @@ All notable changes to TangleClaw are documented in this file.
   (`lib/wrap-pipeline.js#resumableContentResults`), for up to 30 minutes from when each was
   captured. Everything else — tests, lint, git steps — still re-runs against the current state.
   The reuse is decided only from the server's own record of the previous run, never from the
-  request, and an operator's "Skip & note" for a step still wins.
+  request, and an operator's "Skip & note" for a step still wins. The wrap drawer marks a reused
+  step "reused from the blocked wrap, not re-asked", the next prompt's "step N of M" header counts
+  only the steps actually sent, and the server log records why each Retry did or did not reuse.
 
   **The error now says what actually happened.** "Was not written during this step" when the file
   is absent; "could not be read" for a permission error, a directory at that path or a bridge

@@ -355,6 +355,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
     const SESSION = 7;
     /** A finished, blocked run whose memory-update captured. */
     const blockedRun = (over = {}) => ({
+      runId: 'run-1',
       running: false,
       sessionId: SESSION,
       finishedAt: NOW - 60_000,
@@ -375,7 +376,26 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       },
       ...over.run
     });
-    const r = (run, opts = {}) => wrapPipeline.resumableContentResults(run, { sessionId: SESSION, now: NOW, ...opts });
+    const decide = (run, opts = {}) => wrapPipeline.resumableContentResults(run, { sessionId: SESSION, now: NOW, ...opts });
+    const r = (run, opts) => decide(run, opts).results;
+
+    it('says WHY nothing was reused, for every refusal — a silent re-prompt is otherwise untraceable', () => {
+      const cases = [
+        [null, /no previous run/],
+        [{ runId: null, sessionId: null, running: false, finishedAt: null, result: null }, /no previous run/],
+        [blockedRun({ run: { running: true } }), /still in flight/],
+        [blockedRun({ run: { sessionId: SESSION + 1 } }), /another session/],
+        [blockedRun({ pipelineResult: { commitSha: 'abc' } }), /committed/],
+        [blockedRun({ pipelineResult: { ok: true, blockedAt: null } }), /did not halt/],
+        [blockedRun({ run: { finishedAt: NOW - wrapPipeline.RESUME_WINDOW_MS - 1 } }), /older than the resume window/]
+      ];
+      for (const [run, reason] of cases) {
+        const d = decide(run);
+        assert.equal(d.results, null);
+        assert.match(d.reason, reason);
+      }
+      assert.match(decide(blockedRun()).reason, /reusing 2 captured content steps/);
+    });
 
     it('reuses only ai-content steps that finished done with a capture', () => {
       const out = r(blockedRun());
@@ -397,7 +417,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
     it('reuses nothing from a run still in flight, or with no record at all', () => {
       assert.equal(r(blockedRun({ run: { running: true } })), null);
       assert.equal(r(null), null);
-      assert.equal(r({ running: false, sessionId: SESSION, finishedAt: null, result: null }), null);
+      assert.equal(r({ runId: 'x', running: false, sessionId: SESSION, finishedAt: null, result: null }), null);
     });
 
     it('lets a capture expire RESUME_WINDOW_MS after it was captured', () => {
@@ -465,6 +485,32 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
         });
         assert.deepEqual(stagedAtCommit['memory-update'], { capturedText: 'raw', parsedFields: { summary: 's' } });
       } finally {
+        restore();
+      }
+    });
+
+    it('does not count a reused step in the "step N of M" header — the Retry\'s only prompt is step 1 of 1', async () => {
+      const restore = stubRealHandlers(wrapPipeline, ['ai-content']);
+      const original = wrapPipeline.STEP_DISPATCH['ai-content'];
+      const progress = {};
+      wrapPipeline.STEP_DISPATCH['ai-content'] = {
+        run: async (ctx) => {
+          progress[ctx.step.id] = ctx.aiContentProgress;
+          return { ok: true, status: 'done', output: { capturedText: 'fresh', parsedFields: null }, blockers: [] };
+        }
+      };
+      try {
+        const now = Date.now();
+        await wrapPipeline.runWrapPipeline('pipeline-test', {
+          resumeFrom: {
+            'changelog-update': { output: { capturedText: 'a', parsedFields: null }, capturedAt: now },
+            'learnings-capture': { output: { capturedText: 'b', parsedFields: null }, capturedAt: now }
+          }
+        });
+        assert.deepEqual(progress['memory-update'], { ordinal: 1, total: 1 },
+          'an AI told "step 3 of 3" may conclude steps 1 and 2 are already done');
+      } finally {
+        wrapPipeline.STEP_DISPATCH['ai-content'] = original;
         restore();
       }
     });

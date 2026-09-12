@@ -42,6 +42,13 @@ noted on the issue.
 - **C. Option 1 from the issue (defer the delete).** Rejected: the #840 arm deletes it anyway, and
   removing the arm reopens "another session's summary becomes this commit's subject".
 
+**The 30-minute window.** Chosen to match `wrapRunRegistry`'s `STALE_RUN_MS`, the existing bound on
+how long a wrap is believed to still be "about" its run. A Retry normally follows a block within
+minutes; past half an hour the session has plausibly done work the captured summary does not
+describe, and re-asking is the honest cost. Alternatives: no window (reuses a stale summary after a
+long gap — rejected), or invalidating on a HEAD change (misses uncommitted work, which is most of
+what a wrap describes — rejected).
+
 **Recommendation: A + B.** A removes the cause; B keeps the message honest for the cases A does not
 cover (first pass, a different session, after a restart).
 
@@ -54,8 +61,19 @@ cover (first pass, a different session, after a restart).
 
 ## Status
 
-- [ ] a — Registry keeps the blocked run's reusable content-step results (session-scoped).
-- [ ] b — Runner reuses them on a same-session Retry; results say `resumed` so the drawer is honest.
-- [ ] c — Honest ENOENT / read-failure wording on tmux and gateway paths; update the two tests that
+- [x] a — Registry keeps the blocked run's reusable content-step results (session-scoped).
+- [x] b — Runner reuses them on a same-session Retry; results say `resumed`, and the drawer shows it.
+- [x] c — Honest ENOENT / read-failure wording on tmux and gateway paths; update the two tests that
       pin the old wording as a deliberate contract change.
-- [ ] d — Tests (resume, cross-session no-reuse, restart no-reuse, committed-run no-reuse), CHANGELOG `### Fixed`, FEATURES.
+- [x] d — Tests (resume, cross-session no-reuse, restart no-reuse, committed-run no-reuse), CHANGELOG `### Fixed`, FEATURES.
+
+## Critic record
+
+**Round 1** — `rev-20260912T220112Z-febb4095` over `5846abf5`: 0 blocking, 4 warnings, 11 notes.
+All four warnings fixed in one commit: R-1 (a reused step still counted in the `step N of M`
+header, so a Retry's only prompt read "step 3 of 3" — now one predicate, `_resumePrior`, for runner
+and planner); R-4 (the staged-capture shape had two owners — now `ai-content.js#stagedFromOutput`);
+R-9 (nothing displayed `resumed` — the drawer row now says it); R-10 (a declined resume left no trace
+— the decision returns and logs a reason). Notes fixed: the window now measures from a recorded
+`capturedAt` (R-2/R-5/R-12), the history-narrating JSDoc (R-7), the overstated "commit subject"
+comment, and the window's rationale is recorded above (R-11).

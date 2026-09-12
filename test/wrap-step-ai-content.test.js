@@ -105,6 +105,11 @@ describe('wrap-step ai-content — #287 captureFile parsing', () => {
       assert.equal(res.output.parsedFields.learnings, '- none');
       assert.equal(ctx.staged['memory-update'].parsedFields.summary, 'Tidy wrap cycle; no code changes.');
       assert.equal(removed, '.tangleclaw/.wrap-summary.md', 'consume-once: file removed after a successful read');
+      // #1404 — a Retry re-stages this step from its OUTPUT. The shape it
+      // rebuilds must be the shape the handler staged, or downstream steps
+      // read a reused capture differently from a fresh one.
+      assert.deepEqual(aic.stagedFromOutput(res.output), ctx.staged['memory-update']);
+      assert.equal(typeof res.output.capturedAt, 'number', 'the capture time is recorded for the resume window');
     });
 
     it('blocks with a clear message when the captureFile is missing', async () => {
