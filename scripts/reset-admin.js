@@ -247,7 +247,14 @@ async function runStoreMode({ store, user, dryRun, passwordStdin }) {
     if (existing && existing.disabled_at) {
       process.stdout.write('         → re-enable the account\n');
     }
-    process.stdout.write('         → no Caddyfile touched, no reload\n\n');
+    process.stdout.write('         → no Caddyfile touched, no reload\n');
+    try {
+      process.stdout.write(store.config.load().authEnabled === true
+        ? '  after this, the TangleClaw login gate would be LIVE\n\n'
+        : '  ⚠ authEnabled is OFF — the account would exist but enforce nothing\n\n');
+    } catch {
+      process.stdout.write('  (could not read config to report gate status)\n\n');
+    }
     return 0;
   }
 
@@ -283,14 +290,34 @@ async function runStoreMode({ store, user, dryRun, passwordStdin }) {
     process.stdout.write('  ✓ Account re-enabled.\n');
   }
   process.stdout.write(`  Store: ${store._getBasePath()}\n`);
-  // Said plainly because it is the surprising half. An operator who ran this to
-  // recover a login has, on an install with no account before, also just closed
-  // a door that was open — and one who ran it in caddy mode still has Caddy's
-  // basic_auth in front until the cutover (#1420).
+
+  // ANSWER the condition rather than stating it. The gate needs authEnabled
+  // AND an enabled account; this command supplies the account. Printing "…when
+  // authEnabled is on" left the operator holding a conditional they cannot
+  // evaluate — on the tool they are running precisely because they cannot reach
+  // the dashboard to look. And the population this mode exists for is the one
+  // most likely to be on the wrong side of it: a direct-mode install that
+  // finished the wizard ungated under #803's ruling carries authEnabled:false,
+  // so without this the operator creates an account, reads a success message,
+  // and still has no login with nothing anywhere saying so.
+  let authEnabled = null;
+  try {
+    authEnabled = store.config.load().authEnabled === true;
+  } catch (err) {
+    // Never fatal: the account IS created, and refusing to report that because
+    // a status read failed would be the worse outcome for someone locked out.
+    process.stdout.write(`  (could not read config to report gate status: ${err.message})\n`);
+  }
+  if (authEnabled === true) {
+    process.stdout.write('  ✓ The TangleClaw login gate is now LIVE for this install.\n');
+  } else if (authEnabled === false) {
+    process.stdout.write(
+      '  ⚠ authEnabled is OFF — this account exists but NO login is enforced.\n'
+      + '    Turn it on in Settings, or the account does nothing.\n');
+  }
   process.stdout.write(
-    '  TangleClaw enforces its own login for any account that exists, on every\n'
-    + '  ingress mode, when authEnabled is on. In caddy ingress mode Caddy\'s\n'
-    + '  basic_auth still sits in front of it until the cutover.\n\n');
+    '  In caddy ingress mode Caddy\'s basic_auth still sits in front of this\n'
+    + '  gate until the cutover.\n\n');
   return 0;
 }
 

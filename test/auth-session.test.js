@@ -161,17 +161,47 @@ describe('lib/auth-session — cookie and token mechanism (#1418, ADR 0016)', ()
   });
 
   describe('clearCookie', () => {
-    it('repeats every scoping attribute of the cookie it clears', () => {
-      // A browser matches a replacement cookie on name, domain and path. A
-      // clear written without `Path=/` leaves the real cookie in place, so
-      // logout silently does nothing on any page below the root.
-      const set = authSession.serializeCookie('tok', { secure: true });
-      const clear = authSession.clearCookie({ secure: true });
-      for (const attr of ['Path=/', 'HttpOnly', 'SameSite=Lax', 'Secure']) {
-        assert.ok(set.includes(attr), `precondition: set carries ${attr}`);
-        assert.ok(clear.includes(attr), `clear must also carry ${attr}`);
+    // The parity invariant, DERIVED from the setter rather than enumerated.
+    //
+    // A browser matches a replacement cookie on name, domain and path, so a
+    // clear that drops any scoping attribute leaves the real cookie in place
+    // and logout silently does nothing. The first version of this check walked
+    // a hardcoded list — which meant a FIFTH attribute added to a setter (a
+    // `Domain`, a `SameSite=Strict`, a `__Host-` rename) was not compared at
+    // all and the suite stayed green while logout stopped clearing. Reading the
+    // attributes off the setter's own output makes it a check rather than a
+    // list.
+    const LIFETIME = /^(Max-Age|Expires)=/i;
+
+    /**
+     * Split a Set-Cookie value into its scoping attributes.
+     * @param {string} c
+     * @returns {string[]} every attribute except the name=value pair and the lifetime
+     */
+    const scopingAttrs = (c) => c.split('; ').slice(1).filter((a) => !LIFETIME.test(a));
+
+    for (const [label, set, clear] of [
+      ['session',
+        (secure) => authSession.serializeCookie('tok', { secure }),
+        (secure) => authSession.clearCookie({ secure })],
+      ['csrf',
+        (secure) => authSession.serializeCsrfCookie('tok', { secure }),
+        (secure) => authSession.clearCsrfCookie({ secure })]
+    ]) {
+      for (const secure of [true, false]) {
+        it(`the ${label} clear repeats every scoping attribute the setter emits (secure=${secure})`, () => {
+          const setAttrs = scopingAttrs(set(secure));
+          const clearAttrs = scopingAttrs(clear(secure));
+          assert.ok(setAttrs.length > 0, 'precondition: the setter emits scoping attributes');
+          assert.deepEqual(clearAttrs.sort(), setAttrs.sort(),
+            `${label} clear must carry exactly the setter's scoping attributes`);
+        });
+
+        it(`the ${label} clear uses the same cookie NAME (secure=${secure})`, () => {
+          assert.equal(clear(secure).split('=')[0], set(secure).split('=')[0]);
+        });
       }
-    });
+    }
 
     it('expires immediately and carries no value', () => {
       const c = authSession.clearCookie({ secure: false });
@@ -194,14 +224,78 @@ describe('lib/auth-session — cookie and token mechanism (#1418, ADR 0016)', ()
       assert.match(c, /(^|; )Secure$/);
     });
 
-    it('clears with the same attributes minus the lifetime', () => {
-      const c = authSession.clearCsrfCookie({ secure: false });
-      assert.match(c, /(^|; )Path=\/(;|$)/);
-      assert.match(c, /(^|; )Max-Age=0(;|$)/);
+    it('expires immediately', () => {
+      // The attribute PARITY is checked by the derived loop in `clearCookie`
+      // above, for both pairs; what is left to state here is the lifetime,
+      // which is the one attribute that must deliberately NOT match.
+      assert.match(authSession.clearCsrfCookie({ secure: false }), /(^|; )Max-Age=0(;|$)/);
     });
 
     it('is a different cookie name from the session', () => {
       assert.notEqual(authSession.CSRF_COOKIE, authSession.SESSION_COOKIE);
+    });
+  });
+
+  describe('stripOwnCookies — the session must not travel to an upstream', () => {
+    const { SESSION_COOKIE, CSRF_COOKIE } = authSession;
+
+    it('removes both of ours and keeps everything else', () => {
+      const got = authSession.stripOwnCookies(
+        `a=1; ${SESSION_COOKIE}=secret; b=2; ${CSRF_COOKIE}=tok; c=3`);
+      assert.equal(got, 'a=1; b=2; c=3');
+    });
+
+    it('never leaves the session value anywhere in the result', () => {
+      const got = authSession.stripOwnCookies(`${SESSION_COOKIE}=supersecret; keep=1`);
+      assert.equal(String(got).includes('supersecret'), false);
+    });
+
+    it('returns undefined when nothing survives, so the header is DROPPED', () => {
+      // Not an empty string: an empty `Cookie:` header is malformed to some
+      // servers, and "no cookies" is what we mean.
+      assert.equal(authSession.stripOwnCookies(`${SESSION_COOKIE}=x`), undefined);
+      assert.equal(authSession.stripOwnCookies(`${SESSION_COOKIE}=x; ${CSRF_COOKIE}=y`), undefined);
+      assert.equal(authSession.stripOwnCookies(''), undefined);
+      assert.equal(authSession.stripOwnCookies(undefined), undefined);
+    });
+
+    it('keeps a foreign cookie whose name merely CONTAINS ours', () => {
+      // The gateway sets its own cookies through this proxy; stripping them
+      // would break its UI while looking like a TangleClaw bug.
+      const got = authSession.stripOwnCookies(`not_${SESSION_COOKIE}=x; ${SESSION_COOKIE}_extra=y`);
+      assert.equal(got, `not_${SESSION_COOKIE}=x; ${SESSION_COOKIE}_extra=y`);
+    });
+
+    it('tolerates odd spacing', () => {
+      assert.equal(authSession.stripOwnCookies(`  ${SESSION_COOKIE}=x ;  keep=1  `), 'keep=1');
+    });
+  });
+
+  describe('stripOwnCookiesFromHeaders', () => {
+    it('deletes the cookie header outright when only ours were present', () => {
+      const out = authSession.stripOwnCookiesFromHeaders({
+        host: 'x', cookie: `${authSession.SESSION_COOKIE}=x`
+      });
+      assert.equal('cookie' in out, false);
+      assert.equal(out.host, 'x');
+    });
+
+    it('rewrites it when something survives', () => {
+      const out = authSession.stripOwnCookiesFromHeaders({
+        cookie: `keep=1; ${authSession.SESSION_COOKIE}=x`
+      });
+      assert.equal(out.cookie, 'keep=1');
+    });
+
+    it('does not mutate the headers it was given', () => {
+      const headers = { cookie: `${authSession.SESSION_COOKIE}=x` };
+      authSession.stripOwnCookiesFromHeaders(headers);
+      assert.equal(headers.cookie, `${authSession.SESSION_COOKIE}=x`);
+    });
+
+    it('is a no-op for headers with no cookie at all', () => {
+      const out = authSession.stripOwnCookiesFromHeaders({ host: 'x' });
+      assert.deepEqual(out, { host: 'x' });
     });
   });
 

@@ -6,6 +6,7 @@ const {
   matchRoute, route, parseQuery, reqUrl, handleUpgrade, handleRequest,
   _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed
 } = require('../server');
+const authSession = require('../lib/auth-session');
 
 describe('server', () => {
   describe('reqUrl', () => {
@@ -649,6 +650,27 @@ describe('server', () => {
         assert.equal(out.host, '127.0.0.1:5001');
         assert.equal(out.origin, 'http://127.0.0.1:5001');
         assert.equal(out.referer, 'http://127.0.0.1:5001/');
+      });
+
+      it("strips TangleClaw's session cookie, and keeps the gateway's own (#1418)", () => {
+        // The same rule as the Authorization strip above and for the same
+        // reason (ADR 0016 OQ1): the gateway can be a REMOTE host at the far
+        // end of a tunnel and has no use for our session. Only OUR cookies go —
+        // the gateway sets its own through this proxy and those must survive,
+        // or its UI breaks in a way that looks like a TangleClaw bug.
+        const out = _openclawProxyHeaders(
+          { cookie: `gw_sid=theirs; ${authSession.SESSION_COOKIE}=ours; ${authSession.CSRF_COOKIE}=tok` },
+          5001, TOKEN
+        );
+        assert.equal(out.cookie, 'gw_sid=theirs');
+        assert.equal(JSON.stringify(out).includes('ours'), false,
+          'the session value must not reach the upstream in any header');
+      });
+
+      it('drops the Cookie header entirely when only ours were present', () => {
+        const out = _openclawProxyHeaders(
+          { cookie: `${authSession.SESSION_COOKIE}=ours` }, 5001, TOKEN);
+        assert.ok(!('cookie' in out), 'an empty Cookie header is malformed to some servers');
       });
     });
 

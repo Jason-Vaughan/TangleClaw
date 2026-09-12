@@ -75,7 +75,15 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
   }
 
   /**
-   * Drive one request through the real handler.
+   * Drive one request through the real handler AS A BROWSER.
+   *
+   * Browser-shaped by default — `Sec-Fetch-Site` present — because the subject
+   * of almost every case here is a person at a dashboard, and TangleClaw now
+   * treats a loopback request with no browser marker as a MACHINE client (the
+   * `tc` CLI, PortHub, the switchboard) and waves it through. Leaving that
+   * implicit would have quietly turned every gate assertion below into a test
+   * of the carve-out instead. Pass `machine: true` to send the fleet's shape.
+   *
    * @param {string} method
    * @param {string} url
    * @param {object} [opts]
@@ -83,11 +91,14 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
    * @param {string} [opts.cookie] - Cookie header
    * @param {string} [opts.csrf] - X-CSRF-Token header
    * @param {object} [opts.headers] - Extra headers
+   * @param {boolean} [opts.machine] - Send no browser markers at all
+   * @param {string} [opts.remoteAddress] - Socket address; defaults to loopback
    * @returns {Promise<object>} The mock response
    */
   async function send(method, url, opts = {}) {
     const raw = opts.body === undefined ? null : JSON.stringify(opts.body);
-    const headers = Object.assign({ host: 'localhost:3102' }, opts.headers);
+    const browserMarkers = opts.machine ? {} : { 'sec-fetch-site': 'same-origin' };
+    const headers = Object.assign({ host: 'localhost:3102' }, browserMarkers, opts.headers);
     if (raw !== null) {
       headers['content-type'] = 'application/json';
       headers['content-length'] = String(Buffer.byteLength(raw));
@@ -96,7 +107,7 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
     if (opts.csrf) headers[authSession.CSRF_HEADER] = opts.csrf;
     const req = {
       url, method, headers,
-      socket: { remoteAddress: '127.0.0.1' },
+      socket: { remoteAddress: opts.remoteAddress || '127.0.0.1' },
       on(event, cb) {
         if (event === 'data' && raw !== null) cb(Buffer.from(raw));
         if (event === 'end') cb();
@@ -471,12 +482,74 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
     });
 
     it('does not apply to a request with NO session — curl and the agent API', async () => {
-      // The scoping that keeps the documented agent-facing API working: a
-      // request carrying no session rides no ambient authority, so it is not a
-      // CSRF vector. It is still GATED — it just is not refused for CSRF.
-      const res = await send('PATCH', '/api/config', { body: { logLevel: 'info' } });
-      assert.equal(res.statusCode, 401, 'gated, yes');
-      assert.doesNotMatch(res.body, /CSRF/, 'but not refused as a CSRF failure');
+      // A request carrying no session rides no ambient authority, so it is not
+      // a CSRF vector. On loopback it is also not GATED (see the fleet block
+      // below); what this pins is that it is never refused FOR CSRF.
+      const res = await send('PATCH', '/api/config', { machine: true, body: { logLevel: 'info' } });
+      assert.doesNotMatch(res.body, /CSRF/, 'a sessionless write is never a CSRF failure');
+    });
+  });
+
+  describe('the fleet keeps working when the gate is armed', () => {
+    // The defect this block exists for: the gate sits ahead of
+    // `serviceToken.requiresServiceToken`, so without a carve-out the moment an
+    // operator runs `reset-admin.js --store` every machine caller of the
+    // loopback listener gets 401 — `bin/tc`, the PortHub surface every project
+    // on this machine leases through, shared-docs, and the switchboard. A valid
+    // AUTH-4 token does not rescue them: the session gate answers first.
+    beforeEach(armGate);
+
+    // `machine: true` drops every browser marker, which — together with the
+    // loopback socket `send` already uses — is exactly the shape `bin/tc` has.
+    const FLEET_READS = [
+      ['the tc CLI', '/api/tc/whoami', { 'x-tangleclaw-cli': '1', 'x-tangleclaw-verb': 'whoami' }],
+      ['PortHub', '/api/ports', {}],
+      ['shared docs', '/api/shared-docs', {}]
+    ];
+
+    for (const [who, url, headers] of FLEET_READS) {
+      it(`${who} is not refused by the session gate`, async () => {
+        const res = await send('GET', url, { headers, machine: true });
+        assert.notEqual(res.statusCode, 401,
+          `${url} must not be refused for want of a session`);
+        assert.doesNotMatch(res.body || '', /UNAUTHENTICATED/);
+      });
+    }
+
+    it('a machine WRITE is allowed without a CSRF token', async () => {
+      // PortHub leasing is a POST, and no CLI can hold a CSRF token.
+      const res = await send('POST', '/api/ports/lease', {
+        machine: true,
+        body: { port: 4999, project: 'fleet-test', service: 'suite' }
+      });
+      assert.notEqual(res.statusCode, 401);
+      assert.notEqual(res.statusCode, 403);
+    });
+
+    it('a BROWSER-shaped loopback request is still gated', async () => {
+      // The carve-out must not become a way for a page to walk through the
+      // door. A browser cannot suppress Sec-Fetch-Site from script.
+      const res = await send('GET', '/api/config', { headers: { 'sec-fetch-site': 'same-origin' } });
+      assert.equal(res.statusCode, 401, 'a browser on loopback is still a browser');
+    });
+
+    it('an Origin header alone is enough to make it browser-shaped', async () => {
+      const res = await send('GET', '/api/config', { headers: { origin: 'http://localhost:3102' } });
+      assert.equal(res.statusCode, 401);
+    });
+
+    it('a request carrying a session cookie is NOT treated as a machine client', async () => {
+      // Otherwise a signed-in browser could drop Sec-Fetch-Site and escape the
+      // CSRF check by being mistaken for the CLI.
+      const { cookie } = await login();
+      const res = await send('PATCH', '/api/config', { cookie, body: { logLevel: 'info' } });
+      assert.equal(res.statusCode, 403, 'the CSRF check must still apply');
+      assert.match(res.body, /CSRF_TOKEN_INVALID/);
+    });
+
+    it('a NON-loopback request is gated, machine-shaped or not', async () => {
+      const res = await send('GET', '/api/config', { machine: true, remoteAddress: '10.0.0.5' });
+      assert.equal(res.statusCode, 401, 'the carve-out is local processes only');
     });
   });
 });

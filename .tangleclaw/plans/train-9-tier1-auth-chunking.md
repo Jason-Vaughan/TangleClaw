@@ -154,9 +154,16 @@ no-op, and this sentence previously claimed it was.
   satisfies ADR 0009 rule 5 (recovery is a terminal tool outside the gate). `store.users.enable`
   exists for this caller — un-revoking an account the operator disabled is recovery, and a
   `disable` with no `enable` is a one-way door.
-- **Password policy**: the set-password and login surfaces apply `caddy.validateAdminPassword`
-  (min 12, denylist, no username match, no control chars) — ADR 0016. The store deliberately
-  enforces only non-empty, so without this the new door is weaker than the one it replaces.
+- **Password policy**: the set-password surface, and any password-change surface, apply
+  `caddy.validateAdminPassword` (min 12, denylist, no username match, no control chars) — ADR 0016.
+  The store deliberately enforces only non-empty, so without this the new door is weaker than the
+  one it replaces.
+  *(Amended during chunk 02's build: this bullet used to say "the set-password **and login**
+  surfaces". ADR 0016 only ever asked for the setting surfaces, and the login route deliberately
+  validates for PRESENCE only — running the policy where a password is CHECKED would refuse a login
+  for an account whose password predates a policy change, leaving no way in to change it, and would
+  state a live credential's shape in the refusal. The ADR is the authority; this line was the
+  outlier, and chunk 04 builds the set-password screen against it.)*
 - **Async scrypt**: the login route uses `crypto.scrypt`, not `scryptSync`, or states why not.
   `scryptSync` blocks the single-threaded server for tens of milliseconds per attempt — ADR 0016.
 

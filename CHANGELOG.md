@@ -23,12 +23,27 @@ All notable changes to TangleClaw are documented in this file.
   was — only now it is fixable. `node scripts/reset-admin.js --store --user <name>` creates or
   resets the account, at a terminal on the machine, per ADR 0009 rule 5.
 
+  **The machine clients on the loopback listener are outside this door, by scope.** `bin/tc`, the
+  PortHub surface every project on this machine leases through, shared-docs, and the agent
+  switchboard all reach TangleClaw over loopback with no cookie and no way to be handed one — so a
+  session gate in front of them would refuse the whole fleet the moment an account exists. A
+  request that is on a loopback socket, carries no `Sec-Fetch-Site`/`Origin`, and sends no session
+  cookie is treated as a machine client and passes. It opens nothing that was not already open:
+  those callers reach TangleClaw only over loopback, which is the perimeter ADR 0009 gives them,
+  and AUTH-4's service-token gate still runs below this one unchanged. Tier 1 is the door a
+  *person* walks through. **#1420 must revisit this** — once Caddy is gone, a loopback socket no
+  longer implies a local process.
+
   **A per-session CSRF token** joins the three request-shape guards from #860/#864. It is minted with
   the session, stored on the session row, and echoed by the dashboard in `X-CSRF-Token`; the
   comparison is against the row, so an attacker who can plant a cookie still cannot satisfy it. It
-  applies only to requests carrying a live session, which is what leaves `curl`, the `tc` CLI and
-  the agent-facing API untouched. It runs *ahead of* the gate's exemption list so logout is
-  protected, and exempts login, whose authority is the password rather than the cookie.
+  applies only to requests carrying a live session, so a sessionless caller is never refused for
+  CSRF. It runs *ahead of* the gate's exemption list so logout is protected, and exempts login,
+  whose authority is the password rather than the cookie.
+
+  **The session cookie is stripped before proxying** to ttyd and to the OpenClaw gateway on both
+  HTTP proxy paths — only TangleClaw's own two cookies, so the gateway's survive. The two WebSocket
+  paths are #1419's, with the rest of the upgrade gate.
 
   **Revocation now reaches live sessions.** `users.disable` and `users.setPassword` both destroy the
   account's sessions, and the resolve path re-checks `disabled_at` on every request — without that,

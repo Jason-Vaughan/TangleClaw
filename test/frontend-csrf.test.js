@@ -3,6 +3,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const loadApiHelperGlobals = require('./_api-helper-globals');
+const authSession = require('../lib/auth-session');
 
 // The dashboard's half of the CSRF contract (#1418).
 //
@@ -22,6 +23,54 @@ function loadWithCookie(cookie) {
 }
 
 describe('frontend CSRF plumbing (#1418)', () => {
+  // The two realms agree on two names — the cookie and the header — and the
+  // browser half necessarily re-spells both as literals, because `public/` may
+  // not require `lib/` (this repo's rule about what an import DRAGS: store.js
+  // pulls node:sqlite at module scope).
+  //
+  // So the agreement is pinned HERE, in the one place that can see both sides:
+  // this file runs under node, so it can require the server's constants and
+  // compare them against what the browser code actually produces and reads.
+  // Without it, renaming `CSRF_COOKIE` or `CSRF_HEADER` in `lib/auth-session.js`
+  // leaves the whole suite green while every dashboard write on a gated install
+  // 403s — visible only on a live armed install, which is the operator's phone.
+  //
+  // The fixtures below are built from the SERVER's producers for the same
+  // reason (`serializeCsrfCookie` rather than a hand-written `tc_csrf=tok`):
+  // a cross-realm fixture must come from the other side's producer, not from a
+  // string both sides happen to agree on today.
+  describe('the two realms agree on the names, and neither side is asked to remember', () => {
+    it('the browser reads exactly the cookie the server sets', () => {
+      const setCookie = authSession.serializeCsrfCookie('server-minted', { secure: false });
+      const jar = setCookie.split(';')[0];
+      const { tcCsrfToken } = loadWithCookie(jar);
+      assert.equal(tcCsrfToken(), 'server-minted',
+        `the browser could not read the cookie the server produced: ${setCookie}`);
+    });
+
+    it('the browser emits exactly the header the server reads', () => {
+      const { tcWithCsrf } = loadWithCookie('tc_csrf=tok');
+      const emitted = Object.keys(tcWithCsrf({ method: 'POST' }).headers);
+      const lowered = emitted.map((h) => h.toLowerCase());
+      assert.ok(lowered.includes(authSession.CSRF_HEADER),
+        `browser emits ${JSON.stringify(emitted)}, server reads '${authSession.CSRF_HEADER}'`);
+    });
+
+    it('and the server would actually accept what the browser sent', () => {
+      // End to end across the seam, through both real functions: mint, set,
+      // read in the browser, emit, then read back the way `handleRequest` does.
+      const minted = 'a-minted-token';
+      const jar = authSession.serializeCsrfCookie(minted, { secure: false }).split(';')[0];
+      const { tcWithCsrf } = loadWithCookie(jar);
+      const headers = {};
+      for (const [k, v] of Object.entries(tcWithCsrf({ method: 'POST' }).headers)) {
+        headers[k.toLowerCase()] = v;
+      }
+      const submitted = authSession.csrfTokenFromRequest({ headers });
+      assert.equal(authSession.csrfTokenMatches(submitted, minted), true);
+    });
+  });
+
   describe('tcCsrfToken', () => {
     it('reads the token out of document.cookie', () => {
       const { tcCsrfToken } = loadWithCookie('a=1; tc_csrf=abc123; b=2');

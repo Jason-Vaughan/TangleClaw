@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it } = require('node:test');
+const { describe, it, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const authGate = require('../lib/auth-gate');
 const caddy = require('../lib/caddy');
@@ -16,6 +16,11 @@ const throwingSessions = () => ({
 
 describe('lib/auth-gate — the front-door verdict (#1418, ADR 0015/0016)', () => {
   describe('isGateActive', () => {
+    // The armed memory is process-wide, so each case starts from a clean one —
+    // otherwise an earlier case that armed the gate changes what a later case's
+    // error path answers, and the suite would depend on its own ordering.
+    beforeEach(() => authGate._resetArmedMemory());
+
     it('is active with authEnabled and an enabled account', () => {
       assert.equal(
         authGate.isGateActive(() => ({ authEnabled: true }), sessions(true)),
@@ -59,20 +64,20 @@ describe('lib/auth-gate — the front-door verdict (#1418, ADR 0015/0016)', () =
       }
     });
 
-    it('does not enforce when the config cannot be read', () => {
-      // Fails toward NOT enforcing, and that is the safe direction here
-      // precisely because this door is additive: declining to enforce leaves
-      // the install as protected as it was before this module existed, while
-      // failing the other way hands a corrupt config file the power to lock the
-      // operator out of the tool they would fix it with.
+    it('does not enforce when config reads back as null', () => {
+      // A SUCCESSFUL read of nothing — not an error — so this answer is
+      // unconditional and does not depend on whether the gate was ever armed.
+      assert.equal(authGate.isGateActive(() => null, sessions(true)), false);
+      authGate.isGateActive(() => ({ authEnabled: true }), sessions(true)); // arm it
       assert.equal(authGate.isGateActive(() => null, sessions(true)), false);
     });
 
-    it('does not enforce, and does not throw, when the store is unreadable', () => {
+    it('does not enforce, and does not throw, when the store is unreadable WHILE DORMANT', () => {
+      // The armed case answers the other way — see the fail-closed block below.
       assert.equal(authGate.isGateActive(() => ({ authEnabled: true }), throwingSessions()), false);
     });
 
-    it('does not enforce when reading config THROWS', () => {
+    it('does not enforce when reading config THROWS while dormant', () => {
       assert.equal(
         authGate.isGateActive(() => { throw new Error('corrupt'); }, sessions(true)),
         false
@@ -90,6 +95,80 @@ describe('lib/auth-gate — the front-door verdict (#1418, ADR 0015/0016)', () =
       assert.equal(configReads, 0, 'config must not be read when no account exists');
       authGate.isGateActive(loadConfig, sessions(true));
       assert.equal(configReads, 1, 'config IS read once the account question passes');
+    });
+  });
+
+  describe('isGateActive fails CLOSED once the gate has been armed', () => {
+    // Before it is armed, failing open leaves the install as protected as it was
+    // before this module existed. After it is armed, the install is RELYING on
+    // this door, so a transient read error must not silently remove it.
+    beforeEach(() => authGate._resetArmedMemory());
+
+    it('fails open on a store error while still dormant', () => {
+      assert.equal(authGate.isGateActive(() => ({ authEnabled: true }), throwingSessions()), false);
+    });
+
+    it('fails CLOSED on a store error after the gate has been live once', () => {
+      assert.equal(authGate.isGateActive(() => ({ authEnabled: true }), sessions(true)), true);
+      assert.equal(authGate.isGateActive(() => ({ authEnabled: true }), throwingSessions()), true,
+        'an armed install must not be silently un-gated by a store fault');
+    });
+
+    it('fails CLOSED on a config error after the gate has been live once', () => {
+      assert.equal(authGate.isGateActive(() => ({ authEnabled: true }), sessions(true)), true);
+      assert.equal(
+        authGate.isGateActive(() => { throw new Error('corrupt'); }, sessions(true)), true);
+    });
+
+    it('still lets authEnabled:false turn the gate off after it was armed', () => {
+      // The recovery lever must keep working — that is a successful READ of a
+      // false value, not an error, so it is not the fail-closed path.
+      assert.equal(authGate.isGateActive(() => ({ authEnabled: true }), sessions(true)), true);
+      assert.equal(authGate.isGateActive(() => ({ authEnabled: false }), sessions(true)), false);
+    });
+
+    it('still goes dormant when the last account is disabled after arming', () => {
+      assert.equal(authGate.isGateActive(() => ({ authEnabled: true }), sessions(true)), true);
+      assert.equal(authGate.isGateActive(() => ({ authEnabled: true }), sessions(false)), false);
+    });
+  });
+
+  describe('isMachineClient — the fleet carve-out', () => {
+    // `bin/tc`, PortHub, shared-docs and the switchboard all reach TangleClaw on
+    // the loopback listener with no cookie and no way to be handed one. Without
+    // this, creating an account refuses every one of them.
+    it('is true for a loopback, non-browser, cookieless request', () => {
+      assert.equal(authGate.isMachineClient({
+        loopback: true, browserShaped: false, hasSessionCookie: false
+      }), true);
+    });
+
+    it('is FALSE off loopback — the carve-out is local processes only', () => {
+      assert.equal(authGate.isMachineClient({
+        loopback: false, browserShaped: false, hasSessionCookie: false
+      }), false);
+    });
+
+    it('is FALSE for anything browser-shaped', () => {
+      // A browser cannot suppress Sec-Fetch-Site from script, so a page cannot
+      // disguise itself as the CLI.
+      assert.equal(authGate.isMachineClient({
+        loopback: true, browserShaped: true, hasSessionCookie: false
+      }), false);
+    });
+
+    it('is FALSE when a session cookie is present', () => {
+      // A signed-in browser is a person, and must stay subject to the CSRF
+      // check rather than slipping into the machine path by dropping a header.
+      assert.equal(authGate.isMachineClient({
+        loopback: true, browserShaped: false, hasSessionCookie: true
+      }), false);
+    });
+
+    it('requires every condition explicitly — a missing field is not a pass', () => {
+      assert.equal(authGate.isMachineClient({}), false);
+      assert.equal(authGate.isMachineClient({ loopback: true }), true);
+      assert.equal(authGate.isMachineClient({ loopback: 'yes' }), false);
     });
   });
 
@@ -146,7 +225,10 @@ describe('lib/auth-gate — the front-door verdict (#1418, ADR 0015/0016)', () =
   describe('evaluate', () => {
     const base = {
       method: 'GET', rawUrl: '/', pathname: '/',
-      gateActive: true, session: null, submittedCsrf: null
+      gateActive: true, session: null, submittedCsrf: null,
+      // Off unless a case asks for it: the default subject of these cases is a
+      // browser, and leaving it on would wave every one of them through.
+      machineClient: false
     };
     const ev = (over) => authGate.evaluate({ ...base, ...over });
     const SESSION = { csrfToken: 'tok', username: 'rosie' };

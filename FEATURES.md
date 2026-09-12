@@ -151,7 +151,14 @@ fails any auto-stub section older than 14 days.
   precisely because this door is additive. CSRF is evaluated AHEAD of the exemption list so
   `/api/auth/logout` is protected despite being exempt, and `/api/auth/login` is exempt because its
   authority is the password, not the cookie — without that a browser holding a live session cannot
-  submit the login form. Dashboard side: `public/api-helper.js#tcCsrfToken`/`#tcWithCsrf`, applied
+  submit the login form. **`#isMachineClient` carves the fleet out**: a loopback socket + no
+  `Sec-Fetch-Site`/`Origin` + no session cookie is `bin/tc`, PortHub, shared-docs or the
+  switchboard, none of which can hold a cookie, and all of which the gate would otherwise refuse
+  the moment an account exists. It opens nothing — those callers already reach TangleClaw only over
+  loopback — and #1420 must revisit it once Caddy no longer fronts the remote path. The session
+  cookie is stripped before proxying on both HTTP proxy paths
+  (`authSession#stripOwnCookiesFromHeaders`, applied in `proxyToTtyd` and `_openclawProxyHeaders`);
+  the two WebSocket paths are #1419's. Dashboard side: `public/api-helper.js#tcCsrfToken`/`#tcWithCsrf`, applied
   inside `api()` because that is the one choke-point every write already goes through, bodyless ones
   included. Revocation reaches live sessions — `users.disable` and `users.setPassword` destroy them,
   and `#resolve` re-checks `disabled_at` every request. The login route uses

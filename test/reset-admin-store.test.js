@@ -49,11 +49,22 @@ describe('reset-admin --store (#1418)', () => {
     for (const u of store.users.list()) {
       store.getDb().prepare('DELETE FROM users WHERE id = ?').run(u.id);
     }
+    setAuthEnabled(false);
     out = '';
     err = '';
     process.stdout.write = (s) => { out += s; return true; };
     process.stderr.write = (s) => { err += s; return true; };
   });
+
+  /**
+   * Write `authEnabled` into the config the tool reads back.
+   * @param {boolean} on
+   */
+  function setAuthEnabled(on) {
+    const cfg = store.config.load();
+    cfg.authEnabled = on;
+    store.config.save(cfg);
+  }
 
   // Two helpers, because `--password-stdin` is a real branch and the dry-run
   // cases are about what happens WITHOUT it. `run` never reads stdin; a test
@@ -113,11 +124,44 @@ describe('reset-admin --store (#1418)', () => {
       assert.equal(store.authSessions.anyLoginableUser(), true);
     });
 
-    it('says plainly that a login is now enforced', async () => {
-      // The surprising half: an operator who ran this to recover a login has,
-      // on an install with no account before, also just closed an open door.
+    it('ANSWERS whether a login is now enforced, rather than stating the condition', async () => {
+      // The gate needs authEnabled AND an account; this command supplies the
+      // account. Printing "…when authEnabled is on" left the operator holding a
+      // conditional they cannot evaluate — on the tool they are running
+      // precisely because they cannot reach the dashboard to look.
+      setAuthEnabled(true);
       await runWithPassword(PASSWORD, { user: 'rosie' });
-      assert.match(out, /enforces its own login/);
+      assert.match(out, /login gate is now LIVE/);
+      assert.doesNotMatch(out, /authEnabled is OFF/);
+    });
+
+    it('WARNS when authEnabled is off, because the account then enforces nothing', async () => {
+      // The population this mode exists for is the one most likely to be here:
+      // a direct-mode install that finished the wizard ungated under #803's
+      // ruling carries authEnabled:false, so without this the operator creates
+      // an account, reads a success message, and still has no login.
+      setAuthEnabled(false);
+      await runWithPassword(PASSWORD, { user: 'rosie' });
+      assert.match(out, /authEnabled is OFF/);
+      assert.match(out, /NO login is enforced/);
+      assert.doesNotMatch(out, /now LIVE/);
+    });
+
+    it('still reports the account was created when the status read fails', async () => {
+      // Never fatal: the account IS created, and refusing to report that
+      // because a status read failed is the worse outcome for someone locked
+      // out.
+      const realLoad = store.config.load;
+      store.config.load = () => { throw new Error('config unreadable'); };
+      try {
+        const code = await runWithPassword(PASSWORD, { user: 'rosie' });
+        assert.equal(code, 0);
+        assert.match(out, /created/);
+        assert.match(out, /could not read config to report gate status/);
+      } finally {
+        store.config.load = realLoad;
+      }
+      assert.ok(store.users.getByName('rosie'), 'the account must exist regardless');
     });
   });
 
