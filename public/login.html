@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — TangleClaw</title>
+<!--
+  Deliberately ONE self-contained document: styles and script inline, no
+  external asset, no favicon link, no font fetch.
+
+  Every path that has to answer before anyone is logged in is a hole in the
+  gate (`lib/auth-gate.js` LOGIN_SURFACE_PATHS), so a login page split into
+  page + stylesheet + script would be three holes instead of one. That is also
+  why this page does not load `api-helper.js` — it posts with a bare `fetch`
+  and needs nothing the dashboard has.
+
+  NOT registered in the service worker's precache and not referenced from
+  `sw.js`: caching a login page is how a stale one gets served to someone who
+  is already signed in.
+-->
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --fg: #1a1d21;
+    --muted: #5b6470;
+    --line: #d9dee5;
+    --accent: #2f6feb;
+    --danger: #b42318;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c;
+      --card: #1c2027;
+      --fg: #e8ebef;
+      --muted: #9aa4b2;
+      --line: #2c323b;
+      --accent: #5b8cf5;
+      --danger: #f2736a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  main {
+    width: 100%;
+    max-width: 380px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 28px 26px 24px;
+  }
+  h1 { margin: 0 0 4px; font-size: 19px; letter-spacing: -0.01em; }
+  p.sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
+  label { display: block; font-size: 13px; font-weight: 600; margin: 14px 0 5px; }
+  input {
+    width: 100%;
+    padding: 9px 11px;
+    font: inherit;
+    color: var(--fg);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button {
+    width: 100%;
+    margin-top: 20px;
+    padding: 10px;
+    font: inherit;
+    font-weight: 600;
+    color: #fff;
+    background: var(--accent);
+    border: 0;
+    border-radius: 7px;
+    cursor: pointer;
+  }
+  button[disabled] { opacity: 0.6; cursor: default; }
+  /*
+    Always in the DOM, emptied rather than hidden, and marked as a live region:
+    a screen reader must hear "that password is wrong" without the element
+    appearing and disappearing under it. Accessibility From the Start.
+  */
+  #error {
+    margin-top: 14px;
+    min-height: 1.4em;
+    color: var(--danger);
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>TangleClaw</h1>
+  <p class="sub">Sign in to continue.</p>
+  <form id="f" autocomplete="on">
+    <label for="u">Username</label>
+    <input id="u" name="username" autocomplete="username" autocapitalize="none"
+           autocorrect="off" spellcheck="false" required>
+    <label for="p">Password</label>
+    <input id="p" name="password" type="password" autocomplete="current-password" required>
+    <button id="go" type="submit">Sign in</button>
+    <p id="error" role="alert" aria-live="polite"></p>
+  </form>
+</main>
+<script>
+'use strict';
+(function () {
+  var form = document.getElementById('f');
+  var err = document.getElementById('error');
+  var go = document.getElementById('go');
+
+  form.addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    err.textContent = '';
+    go.disabled = true;
+    go.textContent = 'Signing in…';
+    try {
+      var res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: document.getElementById('u').value,
+          password: document.getElementById('p').value
+        })
+      });
+      var data = await res.json().catch(function () { return {}; });
+      if (res.ok) {
+        // Replace rather than assign, so Back does not land on this page with
+        // a live session and a filled-in password field.
+        //
+        // The destination is always the dashboard root, never a `?next=`
+        // parameter taken off the URL. An open redirect on a login page is a
+        // credential-phishing primitive, and nothing here needs deep-linking
+        // badly enough to introduce one.
+        window.location.replace('/');
+        return;
+      }
+      err.textContent = data.error || ('Sign in failed (HTTP ' + res.status + ')');
+    } catch (e) {
+      err.textContent = 'Could not reach the server.';
+    }
+    go.disabled = false;
+    go.textContent = 'Sign in';
+  });
+
+  document.getElementById('u').focus();
+})();
+</script>
+</body>
+</html>

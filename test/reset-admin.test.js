@@ -11,8 +11,21 @@ const { parseArgs, resolveTargetUser, reloadCaddyArgs, writeValidatedCaddyfile }
 describe('reset-admin', () => {
   describe('parseArgs', () => {
     it('defaults: no user, no flags', () => {
-      assert.deepEqual(parseArgs([]),
-        { user: null, dryRun: false, passwordStdin: false, help: false, createGate: false });
+      // Asserted as the WHOLE object, not field by field, so a new flag has to
+      // be added here deliberately — which is what caught `--store` arriving
+      // (#1418) rather than letting it default in unnoticed.
+      assert.deepEqual(parseArgs([]), {
+        user: null, dryRun: false, passwordStdin: false, help: false,
+        createGate: false, store: false
+      });
+    });
+
+    it('parses --store, which is off unless asked for', () => {
+      // Opt-in for the same reason --create-gate is: --store writes to a
+      // DIFFERENT door (TangleClaw's own users table, not Caddy's basic_auth),
+      // and a plain password reset must never land on the wrong one.
+      assert.equal(parseArgs(['--store']).store, true);
+      assert.equal(parseArgs(['--user', 'jason']).store, false);
     });
 
     it('parses --create-gate, which is off unless asked for', () => {
@@ -189,7 +202,15 @@ describe('the preview cannot promise what the run refuses', () => {
   // The end delimiter is searched FROM the start offset, not from zero:
   // `let password;` also occurs earlier inside acquirePassword, and anchoring on
   // the first hit sliced backwards to an empty string that satisfied nothing.
-  const dryRunStart = code.indexOf('if (dryRun) {');
+  // Anchored PAST the Caddyfile resolution, because `--store` added a second
+  // `if (dryRun) {` to this file (#1418) and it sits earlier. That preview is a
+  // different door with a different predicate, so a slice that landed on it
+  // would report this contract as broken while it was intact — and, worse,
+  // would have reported it as intact had the two branches been the other way
+  // round. `runStoreMode`'s own preview is covered by behavioural tests, not by
+  // a second source probe.
+  const caddyPathAt = code.indexOf('const caddyfilePath = caddy.getCaddyfilePath();');
+  const dryRunStart = code.indexOf('if (dryRun) {', caddyPathAt);
   const dryRun = code.slice(dryRunStart, code.indexOf('let password;', dryRunStart));
   // The would-do description is anchored on its own `  would: ` prefix rather
   // than on the sentence that follows it. That sentence is now written from the
@@ -200,9 +221,16 @@ describe('the preview cannot promise what the run refuses', () => {
 
   it('the slice actually covers the dry-run branch', () => {
     // Guards the two assertions below from silently measuring an empty string.
+    assert.ok(caddyPathAt > -1, 'the Caddyfile resolution must be findable');
     assert.ok(dryRunStart > -1, 'the dry-run branch must be findable');
     assert.ok(dryRun.length > 200, `slice looks wrong (${dryRun.length} chars)`);
     assert.match(dryRun, /\[dry-run\]/);
+    // The slice is the CADDY preview and not the --store one. Without this the
+    // anchor could drift back onto the wrong branch and every assertion below
+    // would go on passing or failing for the wrong file.
+    assert.doesNotMatch(dryRun, /TangleClaw account/,
+      'the slice must be the Caddy preview, not the --store one');
+    assert.match(dryRun, /caddyfile:/);
   });
 
   it('consults canCreateGate inside the dry-run branch', () => {

@@ -39,12 +39,85 @@
    *   `api.lastError`.
    * @returns {Function & { lastError: string|null, lastErrorCode: string|null }}
    */
+  // Methods that change server state — the set TangleClaw's own gate applies
+  // its CSRF check to (`lib/auth-gate.js` UNSAFE_METHODS).
+  const TC_UNSAFE_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
+
+  /**
+   * Read the CSRF token the server set alongside the session cookie (#1418).
+   *
+   * Deliberately a readable cookie rather than a value fetched from
+   * `/api/auth/me`: no page needs a bootstrap request before it can write, and
+   * a page that never calls that route still works. It is not a credential —
+   * the server compares the submitted header against the token stored on the
+   * SESSION ROW, so planting this cookie gains an attacker nothing.
+   *
+   * @returns {string|null} The token, or null when there is no session.
+   */
+  function tcCsrfToken() {
+    // This file is loaded outside a browser — the suite lifts it into a sandbox
+    // (`test/_api-helper-globals.js`) and the IIFE below falls back to
+    // `globalThis` when there is no `window`. `document` is therefore not a
+    // given, and reading it unguarded turned every `api()` call in those
+    // contexts into a ReferenceError reported as the server's error message.
+    // No document means no cookie jar, which means no token — the same answer
+    // as a browser with no session, and the right one.
+    if (typeof document === 'undefined' || !document) return null;
+    var pairs = String(document.cookie || '').split(';');
+    for (var i = 0; i < pairs.length; i++) {
+      var eq = pairs[i].indexOf('=');
+      if (eq < 1) continue;
+      if (pairs[i].slice(0, eq).trim() !== 'tc_csrf') continue;
+      try {
+        return decodeURIComponent(pairs[i].slice(eq + 1).trim()) || null;
+      } catch (e) {
+        return pairs[i].slice(eq + 1).trim() || null;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Add `X-CSRF-Token` to a state-changing request's options.
+   *
+   * Applied inside `api()` rather than at each call site, because `api()` is
+   * the one choke-point every dashboard fetch already goes through — including
+   * the genuinely bodyless writes (`medusa/toggle`, `medusa/read`,
+   * `wrap-sentinel/ack`) that do not go via `apiMutate`. A per-call-site header
+   * would be a rule to remember on every future write, and the one that got
+   * forgotten would fail only on a gated install.
+   *
+   * A GET is left untouched, and so is any request made before a session
+   * exists: the header is simply absent, which is what an ungated install and
+   * the login POST both need.
+   *
+   * @param {object} [fetchOpts] - The caller's fetch options
+   * @returns {object|undefined} Options with the header added where it applies
+   */
+  function tcWithCsrf(fetchOpts) {
+    var method = ((fetchOpts && fetchOpts.method) || 'GET').toUpperCase();
+    if (TC_UNSAFE_METHODS.indexOf(method) === -1) return fetchOpts;
+    var token = tcCsrfToken();
+    if (!token) return fetchOpts;
+    var out = {};
+    for (var k in fetchOpts) {
+      if (Object.prototype.hasOwnProperty.call(fetchOpts, k)) out[k] = fetchOpts[k];
+    }
+    out.headers = {};
+    var given = (fetchOpts && fetchOpts.headers) || {};
+    for (var h in given) {
+      if (Object.prototype.hasOwnProperty.call(given, h)) out.headers[h] = given[h];
+    }
+    out.headers['X-CSRF-Token'] = token;
+    return out;
+  }
+
   function tcCreateApi(opts) {
     const setConnected = (opts && opts.setConnected) || function () {};
 
     async function api(url, fetchOpts) {
       try {
-        const res = await fetch(url, fetchOpts);
+        const res = await fetch(url, tcWithCsrf(fetchOpts));
         // On a service-worker-controlled page a dead server never rejects this
         // fetch (#709): sw.js resolves it as either a cache-served stand-in
         // (marked with this header) or a synthetic 503. Both mean THE SERVER
@@ -1155,6 +1228,11 @@
 
   global.tcCreateApi = tcCreateApi;
   global.tcCreateApiMutate = tcCreateApiMutate;
+  // Published so the suite can exercise the CSRF plumbing directly, and so a
+  // page making a write outside `api()` has one implementation to reach for
+  // rather than re-deriving the cookie read.
+  global.tcCsrfToken = tcCsrfToken;
+  global.tcWithCsrf = tcWithCsrf;
   global.tcCreateRestartFlow = tcCreateRestartFlow;
   global.tcCopyToClipboard = tcCopyToClipboard;
   global.tcCopyOutcome = tcCopyOutcome;

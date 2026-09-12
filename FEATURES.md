@@ -113,6 +113,52 @@ fails any auto-stub section older than 14 days.
   refuses to advance `schema_version` over a `users` table whose username is not UNIQUE. Decisions:
   `docs/adr/0016-tier-1-auth-build-decisions.md`. Tests: `test/password.test.js`,
   `test/store-users.test.js`.
+- **Auth tier 1: sessions, the HTTP gate, and CSRF** (ADR 0015/0016, #1418) — TangleClaw's own
+  front door, enforced by TangleClaw on every ingress mode rather than only where a Caddyfile
+  exists. `lib/auth-session.js` is pure mechanism (`#mintToken`, `#hashToken`, `#parseCookies`,
+  `#tokenFromRequest`, `#isSecureRequest`, `#serializeCookie`, `#clearCookie`,
+  `#serializeCsrfCookie`, `#clearCsrfCookie`, `#csrfTokenMatches`) — no database handle, no request,
+  so the cookie rules are testable without a server. `lib/auth-gate.js` is the verdict
+  (`#isGateActive`, `#isLoginSurfacePath`, `#evaluate`), returning a decision object rather than
+  touching a response. `store.authSessions` is the persistence (`#create`, `#resolve`, `#destroy`,
+  `#destroyForUser`, `#sweepExpired`, `#anyLoginableUser`) over the `auth_sessions` table at schema
+  v37 — named `auth_sessions` because `sessions` is already the tmux/AI table the product is about.
+  Routes: `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`; page:
+  `public/login.html`, one self-contained document because every path that must answer before
+  anyone is logged in is a hole in the gate. Break-glass:
+  `node scripts/reset-admin.js --store --user <name>` (`scripts/reset-admin.js#runStoreMode`),
+  which creates *or* resets because the operator running it is already locked out and should not
+  have to find out which first.
+
+  **`token_hash` is a SHA-256; the token itself is never stored**, so a backup or a `.dump` in an
+  issue is not a bag of live sessions. `csrf_token` IS stored in the clear — it is not a credential,
+  only a value the page must echo back, and the comparison is against the SESSION ROW rather than
+  against the readable `tc_csrf` cookie, which is what closes plain double-submit's
+  cookie-planting residual. **The gate activates only when `authEnabled` is true AND an enabled
+  account exists**; gating on `authEnabled` alone would lock every caddy-mode install out on first
+  boot, because they all carry `authEnabled: true` with a bcrypt hash and zero user rows. Dormant
+  is not open — Caddy's gate is untouched by this chunk. Chunk 04 (#1420) must REPLACE that
+  predicate with ADR 0016's `credential-migration-required` state, not extend it.
+
+  **Placement is load-bearing in both directions**: the gate sits after the three request-shape
+  guards (#860/#864) — a cross-site write is refused on what it is, before any question of who is
+  asking — and ahead of every route, proxy and static branch, so `/terminal/*` (a writable shell)
+  and `/openclaw/*` (the operator's gateway token) are gated by the perimeter rather than by a
+  per-branch check that a sibling could miss. `#isGateActive` takes a config THUNK so the cheap
+  account query runs first: an install with no accounts pays no file I/O per request, and the config
+  read is deliberately un-memoised so `authEnabled: false` takes effect on the next request for an
+  operator recovering from a bad gate. Both of its reads fail toward NOT enforcing, which is safe
+  precisely because this door is additive. CSRF is evaluated AHEAD of the exemption list so
+  `/api/auth/logout` is protected despite being exempt, and `/api/auth/login` is exempt because its
+  authority is the password, not the cookie — without that a browser holding a live session cannot
+  submit the login form. Dashboard side: `public/api-helper.js#tcCsrfToken`/`#tcWithCsrf`, applied
+  inside `api()` because that is the one choke-point every write already goes through, bodyless ones
+  included. Revocation reaches live sessions — `users.disable` and `users.setPassword` destroy them,
+  and `#resolve` re-checks `disabled_at` every request. The login route uses
+  `password.verifyPasswordAsync` via `store.users.verifyAsync`, keeping the equal-cost comparison
+  that denies the username timing oracle. Tests: `test/auth-session.test.js`,
+  `test/auth-gate.test.js`, `test/store-auth-sessions.test.js`, `test/api-auth-session.test.js`,
+  `test/reset-admin-store.test.js`, `test/frontend-csrf.test.js`.
 - **Auth: Caddy ingress + proxy identity** (AUTH-1/AUTH-3) — `lib/caddy.js` generates the integrity-stamped Caddyfile for the auth-gated ingress; `lib/auth-identity.js` resolves proxy-authenticated request identity (`X-Auth-User` → `currentUser` on `/api/server-info`). Drift surfacing: `docs/auth-status-surfacing.md` (AUTH-2K9D).
 - **Caddyfile security divergence check** (#1394) — the only mechanism that can see a hand-edit, because the exposure that motivated it was a hand-added block `lib/caddy.js` has no code path to emit. `lib/caddy-drift.js#checkCaddyDrift` adapts BOTH the live file and the baseline the generator would write through `caddy adapt` and diffs four **properties**, never documents: every proxying site has a gate (`checkGates`), the HTTPS listener negotiates what the baseline pins (`checkHttpsProtocols`), no site dials an upstream TC does not generate (`checkUpstreams`), and no site fronts a port whose PortHub lease declares a narrower `reach` (`checkLeaseReach`, scoped to the upstreams the third already found unknown — TC's own port is fronted by design). Property-diffing is load-bearing, not cosmetic: the live file's gate is one route holding `[authentication, reverse_proxy]` while the generator emits an `authentication` route behind a `not path_regexp` matcher followed by a separate unmatched `reverse_proxy`, so a walk asking "was this proxy gated in its own chain" calls the GENERATOR'S OWN OUTPUT ungated. Sites are keyed by listen address + host (`summarizeConfig`) because `caddy adapt` numbers servers itself and the hand-added block moved the HTTPS listener from `srv1` to `srv2`. Every property answers `holds`/`diverged`/`not-measured` and no path yields a clean verdict from an unrun check. P1 covers gate PRESENCE only, and asks its question per SITE — `(listen address, host)`, with a site's routes merged — so an ungated path-scoped block beside a real gate on the same host and port ALSO reads as holding, as does a hand-widened bypass matcher. Both limits are #1403; both are stated rather than approximated, because comparing matcher sets is Caddy's matcher algebra and an approximation fired on three correctly gated sites. The merge is what lets TC's own bypass routes pass, so it is the design. P4 treats every Caddy-served site as exactly `tailnet`, so only a `loopback` lease can ever trip it. Reports, never blocks. Baseline comes from CONFIG, not from the live file, since a baseline recovered from the file would agree with a deleted gate. `caddy adapt` embeds the bcrypt hash verbatim, so raw JSON is never logged and every reason/finding passes `redactHashes` (#821). Surfaced once at boot in caddy mode only, deferred past `listen` with `setImmediate` (it spawns `caddy adapt` twice) and carried on `/api/server-info` as `caddyDriftNotice` via `serverInfo.setCaddyDriftNotice`, beside `bindNotice`/`ttydNotice`. The notice is derived from the PROPERTIES, never from the divergence-only `findings` list, and carries `unmeasured[]` beside `findings[]` — deriving it from that list made an all-holds result and a result with an unmeasurable property indistinguishable, so an unrun property reached the operator as silence while the boot log called the file clean (reachable via an ungated config or an unreadable PortHub). Null now means exactly one thing: the check ran and every property held. Rendered as a BANNER by `public/landing.js#renderCaddyDriftBanner`, not a dash-bar chip: that chip truncates at 42ch behind a `title` tooltip and the operator reads this on a phone, where the findings — the actual deliverable — would be unreachable. Findings quote the live file, so each is escaped. A check that could not run renders too (`severity: 'unknown'`), because "did not look" and "looked and found nothing" are different facts. Design: `docs/caddy-drift-check.md`. Tests: `test/caddy-drift.test.js`, `test/caddy-drift-surfacing.test.js`.
 - **PortHub lease reach** (#1394) — `loopback` | `tailnet` | `lan` on a port lease (`store.LEASE_REACHES` owns the vocabulary for the CHECK constraint, the validator and the HTTP error alike), declaring how far a service is MEANT to be reachable so the divergence check can tell a deliberate exposure from an accidental one. Defaults to `loopback` and backfills to it — the weakest claim, because a lease that never said otherwise is not permission to expose the port — with replace semantics on renewal so a stale value over-reports rather than hides. Schema v34→v35; the ALTER is conditional because `_createTables` precedes migrations and creates a missing table already carrying the column. `lib/store.js`, `lib/porthub.js#registerPort`, `POST /api/ports/lease`. Tests: `test/store-portleases.test.js`, `test/api-ports.test.js`.
