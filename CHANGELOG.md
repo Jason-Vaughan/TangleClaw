@@ -63,7 +63,11 @@ All notable changes to TangleClaw are documented in this file.
   `docs/caddy-drift-check.md`. Tests: `test/caddy-drift.test.js` — the property layer runs
   against committed real `caddy adapt` output so CI, which has no `caddy`, still covers the
   logic; the integration layer skips honestly and re-derives every fixture so a Caddy release
-  cannot leave the snapshot describing a Caddy nobody runs.
+  cannot leave the snapshot describing a Caddy nobody runs. Those two skips are declared in
+  `test/skip-ledger.json`, which `scripts/test-skip-audit.js` enforces on every CI run — they were
+  missed on the first push and reddened CI, because this machine has `caddy` installed and the skips
+  never fired locally. Worth recording as the guard that caught it enforces the same property the
+  feature ships: an unrun check must not be indistinguishable from a passing one.
 - **ADR 0014 now says which reading of its live-serving category governs (#1373).** The ADR
   supported two, a few paragraphs apart and pointing opposite ways: its Decision item says the
   Coordinator "rejects on four categories" and the Communication table carries a dedicated
