@@ -100,6 +100,32 @@ adapt JSON is never logged, every failure reason and every finding passes `caddy
 the baseline is adapted through a `0600` file inside a `0700` directory removed in a `finally`,
 rather than a predictable path under the system temp root (#821, #870).
 
+## Surface
+
+Measured **once, at boot**, in caddy ingress mode only (direct mode is not behind a Caddyfile
+TangleClaw owns), and carried on `GET /api/server-info` as `caddyDriftNotice` —
+`serverInfo.setCaddyDriftNotice`, the same shape as `bindNotice` and `ttydNotice`. Deferred past
+`listen` with `setImmediate`: it spawns `caddy adapt` twice, and delaying the socket on a subprocess
+pair to answer a question nobody is waiting on is the wrong trade. Re-running it per request would
+spawn two processes on the route the dashboard polls continuously.
+
+The dashboard renders a **banner** (`public/landing.js#renderCaddyDriftBanner`), not a dash-bar chip.
+The chip style truncates at `42ch` and puts the remainder in a `title` attribute; the operator reads
+this on a phone, where there is no hover, and the findings *are* the deliverable — a summary they
+cannot expand tells them something is wrong and refuses to say what. Findings quote the live
+Caddyfile, which is operator-authored text arriving at `innerHTML`, so every one is escaped.
+
+Amber, like the base banner: a hand-edit is usually deliberate, and the stale-server banner stays
+the one that reads as urgent when both surface together. State-driven, no dismiss control and no
+timer (#98/#268) — the measurement is taken at boot, so it clears when the operator fixes the file
+and restarts.
+
+A check that could **not** run still renders, with `severity: 'unknown'`. On an install where a
+Caddyfile is expected, "TangleClaw did not look" and "TangleClaw looked and found nothing" are
+different facts; showing nothing for both is the collapse the `not-measured` verdict exists to
+prevent. A fault in the check itself is caught, logged, and surfaced the same way rather than left
+to imply a clean file.
+
 ## What this does not replace
 
 `scanAccessLog` and `extractTailnetHost` walk the Caddyfile for **adoption** — reconstructing

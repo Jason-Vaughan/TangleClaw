@@ -41,6 +41,15 @@ All notable changes to TangleClaw are documented in this file.
   `extractTailnetHost` are likewise **not** retired by this: they serve adoption, which unlike
   this check may not degrade to "not measured" without re-opening #846.
 
+  The operator reads it in the browser, not in a boot log — they are almost never sitting at
+  this machine. Measured once at boot in caddy mode only, deferred past `listen` because it
+  spawns `caddy adapt` twice, and carried on `/api/server-info` as `caddyDriftNotice` beside
+  `bindNotice`/`ttydNotice`. Rendered as a **banner** rather than a dash-bar chip: that chip
+  truncates at 42ch and puts the rest in a hover tooltip, and the operator reads this on a
+  phone, so the findings — which are the whole deliverable — would be unreachable. A check that
+  could not run renders too, because "TangleClaw did not look" and "TangleClaw looked and found
+  nothing" are different facts.
+
   Credentials never reach a report — `caddy adapt` embeds the bcrypt hash verbatim, so raw
   adapt JSON is never logged, every reason and finding passes `redactHashes`, and the baseline
   is adapted through a 0600 file in a 0700 directory removed in a `finally`. Design:
@@ -48,6 +57,27 @@ All notable changes to TangleClaw are documented in this file.
   against committed real `caddy adapt` output so CI, which has no `caddy`, still covers the
   logic; the integration layer skips honestly and re-derives every fixture so a Caddy release
   cannot leave the snapshot describing a Caddy nobody runs.
+- **ADR 0014 now says which reading of its live-serving category governs (#1373).** The ADR
+  supported two, a few paragraphs apart and pointing opposite ways: its Decision item says the
+  Coordinator "rejects on four categories" and the Communication table carries a dedicated
+  *Rejected — security trip* row, while the paragraph below calls the omission of `public/**`
+  from `CONTRIBUTING.md` a recorded decision *"because forbidding the UI surface would block
+  every legitimate UI contribution for no gain when reconstruction already covers it"* — which
+  only holds if such a PR proceeds.
+
+  The second reading governs, as ruled on 2026-09-08 when four external PRs arrived and two of
+  them (#1354 `public/style.css`, #1359 `server.js`) touched enumerated live-serving paths. What
+  the ADR protects is that a contributor's bytes never *execute* on the machine serving the live
+  install, and clean-room reconstruction satisfies that completely; rejecting instead would block
+  every UI contribution and add no protection. A live-surface PR is therefore **flagged, never
+  refused**. The ruling had lived only in a Medusa exchange, which nothing reads, so the next
+  session would have met the same fork against the same text.
+
+  The *Rejected — security trip* row is reconciled — reachable from three of the four categories,
+  not the live-serving one — and the asymmetry the ADR required this repo to decide before first
+  use, after two uses without deciding, is settled by being dissolved: under the governing reading
+  there is no unpublished rejection rule on that surface, because that surface does not reject.
+
 - **A PortHub lease now records how far its service is meant to reach (#1394).** New `reach`
   field on the lease — `loopback` | `tailnet` | `lan`, defaulting to `loopback` — accepted by
   `POST /api/ports/lease` and reported by `GET /api/ports`. A service that binds `127.0.0.1`

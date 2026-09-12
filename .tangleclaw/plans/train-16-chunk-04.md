@@ -150,6 +150,8 @@ reasonably assume it catches a widened bypass. Filed as #1403.
       table row, and state the published-boundary asymmetry decision the ADR says must be made
       before first use (it has now been used twice without it).
 
+**Tick after the Critic, not before** — the last tick disarms the Stop gates.
+
 **Done when:** all four ticked, suite green, `/prawduct:critic cumulative` clean, and the check
 run against the real `~/.tangleclaw/Caddyfile` names the `:3250` block by its missing properties.
 

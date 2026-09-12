@@ -389,6 +389,14 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
     <div id="behindOriginBanner" class="orphan-banner behind-origin-banner hidden" role="status">
       <span class="orphan-banner-text" id="behindOriginBannerText"></span>
     </div>
+    <!-- Caddyfile divergence banner (#1394). Hidden until /api/server-info
+         reports caddyDriftNotice. A banner rather than a dash-bar chip because
+         the chip truncates at 42ch behind a hover tooltip, and the operator
+         reads this on a phone where there is no hover — the findings ARE the
+         deliverable, so they have to be on screen. -->
+    <div id="caddyDriftBanner" class="orphan-banner caddy-drift-banner hidden" role="alert">
+      <span class="orphan-banner-text" id="caddyDriftBannerText"></span>
+    </div>
     <!-- Orphan hooks repair banner (#145, chunk 2). Hidden until scan reports orphans. -->
     <div id="orphanHooksBanner" class="orphan-banner hidden" role="alert">
       <span class="orphan-banner-text" id="orphanHooksBannerText"></span>

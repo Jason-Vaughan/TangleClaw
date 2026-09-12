@@ -23,6 +23,35 @@ We establish a **Dual-Key (Two-Person) Review** mechanism for all untrusted exte
 
    In **this** repository those categories resolve to: `package.json` and lockfiles; `data/hooks/`, `hooks/`, `scripts/`, `deploy/`, `.github/workflows/`; and `public/**` and `server.js` — the last because this clone *is* the live install, which is a property of this deployment and not a general rule. **A repo that mirrors these literal paths instead of re-deriving them gets a checklist that reads as authoritative while naming files it does not have.**
 
+   **The live-serving-surface category does NOT reject. Ruled 2026-09-08, recorded here 2026-09-12 (#1373).**
+   The text above supported two readings and pointed both ways. One: item 1 says the Coordinator
+   "rejects on four categories", and the Communication table below carries a dedicated *Rejected —
+   security trip* row, so a live-surface touch is a rejection. Two: the paragraph that follows calls
+   the omission of `public/**` from `CONTRIBUTING.md` a recorded decision "because forbidding the UI
+   surface would block every legitimate UI contribution for no gain **when reconstruction already
+   covers it**" — which only holds if such a PR proceeds to reconstruction.
+
+   **The second reading governs.** What this ADR protects is that we never *execute* a contributor's
+   bytes on the machine that serves the live install, and clean-room reconstruction satisfies that
+   completely. Rejecting instead would block every UI contribution while adding no protection
+   reconstruction does not already give. So a PR touching `public/**` or `server.js` clears the macro
+   filter on that ground alone and goes to the Builder like any other — it is flagged, never refused.
+   The category still earns its place in the list: it raises the care taken, and it is why the
+   reply must say plainly that this deployment serves `public/` off the working tree.
+
+   Occasioned by four external PRs on 2026-09-08, two of which (#1354 `public/style.css`, #1359
+   `server.js`) touched enumerated live-serving paths. The Builder's micro filter stopped on exactly
+   this fork; the ruling lived only in a Medusa exchange, which nothing reads, so the next session
+   would have hit the same fork against the same text.
+
+   **The asymmetry this repo was required to decide, decided.** The paragraph below obliges a repo
+   adopting this ADR to choose, before first use, between publishing its live-surface boundary and
+   keeping the asymmetry knowingly. This repo had used the ADR twice without choosing. The ruling
+   settles it by removing the question: under the governing reading there is **no unpublished
+   rejection rule** on the live-serving surface, because that surface does not produce a rejection.
+   Nothing is owed to `CONTRIBUTING.md` here, and the obligation below binds only the three
+   categories that *can* reject.
+
    **Not every rejection reason is one the contributor could have read, and the two must not be confused.** `CONTRIBUTING.md` §4 publishes the execute-on-our-machine list, so a rejection there is a rule the contributor was told. It deliberately does *not* forbid `public/**` — that omission is a recorded decision, because forbidding the UI surface would block every legitimate UI contribution for no gain when reconstruction already covers it. So a rejection on the live-serving surface rests on an **unpublished** boundary: the contributor did nothing they were warned against. Two obligations follow. The reply must not cite `CONTRIBUTING.md` as though it said so — it says plainly that this deployment serves `public/` off the working tree and that the omission is ours. And a repo adopting this ADR must decide, before its first use, whether to publish its live-surface boundary or to keep the asymmetry knowingly; what it must not do is reject on a rule it never wrote down and then point at a page that does not contain it.
 2. **The Builder (Micro Filter):** If the PR clears the Coordinator's macro audit, the Coordinator passes the PR details to the Builder via Medusa. The Builder performs a secondary independent raw-text audit, focusing on logical soundness, regressions, and subtle implementation flaws.
 3. **Execution:** Only when both sessions have passed the PR does the Builder reconstruct, on a clean branch off `main`.
@@ -64,7 +93,7 @@ therefore owes a response.
 |---|---|
 | **Passed, reconstructed** | Visible credit (commit trailer, PR body, `CHANGELOG.md`), a link to the reconstruction so they can see their logic shipped, and one line on why their bytes were not merged, pointing at `CONTRIBUTING.md`. Without the link, "we reimplemented it" reads as a brush-off. |
 | **Rejected — logic flaw or regression** | The finding itself. They can correct it and resubmit; that is a contributor worth keeping. |
-| **Rejected — security trip (macro filter)** | **Deliberately less.** That the submission falls outside the contribution policy, with a link to it — and *not* which rule fired. |
+| **Rejected — security trip (macro filter)** | **Deliberately less.** That the submission falls outside the contribution policy, with a link to it — and *not* which rule fired. Reachable from three of the four categories: the **live-serving surface does not produce this outcome** (see the ruling above) — such a PR is reconstructed, and lands in the first row. |
 
 The asymmetry in the last row is the reason this section exists rather than being left to judgment.
 The instinct on a rejection is to be maximally helpful and explain exactly what tripped, and in
@@ -76,4 +105,8 @@ is not.
 - **Positive:** Dramatically reduces the surface area for supply-chain attacks, obfuscation, or logic bombs making it into the codebase. Enforces the Swarm Protocol's division of concerns.
 - **Negative:** Adds a mandatory Medusa round-trip to the PR processing workflow, marginally increasing cycle time for external contributions.
 - **Negative:** reconstructing from the issue rather than transcribing costs real time — it is a second implementation of a solved problem, and the Builder must resist a correct answer sitting in front of them. That cost is the mechanism, not overhead on it: transcription produces a diff that looks identical and carries none of the guarantee.
+- **Positive, from the 2026-09-08 ruling:** a UI or server contribution is never turned away for
+  touching the live-serving surface. The protection was always "do not execute their bytes", and
+  reconstruction delivers it — so the category costs the contributor nothing beyond what every other
+  reconstructed PR costs them.
 - **Negative, and accepted knowingly:** a contributor whose sound patch is reconstructed rather than merged loses the commit attribution they would get in an ordinary project, keeping only the credit we write. That cost is real and falls on the person who did nothing wrong. It is accepted because the alternative is executing unreviewed code on a machine that serves the operator's live install.

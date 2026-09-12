@@ -332,6 +332,7 @@ describe('#744 the dashboard stops advertising a version it is not running', () 
       renderAuthUser: () => {},
       renderAuthStatus: () => {},
       renderBindNotice: () => {},
+      renderCaddyDriftBanner: () => {},
       renderBehindOriginBanner: () => {},
       renderStaleServerBanner: () => { dom.els.staleServerBanner.classList.remove('hidden'); },
       renderStaleUnknownBanner: () => { unknownBanners++; dom.els.staleServerBanner.classList.remove('hidden'); },
