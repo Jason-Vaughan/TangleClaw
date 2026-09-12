@@ -129,8 +129,9 @@ you are checking for here; the certificate warning is a separate question.
 
    Pick that URL deliberately. Three paths are **exempt by design** and will answer
    without a password: `/api/health` (so an uptime monitor can check liveness without
-   a credential), `/openclaw-direct/*` (the OpenClaw gateway does its own token
-   authentication) and `/manifest.json` (browsers fetch PWA manifests anonymously).
+   a credential), `/openclaw-direct/*` (the OpenClaw web page sends its own
+   `Authorization` header, which would otherwise make the browser re-prompt in a loop)
+   and `/manifest.json` (browsers fetch PWA manifests anonymously).
    Testing one of those and seeing a reply proves nothing about your gate.
 
 If you have a Tailscale or WireGuard tunnel, use the tunnel address for both checks —

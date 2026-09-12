@@ -33,7 +33,7 @@ const COMMITTED_ROOTS = new Set([
  * split into `{filePath, symbol}` (symbol null when the token has no `#`).
  * Tokens with globs/placeholders (`*`, `<`, `{`) or non-committed roots
  * are out of contract and skipped.
- * @returns {Array<{token: string, filePath: string, symbol: string|null}>}
+ * @returns {Array<{token: string, filePath: string, symbol: string|null, rootLevel?: boolean}>}
  */
 function citedPaths() {
   const out = [];
@@ -43,7 +43,22 @@ function citedPaths() {
     const token = m[1];
     if (/[*<{]/.test(token)) continue;
     const [filePath, symbol = null] = token.split('#');
-    if (!filePath.includes('/')) continue;
+    if (!filePath.includes('/')) {
+      // A root-level file (`server.js#handleUpgrade`) is a citation too, and the
+      // busiest one: skipping every slash-less token let a symbol removed from
+      // `server.js` stay cited here. Only a `file.ext#symbol` token counts — a
+      // bare backticked word (`authEnabled`, `config.json`) is prose, not a
+      // path claim, and would drown the contract in false positives.
+      //
+      // Held to the SYMBOL contract only, not the existence one: a slash-less
+      // name cannot say which directory it means (`project.json#…` is a managed
+      // project's file, `file.js#symbolName` is the convention's own example),
+      // so a root-level name that is not at the repo root is skipped rather
+      // than reported. The known cost: a DELETED root file is not caught here.
+      if (!symbol || !/^[\w.-]+\.(?:js|json|md|sh|html|css)$/.test(filePath)) continue;
+      out.push({ token, filePath, symbol, rootLevel: true });
+      continue;
+    }
     if (!COMMITTED_ROOTS.has(filePath.split('/')[0])) continue;
     out.push({ token, filePath, symbol });
   }
@@ -58,6 +73,7 @@ describe('FEATURES.md citation contract (DOC-3K7Q)', () => {
 
   it('every cited committed-repo path exists on disk', () => {
     const missing = citedPaths()
+      .filter(({ rootLevel }) => !rootLevel)
       .filter(({ filePath }) => !fs.existsSync(path.join(ROOT, filePath)))
       .map(({ token }) => token);
     assert.deepEqual(missing, [], `dangling paths: ${missing.join(', ')}`);

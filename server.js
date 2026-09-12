@@ -1812,6 +1812,26 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
 // (scrypt, a session cookie), `/api/auth/credential` is Caddy's (bcrypt, a
 // Caddyfile).
 
+// How many password verifications `POST /api/auth/login` runs at once.
+//
+// The route is gate-exempt, CSRF-exempt and open to anyone who can reach the
+// listener, and async scrypt moved a burst of attempts off the event loop onto
+// libuv's threadpool rather than removing it. That pool is 4 slots by default
+// and it is SHARED with fs and dns, so a handful of concurrent unauthenticated
+// POSTs would occupy every slot the process has — the same "stalls every other
+// request" failure ADR 0016 gives for choosing async scrypt, relocated. Two
+// leaves half the pool to the rest of the server.
+//
+// A cap on concurrency, deliberately not a lockout: there is no per-account or
+// per-address state, so nobody can lock the operator out by guessing at their
+// username. The trade-off, stated rather than hidden: during an anonymous flood
+// the operator's own attempt usually meets the 503 too, and retries. Chosen over
+// the alternative on purpose — an uncapped flood stalls the whole server, the
+// dashboard included, while a capped one costs only sign-ins, and only for as
+// long as the flood lasts.
+const MAX_CONCURRENT_LOGIN_VERIFICATIONS = 2;
+let _loginVerificationsInFlight = 0;
+
 // POST /api/auth/login — exchange a username and password for a session.
 //
 // Exempt from the gate (`lib/auth-gate.js` LOGIN_SURFACE_PATHS) because it is
@@ -1845,7 +1865,26 @@ route('POST', '/api/auth/login', async (req, res, _params, body) => {
   // trying to reach. The equal-cost comparison inside `verifyAsync` is kept —
   // that cost is the anti-timing-oracle fix, so the answer to blocking is to
   // stop blocking, never to stop paying.
-  const user = await store.users.verifyAsync(username, password);
+  //
+  // Counted only once a verification is actually about to run, so a malformed
+  // request never holds a slot, and released in `finally`, so a verification
+  // that THROWS cannot leak one — a leaked slot is a login that stays refused
+  // until the process restarts.
+  if (_loginVerificationsInFlight >= MAX_CONCURRENT_LOGIN_VERIFICATIONS) {
+    log.warn('Refused a login: too many password verifications already in flight', {
+      inFlight: _loginVerificationsInFlight
+    });
+    res.setHeader('Retry-After', '1');
+    return errorResponse(res, 503,
+      'The server is busy checking other sign-ins. Try again in a moment.', 'LOGIN_BUSY');
+  }
+  let user;
+  _loginVerificationsInFlight += 1;
+  try {
+    user = await store.users.verifyAsync(username, password);
+  } finally {
+    _loginVerificationsInFlight -= 1;
+  }
   if (!user) return deny();
 
   // Session fixation: the session the request ARRIVED with is destroyed and a
@@ -6452,7 +6491,8 @@ function _openclawProxyHeaders(headers, localPort, gatewayToken) {
  * the incoming `Authorization` header (the operator's caddy Basic credential in
  * gated mode) is always dropped, and a `Bearer <gatewayToken>` is injected when a
  * token is configured. `Host` is pinned to the upstream and `Origin`/`Referer` are
- * rewritten to the local origin. Terminates with the blank line ending the block.
+ * rewritten to the local origin. TangleClaw's own session and CSRF cookies are
+ * stripped, as on HTTP (ADR 0016 OQ1). Terminates with the blank line ending the block.
  * @param {object} headers - Incoming request headers (`req.headers`, lowercased keys).
  * @param {string} targetUrl - Rewritten request target for the upstream.
  * @param {number} localPort - Upstream tunnel port on 127.0.0.1.
@@ -6462,7 +6502,11 @@ function _openclawProxyHeaders(headers, localPort, gatewayToken) {
 function _openclawWsRequestLines(headers, targetUrl, localPort, gatewayToken) {
   const localOrigin = `http://127.0.0.1:${localPort}`;
   const lines = [`GET ${targetUrl} HTTP/1.1`, `Host: 127.0.0.1:${localPort}`];
-  for (const [key, value] of Object.entries(headers)) {
+  // TangleClaw's session and CSRF cookies are ours, and the gateway — possibly a
+  // remote host at the far end of a tunnel — has no use for them (ADR 0016 OQ1).
+  // Same rule as `_openclawProxyHeaders` on HTTP; the gateway's own cookies
+  // survive.
+  for (const [key, value] of Object.entries(authSession.stripOwnCookiesFromHeaders(headers))) {
     const k = key.toLowerCase();
     if (k === 'host') continue;
     if (k === 'authorization') continue; // stripped; gateway token injected below (#470)
@@ -6559,12 +6603,6 @@ function proxyToTtyd(req, res, pathname) {
 }
 
 /**
- * Handle WebSocket upgrade for terminal proxy.
- * @param {http.IncomingMessage} req
- * @param {import('net').Socket} socket
- * @param {Buffer} head
- */
-/**
  * Does a WebSocket handshake's `Origin` name the same host we are serving?
  *
  * Compared by HOST, not by full origin string: the dashboard is reached over
@@ -6596,26 +6634,127 @@ function _isSameOriginUpgrade(origin, host) {
   return originHost === targetHost;
 }
 
-function handleUpgrade(req, socket, head) {
-  const urlObj = reqUrl(req);
+// What a refused upgrade is answered with. A status line rather than a bare
+// socket close, so a client that is merely signed out — a dashboard left open
+// past its session — can be told apart from one refused for being cross-site,
+// which the two guards ahead of the session check still close silently.
+// Nothing about the request or the session is echoed.
+const UPGRADE_UNAUTHORIZED_RESPONSE =
+  'HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n';
 
-  // ⚠ THE SESSION GATE IS NOT HERE YET. #1418 gates HTTP; #1419 gates this.
-  //
-  // Stated at the top of the function rather than left to be discovered,
-  // because the asymmetry is genuinely surprising: with TangleClaw's own gate
-  // armed, `GET /terminal/x` is refused with a login page while a WebSocket
-  // upgrade to the same prefix still establishes. `/terminal/*` proxies to a
-  // `--writable` ttyd, so that socket is a shell.
-  //
-  // It is not a regression — in caddy mode Caddy's `basic_auth` is still in
-  // front of this path, and in direct mode the upgrade was already reachable
-  // before #1418 existed — but it IS a gap between what an operator will
-  // reasonably believe after arming the gate and what is true. #1419 closes it,
-  // in the same chunk that strips the session cookie before proxying (ADR 0016
-  // OQ1), because both are consequences of the cookie decision and splitting
-  // them would ship the cookie to ttyd with nothing reading it.
-  //
-  // The cross-site guard has to be here too, and this is the sharper half.
+/**
+ * Whether a request carries the markers only a browser sends.
+ *
+ * One definition for every guard that asks. A browser cannot suppress
+ * `Sec-Fetch-Site` from script and always sends `Origin` on a WebSocket
+ * handshake, so a page cannot disguise itself as the CLI; `curl`, scripts and
+ * the agent-facing API send neither. The three request-shape guards in
+ * `handleRequest` and the machine-client carve-out both read this, so a change
+ * to what counts as a browser cannot reach one and miss the other.
+ *
+ * @param {http.IncomingMessage} req
+ * @returns {boolean}
+ */
+function _looksLikeBrowser(req) {
+  return req.headers['sec-fetch-site'] !== undefined || req.headers.origin !== undefined;
+}
+
+/**
+ * Who is asking, as TangleClaw's session gate needs to know it — resolved ONCE,
+ * here, for both transports.
+ *
+ * `handleRequest`'s gate and `handleUpgrade`'s gate both call this, and neither
+ * assembles these inputs itself. That is the point of it existing: the verdicts
+ * differ (`authGate.evaluate` for HTTP, `authGate.evaluateUpgrade` for a
+ * handshake), but the facts they judge — the session token, the session it
+ * resolves to, whether the request is browser-shaped, whether it is the fleet —
+ * must be the same facts, or an edit to one gate's inputs that misses the
+ * other's lets a signed-out request through the transport nobody re-read.
+ *
+ * A session lookup that THROWS is treated as no session. That is the fail-closed
+ * direction, and it is safe to choose here because this is only called once the
+ * gate is known to be armed, where no session means a challenge or a refusal
+ * that still leaves `/login` reachable — the operator is not locked out by it.
+ * Guarded because `resolve` runs two prepared statements and can delete a row, so
+ * a store fault (SQLITE_BUSY against a concurrent `reset-admin.js`, a disk error,
+ * a closed handle) would otherwise throw out of a request handler that has no
+ * catch above it, and the response would never be written.
+ *
+ * @param {http.IncomingMessage} req
+ * @param {import('net').Socket|undefined} socket - The connection; `req.socket` when absent
+ * @param {string} pathname - For the log line only
+ * @returns {{ sessionToken: string|null, session: object|null, machineClient: boolean }}
+ */
+function _gateIdentity(req, socket, pathname) {
+  const sessionToken = authSession.tokenFromRequest(req);
+  let session = null;
+  if (sessionToken) {
+    try {
+      session = store.authSessions.resolve(sessionToken);
+    } catch (err) {
+      log.error('Session lookup failed — treating the request as unauthenticated', {
+        method: req.method, path: pathname, error: err.message
+      });
+      session = null;
+    }
+  }
+  const browserShaped = _looksLikeBrowser(req);
+  const conn = socket || req.socket;
+  const machineClient = authGate.isMachineClient({
+    // `isLoopbackRemote` is `lib/admin-credential.js`'s, reused because
+    // `POST /api/auth/credential` already authorises on exactly this predicate.
+    loopback: adminCredential.isLoopbackRemote(conn && conn.remoteAddress),
+    browserShaped,
+    hasSessionCookie: sessionToken !== null
+  });
+  return { sessionToken, session, machineClient };
+}
+
+/**
+ * Percent-decode one path segment of an upgrade target, or `null` when it is
+ * not valid percent-encoding (`%E0`). `decodeURIComponent` throws on that, and
+ * in the 'upgrade' listener a throw strands the socket; the callers treat
+ * `null` as "no such connection", which closes it.
+ *
+ * @param {string} segment - Raw path segment
+ * @returns {string|null}
+ */
+function _decodeUpgradeSegment(segment) {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Handle a WebSocket upgrade: the terminal proxy and both OpenClaw proxies.
+ *
+ * Three checks run before any branch dispatches, in this order — cross-site
+ * Origin, served Host (#864), then TangleClaw's session gate (#1419) — so every
+ * prefix is covered by position rather than by a check repeated per branch.
+ *
+ * @param {http.IncomingMessage} req
+ * @param {import('net').Socket} socket
+ * @param {Buffer} head
+ */
+function handleUpgrade(req, socket, head) {
+  // Everything below runs inside the server's 'upgrade' listener, where a throw
+  // is caught by no request handler: it reaches the process-level logger and
+  // leaves the client's socket open. `reqUrl` throws on a Host header `new URL`
+  // cannot parse (`Host: a b`), and it runs before any guard — so a caller with
+  // no session at all controls whether it throws. Such a request names no
+  // target this server could answer, so it is closed.
+  let urlObj;
+  try {
+    urlObj = reqUrl(req);
+  } catch (err) {
+    log.warn('Refused a WebSocket upgrade with an unparseable target', { error: err.message });
+    socket.destroy();
+    return;
+  }
+
+  // The cross-site guard comes first, and it is the sharper half of this path.
   //
   // WebSockets are NOT subject to the same-origin policy: any page can open one
   // to any host, no preflight, no CORS. So the reasoning that protects the HTTP
@@ -6628,9 +6767,9 @@ function handleUpgrade(req, socket, head) {
   //
   // Browsers always send `Origin` on a WebSocket handshake and it cannot be
   // forged from script, so this is the check that exists for exactly this case.
-  // Non-browser clients (the OpenClaw CLI, scripts) omit it and are allowed —
-  // they are not a cross-site vector — which keeps every existing consumer
-  // working, the same contract as the HTTP guard.
+  // Non-browser clients (the OpenClaw CLI, scripts) omit it and pass THIS guard —
+  // they are not a cross-site vector — the same contract as the HTTP guard.
+  // Passing it is not being let in: the session gate below still decides.
   const origin = req.headers.origin;
   if (origin && !_isSameOriginUpgrade(origin, req.headers.host)) {
     log.warn('Refused cross-origin WebSocket upgrade', { path: urlObj.pathname, origin });
@@ -6664,12 +6803,52 @@ function handleUpgrade(req, socket, head) {
     }
   }
 
+  // ── TangleClaw's own front door, on the upgrade path (#1419) ──
+  //
+  // AFTER the two guards above, which refuse a handshake for what it IS before
+  // any question of who is asking — and which must keep refusing a cross-site or
+  // rebound handshake even when the browser holds a valid session, because the
+  // cookie rides that attack too.
+  //
+  // BEFORE every branch, because an upgrade must be authenticated before the
+  // socket is established, not after (ADR 0015): past this line a branch opens a
+  // connection to ttyd — a `--writable` shell — or to an OpenClaw gateway with
+  // the operator's token injected. HTTP's gate cannot stand in for this one;
+  // `handleRequest` never sees an upgrade.
+  //
+  // `/openclaw-direct/*` is gated here too, unlike at Caddy — see
+  // `lib/auth-gate.js#isGateBypassPath` for why its exemption does not hold at
+  // TangleClaw's gate.
+  const upgradeGateActive = authGate.isGateActive(_gateConfig, store.authSessions);
+  const upgradeIdentity = upgradeGateActive ? _gateIdentity(req, socket, urlObj.pathname) : null;
+  const upgradeVerdict = authGate.evaluateUpgrade({
+    gateActive: upgradeGateActive,
+    session: upgradeIdentity && upgradeIdentity.session,
+    machineClient: upgradeIdentity !== null && upgradeIdentity.machineClient
+  });
+  if (upgradeVerdict.action !== 'allow') {
+    // `hadCookie` separates a dashboard left open past its session (a cookie
+    // that no longer resolves) from a caller that never signed in, which is the
+    // first question an operator with a dead terminal asks. The value is never
+    // logged.
+    log.info('Unauthenticated WebSocket upgrade refused', {
+      path: urlObj.pathname, hadCookie: upgradeIdentity !== null && upgradeIdentity.sessionToken !== null
+    });
+    // A raw socket with no 'error' listener turns a client that resets while
+    // this is being written into an uncaught exception in the 'upgrade'
+    // listener. Attached before the write, and the answer to an error is the
+    // destroy the refusal was going to do anyway.
+    socket.on('error', () => socket.destroy());
+    socket.end(UPGRADE_UNAUTHORIZED_RESPONSE, () => socket.destroy());
+    return;
+  }
+
   // OpenClaw direct WebSocket proxy — /openclaw-direct/:connId/*
   if (urlObj.pathname.startsWith('/openclaw-direct/')) {
     const parts = urlObj.pathname.split('/'); // ['', 'openclaw-direct', connId, ...rest]
     if (parts.length >= 3 && parts[2]) {
-      const connId = decodeURIComponent(parts[2]);
-      const resolved = resolveOpenclawPortDirect(connId);
+      const connId = _decodeUpgradeSegment(parts[2]);
+      const resolved = connId === null ? null : resolveOpenclawPortDirect(connId);
       if (!resolved) {
         socket.destroy();
         return;
@@ -6706,8 +6885,8 @@ function handleUpgrade(req, socket, head) {
   if (urlObj.pathname.startsWith('/openclaw/')) {
     const parts = urlObj.pathname.split('/'); // ['', 'openclaw', project, ...rest]
     if (parts.length >= 3 && parts[2]) {
-      const ocProject = decodeURIComponent(parts[2]);
-      const resolved = resolveOpenclawPort(ocProject);
+      const ocProject = _decodeUpgradeSegment(parts[2]);
+      const resolved = ocProject === null ? null : resolveOpenclawPort(ocProject);
       if (!resolved) {
         socket.destroy();
         return;
@@ -6745,7 +6924,21 @@ function handleUpgrade(req, socket, head) {
     return;
   }
 
-  const config = store.config.load();
+  // Guarded, because this runs inside the server's 'upgrade' listener: a throw
+  // here is not caught by any request handler, reaches the process-level
+  // `uncaughtException` logger, and leaves the client's socket open with
+  // nothing on the other end. A config that cannot be read has no ttyd target
+  // to name, so the only honest answer is to close the socket.
+  let config;
+  try {
+    config = store.config.load();
+  } catch (err) {
+    log.error('Could not read config for a terminal upgrade — closing the socket', {
+      error: err.message
+    });
+    socket.destroy();
+    return;
+  }
   const target = caddy.ttydConnectTarget(config);
   const targetPath = urlObj.pathname.replace(/^\/terminal/, '') || '/';
   const targetUrl = targetPath + (urlObj.search || '');
@@ -6754,11 +6947,13 @@ function handleUpgrade(req, socket, head) {
   // caddy mode → Unix socket; direct mode → TCP host:port. net.connect accepts
   // a socket path (string) or (port, host).
   const onProxyConnect = () => {
-    // Build the upgrade request to forward to ttyd
+    // Build the upgrade request to forward to ttyd. TangleClaw's own cookies are
+    // stripped first (ADR 0016 OQ1), the same rule `proxyToTtyd` applies on
+    // HTTP: ttyd has no use for them, and this socket is a shell.
     const reqHeaders = [];
     reqHeaders.push(`GET ${targetUrl} HTTP/1.1`);
     reqHeaders.push(`Host: ${target.hostHeader}`);
-    for (const [key, value] of Object.entries(req.headers)) {
+    for (const [key, value] of Object.entries(authSession.stripOwnCookiesFromHeaders(req.headers))) {
       if (key.toLowerCase() === 'host') continue;
       reqHeaders.push(`${key}: ${value}`);
     }
@@ -6917,8 +7112,7 @@ async function handleRequest(req, res) {
   // a proxy rewrite). This costs the guard nothing — a rebound page IS a
   // browser, and a browser cannot suppress `Sec-Fetch-Site` from script, so the
   // attack always carries the marker that brings it back into scope.
-  const looksLikeBrowser = req.headers['sec-fetch-site'] !== undefined
-    || req.headers.origin !== undefined;
+  const looksLikeBrowser = _looksLikeBrowser(req);
   if (CSRF_UNSAFE_METHODS.has(method) && looksLikeBrowser) {
     // #860 — a browser-shaped write that carries a BODY must declare JSON.
     //
@@ -7022,31 +7216,10 @@ async function handleRequest(req, res) {
   let tcSession = null;
   const gateActive = authGate.isGateActive(_gateConfig, store.authSessions);
   if (gateActive) {
-    const sessionToken = authSession.tokenFromRequest(req);
-    if (sessionToken) {
-      // Guarded for the reason the module header states and this line used to
-      // ignore: `resolve` runs two prepared statements and can delete a row, so
-      // a store fault (SQLITE_BUSY against a concurrent `reset-admin.js` on the
-      // same file, a disk error, a closed handle) threw straight out of
-      // `handleRequest`. That is passed directly to `http.createServer` and the
-      // route try/catch is further down inside the `/api/` branch, so the throw
-      // became a rejected promise the process-level handler only LOGS — the
-      // response was never written and the browser hung to its own timeout.
-      //
-      // An unreadable session is treated as NO session, which challenges. That
-      // is the fail-closed direction, and it is safe to choose here in a way it
-      // is not in `isGateActive`: the gate is already known to be armed, and a
-      // challenge still leaves `/login` and the login route reachable, so the
-      // operator is not locked out by it.
-      try {
-        tcSession = store.authSessions.resolve(sessionToken);
-      } catch (err) {
-        log.error('Session lookup failed — treating the request as unauthenticated', {
-          method, path: pathname, error: err.message
-        });
-        tcSession = null;
-      }
-    }
+    // Resolved by the helper `handleUpgrade`'s gate also calls, so the two
+    // transports judge the same facts — see `_gateIdentity`.
+    const identity = _gateIdentity(req, req.socket, pathname);
+    tcSession = identity.session;
     const verdict = authGate.evaluate({
       method,
       rawUrl: req.url,
@@ -7054,15 +7227,8 @@ async function handleRequest(req, res) {
       gateActive,
       session: tcSession,
       submittedCsrf: authSession.csrfTokenFromRequest(req),
-      // The fleet carve-out (#1418 Critic R-1). `isLoopbackRemote` is
-      // `lib/admin-credential.js`'s, reused because `POST /api/auth/credential`
-      // already authorises on exactly this predicate; `looksLikeBrowser` is the
-      // same discriminator the three guards above use.
-      machineClient: authGate.isMachineClient({
-        loopback: adminCredential.isLoopbackRemote(req.socket && req.socket.remoteAddress),
-        browserShaped: looksLikeBrowser,
-        hasSessionCookie: sessionToken !== null
-      })
+      // The fleet carve-out (#1418 Critic R-1) — see `authGate.isMachineClient`.
+      machineClient: identity.machineClient
     });
     if (verdict.action === 'refuse-csrf') {
       log.warn('Refused session-authenticated write with no valid CSRF token', {
