@@ -68,7 +68,81 @@ All notable changes to TangleClaw are documented in this file.
   #846 next: the 2026-08-03 decision lives only in `INGRESS.md`; the issue carries no comment
   recording it, so it reads from GitHub as an unfixed bug.
 
+### Security
+- **A failed `git push` could write a credential into the log file (#870).** `lib/wrap-steps/commit.js`
+  built its auto-PR error text straight from `git`/`gh` stderr and passed it to `log.warn` unredacted,
+  while the `activity_log` row thirty-five lines below redacted the identical string. `git push`
+  echoes the remote it could not reach, and a remote can be `https://<token>@host` — the form
+  GitHub's own PAT-over-HTTPS instructions produce — so a push failure on a tokenised remote put
+  that token into `~/.tangleclaw/logs/tangleclaw.log` in the clear, across three rotated files.
+  This is what `observability-strategy.md` § Direction already forbids ("no log line at any level
+  may contain an API key/token") and what its #821 amendment names the remedy for.
+
+  **Redaction moved to the producers**, so no sink has to remember and a sink added later inherits
+  the guarantee. The pass that lived beside one recorder is now `lib/remote-output.js`, applied
+  wherever a string is built from the stderr of a remote-touching command: the `git push`,
+  `gh pr create` and `gh pr merge` failure sites in `wrap-steps/commit.js`, `_ensurePushed` and
+  `enqueueAutoMerge` in `wrap-steps/pr-merge.js`, `listOpenPrs` in `wrap-steps/pr-check.js`, and —
+  found on review — `wrap-pr-status.js`, `ci-status.js`, `update-checker.js`, `update-applier.js`
+  and `behind-origin.js`. The first pass enumerated the `lib/wrap-steps/` directory while stating
+  the guarantee as repo-wide; five callers outside it were still unredacted, two of them logging.
+  The helper now sits in `lib/` because its scope is a property, not a directory.
+
+  The `activity_log` row keeps its own pass — the Direction permits a reporter to add one, and that
+  row is served over `GET /api/activity`, so it should not depend on every present and future
+  producer having remembered. The log line gained one for the same reason.
+
+  Where the redacted text is the WHOLE explanation rather than part of one, the command and its
+  exit code are kept beside it — a reason reading only `[redacted — …]` tells the operator nothing
+  about what failed, and an exit code is not a credential.
+
+  Local-only `git` (`status`, `add`, `checkout`, `commit`, `rev-parse`) is deliberately untouched:
+  it reaches no network and carries no credential.
+
+  **This fix is prospective, and an already-written log is not cleaned up.** A log file that
+  already captured a credential still holds it, across all three rotated generations. If any push,
+  fetch or `gh` call has failed against a remote carrying an embedded token, rotate that token and
+  clear `~/.tangleclaw/logs/tangleclaw.log*`.
+
+  #870 was filed as a chore on the finding that `pr-merge.js`'s text has no durable sink — true of
+  the file it examined, and the reason the leak in the sibling went unnoticed. Each of the six
+  producers is pinned by a guard that reddens when that site alone is reverted; the `gh pr merge`
+  site had no such guard until a mutation check found the gap.
+
 ### Fixed
+- **A hook command broke on `$`, a backtick, a quote or a backslash in the install path (#1062).**
+  `_buildBaselineHooks` wrapped each emitted command in double quotes at the call site. Double
+  quotes stop word-splitting on a space but not expansion — `$HOME` and `` `id` `` in a directory
+  name were substituted by the shell before the hook ran, and a literal `"` or `\` broke the
+  quoting outright. All six characters are legal in a macOS directory name, and the operator
+  chooses where TangleClaw is installed.
+
+  **Quoting moved into `_resolveHookPlaceholders`**, which now substitutes the install path as a
+  single-quoted shell word — the only quoting that is total, since nothing expands or escapes
+  inside it. The emission sites carry a bare `{{TANGLECLAW_DIR}}` and no quotes of their own, so a
+  third hook added later is safe without its author knowing the rule. That is the fix #759 needed:
+  there, a new hook was added WITH quoting and a comment explaining the hazard, while the site
+  fifteen lines above it stayed unquoted.
+
+  Installs configured before this keep working — hook ownership matches on the script's
+  `data/hooks/` path and has never looked at quoting, so an existing double-quoted entry is still
+  recognised and replaced rather than preserved beside the new one. A test now pins that.
+
+  `scripts/install-primary-guard.js#guardCommand` — the only other generator of a
+  `hooks[].command` — carried the same double-quoted defect and was outside the sweep, so the
+  quoter moved to `lib/shell-word.js` and both generators share it. That file also reads the
+  command back to report what is wired, and the two are halves of one invariant: the reader hunted
+  for double quotes, so it called a freshly-wired install STALE. It parses with `firstWord`, the
+  quoter's own inverse, and a test round-trips the pair.
+
+  The guards for this were **consolidated, and made capable of failing**. Several asserted the
+  command matched `/^"/` — true of `"$HOME/x"`, which still expands — so they passed against the
+  defect. They are replaced by `test/engines-hook-shell-safety.test.js`, which runs every command
+  the producer emits through a real `/bin/sh` from an install directory containing all six
+  characters and asserts what the script actually received. The #759 space guard was substituting
+  the placeholder with a hand-written `String.replace` rather than calling the resolver, so it had
+  stopped testing the code under it; it now goes through the real one.
+
 - **Four of the eight wrap-summary sections were never captured, on every wrap and every engine
   (#1379, #1389).** `Delta`, `Open threads`, `Decisions` and `Pointers` rendered `_⚠ not captured_`
   in every `.tangleclaw/continuity/wraps/<sid>.md` ever written. The renderer, the honest-flag and

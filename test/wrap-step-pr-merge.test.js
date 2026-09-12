@@ -242,3 +242,62 @@ describe('wrap-step pr-merge — handler', () => {
     assert.match(result.output.reason, /requires context\.project\.path/);
   });
 });
+
+describe('wrap-step pr-merge — remote error text carries no credential', () => {
+  // Three producers in two files turn a failed remote command's stderr into
+  // operator-facing text. `git push` echoes the remote it could not reach, and
+  // a remote can be `https://<token>@host` — so each of them is a place a
+  // credential escapes unless the string is redacted where it is built.
+  //
+  // Tokens are assembled at runtime, never written contiguously: a
+  // secret-shaped literal in a tracked file is blocked by GitHub push
+  // protection (#377), and recovering from that costs a history rewrite.
+  const TOKEN = `gh${'o'}_notarealtokenvalue`;
+  const REMOTE_ERR = `fatal: unable to access 'https://${TOKEN}@github.com/x/y.git/': 403`;
+
+  // A freshly-required copy, because the describes above leave their own stubs
+  // installed on the shared `_internal` table — snapshotting it here would
+  // capture those, and this block needs the real `enqueueAutoMerge`.
+  let mod;
+  beforeEach(() => {
+    delete require.cache[require.resolve('../lib/wrap-steps/pr-merge')];
+    mod = require('../lib/wrap-steps/pr-merge');
+  });
+
+  it('_ensurePushed strips it from the reason a failed push produces', async () => {
+    mod._internal.exec = async (file, args) => {
+      const cmd = `${file} ${args.join(' ')}`;
+      if (cmd === 'git rev-parse --abbrev-ref HEAD') return { exitCode: 0, stdout: 'wrap/x\n', stderr: '' };
+      if (cmd.startsWith('git rev-list')) return { exitCode: 0, stdout: '2\n', stderr: '' };
+      if (cmd.startsWith('git push')) return { exitCode: 128, stdout: '', stderr: REMOTE_ERR };
+      return { exitCode: 0, stdout: '', stderr: '' };
+    };
+
+    const r = await mod._ensurePushed('/tmp');
+
+    assert.equal(r.ok, false, 'refusing on a failed push is unchanged — only the text is');
+    assert.ok(!r.reason.includes(TOKEN), 'the token must not reach the wrap result');
+    assert.match(r.reason, /\/\/\*\*\*@github\.com/, 'the host survives; the credential does not');
+    assert.match(r.reason, /403/, 'the diagnostic value survives redaction');
+  });
+
+  it('enqueueAutoMerge strips it from the reason a failed `gh pr merge` produces', async () => {
+    mod._internal.execShell = async () => ({ exitCode: 1, stdout: '', stderr: REMOTE_ERR });
+
+    const r = await mod._internal.enqueueAutoMerge('/tmp', 42);
+
+    assert.equal(r.ok, false);
+    assert.ok(!r.reason.includes(TOKEN), 'the second producer in this file needs the same guard');
+    assert.match(r.reason, /\/\/\*\*\*@github\.com/);
+  });
+
+  it('a stopped command is still reported as stopped, not redacted into silence', async () => {
+    // The redaction must not swallow the "we killed it" wording, which is a
+    // different verdict from a refusal and sends the operator somewhere else.
+    mod._internal.execShell = async () => ({ exitCode: 1, stdout: '', stderr: '', timedOut: true, error: 'timed out' });
+
+    const r = await mod._internal.enqueueAutoMerge('/tmp', 42);
+
+    assert.match(r.reason, /stopped before it answered/);
+  });
+});

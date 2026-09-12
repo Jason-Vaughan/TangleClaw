@@ -36,6 +36,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { shellWord, firstWord } = require('../lib/shell-word');
 const { execFileSync } = require('node:child_process');
 
 const { locateCheckouts, OVERRIDE_FILE } = require('../lib/checkout-layout');
@@ -65,7 +66,12 @@ const GUARD_REL = path.join('scripts', 'guard-primary-checkout.js');
  * @returns {string} Shell command for a `hooks[].command` field.
  */
 function guardCommand(primary) {
-  return `node "${path.join(primary, GUARD_REL)}" || true`;
+  // Single-quoted, not double: the primary checkout is an operator-chosen path,
+  // and under double quotes a `$` or a backtick in it is expanded by the shell
+  // before `node` ever sees it, while a literal `"` or `\\` breaks the quoting
+  // outright. The sibling generator of a `hooks[].command` shipped the
+  // double-quoted form for the same reason (#1062).
+  return `node ${shellWord(path.join(primary, GUARD_REL))} || true`;
 }
 
 /**
@@ -229,8 +235,18 @@ function wiredCommand(settings) {
  * @returns {string|null} The path it invokes, or null when it cannot be read.
  */
 function pinnedScript(command) {
-  const m = /"([^"]+)"|(\S*guard-primary-checkout\.js)/.exec(command);
-  return m ? (m[1] || m[2]) : null;
+  // Read by STRUCTURE, not by re-parsing shell quoting. `guardCommand` emits
+  // exactly `node <word> || true`, so the word is whatever sits between them,
+  // and `firstWord` — the quoter's own inverse — turns it back into a path.
+  // A regex that hunts for quotes has to know every quoting style the generator
+  // has ever used, and silently mis-reads the one it was not taught: that is
+  // how a correctly-wired install came back STALE when the quoting changed.
+  // `node` as a WORD, so an `/usr/bin/env node …` or `exec node …` prefix — a
+  // shape an operator may have hand-written — is still read.
+  const m = /(?:^|\s)node\s+([\s\S]*)$/.exec(command || '');
+  if (!m) return null;
+  const resolved = firstWord(m[1]);
+  return resolved.includes(path.basename(GUARD_REL)) ? resolved : null;
 }
 
 /**

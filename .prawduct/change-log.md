@@ -34,6 +34,62 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-11 — #870, #1062: two invariants get one owner each, and the sweep was the defect
+
+<!-- prawduct: type=fix | scope=train-16-chunk-03 -->
+
+Train 16 Chunk 03. Both cards were filed as chores about duplicated logic. One of them was a live
+credential leak, and the fix for both was wrong in the same way twice before it was right.
+
+**#870 was not a chore.** `wrap-steps/commit.js` handed raw `git`/`gh` stderr to `log.warn` while
+the `activity_log` row thirty-five lines below redacted the identical string. `log.warn` writes to
+`~/.tangleclaw/logs/tangleclaw.log`, rotated across three files, so a `git push` that failed against
+a `https://<token>@host` remote wrote that token there in plaintext — against
+`observability-strategy.md` § Direction and its #821 amendment. The card says "there is no leak
+today"; the Critic that filed it looked for a durable sink in `pr-merge.js` and correctly found
+none. The conclusion was right about the file it read.
+
+Redaction moved to the producers — `lib/remote-output.js`, called where the string is BUILT, so
+every sink inherits it and a sink added later inherits it too. The `activity_log` row and the log
+line keep their own second pass, which the Direction permits a reporter to have and that row wants:
+it is served over `GET /api/activity`.
+
+**#1062's quoting moved into `_resolveHookPlaceholders`**, which substitutes the install path as a
+single-quoted shell word via the new `lib/shell-word.js`. Double quotes stop word-splitting and
+nothing else — `$HOME` and a backtick in a directory name were expanded before the hook ran. The
+emission sites now carry no quotes at all, which is what actually moves the invariant: a third hook
+is safe without its author knowing the rule.
+
+**The real finding is that a family was enumerated by the wrong axis five times on one branch.** The
+`gh pr merge` producer had no guard because the push and create cases never reach it. The sweep
+enumerated the `lib/wrap-steps/` DIRECTORY while the docstring claimed repo-wide, leaving five
+callers unredacted and two of them logging — found independently by all three Critic reviewers.
+Fixing that, `behind-origin` turned out to build three reasons where the review named one. C2's
+`scripts/install-primary-guard.js` carried the identical shell defect, missed for living outside
+`lib/`. And that file's test fixture manifest is a hand-enumerated SET, so a new require makes every
+case fail with empty output rather than a named missing module.
+
+The operational form, worth more than either fix: **when a docstring says "wherever X", grep for X —
+not for the directory the first instance happened to live in.** The docstring is the spec; if the
+sweep is narrower than the sentence, one of the two is wrong.
+
+**Two couplings surfaced that no single-sided test could see.** Fixing the second hook-command
+generator broke its READER — the same file parses the wired command back with a regex that hunted
+for double quotes, so `--check` called a freshly-wired install STALE. Generator and reader are two
+halves of one invariant. Writing the inverse then exposed a third: `shellWord` emits `'` as `'\''`,
+so the reader had to understand a backslash escape outside quotes or it was not an inverse, and a
+path with an apostrophe lost the apostrophe.
+
+**Eleven existing assertions passed against the #1062 defect**, matching on the command starting
+with a double quote — true of a double-quoted string carrying a variable reference, which still
+expands. Same class as #749's `endsWith`, a different assertion shape. The #759 guard had stopped
+testing its subject entirely: it resolved the placeholder with a hand-written `String.replace`
+rather than calling the resolver. Both are replaced by assertions that run a real `/bin/sh` and
+check what the script RECEIVED.
+
+The fix is prospective. Older log files on any install may still hold a credential; #870 carries
+rotate-or-clear guidance.
+
 ## 2026-09-10 — #1379: the four wrap judgment sections are wanted, not required
 
 <!-- prawduct: type=fix | scope=wrap-section-capture -->

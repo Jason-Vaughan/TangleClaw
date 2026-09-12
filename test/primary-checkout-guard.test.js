@@ -36,12 +36,21 @@ const REPO_ROOT = path.join(__dirname, '..');
 // a hook at one path and test a script at another, and both halves would pass.
 const GUARD_REL = installer.GUARD_REL;
 
-/** Files the guard and its installer need at runtime, copied into each fixture repo. */
+/**
+ * Files the guard and its installer need at runtime, copied into each fixture repo.
+ *
+ * Hand-enumerated, so it is a set rather than a family: adding a `require` to
+ * the installer without adding it here makes every case in this block fail with
+ * an EMPTY output rather than a named missing module, because the script dies
+ * before it prints. If that happens again, derive this list from the installer's
+ * own requires instead of extending it once more.
+ */
 const GUARD_SOURCES = [
   GUARD_REL,
   path.join('scripts', 'install-primary-guard.js'),
   path.join('lib', 'checkout-layout.js'),
-  path.join('lib', 'project-paths.js')
+  path.join('lib', 'project-paths.js'),
+  path.join('lib', 'shell-word.js')
 ];
 
 /**

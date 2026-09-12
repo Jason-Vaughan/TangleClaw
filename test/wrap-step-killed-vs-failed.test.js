@@ -594,6 +594,28 @@ describe('every operator-facing timeout branch in the swept steps (#897)', () =>
         'null widens the step from this session to every open PR — that needs a trace');
     });
 
+    it('strips a credential from the reason a failed `gh pr list` produces', async () => {
+      // `gh` reaches a remote, so its stderr is the same class of text a failed
+      // push produces — and this reason is rendered in the wrap UI. Assembled
+      // at runtime, never a contiguous literal (GitHub push protection, #377).
+      const token = `gh${'o'}_notarealtokenvalue`;
+      const saved = prCheckStep._internal.exec;
+      try {
+        prCheckStep._internal.exec = async () => refused(
+          1,
+          `failed to run git: remote 'https://${token}@github.com/x/y.git' rejected`
+        );
+        const r = await prCheckStep._internal.listOpenPrs(os.tmpdir());
+
+        assert.equal(r.ok, false, 'the verdict is unchanged — only the text is');
+        assert.ok(!r.reason.includes(token), 'the token must not reach the wrap UI');
+        assert.match(r.reason, /\/\/\*\*\*@github\.com/, 'the host survives; the credential does not');
+        assert.match(r.reason, /failed to run git/, 'the actionable hint survives redaction');
+      } finally {
+        prCheckStep._internal.exec = saved;
+      }
+    });
+
     it('does NOT log for an ordinary non-zero exit', async () => {
       // The falsifying half: if the log fired on every failure it would say
       // nothing about whether the probe answered.
