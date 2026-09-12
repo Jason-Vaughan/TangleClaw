@@ -128,7 +128,12 @@ verify, and per ADR 0009 it must not degrade to no gate meanwhile.
   guarding project deletion; extract to `lib/password.js` rather than writing a second copy —
   the same "derive it once" habit as #804 and #1399.
 
-Nothing is gated. Nothing changes for the operator. Fully revertible.
+Nothing is gated. No behaviour an operator drives changes. **One persistent effect, and it is not
+undone by reverting the code:** the database file is narrowed from 0644 to 0600 on every boot, and
+`schema_version` advances to 36. Both are safe to leave in place — old code evaluates
+`currentVersion < CURRENT_SCHEMA_VERSION` as false, skips migrations, and simply never reads the
+`users` table; 0600 is same-owner on every launchd agent here. So a revert is safe, but it is not a
+no-op, and this sentence previously claimed it was.
 **Issues:** #1416 (addendum), #1417 (store).
 
 ### Chunk 02 — Sessions and the HTTP gate

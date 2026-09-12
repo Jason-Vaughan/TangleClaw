@@ -194,6 +194,7 @@ stop paying.
   proxying, on both WebSocket paths.
 - #1420 gains the migration state machine above, and `lib/auth-identity.js`'s inversion.
 - #804 (chunk 05) is confirmed as post-cutover work, per ADR 0015 OQ4.
+
 **Three more things the store hands chunk 02, recorded so they are decisions and not surprises:**
 
 - **The stored format `salt:hash` carries no algorithm or cost tag.** Raising the KDF cost later
