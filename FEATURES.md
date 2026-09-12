@@ -100,8 +100,10 @@ fails any auto-stub section older than 14 days.
   `store.users` (`#create`, `#getByName`, `#setPassword`, `#verify`, `#disable`, `#enable`,
   `#list`) is the API both the coming session gate and the break-glass reset tool call.
   `#verify` answers `null` identically for wrong password, unknown user and disabled account AND
-  spends the same scrypt cost on all three — it compares against a module-level `ABSENT_USER_HASH`
-  on the no-row and disabled paths, because an early return there is a username oracle by timing
+  spends the same scrypt cost on all three — it compares against `#_absentUserHashValue()`, a
+  throwaway hash derived on FIRST USE rather than at module load (`lib/store.js` is required by the
+  server, every `tc` verb and every test process, and a module-load derivation charged all of them
+  for a value only the login path reads), on the no-row and disabled paths, because an early return there is a username oracle by timing
   even when the return value is identical. Failures log at `warn`, not `debug`: the default level is
   info, so a debug line would mean a remote operator reading the log file could not see repeated
   failures against a door that fronts a writable shell. `#list` never returns hashes. There is no

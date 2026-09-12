@@ -195,3 +195,44 @@ in THIS file was the right instinct and the wrong location, because this file ar
 chunk ships. The durable artifacts — the train plan's chunk 02 bullets, and ADR 0016 — now carry it,
 along with the password-policy owner and the async-scrypt decision, none of which were in #1418 when
 it was filed.
+
+### Rounds 2-4
+
+`rev-20260912T062414Z-8607011d` (verify-resolutions) — 0 blocking, 0 findings. It **declined to mark
+R-7 resolved**, correctly: R-7 was scoped as a CLASS ("every ADR status line naming another ADR's
+state") and I had closed it only at the site it happened to list, leaving `docs/adr/0004` calling
+ADR 0015 "proposed" four days after it was accepted. Six observations rode out of it, including two
+defects the fix commit itself introduced — an orphaned JSDoc and a warning that fired on a condition
+its own caller repaired.
+
+`rev-20260912T063143Z-fc03d99e` (cumulative) — 0 blocking, 11 warnings, 14 notes, all 25
+dispositioned. The one that mattered: **the timing guard I wrote for the oracle fix was itself the
+flaky shape this repo has a recorded rule against**, comparing elapsed medians and so scoring the CI
+runner's scheduler. Replaced with a spy that COUNTS `verifyPassword` calls. Also caught that the
+0600 chmod — added mid-build as a finding-fix — appeared in no record at all while this plan still
+claimed the chunk changed nothing on disk.
+
+`rev-20260912T064618Z-9433e18f` (verify-resolutions) — **0 blocking, 0 warnings, 0 notes.** Verified
+each claimed fix at its site rather than from the commit message, and confirmed neither test change
+was a weakening. Coverage closed.
+
+### What the round count actually says
+
+Four rounds, ~35 minutes. Round 1 found a timing channel I could not have found by re-reading my own
+code. **Every round after that was spent on defects introduced BY a finding-fix** — a flaky guard, an
+orphaned JSDoc, a self-repairing warning, records that still described the pre-fix shape, and a
+citation to a constant the fix had deleted. That is one recorded learning
+(`feedback_finding_fix_is_new_code`) hit four times in a single chunk.
+
+The habit that would collapse all of them, and the thing to carry into chunk 02: **after writing a
+finding-fix, re-read the whole region it lands in and ask which records claimed the old shape.** The
+fix is not done when the code is right.
+
+### Accepted, not fixed — so chunk 02 is not misled
+
+The lazy derivation has a one-shot asymmetry the JSDoc does not mention: the first
+unknown-or-disabled `verify` in a process pays two scrypts (derive + compare) against the
+wrong-password path's one. One sample per process, in the safe direction (unknown is *slower*),
+confounded by warm-up, and not usable as an oracle — but the JSDoc claims equal cost
+unconditionally and the counting test is blind to it by construction. Left as-is because fixing a
+comment would have bought a fifth review round; recorded here instead.
