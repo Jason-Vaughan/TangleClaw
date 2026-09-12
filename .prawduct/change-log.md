@@ -34,6 +34,107 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-12 — #1416, #1417: TangleClaw gets somewhere to put a user, and the three answers the gate needed
+
+<!-- prawduct: type=feature | scope=train-9-chunk-01 -->
+
+Train 9 Chunk 01. First car of the Tier 1 Auth build (ADR 0015), and it ships **dark** — a `users`
+table, a `store.users` API and `lib/password.js`, with no route, no gate and no login.
+
+Why the store lands before the gate: the risky chunk then starts against a schema already migrated
+and tested on a real install, and this bundle reaches the live install with almost no behavioural
+surface. "Almost" is doing work in that sentence — see the chmod below, which is the one thing here
+that touches a running install.
+
+**The problem being solved is not abstract.** `lib/store.js` says, on `basicAuthUser`/`basicAuthHash`:
+"The gate lives at Caddy, so these only take effect in caddy ingress mode." A direct-mode install
+therefore has no login at all, and the credential it stores enforces nothing. That is a live gap in
+shipped software with several outside installers, and it is what ranks this train above the Train 16
+remainder.
+
+`lib/password.js` takes ownership of scrypt hash/verify from `lib/projects.js`, where they had been
+guarding project deletion. Two copies of a hash function on the auth path is a security defect, not a
+duplication one. `lib/projects.js` re-exports them, and `test/password.test.js` asserts IDENTITY
+rather than equivalence, so a copy-paste back into `projects.js` fails the suite.
+
+**The extraction surfaced a live bug in what was being extracted.** `crypto.timingSafeEqual` throws
+on unequal buffer lengths and `Buffer.from(s,'hex')` truncates silently at the first invalid pair, so
+a corrupt, truncated or non-hex stored hash made `verifyPassword` raise a `RangeError` instead of
+answering `false` — a 500 on the delete-confirmation path today, and a crash serving a malformed row
+once it is the login path. `lib/service-token.js#_safeEqual` had already solved this once and
+documented why. Five regression cases, all red without the guard.
+
+**The finding that mattered most was the Critic's, and it is the useful lesson.** `store.users.verify`
+returns `null` identically for wrong password, unknown account and disabled account — I verified that
+and wrote it down as an anti-username-oracle guarantee in both the JSDoc and FEATURES.md. The
+no-row and disabled branches returned WITHOUT paying scrypt, so the three were distinguishable by
+**response time** even though the value matched, and chunk 02's author would have built
+`POST /api/auth/login` on a promise the code did not keep. The return value was never the whole
+oracle: when a negative security property is asserted, the channels are return value, timing, log
+volume and error text, not just the one it was designed against. Both early paths now compare against
+`_absentUserHashValue()`, a throwaway hash nothing can match.
+
+That guard was then written the wrong way and caught on a later round: it compared elapsed medians,
+which scores the CI runner's scheduler and is the shape that has reddened this repo's `main` three
+times. It now COUNTS `verifyPassword` calls by spying the `lib/password.js` seam — same mutation
+reds it, no dependence on wall clock. When the thing you mean is "work was performed", count it.
+
+**The one thing here that touches an existing install:** `tangleclaw.db` is narrowed from 0644 to
+0600 on every boot. `new DatabaseSync` created it at the process umask — world-readable on a default
+macOS account — and nothing checked it, while `config.json` beside it is checked. Survivable while
+the file held project metadata; not once it holds password hashes. If a backup agent or a second
+local account was reading that file as a non-owner, this is the change that stopped it.
+`_tightenDbPermissions` owns both the repair and the report, because `_checkPermissions` runs before
+the database is opened and a warning its own caller repairs teaches the operator to ignore it.
+
+Two shape decisions worth stating rather than implying:
+
+- **No `role` column.** ADR 0015 is explicit that the only genuine tier-1 distinction is
+  authenticated or not, and that "admin" names a tier-2 preferences concept. A role column added
+  before anything reads it is a security-shaped field that gates nothing.
+- **The v35→v36 migration's own CREATE is a no-op on every path**, because `_createTables` runs first
+  and already carries the table. The block exists for its postcondition: it reads the shape back out
+  of `sqlite_master` and refuses to advance `schema_version` over a `users` table whose `username` is
+  not UNIQUE, since a login table accepting duplicates is an authentication bug. The fixture reaches
+  that refusal by seeding a v35 DB that already has such a table — the one state where both CREATEs
+  no-op and the check is all that is still looking.
+
+ADR 0016 answers the three ADR 0015 open questions that blocked code. **Cookie, not bearer** — a
+browser cannot set a header on a WebSocket handshake, so the alternative is a credential in a query
+string or in `Sec-WebSocket-Protocol`; the upgrade path decides it, not the dashboard. **`X-Auth-User`
+becomes internal-only** and `lib/auth-identity.js` inverts from interpreting the header to refusing it
+inbound. **`authEnabled` keeps its name and changes what it names**, from "a Caddy gate is generated"
+to "a TangleClaw session is required" — the first time it will mean the same thing in direct mode as
+in caddy mode. Plus the bcrypt→scrypt migration shape: a forced set with the gate still closed, never
+a silent conversion.
+
+Writing it found a requirement chunk 03 did not have when filed: both WebSocket proxies forward
+request headers upstream, so a session cookie would reach ttyd and the OpenClaw gateway.
+`_openclawWsRequestLines` already strips `authorization` for exactly this reason (#470).
+
+Three forks chunk 02 inherits are recorded in ADR 0016 rather than left to be discovered: the
+`salt:hash` format carries no algorithm or cost tag, so raising the KDF cost later invalidates every
+hash and surfaces as `bad password`; `getByName` returns the hash while `list` was deliberately made
+hash-free, so `GET /api/auth/me` must build from the session; and `verify` is synchronous while the
+same ADR sends the login route to async `crypto.scrypt` — chunk 02 must not re-implement the
+equalisation at the route, because the equal cost IS the fix.
+
+Two scope corrections recorded rather than taken silently. `scripts/reset-admin.js` keeps its Caddy
+contract this chunk and gains its store-backed mode in chunk 02, alongside the gate it recovers — a
+recovery path for a door not installed yet cannot be verified end to end. And the deferral is written
+into the TRAIN plan, not just the chunk plan, because the chunk plan archives when this ships and
+chunk 02's builder reads the train plan and #1418.
+
+Filed #1421: the data directory still allows 0755 and SQLite writes `-journal`/`-wal` siblings at the
+process umask, which per-file chmod cannot keep up with. Broader than this chunk, deliberately not
+bundled.
+
+Four Critic rounds, 0 blocking on every one, all findings dispositioned. The honest lesson is the
+round count: every round after the first was spent on defects introduced BY a finding-fix — a flaky
+guard, an orphaned JSDoc, a warning that fired on a condition its own caller repaired, records still
+describing the pre-fix shape, and a citation to a constant the fix had deleted. After writing a
+finding-fix, re-read the whole region it lands in and ask which records claimed the old shape.
+
 ## 2026-09-12 — #1394, #1373: the Caddyfile finally gets a mechanism that can see a hand-edit
 
 <!-- prawduct: type=feature | scope=train-16-chunk-04 -->
