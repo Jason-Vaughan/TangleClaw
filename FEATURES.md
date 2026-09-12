@@ -396,3 +396,10 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 ## TODO (auto-stubbed 2026-09-11)
 
 - **TBD** — touched in this session: `test/wrap-step-killed-vs-failed.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-09-11)
+
+- **TBD** — touched in this session: `test/fixtures/caddy-adapt-generated.json`. <!-- describe -->
+- **TBD** — touched in this session: `test/fixtures/caddy-adapt-hand-edited.json`. <!-- describe -->
+- **TBD** — touched in this session: `test/fixtures/caddy-adapt-no-h1.json`. <!-- describe -->
+- **TBD** — touched in this session: `test/fixtures/caddy-adapt-ungated.json`. <!-- describe -->
