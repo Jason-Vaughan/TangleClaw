@@ -230,6 +230,30 @@ All notable changes to TangleClaw are documented in this file.
   recording it, so it reads from GitHub as an unfixed bug.
 
 ### Security
+- **The terminal's WebSocket now needs a login too (#1419).** With TangleClaw's gate armed, the
+  HTTP request to `/terminal/*` was refused while a WebSocket upgrade to the same prefix still
+  connected — and that socket is a writable shell. `server.js#handleUpgrade` now runs the session
+  gate after its cross-site and served-Host guards and before any upstream socket is opened, on all
+  three upgrade paths (`/terminal/*`, `/openclaw/*`, `/openclaw-direct/*`); a refused upgrade is
+  answered `401`. It reuses the HTTP gate's activation check, session lookup and machine-client
+  carve-out rather than restating them, so the dormant-until-an-account-exists behaviour and the
+  fleet's loopback access are unchanged. TangleClaw's own cookies are now also stripped from the
+  handshakes it forwards to ttyd and the OpenClaw gateway.
+
+  **`/openclaw-direct/*` requires a TangleClaw session once the gate is armed**, on HTTP and WS.
+  It was exempt on the reasoning that the OpenClaw gateway enforces its own token — but TangleClaw
+  injects that token on the proxy, so the check was being passed on behalf of whoever asked. The
+  exemption stays in the generated Caddyfile for now, where it exists to stop a `basic_auth` prompt
+  loop (#472); #1420 removes it with `basic_auth` itself. **Residual, until #1420:** in caddy mode an
+  off-box, non-browser request to that path still passes, because Caddy waves it through and it
+  reaches TangleClaw from loopback in the machine-client shape — bounded by the connection id, a
+  random UUID shown only to the signed-in dashboard.
+
+  **`POST /api/auth/login` admits two password checks at a time** and answers `503` with
+  `Retry-After` above that. The checks run on a thread pool the server's file and DNS work shares,
+  so an unbounded burst of anonymous login attempts could stall everything else. No lockout — no
+  per-account or per-address state is kept.
+
 - **A failed `git push` could write a credential into the log file (#870).** `lib/wrap-steps/commit.js`
   built its auto-PR error text straight from `git`/`gh` stderr and passed it to `log.warn` unredacted,
   while the `activity_log` row thirty-five lines below redacted the identical string. `git push`
