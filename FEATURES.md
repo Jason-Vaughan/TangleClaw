@@ -420,13 +420,8 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/import-banner-buttons.test.js` — #1383, asserted as a ROUND TRIP: each rendered `onclick` is decoded the way a browser would and the argument the handler actually receives is compared against what that handler expects, rather than pattern-matching the source (which passes on any encoding that merely looks different). Import and Import All are pinned separately so the obvious wrong fix — one stringify everywhere to "make them consistent" — fails at whichever site it is applied to, and it drives the real consumer (`ignoreLeaseProject` through `checkPortImports`) as well as the producer.
 - `test/settings-hint-wrapping.test.js` — #1271: settings-modal hint text clipped at the right edge instead of wrapping. Source-level CSS assertions in the house pattern for frontend regressions, scoped to the `.form-hint` block on purpose — an unanchored search for the property across a 3000-line stylesheet passes on a rule belonging to something else.
 
-## TODO (auto-stubbed 2026-09-11)
-
-- **TBD** — touched in this session: `test/wrap-step-killed-vs-failed.test.js`. <!-- describe -->
-
-## TODO (auto-stubbed 2026-09-11)
-
-- **TBD** — touched in this session: `test/fixtures/caddy-adapt-generated.json`. <!-- describe -->
-- **TBD** — touched in this session: `test/fixtures/caddy-adapt-hand-edited.json`. <!-- describe -->
-- **TBD** — touched in this session: `test/fixtures/caddy-adapt-no-h1.json`. <!-- describe -->
-- **TBD** — touched in this session: `test/fixtures/caddy-adapt-ungated.json`. <!-- describe -->
+- `test/wrap-step-killed-vs-failed.test.js` — #897: a wrap step that was KILLED must not be reported as one that FAILED. #894 fixed that distinction only in `test` and `lint`, two handlers the shipped fourteen-step pipeline never runs; this covers the four that DO run on every wrap (`open-pr-check`, `commit`, `continuity-write`, `apply-pr-resolutions`), two of which take outward actions — a `git commit` or `gh pr merge` killed at its timeout arrived as a bare `exit 1` with empty output, so the operator was told a commit "was rejected" for one that may have landed. Every timeout case runs a REAL process against a REAL kill through the production wrapper, because three hand-written models of these error shapes were wrong in #894.
+- `test/fixtures/caddy-adapt-generated.json` — #1394's must-stay-clean baseline: `caddy adapt` JSON for the Caddyfile TangleClaw's own generator emits (`:8080` redirect + `:8443` with the `h1` pin and a gate). The drift check has to report this as holding on every property, which is the assertion that catches a checker whose walk calls correct generator output ungated.
+- `test/fixtures/caddy-adapt-hand-edited.json` — #1394's divergence fixture, taken from the operator's REAL live file: the hand-added `:3250` block, ungated and dialing an upstream the generator has no code path to emit. It is also why sites are keyed by listen address and host rather than server name — adding that block renumbered the HTTPS listener from `srv1` to `srv2`.
+- `test/fixtures/caddy-adapt-no-h1.json` — the same shape as the generated baseline with `protocols: ['h1']` removed from the `:8443` listener, so `checkHttpsProtocols` is exercised against a file that differs in exactly the pinned property and nothing else.
+- `test/fixtures/caddy-adapt-ungated.json` — a minimal `:8443` site carrying the `h1` pin and NO `authentication` handler, so `checkGates` is driven by gate absence alone rather than by the larger hand-edited file, where three properties break at once.
