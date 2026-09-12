@@ -28,6 +28,7 @@ setLevel('error');
 
 const caddy = require('../lib/caddy');
 const drift = require('../lib/caddy-drift');
+const store = require('../lib/store');
 const { withoutCaddy } = require('./_caddy-stub');
 const {
   FIXTURE_CADDYFILES,
@@ -35,6 +36,7 @@ const {
   FIXTURE_HASH,
   FIXTURE_TAILNET_HOST,
   FIXTURE_HTTPS_PORT,
+  FIXTURE_SERVER_PORT,
   FIXTURE_STRAY_PORT
 } = require('./_caddy-drift-fixtures');
 
@@ -60,8 +62,8 @@ function summarize(name) {
 }
 
 /** @returns {object} A lease row shaped like `store.portLeases` returns. */
-function lease(port, reach, project = 'TangleBrain', service = 'gui') {
-  return { port, reach, project, service, host: 'localhost' };
+function lease(port, reach, project = 'TangleBrain', service = 'gui', host = 'localhost') {
+  return { port, reach, project, service, host };
 }
 
 describe('caddy-drift — reading the adapted config', () => {
@@ -260,11 +262,83 @@ describe('caddy-drift — P4, the PortHub lease cross-reference', () => {
     assert.equal(drift.checkLeaseReach([], []).status, drift.HOLDS);
   });
 
+  it('matches the lease by HOST as well as port', () => {
+    // port_leases is keyed on (host, port) and list() orders by host, so a row
+    // for another machine sorts ahead of the localhost row and a port-only
+    // match lets it answer for a dial it has nothing to do with.
+    const foreign = lease(FIXTURE_STRAY_PORT, 'lan', 'OtherBox', 'gui', 'elkaholic');
+    const local = lease(FIXTURE_STRAY_PORT, 'loopback', 'TangleBrain', 'knob-gui', 'localhost');
+    const found = drift.checkLeaseReach(unknown, [foreign, local]);
+    assert.equal(found.status, drift.DIVERGED, 'the foreign row must not shadow the local one');
+    assert.match(found.findings[0], /TangleBrain/);
+
+    // And a foreign row ALONE answers for nothing.
+    const alone = drift.checkLeaseReach(unknown, [foreign]);
+    assert.equal(alone.status, drift.NOT_MEASURED);
+    assert.match(alone.findings[0], /no PortHub lease/);
+  });
+
+  it('treats a lease with no host as local, since localhost is the column default', () => {
+    const bare = { port: FIXTURE_STRAY_PORT, reach: 'loopback', project: 'P', service: 's' };
+    assert.equal(drift.checkLeaseReach(unknown, [bare]).status, drift.DIVERGED);
+  });
+
+  it('reads the reach vocabulary from the store, not from a second copy', () => {
+    // Two copies of the list meant a widened vocabulary left P4 quietly
+    // refusing to recognise the new value while the store accepted it.
+    assert.deepEqual(drift.REACH_ORDER, store.LEASE_REACHES);
+    assert.equal(drift.REACH_ORDER, store.LEASE_REACHES, 'the same array, not an equal one');
+  });
+
   it('treats every loopback spelling as this machine', () => {
     for (const host of ['127.0.0.1', 'localhost', '::1', '[::1]']) {
       assert.ok(drift.isLoopbackHost(host), host);
     }
     assert.ok(!drift.isLoopbackHost('10.0.0.4'));
+  });
+});
+
+describe('caddy-drift — buildBaseline, which needs no caddy binary', () => {
+  // Every other path to buildBaseline is behind an adapt call, so on CI it had
+  // no coverage at all. It only builds TEXT; the binary is needed to adapt it.
+  it('generates a gated baseline from CONFIG, not from the live file', () => {
+    // The point of sourcing from config: a hand-edit that DELETED the gate must
+    // not produce a baseline that also has none, or the check blesses it.
+    const ungatedLive = 'localhost {\n\treverse_proxy 127.0.0.1:3102\n}\n';
+    const built = drift.buildBaseline(fixtureConfig(), ungatedLive);
+    assert.equal(built.ok, true, built.reason);
+    assert.match(built.content, /basic_auth/, 'the baseline is gated even though the live file is not');
+    assert.match(built.content, new RegExp(`reverse_proxy 127\\.0\\.0\\.1:${FIXTURE_SERVER_PORT}`));
+    assert.match(built.content, new RegExp(`servers :${FIXTURE_HTTPS_PORT}`));
+  });
+
+  it('emits no gate when the config declares none', () => {
+    const built = drift.buildBaseline(fixtureConfig({ authEnabled: false, caddyTailnetHost: null }), null);
+    assert.equal(built.ok, true, built.reason);
+    assert.ok(!built.content.includes('basic_auth'));
+  });
+
+  it('takes cert paths from the live file when it can read them', () => {
+    // Cosmetic to every measured property, but it is what keeps the baseline
+    // from claiming certificates this install does not have.
+    const live = FIXTURE_CADDYFILES.generated;
+    const built = drift.buildBaseline(fixtureConfig(), live);
+    assert.equal(built.ok, true, built.reason);
+    assert.match(built.content, /tls \/fixtures\/cert\.pem \/fixtures\/key\.pem/);
+  });
+
+  it('falls back to the staged certs dir when the live file is unreadable', () => {
+    const built = drift.buildBaseline(fixtureConfig(), null);
+    assert.equal(built.ok, true, built.reason);
+    assert.match(built.content, /cert\.pem/);
+  });
+
+  it('reports a generator refusal rather than throwing', () => {
+    // The generator throws on a half-set credential pair, by design — a
+    // misconfigured gate must never silently produce an UNGATED baseline.
+    const built = drift.buildBaseline(fixtureConfig({ basicAuthHash: null }), null);
+    assert.equal(built.ok, false);
+    assert.ok(typeof built.reason === 'string' && built.reason.length > 0);
   });
 });
 

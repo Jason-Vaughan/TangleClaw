@@ -137,9 +137,13 @@ reasonably assume it catches a widened bypass. Filed as #1403.
       `/api/ports/lease` passthrough, `getLeases` exposure. Tests: migration backfills existing
       rows to `loopback`; CHECK rejects an unknown value; an old lease reads `loopback`;
       round-trip through the HTTP API.
-- [ ] **04b — `lib/caddy-drift.js`.** `adaptCaddyfile(path)`, the four property extractors, and
-      `compareProperties(live, baseline)` returning per-property `{ status, detail }` where status
-      is `holds | diverged | not-measured`. Tests built from the REAL live Caddyfile shape, with
+- [ ] **04b — `lib/caddy-drift.js`.** `adaptCaddyfile(path)` / `adaptCaddyfileContent(text)`,
+      `summarizeConfig` to reduce adapt JSON to sites and listeners, and one checker per property
+      (`checkGates`, `checkHttpsProtocols`, `checkUpstreams`, `checkLeaseReach`) each returning
+      `{ status, findings }` where status is `holds | diverged | not-measured`; `checkCaddyDrift`
+      composes them. (Planned as a single `compareProperties` returning `{ status, detail }` — split
+      per property because each degrades for its own reasons, and named `findings` because the
+      operator-facing strings are plural per property.) Tests built from the REAL live Caddyfile shape, with
       the `:3250` block as the divergence fixture and TC's own generated output as the must-stay-
       clean fixture (F2). Mutation-check each property: break it, watch it go red.
 - [ ] **04c — Wiring + surfacing.** Boot-time run, `serverInfo.setCaddyDriftNotice`,

@@ -236,6 +236,9 @@ body {
   overflow-wrap: anywhere;
 }
 .caddy-drift-findings li { margin: 2px 0; }
+/* A property that could not be checked reads as a weaker statement than one
+   that diverged, without disappearing - it is still on the list. */
+.caddy-drift-unmeasured { opacity: 0.75; font-style: italic; }
 .orphan-banner-text { flex: 1; }
 /* Settings-save warnings (#1148): one warning per line, and a plist path must
    wrap rather than push the Dismiss button off a phone screen. */

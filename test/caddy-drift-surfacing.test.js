@@ -75,51 +75,135 @@ function render(notice) {
   return { hidden: state.banner._hidden, html: state.text.innerHTML, text: state.text.textContent };
 }
 
-describe('#1394 describeDrift — the wording, without a caddy binary', () => {
-  it('says nothing when the check ran and every property holds', () => {
-    assert.equal(drift.describeDrift({ measured: true, reason: null, findings: [] }), null);
+/**
+ * A `checkCaddyDrift`-shaped result. Statuses are given per property, because
+ * the notice is derived from THOSE and not from the flat findings list — the
+ * distinction this helper exists to make testable.
+ * @param {object} statuses - `{ gatedProxies, httpsProtocols, knownUpstreams, leaseReach }`.
+ * @param {object} [findingsByKey] - Per-property findings.
+ * @returns {object} A result object.
+ */
+function result(statuses, findingsByKey = {}) {
+  const properties = {};
+  for (const [key, status] of Object.entries(statuses)) {
+    properties[key] = { status, findings: findingsByKey[key] || [] };
+  }
+  const findings = Object.values(properties)
+    .filter((p) => p.status === drift.DIVERGED)
+    .flatMap((p) => p.findings);
+  return { measured: true, reason: null, properties, findings };
+}
+
+const ALL_HOLD = {
+  gatedProxies: drift.HOLDS, httpsProtocols: drift.HOLDS,
+  knownUpstreams: drift.HOLDS, leaseReach: drift.HOLDS
+};
+
+describe('#1394 describeDrift — silence is only ever earned', () => {
+  it('says nothing when the check ran and EVERY property holds', () => {
+    assert.equal(drift.describeDrift(result(ALL_HOLD)), null);
   });
 
-  it('reports a check that could not run, rather than staying silent', () => {
-    // "TangleClaw did not look" and "TangleClaw looked and found nothing" are
-    // different facts. Collapsing them is the failure the not-measured verdict
-    // exists to prevent, so it must survive all the way to the surface.
+  it('speaks when a property could not be measured, even with nothing diverged', () => {
+    // The blocking defect this pins: the notice was derived from the flat
+    // `findings` list, which carries DIVERGENCES only. An all-holds result and a
+    // result with an unmeasurable property both present an empty list, so an
+    // unrun property reached the operator as silence — and the boot log then
+    // said the file holds every security property.
+    const notice = drift.describeDrift(result(
+      { ...ALL_HOLD, leaseReach: drift.NOT_MEASURED },
+      { leaseReach: ['PortHub did not answer, so no lease could be cross-referenced'] }
+    ));
+    assert.ok(notice, 'an unmeasurable property is not a clean bill');
+    assert.equal(notice.severity, 'unknown');
+    assert.match(notice.message, /could not be checked/);
+    assert.equal(notice.unmeasured.length, 1);
+    assert.match(notice.unmeasured[0], /PortHub did not answer/);
+    assert.match(notice.unmeasured[0], /narrower reach/, 'and names WHICH property');
+  });
+
+  it('speaks for an ungated config, which leaves P1 permanently unmeasurable', () => {
+    // Reachable on an ordinary install, not a contrived one: a config with no
+    // credential generates an ungated baseline, so there is no gate property to
+    // diverge from and P1 is never measurable.
+    const notice = drift.describeDrift(result(
+      { ...ALL_HOLD, gatedProxies: drift.NOT_MEASURED },
+      { gatedProxies: ['TangleClaw is configured to generate an UNGATED ingress'] }
+    ));
+    assert.ok(notice);
+    assert.match(notice.unmeasured[0], /every proxying site has a gate/);
+  });
+
+  it('reports divergences and unmeasured properties together, never one instead of the other', () => {
+    const notice = drift.describeDrift(result(
+      { gatedProxies: drift.DIVERGED, httpsProtocols: drift.HOLDS,
+        knownUpstreams: drift.DIVERGED, leaseReach: drift.NOT_MEASURED },
+      { gatedProxies: ['no gate'], knownUpstreams: ['unknown upstream'], leaseReach: ['no lease'] }
+    ));
+    assert.equal(notice.severity, 'diverged');
+    assert.deepEqual(notice.findings, ['no gate', 'unknown upstream']);
+    assert.equal(notice.unmeasured.length, 1);
+    assert.match(notice.message, /does not hold 2 of the 4/);
+    assert.match(notice.message, /1 property could not be checked/);
+  });
+
+  it('counts PROPERTIES, not findings', () => {
+    // Two ungated blocks break one property. Counting findings called that
+    // "2 security properties".
+    const notice = drift.describeDrift(result(
+      { ...ALL_HOLD, gatedProxies: drift.DIVERGED },
+      { gatedProxies: ['site A has no gate', 'site B has no gate'] }
+    ));
+    assert.match(notice.message, /does not hold 1 of the 4 security properties/);
+    assert.equal(notice.findings.length, 2, 'both findings still reach the operator');
+  });
+
+  it('reports a check that could not run at all', () => {
     const notice = drift.describeDrift({
       measured: false, reason: 'caddy is not available: caddy not found on PATH', findings: []
     });
-    assert.ok(notice, 'an unrun check still has something to say');
     assert.equal(notice.severity, 'unknown');
     assert.match(notice.message, /could not check/);
     assert.match(notice.message, /caddy not found/);
   });
 
-  it('counts the properties and carries every finding', () => {
-    const findings = ['a proxies with no gate', 'b fronts an unknown upstream'];
-    const notice = drift.describeDrift({ measured: true, reason: null, findings });
-    assert.equal(notice.severity, 'diverged');
-    assert.match(notice.message, /2 security properties/);
-    assert.deepEqual(notice.findings, findings);
-  });
-
-  it('says property, not properties, for one', () => {
-    const notice = drift.describeDrift({ measured: true, reason: null, findings: ['just one'] });
-    assert.match(notice.message, /1 security property\b/);
-  });
-
   it('stays neutral — a hand-edit is usually deliberate', () => {
-    const notice = drift.describeDrift({ measured: true, reason: null, findings: ['x'] });
+    const notice = drift.describeDrift(result(
+      { ...ALL_HOLD, gatedProxies: drift.DIVERGED }, { gatedProxies: ['x'] }
+    ));
     assert.ok(!/mistake|wrong|should have|you broke|error/i.test(notice.message), notice.message);
   });
 
   it('copies the findings rather than aliasing the result', () => {
-    const result = { measured: true, reason: null, findings: ['one'] };
-    const notice = drift.describeDrift(result);
-    result.findings.push('two');
+    const r = result({ ...ALL_HOLD, gatedProxies: drift.DIVERGED }, { gatedProxies: ['one'] });
+    const notice = drift.describeDrift(r);
+    r.properties.gatedProxies.findings.push('two');
     assert.deepEqual(notice.findings, ['one'], 'the notice is a snapshot of what was measured');
   });
 
-  it('tolerates a null result', () => {
+  it('tolerates a null result and a result with no properties', () => {
     assert.equal(drift.describeDrift(null), null);
+    assert.equal(drift.describeDrift({ measured: true, reason: null, findings: [] }), null);
+  });
+
+  it('redacts a hash out of what it emits, without the test doing the redacting', () => {
+    // R-2: the previous version of this check called redactHashes in its own
+    // body and asserted on its own output, so deleting the redaction from the
+    // module left it green. Every string below is asserted as describeDrift
+    // RETURNED it.
+    const hash = '$2a$14$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU';
+
+    const unrun = drift.describeDrift({
+      measured: false, reason: `adapt failed on: basic_auth jason ${hash}`, findings: []
+    });
+    assert.ok(!unrun.message.includes(hash), unrun.message);
+
+    const diverged = drift.describeDrift(result(
+      { ...ALL_HOLD, gatedProxies: drift.DIVERGED, leaseReach: drift.NOT_MEASURED },
+      { gatedProxies: [`site ${hash} has no gate`], leaseReach: [`lease ${hash} unreadable`] }
+    ));
+    assert.ok(!diverged.findings.join(' ').includes(hash), 'findings leaked the hash');
+    assert.ok(!diverged.unmeasured.join(' ').includes(hash), 'unmeasured leaked the hash');
   });
 });
 
@@ -167,6 +251,36 @@ describe('#1394 the dashboard banner, executed', () => {
     }
     assert.match(out.html, /<ul class="caddy-drift-findings">/);
     assert.ok(!/title=/.test(out.html), 'the findings must not be hidden in a tooltip');
+  });
+
+  it('renders unmeasured properties beside the divergences, never instead of them', () => {
+    const out = render({
+      message: 'The live Caddyfile does not hold 1 of the 4 security properties TangleClaw would generate. 1 property could not be checked at all.',
+      severity: 'diverged',
+      findings: ['the site on :3250 proxies to 127.0.0.1:3250 with no gate'],
+      unmeasured: ['no site fronts a port leased for a narrower reach — PortHub did not answer']
+    });
+    assert.equal(out.hidden, false);
+    assert.ok(out.html.includes('with no gate'), out.html);
+    assert.ok(out.html.includes('PortHub did not answer'), 'the unmeasured property must be on screen');
+    assert.match(out.html, /caddy-drift-unmeasured/, 'and marked as not-checked rather than found');
+  });
+
+  it('renders an unmeasured-only notice, which has no findings at all', () => {
+    const out = render({
+      message: '1 property could not be checked at all.', severity: 'unknown',
+      findings: [], unmeasured: ['every proxying site has a gate — ungated config']
+    });
+    assert.equal(out.hidden, false, 'silence here is the defect this whole path exists to prevent');
+    assert.ok(out.html.includes('ungated config'), out.html);
+  });
+
+  it('escapes an unmeasured reason too, not just a finding', () => {
+    const out = render({
+      message: 'ok', severity: 'unknown', findings: [],
+      unmeasured: ['<img src=x onerror=alert(1)>']
+    });
+    assert.ok(!out.html.includes('<img'), out.html);
   });
 
   it('renders the could-not-check state too', () => {

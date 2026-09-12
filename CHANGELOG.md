@@ -28,10 +28,17 @@ All notable changes to TangleClaw are documented in this file.
   `caddy adapt` numbers servers itself, and adding the one hand-written block moved the HTTPS
   listener from `srv1` to `srv2`.
 
-  **An unrun check is never clean.** Every property answers `holds`, `diverged` or
-  `not-measured`; a missing `caddy`, an unreadable Caddyfile, an ungated config, or an absent
-  PortHub lease produces the third. Nothing blocks or rewrites — the operator hand-edits
-  deliberately and has twice affirmed that this particular block is fine.
+  **An unrun check is never clean, all the way to the screen.** Every property answers `holds`,
+  `diverged` or `not-measured`; a missing `caddy`, an unreadable Caddyfile, an ungated config, or
+  an unreadable PortHub produces the third. The banner is derived from the PROPERTIES and not from
+  the flat findings list, which carries divergences only — deriving it from that list made an
+  all-holds result and a result with an unmeasurable property indistinguishable, so an unrun
+  property reached the operator as silence while the boot log called the file clean. Reachable on
+  an ordinary install: an ungated config leaves the gate property permanently unmeasurable. Silence
+  now means one thing only — the check ran and every property held.
+
+  Nothing blocks or rewrites — the operator hand-edits deliberately and has twice affirmed that
+  this particular block is fine.
 
   Scope stated rather than implied: P1 checks gate **presence**, not gate **breadth**. A
   hand-widened bypass matcher leaves the site gated and is not reported. The first

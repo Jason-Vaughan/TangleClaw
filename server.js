@@ -7991,11 +7991,13 @@ if (require.main === module) {
       } catch (err) {
         // The check is diagnostic. A fault in it must never take the server
         // down, but it must also not leave the dashboard implying a clean file.
-        log.warn('Caddyfile drift check failed to run', { error: err.message });
+        // Redacted on the way in, not trusted to arrive clean: this path can
+        // carry a `caddy adapt` stderr string, which quotes the offending
+        // Caddyfile line — and that line can be `basic_auth <user> <hash>`.
+        const reason = caddy.redactHashes(`the check itself failed: ${err.message}`);
+        log.warn('Caddyfile drift check failed to run', { error: reason });
         serverInfo.setCaddyDriftNotice(caddyDrift.describeDrift({
-          measured: false,
-          reason: `the check itself failed: ${err.message}`,
-          findings: []
+          measured: false, reason, findings: []
         }));
       }
     });

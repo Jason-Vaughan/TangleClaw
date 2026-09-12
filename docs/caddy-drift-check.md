@@ -70,6 +70,13 @@ list carries divergences only, so a caller deciding whether to reassure the oper
 | P3 | `knownUpstreams` | No site dials an upstream the generated config does not dial | adapt unavailable |
 | P4 | `leaseReach` | No site fronts a port whose PortHub lease declares a narrower `reach` | adapt unavailable, PortHub unreachable, the port has no lease, or the lease has no readable reach |
 
+**P1 asks its question per SITE, and a site is `(listen address, host)`.** `summarizeConfig` merges
+every route under one site, so a gate anywhere in that site satisfies P1 for all of it. An ungated
+path-scoped block sitting beside a real gate on the same host and port therefore reads as `holds`.
+That aggregation is what makes the property work at all — TangleClaw's own bypass routes are exactly
+such ungated blocks — but it means P1 catches a site with NO gate, not an ungated hole inside a gated
+one. Same boundary as the breadth limit below, reached from the other direction, and in #1403's scope.
+
 **P1 is gate PRESENCE, not gate BREADTH.** A hand-widened bypass matcher leaves the site gated and is
 not reported. The first implementation did compare matchers and fired on three correctly gated sites,
 because deciding which of two matcher sets admits more requests means reimplementing Caddy's matcher
@@ -82,6 +89,12 @@ cross-referencing those would report the architecture as a fault. P4's value is 
 "unknown upstream" into a named owner and a declared intent:
 
 > port 3250 is leased reach:loopback by "TangleBrain-Builder" (knob-gui), but the live Caddyfile fronts it
+
+It also treats every Caddy-served site as **exactly** `tailnet`. Caddy binds all interfaces, so that
+floor is correct, but nothing here tells a tailnet-only listener from a LAN-exposed one. Only a
+`loopback` lease can therefore trip this property; a `tailnet` lease fronted on a listener the whole
+LAN can reach reads as holding. A narrower claim than the property name suggests, and stated so it is
+not mistaken for a stronger one.
 
 ### The baseline comes from config, not from the live file
 

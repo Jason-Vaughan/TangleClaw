@@ -606,7 +606,8 @@ function renderBindNotice(notice, elementId) {
  * are escaped: a hostname in that file is operator-controlled text arriving at
  * innerHTML.
  *
- * @param {{message: string, severity: string, findings: string[]}|null|undefined} notice
+ * @param {{message: string, severity: string, findings: string[],
+ *   unmeasured: string[]}|null|undefined} notice
  */
 function renderCaddyDriftBanner(notice) {
   const banner = document.getElementById('caddyDriftBanner');
@@ -620,9 +621,14 @@ function renderCaddyDriftBanner(notice) {
     return;
   }
   const findings = Array.isArray(notice.findings) ? notice.findings : [];
-  const list = findings.length
-    ? `<ul class="caddy-drift-findings">${findings.map((f) => `<li>${esc(f)}</li>`).join('')}</ul>`
-    : '';
+  // Properties that could NOT be checked are rendered beside the ones that
+  // diverged, never dropped. A check that did not run and a check that found
+  // nothing are different facts, and a banner that shows only divergences turns
+  // the first into the second.
+  const unmeasured = Array.isArray(notice.unmeasured) ? notice.unmeasured : [];
+  const items = findings.map((f) => `<li>${esc(f)}</li>`)
+    .concat(unmeasured.map((u) => `<li class="caddy-drift-unmeasured">not checked: ${esc(u)}</li>`));
+  const list = items.length ? `<ul class="caddy-drift-findings">${items.join('')}</ul>` : '';
   textEl.innerHTML = `⚠ <strong>${esc(message)}</strong>${list}`;
   banner.classList.remove('hidden');
 }
