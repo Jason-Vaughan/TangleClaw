@@ -180,10 +180,10 @@ fails any auto-stub section older than 14 days.
   **The WebSocket upgrade is gated too** (#1419). `server.js#handleUpgrade` asks
   `server.js#_upgradeVerdict` after its Origin and served-Host guards and before any branch opens
   an upstream socket, so `/terminal/*` (a `--writable` ttyd), `/openclaw/*` and `/openclaw-direct/*`
-  are refused with a `401` before ttyd or a gateway is ever dialled. It is built from the HTTP
-  gate's parts — the same `#isGateActive` through the same throwing thunk, the same session lookup,
-  the same `#isMachineClient` carve-out — so the two transports cannot disagree about who is let in,
-  and #1420 revisits one carve-out, not two. The verdict is its own function, `#evaluateUpgrade`,
+  are refused with a `401` before ttyd or a gateway is ever dialled. Both gates resolve who is
+  asking through one helper, `server.js#_gateIdentity` (session token, session lookup, browser shape,
+  `#isMachineClient`), after the same `#isGateActive` through the same throwing thunk — so the facts
+  the two verdicts judge are assembled once, and #1420 revisits one carve-out, not two. The verdict is its own function, `#evaluateUpgrade`,
   which takes NO path: the HTTP exemption lists are not WebSocket routes, and routing a handshake
   through them would let a future list addition open a shell socket. **`/openclaw-direct/*` is
   gated on both transports** (`#isGateBypassPath` is Caddy's list minus that prefix): TangleClaw

@@ -936,6 +936,37 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
       });
     });
 
+    it('a refused socket carries an error listener, so a client reset cannot throw out of the listener', async () => {
+      // A raw socket with no 'error' listener turns an ECONNRESET during the
+      // 401 write into an uncaught exception in the server's 'upgrade' handler.
+      try {
+        armGate();
+        const s = await upgrade('/terminal/ws');
+        assert.match(s.written, REFUSED);
+        assert.ok(s.listenerCount('error') > 0, 'the refusal path must attach an error listener');
+        assert.doesNotThrow(() => s.emit('error', new Error('ECONNRESET')));
+      } finally { restore(); }
+    });
+
+    it('closes the terminal socket, rather than throwing, when config cannot be read', async () => {
+      // Dormant gate (no account), so the gate reads no config and the terminal
+      // branch is the first thing to — an unguarded throw there escapes the
+      // 'upgrade' listener and leaves the client's socket half-open.
+      const cfgPath = store._getConfigPath();
+      const saved = fs.readFileSync(cfgPath, 'utf8');
+      try {
+        fs.writeFileSync(cfgPath, '{ this is not json');
+        let s;
+        assert.doesNotThrow(() => { s = upgrade('/terminal/ws', { origin: null }); });
+        s = await s;
+        assert.equal(s.destroyed, true, 'the client socket must be closed');
+        assert.equal(connects.length, 0, 'no ttyd target can be named without config');
+      } finally {
+        fs.writeFileSync(cfgPath, saved);
+        restore();
+      }
+    });
+
     describe('with the gate dormant', () => {
       it('opens the terminal exactly as before — no account, nothing to log in to', async () => {
         try {
@@ -945,6 +976,38 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
           assert.equal(connects.length, 1);
         } finally { restore(); }
       });
+    });
+  });
+
+  describe('the WebSocket refusal over a REAL socket (#1419)', () => {
+    // Every other upgrade case drives a PassThrough, which cannot show what a
+    // client actually receives on the wire. This one uses a listening server and
+    // a real HTTP client.
+    beforeEach(armGate);
+
+    it('a real client receives HTTP/1.1 401 and the connection closes', async () => {
+      const http = require('node:http');
+      const server = http.createServer(handleRequest);
+      server.on('upgrade', handleUpgrade);
+      await new Promise((r) => server.listen(0, '127.0.0.1', r));
+      const { port } = server.address();
+      try {
+        const raw = await new Promise((resolve, reject) => {
+          const sock = net.createConnection(port, '127.0.0.1', () => {
+            sock.write('GET /terminal/ws HTTP/1.1\r\nHost: localhost:3102\r\n'
+              + `Origin: http://localhost:3102\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n`
+              + 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n');
+          });
+          let got = '';
+          sock.on('data', (d) => { got += d; });
+          sock.on('close', () => resolve(got));
+          sock.on('error', reject);
+          sock.setTimeout(3000, () => { sock.destroy(); reject(new Error('connection was not closed')); });
+        });
+        assert.match(raw, /^HTTP\/1\.1 401 Unauthorized\r\n/);
+      } finally {
+        await new Promise((r) => server.close(r));
+      }
     });
   });
 

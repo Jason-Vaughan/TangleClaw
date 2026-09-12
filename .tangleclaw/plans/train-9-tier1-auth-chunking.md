@@ -193,6 +193,11 @@ The ADR names this "the single most likely place to get it wrong."
   ADR 0009 without a reverse proxy in front.
 - Closes **#1055** — the invisibility is the caddy-mode coupling this chunk removes.
 - Kill-switch + elkaholic VRF per the risk section above, both landing *in* this chunk.
+- **Remove `/openclaw-direct/*` from Caddy's `AUTH_BYPASS_PATHS` in the same change that removes
+  `basic_auth`, and revisit `isMachineClient` for HTTP and WebSocket together** (both now go through
+  `server.js#_gateIdentity`). Left by #1419: in caddy mode an off-box, non-browser request to that
+  path passes Caddy's exemption and reaches TangleClaw from loopback in the machine-client shape,
+  so it is let through with the gateway token injected — bounded only by the connection's UUID.
 
 **Issues:** #1420 (cutover + migration), closes #1055.
 

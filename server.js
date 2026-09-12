@@ -1824,7 +1824,11 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
 //
 // A cap on concurrency, deliberately not a lockout: there is no per-account or
 // per-address state, so nobody can lock the operator out by guessing at their
-// username. A person typing a password never meets it.
+// username. The trade-off, stated rather than hidden: during an anonymous flood
+// the operator's own attempt usually meets the 503 too, and retries. Chosen over
+// the alternative on purpose — an uncapped flood stalls the whole server, the
+// dashboard included, while a capped one costs only sign-ins, and only for as
+// long as the flood lasts.
 const MAX_CONCURRENT_LOGIN_VERIFICATIONS = 2;
 let _loginVerificationsInFlight = 0;
 
@@ -6639,53 +6643,59 @@ const UPGRADE_UNAUTHORIZED_RESPONSE =
   'HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n';
 
 /**
- * TangleClaw's session gate, asked about one WebSocket upgrade.
+ * Who is asking, as TangleClaw's session gate needs to know it — resolved ONCE,
+ * here, for both transports.
  *
- * The upgrade-path twin of the gate block in `handleRequest`, and built from the
- * same parts so the two transports cannot disagree about who is let in: the same
- * activation predicate through the same throwing config thunk (so an armed gate
- * fails CLOSED on an unreadable config here too), the same session lookup, and
- * the same `isMachineClient` carve-out on the same browser-shape discriminator.
- * Only the verdict differs — `authGate.evaluateUpgrade`, which takes no path, so
- * no HTTP exemption can reach a shell socket.
+ * `handleRequest`'s gate and `handleUpgrade`'s gate both call this, and neither
+ * assembles these inputs itself. That is the point of it existing: the verdicts
+ * differ (`authGate.evaluate` for HTTP, `authGate.evaluateUpgrade` for a
+ * handshake), but the facts they judge — the session token, the session it
+ * resolves to, whether the request is browser-shaped, whether it is the fleet —
+ * must be the same facts, or an edit to one gate's inputs that misses the
+ * other's lets a signed-out request through the transport nobody re-read.
  *
- * A session lookup that THROWS is treated as no session, which refuses. That is
- * the fail-closed direction and it is safe here for the reason it is safe on
- * HTTP: the gate is already known to be armed, and a refused socket leaves
- * `/login` reachable, so the operator is not locked out by it.
+ * A session lookup that THROWS is treated as no session. That is the fail-closed
+ * direction, and it is safe to choose here because this is only called once the
+ * gate is known to be armed, where no session means a challenge or a refusal
+ * that still leaves `/login` reachable — the operator is not locked out by it.
+ * Guarded because `resolve` runs two prepared statements and can delete a row, so
+ * a store fault (SQLITE_BUSY against a concurrent `reset-admin.js`, a disk error,
+ * a closed handle) would otherwise throw out of a request handler that has no
+ * catch above it, and the response would never be written.
  *
- * @param {http.IncomingMessage} req - The upgrade request
- * @param {import('net').Socket} socket - The client socket
- * @returns {{ action: 'allow'|'refuse', gateActive: boolean }}
+ * @param {http.IncomingMessage} req
+ * @param {import('net').Socket|undefined} socket - The connection; `req.socket` when absent
+ * @param {string} pathname - For the log line only
+ * @returns {{ sessionToken: string|null, session: object|null,
+ *   browserShaped: boolean, machineClient: boolean }}
  */
-function _upgradeVerdict(req, socket) {
-  const gateActive = authGate.isGateActive(_gateConfig, store.authSessions);
-  if (!gateActive) return { action: 'allow', gateActive };
-
+function _gateIdentity(req, socket, pathname) {
   const sessionToken = authSession.tokenFromRequest(req);
   let session = null;
   if (sessionToken) {
     try {
       session = store.authSessions.resolve(sessionToken);
     } catch (err) {
-      log.error('Session lookup failed on a WebSocket upgrade — refusing it', {
-        path: reqUrl(req).pathname, error: err.message
+      log.error('Session lookup failed — treating the request as unauthenticated', {
+        method: req.method, path: pathname, error: err.message
       });
       session = null;
     }
   }
+  // The same discriminator the three request-shape guards in `handleRequest`
+  // use: a browser cannot suppress `Sec-Fetch-Site` from script, and always
+  // sends `Origin` on a WebSocket handshake.
   const browserShaped = req.headers['sec-fetch-site'] !== undefined
     || req.headers.origin !== undefined;
-  const verdict = authGate.evaluateUpgrade({
-    gateActive,
-    session,
-    machineClient: authGate.isMachineClient({
-      loopback: adminCredential.isLoopbackRemote(socket && socket.remoteAddress),
-      browserShaped,
-      hasSessionCookie: sessionToken !== null
-    })
+  const conn = socket || req.socket;
+  const machineClient = authGate.isMachineClient({
+    // `isLoopbackRemote` is `lib/admin-credential.js`'s, reused because
+    // `POST /api/auth/credential` already authorises on exactly this predicate.
+    loopback: adminCredential.isLoopbackRemote(conn && conn.remoteAddress),
+    browserShaped,
+    hasSessionCookie: sessionToken !== null
   });
-  return { action: verdict.action, gateActive };
+  return { sessionToken, session, browserShaped, machineClient };
 }
 
 /**
@@ -6767,9 +6777,26 @@ function handleUpgrade(req, socket, head) {
   // `/openclaw-direct/*` is gated here too, unlike at Caddy — see
   // `lib/auth-gate.js#isGateBypassPath` for why its exemption does not hold at
   // TangleClaw's gate.
-  const upgradeVerdict = _upgradeVerdict(req, socket);
+  const upgradeGateActive = authGate.isGateActive(_gateConfig, store.authSessions);
+  const upgradeIdentity = upgradeGateActive ? _gateIdentity(req, socket, urlObj.pathname) : null;
+  const upgradeVerdict = authGate.evaluateUpgrade({
+    gateActive: upgradeGateActive,
+    session: upgradeIdentity && upgradeIdentity.session,
+    machineClient: upgradeIdentity !== null && upgradeIdentity.machineClient
+  });
   if (upgradeVerdict.action !== 'allow') {
-    log.info('Unauthenticated WebSocket upgrade refused', { path: urlObj.pathname });
+    // `hadCookie` separates a dashboard left open past its session (a cookie
+    // that no longer resolves) from a caller that never signed in, which is the
+    // first question an operator with a dead terminal asks. The value is never
+    // logged.
+    log.info('Unauthenticated WebSocket upgrade refused', {
+      path: urlObj.pathname, hadCookie: upgradeIdentity !== null && upgradeIdentity.sessionToken !== null
+    });
+    // A raw socket with no 'error' listener turns a client that resets while
+    // this is being written into an uncaught exception in the 'upgrade'
+    // listener. Attached before the write, and the answer to an error is the
+    // destroy the refusal was going to do anyway.
+    socket.on('error', () => socket.destroy());
     socket.end(UPGRADE_UNAUTHORIZED_RESPONSE, () => socket.destroy());
     return;
   }
@@ -7148,31 +7175,10 @@ async function handleRequest(req, res) {
   let tcSession = null;
   const gateActive = authGate.isGateActive(_gateConfig, store.authSessions);
   if (gateActive) {
-    const sessionToken = authSession.tokenFromRequest(req);
-    if (sessionToken) {
-      // Guarded for the reason the module header states and this line used to
-      // ignore: `resolve` runs two prepared statements and can delete a row, so
-      // a store fault (SQLITE_BUSY against a concurrent `reset-admin.js` on the
-      // same file, a disk error, a closed handle) threw straight out of
-      // `handleRequest`. That is passed directly to `http.createServer` and the
-      // route try/catch is further down inside the `/api/` branch, so the throw
-      // became a rejected promise the process-level handler only LOGS — the
-      // response was never written and the browser hung to its own timeout.
-      //
-      // An unreadable session is treated as NO session, which challenges. That
-      // is the fail-closed direction, and it is safe to choose here in a way it
-      // is not in `isGateActive`: the gate is already known to be armed, and a
-      // challenge still leaves `/login` and the login route reachable, so the
-      // operator is not locked out by it.
-      try {
-        tcSession = store.authSessions.resolve(sessionToken);
-      } catch (err) {
-        log.error('Session lookup failed — treating the request as unauthenticated', {
-          method, path: pathname, error: err.message
-        });
-        tcSession = null;
-      }
-    }
+    // Resolved by the helper `handleUpgrade`'s gate also calls, so the two
+    // transports judge the same facts — see `_gateIdentity`.
+    const identity = _gateIdentity(req, req.socket, pathname);
+    tcSession = identity.session;
     const verdict = authGate.evaluate({
       method,
       rawUrl: req.url,
@@ -7180,15 +7186,8 @@ async function handleRequest(req, res) {
       gateActive,
       session: tcSession,
       submittedCsrf: authSession.csrfTokenFromRequest(req),
-      // The fleet carve-out (#1418 Critic R-1). `isLoopbackRemote` is
-      // `lib/admin-credential.js`'s, reused because `POST /api/auth/credential`
-      // already authorises on exactly this predicate; `looksLikeBrowser` is the
-      // same discriminator the three guards above use.
-      machineClient: authGate.isMachineClient({
-        loopback: adminCredential.isLoopbackRemote(req.socket && req.socket.remoteAddress),
-        browserShaped: looksLikeBrowser,
-        hasSessionCookie: sessionToken !== null
-      })
+      // The fleet carve-out (#1418 Critic R-1) — see `authGate.isMachineClient`.
+      machineClient: identity.machineClient
     });
     if (verdict.action === 'refuse-csrf') {
       log.warn('Refused session-authenticated write with no valid CSRF token', {
