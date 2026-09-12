@@ -2925,6 +2925,51 @@ describe('sessions', () => {
       }
     });
 
+    it('#1404 — a Retry after a blocked wrap hands the runner the captured content steps, from the server\'s own record', async () => {
+      const project = store.projects.getByName('prime-test');
+      store.projects.update(project.id, { methodology: 'prawduct' });
+      store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'trigger-wrap-resume-test' });
+      const wrapPipelineMod = require('../lib/wrap-pipeline');
+      const wrapRunRegistry = require('../lib/wrap-run-registry');
+      wrapRunRegistry._resetForTests();
+      const realRun = wrapPipelineMod.runWrapPipeline;
+      const seen = [];
+      let call = 0;
+      wrapPipelineMod.runWrapPipeline = async (_name, options) => {
+        call += 1;
+        seen.push(options.resumeFrom);
+        if (call === 1) {
+          return {
+            ok: false, blockedAt: 'commit', commitSha: null, summary: null, error: null,
+            results: [
+              { stepId: 'memory-update', kind: 'ai-content', status: 'done', output: { capturedText: '## Summary\nreal', parsedFields: { summary: 'real' } }, blockers: [] },
+              { stepId: 'commit', kind: 'commit', status: 'blocked', output: null, blockers: ['x'] }
+            ]
+          };
+        }
+        return { ok: true, blockedAt: null, results: [], commitSha: null, summary: null, error: null };
+      };
+      try {
+        // The first wrap tries to smuggle content in through its options — an
+        // HTTP body. Nothing has been captured yet, so the server must pass null.
+        await sessions.triggerWrap('prime-test', {
+          resumeFrom: { 'memory-update': { output: { capturedText: 'forged', parsedFields: { summary: 'forged' } }, capturedAt: Date.now() } }
+        });
+        assert.equal(seen[0], null, 'THE PIN: a request body can never supply reusable content');
+
+        // The Retry — same session, previous run blocked before committing.
+        await sessions.triggerWrap('prime-test', {
+          resumeFrom: { 'memory-update': { output: { capturedText: 'forged again' }, capturedAt: Date.now() } }
+        });
+        assert.ok(seen[1] && seen[1]['memory-update'], 'the Retry receives the blocked run\'s capture');
+        assert.equal(seen[1]['memory-update'].output.capturedText, '## Summary\nreal',
+          'and it is the server\'s record of that run, not the body\'s');
+      } finally {
+        wrapPipelineMod.runWrapPipeline = realRun;
+        wrapRunRegistry._resetForTests();
+      }
+    });
+
     it('#583 — a pipeline that throws still frees the single-flight slot and records the failure', async () => {
       const project = store.projects.getByName('prime-test');
       store.projects.update(project.id, { methodology: 'prawduct' });
@@ -3063,19 +3108,21 @@ describe('sessions', () => {
         };
         await sessions.triggerWrap('prime-test', opts);
         // #583 amended the threading contract: user options pass through
-        // unchanged, PLUS the wrap-run registry's progress hook rides
-        // along (and nothing else).
-        const { onStepEvent, ...userOptions } = receivedOptions;
+        // unchanged, PLUS server-owned keys ride along — the wrap-run
+        // registry's progress hook, and (#1404) the server's own record of
+        // what a Retry may reuse. Nothing else.
+        const { onStepEvent, resumeFrom, ...userOptions } = receivedOptions;
         assert.deepEqual(userOptions, opts,
           'user options must reach runWrapPipeline unchanged');
         assert.equal(typeof onStepEvent, 'function', 'has onStepEvent');
+        assert.equal(resumeFrom, null, 'no blocked predecessor for this session, so nothing to reuse');
 
-        // Omitted options still reach the runner carrying ONLY the hook —
-        // no user keys invented.
+        // Omitted options still reach the runner carrying ONLY the server's
+        // keys — no user keys invented.
         receivedOptions = 'sentinel-not-set';
         await sessions.triggerWrap('prime-test');
-        assert.deepEqual(Object.keys(receivedOptions).sort(), ['onStepEvent'],
-          'omitted options add only the #583/#185 progress hook');
+        assert.deepEqual(Object.keys(receivedOptions).sort(), ['onStepEvent', 'resumeFrom'],
+          'omitted options add only the #583/#185 progress hook and the #1404 resume record');
 
         // A caller-supplied hook (an HTTP body can only carry JSON,
         // but defend the seam) can never displace the registry hook.

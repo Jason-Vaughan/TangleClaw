@@ -295,6 +295,26 @@ All notable changes to TangleClaw are documented in this file.
   site had no such guard until a mutation check found the gap.
 
 ### Fixed
+- **Retrying a blocked wrap no longer re-asks the AI for summaries it already wrote (#1404).** A
+  Retry started the whole wrap pipeline from scratch, so every content step that had already
+  finished was prompted again. Because each capture is armed by clearing its file before the prompt,
+  an AI that reasoned "I already wrote that" wrote nothing — and the step blocked with an error that
+  blamed the step prompt, the one thing that was not wrong. Now a Retry in the **same session**,
+  after a wrap that **halted without committing**, reuses the content steps that already finished
+  (`lib/wrap-pipeline.js#resumableContentResults`), for up to 30 minutes from when each was
+  captured. Everything else — tests, lint, git steps — still re-runs against the current state.
+  The reuse is decided only from the server's own record of the previous run, never from the
+  request, and an operator's "Skip & note" for a step still wins. The wrap drawer marks a reused
+  step "reused from the blocked wrap, not re-asked", the next prompt's "step N of M" header counts
+  only the steps actually sent, and the server log records why each Retry did or did not reuse.
+
+  **The error now says what actually happened.** "Was not written during this step" when the file
+  is absent; "could not be read" for a permission error, a directory at that path or a bridge
+  failure; and over the gateway, where the bridge answers 404 for a missing file and an unknown
+  project alike, a message that names both. None of them names the prompt as the cause any more.
+  Two agent sessions acted on the old wording as fact, one broadcasting "wrap is broken on this
+  project" to other sessions before anyone read the code (reported by @GURULifeline on #1404).
+
 - **A hook command broke on `$`, a backtick, a quote or a backslash in the install path (#1062).**
   `_buildBaselineHooks` wrapped each emitted command in double quotes at the call site. Double
   quotes stop word-splitting on a space but not expansion — `$HOME` and `` `id` `` in a directory

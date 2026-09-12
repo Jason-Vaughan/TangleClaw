@@ -34,6 +34,26 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-12 — #1404: a wrap Retry resumes the content steps it already captured, and the blocker stops blaming the prompt
+
+<!-- prawduct: type=bugfix | scope=wrap-1404 -->
+
+**Why.** A Retry was a brand-new pipeline run, so every finished content step was prompted again; the
+#840 arm clears each captureFile before the prompt, so an AI that reasoned "already written" wrote
+nothing and the step blocked on ENOENT with a message naming the step prompt as the cause. Two agent
+sessions acted on that wording as fact (reported by GURULifeline). The issue's option 1 (defer the
+delete) would not have helped — the arm deletes it anyway. Closed PR #1428 had only reworded the
+message, asserting a cause nothing checked.
+
+**What.** `lib/wrap-pipeline.js#resumableContentResults` offers a same-session Retry, after a run that
+halted without committing, the `ai-content` steps that finished with a capture within 30 minutes of
+capture; it returns a reason either way, which `lib/sessions.js#_triggerWrapPipeline` logs, and is set
+after the request options so a body cannot supply content. `_resumePrior` is the one predicate for
+the runner and the `step N of M` planner; `ai-content.js#stagedFromOutput` the one owner of the staged
+shape; the drawer marks a reused step. `_captureReadBlocker` words a failed read by what it
+established: not written, could not be read, or (bridge 404) not found — file or project.
+
+**Review.** Critic `rev-20260912T220112Z-febb4095` — 0 blocking, 4 warnings fixed in `98800a57`;
 ## 2026-09-12 — #1419: the WebSocket upgrade gets the session gate, and /openclaw-direct/* loses an exemption it never earned
 
 <!-- prawduct: type=feature | scope=train-9-chunk-03 -->

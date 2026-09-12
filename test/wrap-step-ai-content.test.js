@@ -105,6 +105,11 @@ describe('wrap-step ai-content — #287 captureFile parsing', () => {
       assert.equal(res.output.parsedFields.learnings, '- none');
       assert.equal(ctx.staged['memory-update'].parsedFields.summary, 'Tidy wrap cycle; no code changes.');
       assert.equal(removed, '.tangleclaw/.wrap-summary.md', 'consume-once: file removed after a successful read');
+      // #1404 — a Retry re-stages this step from its OUTPUT. The shape it
+      // rebuilds must be the shape the handler staged, or downstream steps
+      // read a reused capture differently from a fresh one.
+      assert.deepEqual(aic.stagedFromOutput(res.output), ctx.staged['memory-update']);
+      assert.equal(typeof res.output.capturedAt, 'number', 'the capture time is recorded for the resume window');
     });
 
     it('blocks with a clear message when the captureFile is missing', async () => {
@@ -116,8 +121,26 @@ describe('wrap-step ai-content — #287 captureFile parsing', () => {
 
       assert.equal(res.ok, false);
       assert.equal(res.status, 'blocked');
-      assert.match(res.blockers[0], /captureFile ".tangleclaw\/\.wrap-summary\.md" missing or unreadable/);
+      // #1404 — ENOENT after the arm means nothing wrote the file during this
+      // step. That is what it says, and it must not name the step prompt as
+      // the cause: the old wording did, and sent readers after an AI that had
+      // followed its instructions one pass earlier.
+      assert.match(res.blockers[0], /captureFile ".tangleclaw\/\.wrap-summary\.md" was not written during this step/);
+      assert.match(res.blockers[0], /\(ENOENT\)$/);
+      assert.doesNotMatch(res.blockers[0], /prompt must instruct/);
       assert.equal(removeCalled, false, 'do not attempt removal when the read itself failed');
+    });
+
+    it('says READ FAILURE, not "not written", when the file exists but cannot be read (#1404)', async () => {
+      for (const code of ['EACCES', 'EISDIR']) {
+        aic._internal.readCaptureFile = () => { const e = new Error('nope'); e.code = code; throw e; };
+        aic._internal.removeCaptureFile = () => {};
+        const res = await aic.run(baseCtx());
+        assert.equal(res.status, 'blocked');
+        assert.match(res.blockers[0], /could not be read after the AI went idle — this is a read failure/, code);
+        assert.doesNotMatch(res.blockers[0], /not written/, code);
+        assert.ok(res.blockers[0].endsWith(`(${code})`), code);
+      }
     });
 
     it('clears a captureFile left by a PREVIOUS run before asking the AI to write one (#840)', async () => {
@@ -592,13 +615,28 @@ describe('wrap-step ai-content — CC-7 B1 gateway capture (webui)', () => {
   it('captureFile unreadable over the gateway → blocked with a clear remediation', async () => {
     aic._internal.bridgeSend = async () => ({ ok: true });
     aic._internal.bridgeGetStatus = async () => ({ ok: true, inputReady: true });
-    aic._internal.bridgeGetFile = async () => ({ ok: false, error: 'file not found' });
+    aic._internal.bridgeGetFile = async () => ({ ok: false, status: 404, error: 'file not found' });
 
     const res = await aic._runGatewayCapture(ctx(structuredStep));
 
     assert.equal(res.ok, false);
     assert.equal(res.status, 'blocked');
-    assert.match(res.blockers[0], /captureFile ".tangleclaw\/\.wrap-summary\.md" missing or unreadable over the gateway/);
+    // #1404 — the bridge 404s for a missing file AND an unknown project, so the
+    // message names both instead of claiming the AI did not write it.
+    assert.match(res.blockers[0], /captureFile ".tangleclaw\/\.wrap-summary\.md" was not found over the gateway — either nothing wrote it during this step .*or the bridge does not know this project/);
+    assert.doesNotMatch(res.blockers[0], /prompt must instruct/);
+  });
+
+  it('a bridge failure over the gateway reads as a read failure, not a missing file (#1404)', async () => {
+    aic._internal.bridgeSend = async () => ({ ok: true });
+    aic._internal.bridgeGetStatus = async () => ({ ok: true, inputReady: true });
+    aic._internal.bridgeGetFile = async () => ({ ok: false, status: 502, error: 'bridge unreachable' });
+
+    const res = await aic._runGatewayCapture(ctx(structuredStep));
+
+    assert.equal(res.status, 'blocked');
+    assert.match(res.blockers[0], /could not be read over the gateway — this is a read failure/);
+    assert.doesNotMatch(res.blockers[0], /not written/);
   });
 
   it('waiting_for_permission → blocked (surfaced honestly, never hangs)', async () => {

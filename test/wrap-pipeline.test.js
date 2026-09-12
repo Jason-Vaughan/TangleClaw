@@ -350,6 +350,206 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
     });
   });
 
+  describe('resumableContentResults — what a Retry may reuse (#1404)', () => {
+    const NOW = 10_000_000;
+    const SESSION = 7;
+    /** A finished, blocked run whose memory-update captured. */
+    const blockedRun = (over = {}) => ({
+      runId: 'run-1',
+      running: false,
+      sessionId: SESSION,
+      finishedAt: NOW - 60_000,
+      result: {
+        pipelineResult: {
+          ok: false,
+          blockedAt: 'commit',
+          commitSha: null,
+          results: [
+            { stepId: 'changelog-update', kind: 'ai-content', status: 'done', output: { capturedText: 'edited', parsedFields: null } },
+            { stepId: 'version-bump', kind: 'version-bump', status: 'done', output: { capturedText: 'not content' } },
+            { stepId: 'learnings-capture', kind: 'ai-content', status: 'skipped', output: { capturedText: 'x' } },
+            { stepId: 'memory-update', kind: 'ai-content', status: 'done', output: { capturedText: '## Summary\nx', parsedFields: { summary: 'x' } } },
+            { stepId: 'commit', kind: 'commit', status: 'blocked', output: null }
+          ],
+          ...over.pipelineResult
+        }
+      },
+      ...over.run
+    });
+    const decide = (run, opts = {}) => wrapPipeline.resumableContentResults(run, { sessionId: SESSION, now: NOW, ...opts });
+    const r = (run, opts) => decide(run, opts).results;
+
+    it('says WHY nothing was reused, for every refusal — a silent re-prompt is otherwise untraceable', () => {
+      const cases = [
+        [null, /no previous run/],
+        [{ runId: null, sessionId: null, running: false, finishedAt: null, result: null }, /no previous run/],
+        [blockedRun({ run: { running: true } }), /still in flight/],
+        [blockedRun({ run: { sessionId: SESSION + 1 } }), /another session/],
+        [blockedRun({ pipelineResult: { commitSha: 'abc' } }), /committed/],
+        [blockedRun({ pipelineResult: { ok: true, blockedAt: null } }), /did not halt/],
+        [blockedRun({ run: { finishedAt: NOW - wrapPipeline.RESUME_WINDOW_MS - 1 } }), /older than the resume window/]
+      ];
+      for (const [run, reason] of cases) {
+        const d = decide(run);
+        assert.equal(d.results, null);
+        assert.match(d.reason, reason);
+      }
+      assert.match(decide(blockedRun()).reason, /reusing 2 captured content steps/);
+    });
+
+    it('reuses only ai-content steps that finished done with a capture', () => {
+      const out = r(blockedRun());
+      assert.deepEqual(Object.keys(out).sort(), ['changelog-update', 'memory-update']);
+      assert.equal(out['memory-update'].output.parsedFields.summary, 'x');
+    });
+
+    it('reuses nothing from ANOTHER session — the #840 hazard', () => {
+      assert.equal(r(blockedRun(), { sessionId: SESSION + 1 }), null);
+      assert.equal(r(blockedRun({ run: { sessionId: null } })), null);
+    });
+
+    it('reuses nothing from a run that committed, succeeded, or did not halt', () => {
+      assert.equal(r(blockedRun({ pipelineResult: { commitSha: 'abc123' } })), null);
+      assert.equal(r(blockedRun({ pipelineResult: { ok: true, blockedAt: null } })), null);
+      assert.equal(r(blockedRun({ pipelineResult: { blockedAt: null } })), null);
+    });
+
+    it('reuses nothing from a run still in flight, or with no record at all', () => {
+      assert.equal(r(blockedRun({ run: { running: true } })), null);
+      assert.equal(r(null), null);
+      assert.equal(r({ runId: 'x', running: false, sessionId: SESSION, finishedAt: null, result: null }), null);
+    });
+
+    it('lets a capture expire RESUME_WINDOW_MS after it was captured', () => {
+      const old = blockedRun({ run: { finishedAt: NOW - wrapPipeline.RESUME_WINDOW_MS - 1 } });
+      assert.equal(r(old), null);
+      const edge = blockedRun({ run: { finishedAt: NOW - wrapPipeline.RESUME_WINDOW_MS } });
+      assert.ok(r(edge));
+    });
+
+    it('measures a re-resumed capture from its ORIGINAL capture time, so retries cannot keep it alive', () => {
+      const run = blockedRun({ run: { finishedAt: NOW - 1000 } });
+      run.result.pipelineResult.results[3].output.capturedAt = NOW - wrapPipeline.RESUME_WINDOW_MS - 1;
+      const out = r(run);
+      assert.equal(out['memory-update'], undefined, 'an old capture re-offered by a recent retry must expire');
+      assert.ok(out['changelog-update'], 'a step with no carried capture time is measured from the run');
+    });
+  });
+
+  describe('runWrapPipeline — a Retry reuses captured content steps (#1404)', () => {
+    it('does not re-run a resumable content step, and stages its capture as the handler would', async () => {
+      const restore = stubRealHandlers(wrapPipeline, ['ai-content']);
+      const original = wrapPipeline.STEP_DISPATCH['ai-content'];
+      const ran = [];
+      const stagedSeen = {};
+      wrapPipeline.STEP_DISPATCH['ai-content'] = {
+        run: async (ctx) => {
+          ran.push(ctx.step.id);
+          stagedSeen[ctx.step.id] = JSON.parse(JSON.stringify(ctx.staged));
+          ctx.staged[ctx.step.id] = { capturedText: 'fresh', parsedFields: null };
+          return { ok: true, status: 'done', output: { capturedText: 'fresh', parsedFields: null }, blockers: [] };
+        }
+      };
+      try {
+        const capturedAt = Date.now() - 1000;
+        const result = await wrapPipeline.runWrapPipeline('pipeline-test', {
+          resumeFrom: {
+            'memory-update': { output: { capturedText: '## Summary\nold', parsedFields: { summary: 'old' } }, capturedAt }
+          }
+        });
+        assert.ok(!ran.includes('memory-update'), 'THE PIN: a captured step must not be re-prompted on Retry');
+        assert.ok(ran.includes('changelog-update'), 'a step with nothing to reuse still runs');
+        const mu = result.results.find((x) => x.stepId === 'memory-update');
+        assert.equal(mu.status, 'done');
+        assert.equal(mu.output.resumed, true, 'the record says the result was reused, not freshly captured');
+        assert.equal(mu.output.capturedAt, capturedAt);
+        assert.equal(mu.output.parsedFields.summary, 'old');
+      } finally {
+        wrapPipeline.STEP_DISPATCH['ai-content'] = original;
+        restore();
+      }
+    });
+
+    it('restores the staged capture downstream steps read', async () => {
+      const restore = stubRealHandlers(wrapPipeline);
+      let stagedAtCommit = null;
+      wrapPipeline.STEP_DISPATCH.commit = {
+        run: async (ctx) => {
+          stagedAtCommit = JSON.parse(JSON.stringify(ctx.staged));
+          return { ok: true, status: 'done', output: null, blockers: [] };
+        }
+      };
+      try {
+        await wrapPipeline.runWrapPipeline('pipeline-test', {
+          resumeFrom: { 'memory-update': { output: { capturedText: 'raw', parsedFields: { summary: 's' } }, capturedAt: Date.now() } }
+        });
+        assert.deepEqual(stagedAtCommit['memory-update'], { capturedText: 'raw', parsedFields: { summary: 's' } });
+      } finally {
+        restore();
+      }
+    });
+
+    it('does not count a reused step in the "step N of M" header — the Retry\'s only prompt is step 1 of 1', async () => {
+      const restore = stubRealHandlers(wrapPipeline, ['ai-content']);
+      const original = wrapPipeline.STEP_DISPATCH['ai-content'];
+      const progress = {};
+      wrapPipeline.STEP_DISPATCH['ai-content'] = {
+        run: async (ctx) => {
+          progress[ctx.step.id] = ctx.aiContentProgress;
+          return { ok: true, status: 'done', output: { capturedText: 'fresh', parsedFields: null }, blockers: [] };
+        }
+      };
+      try {
+        const now = Date.now();
+        await wrapPipeline.runWrapPipeline('pipeline-test', {
+          resumeFrom: {
+            'changelog-update': { output: { capturedText: 'a', parsedFields: null }, capturedAt: now },
+            'learnings-capture': { output: { capturedText: 'b', parsedFields: null }, capturedAt: now }
+          }
+        });
+        assert.deepEqual(progress['memory-update'], { ordinal: 1, total: 1 },
+          'an AI told "step 3 of 3" may conclude steps 1 and 2 are already done');
+      } finally {
+        wrapPipeline.STEP_DISPATCH['ai-content'] = original;
+        restore();
+      }
+    });
+
+    it('an operator "Skip & note" for the step wins over reuse', async () => {
+      const restore = stubRealHandlers(wrapPipeline, ['ai-content']);
+      const original = wrapPipeline.STEP_DISPATCH['ai-content'];
+      const ran = [];
+      wrapPipeline.STEP_DISPATCH['ai-content'] = {
+        run: async (ctx) => { ran.push(ctx.step.id); return { ok: true, status: 'skipped', output: null, blockers: [] }; }
+      };
+      try {
+        const result = await wrapPipeline.runWrapPipeline('pipeline-test', {
+          skipAiContent: { 'memory-update': true },
+          resumeFrom: { 'memory-update': { output: { capturedText: 'old', parsedFields: null }, capturedAt: Date.now() } }
+        });
+        assert.ok(ran.includes('memory-update'), 'the handler runs, so it can honour the skip');
+        assert.notEqual(result.results.find((x) => x.stepId === 'memory-update').output?.resumed, true);
+      } finally {
+        wrapPipeline.STEP_DISPATCH['ai-content'] = original;
+        restore();
+      }
+    });
+
+    it('never reuses for a non-content step, whatever resumeFrom names', async () => {
+      const restore = stubRealHandlers(wrapPipeline);
+      let commitRan = false;
+      wrapPipeline.STEP_DISPATCH.commit = { run: async () => { commitRan = true; return { ok: true, status: 'done', output: null, blockers: [] }; } };
+      try {
+        await wrapPipeline.runWrapPipeline('pipeline-test', {
+          resumeFrom: { commit: { output: { capturedText: 'x' }, capturedAt: Date.now() } }
+        });
+        assert.equal(commitRan, true);
+      } finally {
+        restore();
+      }
+    });
+  });
+
   describe('runWrapPipeline — preflight errors', () => {
     it('returns ok:false when project does not exist', async () => {
       const result = await wrapPipeline.runWrapPipeline('does-not-exist');

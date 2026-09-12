@@ -288,13 +288,19 @@
         // `parsedFields` is an object whose keys are captureFields the
         // step extracted. Surface field count when present so the user
         // sees "captured 3 fields" rather than a blank row.
+        //
+        // #1404 — a Retry can reuse a capture from the run it follows instead
+        // of re-asking the AI. That content lands in the commit, so the row
+        // says so: an operator reading "captured" would assume it was just
+        // written.
+        const reused = output.resumed === true ? ' · reused from the blocked wrap, not re-asked' : '';
         const pf = output.parsedFields;
         if (pf && typeof pf === 'object') {
           const keys = Object.keys(pf);
-          if (keys.length > 0) return `captured ${keys.length} field${keys.length === 1 ? '' : 's'}`;
+          if (keys.length > 0) return `captured ${keys.length} field${keys.length === 1 ? '' : 's'}${reused}`;
         }
         if (typeof output.capturedText === 'string' && output.capturedText.trim().length > 0) {
-          return 'captured';
+          return `captured${reused}`;
         }
         return null;
       }

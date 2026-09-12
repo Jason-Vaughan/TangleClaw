@@ -264,9 +264,11 @@ describe('api-sessions', () => {
         // plus the wrap-run registry's progress hook rides along — named
         // here rather than swept into `userOptions`, which would let a
         // future hook land in the user-options assertion unnoticed.
-        const { onStepEvent, ...userOptions } = receivedOptions;
+        // #1404 adds a second server-owned key, `resumeFrom` — never the body's.
+        const { onStepEvent, resumeFrom, ...userOptions } = receivedOptions;
         assert.deepEqual(userOptions, { skipTests: true, prHandling: { 42: 'defer' } });
         assert.equal(typeof onStepEvent, 'function', '#583/#185 progress hook threaded to the runner');
+        assert.equal(resumeFrom, null, '#1404 resume record is server-set; no blocked predecessor here');
         assert.ok(res.body.pipelineResult, 'response must surface pipelineResult');
         assert.equal(res.body.pipelineResult.commitSha, 'deadbeef');
         assert.equal(res.body.status, 'wrapping');
@@ -356,10 +358,12 @@ describe('api-sessions', () => {
           options: { prHandling: { '42': 'merge', '43': 'defer' } }
         });
         assert.equal(res.status, 200);
-        // #583: user options unchanged + the registry progress hook.
-        const { onStepEvent, ...userOptions } = receivedOptions;
+        // #583: user options unchanged + the registry progress hook, and
+        // #1404's server-set resume record.
+        const { onStepEvent, resumeFrom, ...userOptions } = receivedOptions;
         assert.deepEqual(userOptions, { prHandling: { '42': 'merge', '43': 'defer' } });
         assert.equal(typeof onStepEvent, 'function');
+        assert.equal(resumeFrom, null);
 
         // Pin the key-type contract: string-keyed PR numbers reach the
         // runner unchanged, matching `_normalizeHandling`'s
@@ -393,10 +397,12 @@ describe('api-sessions', () => {
         });
         assert.equal(res.status, 200);
         // #583: a discarded options body still reaches the runner carrying
-        // ONLY the registry progress hook (onStepEvent) — no user keys are
-        // invented from the malformed body.
-        assert.deepEqual(Object.keys(received).sort(), ['onStepEvent'],
-          'non-object options bodies must be discarded before reaching the runner (only the registry hook remains)');
+        // ONLY server-owned keys — the registry progress hook (onStepEvent)
+        // and #1404's resume record — and no user keys invented from the
+        // malformed body.
+        assert.deepEqual(Object.keys(received).sort(), ['onStepEvent', 'resumeFrom'],
+          'non-object options bodies must be discarded before reaching the runner (only server-owned keys remain)');
+        assert.equal(received.resumeFrom, null);
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
         const active = store.sessions.getActive(project.id);
