@@ -157,8 +157,15 @@ reasonably assume it catches a widened bypass. Filed as #1403.
 ### Critic record
 
 `cumulative` rev-20260912T033048Z-bf760c55 — 1 blocking, 9 warnings, 12 notes. All fixed or
-accepted in one pass (`cba84ec6`). `verify-resolutions` then returned **0 blocking, 0 warning,
-0 note**, verifying all ten from the tree.
+accepted in one pass (`cba84ec6`). **Four** `verify-resolutions` rounds followed, each returning
+0 blocking / 0 warning / 0 note: the first verified all ten findings from the tree, then one per
+post-review commit (the record-closing delta, the PR-review fixes, the skip-ledger fix).
+
+**Three of those rounds were self-inflicted and the pattern is worth naming**: each time, a
+judgeable change was committed after a clean review. The gate priced it every time
+(`cost-of-commit`), and "one more small fix" kept getting treated as free when it had already been
+told it was not. The habit to keep instead: batch every judgeable fix before the review, and take
+the free path (`.prawduct/` records, non-governance prose) for anything that lands after it.
 
 The blocking one is worth keeping here: `describeDrift` derived the operator notice from the
 divergence-only `findings` list, so a `not-measured` property with nothing diverged returned null —

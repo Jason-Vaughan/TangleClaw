@@ -86,6 +86,11 @@ and creates a missing table at the current shape, so any install whose `port_lea
 and whose version was past the v7→v8 rebuild hit v34→v35 with the column already present and the
 unconditional `ALTER` aborted the whole upgrade. Caught by an unrelated existing test.
 
+The two caddy-gated tests are declared in `test/skip-ledger.json`, which CI enforces: nothing joins
+the not-run set unannounced. They were missed on the first push and reddened CI — the fourth recorded
+instance of this repo's host-plumbing divergence class, and the sharpest, because the guard I broke
+enforces the same principle the feature ships (an unrun check must not read as a passing one).
+
 #1373 amends ADR 0014 to record which reading of its live-serving category governs: a PR touching
 `public/**` or `server.js` is flagged, never refused, because the protection is that a contributor's
 bytes never EXECUTE on the machine serving the live install and clean-room reconstruction delivers
