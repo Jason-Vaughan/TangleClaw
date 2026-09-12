@@ -135,19 +135,31 @@ verification cannot leak a slot.
 
 ## Status
 
-- [ ] **03a — `evaluateUpgrade` + `isGateBypassPath`.**
-- [ ] **03b — The gate in `handleUpgrade`.**
-- [ ] **03c — Cookie strip on both WS paths.**
-- [ ] **03d — `/openclaw-direct/*` gated on HTTP.**
-- [ ] **03e — Login in-flight cap.**
-- [ ] **03f — JSDoc placement.**
-- [ ] **03g — Docs.**
+- [x] **03a — `evaluateUpgrade` + `isGateBypassPath`.**
+- [x] **03b — The gate in `handleUpgrade`.**
+- [x] **03c — Cookie strip on both WS paths.**
+- [x] **03d — `/openclaw-direct/*` gated on HTTP.**
+- [x] **03e — Login in-flight cap.**
+- [x] **03f — JSDoc placement.**
+- [x] **03g — Docs.**
 
 ---
 
 ## Critic record
 
-*(pending)*
+**Round 1** — `rev-20260912T211742Z-8d3d6069`, chunk review over `6858e51a`. **12 findings: 0 blocking,
+4 warning, 8 note.** Fixed in one commit (`e9abef5f`): R-1 (refused raw socket had no `'error'`
+listener — the PassThrough fixture could not show it; now pinned over a real socket too), R-2 (the
+terminal config-read guard had no test), R-5 (the upgrade gate re-assembled the HTTP gate's inputs
+while the docs said the two could not disagree — now one helper, `server.js#_gateIdentity`), R-8
+(the `/openclaw-direct/*` residual was carried to #1420 only in this plan — now on #1420 and in the
+train plan's Chunk 04), plus notes R-3, R-6, R-7. Accepted with reasons: R-4, R-9 (signed-out
+terminal UX belongs with the cutover; `hadCookie` added to the log), R-10, R-11, R-12.
+
+**Round 2** — verify-resolutions over `6858e51a`→`e9abef5f`: all four warnings verified resolved,
+**0 findings**. Three non-gating observations accepted as-is: `_gateIdentity`'s `browserShaped`
+field is unread; `hadCookie` is untested diagnostic logging; the fix commit rides the existing
+CHANGELOG entry.
 
 ## Carried to #1420 (chunk 04)
 
