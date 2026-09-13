@@ -1,6 +1,6 @@
 # ADR 0015: TangleClaw owns authentication — the gate moves out of Caddy
 
-**Status:** **Accepted (2026-09-11, operator-ratified in-pane).** Not built. The operator accepted the cost explicitly — 1-2 trains of work — to get a front door that works on any ingress mode, and a principal to hang per-user resource defaults on. `basic_auth` can provide neither: it is one shared credential, and it exists only in caddy mode.
+**Status:** **Accepted (2026-09-11, operator-ratified in-pane).** Built by #1420 (the Tier 1 cutover); the build decisions are recorded in ADR 0016. The operator accepted the cost explicitly — 1-2 trains of work — to get a front door that works on any ingress mode, and a principal to hang per-user resource defaults on. `basic_auth` can provide neither: it is one shared credential, and it exists only in caddy mode.
 **Source issues:** #1149 (v6 multi-user architecture), #803 (the wizard's opt-out), #1055.
 **Supersedes, conditionally:** ADR 0004 / `auth-2-authelia-gate.md`'s Path A choice — on the exact
 condition that choice named for itself.
