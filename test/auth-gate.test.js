@@ -110,7 +110,7 @@ describe('lib/auth-gate — the front-door verdict (#1418, #1420, ADR 0015/0016)
 
     describe('authEnabled:false in caddy mode is honoured only while the Caddyfile is not an ungated remote door (#1420)', () => {
       const off = () => ({ authEnabled: false, ingressMode: 'caddy' });
-      const door = (ungatedRemoteSite) => () => ({ ungatedRemoteSite });
+      const door = (ungatedRemoteSite, unguardedLocalSite = false) => () => ({ ungatedRemoteSite, unguardedLocalSite });
 
       it('opens when the Caddyfile has a gate of its own or serves nothing remote', () => {
         for (const sessions of [NO_ACCOUNTS, ENABLED, ALL_DISABLED]) {
@@ -126,19 +126,83 @@ describe('lib/auth-gate — the front-door verdict (#1418, #1420, ADR 0015/0016)
         assert.equal(authGate.resolveGateState(() => ({ ingressMode: 'caddy' }), ENABLED, door(true)), S.ARMED);
       });
 
+      it('an unguarded localhost site closes the opt-out only when accounts exist (ruled 2026-09-13)', () => {
+        // A `localhost` site with no password and no peer guard answers any
+        // machine that asks for `localhost`. With accounts the install had a
+        // login, so the accounts decide; with none it is the opt-out install.
+        assert.equal(authGate.resolveGateState(off, ENABLED, door(false, true)), S.ARMED);
+        assert.equal(authGate.resolveGateState(off, ALL_DISABLED, door(false, true)), S.LOCKED);
+        assert.equal(authGate.resolveGateState(off, NO_ACCOUNTS, door(false, true)), S.OPEN);
+        // A remote door still wins over the local question, as before.
+        assert.equal(authGate.resolveGateState(off, NO_ACCOUNTS, door(true, true)), S.ACCOUNT_REQUIRED);
+      });
+
+      it('ENFORCES when the store cannot be read while weighing an unguarded localhost site', () => {
+        const broken = { accountPresence: () => { throw new Error('SQLITE_BUSY'); } };
+        assert.equal(authGate.resolveGateState(off, broken, door(false, true)), S.UNREADABLE);
+        for (const bad of [null, {}, { exists: 'no' }]) {
+          assert.equal(authGate.resolveGateState(off, { accountPresence: () => bad }, door(false, true)), S.UNREADABLE,
+            JSON.stringify(bad));
+        }
+      });
+
       it('ENFORCES when the Caddyfile cannot be read, or is described malformed', () => {
         assert.equal(authGate.resolveGateState(off, ENABLED, () => { throw new Error('EACCES'); }), S.UNREADABLE);
-        for (const bad of [null, {}, { ungatedRemoteSite: 'false' }, { ungatedRemoteSite: 0 }]) {
+        for (const bad of [null, {}, { ungatedRemoteSite: 'false', unguardedLocalSite: false }, { ungatedRemoteSite: 0, unguardedLocalSite: false },
+          { ungatedRemoteSite: false }, { ungatedRemoteSite: false, unguardedLocalSite: 'true' }]) {
           assert.equal(authGate.resolveGateState(off, ENABLED, () => bad), S.UNREADABLE, JSON.stringify(bad));
         }
       });
 
       it('never asks about the Caddyfile outside caddy mode, or with authEnabled on', () => {
         let asked = 0;
-        const counting = () => { asked++; return { ungatedRemoteSite: true }; };
+        const counting = () => { asked++; return { ungatedRemoteSite: true, unguardedLocalSite: false }; };
         assert.equal(authGate.resolveGateState(() => ({ authEnabled: false, ingressMode: 'direct' }), ENABLED, counting), S.OPEN);
         assert.equal(authGate.resolveGateState(() => ({ authEnabled: true, ingressMode: 'caddy' }), ENABLED, counting), S.ARMED);
         assert.equal(asked, 0);
+      });
+    });
+
+    describe('writers resolve the gate from config, not from the file they replace (#1420 merge)', () => {
+      const caddy = require('../lib/caddy');
+      const fs = require('node:fs');
+      const path = require('node:path');
+      const off = () => ({ authEnabled: false, ingressMode: 'caddy' });
+      const gen = (gateState, extra = {}) => caddy.buildCaddyfileContent({
+        serverPort: 3102, certPath: '/c/cert.pem', keyPath: '/c/key.pem', gateState, ...extra
+      });
+
+      it('turning the login off in caddy mode settles on open instead of looping', () => {
+        // An armed cutover's file: localhost with no basic_auth and no guard.
+        const armedFile = gen(S.ARMED);
+        const readFile = (text) => () => caddy.describeIngressDoor(text);
+        // The request gate, with accounts, keeps the login on while that file serves.
+        assert.equal(authGate.resolveGateState(off, ENABLED, readFile(armedFile)), S.ARMED);
+        // A writer asking the request gate's question would write the same file again —
+        assert.equal(gen(authGate.resolveGateState(off, ENABLED, readFile(armedFile))), armedFile,
+          'precondition: the loop this guards against');
+        // — so it asks for the configured intent instead, writes a guarded file,
+        const intended = authGate.resolveIntendedGateState(off, ENABLED);
+        assert.equal(intended, S.OPEN);
+        const written = gen(intended);
+        assert.ok(written.includes('remote_ip'), 'the new local site carries the peer guard');
+        // and the request gate reading that file agrees: the opt-out took effect.
+        assert.equal(authGate.resolveGateState(off, ENABLED, readFile(written)), S.OPEN);
+      });
+
+      it('keeps every failure direction: an unreadable config or store still enforces', () => {
+        assert.equal(authGate.resolveIntendedGateState(() => { throw new Error('EACCES'); }, ENABLED), S.UNREADABLE);
+        const broken = { accountPresence: () => { throw new Error('SQLITE_BUSY'); } };
+        assert.equal(authGate.resolveIntendedGateState(() => ({ authEnabled: true }), broken), S.UNREADABLE);
+        assert.equal(authGate.resolveIntendedGateState(() => ({ authEnabled: true }), ENABLED), S.ARMED);
+      });
+
+      it('both Caddyfile writers use it, and neither reads the old file for the gate', () => {
+        for (const script of ['ingress-cutover.js', 'guard-ungated-sites.js']) {
+          const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', script), 'utf8');
+          assert.match(src, /authGate\.resolveIntendedGateState\(/, script);
+          assert.doesNotMatch(src, /authGate\.resolveGateState\(/, script);
+        }
       });
     });
 

@@ -736,10 +736,10 @@ function main() {
 
   // #1420 — whether TangleClaw's own login guards the door, which decides
   // whether the generated file still needs Caddy's `basic_auth`. Read here,
-  // after adoption may have changed `authEnabled`, through the gate's own
-  // classifier against the store this process opened.
-  ctx.gateState = authGate.resolveGateState(() => config, store.authSessions,
-    () => caddy.describeIngressDoor(ctx.existingCaddyfileText));
+  // after adoption may have changed `authEnabled`, against the store this
+  // process opened — as the operator CONFIGURED it, never from the shape of the
+  // file this run is about to replace (`authGate.resolveIntendedGateState`).
+  ctx.gateState = authGate.resolveIntendedGateState(() => config, store.authSessions);
 
   let plan;
   try {

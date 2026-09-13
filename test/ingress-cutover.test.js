@@ -812,7 +812,8 @@ describe('ingress-cutover — the direct-mode binding is named on the way out of
 
   it('prints the note on the dry run and on the real run, and resolves the gate state before planning', () => {
     assert.equal((CUTOVER_SRC.match(/if \(plan\.bindNote\) process\.stdout\.write/g) || []).length, 2);
-    const resolved = CUTOVER_SRC.indexOf('ctx.gateState = authGate.resolveGateState(');
+    // The writer resolves the CONFIGURED gate, not one read off the file it replaces.
+    const resolved = CUTOVER_SRC.indexOf('ctx.gateState = authGate.resolveIntendedGateState(');
     const planned = CUTOVER_SRC.indexOf('plan = planCutover(target, ctx)');
     assert.ok(resolved > -1 && resolved < planned, 'the gate state is read before the plan is built');
   });

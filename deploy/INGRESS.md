@@ -363,6 +363,66 @@ the generator reproduces the live file in full — see the parity caveat below.
 
 If terminals start dying at 1006 after an ingress change, check this block first.
 
+## Sites without a password answer only this machine
+
+A Caddy site name is **not** a boundary. Caddy listens on every interface and chooses a site by the
+host name the client sends, so a `localhost { … }` site with no `basic_auth` serves any machine that
+can reach Caddy's port and asks for `localhost` — the LAN, the tailnet. TangleClaw's own served-Host
+check accepts that name, so it does not stop the request either (GHSA-fhgg-4h57-q2f9).
+
+The generator therefore adds a guard to every site it writes without a password, ahead of the proxy:
+
+```
+	@offbox not remote_ip 127.0.0.1/8 ::1
+	abort @offbox
+```
+
+`remote_ip` reads the socket peer, not a header (this file never sets `trusted_proxies`), so every
+connection that is not from this machine is dropped before it reaches TangleClaw — dropped rather
+than answered `403`, so a caller is not even told a TangleClaw lives there. A site **with**
+`basic_auth` carries no guard: the login is what admits other machines. Neither does a site that
+**TangleClaw's own login** guards (an account exists and `authEnabled` is on, so the cutover wrote it
+without `basic_auth`): it must answer other machines, and `guard-ungated-sites.js` refuses on such an
+install rather than lock you out of it. A `publicDomain` site with no
+login is guarded too, so it refuses the internet it was published to; publish a site only with a login.
+
+**What the guard does not cover.** The peer is whoever opened the connection to Caddy. Something
+running on this machine that relays outside traffic in — Tailscale Serve, an `ssh -L` forward, a
+tunnel agent — connects from loopback, so its traffic passes. Check any such relay before pointing it
+at Caddy or TangleClaw.
+
+**Installs whose Caddyfile was written before the guard are still open** until the file is rewritten.
+The [drift check](../docs/caddy-drift-check.md) reports such a site on the dashboard banner at boot
+("every TangleClaw site with no gate refuses other machines" — judged only for sites that forward
+to TangleClaw; a hand-added site fronting another service is PortHub's reach question, not this one).
+The fix, for a pristine or hand-edited file:
+
+```bash
+node scripts/guard-ungated-sites.js --dry-run   # what it would change; writes nothing
+node scripts/guard-ungated-sites.js             # add the guard, then restart Caddy
+```
+
+It adds only the two lines above, to each top-level site block that proxies directly to TangleClaw
+(`127.0.0.1:<serverPort>`) with no `basic_auth`, `forward_auth` or `import`, and keeps every other
+edit — a block forwarding anywhere else is left as it is. It writes nothing unless
+`caddy adapt` reads the result as your file plus the guard routes, with every ungated site now
+refusing other machines — anything less exact is **refused with the reason**. A generated file stays
+generated (re-stamped), so a later cutover or `reset-admin.js --create-gate` still accepts it. The
+write keeps a timestamped backup and restores it if `caddy validate` fails. Unlike the listener pin
+it does not refuse outside caddy ingress mode: a leftover Caddyfile is still served while Caddy's job
+is loaded, and the guard can only take access away. Exit status: `0` guarded and Caddy restarted (or
+nothing to do), `1` refused or failed with nothing live changed, `2` the guard is on disk but Caddy
+could not be restarted — run the printed `launchctl` command. Restart TangleClaw afterwards so the
+banner re-checks.
+
+**If it refused** (a site whose proxy sits inside `handle`, or behind an `import` that is not a gate),
+add the two lines by hand **directly before each `reverse_proxy`, inside the block that holds it** —
+for a proxy inside `handle { … }`, inside that `handle`. Placing them at the top of the site is not
+enough there: Caddy runs `handle` blocks before a site-level `abort`, so the guard would never fire.
+Then `caddy validate --config ~/.tangleclaw/Caddyfile`, restart Caddy, and restart TangleClaw — the
+banner clears only when Caddy's own reading of the file shows every ungated site refusing other
+machines. Or put a login on the install instead: `node scripts/reset-admin.js --create-gate --user <name>`.
+
 ## Admin credential reset (break-glass, AUTH-2)
 
 When the Caddy `basic_auth` gate is active (AUTH-2) and the admin password is lost,

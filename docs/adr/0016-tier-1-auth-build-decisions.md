@@ -526,3 +526,32 @@ Where the build sharpened "The ruling" above. Where they differ, this section go
 - **The notice is per account** and stays until the account acknowledges it or regenerates its codes.
 - **Issued on the first-account screen only.** Accounts created by the first-run wizard or by
   `scripts/reset-admin.js` start with none and generate them in Settings; wizard issuance is #803.
+
+### Recorded during #1420 (2026-09-13) — the peer guard, with TangleClaw's own login
+
+A site name is not a boundary: Caddy listens on every interface and picks a site by the host the
+client sends, so a `localhost` site with no gate serves any machine that asks for `localhost`
+(GHSA-fhgg-4h57-q2f9, fixed on `main` by a peer guard on every site written without `basic_auth`).
+Two #1420 decisions above rested on "`localhost` is local", and change with it:
+
+- **The generator guards a site only when it has no gate of either kind.** A site TangleClaw's own
+  login guards (`guardsTheDoor`: `armed`, `locked`) carries no `basic_auth` and no guard — it must
+  answer other machines, and the login is what admits them. `account-required`, `unreadable` and
+  `open` with no credential get the guard. The drift property for the guard holds outright when the
+  login guards the door, like P1, and the in-place fix script refuses on such an install.
+- **`authEnabled: false` in caddy mode (the A-03 rule above) now also weighs a `localhost` site with
+  no `basic_auth` and no peer guard.** Ruled by the operator 2026-09-13: it counts against the
+  opt-out **only when accounts exist**. With accounts, the accounts decide, as for a remote door; with
+  none, the install stays open — it is ADR 0009's opt-out population, whose fix is regenerating the
+  Caddyfile with the guard. `lib/caddy.js#describeIngressDoor` reports it as `unguardedLocalSite`; a
+  guard counts only as both lines directly inside the site block.
+- **Limit, stated:** traffic relayed in by something running on this machine (Tailscale Serve,
+  `ssh -L`, a tunnel agent) arrives from loopback and passes the guard.
+- **A tool that WRITES the Caddyfile resolves the gate from config and accounts, never from the file
+  it replaces** (`lib/auth-gate.js#resolveIntendedGateState`, used by `ingress-cutover.js` and
+  `guard-ungated-sites.js`). The request gate reads the file so `authEnabled: false` cannot open an
+  install whose file has no gate; a writer asking the same question saw its own previous output's
+  missing gate as the login's, wrote another ungated file, and read the same answer back — so
+  `authEnabled: false` could never take effect in caddy mode through any tool. Writing for the
+  configured intent breaks the loop: an `authEnabled: false` cutover writes guarded local sites (or
+  refuses a remote one, which needs a gate), and the request gate reading that file agrees.
