@@ -90,6 +90,13 @@ Caddy honour a client's value.
   `basic_auth` gate standing in front. When A-03 drops that gate on an armed install, re-state (or
   change) the condition the forwarded host is believed under — it names an address in hidden model
   context, not an identity, but its stated reason goes away.
+- A-03 (verify-resolutions observations, prose only): `lib/session-ownership.js` and `lib/store.js`
+  still describe `owner` as the "proxy-authenticated user (null in direct mode)", and so does FEATURES'
+  "Session ownership" entry; `lib/caddy.js#_pushSiteBlock`'s JSDoc mentions AUTH-3 forwarding without
+  saying the header is inert. A-03 rewrites `lib/caddy.js` anyway.
+- A-03: `POST /api/setup/complete` answers `account.required: false` when the gate is `unreadable`, so
+  the wizard moves on rather than surfacing the fault (the gate still enforces — nothing is exposed).
+  Decide whether setup should refuse to finish on an unreadable gate, and test it.
 - A-04: `SECURITY.md`'s login section still describes Caddy's `basic_auth` as THE gate. Its identity
   bullet was corrected in A-02b; the section is rewritten with the recovery doc, when the new door's
   recovery exists to describe.
@@ -172,7 +179,7 @@ forwarded host.
 - [x] A-01 — ADR 0016 addendum + this plan
 - [x] Checkpoint 1 — ruled 2026-09-13: 1 + 2
 - [x] A-02a — classifier, gate on it, carve-out + XFF, set-password route/page (reviewed 2026-09-13, PR into `train-9/cutover`)
-- [ ] A-02b — OQ2 inversion, identity + authStatus from the classifier, dashboard consumers
+- [x] A-02b — OQ2 inversion, identity + authStatus from the classifier, dashboard consumers (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [ ] A-03 — state-driven `basic_auth`, bypass ownership, drift, bind policy, #1055
 - [ ] A-04 — fallback command, recovery codes, ADR 0009 rule 5 text, reset-admin, recovery doc, drills
 - [ ] A-VRF — cumulative Critic, elkaholic VRF, phone drill → Checkpoint 2
