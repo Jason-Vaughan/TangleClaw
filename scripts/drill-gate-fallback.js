@@ -78,6 +78,8 @@ function getWithCredential(target, user, password, timeoutMs = 3000) {
     const options = {
       host: '127.0.0.1', port: target.port, path: '/', method: 'GET', rejectUnauthorized: false,
       timeout: timeoutMs,
+      // A fresh connection per sign-in: see `gate-fallback#queryGateState`.
+      agent: false,
       headers: { Host: host, Authorization: `Basic ${Buffer.from(`${user}:${password}`).toString('base64')}` }
     };
     if (target.tls && target.host && net.isIP(target.host) === 0) options.servername = target.host;

@@ -163,7 +163,9 @@ function probeBasicChallenge(target, timeoutMs = 3000) {
       method: 'GET',
       headers: { Host: host },
       rejectUnauthorized: false,
-      timeout: timeoutMs
+      timeout: timeoutMs,
+      // A fresh connection per probe: see `queryGateState`.
+      agent: false
     };
     if (target.tls && target.host && net.isIP(target.host) === 0) options.servername = target.host;
     let req;
@@ -196,7 +198,11 @@ async function queryGateState(port, timeoutMs = 3000) {
   const attempt = (client) => new Promise((resolve) => {
     let req;
     try {
-      req = client.get({ host: '127.0.0.1', port, path: '/api/auth/me', rejectUnauthorized: false, timeout: timeoutMs },
+      // `agent: false`: a fresh connection per question. The fallback and its undo
+      // block on caddy validate and a launchctl restart for longer than the
+      // server's keep-alive, so a pooled socket was already closed when the next
+      // question went out on it — ECONNRESET, read as "TangleClaw did not answer".
+      req = client.get({ host: '127.0.0.1', port, path: '/api/auth/me', rejectUnauthorized: false, timeout: timeoutMs, agent: false },
         (res) => {
           let body = '';
           res.setEncoding('utf8');

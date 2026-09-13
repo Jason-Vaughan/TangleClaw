@@ -393,6 +393,34 @@ describe('scripts/gate-fallback.js (#1420)', () => {
       assert.equal(closed.ok, false);
     });
 
+    it('asks on a fresh connection after a blocking step outlasts the server\'s keep-alive', async () => {
+      // An undo's caddy validate and launchctl restart block the event loop past
+      // the server's keep-alive timeout, so a pooled socket is already closed by
+      // the time the next question goes out on it: ECONNRESET, read as "no answer".
+      // The server runs in a child process: an in-process one would be blocked
+      // too, and could not close the socket while the test waits.
+      const child = require('node:child_process').spawn(process.execPath, ['-e', `
+        const s = require('node:http').createServer((q, r) => {
+          r.writeHead(200, { 'Content-Type': 'application/json' }); r.end('{"gateState":"armed"}');
+        });
+        s.keepAliveTimeout = 2000;
+        s.listen(0, '127.0.0.1', () => process.stdout.write(String(s.address().port) + '\\n'));
+      `], { stdio: ['ignore', 'pipe', 'inherit'] });
+      const port = await new Promise((resolve) => child.stdout.once('data', (b) => resolve(Number(String(b).trim()))));
+      const me = { port, close: async () => { child.kill(); } };
+      try {
+        assert.equal((await cmd.queryGateState(me.port)).state, 'armed');
+        assert.equal((await cmd.probeBasicChallenge({ port: me.port, tls: false, host: null })).ok, false);
+        require('node:child_process').execFileSync('/bin/sleep', ['3']);
+        assert.deepEqual(await cmd.queryGateState(me.port), { state: 'armed', error: null });
+        require('node:child_process').execFileSync('/bin/sleep', ['3']);
+        const again = await cmd.probeBasicChallenge({ port: me.port, tls: false, host: null });
+        assert.match(again.detail, /HTTP 200/, 'the probe must reach the server, not a dead pooled socket');
+      } finally {
+        await me.close();
+      }
+    });
+
     it('reads the gate state as a local tool, with no browser headers and no cookie', async () => {
       const me = await serve(200, { 'Content-Type': 'application/json' }, '{"gateState":"fallback"}');
       const junk = await serve(200, {}, 'not json');
