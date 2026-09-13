@@ -73,14 +73,21 @@ The audit has two parts, split between the two ADR 0014 roles.
   `app/dependabot` and the branch under `dependabot/github_actions/`. If the author is anything
   else, it is not a Dependabot PR. Handle it as an ordinary external PR under ADR 0014, where a
   change to `.github/workflows/` is a security trip.
-- **Shape of the diff.** Every changed line is a `uses: owner/repo@ref` line, and every one names
-  the same action. Any other change, in any file, fails the filter: a new step, a changed `with:`,
-  a new `permissions:`, or a comment.
-- **Expected category trip.** The diff always touches `.github/workflows/`, which is ADR 0014's
-  execute-on-our-machine category. For a Dependabot PR that is expected. It does not end the
-  review, because the bot's bytes are never merged either way. What the filter checks is that the
-  diff contains the ref change and nothing more. Whatever the verdict, the rebuilt change is a
-  maintainer's own edit, and `CONTRIBUTING.md` §4 allows that.
+- **Shape of the diff — by command, never by eye.** Run
+  `gh pr diff <N> | node scripts/check-bump-diff.js`. It must exit `0` and print
+  `BUMP-ONLY: <action> <old refs> → <new ref>`. It passes only when every changed file is a workflow
+  under `.github/workflows/` modified in place, every changed line is a `uses: owner/repo@ref` line
+  (a trailing version comment such as `# v4.2.0` is allowed), every line names the same action moving
+  to one new ref, and no step is added, dropped or re-indented. Exit `1` names the reason: a new
+  step, a changed `with:`, a widened `permissions:`, a comment edit, a second action. Exit `2` means
+  no diff reached it — never read that as a pass. The operator ruled that this condition is checked
+  mechanically because a one-line bump is exactly what a reader waves through.
+- **The workflows category, and why it does not reject here.** The diff always touches
+  `.github/workflows/`, ADR 0014's execute-on-our-machine category. ADR 0014 exempts a PR from that
+  rejection **only** when both checks above pass (author `app/dependabot`, checker exit `0`); the
+  ruling and its reasoning are recorded there. Any other result is a security trip as for any
+  untrusted PR. A passing PR is still never merged: the rebuilt change is a maintainer's own edit,
+  and `CONTRIBUTING.md` §4 allows that.
 
 ### 2. Micro filter (Builder): is the upstream release what it claims to be?
 

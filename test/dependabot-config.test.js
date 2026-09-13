@@ -165,6 +165,15 @@ describe('Dependency-bump audit policy (docs/dependency-bump-audit.md)', () => {
       'README does not link the dependency-bump audit policy');
   });
 
+  it('rests the ADR 0014 exemption on the checker command, in both the ADR and the audit doc', () => {
+    // The operator ruled the uses:-only condition is checked by a command, never
+    // by eye. The command named in the prose must be one that exists.
+    const cmd = 'node scripts/check-bump-diff.js';
+    assert.ok(fs.existsSync(path.join(ROOT, 'scripts', 'check-bump-diff.js')), 'checker script missing');
+    assert.ok(fs.readFileSync(ADR_0014, 'utf8').includes(cmd), 'ADR 0014 exemption does not name the checker');
+    assert.ok(fs.readFileSync(POLICY_DOC, 'utf8').includes(cmd), 'audit doc macro filter does not name the checker');
+  });
+
   it('links only to repository files that exist', () => {
     const doc = fs.readFileSync(POLICY_DOC, 'utf8');
     const targets = [...doc.matchAll(/\]\(((?!https?:)[^)#]+)(?:#[^)]*)?\)/g)].map((m) => m[1]);

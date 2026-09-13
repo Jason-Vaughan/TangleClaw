@@ -34,6 +34,28 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-12 — #1361: Dependabot for GitHub Actions, audited under a narrow ADR 0014 exemption
+
+<!-- prawduct: type=chore | scope=deps-1361 -->
+
+Sprint v5.24 Lane C.
+
+**Why.** Nothing told us an action had a new release, including a security fix. #1361 asked for
+Dependabot with bump PRs audited and clean-room reconstructed — but ADR 0014 rejects any untrusted PR
+touching `.github/workflows/`, which every Actions bump does. The operator ruled (2026-09-12) to
+amend ADR 0014 for `uses:`-only bot PRs, and added that the condition be checked by a command, never
+by eye.
+
+**What.** `.github/dependabot.yml` (github-actions only, weekly, 3 open PRs; npm dropped explicitly —
+no manifest). `docs/dependency-bump-audit.md`: macro filter by command, micro filter (same repo,
+published release, 7-day cooling-off, tag on default branch, upstream diff), reconstruction, the
+"never" list. `scripts/check-bump-diff.js` decides bump-only from raw diff text. ADR 0014 records the
+ruling under Decision item 1. `test/dependabot-config.test.js`, `test/check-bump-diff.test.js`.
+
+**Review.** Critic `rev-20260913T015803Z-f54d59b0` — 2 blocking (inverted compare direction in the
+tag check) fixed in `a212e36f`; verify-resolutions clean. The ruling's amendment and checker are
+reviewed by a further verify-resolutions pass.
+
 ## 2026-09-12 — #848: an already-deployed unpinned HTTPS listener can be pinned in place
 
 <!-- prawduct: type=bugfix | scope=caddy-848 -->
