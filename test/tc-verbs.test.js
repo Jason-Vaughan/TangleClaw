@@ -37,7 +37,8 @@ const {
   renderDocs,
   renderRules,
   renderLearnings,
-  renderInbox
+  renderInbox,
+  renderPeerStatus
 } = require('../lib/tc-verbs');
 
 const TC_BIN = path.join(__dirname, '..', 'bin', 'tc');
@@ -110,11 +111,45 @@ describe('tc verb roster (lib/tc-verbs)', () => {
     assert.equal(receiptVerbLabel('message', ['send', 'ws-1', 'hi']), 'message.send');
     assert.equal(receiptVerbLabel('message', ['read']), 'message.read');
     assert.equal(receiptVerbLabel('message', ['ack', '3']), 'message.ack');
+    assert.equal(receiptVerbLabel('message', ['status', 'ws-1']), 'message.status');
     assert.equal(receiptVerbLabel('message', ['bogus']), 'message');
     assert.equal(receiptVerbLabel('ports', []), 'ports');
   });
 
   describe('renderers report honest emptiness — never blank output, never invented success', () => {
+    it('peer status: a peer this host cannot see is said to be unseeable, never reachable or unreachable (#918)', () => {
+      const out = renderPeerStatus({ workspaceId: 'far-away-1234abcd', local: false });
+      assert.match(out, /not a TangleClaw session on this host/);
+      assert.match(out, /no verdict to give/);
+      assert.doesNotMatch(out, /\bunreachable\b|\breachable\b/);
+    });
+
+    it('peer status: every code the wake monitor emits has a meaning, and an unknown one is relayed as given (#918)', () => {
+      const codes = [
+        'nudged', 'no-mail', 'wake-not-opted-in', 'pane-at-prompt', 'pane-no-prompt',
+        'pane-composer-has-input', 'pane-turn-in-flight', 'pane-agents-running', 'pane-not-at-rest',
+        'pane-writing', 'pane-capture-failed', 'inject-failed', 'wrap-running', 'no-pane',
+        'unprofiled-engine', 'no-project', 'config-unreadable', 'not-observed',
+        'session-ended', 'listener-connecting', 'listener-off'
+      ];
+      for (const reason of codes) {
+        const out = renderPeerStatus({ workspaceId: 'w', local: true, reason, since: 's', observedAt: 'o', monitorRunning: true });
+        assert.doesNotMatch(out, /no description for this code/, `${reason} has a meaning`);
+      }
+      assert.match(renderPeerStatus({ workspaceId: 'w', local: true, reason: 'listener-error', since: 's', observedAt: 'o', monitorRunning: true }),
+        /listener is in state error, not listening/);
+      assert.match(renderPeerStatus({ workspaceId: 'w', local: true, reason: 'a-future-code', since: 's', observedAt: 'o', monitorRunning: true }),
+        /a-future-code — no description for this code/);
+    });
+
+    it('peer status: a verdict nothing is refreshing says so, and a never-observed one prints no timestamps (#918)', () => {
+      const stale = renderPeerStatus({ workspaceId: 'w', local: true, reason: 'nudged', since: 's', observedAt: 'o', monitorRunning: false });
+      assert.match(stale, /not being refreshed — treat it as stale/);
+      const unseen = renderPeerStatus({ workspaceId: 'w', local: true, reason: 'not-observed', since: null, observedAt: null, monitorRunning: true });
+      assert.doesNotMatch(unseen, /Observed/);
+      assert.match(unseen, /has not assessed this session yet/);
+    });
+
     it('sessions: an idle fleet says idle, a live one marks your own project', () => {
       assert.match(renderSessions({ sessions: [] }, {}), /No live TangleClaw sessions/);
       const out = renderSessions({
@@ -202,6 +237,34 @@ describe('tc verb roster (lib/tc-verbs)', () => {
       const res = await message.run({ ...noopCtx, argv: ['send', 'ws-1'] });
       assert.equal(res.code, 1);
       assert.match(res.stderr, /needs a recipient and a message/);
+    });
+
+    // #918 — `tc message status <workspace-id>`.
+    it('status without a workspace id → exit 1 before any network call', async () => {
+      const res = await message.run({ ...noopCtx, argv: ['status'] });
+      assert.equal(res.code, 1);
+      assert.match(res.stderr, /status needs the workspace id/);
+    });
+
+    it('status reads the peer route for the resolved project, id URL-encoded, and renders the verdict', async () => {
+      const calls = [];
+      const res = await message.run({
+        env: {}, argv: ['status', 'peer/odd id'],
+        getJson: async (p) => {
+          calls.push(p);
+          if (p.startsWith('/api/tc/whoami')) return { project: { id: 1, name: 'proj a' } };
+          return {
+            workspaceId: 'peer/odd id', local: true, reason: 'pane-no-prompt',
+            since: '2026-09-12T10:00:00.000Z', observedAt: '2026-09-12T10:45:00.000Z', monitorRunning: true
+          };
+        },
+        postJson: async () => { throw new Error('status must not POST'); }
+      });
+      assert.equal(res.code, 0);
+      assert.equal(calls[1], '/api/sessions/proj%20a/medusa/peers/peer%2Fodd%20id');
+      assert.match(res.stdout, /pane-no-prompt — the pane shows no input prompt/);
+      assert.match(res.stdout, /Observed 2026-09-12T10:45:00.000Z; this has been the verdict since 2026-09-12T10:00:00.000Z/);
+      assert.doesNotMatch(res.stdout, /not being refreshed/);
     });
 
     it('unresolved identity → exit 2 telling the agent not to guess a project name', async () => {

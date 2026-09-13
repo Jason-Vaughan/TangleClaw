@@ -245,14 +245,14 @@ describe('medusa-wake — _composerEmpty (cursor-based input detection, #1103)',
 
   it('refuses a whitespace-only composer through the full gate, cursor present (#1109)', () => {
     const verdict = wake._assessPane(['❯  '], CLAUDE, { x: 3, line: '❯  ' });
-    assert.deepEqual(verdict, { idle: false, reason: 'no-bare-prompt' });
+    assert.deepEqual(verdict, { idle: false, reason: 'composer-has-input' });
   });
 
   it('refuses a whitespace-only composer on the no-cursor fallback path (#1109)', () => {
     // The degraded path: no cursor, so the rendered line alone decides. A
     // trailing typed space must not read as a bare prompt.
     const verdict = wake._assessPane(['❯  '], CLAUDE, undefined);
-    assert.deepEqual(verdict, { idle: false, reason: 'no-bare-prompt' });
+    assert.deepEqual(verdict, { idle: false, reason: 'no-prompt' });
   });
 
   it('carries faintness across an SGR reset and a specific un-faint', () => {
@@ -327,20 +327,20 @@ describe('medusa-wake — placeholder styling is declared per engine (#1105)', (
 
 describe('medusa-wake — _assessPane with cursor (#1103)', () => {
   it('judges a pane idle when its prompt line holds only a suggestion', () => {
-    // The regression. Without the cursor this same pane reads `no-bare-prompt`,
+    // The regression. Without the cursor this same pane reads `no-prompt`,
     // because the suggestion is indistinguishable from typed input once the
     // escape sequences are stripped.
     const withSuggestion = PANE_WITH_PROMPT_TEXT.slice();
     withSuggestion[2] = 'add case law to the reading list too, then branch and PR';
     assert.deepEqual(wake._assessPane(withSuggestion, CLAUDE),
-      { idle: false, reason: 'no-bare-prompt' });
+      { idle: false, reason: 'no-prompt' });
     assert.deepEqual(wake._assessPane(withSuggestion, CLAUDE, SUGGESTION_CURSOR),
       { idle: true, reason: 'at-prompt' });
   });
 
   it('still refuses a pane whose composer really holds typed input', () => {
     assert.deepEqual(wake._assessPane(PANE_WITH_PROMPT_TEXT, CLAUDE, TYPED_CURSOR),
-      { idle: false, reason: 'no-bare-prompt' });
+      { idle: false, reason: 'composer-has-input' });
   });
 
   it('falls back to the text check when the cursor is unavailable', () => {
@@ -348,7 +348,7 @@ describe('medusa-wake — _assessPane with cursor (#1103)', () => {
     assert.deepEqual(wake._assessPane(IDLE_PANE, CLAUDE, null),
       { idle: true, reason: 'at-prompt' });
     assert.deepEqual(wake._assessPane(PANE_WITH_PROMPT_TEXT, CLAUDE, null),
-      { idle: false, reason: 'no-bare-prompt' });
+      { idle: false, reason: 'no-prompt' });
   });
 
   it('lets the busy and fleet gates win over an empty composer', () => {
@@ -436,10 +436,10 @@ describe('medusa-wake — _assessPane (Claude idle policy, pinned byte-for-byte)
     assert.deepEqual(wake._assessPane(BUSY_PANE, CLAUDE), { idle: false, reason: 'turn-in-flight' });
   });
   it('refuses a permission dialog (selector row is not a bare prompt)', () => {
-    assert.deepEqual(wake._assessPane(DIALOG_PANE, CLAUDE), { idle: false, reason: 'no-bare-prompt' });
+    assert.deepEqual(wake._assessPane(DIALOG_PANE, CLAUDE), { idle: false, reason: 'no-prompt' });
   });
   it('refuses to type over an operator\'s half-typed input', () => {
-    assert.deepEqual(wake._assessPane(TYPING_PANE, CLAUDE), { idle: false, reason: 'no-bare-prompt' });
+    assert.deepEqual(wake._assessPane(TYPING_PANE, CLAUDE), { idle: false, reason: 'no-prompt' });
   });
   it('strips ANSI before judging (a colored busy marker still blocks)', () => {
     const colored = ['❯ ', '[2mesc to interrupt[0m'];
@@ -466,7 +466,7 @@ describe('medusa-wake — _assessPane (antigravity idle policy, #560)', () => {
     assert.deepEqual(wake._assessPane(AG_DIALOG_PANE, ANTIGRAVITY), { idle: false, reason: 'not-at-rest' });
   });
   it('refuses to type over half-typed antigravity input (prompt non-bare)', () => {
-    assert.deepEqual(wake._assessPane(AG_TYPING_PANE, ANTIGRAVITY), { idle: false, reason: 'no-bare-prompt' });
+    assert.deepEqual(wake._assessPane(AG_TYPING_PANE, ANTIGRAVITY), { idle: false, reason: 'no-prompt' });
   });
   it('a Claude-idle pane is NOT idle under the antigravity profile (markers do not cross)', () => {
     // The bug this chunk fixes, from the other direction: Claude's `❯` never
@@ -667,7 +667,7 @@ describe('medusa-wake — gates (each one blocks alone)', () => {
     for (let i = 0; i < 6; i++) wake._internal.tick();
     assert.equal(world.injected.length, 0, 'never types into the dialog');
     assert.equal(
-      world.recorded.filter((r) => r.skipReason === 'pane-no-bare-prompt').length, 1,
+      world.recorded.filter((r) => r.skipReason === 'pane-no-prompt').length, 1,
       'the dialog is recorded as the reason, once — a transition, not a row per tick'
     );
 
@@ -1054,5 +1054,183 @@ describe('medusa-wake — the delivery ledger (#792, #791)', () => {
     wake._internal.recordDelivery = () => { throw new Error('db is locked'); };
     assert.doesNotThrow(() => tickThroughDebounce());
     assert.equal(world.injected.length, 1, 'the nudge still went out');
+  });
+});
+
+// #918. A sender cannot see a peer's pane, so "why has my message not been
+// picked up?" was answerable only by leaving the protocol. The monitor already
+// decides the answer on every tick; these pin that what it hands a sender is
+// that decision — a reason code with a timestamp — and nothing it did not see.
+describe('medusa-wake — peer reachability verdicts (#918)', () => {
+  let saved;
+  let clock;
+  const PEER = 'proj-a-abc123';
+
+  beforeEach(() => {
+    wake.stop();
+    saved = { ...wake._internal };
+    clock = Date.parse('2026-09-12T10:00:00.000Z');
+    wake._internal.now = () => clock;
+    wake._internal.masterKey = () => 'master';
+    wake._internal.registeredWorkspaceId = () => null;
+  });
+  afterEach(() => { Object.assign(wake._internal, saved); wake.stop(); });
+
+  /** Advance the stub clock by `ms` and run one tick. */
+  function tickAt(ms) {
+    clock += ms;
+    wake._internal.tick();
+  }
+
+  it('reports a dialog as `pane-no-prompt`, and keeps `since` while `observedAt` moves', () => {
+    installWorld({ pane: DIALOG_PANE });
+    tickAt(0);
+    const first = wake.peerReachability(PEER);
+    assert.equal(first.local, true);
+    assert.equal(first.reason, 'pane-no-prompt');
+    assert.equal(first.since, '2026-09-12T10:00:00.000Z');
+    assert.equal(first.observedAt, '2026-09-12T10:00:00.000Z');
+
+    tickAt(5000);
+    const second = wake.peerReachability(PEER);
+    assert.equal(second.reason, 'pane-no-prompt');
+    assert.equal(second.since, '2026-09-12T10:00:00.000Z', 'the dialog has been up since the first observation');
+    assert.equal(second.observedAt, '2026-09-12T10:00:05.000Z', 'but it was re-confirmed just now');
+  });
+
+  it('reports typed input under the cursor as `pane-composer-has-input`, in the verdict and the ledger', () => {
+    const world = installWorld({ pane: PANE_WITH_PROMPT_TEXT, cursor: TYPED_CURSOR });
+    tickAt(0);
+    assert.equal(wake.peerReachability(PEER).reason, 'pane-composer-has-input');
+    assert.deepEqual(world.recorded.map((r) => r.skipReason), ['pane-composer-has-input']);
+  });
+
+  it('resets `since` when the reason changes', () => {
+    const world = installWorld({ pane: DIALOG_PANE });
+    tickAt(0);
+    world.pane = BUSY_PANE;
+    tickAt(5000);
+    const v = wake.peerReachability(PEER);
+    assert.equal(v.reason, 'pane-turn-in-flight');
+    assert.equal(v.since, '2026-09-12T10:00:05.000Z');
+  });
+
+  it('says `wake-not-opted-in` explicitly — even with no mail, because that gate is what the monitor observed', () => {
+    const world = installWorld({ config: { medusaWake: false } });
+    tickAt(0);
+    assert.equal(wake.peerReachability(PEER).reason, 'wake-not-opted-in');
+    world.status = { ...world.status, unread: 0 };
+    tickAt(5000);
+    assert.equal(wake.peerReachability(PEER).reason, 'wake-not-opted-in');
+  });
+
+  it('says `no-mail` for an opted-in session with nothing unread', () => {
+    installWorld({ status: { state: 'listening', workspaceId: PEER, unread: 0, lastError: null } });
+    tickAt(0);
+    assert.equal(wake.peerReachability(PEER).reason, 'no-mail');
+  });
+
+  it('reports `pane-at-prompt` during the debounce, then `nudged` — and `nudged` holds while the mail sits unhandled', () => {
+    installWorld();
+    tickAt(0);
+    assert.equal(wake.peerReachability(PEER).reason, 'pane-at-prompt');
+    tickAt(5000);
+    assert.equal(wake.peerReachability(PEER).reason, 'nudged');
+    tickAt(5000);
+    const held = wake.peerReachability(PEER);
+    assert.equal(held.reason, 'nudged');
+    assert.equal(held.since, '2026-09-12T10:00:05.000Z');
+  });
+
+  it('names a failed injection by code, without the tmux error text', () => {
+    installWorld({ injectResult: { ok: false, error: 'tmux: /private/secret path gone' } });
+    tickAt(0);
+    tickAt(5000);
+    const v = wake.peerReachability(PEER);
+    assert.equal(v.reason, 'inject-failed');
+    assert.ok(!JSON.stringify(v).includes('secret'));
+  });
+
+  it('never carries pane content — only the fixed fields', () => {
+    const SECRET = 'API_KEY=sk-do-not-leak';
+    installWorld({ pane: [SECRET, '  Do you want to proceed?', '❯ 1. Yes', '  2. No'] });
+    tickAt(0);
+    const v = wake.peerReachability(PEER);
+    assert.deepEqual(Object.keys(v).sort(), ['local', 'monitorRunning', 'observedAt', 'reason', 'since', 'workspaceId']);
+    assert.ok(!JSON.stringify(v).includes(SECRET));
+  });
+
+  it('answers `local: false` and nothing else for a workspace no local session holds', () => {
+    installWorld();
+    tickAt(0);
+    assert.deepEqual(wake.peerReachability('someone-elses-host-1234abcd'), {
+      workspaceId: 'someone-elses-host-1234abcd', local: false
+    });
+    assert.deepEqual(wake.peerReachability(''), { workspaceId: '', local: false });
+  });
+
+  it('answers `not-observed` for a local session the monitor has not scanned yet — never a guessed state', () => {
+    installWorld();
+    const v = wake.peerReachability(PEER);
+    assert.equal(v.local, true);
+    assert.equal(v.reason, 'not-observed');
+    assert.equal(v.since, null);
+    assert.equal(v.observedAt, null);
+  });
+
+  it('resolves a session whose listener is off through the registry', () => {
+    const world = installWorld({ status: { state: 'off', workspaceId: null, unread: 0, lastError: null } });
+    wake._internal.registeredWorkspaceId = (c) => (c.key === world.sessions[0].id ? 'toggled-off-9999aaaa' : null);
+    tickAt(0);
+    const v = wake.peerReachability('toggled-off-9999aaaa');
+    assert.equal(v.local, true);
+    assert.equal(v.reason, 'listener-off', 'and its verdict is the off listener the monitor saw');
+  });
+
+  it('resolves the Project Master by its listener key, with no tmux probe', () => {
+    const world = installWorld({ sessions: [] });
+    wake._internal.getStatus = (key) => (key === 'master'
+      ? { state: 'listening', workspaceId: 'project-master-0000beef', unread: 0, lastError: null }
+      : { state: 'off', workspaceId: null, unread: 0, lastError: null });
+    wake._internal.masterWakeRecord = () => { throw new Error('peer resolution must not probe tmux'); };
+    const v = wake.peerReachability('project-master-0000beef');
+    assert.equal(v.local, true);
+    assert.equal(v.reason, 'not-observed');
+    assert.equal(world.injected.length, 0);
+  });
+
+  it('says whether the monitor is still refreshing the verdict', () => {
+    installWorld();
+    tickAt(0);
+    assert.equal(wake.peerReachability(PEER).monitorRunning, false);
+    wake.start({ intervalMs: 60 * 60 * 1000 });
+    assert.equal(wake.peerReachability(PEER).monitorRunning, true);
+  });
+
+  it('every gate names what it observed — no tick leaves an unclassified verdict', () => {
+    const worlds = [
+      { sessions: [{ ...claudeSession(1), sessionMode: 'webui' }] },
+      { sessions: [{ ...claudeSession(1), engineId: 'codex' }] },
+      { sessions: [{ ...claudeSession(1), status: 'ended' }] },
+      { project: null },
+      { wrapRunning: true },
+      { config: { medusaWake: false } },
+      { status: { state: 'connecting', workspaceId: PEER, unread: 1, lastError: null } },
+      { status: { state: 'listening', workspaceId: PEER, unread: 0, lastError: null } },
+      { status: { state: 'listening', workspaceId: PEER, unread: 2, lastError: null }, inbox: [] },
+      { pane: DIALOG_PANE },
+      { pane: BUSY_PANE },
+      {}
+    ];
+    for (const w of worlds) {
+      wake.stop();
+      installWorld(w);
+      tickAt(5000);
+      tickAt(5000);
+      const v = wake.peerReachability(PEER);
+      assert.equal(v.local, true, `fixture resolves: ${JSON.stringify(w)}`);
+      assert.notEqual(v.reason, 'unclassified', `a gate returned no code for ${JSON.stringify(w)}`);
+      assert.notEqual(v.reason, 'not-observed', `the tick recorded nothing for ${JSON.stringify(w)}`);
+    }
   });
 });

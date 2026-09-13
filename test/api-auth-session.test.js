@@ -1032,4 +1032,51 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
       assert.match(res.body, /OpenClaw connection not found/);
     });
   });
+  // #918. The peer reachability read carries a session's wake verdict, so it
+  // must sit behind exactly the door the roster sits behind. Asserted as
+  // PARITY with the roster for every caller shape, on both mounts, so a future
+  // exemption for one route that skips the other shows up here as a mismatch.
+  describe('the peer read sits behind the roster\'s door (#918)', () => {
+    const MOUNTS = [
+      ['/api/sessions/no-such-project/medusa/roster', '/api/sessions/no-such-project/medusa/peers/some-peer-1234abcd'],
+      ['/api/master/medusa/roster', '/api/master/medusa/peers/some-peer-1234abcd']
+    ];
+
+    it('refuses a browser with no session exactly as the roster is refused', async () => {
+      armGate();
+      for (const [roster, peers] of MOUNTS) {
+        const r = await send('GET', roster);
+        const p = await send('GET', peers);
+        assert.equal(r.statusCode, 401, `precondition: ${roster} is gated`);
+        assert.equal(p.statusCode, r.statusCode, `${peers} answers as ${roster} does`);
+      }
+    });
+
+    it('refuses a machine-shaped caller from off the host exactly as the roster is refused', async () => {
+      armGate();
+      for (const [roster, peers] of MOUNTS) {
+        const r = await send('GET', roster, { machine: true, remoteAddress: '10.0.0.5' });
+        const p = await send('GET', peers, { machine: true, remoteAddress: '10.0.0.5' });
+        assert.equal(r.statusCode, 401, `precondition: ${roster} refuses a remote machine caller`);
+        assert.equal(p.statusCode, r.statusCode);
+      }
+    });
+
+    it('lets through exactly who the roster lets through — a signed-in browser and a loopback machine client', async () => {
+      armGate();
+      const { cookie } = await login();
+      // The project mount only: past the door the Master mount probes tmux, and
+      // a live Master on a developer box would make this read the real host.
+      // The door itself is path-blind, which the two refusal cases above pin
+      // on both mounts.
+      for (const [roster, peers] of MOUNTS.slice(0, 1)) {
+        for (const opts of [{ cookie }, { machine: true }]) {
+          const r = await send('GET', roster, opts);
+          const p = await send('GET', peers, opts);
+          assert.notEqual(r.statusCode, 401, `precondition: ${roster} admits ${JSON.stringify(Object.keys(opts))}`);
+          assert.equal(p.statusCode, r.statusCode, `${peers} past the door answers as ${roster} does`);
+        }
+      }
+    });
+  });
 });

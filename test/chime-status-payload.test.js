@@ -18,6 +18,7 @@ const path = require('node:path');
 
 const store = require('../lib/store');
 const tmux = require('../lib/tmux');
+const medusaWake = require('../lib/medusa-wake');
 
 let tmpDir;
 let sessions;
@@ -93,10 +94,18 @@ describe('#1180 the chime asks the notifier question, end to end', () => {
   it('a permission dialog does not read as "not at a prompt"', () => {
     // The regression this pins: asking the INJECTOR's question here silences
     // the chime on a blocked session, which is the case it exists for. The
-    // paste-safe gate returns `no-bare-prompt` for a selector row.
-    withPane(['Do you want to proceed?', '❯ 1. Yes', '  2. No'], 'claude', () => {
+    // paste-safe gate refuses a selector row as `no-prompt` (or, with a cursor
+    // parked on a glyph-led row, `composer-has-input`). Both codes are pinned,
+    // and pinned against what the injector gate really returns for this pane,
+    // so a future rename cannot leave this assertion comparing to a dead string.
+    const pane = ['Do you want to proceed?', '❯ 1. Yes', '  2. No'];
+    const INJECTOR_REFUSALS = ['no-prompt', 'composer-has-input'];
+    assert.ok(INJECTOR_REFUSALS.includes(
+      medusaWake._assessPane(pane, medusaWake.ENGINE_WAKE_PROFILES.claude, null).reason),
+    'precondition: the injector gate refuses this pane with one of the pinned codes');
+    withPane(pane, 'claude', () => {
       const status = sessions.getSessionStatus('chime-payload');
-      assert.notEqual(status.idleReason, 'no-bare-prompt',
+      assert.ok(!INJECTOR_REFUSALS.includes(status.idleReason),
         'the chime must not adopt the injector paste-safety gate');
     });
   });

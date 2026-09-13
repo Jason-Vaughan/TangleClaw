@@ -4910,18 +4910,57 @@ function registerMedusaRoutes(prefix, resolve) {
     });
   });
 
+  /**
+   * The gate for READING about peers — the roster and a peer's reachability.
+   *
+   * One function for both routes so they cannot drift: whatever may list the
+   * roster may ask why a peer on it is silent, and nothing else may. A live
+   * participant is required (404 unknown / 409 none live), and the outbound
+   * access level deliberately is NOT consulted — a read-only Master can still
+   * list peers, so it can still ask about them. The front-door gate
+   * (`lib/auth-gate.js`) runs ahead of every route and applies to both alike.
+   * @param {object} params - Route params.
+   * @param {import('http').ServerResponse} res - Response.
+   * @param {string} verb - What the caller was trying to do, for the 409 clause.
+   * @returns {object|null} The resolved target, or null when already answered.
+   */
+  function peerReadTarget(params, res, verb) {
+    const r = resolve(params);
+    return refused(res, r, verb) ? null : r.target;
+  }
+
   // GET <prefix>/roster — the live roster of other registered workspaces this
   // participant can message (MED-2K9P Chunk 03), proxied from the Bridge
   // (`GET /workspaces`) with the caller's own workspace excluded. Requires a
   // live participant (409).
   route('GET', `${prefix}/roster`, async (_req, res, params) => {
-    const r = resolve(params);
-    if (refused(res, r, 'list a roster for')) return;
+    const target = peerReadTarget(params, res, 'list a roster for');
+    if (!target) return;
     try {
-      const workspaces = await medusa.getRoster({ sessionId: r.target.sessionId });
+      const workspaces = await medusa.getRoster({ sessionId: target.sessionId });
       jsonResponse(res, 200, { workspaces });
     } catch (err) {
       errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_ROSTER_FAILED');
+    }
+  });
+
+  // GET <prefix>/peers/:workspaceId — why a peer has not picked up its mail
+  // (#918). The wake monitor's latest in-memory verdict on the LOCAL session
+  // holding that workspace id, as a reason code with the time it was observed —
+  // never pane text. A workspace no TangleClaw session on this host holds is
+  // `local: false`: its pane is not ours to read, and nothing is guessed.
+  // Gated exactly as the roster is (`peerReadTarget`).
+  route('GET', `${prefix}/peers/:workspaceId`, (_req, res, params) => {
+    const target = peerReadTarget(params, res, 'check a peer for');
+    if (!target) return;
+    try {
+      jsonResponse(res, 200, medusaWake.peerReachability(params.workspaceId));
+    } catch (err) {
+      // prawduct:allow prawduct/broad-except -- the store read behind the
+      // session list can throw anything; the caller gets the failure named,
+      // never a verdict assembled from half a lookup.
+      log.warn('Peer reachability lookup failed', { workspaceId: params.workspaceId, error: err.message });
+      errorResponse(res, 500, `Could not resolve peer reachability: ${err.message}`, 'PEER_STATUS_FAILED');
     }
   });
 
