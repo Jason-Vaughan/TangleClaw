@@ -294,8 +294,16 @@ the sprint release); and the #1420 side lands here, on a sync branch that merges
   `authEnabled: false` only when accounts exist (ruled: no account stays open).
 - The drift property for the guard is P6 here (P5 is `forwardedFor`), gate-aware; the fix script
   refuses when the login guards the door.
+- **Writers resolve the gate from config, not the file they replace** (`authGate.resolveIntendedGateState`,
+  Critic `rev-20260913T181335Z-09c75281` R-3): otherwise `authEnabled: false` could never take effect in
+  caddy mode through any tool.
 - **Carried to A.04b:** the fallback's "door observably present" check must require a gate on every
   site that proxies to TangleClaw, or the peer guard — never a site name.
+- **Carried to A.04b from that review** (A.04b rewrites the login copy and touches these routes anyway):
+  R-4 — the scrypt concurrency-cap code is copied into four routes (login, set-password, recover,
+  recovery-codes) and the copies differ; one helper should own acquire/release. R-8 — the recovery
+  routes answer the cap's 503 without the warn line login logs. R-6 — `lib/recovery-codes.js#clientKey`
+  re-spells the proxy check `lib/auth-identity.js#cameThroughProxy` owns.
 
 ### Chunk A.04b (A-04b) — the fallback, reset-admin, recovery doc, drill
 

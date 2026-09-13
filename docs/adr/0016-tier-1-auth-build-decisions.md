@@ -547,3 +547,11 @@ Two #1420 decisions above rested on "`localhost` is local", and change with it:
   guard counts only as both lines directly inside the site block.
 - **Limit, stated:** traffic relayed in by something running on this machine (Tailscale Serve,
   `ssh -L`, a tunnel agent) arrives from loopback and passes the guard.
+- **A tool that WRITES the Caddyfile resolves the gate from config and accounts, never from the file
+  it replaces** (`lib/auth-gate.js#resolveIntendedGateState`, used by `ingress-cutover.js` and
+  `guard-ungated-sites.js`). The request gate reads the file so `authEnabled: false` cannot open an
+  install whose file has no gate; a writer asking the same question saw its own previous output's
+  missing gate as the login's, wrote another ungated file, and read the same answer back — so
+  `authEnabled: false` could never take effect in caddy mode through any tool. Writing for the
+  configured intent breaks the loop: an `authEnabled: false` cutover writes guarded local sites (or
+  refuses a remote one, which needs a gate), and the request gate reading that file agrees.

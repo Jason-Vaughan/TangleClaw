@@ -172,8 +172,10 @@ function main() {
   }
 
   // Config for TangleClaw's port — which sites are TangleClaw's — the store for
-  // the base path the Caddyfile lives under, and the gate state, read through
-  // the gate's own classifier exactly as the cutover reads it.
+  // the base path the Caddyfile lives under, and the gate state as CONFIGURED,
+  // exactly as the cutover reads it: a writer asking the file it rewrites would
+  // keep refusing to guard a file whose missing gate it read as the login's.
+  // `authGate.resolveIntendedGateState` says why.
   const store = require(path.join(REPO_DIR, 'lib', 'store'));
   const authGate = require(path.join(REPO_DIR, 'lib', 'auth-gate'));
   store.init();
@@ -183,8 +185,7 @@ function main() {
   try {
     caddyfilePath = caddy.getCaddyfilePath();
     config = store.config.load();
-    gateState = authGate.resolveGateState(() => config, store.authSessions,
-      () => caddy.describeIngressDoor(fs.existsSync(caddyfilePath) ? fs.readFileSync(caddyfilePath, 'utf8') : null));
+    gateState = authGate.resolveIntendedGateState(() => config, store.authSessions);
   } finally {
     store.close();
   }

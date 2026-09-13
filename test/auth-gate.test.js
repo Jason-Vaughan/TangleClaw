@@ -163,6 +163,49 @@ describe('lib/auth-gate — the front-door verdict (#1418, #1420, ADR 0015/0016)
       });
     });
 
+    describe('writers resolve the gate from config, not from the file they replace (#1420 merge)', () => {
+      const caddy = require('../lib/caddy');
+      const fs = require('node:fs');
+      const path = require('node:path');
+      const off = () => ({ authEnabled: false, ingressMode: 'caddy' });
+      const gen = (gateState, extra = {}) => caddy.buildCaddyfileContent({
+        serverPort: 3102, certPath: '/c/cert.pem', keyPath: '/c/key.pem', gateState, ...extra
+      });
+
+      it('turning the login off in caddy mode settles on open instead of looping', () => {
+        // An armed cutover's file: localhost with no basic_auth and no guard.
+        const armedFile = gen(S.ARMED);
+        const readFile = (text) => () => caddy.describeIngressDoor(text);
+        // The request gate, with accounts, keeps the login on while that file serves.
+        assert.equal(authGate.resolveGateState(off, ENABLED, readFile(armedFile)), S.ARMED);
+        // A writer asking the request gate's question would write the same file again —
+        assert.equal(gen(authGate.resolveGateState(off, ENABLED, readFile(armedFile))), armedFile,
+          'precondition: the loop this guards against');
+        // — so it asks for the configured intent instead, writes a guarded file,
+        const intended = authGate.resolveIntendedGateState(off, ENABLED);
+        assert.equal(intended, S.OPEN);
+        const written = gen(intended);
+        assert.ok(written.includes('remote_ip'), 'the new local site carries the peer guard');
+        // and the request gate reading that file agrees: the opt-out took effect.
+        assert.equal(authGate.resolveGateState(off, ENABLED, readFile(written)), S.OPEN);
+      });
+
+      it('keeps every failure direction: an unreadable config or store still enforces', () => {
+        assert.equal(authGate.resolveIntendedGateState(() => { throw new Error('EACCES'); }, ENABLED), S.UNREADABLE);
+        const broken = { accountPresence: () => { throw new Error('SQLITE_BUSY'); } };
+        assert.equal(authGate.resolveIntendedGateState(() => ({ authEnabled: true }), broken), S.UNREADABLE);
+        assert.equal(authGate.resolveIntendedGateState(() => ({ authEnabled: true }), ENABLED), S.ARMED);
+      });
+
+      it('both Caddyfile writers use it, and neither reads the old file for the gate', () => {
+        for (const script of ['ingress-cutover.js', 'guard-ungated-sites.js']) {
+          const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', script), 'utf8');
+          assert.match(src, /authGate\.resolveIntendedGateState\(/, script);
+          assert.doesNotMatch(src, /authGate\.resolveGateState\(/, script);
+        }
+      });
+    });
+
     it('lets authEnabled:false turn an armed gate off — the recovery lever', () => {
       assert.equal(authGate.resolveGateState(on, ENABLED), S.ARMED);
       assert.equal(authGate.resolveGateState(() => ({ authEnabled: false }), ENABLED), S.OPEN);
