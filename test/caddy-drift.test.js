@@ -435,6 +435,9 @@ describe('caddy-drift — against real caddy', { skip: !CADDY_AVAILABLE && 'cadd
       assert.equal(result.properties.httpsProtocols.status, drift.HOLDS);
       assert.equal(result.properties.knownUpstreams.status, drift.DIVERGED);
       assert.equal(result.properties.leaseReach.status, drift.DIVERGED);
+      // The stray block is open too, but it forwards to a port that is not
+      // TangleClaw's, so the fifth property leaves it to P3 and P4.
+      assert.equal(result.properties.offboxRefused.status, drift.HOLDS);
       assert.equal(result.findings.length, 3, result.findings.join(' | '));
       for (const finding of result.findings) {
         assert.match(finding, new RegExp(String(FIXTURE_STRAY_PORT)));

@@ -65,6 +65,12 @@
       "runsWhere": "any developer or operator machine with caddy installed \u2014 where it also re-derives test/fixtures/caddy-adapt-*.json and fails if a Caddy release changed the JSON shape, which is the check that stops the committed fixtures describing a Caddy nobody runs."
     },
     {
+      "id": "caddy-adapt-absent-offbox-guard",
+      "match": "^offbox guard — against real caddy$",
+      "why": "Hands real Caddyfiles to real `caddy adapt`: a pre-guard generated file planned into the current generator's output, the live install's hand-edited SHAPE (snippet import, handle blocks, redirect) read as already holding, and a nested-proxy site refused. The runner has no caddy binary. The decision layer of the same file (the guard reader, the property, the plan and the command) is fixture-driven and DOES run here.",
+      "runsWhere": "any developer or operator machine with caddy installed — where `caddy-drift — against real caddy` also re-derives test/fixtures/caddy-adapt-ungated*.json, the JSON this suite's decision layer reads."
+    },
+    {
       "id": "caddy-adapt-absent-redaction",
       "match": "^caddy-drift \u2014 credentials never reach a report > redacts the bcrypt hash out of an adapt failure$",
       "why": "Needs a real `caddy adapt` PARSE FAILURE to produce the stderr that quotes the offending Caddyfile line \u2014 that line can be `basic_auth <user> <hash>`, which is the only way a credential enters text nobody wrote by hand (#821). A stub cannot generate it, so there is nothing to redact without the binary. The sibling case in the same describe (`redacts findings on the way out`) needs no caddy and runs here.",

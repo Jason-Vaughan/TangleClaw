@@ -34,6 +34,33 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-13 — GHSA-fhgg-4h57-q2f9: Caddy sites without a password refuse other machines
+
+<!-- prawduct: type=bugfix | scope=security-offbox-guard -->
+
+Sprint v5.24, inserted ahead of Lane A chunk A.04b by operator ruling.
+
+**Why.** Found during A-04b discovery and verified on a throwaway Caddy v2.11.4: Caddy listens on every
+interface and chooses a site by the Host/SNI the client sends, so a generated `localhost` site with no
+`basic_auth` served the dashboard to any LAN or tailnet machine naming `localhost`; TangleClaw's
+served-Host check accepts the name. The operator ruled 2026-09-13, in the Builder pane: a private
+advisory, the fix merged to `main`, shipped with the sprint release (a cut from `main` now would be
+5.24.0, not a patch), and the matching change folded into #1420 separately.
+
+**What.** `lib/caddy.js#OFFBOX_GUARD_LINES` (`not remote_ip` loopback + `abort`) ahead of
+`reverse_proxy` in every site written without `basic_auth`; drift property P5
+`lib/caddy-drift.js#checkOffboxRefused`, judged only for sites forwarding to TangleClaw;
+`scripts/guard-ungated-sites.js` retrofits in place via `lib/caddy.js#insertOffboxGuard` +
+`lib/caddy-drift.js#planOffboxGuard` (adapt-verified, re-stamps a generated file);
+`lib/admin-credential.js#canCreateGate` also accepts the pre-guard generated form. Docs: `deploy/INGRESS.md`,
+`docs/caddy-drift-check.md`, `docs/configuration-reference.md`, FEATURES, CHANGELOG `### Security`.
+`.prawduct/artifacts/security-model.md` descoped (gitignored; canonical copy is the live install's).
+
+**Review.** Critic `rev-20260913T174551Z-f11519c7` — 0 blocking, 8 warnings; fixed in `9f86bfc8` (R-2/R-4
+scope to TangleClaw's upstream, R-5, R-10, R-3, R-11, R-12, R-1/6/9 descope); R-7 accepted. verify-resolutions
+raised one blocking (untested port refusal), fixed in `3d6ee4aa`; final pass 0 findings. Every new guard
+mutation-checked red. Live Caddyfile reads `already-guarded` (read-only check).
+
 ## 2026-09-12 — #918: a sender can see why a peer has not picked up its mail
 
 <!-- prawduct: type=feature | scope=medusa-918 -->

@@ -709,6 +709,40 @@ describe('createGate — an install that completed setup with no login', () => {
     assert.deepEqual(calls[0].argv, ['kickstart', '-k', 'gui/501/com.tangleclaw.caddy']);
   });
 
+  it('still gates a file written before sites without a password gained the peer guard', () => {
+    // The install most likely to need this tool: no login, and a Caddyfile from
+    // an earlier release. Its bytes no longer match what the generator writes
+    // today, and a round trip that knew only today's form would refuse it.
+    fs.writeFileSync(caddyfilePath, caddy.buildCaddyfileContent({
+      serverPort: 3102, certPath, keyPath, httpsPort: 9443, httpPort: 9080, offboxGuard: false
+    }), { mode: 0o600 });
+    assert.ok(!fs.readFileSync(caddyfilePath, 'utf8').includes('remote_ip'),
+      'precondition: the fixture is the pre-guard form');
+    assert.equal(cred.canCreateGate(store.config.load(), fs.readFileSync(caddyfilePath, 'utf8'), 'jason').allowed,
+      true);
+    const r = cred.createGate({
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      execFn: () => {}, validateFn: () => ({ ok: true })
+    });
+    assert.equal(r.ok, true, r.error || '');
+    assert.deepEqual(caddy.listBasicAuthUsers(fs.readFileSync(caddyfilePath, 'utf8')), ['jason']);
+  });
+
+  it('refuses a file in neither generated form', () => {
+    // Accepting the pre-guard form must not become accepting any near-miss:
+    // one guard line removed from a guarded file is neither form.
+    const full = ungenerated();
+    const body = full.slice(full.indexOf('\n') + 1).replace(`${caddy.OFFBOX_GUARD_LINES[1]}\n`, '');
+    const sha = require('node:crypto').createHash('sha256').update(body).digest('hex');
+    // Re-stamped, so the file is still "generated" and the refusal comes from
+    // the round trip rather than from a broken stamp.
+    const content = `${full.split('\n')[0].replace(/sha256:[0-9a-f]{64}/, `sha256:${sha}`)}\n${body}`;
+    assert.equal(caddy.isGeneratedCaddyfile(content), true, 'precondition: stamp is valid');
+    const verdict = cred.canCreateGate(store.config.load(), content, 'jason');
+    assert.equal(verdict.allowed, false);
+    assert.equal(verdict.code, cred.CREDENTIAL_CODES.UNRECOGNIZED_SHAPE);
+  });
+
   it('changes NOTHING but the gate', () => {
     // The promise this tool makes. Rebuilding from `config` instead of from the
     // file would fold in every field that has since drifted — a moved port, a
@@ -729,7 +763,11 @@ describe('createGate — an install that completed setup with no login', () => {
     // turns `reverse_proxy <upstream>` into `reverse_proxy <upstream> {` so the
     // authenticated username can be forwarded to TangleClaw. That is part of the
     // gate. Anything else that disappears is a setting this rebuild dropped.
-    const survives = (l, out) => out.includes(l) || out.includes(`${l} {`);
+    // The peer guard is the other: an ungated site refuses other machines, and
+    // gating the site replaces that restriction with the login. Named exactly,
+    // so any OTHER dropped line still fails.
+    const survives = (l, out) => out.includes(l) || out.includes(`${l} {`)
+      || caddy.OFFBOX_GUARD_LINES.includes(l);
     const gone = body(before).filter((l) => !survives(l, body(after)));
     assert.deepEqual(gone, [], `these settings were dropped or altered: ${JSON.stringify(gone)}`);
 
