@@ -34,6 +34,36 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-13 — #1420 A-02a: close an install with no account; keep proxied traffic out of the fleet carve-out
+
+<!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->
+
+Train 9 Chunk 04, A-02a. Merges into `train-9/cutover`, not `main`.
+
+**Why.** TangleClaw's gate stayed dormant on an install with `authEnabled` and no account, which was
+safe only while Caddy's `basic_auth` stood in front — and the cutover removes it. The fleet carve-out
+trusted a loopback socket, which Caddy's forwarded traffic also has, so an off-box non-browser request
+(including to `/openclaw-direct/*`, where TangleClaw injects the gateway token) skipped the login.
+
+**What.** `lib/auth-gate.js#resolveGateState` — five states (`open`, `account-required`, `armed`,
+`locked`, `unreadable`), every non-`open` one enforcing, read failures fail closed always.
+`account-required` serves `public/account-setup.html` and admits only `POST /api/auth/set-password`
+(async scrypt via `store.users#createFirstAsync`, inside the login concurrency cap, atomic under
+`BEGIN IMMEDIATE`). `#isMachineClient` requires no `X-Forwarded-For` — verified against a throwaway
+Caddy v2.11.4 (sets it on every forwarded request, replaces a forged one); the generator is pinned
+against `trusted_proxies`. The first-run wizard creates the TangleClaw account from its credential and
+signs in; setup that ends with no account sends the operator to `/login`. `store.authSessions`
+`anyLoginableUser` → `#accountPresence`. `test/server.test.js` moved onto a temp store (it read the
+live `~/.tangleclaw`). Decisions: ADR 0016 "Recorded during #1420 A-02a" and the plan.
+
+**Review.** Critic `rev-20260913T041308Z-54834227` on `bb66e336` — 0 blocking, 8 warnings, 12 notes.
+Fixed in `5095fbb5` (the wizard locked itself out as it finished; sync scrypt on a signed-out route;
+stale config-reference; unrecorded XFF re-verify triggers; unrecorded wizard effect). Accepted with
+reasons: R-4, R-5, R-8 (→A-02b), R-12, R-17 (→A-04), R-18, R-19, R-20. verify-resolutions clean; the
+timing-dependent concurrency test made deterministic in `0828d3fe`, verify-resolutions clean. Mutation:
+14 guards + 1 + 12 fixes + 1, all red. Filed #1445 (out of scope).
+
+
 ## 2026-09-12 — #918: a sender can see why a peer has not picked up its mail
 
 <!-- prawduct: type=feature | scope=medusa-918 -->

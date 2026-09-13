@@ -144,7 +144,7 @@ Caddy honour a client's value.
 ## Status
 - [x] A-01 — ADR 0016 addendum + this plan
 - [x] Checkpoint 1 — ruled 2026-09-13: 1 + 2
-- [ ] A-02a — classifier, gate on it, carve-out + XFF, set-password route/page
+- [x] A-02a — classifier, gate on it, carve-out + XFF, set-password route/page (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [ ] A-02b — OQ2 inversion, identity + authStatus from the classifier, dashboard consumers
 - [ ] A-03 — state-driven `basic_auth`, bypass ownership, drift, bind policy, #1055
 - [ ] A-04 — fallback command, recovery codes, ADR 0009 rule 5 text, reset-admin, recovery doc, drills
