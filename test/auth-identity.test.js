@@ -3,7 +3,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  refuseInboundIdentity, resolveAuthStatus, isProxyHeaderTrusted,
+  refuseInboundIdentity, cameThroughProxy, resolveAuthStatus, isProxyHeaderTrusted,
   IDENTITY_HEADER, PROXY_EVIDENCE_HEADER, AUTH_STATUSES
 } = require('../lib/auth-identity');
 
@@ -54,40 +54,46 @@ describe('auth-identity.refuseInboundIdentity — identity is the session\'s (#1
   });
 });
 
-describe('auth-identity.resolveAuthStatus — derived from the gate state', () => {
-  const MAPPING = {
-    open: 'off',
-    armed: 'live',
-    'account-required': 'account-required',
-    locked: 'locked',
-    unreadable: 'unreadable'
-  };
+describe('auth-identity.cameThroughProxy — the one spelling of "forwarded"', () => {
+  it('is true when X-Forwarded-For is present, whatever its value', () => {
+    for (const v of ['100.64.0.7', '', '   ', ['1.2.3.4']]) {
+      assert.equal(cameThroughProxy({ [PROXY_EVIDENCE_HEADER]: v }), true, JSON.stringify(v));
+    }
+  });
 
-  for (const [gateState, status] of Object.entries(MAPPING)) {
-    it(`maps gate state ${gateState} → ${status}`, () => {
-      assert.equal(resolveAuthStatus(gateState), status);
-    });
-  }
+  it('is false when it is absent, or there are no headers', () => {
+    for (const h of [{}, { host: 'x' }, null, undefined, 'x']) {
+      assert.equal(cameThroughProxy(h), false, JSON.stringify(h));
+    }
+  });
 
-  it('answers an unknown or missing gate state as unreadable — never as off', () => {
+  it('is what every caller asks — no hand-spelled X-Forwarded-For check remains', () => {
+    for (const rel of ['server.js', 'lib/auth-gate.js']) {
+      const code = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', rel), 'utf8');
+      assert.doesNotMatch(code, /headers\s*\[\s*['"]x-forwarded-for['"]\s*\]/i, rel);
+    }
+  });
+});
+
+describe('auth-identity.resolveAuthStatus — the gate state, reported as-is', () => {
+  const { GATE_STATES } = require('../lib/auth-gate');
+
+  it('reports every gate state unchanged — one vocabulary, no rename map', () => {
+    for (const state of Object.values(GATE_STATES)) {
+      assert.equal(resolveAuthStatus(state), state);
+    }
+  });
+
+  it('AUTH_STATUSES is exactly the gate\'s states, so a new state needs no second edit', () => {
+    assert.deepEqual([...AUTH_STATUSES].sort(), Object.values(GATE_STATES).sort());
+  });
+
+  it('answers anything that is not a gate state as unreadable — never as open', () => {
     // A status that fails toward "no login required" would tell the operator
     // the door is open when the code cannot say so.
-    for (const v of [undefined, null, '', 'OPEN', 'bogus', true]) {
+    for (const v of [undefined, null, '', 'OPEN', 'off', 'live', 'bogus', true]) {
       assert.equal(resolveAuthStatus(v), 'unreadable', JSON.stringify(v));
     }
-  });
-
-  it('covers every gate state the gate can produce', () => {
-    const { GATE_STATES } = require('../lib/auth-gate');
-    for (const state of Object.values(GATE_STATES)) {
-      assert.ok(state in MAPPING, `gate state ${state} has a mapping in this test`);
-      assert.equal(resolveAuthStatus(state), MAPPING[state]);
-    }
-  });
-
-  it('only ever returns a value from the AUTH_STATUSES enum, and uses all of it', () => {
-    const produced = new Set(Object.keys(MAPPING).map(resolveAuthStatus));
-    assert.deepEqual([...produced].sort(), [...AUTH_STATUSES].sort());
   });
 });
 

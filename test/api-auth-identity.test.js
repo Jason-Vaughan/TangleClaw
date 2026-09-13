@@ -96,7 +96,7 @@ describe('/api/server-info identity comes from the session, never a header (#142
     const res = await request(server, 'GET', '/api/server-info', { 'X-Auth-User': 'attacker' });
     assert.equal(res.status, 200);
     assert.equal(res.body.currentUser, null);
-    assert.equal(res.body.authStatus, 'off');
+    assert.equal(res.body.authStatus, 'open');
   });
 
   it('ignores it through a proxy too — even Caddy\'s own transitional value is not identity', async () => {
@@ -113,15 +113,15 @@ describe('/api/server-info identity comes from the session, never a header (#142
     const res = await request(server, 'GET', '/api/server-info', { ...auth, 'X-Auth-User': 'attacker' });
     assert.equal(res.status, 200);
     assert.equal(res.body.currentUser, 'rosie');
-    assert.equal(res.body.authStatus, 'live');
+    assert.equal(res.body.authStatus, 'armed');
   });
 
-  it('reports live in DIRECT mode for a signed-in session — the mode no longer decides', async () => {
+  it('reports armed in DIRECT mode for a signed-in session — the mode no longer decides', async () => {
     store.users.create('rosie', PASSWORD);
     setConfig({ ingressMode: 'direct', authEnabled: true });
     const auth = await signIn();
     const res = await request(server, 'GET', '/api/server-info', auth);
-    assert.equal(res.body.authStatus, 'live');
+    assert.equal(res.body.authStatus, 'armed');
     assert.equal(res.body.currentUser, 'rosie');
   });
 

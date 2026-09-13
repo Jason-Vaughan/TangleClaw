@@ -52,7 +52,7 @@ describe('AUTH-2K9D dashboard warning surface', () => {
     }
     assert.equal((fnBody.match(/return '⚠/g) || []).length, 3);
     // The expected states stay silent.
-    assert.doesNotMatch(fnBody, /authStatus === '(off|live)'/);
+    assert.doesNotMatch(fnBody, /authStatus === '(open|armed)'/);
     // A locked install names the one recovery that works for it.
     assert.match(fnBody, /reset-admin\.js --store/);
     // The proxy-header diagnostics are gone: nothing reads that header any more.
@@ -61,14 +61,15 @@ describe('AUTH-2K9D dashboard warning surface', () => {
 
   it('every status the server can send has a decided rendering', () => {
     // A value the mapper has never heard of renders nothing, which is right for
-    // `off`/`live` and wrong for a closed state — so the enum and the mapper are
-    // checked against each other.
+    // `open`/`armed` and wrong for a closed state — so the enum (the gate's own
+    // states) and the mapper are checked against each other. A state added to
+    // the gate turns this red until its rendering is decided.
     const { AUTH_STATUSES } = require('../lib/auth-identity');
     const mapperBody = landing.slice(landing.indexOf('function _authStatusWarning('));
     const fnBody = mapperBody.slice(0, mapperBody.indexOf('\n}\n') + 2);
     for (const status of AUTH_STATUSES) {
       const warns = fnBody.includes(`authStatus === '${status}'`);
-      const silent = status === 'off' || status === 'live';
+      const silent = status === 'open' || status === 'armed';
       assert.equal(warns, !silent, `${status}: ${silent ? 'silent' : 'warns'}`);
     }
   });

@@ -16,20 +16,23 @@ warning chip for the states that need the operator.
 
 ## State model (current)
 
-`authStatus` is a pure function of the request's gate state (`lib/auth-identity.js#resolveAuthStatus`).
-The gate state is the single owner of whether a login is enforced; nothing here reads config or a
-request header.
+`authStatus` IS the request's gate state (`lib/auth-identity.js#resolveAuthStatus`), reported as-is —
+the same value `/api/auth/me` reports as `gateState`. The gate state is the single owner of whether a
+login is enforced; nothing here reads config or a request header, and there is no second vocabulary
+mapped onto it (a rename map is where a newly added state gets labelled wrongly).
 
-| gate state | `authStatus` | Meaning | Dashboard chip |
-|---|---|---|---|
-| `open` | `off` | `authEnabled` is not on — no login required (ADR 0009's opt-out) | none |
-| `armed` | `live` | TangleClaw enforces its login, on any ingress mode | none |
-| `account-required` | `account-required` | login on, no account yet — closed | ⚠ open a new tab to create the account |
-| `locked` | `locked` | accounts exist, none enabled — closed | ⚠ run `reset-admin.js --store` at a terminal |
-| `unreadable` | `unreadable` | the gate could not read its state — closed | ⚠ check the server log |
+| `authStatus` (= gate state) | Meaning | Dashboard chip |
+|---|---|---|
+| `open` | `authEnabled` is not on — no login required (ADR 0009's opt-out) | none |
+| `armed` | TangleClaw enforces its login, on any ingress mode | none |
+| `account-required` | login on, no account yet — closed | ⚠ open a new tab to create the account |
+| `locked` | accounts exist, none enabled — closed | ⚠ run `reset-admin.js --store` at a terminal |
+| `unreadable` | the gate could not read its state — closed | ⚠ check the server log |
 
-An unknown gate state maps to `unreadable`, never `off`: a status that fails toward "no login
-required" would tell the operator the door is open when the code cannot say so.
+A value that is not a gate state maps to `unreadable`, never `open`: a status that fails toward "no
+login required" would tell the operator the door is open when the code cannot say so. A state added to
+the gate is a valid status automatically, and `test/auth-status-warning.test.js` goes red until the
+chip's rendering of it is decided.
 
 **A browser rarely sees the three warnings.** A closed gate refuses the `/api/server-info` poll that
 would carry them to a signed-out page. They reach a local tool through the fleet carve-out, and a

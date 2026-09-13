@@ -85,6 +85,15 @@ Caddy honour a client's value.
   synchronous DOM work that already ran unawaited before; awaiting it at the callers would change
   nothing a caller does next.
 
+**Carried out of the A-02b review:**
+- A-03: `lib/auth-identity.js#isProxyHeaderTrusted` justifies trusting `X-Forwarded-Host` by Caddy's
+  `basic_auth` gate standing in front. When A-03 drops that gate on an armed install, re-state (or
+  change) the condition the forwarded host is believed under — it names an address in hidden model
+  context, not an identity, but its stated reason goes away.
+- A-04: `SECURITY.md`'s login section still describes Caddy's `basic_auth` as THE gate. Its identity
+  bullet was corrected in A-02b; the section is rewritten with the recovery doc, when the new door's
+  recovery exists to describe.
+
 **A-02b decisions (2026-09-13).** Recorded in ADR 0016 "Recorded during #1420 A-02b": the header is
 deleted on both transports, logged at debug when it came through a proxy (Caddy's transitional
 `header_up`) and at warn when it did not — a departure from OQ2's "logged at warn"; identity and

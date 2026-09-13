@@ -1901,22 +1901,38 @@ route('POST', '/api/auth/login', async (req, res, _params, body) => {
   }
   if (!user) return deny();
 
-  // Session fixation: the session the request ARRIVED with is destroyed and a
-  // brand-new token is minted. `store.authSessions.create` has no way to adopt
-  // a caller-supplied id, so the rotation is structural rather than a step that
-  // could be forgotten — but an attacker-planted cookie must also not survive
-  // as a second live session, which is what this destroy is for.
+  const session = _signIn(req, res, user);
+  jsonResponse(res, 200, { username: user.username, csrfToken: session.csrfToken });
+});
+
+/**
+ * Sign a verified user in: rotate away the session the request arrived with,
+ * mint a new one, and set both cookies on the response.
+ *
+ * The ONE place a session is issued. Every route that signs someone in — the
+ * login, the first-account page, the first-run wizard — calls this rather than
+ * repeating the three steps, because the step that matters is the easiest to
+ * leave out of a copy: session fixation. The session the request ARRIVED with
+ * is destroyed; `store.authSessions.create` cannot adopt a caller-supplied id,
+ * so the new token is fresh by construction, and destroying the old one keeps
+ * an attacker-planted cookie from surviving as a second live session.
+ *
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res - Headers not yet sent
+ * @param {{ id: number, username: string }} user - Already authenticated
+ * @returns {{ token: string, csrfToken: string }} The new session
+ */
+function _signIn(req, res, user) {
   const arriving = authSession.tokenFromRequest(req);
   if (arriving) store.authSessions.destroy(arriving);
-
   const session = store.authSessions.create(user);
   const secure = authSession.isSecureRequest(req);
   res.setHeader('Set-Cookie', [
     authSession.serializeCookie(session.token, { secure }),
     authSession.serializeCsrfCookie(session.csrfToken, { secure })
   ]);
-  jsonResponse(res, 200, { username: user.username, csrfToken: session.csrfToken });
-});
+  return session;
+}
 
 // POST /api/auth/logout — end this session.
 //
@@ -2020,15 +2036,10 @@ route('POST', '/api/auth/set-password', async (req, res, _params, body) => {
   // came through the proxy or from the machine itself.
   log.warn('First account created from the account-setup page', {
     username: user.username,
-    proxied: req.headers['x-forwarded-for'] !== undefined
+    proxied: authIdentity.cameThroughProxy(req.headers)
   });
 
-  const session = store.authSessions.create(user);
-  const secure = authSession.isSecureRequest(req);
-  res.setHeader('Set-Cookie', [
-    authSession.serializeCookie(session.token, { secure }),
-    authSession.serializeCsrfCookie(session.csrfToken, { secure })
-  ]);
+  const session = _signIn(req, res, user);
   jsonResponse(res, 200, { username: user.username, csrfToken: session.csrfToken });
 });
 
@@ -2791,12 +2802,7 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
   if (adminProvided && config.authEnabled === true) {
     try {
       const user = store.users.createFirst(config.basicAuthUser, body.adminPassword);
-      const session = store.authSessions.create(user);
-      const secure = authSession.isSecureRequest(req);
-      res.setHeader('Set-Cookie', [
-        authSession.serializeCookie(session.token, { secure }),
-        authSession.serializeCsrfCookie(session.csrfToken, { secure })
-      ]);
+      _signIn(req, res, user);
       account.created = true;
     } catch (err) {
       if (err.code !== 'ACCOUNT_EXISTS') throw err;
@@ -2807,8 +2813,10 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
   // whose credential came from a Caddyfile and so has no plaintext — leaves the
   // install `account-required`. The wizard reads this and sends the operator to
   // the account page rather than into a dashboard that would refuse it.
-  account.required = config.authEnabled === true
-    && store.authSessions.accountPresence().exists === false;
+  // Asked of the gate's own classifier against the config about to be saved,
+  // not re-derived here — one owner of what `account-required` means.
+  account.required = authGate.resolveGateState(() => config, store.authSessions)
+    === authGate.GATE_STATES.ACCOUNT_REQUIRED;
 
   // Mark setup as complete
   config.setupComplete = true;
@@ -6892,7 +6900,7 @@ function _gateIdentity(req, socket, pathname) {
     // The header's PRESENCE, whatever its value: Caddy always sets it on a
     // forwarded request, so even an empty one is not evidence of a local
     // process. See `authGate.isMachineClient` condition 2.
-    proxied: req.headers['x-forwarded-for'] !== undefined,
+    proxied: authIdentity.cameThroughProxy(req.headers),
     browserShaped,
     hasSessionCookie: sessionToken !== null
   });

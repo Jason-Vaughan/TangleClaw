@@ -513,7 +513,7 @@ function renderBehindOriginBanner(info) {
 
 /**
  * Human-readable warning for a login state that needs the operator, or null for
- * the expected states (`off`, `live`, or an older server that omits
+ * the expected states (`open`, `armed`, or an older server that omits
  * `authStatus`). The three warnings name CLOSED states: the login is being
  * enforced, and something about it needs attention. A browser rarely sees them —
  * a closed gate refuses the poll that would carry them — but a signed-in page

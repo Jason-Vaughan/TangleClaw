@@ -202,6 +202,47 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
     });
   });
 
+  describe('sessions are issued in one place, with the fixation rotation (#1420)', () => {
+    it('every route that signs someone in goes through _signIn, and nothing else creates a session', () => {
+      // A copy of the three steps is where the destroy of the arriving session
+      // gets left out. Pinned on the source: `authSessions.create` appears once
+      // in server.js, inside `_signIn`, and each signing-in route calls it.
+      const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+      assert.equal((src.match(/store\.authSessions\.create\(/g) || []).length, 1,
+        'exactly one session-creating call in server.js');
+      const helper = src.slice(src.indexOf('function _signIn('), src.indexOf('\n}\n', src.indexOf('function _signIn(')));
+      assert.match(helper, /store\.authSessions\.destroy\(arriving\)/, 'the helper rotates the arriving session');
+      assert.match(helper, /store\.authSessions\.create\(/);
+      for (const marker of ["route('POST', '/api/auth/login'", "route('POST', '/api/auth/set-password'",
+        "route('POST', '/api/setup/complete'"]) {
+        const start = src.indexOf(marker);
+        const body = src.slice(start, src.indexOf('\n});\n', start));
+        assert.match(body, /_signIn\(req, res, user\)/, `${marker} signs in through the helper`);
+      }
+    });
+
+    it('the first-account route destroys a session cookie the browser arrived with', async () => {
+      // The fixation half, driven for real on a route that used to skip it. A
+      // live session row can exist here only if planted — which is exactly the
+      // case the rotation exists for.
+      setAuthEnabled(true);
+      const token = 'f'.repeat(64);
+      const realDestroy = store.authSessions.destroy;
+      const destroyed = [];
+      store.authSessions.destroy = (t) => { destroyed.push(t); return realDestroy.call(store.authSessions, t); };
+      try {
+        const res = await send('POST', '/api/auth/set-password', {
+          body: { username: 'jason', password: 'a-long-enough-password' },
+          cookie: `${authSession.SESSION_COOKIE}=${token}`
+        });
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(destroyed, [token], 'the arriving session token is destroyed before a new one is issued');
+      } finally {
+        store.authSessions.destroy = realDestroy;
+      }
+    });
+  });
+
   describe('an inbound X-Auth-User is deleted at request entry (#1420, ADR 0016 OQ2)', () => {
     // Deleted rather than ignored, so a later reader — or a proxy that copies
     // request headers upstream — cannot pick it back up. Asserted on the request
