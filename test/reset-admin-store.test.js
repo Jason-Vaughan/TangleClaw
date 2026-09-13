@@ -270,6 +270,35 @@ describe('reset-admin --store (#1418)', () => {
       assert.match(out, /Caddy's password \(basic_auth\) still stands in front of this login/);
     });
 
+    it('names Caddy\'s password as the login when authEnabled is off but the Caddyfile carries basic_auth', async () => {
+      setConfig({ ingressMode: 'caddy', authEnabled: false });
+      fs.writeFileSync(caddy.getCaddyfilePath(),
+        `box.ts.net {\n  basic_auth {\n    jason $2a$14$${'a'.repeat(53)}\n  }\n  reverse_proxy 127.0.0.1:3102\n}\n`);
+      await runWithPassword(PASSWORD, { user: 'rosie' });
+      assert.match(out, /Caddy's password \(basic_auth\) is the only login in front of this install/);
+      assert.doesNotMatch(out, /NO login is enforced/);
+    });
+
+    it('says it could not check for Caddy\'s password when the Caddyfile exists but cannot be read', async () => {
+      // With authEnabled on the gate state never reads the file, so without this
+      // the report printed LIVE and nothing about the door in front of it.
+      setConfig({ ingressMode: 'caddy', authEnabled: true });
+      fs.mkdirSync(caddy.getCaddyfilePath());
+      try {
+        await runWithPassword(PASSWORD, { user: 'rosie' });
+        assert.match(out, /login gate is now LIVE/);
+        assert.match(out, /could not read the Caddyfile to check for Caddy's password/);
+      } finally {
+        fs.rmSync(caddy.getCaddyfilePath(), { recursive: true, force: true });
+      }
+    });
+
+    it('says nothing about the Caddyfile when caddy mode has none', async () => {
+      setConfig({ ingressMode: 'caddy', authEnabled: true });
+      await runWithPassword(PASSWORD, { user: 'rosie' });
+      assert.doesNotMatch(out, /could not read the Caddyfile/);
+    });
+
     it('reports a fallback marker and the command that ends it', async () => {
       setAuthEnabled(true);
       fs.writeFileSync(gateFallback.markerPath(), '{}\n');

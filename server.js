@@ -403,7 +403,7 @@ function _gateIngress() {
   try {
     st = fs.statSync(file);
   } catch (err) {
-    if (err.code === 'ENOENT') return { ungatedRemoteSite: false, unguardedLocalSite: false };
+    if (err.code === 'ENOENT') return caddy.describeIngressDoor(null);
     throw err;
   }
   const key = `${file}:${st.mtimeMs}:${st.size}`;
@@ -2449,8 +2449,9 @@ route('POST', '/api/auth/recovery-codes/acknowledge', (req, res) => {
 //
 // Answers 200 with `authenticated: false` rather than 401 when the gate is off,
 // because "no login is required here" is a successful answer to the question
-// the dashboard is asking. When the gate IS on, an unauthenticated caller never
-// reaches this handler — the gate challenges first.
+// the dashboard is asking. It stays reachable signed out while the gate IS on
+// (`lib/auth-gate.js` LOGIN_SURFACE_PATHS): the sign-in page reads `gateState`
+// here to say why a sign-in cannot work, and whether a recovery code can.
 route('GET', '/api/auth/me', (req, res) => {
   const session = req.tcSession;
   // Both branches read the verdict `handleRequest` already reached, never a

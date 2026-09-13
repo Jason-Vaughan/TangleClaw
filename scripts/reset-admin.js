@@ -215,8 +215,11 @@ async function acquirePassword({ passwordStdin, user }) {
  * @param {{ accountPresence: Function }} [sessions] - Defaults to
  *   `store.authSessions`; a `--dry-run` passes the presence the run would leave.
  * @returns {{ error: string }|{ config: object, gateState: string,
- *   caddyPassword: boolean, markerPresent: boolean, markerPath: string }}
- *   `error` when the config cannot be read.
+ *   caddyPassword: boolean, caddyfileError: (string|null), markerPresent: boolean,
+ *   markerPath: string }}
+ *   `error` when the config cannot be read. `caddyfileError` when a caddy-mode
+ *   Caddyfile exists but could not be read, so whether Caddy's password stands
+ *   in front is unknown and the report says so.
  */
 function describeLiveGate(store, sessions = store.authSessions) {
   let config;
@@ -227,15 +230,22 @@ function describeLiveGate(store, sessions = store.authSessions) {
   }
   const gateState = authGate.resolveGateState(() => config, sessions, () => caddy.readIngressDoor());
   let caddyPassword = false;
+  let caddyfileError = null;
   if (config && config.ingressMode === 'caddy') {
     try {
       caddyPassword = caddy.listBasicAuthUsers(fs.readFileSync(caddy.getCaddyfilePath(), 'utf8')).length > 0;
-    } catch { // prawduct:allow prawduct/broad-except -- a missing or unreadable Caddyfile carries no password this report can name; the gate state above already enforces on an unreadable one
-      caddyPassword = false;
+    } catch (err) {
+      // Missing: Caddy serves nothing, so no password stands in front. Anything
+      // else is not knowing, which the report must say rather than print as
+      // "no Caddy password" — the gate state above reads the file only while
+      // `authEnabled` is off, so it does not cover this.
+      if (err.code !== 'ENOENT') caddyfileError = err.message;
     }
   }
   const markerPath = gateFallback.markerPath(store._getBasePath());
-  return { config, gateState, caddyPassword, markerPresent: fs.existsSync(markerPath), markerPath };
+  return {
+    config, gateState, caddyPassword, caddyfileError, markerPresent: fs.existsSync(markerPath), markerPath
+  };
 }
 
 /**
@@ -265,6 +275,12 @@ function describeGateLines(live, preview) {
       lines.push('    authEnabled is off, but the Caddyfile serves beyond this machine without a password of',
         '    its own, so the accounts decide anyway.');
     }
+  } else if (live.gateState === authGate.GATE_STATES.OPEN && live.caddyPassword) {
+    // TangleClaw asks nothing, but the install is not unprotected: Caddy's
+    // password is its login. "NO login is enforced" would be false.
+    lines.push(`  ⚠ authEnabled is OFF — TangleClaw's login ${preview ? 'would enforce' : 'enforces'} nothing here.`,
+      '    Caddy\'s password (basic_auth) is the only login in front of this install.',
+      '    Turn authEnabled on in Settings for the account to be the login.');
   } else if (live.gateState === authGate.GATE_STATES.OPEN) {
     lines.push(preview
       ? '  ⚠ authEnabled is OFF — the account would exist but enforce nothing'
@@ -278,6 +294,9 @@ function describeGateLines(live, preview) {
   }
   if (live.caddyPassword && live.gateState !== authGate.GATE_STATES.OPEN) {
     lines.push('  Caddy\'s password (basic_auth) still stands in front of this login, so a browser meets it first.');
+  }
+  if (live.caddyfileError) {
+    lines.push(`  (could not read the Caddyfile to check for Caddy's password in front: ${live.caddyfileError})`);
   }
   if (live.markerPresent) {
     lines.push(`  ⚠ A fallback marker is present (${live.markerPath}). While TangleClaw honours it, Caddy's`,
