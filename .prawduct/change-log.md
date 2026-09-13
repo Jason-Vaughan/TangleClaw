@@ -34,6 +34,31 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-12 — #918: a sender can see why a peer has not picked up its mail
+
+<!-- prawduct: type=feature | scope=medusa-918 -->
+
+Sprint v5.24 Lane B.
+
+**Why.** A message parked behind a recipient's interactive dialog gave the sender no signal; in the
+field incident the sender polled for 30 minutes. Discovery showed the dialog-exit drain the issue
+recommended had already shipped (`lib/medusa-wake.js` holds the mail edge on a non-idle pane) and
+that Medusa's `peek` cannot see TangleClaw panes, so what remained was sender-side visibility. The
+operator ruled 2026-09-12: option A only (a reachability read + `tc message status`), with the
+`no-bare-prompt` label split and roster-level gating; adding reachability to `/send` was dropped.
+
+**What.** `lib/medusa-wake.js#peerReachability` returns the monitor's in-memory verdict as a reason
+code (never pane text), with meanings declared once in `PEER_REASON_MEANINGS`; the route
+`<prefix>/peers/:workspaceId` on both mounts returns `meaning` beside `reason`, gated through the
+roster's `server.js#peerReadTarget`; `tc message status` renders the route's `meaning`. `not-running`
+for a stopped Master; one warning per session entering `unclassified`; the workspace registry read
+once per lookup (`lib/medusa-registry.js#readWorkspaceIds`). `_assessPane` splits into
+`composer-has-input` / `no-prompt`. Docs: `lib/engines.js`, `lib/master.js`, `docs/user-guide.md`,
+`docs/engine-guide.md`, `README.md`. Not added to the project prime (4400-char budget test).
+
+**Review.** Critic on `b6de7eda` — 0 blocking, 6 warnings; R-2/R-6/R-7/R-8/R-10/R-11 fixed in
+`a94c997c` (15 mutations red); CHANGELOG/FEATURES written at merge.
+
 ## 2026-09-12 — #1361: Dependabot for GitHub Actions, audited under a narrow ADR 0014 exemption
 
 <!-- prawduct: type=chore | scope=deps-1361 -->
