@@ -1156,7 +1156,8 @@ describe('medusa-wake — peer reachability verdicts (#918)', () => {
     installWorld({ pane: [SECRET, '  Do you want to proceed?', '❯ 1. Yes', '  2. No'] });
     tickAt(0);
     const v = wake.peerReachability(PEER);
-    assert.deepEqual(Object.keys(v).sort(), ['local', 'monitorRunning', 'observedAt', 'reason', 'since', 'workspaceId']);
+    assert.deepEqual(Object.keys(v).sort(), ['local', 'meaning', 'monitorRunning', 'observedAt', 'reason', 'since', 'workspaceId']);
+    assert.equal(v.meaning, wake.PEER_REASON_MEANINGS['pane-no-prompt'], 'the meaning is the declared text for the code, nothing captured');
     assert.ok(!JSON.stringify(v).includes(SECRET));
   });
 
@@ -1199,6 +1200,172 @@ describe('medusa-wake — peer reachability verdicts (#918)', () => {
     assert.equal(world.injected.length, 0);
   });
 
+  // R-2. The Master is always a candidate, so unlike an ended project session
+  // it never drops out to `local: false`. Before this, a stopped Master read
+  // `not-observed` forever — a promise of an assessment nothing would make.
+  describe('a Project Master that is not running', () => {
+    const MASTER_WS = 'project-master-0000beef';
+
+    /** A world with no project sessions whose Master is registered but its listener is off. */
+    function masterWorld(masterRecord) {
+      const world = installWorld({ sessions: [], masterRecord });
+      wake._internal.getStatus = () => ({ state: 'off', workspaceId: null, unread: 0, lastError: null });
+      wake._internal.registeredWorkspaceId = (c) => (c.record === null ? MASTER_WS : null);
+      return world;
+    }
+
+    it('reads `not-running` once a tick found no Master, stamped with that tick', () => {
+      masterWorld(null);
+      tickAt(0);
+      const v = wake.peerReachability(MASTER_WS);
+      assert.equal(v.local, true, 'still this host\'s Master — only stopped');
+      assert.equal(v.reason, 'not-running');
+      assert.equal(v.meaning, wake.PEER_REASON_MEANINGS['not-running']);
+      assert.equal(v.since, '2026-09-12T10:00:00.000Z');
+      assert.equal(v.observedAt, '2026-09-12T10:00:00.000Z');
+
+      tickAt(5000);
+      const again = wake.peerReachability(MASTER_WS);
+      assert.equal(again.since, '2026-09-12T10:00:00.000Z', 'stopped since the first observation');
+      assert.equal(again.observedAt, '2026-09-12T10:00:05.000Z', 're-observed just now');
+    });
+
+    it('is `not-observed` before any tick has looked, not `not-running`', () => {
+      masterWorld(null);
+      assert.equal(wake.peerReachability(MASTER_WS).reason, 'not-observed');
+    });
+
+    it('reports a running Master\'s own verdict, and `not-running` from the tick it stops', () => {
+      const world = masterWorld({
+        id: 'master', isMaster: true, name: 'Project Master', tmuxSession: 'tangleclaw-master',
+        engineId: 'claude', sessionMode: 'tmux', status: 'active', medusaWake: true, apiBase: '/api/master/medusa'
+      });
+      tickAt(0);
+      assert.equal(wake.peerReachability(MASTER_WS).reason, 'listener-off');
+      world.masterRecord = null;
+      tickAt(5000);
+      const v = wake.peerReachability(MASTER_WS);
+      assert.equal(v.reason, 'not-running');
+      assert.equal(v.since, '2026-09-12T10:00:05.000Z');
+    });
+
+    it('does not read a probe that THREW as a stopped Master', () => {
+      masterWorld(null);
+      wake._internal.masterWakeRecord = () => { throw new Error('tmux exploded'); };
+      tickAt(0);
+      assert.equal(wake.peerReachability(MASTER_WS).reason, 'not-observed');
+    });
+  });
+
+  // R-11. The registry lookup runs per candidate; an unreadable registry used to
+  // log once per live session on every request. Guarded by COUNTING.
+  describe('registry reads per lookup', () => {
+    /** Three live sessions of one project, none holding a running listener. */
+    function threeSessionWorld() {
+      const world = installWorld({
+        sessions: [claudeSession(1), claudeSession(2), claudeSession(3)],
+        status: { state: 'off', workspaceId: null, unread: 0, lastError: null }
+      });
+      wake._internal.registeredWorkspaceId = saved.registeredWorkspaceId;
+      wake._internal.masterKey = () => 'master';
+      return world;
+    }
+
+    /** Capture warn-level log lines for the duration of `fn`. */
+    function captureWarnings(fn) {
+      const logger = require('../lib/logger');
+      const lines = [];
+      logger.setLevel('warn');
+      logger.setConsoleStream({ write: (line) => lines.push(line) });
+      try { fn(); } finally {
+        logger.setConsoleStream(null);
+        logger.setLevel('error');
+      }
+      return lines;
+    }
+
+    it('reads each project\'s registry once however many of its sessions are candidates', () => {
+      threeSessionWorld();
+      const reads = [];
+      wake._internal.readRegistry = (projectPath) => {
+        reads.push(projectPath);
+        return { 3: 'third-session-1234abcd' };
+      };
+      const realMaster = require('../lib/master').masterMedusaTarget;
+      require('../lib/master').masterMedusaTarget = () => ({ projectPath: '/tmp/master-home', sessionId: 'master' });
+      try {
+        assert.equal(wake.peerReachability('nobody-here-00000000').local, false);
+      } finally {
+        require('../lib/master').masterMedusaTarget = realMaster;
+      }
+      assert.deepEqual(reads.sort(), ['/tmp/master-home', '/tmp/proj-a'], 'one read per registry file, not one per session');
+      const found = wake.peerReachability('third-session-1234abcd');
+      assert.equal(found.local, true);
+    });
+
+    it('logs one warning per lookup when the registry cannot be read, not one per session', () => {
+      threeSessionWorld();
+      wake._internal.getProject = () => { throw new Error('store is gone'); };
+      const lines = captureWarnings(() => {
+        assert.equal(wake.peerReachability('nobody-here-00000000').local, false);
+      });
+      const registryWarnings = lines.filter((l) => l.includes('registry read failed'));
+      assert.equal(registryWarnings.length, 1, lines.join(''));
+    });
+
+    it('an unparsable registry file on disk warns once per lookup through the real registry module', () => {
+      const fs = require('node:fs');
+      const os = require('node:os');
+      const path = require('node:path');
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wake-registry-'));
+      try {
+        fs.mkdirSync(path.join(dir, '.tangleclaw', 'medusa'), { recursive: true });
+        fs.writeFileSync(path.join(dir, '.tangleclaw', 'medusa', 'registry.json'), '{not json');
+        const world = threeSessionWorld();
+        world.project = { id: 10, name: 'proj-a', path: dir };
+        wake._internal.readRegistry = saved.readRegistry;
+        wake._internal.masterKey = () => 'master';
+        const realMaster = require('../lib/master').masterMedusaTarget;
+        require('../lib/master').masterMedusaTarget = () => ({ projectPath: path.join(dir, 'no-master'), sessionId: 'master' });
+        let lines;
+        try {
+          lines = captureWarnings(() => {
+            assert.equal(wake.peerReachability('nobody-here-00000000').local, false);
+          });
+        } finally {
+          require('../lib/master').masterMedusaTarget = realMaster;
+        }
+        assert.equal(lines.filter((l) => l.includes('corrupt JSON')).length, 1, lines.join(''));
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  // R-8/R-10. A gate that returns no code is a defect; the docstring promised it
+  // would be loud, so it is — once per session per entry into the state.
+  it('logs a missing reason code once on entering `unclassified`, not on every tick', () => {
+    const logger = require('../lib/logger');
+    const lines = [];
+    logger.setLevel('warn');
+    logger.setConsoleStream({ write: (line) => lines.push(line) });
+    const st = { verdict: null };
+    try {
+      wake._noteVerdict(st, undefined, 7);
+      wake._noteVerdict(st, undefined, 7);
+      wake._noteVerdict(st, '', 7);
+      assert.equal(st.verdict.reason, 'unclassified');
+      wake._noteVerdict(st, 'no-mail', 7);
+      wake._noteVerdict(st, undefined, 7);
+    } finally {
+      logger.setConsoleStream(null);
+      logger.setLevel('error');
+    }
+    const warned = lines.filter((l) => l.includes('returned no reason code'));
+    assert.equal(warned.length, 2, `one per transition into unclassified:\n${lines.join('')}`);
+    assert.match(warned[0], /sessionId=7/);
+  });
+
   it('says whether the monitor is still refreshing the verdict', () => {
     installWorld();
     tickAt(0);
@@ -1232,5 +1399,127 @@ describe('medusa-wake — peer reachability verdicts (#918)', () => {
       assert.notEqual(v.reason, 'unclassified', `a gate returned no code for ${JSON.stringify(w)}`);
       assert.notEqual(v.reason, 'not-observed', `the tick recorded nothing for ${JSON.stringify(w)}`);
     }
+  });
+});
+
+// R-7. The reason vocabulary is declared ONCE (`PEER_REASON_MEANINGS`). These
+// derive the codes the monitor can emit from the producing SOURCE — the return
+// sites of `_judgeSession`, the assessor reasons it prefixes, and the answers
+// `peerReachability`/`_noteVerdict` build — rather than from a typed list, so a
+// new gate that is not declared turns this red instead of shipping a bare code.
+describe('medusa-wake — the peer reason vocabulary is declared for every code emitted (#918)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const SRC = fs.readFileSync(path.join(__dirname, '..', 'lib', 'medusa-wake.js'), 'utf8');
+
+  /** The source of a top-level function, through its closing column-0 brace. */
+  function topLevelFunction(name) {
+    const start = SRC.search(new RegExp(`^function ${name}\\(`, 'm'));
+    assert.ok(start >= 0, `lib/medusa-wake.js has no top-level function ${name}`);
+    const end = SRC.indexOf('\n}\n', start);
+    return SRC.slice(start, end + 2);
+  }
+
+  /** Drop comments so prose naming a code is never read as producing it. */
+  function stripComments(src) {
+    return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
+  }
+
+  /** Kebab-case string literals, minus those only compared against. */
+  function codeLiterals(expr) {
+    const cleaned = expr.replace(/[!=]==\s*'[^']*'/g, '');
+    return [...cleaned.matchAll(/'([a-z]+(?:-[a-z]+)*)'/g)].map((m) => m[1]);
+  }
+
+  /** Template-literal prefixes (`` `listener-${…}` `` → `listener-`). */
+  function templatePrefixes(expr) {
+    return [...expr.matchAll(/`([a-z-]*)\$\{/g)].map((m) => m[1]);
+  }
+
+  /** Every reason code the wake monitor can hand a sender, derived from source. */
+  function emittedCodes() {
+    const exact = new Set();
+    const prefixes = new Set();
+
+    // The assessor reasons `_judgeSession` prefixes with `pane-`.
+    const assessorReasons = ['_assessActivity', '_assessPane']
+      .flatMap((fn) => [...stripComments(topLevelFunction(fn)).matchAll(/reason:\s*'([a-z-]+)'/g)].map((m) => m[1]));
+    assert.ok(assessorReasons.length >= 5, `the assessor scan found reasons: ${assessorReasons}`);
+    const idleOwn = [...stripComments(topLevelFunction('assessSessionIdle')).matchAll(/reason:\s*'(pane-[a-z-]+)'/g)].map((m) => m[1]);
+
+    let judge = stripComments(topLevelFunction('_judgeSession'));
+    const recordStart = judge.indexOf('  function record(');
+    assert.ok(recordStart >= 0, 'the nested ledger writer moved; update this scan');
+    judge = judge.slice(0, recordStart) + judge.slice(judge.indexOf('\n  }\n', recordStart) + 4);
+
+    const returns = [...judge.matchAll(/\breturn\b([^;]*);/g)].map((m) => m[1].trim());
+    assert.ok(returns.length >= 10, `the return scan found ${returns.length} sites`);
+    for (const expr of returns) {
+      let source = expr;
+      if (/^[A-Za-z_$][\w$]*$/.test(expr)) {
+        const def = judge.match(new RegExp(`const ${expr} = ([^;]*);`));
+        assert.ok(def, `return ${expr}: no single-line const definition to derive its codes from`);
+        source = def[1];
+      } else {
+        assert.ok(/^('[^']*'|`[^`]*`)$/.test(expr),
+          `_judgeSession returns \`${expr || '(nothing)'}\` — a site this scan cannot derive a code from`);
+      }
+      const lits = codeLiterals(source);
+      const pres = templatePrefixes(source);
+      assert.ok(lits.length + pres.length > 0, `return ${expr}: yields no code`);
+      lits.forEach((c) => exact.add(c));
+      pres.forEach((p) => prefixes.add(p));
+    }
+    if (prefixes.delete('pane-')) {
+      assessorReasons.forEach((r) => exact.add(`pane-${r}`));
+      idleOwn.forEach((r) => exact.add(r));
+    }
+
+    for (const fn of ['peerReachability', '_noteVerdict']) {
+      codeLiterals(stripComments(topLevelFunction(fn))).forEach((c) => exact.add(c));
+    }
+    return { exact, prefixes };
+  }
+
+  it('every exact code a return site can emit has a declared meaning', () => {
+    const { exact } = emittedCodes();
+    for (const code of exact) {
+      assert.equal(typeof wake.peerReasonMeaning(code), 'string', `\`${code}\` is emitted but has no declared meaning`);
+    }
+  });
+
+  it('every variable-tail code a return site can emit has a declared prefix', () => {
+    const { prefixes } = emittedCodes();
+    assert.ok(prefixes.size >= 2, `found prefixes: ${[...prefixes]}`);
+    for (const prefix of prefixes) {
+      assert.ok(Object.prototype.hasOwnProperty.call(wake.PEER_REASON_PREFIX_MEANINGS, prefix),
+        `\`${prefix}<tail>\` is emitted but no prefix meaning is declared`);
+    }
+  });
+
+  it('declares nothing no site emits — every declared code is derived from a producer', () => {
+    const { exact } = emittedCodes();
+    for (const code of Object.keys(wake.PEER_REASON_MEANINGS)) {
+      assert.ok(exact.has(code), `\`${code}\` is declared but nothing in lib/medusa-wake.js emits it`);
+    }
+  });
+
+  it('every declared code, exact or prefixed, has a non-empty meaning', () => {
+    for (const [code, meaning] of Object.entries(wake.PEER_REASON_MEANINGS)) {
+      assert.ok(typeof meaning === 'string' && meaning.length > 0, code);
+      assert.equal(wake.peerReasonMeaning(code), meaning);
+    }
+    for (const prefix of Object.keys(wake.PEER_REASON_PREFIX_MEANINGS)) {
+      const meaning = wake.peerReasonMeaning(`${prefix}sometail`);
+      assert.match(meaning, /sometail/, `${prefix} fills its tail`);
+      assert.equal(wake.peerReasonMeaning(prefix), null, 'a bare prefix is not a code');
+    }
+  });
+
+  it('an unknown code has no meaning — relayed as-is, never given a guessed one', () => {
+    assert.equal(wake.peerReasonMeaning('a-future-code'), null);
+    assert.equal(wake.peerReasonMeaning(''), null);
+    assert.equal(wake.peerReasonMeaning(undefined), null);
+    assert.equal(wake.peerReasonMeaning('toString'), null, 'no prototype key reads as declared');
   });
 });

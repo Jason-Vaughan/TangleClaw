@@ -124,28 +124,37 @@ describe('tc verb roster (lib/tc-verbs)', () => {
       assert.doesNotMatch(out, /\bunreachable\b|\breachable\b/);
     });
 
-    it('peer status: every code the wake monitor emits has a meaning, and an unknown one is relayed as given (#918)', () => {
+    // R-7: the meaning is declared once, beside its producer
+    // (`lib/medusa-wake.js#PEER_REASON_MEANINGS`), and reaches tc as the
+    // route's `meaning` field. The codes here are derived from that declaration,
+    // so the CLI and the raw route cannot disagree about any of them.
+    it('peer status: prints the server\'s declared meaning for every declared code, and relays an unknown one as given (#918)', () => {
+      const wake = require('../lib/medusa-wake');
       const codes = [
-        'nudged', 'no-mail', 'wake-not-opted-in', 'pane-at-prompt', 'pane-no-prompt',
-        'pane-composer-has-input', 'pane-turn-in-flight', 'pane-agents-running', 'pane-not-at-rest',
-        'pane-writing', 'pane-capture-failed', 'inject-failed', 'wrap-running', 'no-pane',
-        'unprofiled-engine', 'no-project', 'config-unreadable', 'not-observed',
-        'session-ended', 'listener-connecting', 'listener-off'
+        ...Object.keys(wake.PEER_REASON_MEANINGS),
+        ...Object.keys(wake.PEER_REASON_PREFIX_MEANINGS).map((p) => `${p}sometail`)
       ];
+      assert.ok(codes.length > 10);
       for (const reason of codes) {
-        const out = renderPeerStatus({ workspaceId: 'w', local: true, reason, since: 's', observedAt: 'o', monitorRunning: true });
-        assert.doesNotMatch(out, /no description for this code/, `${reason} has a meaning`);
+        const meaning = wake.peerReasonMeaning(reason);
+        const out = renderPeerStatus({ workspaceId: 'w', local: true, reason, meaning, since: 's', observedAt: 'o', monitorRunning: true });
+        assert.ok(out.includes(`${reason} — ${meaning}.`), `${reason} renders its declared meaning:\n${out}`);
       }
-      assert.match(renderPeerStatus({ workspaceId: 'w', local: true, reason: 'listener-error', since: 's', observedAt: 'o', monitorRunning: true }),
-        /listener is in state error, not listening/);
-      assert.match(renderPeerStatus({ workspaceId: 'w', local: true, reason: 'a-future-code', since: 's', observedAt: 'o', monitorRunning: true }),
-        /a-future-code — no description for this code/);
+      for (const meaning of [null, undefined, '']) {
+        assert.match(renderPeerStatus({ workspaceId: 'w', local: true, reason: 'a-future-code', meaning, since: 's', observedAt: 'o', monitorRunning: true }),
+          /a-future-code — no description for this code/);
+      }
+    });
+
+    it('peer status: tc-verbs keeps no private copy of the vocabulary and does not load the wake monitor (#918)', () => {
+      const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'tc-verbs.js'), 'utf8');
+      assert.doesNotMatch(src, /PEER_REASONS|'pane-no-prompt'|require\([^)]*medusa-wake/);
     });
 
     it('peer status: a verdict nothing is refreshing says so, and a never-observed one prints no timestamps (#918)', () => {
       const stale = renderPeerStatus({ workspaceId: 'w', local: true, reason: 'nudged', since: 's', observedAt: 'o', monitorRunning: false });
       assert.match(stale, /not being refreshed — treat it as stale/);
-      const unseen = renderPeerStatus({ workspaceId: 'w', local: true, reason: 'not-observed', since: null, observedAt: null, monitorRunning: true });
+      const unseen = renderPeerStatus({ workspaceId: 'w', local: true, reason: 'not-observed', meaning: 'the wake monitor has not assessed this session yet', since: null, observedAt: null, monitorRunning: true });
       assert.doesNotMatch(unseen, /Observed/);
       assert.match(unseen, /has not assessed this session yet/);
     });
@@ -255,6 +264,7 @@ describe('tc verb roster (lib/tc-verbs)', () => {
           if (p.startsWith('/api/tc/whoami')) return { project: { id: 1, name: 'proj a' } };
           return {
             workspaceId: 'peer/odd id', local: true, reason: 'pane-no-prompt',
+            meaning: 'the pane shows no input prompt (a dialog, a menu, or a scrolled pane); the nudge waits until it returns to its prompt',
             since: '2026-09-12T10:00:00.000Z', observedAt: '2026-09-12T10:45:00.000Z', monitorRunning: true
           };
         },
