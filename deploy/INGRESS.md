@@ -183,7 +183,38 @@ port tracks `httpsPort`, so a custom port is pinned too. Plain HTTP needs no pin
 The generator emitting the pin does **not** retrofit a Caddyfile that is already on
 disk — nothing rewrites a live Caddyfile except an operator-run cutover, and
 `validateCaddyfile` checks syntax only. Any install created before the pin landed
-is still unpinned. Check it:
+is still unpinned.
+
+**You are told on every boot.** In caddy ingress mode the
+[Caddyfile drift check](../docs/caddy-drift-check.md) compares the live listener
+with the generator's and puts an unpinned one on the dashboard banner and in the
+server log.
+
+**The fix, for any Caddyfile — pristine or hand-edited:**
+
+```bash
+node scripts/pin-https-listener.js --dry-run   # what it would change; writes nothing
+node scripts/pin-https-listener.js             # add the pin, then restart Caddy
+```
+
+It adds only the `servers :<httpsPort> { protocols h1 }` block, in place, and keeps
+every other edit in the file. It writes nothing unless `caddy adapt` reads the result
+as identical to your file apart from the pin — anything less exact is **refused with
+the reason**, and the manual steps below still apply. The write keeps a timestamped
+backup and restores it if the new file fails `caddy validate`. The port is
+`caddyHttpsPort` from config (default `8443`), the same port the drift check
+measured. Restart TangleClaw afterwards so the banner re-checks. It refuses outside
+`ingressMode: caddy`. Exit status: `0` pinned and Caddy restarted (or already pinned),
+`1` refused or failed with nothing live changed, `2` the pin is on disk but Caddy could
+not be restarted — run the printed `launchctl` command, since the pin is not live yet.
+
+What it refuses, and why: a listener already set to other protocols (a deliberate
+setting, yours to change); no listener on the configured port (a pin there fixes
+nothing); and an address-less `servers { … }` block in the global options — Caddy
+stops applying that block's settings to a listener that gains its own
+`servers :<port>` block, so adding one would silently drop them.
+
+To check by hand instead:
 
 ```bash
 # does the live HTTPS listener actually carry the pin?
@@ -205,8 +236,9 @@ drop at 1006. If instead you get a Python traceback, `caddy adapt` itself failed
 read its error above the traceback (usually `caddy` not in PATH, or no Caddyfile
 at that path); the check never ran.
 
-**Which fix you want depends on whether your Caddyfile is still generator-pristine.**
-Find out first — the answer decides the whole procedure:
+**If `pin-https-listener.js` refused, which fix you want depends on whether your
+Caddyfile is still generator-pristine.** Find out first — the answer decides the
+whole procedure:
 
 ```bash
 node scripts/ingress-cutover.js --to caddy --dry-run

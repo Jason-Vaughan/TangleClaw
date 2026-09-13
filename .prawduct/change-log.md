@@ -34,6 +34,32 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-12 — #848: an already-deployed unpinned HTTPS listener can be pinned in place
+
+<!-- prawduct: type=bugfix | scope=caddy-848 -->
+
+Sprint v5.24 Lane D.
+
+**Why.** The generator's `protocols h1` pin (#845) only reaches Caddyfiles written after it; every
+older caddy-mode install stays unpinned and its Chrome terminals die at 1006. Detection already
+shipped in #1394's drift check (its protocols property), so the issue's remaining half was the
+remedy — and the obvious one fails: the cutover refuses a hand-edited file and `--force` replaces
+the whole file. A text edit alone is not safe either: verified against Caddy 2.11, adding
+`servers :8443` beside an existing port-less `servers { … }` block silently drops that block's
+settings.
+
+**What.** `scripts/pin-https-listener.js` (`--dry-run`) inserts the pin
+(`lib/caddy.js#insertHttpsListenerPin`) and writes only when `caddy adapt` reads the result as the
+old file with just that listener's protocols changed (`lib/caddy-drift.js#planHttpsListenerPin`,
+`#isPinOnlyChange`), through the reset tool's backup / validate / restore writer. Refuses outside
+`ingressMode: caddy`; exit `2` when the pin is written but Caddy could not be restarted. The drift
+finding for an unpinned listener names the script. Also rewrote a flaky temp-dir test in
+`test/caddy-drift.test.js` to track the directory its call created, not a listing of the shared
+tmpdir. The h2/h3 root-cause question moves to #1438. Not live-verified (no live Caddyfile touched).
+
+**Review.** Critic `rev-20260913T020355Z-c8eec57e` — 0 blocking; restart-failure exit code and the
+caddy-mode refusal fixed in `95fd6fda`, rest accepted; `verify-resolutions` clean.
+
 ## 2026-09-12 — #1404: a wrap Retry resumes the content steps it already captured, and the blocker stops blaming the prompt
 
 <!-- prawduct: type=bugfix | scope=wrap-1404 -->
