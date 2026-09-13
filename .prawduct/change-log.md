@@ -34,6 +34,39 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-13 — #1420 A-03: Caddy's gate by state, a TangleClaw-owned bypass list, drift P5, #1055
+
+<!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->
+
+Train 9 Chunk 04, A-03. Merges into `train-9/cutover`, not `main`.
+
+**Why.** TangleClaw's login is the gate on every mode now, so Caddy's `basic_auth` has to follow the
+gate state rather than the release, the bypass list has to be TangleClaw's, the drift check must stop
+calling an armed install's missing `basic_auth` drift, and the carve-out's `X-Forwarded-For` premise
+needs a reader for the live file.
+
+**What.** `lib/auth-gate.js#guardsTheDoor` (`armed`, `locked`) is the one predicate the generator
+(`gateState` option; omitted keeps `basic_auth`), drift, cutover and bind policy read.
+`GATE_BYPASS_PATHS` (exact: `/api/health`, `/manifest.json`) generates Caddy's matcher; a glob throws;
+`/openclaw-direct/*` left both. Exemptions apply only when the router serves the path matched
+(`//login` served the shell with no session — found while retargeting the parity test). Drift P1 holds
+when the state guards the door; P5 `checkForwardedFor` reports `trusted_proxies`/`header_up`
+X-Forwarded-For. In caddy mode `authEnabled: false` opens only while `caddy.describeIngressDoor` says
+the Caddyfile on disk is not an ungated remote door (`server.js#_gateIngress`). Caddy mode still pins
+loopback (a stored opt-in would open a plain-HTTP LAN listener); #1055 option b names the stored value
+in the locked hint and `ingress-cutover --to direct`; the cutover prints which gate it writes. Setup
+refuses on an unreadable gate. `isProxyHeaderTrusted` re-justified after VERIFYING Caddy v2.11.4
+replaces a forged `X-Forwarded-Host`. Docs: ADR 0016 "Recorded during #1420 A-03", configuration
+reference, setup guide, INGRESS, drift-check doc, openclaw-setup curl, FEATURES.
+
+**Review.** Critic cumulative `rev-20260913T053802Z-6bb4caa5` on `bb9fe93e` — 2 blocking, 7 warnings.
+Fixed in `73394f10`: R-7 (an armed cutover's remote sites opened on `authEnabled: false`), R-2, R-3,
+R-8, R-9, R-10, R-13, R-14; verify-resolutions 8/8. R-1 (record-lint could not read hyphenated chunk
+ids) cleared by `de11c380`'s `Chunk A.03` heading and cumulative `rev-20260913T055830Z-267e3318` —
+0 blocking, 2 warnings (R-1, R-6), notes; all accepted and carried to A-04 in the plan. Accepted from
+the first round: R-4, R-11, R-19. Mutation: 25 guards + 12 finding-fixes, all red.
+
+
 ## 2026-09-13 — #1420 A-02b: identity comes only from the TangleClaw session
 
 <!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->

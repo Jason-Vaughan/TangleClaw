@@ -205,6 +205,22 @@ forwarded host.
 - **Carried to A-04:** reset-admin passes `gateState` and the Caddyfile door like the cutover does;
   the bind notice and drift notice are computed once at boot (accepted — both re-evaluate on restart,
   and the gate itself is per request); close #1055 by hand when `train-9/cutover` reaches `main`.
+  From the A-03 cumulative review (`rev-20260913T055830Z-267e3318`, 0 blocking):
+  - R-6: `lib/admin-credential.js#canChangeCredential` / `#canCreateGate`, `deploy/INGRESS.md`
+    "Creating a gate where there is none" and `public/ui.js`'s "The login is enforced by Caddy" still
+    ask "is there `basic_auth`?". After an armed cutover, Settings > Login says there is nothing to
+    change and `--create-gate` would put `basic_auth` back. Align them with `guardsTheDoor`.
+  - R-1: #472's prompt loop on `/openclaw-direct/*` returns wherever `basic_auth` is written — the
+    fallback, a cutover run before the first account, and reset-admin's gate creation. Decide once.
+  - R-3/R-14: `caddy.describeIngressDoor` reads text and under-reports a top-level `import`, a
+    brace-less site, and a `basic_auth` covering only some remote sites. Consider reading the door
+    through `caddy adapt` (the drift module's rule) with a text fallback that fails closed.
+  - R-8: `resolveGateState` without `loadIngress` opens; the generator without `gateState` keeps the
+    gate. Every caller passes both today (pinned); reset-admin must too.
+  - R-7: `isProxyHeaderTrusted` reads `authEnabled`, so the forwarded host is ignored on a caddy
+    install enforcing with `authEnabled: false` (falls back to `Host`).
+  - A-VRF, R-2: a pre-A-03 generated file still exempts `/openclaw-direct/.*`; with the login off,
+    `//openclaw-direct/x` reaches the page shell (the API behind it stays gated).
 - **`docs/openclaw-setup.md` curl:** still works from the machine itself (loopback, no browser
   headers, no cookie = the fleet carve-out); from anywhere else it now answers 401 without a session.
 
@@ -247,6 +263,6 @@ forwarded host.
 - [x] Checkpoint 1 — ruled 2026-09-13: 1 + 2
 - [x] A-02a — classifier, gate on it, carve-out + XFF, set-password route/page (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [x] A-02b — OQ2 inversion, identity + authStatus from the classifier, dashboard consumers (reviewed 2026-09-13, PR into `train-9/cutover`)
-- [ ] Chunk A.03 (A-03) — state-driven `basic_auth`, bypass ownership, drift, bind policy, #1055
+- [x] Chunk A.03 (A-03) — state-driven `basic_auth`, bypass ownership, drift, bind policy, #1055 (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [ ] A-04 — fallback command, recovery codes, ADR 0009 rule 5 text, reset-admin, recovery doc, drills
 - [ ] A-VRF — cumulative Critic, elkaholic VRF, phone drill → Checkpoint 2
