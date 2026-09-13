@@ -38,20 +38,31 @@ describe('#1178 isProxyHeaderTrusted — one predicate, two headers', () => {
     assert.equal(authIdentity.isProxyHeaderTrusted(null), false);
   });
 
-  it('the identity header decides trust through the predicate, not its own copy', () => {
-    // Both headers must answer to ONE trust decision. `resolveAuthStatus` also
-    // mentions ingressMode, but asks a different question (the auth-status
-    // tri-state), so counting the conjunction file-wide measures the wrong
-    // thing — pin the trust path itself.
+  it('the identity header is trusted under NO predicate — only the forwarded host answers to this one (#1420)', () => {
+    // This used to pin that `X-Auth-User` and `X-Forwarded-Host` shared one trust
+    // decision. ADR 0016 OQ2 retired the first: identity is the session's, and
+    // the identity header is deleted at request entry on every mode. So the
+    // property is now stronger — the refusal consults no config and no
+    // predicate, because there is no condition under which it may be believed.
     const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'auth-identity.js'), 'utf8');
-    // Body only: the slice up to the next function also swallows a doc comment
-    // that legitimately NAMES ingressMode, which is prose, not a trust decision.
-    const from = src.indexOf('function resolveRequestUser');
+    const from = src.indexOf('function refuseInboundIdentity');
+    assert.ok(from > 0, 'premise: the refusal exists');
     const body = src.slice(from, src.indexOf('\n}', from) + 2);
-    assert.match(body, /isProxyHeaderTrusted\(config\)/,
-      'resolveRequestUser must route its trust decision through the shared predicate');
-    assert.doesNotMatch(body, /ingressMode/,
-      'resolveRequestUser re-spells the gate instead of calling it');
+    assert.doesNotMatch(body, /isProxyHeaderTrusted|ingressMode|authEnabled|config/,
+      'the refusal must not be conditional on any mode or setting');
+
+    // And nothing on the request path reads the header's VALUE as identity:
+    // every code reference to it outside the refusal is the Caddyfile emitter.
+    const libDir = path.join(__dirname, '..', 'lib');
+    const files = fs.readdirSync(libDir).filter((f) => f.endsWith('.js'))
+      .map((f) => path.join(libDir, f)).concat(path.join(__dirname, '..', 'server.js'));
+    for (const file of files) {
+      const code = fs.readFileSync(file, 'utf8');
+      // A `delete headers[...]` is the refusal, not a read, so it is excluded.
+      assert.doesNotMatch(code,
+        /(?<!delete\s)headers\s*\[\s*(['"]x-auth-user['"]|IDENTITY_HEADER)\s*\]/i,
+        `${path.basename(file)} must not read X-Auth-User from a request`);
+    }
   });
 });
 

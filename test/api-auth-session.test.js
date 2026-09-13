@@ -118,6 +118,9 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
     };
     const res = mockRes();
     await handleRequest(req, res);
+    // The request as the handler left it, for cases asserting what the entry
+    // guards removed from it.
+    res.req = req;
     return res;
   }
 
@@ -197,6 +200,26 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
       assert.equal(create.statusCode, 401, 'the first-account route is closed once any account exists');
       assert.equal(store.users.getByName('mallory'), null);
     });
+  });
+
+  describe('an inbound X-Auth-User is deleted at request entry (#1420, ADR 0016 OQ2)', () => {
+    // Deleted rather than ignored, so a later reader — or a proxy that copies
+    // request headers upstream — cannot pick it back up. Asserted on the request
+    // the handler leaves behind, on every gate state and for a proxied request.
+    for (const [label, setup] of [
+      ['an open install', () => setAuthEnabled(false)],
+      ['an install with no account', () => setAuthEnabled(true)],
+      ['an armed install', () => armGate()]
+    ]) {
+      it(`on ${label}`, async () => {
+        setup();
+        for (const headers of [{ 'x-auth-user': 'attacker' },
+          { 'x-auth-user': 'jason', 'x-forwarded-for': '100.64.0.7' }]) {
+          const res = await send('GET', '/api/auth/me', { headers });
+          assert.equal('x-auth-user' in res.req.headers, false, JSON.stringify(headers));
+        }
+      });
+    }
   });
 
   describe('POST /api/auth/set-password — the first account (#1420)', () => {
@@ -327,6 +350,22 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
         passwordLib.hashPassword = realSync;
         passwordLib.hashPasswordAsync = realAsync;
       }
+    });
+
+    it('answers 503 GATE_UNREADABLE when the gate cannot read its state — never a claim either way', async () => {
+      // Reachable by a local tool through the carve-out. "An account already
+      // exists" would be a guess; the gate does not know.
+      const orig = store.authSessions.accountPresence;
+      store.authSessions.accountPresence = () => { throw new Error('database is locked'); };
+      try {
+        const res = await send('POST', '/api/auth/set-password', { body: GOOD, machine: true });
+        assert.equal(res.statusCode, 503);
+        assert.match(res.body, /GATE_UNREADABLE/);
+        assert.doesNotMatch(res.body, /already exists/);
+      } finally {
+        store.authSessions.accountPresence = orig;
+      }
+      assert.equal(store.users.list().length, 0);
     });
 
     it('is reachable through the proxy — reach authorises it, per ADR 0016', async () => {
@@ -1022,6 +1061,17 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
           assert.equal(sent.includes(authSession.SESSION_COOKIE), false,
             'the session cookie must not reach a --writable ttyd');
           assert.equal(sent.includes(authSession.CSRF_COOKIE), false);
+        } finally { restore(); }
+      });
+
+      it('does not carry an inbound X-Auth-User to ttyd — it is deleted before any branch (#1420)', async () => {
+        try {
+          const { cookie } = await login();
+          const s = await upgrade('/terminal/ws', { cookie, headers: { 'x-auth-user': 'attacker' } });
+          assert.doesNotMatch(s.written, REFUSED);
+          assert.equal(connects.length, 1, 'precondition: the ttyd connection was opened');
+          assert.equal(/x-auth-user/i.test(connects[0].upstream.written), false,
+            'a claimed identity must not travel to the shell');
         } finally { restore(); }
       });
 

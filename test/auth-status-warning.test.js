@@ -44,19 +44,33 @@ describe('AUTH-2K9D dashboard warning surface', () => {
     assert.match(landing, /function _authStatusWarning\(/);
   });
 
-  it('warns on both mismatch states and only those', () => {
-    assert.match(landing, /configured-inert/);
-    assert.match(landing, /configured-no-identity/);
-    // Both warning texts name the concrete remediation.
-    assert.match(landing, /run the Caddy cutover/i);
-    assert.match(landing, /header_up X-Auth-User/);
-    // Exactly two states produce a warning: a direct-loopback load that never
-    // traversed the gate ('configured-bypassed') must stay silent — it was the
-    // AUTH-5N2J false-positive.
+  it('warns on the three closed states that need the operator, and only those (#1420)', () => {
     const mapperBody = landing.slice(landing.indexOf('function _authStatusWarning('));
     const fnBody = mapperBody.slice(0, mapperBody.indexOf('\n}\n') + 2);
-    assert.equal((fnBody.match(/return '⚠/g) || []).length, 2);
-    assert.doesNotMatch(fnBody, /authStatus === 'configured-bypassed'/);
+    for (const status of ['account-required', 'locked', 'unreadable']) {
+      assert.match(fnBody, new RegExp(`authStatus === '${status}'`), status);
+    }
+    assert.equal((fnBody.match(/return '⚠/g) || []).length, 3);
+    // The expected states stay silent.
+    assert.doesNotMatch(fnBody, /authStatus === '(off|live)'/);
+    // A locked install names the one recovery that works for it.
+    assert.match(fnBody, /reset-admin\.js --store/);
+    // The proxy-header diagnostics are gone: nothing reads that header any more.
+    assert.doesNotMatch(landing, /configured-inert|configured-no-identity|configured-bypassed|header_up X-Auth-User/);
+  });
+
+  it('every status the server can send has a decided rendering', () => {
+    // A value the mapper has never heard of renders nothing, which is right for
+    // `off`/`live` and wrong for a closed state — so the enum and the mapper are
+    // checked against each other.
+    const { AUTH_STATUSES } = require('../lib/auth-identity');
+    const mapperBody = landing.slice(landing.indexOf('function _authStatusWarning('));
+    const fnBody = mapperBody.slice(0, mapperBody.indexOf('\n}\n') + 2);
+    for (const status of AUTH_STATUSES) {
+      const warns = fnBody.includes(`authStatus === '${status}'`);
+      const silent = status === 'off' || status === 'live';
+      assert.equal(warns, !silent, `${status}: ${silent ? 'silent' : 'warns'}`);
+    }
   });
 
   it('is state-driven: shows on a message, hides (clears) otherwise — no dismiss/timer', () => {

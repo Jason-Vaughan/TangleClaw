@@ -209,11 +209,10 @@ async function loadServerInfo() {
   state.restartMechanism = (typeof data.restartMechanism === 'string' && data.restartMechanism.length > 0)
     ? data.restartMechanism
     : null;
-  // AUTH-3: show "Logged in as <user>" when behind the Caddy login gate.
-  // `currentUser` is null unless the gate is live (the server-side trust gate
-  // never honors a direct-mode header), so this is hidden in direct mode.
+  // "Logged in as <user>": the TangleClaw session's username, null when no one
+  // is signed in (including every install with no login required).
   renderAuthUser(data.currentUser);
-  // AUTH-2K9D: warn when auth is configured but not actually enforcing.
+  // Warn when the login is closed in a state that needs the operator.
   renderAuthStatus(data.authStatus);
   renderBindNotice(data.bindNotice);
   renderBindNotice(data.ttydNotice, 'ttydNotice');
@@ -513,29 +512,34 @@ function renderBehindOriginBanner(info) {
 }
 
 /**
- * Human-readable warning for an auth config-vs-live mismatch (AUTH-2K9D), or null
- * for the healthy/expected states (`off`, `live`, `configured-bypassed` — a
- * direct-loopback load that never traversed the gate says nothing about gate
- * health, so it deliberately renders no warning — or an older server that omits
- * `authStatus`). Text carries the meaning so the chip is not color-only (a11y).
+ * Human-readable warning for a login state that needs the operator, or null for
+ * the expected states (`off`, `live`, or an older server that omits
+ * `authStatus`). The three warnings name CLOSED states: the login is being
+ * enforced, and something about it needs attention. A browser rarely sees them —
+ * a closed gate refuses the poll that would carry them — but a signed-in page
+ * left open across a change can. Text carries the meaning so the chip is not
+ * color-only (a11y).
  * @param {string|null|undefined} authStatus
  * @returns {string|null}
  */
 function _authStatusWarning(authStatus) {
-  if (authStatus === 'configured-inert') {
-    return '⚠ Auth enabled but direct mode is not enforcing it — run the Caddy cutover to activate the login gate.';
+  if (authStatus === 'account-required') {
+    return '⚠ No account exists yet, so the login is closed — open this address in a new tab to create one.';
   }
-  if (authStatus === 'configured-no-identity') {
-    return '⚠ Auth gate is up but no identity is arriving — the live Caddyfile may be missing "header_up X-Auth-User".';
+  if (authStatus === 'locked') {
+    return '⚠ Every account is disabled, so the login is closed — run "node scripts/reset-admin.js --store --user <name>" at a terminal on this machine.';
+  }
+  if (authStatus === 'unreadable') {
+    return '⚠ TangleClaw cannot read its login state, so the login stays closed — check the server log.';
   }
   return null;
 }
 
 /**
- * Show or hide the auth config-vs-live mismatch warning chip (AUTH-2K9D). Purely
- * state-driven: it mirrors the latest `/api/server-info` poll and self-clears when
- * the mismatch resolves (cutover runs / header fixed). No dismiss control and no
- * timer — removing the cause removes the chip on the next poll.
+ * Show or hide the login-state warning chip. Purely state-driven: it mirrors the
+ * latest `/api/server-info` poll and self-clears when the state resolves. No
+ * dismiss control and no timer — removing the cause removes the chip on the next
+ * poll.
  * @param {string|null|undefined} authStatus
  */
 function renderAuthStatus(authStatus) {

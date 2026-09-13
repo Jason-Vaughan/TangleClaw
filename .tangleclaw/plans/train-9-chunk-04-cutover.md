@@ -70,8 +70,26 @@ Caddy honour a client's value.
   (`store.users#createFirstAsync`) — it is reachable signed-out (Critic R-2).
 
 **Carried out of the A-02a review, into the chunk that will touch the code anyway:**
-- A-02b: `gateActive` means "enforcing" on `/api/auth/me` but `resolveAuthStatus`'s flag means
-  "armed". Rename one when `authStatus` is re-derived from the classifier.
+- ~~A-02b: `gateActive` means "enforcing" on `/api/auth/me` but `resolveAuthStatus`'s flag means
+  "armed".~~ **Done in A-02b** — `resolveAuthStatus` takes the gate state itself, so the second
+  meaning is gone; `gateActive` on `/api/auth/me` keeps "enforcing".
+
+**Done in A-02b (the verify-resolutions and PR-review observations carried from A-02a):**
+- set-password answers `503 GATE_UNREADABLE` in `unreadable` (it had said "an account already
+  exists"); `ACCOUNT_EXISTS` stays for `armed`/`locked`, which do have accounts.
+- The provisioning screen tells the operator they sign in once at the new address with the password
+  they just set.
+- The stale `lib/auth-identity.js` comment is gone with the rewrite.
+- **Accepted, not changed:** `dismissWizard` became async and its three callers do not await it.
+  Its only awaited step (`_installNeedsAccount`) never rejects, and the rest of its body is the same
+  synchronous DOM work that already ran unawaited before; awaiting it at the callers would change
+  nothing a caller does next.
+
+**A-02b decisions (2026-09-13).** Recorded in ADR 0016 "Recorded during #1420 A-02b": the header is
+deleted on both transports, logged at debug when it came through a proxy (Caddy's transitional
+`header_up`) and at warn when it did not — a departure from OQ2's "logged at warn"; identity and
+`owner` read the session; `authStatus` is the gate state; `isProxyHeaderTrusted` stays for the
+forwarded host.
 - A-03: the drift check reads the LIVE Caddyfile for `trusted_proxies` and any `header_up` touching
   `X-Forwarded-For`, and reports either as divergence — the carve-out's premise.
 - A-04: the login page tells a `locked` or `unreadable` install apart from a wrong password (the
