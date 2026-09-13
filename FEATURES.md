@@ -168,9 +168,9 @@ fails any auto-stub section older than 14 days.
   from a bad gate, because that edit changes both. **Both reads fail CLOSED, always**: a store or
   config error answers `unreadable`, which enforces, and the old "fail open while dormant" branch is
   gone — it was safe only while Caddy's gate stood in front. A READABLE `authEnabled: false` stays
-  the recovery lever — except in caddy mode while the Caddyfile serves a remote site with no
-  `basic_auth` (`server.js#_gateIngress`), where turning the login off would leave that site
-  ungated — and `server.js#_gateConfig` THROWS rather than returning null, because the
+  the recovery lever — except in caddy mode while the Caddyfile is a door, as `lib/ingress-door.js`
+  defines one (read through `server.js#_gateIngress`), where turning the login off would leave a
+  site ungated — and `server.js#_gateConfig` THROWS rather than returning null, because the
   null-swallowing loader once made the fail-closed branch unreachable. CSRF is evaluated AHEAD of the exemption list so
   `/api/auth/logout` is protected despite being exempt, and `/api/auth/login` is exempt because its
   authority is the password, not the cookie — without that a browser holding a live session cannot
@@ -209,8 +209,8 @@ fails any auto-stub section older than 14 days.
   `locked`) is the one answer to "does TangleClaw's login need nothing in front of it", read by the
   Caddyfile generator, the drift check, the cutover and the bind policy; in caddy mode
   `authEnabled: false` opens the gate only while `lib/ingress-door.js` — `caddy adapt`, read in
-  evaluation order, with a text fallback that counts what it cannot read as a door — says the
-  Caddyfile is not an ungated remote door. Tests: `test/auth-session.test.js`, `test/ingress-door.test.js`,
+  evaluation order; a file Caddy cannot read counts as a door — says the Caddyfile is not an
+  ungated remote door. Tests: `test/auth-session.test.js`, `test/ingress-door.test.js`,
   `test/api-ingress-door.test.js`,
   `test/auth-gate.test.js`, `test/store-auth-sessions.test.js`, `test/api-auth-session.test.js`,
   `test/reset-admin-store.test.js`, `test/frontend-csrf.test.js`.

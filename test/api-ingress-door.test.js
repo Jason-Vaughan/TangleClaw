@@ -9,7 +9,7 @@ const store = require('../lib/store');
 const caddy = require('../lib/caddy');
 const drift = require('../lib/caddy-drift');
 const { handleRequest } = require('../server');
-const { FIXTURE_CADDYFILES } = require('./_caddy-drift-fixtures');
+const { FIXTURE_CADDYFILES, adaptFromFixtures } = require('./_caddy-drift-fixtures');
 
 // `authEnabled: false` in caddy mode, driven through the REAL request handler:
 // the Caddyfile on disk decides whether the opt-out opens the install
@@ -52,14 +52,18 @@ describe('the Caddyfile as a door, end to end (#1420)', () => {
     store.config.save(cfg);
     realAdapt = drift.adaptCaddyfileContent;
     adapts = 0;
-    drift.adaptCaddyfileContent = (text) => {
-      adapts++;
-      const name = Object.keys(FIXTURE_CADDYFILES).find((n) => FIXTURE_CADDYFILES[n] === text);
-      if (!name) return { ok: false, config: null, reason: 'not a fixture Caddyfile' };
-      const json = fs.readFileSync(path.join(__dirname, 'fixtures', `caddy-adapt-${name}.json`), 'utf8');
-      return { ok: true, config: JSON.parse(json), reason: null };
-    };
+    drift.adaptCaddyfileContent = realAdaptStub;
   });
+
+  /**
+   * `caddy adapt` answered from the committed fixture JSON for a fixture's text.
+   * @param {string} text - Caddyfile text.
+   * @returns {{ ok: boolean, config: object|null, reason: string|null }}
+   */
+  function realAdaptStub(text) {
+    adapts++;
+    return adaptFromFixtures(text);
+  }
 
   afterEach(() => {
     drift.adaptCaddyfileContent = realAdapt;
@@ -125,13 +129,23 @@ describe('the Caddyfile as a door, end to end (#1420)', () => {
     assert.equal(adapts, 2);
   });
 
-  it('reads the text when caddy adapt cannot run, and still finds the door', async () => {
+  it('keeps the login on while caddy adapt cannot read the file, and asks again after a while', async () => {
     store.users.create('rosie', PASSWORD);
-    drift.adaptCaddyfileContent = () => ({ ok: false, config: null, reason: 'caddy is not available' });
-    writeCaddyfile('live-shape-own-auth');
-    assert.equal(await gateState(), 'armed');
-    writeCaddyfile('live-shape-gated');
-    assert.equal(await gateState(), 'open');
+    const realNow = Date.now;
+    let clock = realNow();
+    Date.now = () => clock;
+    try {
+      drift.adaptCaddyfileContent = () => { adapts++; return { ok: false, config: null, reason: 'caddy is not available' }; };
+      writeCaddyfile('live-shape-gated');
+      assert.equal(await gateState(), 'armed', 'a gated file Caddy could not read is still a door');
+      assert.equal(await gateState(), 'armed');
+      assert.equal(adapts, 1, 'not re-asked on every request');
+      clock += 31000;
+      drift.adaptCaddyfileContent = realAdaptStub;
+      assert.equal(await gateState(), 'open', 're-asked once the retry window passed, and Caddy answered');
+    } finally {
+      Date.now = realNow;
+    }
   });
 
   it('no Caddyfile is no door', async () => {

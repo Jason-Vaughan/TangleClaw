@@ -49,10 +49,10 @@ import, a braceless site and per-site `basic_auth`), and the A.04c cumulative
 cached as "no door").
 
 **What.** New `lib/ingress-door.js` (`describeIngressContent`, `describeAdaptedDoor`,
-`readIngressDoor`): file import → door; `caddy adapt` walked with `gateFallback.walkRoutes`; text
-fallback. `lib/caddy.js#describeIngressDoor` rewritten as a scoped, fail-toward-door text reader;
-`caddy.readIngressDoor` removed (moved). `gateFallback.PASSIVE_APPS` exported. `server.js`:
-`_gateIngress` reads after its stat and logs a text fallback / an import; `_withHashSlot` owns the cap
+`readIngressDoor`): file import → door; `caddy adapt` walked with `gateFallback.walkRoutes`; adapt
+failure → door ("unread"). `lib/caddy.js#describeIngressDoor` and `caddy.readIngressDoor` deleted.
+`gateFallback.eachTopLevelRoute` shared by `checkFallbackDoor` and `describeAdaptedDoor`. `server.js`:
+`_gateIngress` reads after its stat, re-asks an unread answer every 30s, logs each answer once; `_withHashSlot` owns the cap
 for login, set-password, recover, recovery-codes; `_recoveryClient` reads `clientKey`'s object.
 `recovery-codes#clientKey` → `{ key, address, proxied }` via `cameThroughProxy` (lazy require: store
 cycle). `auth-gate` JSDoc fixes. `reset-admin.js` uses `ingress-door`. `public/ui.js` missing space.

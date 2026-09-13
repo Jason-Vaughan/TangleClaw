@@ -382,6 +382,13 @@ function _gateConfig() {
 }
 
 let _gateIngressCache = null;
+let _gateIngressLogged = null;
+
+/**
+ * How long an answer Caddy could not give ("unread") is reused before
+ * `caddy adapt` is asked again. Every other answer lasts until the file changes.
+ */
+const GATE_INGRESS_UNREAD_RETRY_MS = 30000;
 
 /**
  * The Caddyfile on disk, described as a door, for the auth gate — cached on the
@@ -389,21 +396,24 @@ let _gateIngressCache = null;
  *
  * Asked only in caddy mode with `authEnabled` off
  * (`authGate.resolveGateState`): the opt-out opens the install only while this
- * says the file is not serving a remote site with no `basic_auth`. An edit to
- * the file changes the key, so it takes effect on the next request.
+ * says the file is not a door — what counts as one is `lib/ingress-door.js`'s
+ * to say. An edit to the file changes the key, so it takes effect on the next
+ * request.
  *
- * A file MISSING at the `stat` answers "no ungated remote site" — Caddy has
- * nothing to serve. Any OTHER failure throws, which the gate answers with
- * `unreadable` — including a file that was there for the `stat` and gone for the
- * read. That one must not be answered as "missing": the answer would be cached
- * under the key of the file that was just `stat`ed.
+ * A file MISSING at the `stat` answers "no door" — Caddy has nothing to serve.
+ * Any OTHER failure throws, which the gate answers with `unreadable` — including
+ * a file that was there for the `stat` and gone for the read. That one must not
+ * be answered as "missing": the answer would be cached under the key of the file
+ * that was just `stat`ed.
  *
- * The description is `lib/ingress-door.js` — `caddy adapt` over the text,
- * synchronously, once per change of the file. The same trade `_gateFallback`
- * makes: an asynchronous check needs a "not yet known" answer, and the text
- * reader cannot be that answer, because the shapes it misreads are why adapt
- * is asked. Bounded by `caddy-drift`'s adapt timeout. When adapt cannot run, the
- * text reader answers and the log says so, once per change.
+ * The description runs `caddy adapt` over the text, synchronously, once per
+ * change of the file. The same trade `_gateFallback` makes: an asynchronous
+ * check needs a "not yet known" answer, which must count as a door anyway, so
+ * the opt-out would stay closed until it landed. Bounded by `caddy-drift`'s
+ * adapt timeout. When Caddy cannot read the file the answer is a door; that one
+ * is re-asked every {@link GATE_INGRESS_UNREAD_RETRY_MS}, so a passing timeout or
+ * a `caddy` briefly missing from PATH does not keep the login on until someone
+ * edits the Caddyfile. Each distinct answer is logged once, not per request.
  *
  * @returns {{ ungatedRemoteSite: boolean, unguardedLocalSite: boolean }}
  * @throws {Error} If the Caddyfile exists but cannot be read
@@ -418,29 +428,35 @@ function _gateIngress() {
     throw err;
   }
   const key = `${file}:${st.mtimeMs}:${st.size}`;
-  if (_gateIngressCache && _gateIngressCache.key === key) return _gateIngressCache.value;
-  const value = ingressDoor.describeIngressContent(fs.readFileSync(file, 'utf8'));
-  if (value.source === 'text') {
-    log.warn('caddy adapt could not read the Caddyfile, so the gate read its text instead, which counts '
-      + 'every shape it cannot see as a site with no gate.', { caddyfile: file, reason: value.reason });
+  const now = Date.now();
+  if (_gateIngressCache && _gateIngressCache.key === key
+      && (_gateIngressCache.value.source !== 'unread' || now < _gateIngressCache.retryAt)) {
+    return _gateIngressCache.value;
   }
-  if (value.source === 'import') {
+  const value = ingressDoor.describeIngressContent(fs.readFileSync(file, 'utf8'));
+  _gateIngressCache = { key, value, retryAt: now + GATE_INGRESS_UNREAD_RETRY_MS };
+  const logged = `${key}|${value.source}|${value.reason}|${value.ungatedRemoteSite}|${value.unguardedLocalSite}`;
+  if (_gateIngressLogged === logged) return value;
+  _gateIngressLogged = logged;
+  if (value.source === 'unread') {
+    log.warn('caddy adapt could not read the Caddyfile, so authEnabled: false does NOT open TangleClaw\'s login '
+      + 'in caddy mode. Make caddy reachable on TangleClaw\'s PATH, or turn authEnabled back on.',
+    { caddyfile: file, reason: value.reason });
+  } else if (value.source === 'import') {
     log.warn('The Caddyfile imports another file, whose edits the gate would not notice, so authEnabled: false '
       + 'does NOT open TangleClaw\'s login in caddy mode. Inline the import, or turn authEnabled back on.',
     { caddyfile: file, reason: value.reason });
   } else if (value.ungatedRemoteSite) {
-    // Logged once per change of the file, not per request.
-    log.warn('The Caddyfile serves a remote site that forwards a request before any basic_auth, so authEnabled: false does NOT open '
-      + 'TangleClaw\'s login in caddy mode. Re-run the cutover with only a localhost site, or turn '
-      + 'authEnabled back on.', { caddyfile: file });
+    log.warn('The Caddyfile serves a remote site that forwards a request before any basic_auth, so '
+      + 'authEnabled: false does NOT open TangleClaw\'s login in caddy mode. Re-run the cutover with only a '
+      + 'localhost site, or turn authEnabled back on.', { caddyfile: file });
   } else if (value.unguardedLocalSite) {
-    // Same once-per-change cadence. Whether it closes the opt-out depends on
-    // whether accounts exist, which the gate decides per request.
+    // Whether it closes the opt-out depends on whether accounts exist, which the
+    // gate decides per request.
     log.warn('The Caddyfile has a localhost site with no basic_auth and no peer guard, so other machines '
       + 'asking for localhost reach it. On an install with accounts, authEnabled: false does NOT open '
       + 'TangleClaw\'s login. Run node scripts/guard-ungated-sites.js.', { caddyfile: file });
   }
-  _gateIngressCache = { key, value };
   return value;
 }
 

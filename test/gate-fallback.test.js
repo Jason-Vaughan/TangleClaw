@@ -119,6 +119,28 @@ describe('lib/gate-fallback — the door TangleClaw may stand down behind (#1420
       assert.match(door.reason, /invoke/);
     });
 
+    it('probes with no host too when one of a route\'s matcher sets names no host', () => {
+      // Matcher sets are OR'd: a set without a host list reaches the route under any host.
+      const route = hostRoute('a.example', [{ handle: [auth(), proxy()] }]);
+      route.match.push({ path: ['/x'] });
+      const door = gf.checkFallbackDoor(site([route]), PORT);
+      assert.equal(door.ok, true, door.reason);
+      assert.deepEqual(door.probes, [
+        { port: 8443, tls: true, host: null },
+        { port: 8443, tls: true, host: 'a.example' }
+      ]);
+    });
+
+    it('eachTopLevelRoute is the one walk both door questions ask', () => {
+      const walk = gf.eachTopLevelRoute(fixture('handle-errors'));
+      assert.equal(walk.unreadable, null);
+      assert.ok(walk.routes.some((r) => r.kind === 'error'), 'error routes are listed');
+      assert.match(gf.eachTopLevelRoute(null).unreadable, /no adapted config/);
+      const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'ingress-door.js'), 'utf8');
+      assert.match(src, /gateFallback\.eachTopLevelRoute\(/);
+      assert.doesNotMatch(src, /apps\.http\.servers|named_routes/, 'ingress-door walks no servers of its own');
+    });
+
     it('refuses an error route that forwards to TangleClaw ungated', () => {
       const door = gf.checkFallbackDoor(site([hostRoute('a.example', [{ handle: [auth(), proxy()] }])],
         { errors: { routes: [{ handle: [proxy()] }] } }), PORT);

@@ -1,0 +1,131 @@
+{
+  "apps": {
+    "http": {
+      "servers": {
+        "srv0": {
+          "listen": [
+            ":443"
+          ],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": [
+                    "box.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "handle": [
+                        {
+                          "handler": "authentication",
+                          "providers": {
+                            "http_basic": {
+                              "accounts": [
+                                {
+                                  "password": "$2a$14$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU",
+                                  "username": "fixture"
+                                }
+                              ],
+                              "hash": {
+                                "algorithm": "bcrypt"
+                              },
+                              "hash_cache": {}
+                            }
+                          }
+                        },
+                        {
+                          "handler": "reverse_proxy",
+                          "upstreams": [
+                            {
+                              "dial": "127.0.0.1:3102"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            }
+          ],
+          "errors": {
+            "routes": [
+              {
+                "match": [
+                  {
+                    "host": [
+                      "box.example.com"
+                    ]
+                  }
+                ],
+                "handle": [
+                  {
+                    "handler": "subroute",
+                    "routes": [
+                      {
+                        "handle": [
+                          {
+                            "handler": "subroute",
+                            "routes": [
+                              {
+                                "handle": [
+                                  {
+                                    "handler": "reverse_proxy",
+                                    "upstreams": [
+                                      {
+                                        "dial": "127.0.0.1:3102"
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ],
+                "terminal": true
+              }
+            ]
+          },
+          "tls_connection_policies": [
+            {
+              "match": {
+                "sni": [
+                  "box.example.com"
+                ]
+              },
+              "certificate_selection": {
+                "any_tag": [
+                  "cert0"
+                ]
+              }
+            },
+            {}
+          ]
+        }
+      }
+    },
+    "tls": {
+      "certificates": {
+        "load_files": [
+          {
+            "certificate": "/fixtures/cert.pem",
+            "key": "/fixtures/key.pem",
+            "tags": [
+              "cert0"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

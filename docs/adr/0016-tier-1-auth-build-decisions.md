@@ -671,20 +671,22 @@ The addendum's "What the switch does", built. Builder decisions, vetoable.
 - **A Caddyfile that imports another file is a door** without asking Caddy: the verdict is cached on
   the Caddyfile's own mtime and size, so an edit to the imported file would never be read. The
   fallback check refuses the same shape for the same reason.
-- **When `caddy adapt` cannot run, the text reader answers** (`lib/caddy.js#describeIngressDoor`),
-  hardened to fail toward "door": a top-level `import`, a braceless site or a split header make the
-  file a door; a site is read as nested scopes (`handle`, `handle_path`, `route`, `handle_errors`),
-  and a credential gates its scope and those inside it, so an import inside `handle { }` leaves a
-  matched sibling handle open; a site whose every line forwards nothing (a redirect) is not a door. Its
-  two stated limits are both beyond what the generator or a `(tcauth)` hand edit writes:
-  `basic_auth @name`'s breadth is taken as its scope, and a gate written after a forwarding directive
-  inside a `route` still counts. Committed fixtures pin the text reader to the same answer as Caddy on
-  every shape the generator and the live install's hand edit write. The server logs a text fallback
-  once per change of the file.
+- **When `caddy adapt` cannot read the file, it is a door.** No text walk decides. The first build
+  kept the old text reader as a fallback, hardened toward "door"; its review showed a hand-written
+  Caddyfile parser misreading `handle_errors` (Caddy runs error routes without the site's
+  `basic_auth`) and carrying two documented limits on the "no door" side, for a question the fallback
+  check already answers "refuse" when adapt cannot run. The cost, stated: a caddy-mode install with
+  `authEnabled: false` whose TangleClaw process cannot run `caddy` (the service PATH trap) keeps its
+  login on — the accounts decide, and with none the first-account page shows — until `caddy` is
+  reachable. The log names the reason. An "unread" answer is re-asked every 30 seconds rather than
+  held until the file changes, so a passing adapt timeout does not stick.
 - **`caddy adapt` runs synchronously on the request path**, once per change of the Caddyfile and only
   in caddy mode with `authEnabled` off — the trade the fallback check already made, for the same
-  reason: an asynchronous check needs a "not yet known" answer, and the text reader cannot be that
-  answer because the shapes it misreads are why Caddy is asked.
+  reason: an asynchronous check needs a "not yet known" answer, which would have to count as a door.
+- **One walk over an adapted config's top-level routes** (`gate-fallback#eachTopLevelRoute`) serves
+  both the fallback check and the door, so a shape either learns to refuse (a plugin app, named
+  routes, error routes) is learned once. Both now agree that a route with one matcher set lacking a
+  host list matches any host; the fallback command probes such a route with no host as well.
 - **`server.js#_gateIngress` reads the file itself after its `stat`**, so a Caddyfile gone between the
   two throws (`unreadable`, not cached) instead of being answered as missing and cached under the key
   of the file just `stat`ed. `ingress-door.readIngressDoor` keeps "missing is no door" for

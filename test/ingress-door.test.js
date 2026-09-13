@@ -16,7 +16,7 @@ const os = require('node:os');
 const path = require('node:path');
 const caddy = require('../lib/caddy');
 const ingressDoor = require('../lib/ingress-door');
-const { FIXTURE_CADDYFILES } = require('./_caddy-drift-fixtures');
+const { FIXTURE_CADDYFILES, adaptFromFixtures } = require('./_caddy-drift-fixtures');
 
 /**
  * The committed `caddy adapt` JSON for a named fixture.
@@ -27,26 +27,17 @@ function adapted(name) {
   return JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', `caddy-adapt-${name}.json`), 'utf8'));
 }
 
-/**
- * An `adapt` stand-in that answers with a fixture's committed JSON for that
- * fixture's exact text, and fails for anything else.
- * @returns {(content: string) => { ok: boolean, config: object|null, reason: string|null }}
- */
-function fixtureAdapt() {
-  return (content) => {
-    for (const [name, text] of Object.entries(FIXTURE_CADDYFILES)) {
-      if (text === content) return { ok: true, config: adapted(name), reason: null };
-    }
-    return { ok: false, config: null, reason: 'not a fixture' };
-  };
-}
+const fixtureAdapt = () => adaptFromFixtures;
 
 const unavailable = () => ({ ok: false, config: null, reason: 'caddy is not available: ENOENT' });
 
-// What each fixture is, as a door. Both readers must give the same answer for
-// every shape the generator or the live install's hand edit writes.
+// What each fixture is, as a door, read through Caddy's parser.
 const EXPECTED = {
   generated: { ungatedRemoteSite: false, unguardedLocalSite: false },
+  'armed-catch-all': { ungatedRemoteSite: true, unguardedLocalSite: false },
+  'armed-lan': { ungatedRemoteSite: true, unguardedLocalSite: false },
+  'armed-public': { ungatedRemoteSite: true, unguardedLocalSite: false },
+  'handle-errors': { ungatedRemoteSite: true, unguardedLocalSite: false },
   'hand-edited': { ungatedRemoteSite: true, unguardedLocalSite: false },
   ungated: { ungatedRemoteSite: false, unguardedLocalSite: false },
   armed: { ungatedRemoteSite: true, unguardedLocalSite: false },
@@ -129,23 +120,16 @@ describe('lib/ingress-door (#1420)', () => {
       assert.equal(door.ungatedRemoteSite, true);
     });
 
-    it('adapt outranks the text reader where they disagree', () => {
-      // Text that reads as a door (a braceless site) but adapts to no route at all.
-      const door = ingressDoor.describeIngressContent('localhost\nrespond ok\n', {
-        adapt: () => ({ ok: true, config: { apps: {} }, reason: null })
-      });
-      assert.equal(door.source, 'adapt');
-      assert.equal(door.ungatedRemoteSite, false);
-    });
-
-    it('falls back to the text reader when adapt cannot run, and says why', () => {
-      for (const [name, expected] of Object.entries(EXPECTED)) {
+    it('a file Caddy cannot read is a door, whatever its text says, and the reason is kept', () => {
+      for (const name of ['generated', 'ungated', 'live-shape-gated']) {
         const door = ingressDoor.describeIngressContent(FIXTURE_CADDYFILES[name], { adapt: unavailable });
-        assert.equal(door.source, 'text', name);
+        assert.equal(door.source, 'unread', name);
         assert.equal(door.reason, 'caddy is not available: ENOENT', name);
-        assert.deepEqual({ ungatedRemoteSite: door.ungatedRemoteSite, unguardedLocalSite: door.unguardedLocalSite },
-          expected, `the text reader agrees with Caddy on ${name}`);
+        assert.equal(door.ungatedRemoteSite, true, name);
       }
+      const noAnswer = ingressDoor.describeIngressContent(FIXTURE_CADDYFILES.generated, { adapt: () => null });
+      assert.equal(noAnswer.source, 'unread');
+      assert.equal(noAnswer.ungatedRemoteSite, true);
     });
 
     it('a Caddyfile that imports another file is a door, without asking Caddy', () => {
@@ -184,7 +168,8 @@ describe('lib/ingress-door (#1420)', () => {
     });
   });
 
-  it('caddy.js no longer carries a second file reader', () => {
+  it('has no second Caddyfile reader: caddy.js carries neither the file reader nor a text walk', () => {
     assert.equal(caddy.readIngressDoor, undefined);
+    assert.equal(caddy.describeIngressDoor, undefined);
   });
 });

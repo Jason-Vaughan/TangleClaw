@@ -421,8 +421,15 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
   // must not open them.
   describe('authEnabled: false in caddy mode, against the Caddyfile on disk (#1420)', () => {
     const caddy = require('../lib/caddy');
-    const HASH = '$2a$14$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU';
-    const base = { serverPort: 3102, certPath: '/c/cert.pem', keyPath: '/c/key.pem' };
+    const drift = require('../lib/caddy-drift');
+    const { FIXTURE_CADDYFILES, adaptFromFixtures } = require('./_caddy-drift-fixtures');
+    // The door is read through `caddy adapt`; answered from the committed
+    // fixtures so the verdicts here do not depend on the host having Caddy.
+    let realAdapt;
+    beforeEach(() => {
+      realAdapt = drift.adaptCaddyfileContent;
+      drift.adaptCaddyfileContent = adaptFromFixtures;
+    });
 
     /**
      * Write the Caddyfile the gate reads, and set caddy mode with the gate off.
@@ -440,6 +447,7 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
     }
 
     afterEach(() => {
+      drift.adaptCaddyfileContent = realAdapt;
       fs.rmSync(caddy.getCaddyfilePath(), { force: true });
       const cfg = store.config.load();
       cfg.ingressMode = 'direct';
@@ -447,7 +455,7 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
     });
 
     it('stays closed while the Caddyfile serves a tailnet site with no basic_auth', async () => {
-      caddyOff(caddy.buildCaddyfileContent({ ...base, tailnetHost: 'box.tail0000.ts.net', gateState: 'armed' }));
+      caddyOff(FIXTURE_CADDYFILES.armed);
       const res = await send('GET', '/api/config');
       assert.equal(res.statusCode, 401);
       const me = await send('GET', '/api/auth/me');
@@ -455,15 +463,19 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
     });
 
     it('opens when the Caddyfile still carries basic_auth', async () => {
-      caddyOff(caddy.buildCaddyfileContent({
-        ...base, basicAuthUser: 'jason', basicAuthHash: HASH, tailnetHost: 'box.tail0000.ts.net'
-      }));
+      caddyOff(FIXTURE_CADDYFILES.generated);
       const res = await send('GET', '/api/config');
       assert.equal(res.statusCode, 200);
     });
 
+    it('stays closed while caddy adapt cannot read the Caddyfile, even one that carries basic_auth', async () => {
+      drift.adaptCaddyfileContent = () => ({ ok: false, config: null, reason: 'caddy is not available' });
+      caddyOff(FIXTURE_CADDYFILES.generated);
+      assert.equal((await send('GET', '/api/config')).statusCode, 401);
+    });
+
     it('opens when the Caddyfile serves localhost only, or does not exist', async () => {
-      caddyOff(caddy.buildCaddyfileContent(base));
+      caddyOff(FIXTURE_CADDYFILES.ungated);
       assert.equal((await send('GET', '/api/config')).statusCode, 200);
       caddyOff(null);
       assert.equal((await send('GET', '/api/config')).statusCode, 200);

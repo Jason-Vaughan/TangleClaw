@@ -418,12 +418,12 @@ Delivers the A.04d bullet of the split above.
      `uncovered` route whose hosts are all `localhost`/`127.0.0.1`/`[::1]` is `unguardedLocalSite`;
      any other uncovered route (no host matcher, or one remote name) is `ungatedRemoteSite`. Caddy
      apps beyond http/tls/pki, or named routes → ungated remote (cannot read, so over-report);
-  4. adapt unavailable or failing → the TEXT reader, hardened per R-3: a depth-0 `import`, a
-     braceless site or a split header → door; `basic_auth` counted per site AND per scope
-     (`handle`/`handle_path`/`route`/`handle_errors` — found while building: an import inside
-     `handle { }` beside `handle @own { reverse_proxy }` is the live shape's exemption, and per-site
-     alone read it as gated); a snippet counts where imported; a site that forwards nothing (the
-     generator's redirect sites) is not a door. Committed fixtures pin text = adapt on every shape.
+  4. adapt unavailable or failing → an ungated remote site ("unread", with Caddy's reason; the
+     server re-asks every 30s). **Changed after the A.04d review** (`rev-20260913T213731Z-4d046855`
+     R-1/R-3/R-7): the first build kept a hardened text reader here; the review found it misread
+     `handle_errors` and carried limits on the "no door" side, so it was deleted — fail closed, the
+     fallback check's rule. Cost: an install whose TangleClaw cannot run `caddy` keeps its login on.
+  R-4: both door questions walk one `gate-fallback#eachTopLevelRoute`.
   The answer carries `source: 'adapt'|'text'` and a reason; the server logs a text fallback once per
   change of the file.
   **Stricter than today on purpose:** a site with `basic_auth` beside an ungated handle
