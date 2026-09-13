@@ -313,6 +313,27 @@ the sprint release); and the #1420 side lands here, on a sync branch that merges
 
 The original A-04 list; the recovery-code and ADR 0009 bullets are A-04a's.
 
+**Split 2026-09-13 into A.04b and A.04c, one review each** — the list below plus the carries above
+is wider than one reviewable diff, and the two halves share no code path:
+- **A.04b — the fallback.** The `fallback` state + marker + fallback command (with `--undo`) + the
+  drill script; the #472 decision (R-1); reading the Caddyfile door through `caddy adapt` with a
+  text reader that fails closed (R-3/R-14); the hotfix carry that the fallback's door check requires
+  a gate on every site proxying to TangleClaw, never a site name.
+- **A.04c — reset-admin and the words.** `scripts/reset-admin.js` + `lib/admin-credential.js` aligned
+  with the state machine (R-6, R-8; recovery codes deleted on disable or enable); login-page copy for
+  `locked`/`unreadable`/`fallback` + the recovery link only where `/recover` works; the in-repo
+  recovery doc + `SECURITY.md` login section + README link; the hotfix-review carries R-4 (one
+  scrypt-cap helper), R-8 (the cap's warn line), R-6 (`clientKey` via `cameThroughProxy`) and the two
+  JSDoc fixes.
+
+**Fallback design going in (A.04b):**
+- Marker = a file under the TangleClaw home, `stat`ed per request; the door check runs only while it
+  exists, cached on Caddyfile mtime+size. `fallback` beats `unreadable` (that IS the broken-gate case).
+- Honoured only if TangleClaw's listener is loopback AND (no Caddyfile, OR `caddy adapt` succeeds and
+  every site proxying to TangleClaw holds a gate — per site). adapt unavailable/failed → not honoured,
+  error logged.
+- The command's 401 probe requires `WWW-Authenticate: Basic` (TangleClaw's own gate answers 401 too).
+
 - The fallback command (name decided in A-04): restore/regenerate the Caddyfile with the retained
   credential → validate → reload → probe 401 → only then write the `gate-fallback` marker; `--undo`
   in reverse order. TangleClaw honours the marker only while the fallback door is observably present.
@@ -353,5 +374,6 @@ The original A-04 list; the recovery-code and ADR 0009 bullets are A-04a's.
 - [x] A-02b — OQ2 inversion, identity + authStatus from the classifier, dashboard consumers (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [x] Chunk A.03 (A-03) — state-driven `basic_auth`, bypass ownership, drift, bind policy, #1055 (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [x] Chunk A.04a (A-04a) — recovery codes end to end, ADR 0009 rule 5 + security-model Direction amendment (reviewed 2026-09-13, PR into `train-9/cutover`)
-- [ ] Chunk A.04b (A-04b) — fallback state + command, reset-admin, #472 decision, login copy, recovery doc, drill
+- [ ] Chunk A.04b (A-04b) — fallback state + marker + command, drill, #472 decision, door read through `caddy adapt`
+- [ ] Chunk A.04c (A-04c) — reset-admin aligned with the state machine, login copy, recovery doc, R-4/R-6/R-8 carries
 - [ ] A-VRF — cumulative Critic, elkaholic VRF, phone drill → Checkpoint 2
