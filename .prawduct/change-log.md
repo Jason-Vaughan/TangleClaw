@@ -34,6 +34,34 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-13 — #1420 A.04c: the recovery tools and words follow the gate state
+
+<!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->
+
+Train 9 Chunk 04, A.04c. Merges into `train-9/cutover`, not `main`.
+
+**Why.** After the state-driven cutover an armed install's Caddyfile has no `basic_auth` on purpose,
+and the recovery surfaces still asked "is there basic_auth?" (A-03 cumulative
+`rev-20260913T055830Z-267e3318` R-6, R-8), a re-enabled account revived its old recovery codes
+(A-04a review carry), and the sign-in page could not tell a locked install from a typo. A.04c was
+split again (A.04c words and tools / A.04d gate machinery carries) because the halves share no code.
+
+**What.** `lib/admin-credential.js`: `canChangeCredential` gains the request's gate state and an
+`account-login` refusal; `canCreateGate`/`createGate` require the writer's gate state (refuse
+armed/locked/unreadable, round trip built for it). `store.users#disable`/`#enable` delete recovery
+codes (`store.recoveryCodes#deleteForUsername`); `reset-admin --store` deletes them on a reset
+(vetoable, ADR 0016 A-04c), reports `resolveGateState` over the file on disk (`#describeLiveGate`,
+`#describeGateLines`) including an unreadable Caddyfile and Caddy's password as the only login, and
+its Caddy modes point an armed install at `--store`. `lib/caddy.js#readIngressDoor`, used by
+`server.js#_gateIngress` too. `public/login.html` reads `gateState` (locked/unreadable/fallback/open
+copy; recovery link only while armed). Settings section renamed Caddy password. `docs/recovery.md`;
+SECURITY.md login section; README, setup/user guides, INGRESS, FEATURES, ADR 0016, CHANGELOG. Broad
+README/setup-guide "Caddy is the gate" prose carried to A-VRF.
+
+**Review.** Critic cumulative `rev-20260913T200038Z-f7452635` — 0 blocking, 1 warning (R-9 report
+swallowed an unreadable Caddyfile), notes R-1/R-6/R-7/R-8 fixed in one commit; R-2 accepted and
+carried to A.04d, R-5 accepted. Verify `rev-20260913T200736Z-dea91552` clean.
+
 ## 2026-09-13 — #1420 A.04b: the fallback — TangleClaw stands down behind a proven Caddy gate
 
 <!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->
