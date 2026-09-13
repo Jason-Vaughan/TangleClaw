@@ -208,8 +208,10 @@ fails any auto-stub section older than 14 days.
   token on that proxy, so it needs a session on both transports. `#guardsTheDoor` (`armed`,
   `locked`) is the one answer to "does TangleClaw's login need nothing in front of it", read by the
   Caddyfile generator, the drift check, the cutover and the bind policy; in caddy mode
-  `authEnabled: false` opens the gate only while `lib/caddy.js#describeIngressDoor` says the
-  Caddyfile is not an ungated remote door. Tests: `test/auth-session.test.js`,
+  `authEnabled: false` opens the gate only while `lib/ingress-door.js` — `caddy adapt`, read in
+  evaluation order, with a text fallback that counts what it cannot read as a door — says the
+  Caddyfile is not an ungated remote door. Tests: `test/auth-session.test.js`, `test/ingress-door.test.js`,
+  `test/api-ingress-door.test.js`,
   `test/auth-gate.test.js`, `test/store-auth-sessions.test.js`, `test/api-auth-session.test.js`,
   `test/reset-admin-store.test.js`, `test/frontend-csrf.test.js`.
 - **Auth tier 1: one-time recovery codes** (#1420, ADR 0009 rule 5 as amended, ADR 0016 "The

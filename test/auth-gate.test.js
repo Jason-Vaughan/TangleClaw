@@ -197,6 +197,13 @@ describe('lib/auth-gate — the front-door verdict (#1418, #1420, ADR 0015/0016)
         assert.equal(authGate.resolveIntendedGateState(() => ({ authEnabled: true }), ENABLED), S.ARMED);
       });
 
+      it('answers open with authEnabled off without asking the store, so a store fault does not change it', () => {
+        let asked = 0;
+        const broken = { accountPresence: () => { asked++; throw new Error('SQLITE_BUSY'); } };
+        assert.equal(authGate.resolveIntendedGateState(off, broken), S.OPEN);
+        assert.equal(asked, 0);
+      });
+
       it('both Caddyfile writers use it, and neither reads the old file for the gate', () => {
         for (const script of ['ingress-cutover.js', 'guard-ungated-sites.js']) {
           const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', script), 'utf8');

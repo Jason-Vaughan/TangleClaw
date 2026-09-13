@@ -214,7 +214,17 @@ const FIXTURE_CADDYFILES = {
   'live-shape-gated': liveShapeCaddyfile(false),
 
   // The same shape with the hand-added ungated `/openclaw-direct/*` handle.
-  'live-shape-own-auth': liveShapeCaddyfile(true)
+  'live-shape-own-auth': liveShapeCaddyfile(true),
+
+  // The live shape with the tailnet site's gate removed: `basic_auth` still on
+  // the localhost site and the catch-all, so a credential elsewhere in the file
+  // must not stand in for the one this site lacks.
+  'per-site-gate': (() => {
+    const text = liveShapeCaddyfile(false);
+    const gated = '\thandle {\n\t\timport tcauth\n';
+    if (!text.includes(gated)) throw new Error('the live shape no longer has the handle this fixture ungates');
+    return text.replace(gated, '\thandle {\n');
+  })()
 };
 
 module.exports = {

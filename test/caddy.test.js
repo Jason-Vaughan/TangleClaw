@@ -700,22 +700,6 @@ describe('caddy', () => {
         assert.equal(door(undefined), false);
       });
 
-      it('readIngressDoor: reads the file on disk, answers a missing one as no door, and throws on any other failure', () => {
-        // The thunk the gate reads: a throw is what makes it `unreadable`.
-        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-door-'));
-        try {
-          const file = path.join(dir, 'Caddyfile');
-          assert.deepEqual(caddy.readIngressDoor(file), { ungatedRemoteSite: false, unguardedLocalSite: false });
-          fs.writeFileSync(file, 'box.ts.net {\n\treverse_proxy 127.0.0.1:3102\n}\n');
-          assert.equal(caddy.readIngressDoor(file).ungatedRemoteSite, true);
-          const asDir = path.join(dir, 'is-a-directory');
-          fs.mkdirSync(asDir);
-          assert.throws(() => caddy.readIngressDoor(asDir), (e) => e.code === 'EISDIR');
-        } finally {
-          fs.rmSync(dir, { recursive: true, force: true });
-        }
-      });
-
       it('reads every remote shape the generator writes without basic_auth as a door', () => {
         assert.equal(door(caddy.buildCaddyfileContent({ ...opts, tailnetHost: TAILNET, gateState: 'armed' })), true);
         assert.equal(door(caddy.buildCaddyfileContent({ ...opts, remoteHttpCatchAll: true, gateState: 'armed' })), true);
@@ -723,9 +707,60 @@ describe('caddy', () => {
         assert.equal(door(caddy.buildCaddyfileContent({ ...opts, publicDomain: 'tc.example.com', gateState: 'armed' })), true);
       });
 
-      it('is not a door when the file carries basic_auth, whatever it serves', () => {
+      it('is not a door when every site that forwards carries basic_auth, inline or through a snippet', () => {
         assert.equal(door(caddy.buildCaddyfileContent({ ...opts, ...AUTH, tailnetHost: TAILNET, remoteHttpCatchAll: true })), false);
         assert.equal(door(`(tcauth) {\n\tbasic_auth {\n\t\tjason ${AUTH.basicAuthHash}\n\t}\n}\n:8080 {\n\timport tcauth\n\treverse_proxy 127.0.0.1:3102\n}\n`), false);
+        assert.equal(door(`:8080 {\n\timport tcauth\n\treverse_proxy 127.0.0.1:3102\n}\n(tcauth) {\n\tbasic_auth {\n\t\tjason ${AUTH.basicAuthHash}\n\t}\n}\n`), false,
+          'a snippet defined after the site that imports it');
+      });
+
+      // #1420 A.04d: basic_auth is counted per site and per scope, not per file.
+      describe('reads the gate per site, in scopes', () => {
+        const cred = `\t\tjason ${AUTH.basicAuthHash}`;
+        const snippet = `(tcauth) {\n\tbasic_auth {\n${cred}\n\t}\n}\n`;
+
+        it('a credential on one site does not gate the site beside it', () => {
+          assert.equal(door(`localhost {\n\tbasic_auth {\n${cred}\n\t}\n\treverse_proxy 127.0.0.1:3102\n}\n`
+            + 'box.ts.net {\n\treverse_proxy 127.0.0.1:3102\n}\n'), true);
+          assert.equal(door(`${snippet}box.ts.net {\n\treverse_proxy 127.0.0.1:3102\n}\n`), true,
+            'a snippet nobody imports gates nothing');
+        });
+
+        it('an import inside handle { } leaves a matched sibling handle open', () => {
+          const site = (exempt) => `${snippet}box.ts.net {\n`
+            + (exempt ? '\t@own path /openclaw-direct/*\n\thandle @own {\n\t\treverse_proxy 127.0.0.1:3102\n\t}\n' : '')
+            + '\thandle {\n\t\timport tcauth\n\t\treverse_proxy 127.0.0.1:3102\n\t}\n}\n';
+          assert.equal(door(site(false)), false);
+          assert.equal(door(site(true)), true);
+        });
+
+        it('a site-level gate covers the handles inside it', () => {
+          assert.equal(door(`${snippet}box.ts.net {\n\timport tcauth\n\thandle /x {\n\t\treverse_proxy 127.0.0.1:3102\n\t}\n`
+            + '\thandle {\n\t\treverse_proxy 127.0.0.1:3102\n\t}\n}\n'), false);
+        });
+
+        it('a basic_auth scoped to a path does not gate the site', () => {
+          assert.equal(door(`box.ts.net {\n\tbasic_auth /admin/* {\n${cred}\n\t}\n\treverse_proxy 127.0.0.1:3102\n}\n`), true);
+        });
+
+        it('a site that forwards nothing is not a door', () => {
+          assert.equal(door('http://box.ts.net {\n\tredir https://box.ts.net:8443{uri}\n}\n'), false);
+          assert.equal(door('box.ts.net {\n\trespond "gone" 410\n}\n'), false);
+          assert.equal(door('box.ts.net {\n\tfile_server\n}\n'), true, 'anything not known to forward nothing counts');
+          assert.equal(door('box.ts.net {\n\timport elsewhere\n}\n'), true, 'an import it cannot see into counts');
+        });
+
+        it('a top-level import, a braceless site or a split header make the file a door', () => {
+          assert.equal(door(`${caddy.buildCaddyfileContent({ ...opts, ...AUTH })}import sites/*\n`), true);
+          assert.equal(door('box.ts.net\nreverse_proxy 127.0.0.1:3102\n'), true);
+          assert.equal(door('localhost,\n\tbox.ts.net {\n\treverse_proxy 127.0.0.1:3102\n}\n'), true);
+        });
+
+        it('a gated localhost site needs no peer guard', () => {
+          const local = (content) => caddy.describeIngressDoor(content).unguardedLocalSite;
+          assert.equal(local(`localhost {\n\tbasic_auth {\n${cred}\n\t}\n\treverse_proxy 127.0.0.1:3102\n}\n`), false);
+          assert.equal(local('localhost {\n\treverse_proxy 127.0.0.1:3102\n}\n'), true);
+        });
       });
 
       it('is not a door for a localhost-only ungated file', () => {

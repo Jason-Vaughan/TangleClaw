@@ -2,6 +2,8 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const rc = require('../lib/recovery-codes');
 
 describe('lib/recovery-codes — the pure half (#1420)', () => {
@@ -79,27 +81,35 @@ describe('lib/recovery-codes — the pure half (#1420)', () => {
     const loop = (a) => a === '127.0.0.1' || a === '::1';
 
     it('uses the socket address for a direct request', () => {
-      assert.equal(rc.clientKey({ remoteAddress: '100.64.0.9' }, {}, loop), 'sock:100.64.0.9');
+      assert.deepEqual(rc.clientKey({ remoteAddress: '100.64.0.9' }, {}, loop),
+        { key: 'sock:100.64.0.9', address: '100.64.0.9', proxied: false });
     });
 
     it('uses the proxy\'s X-Forwarded-For when the socket is loopback', () => {
-      assert.equal(rc.clientKey({ remoteAddress: '127.0.0.1' }, { 'x-forwarded-for': '100.64.0.9' }, loop),
-        'xff:100.64.0.9');
+      assert.deepEqual(rc.clientKey({ remoteAddress: '127.0.0.1' }, { 'x-forwarded-for': '100.64.0.9' }, loop),
+        { key: 'xff:100.64.0.9', address: '100.64.0.9', proxied: true });
     });
 
     it('takes the LAST forwarded entry — the one the proxy appended', () => {
-      assert.equal(rc.clientKey({ remoteAddress: '::1' }, { 'x-forwarded-for': '6.6.6.6, 100.64.0.9' }, loop),
-        'xff:100.64.0.9');
+      assert.deepEqual(rc.clientKey({ remoteAddress: '::1' }, { 'x-forwarded-for': '6.6.6.6, 100.64.0.9' }, loop),
+        { key: 'xff:100.64.0.9', address: '100.64.0.9', proxied: true });
     });
 
     it('ignores a forwarded header on a NON-loopback socket — that is the client\'s own claim', () => {
-      assert.equal(rc.clientKey({ remoteAddress: '192.168.1.5' }, { 'x-forwarded-for': '1.2.3.4' }, loop),
-        'sock:192.168.1.5');
+      assert.deepEqual(rc.clientKey({ remoteAddress: '192.168.1.5' }, { 'x-forwarded-for': '1.2.3.4' }, loop),
+        { key: 'sock:192.168.1.5', address: '192.168.1.5', proxied: false });
     });
 
     it('falls back to the socket for an empty forwarded header', () => {
-      assert.equal(rc.clientKey({ remoteAddress: '127.0.0.1' }, { 'x-forwarded-for': ' ' }, loop),
-        'sock:127.0.0.1');
+      assert.deepEqual(rc.clientKey({ remoteAddress: '127.0.0.1' }, { 'x-forwarded-for': ' ' }, loop),
+        { key: 'sock:127.0.0.1', address: '127.0.0.1', proxied: false });
+      assert.deepEqual(rc.clientKey({ remoteAddress: '127.0.0.1' }, { 'x-forwarded-for': '' }, loop),
+        { key: 'sock:127.0.0.1', address: '127.0.0.1', proxied: false });
+    });
+
+    it('asks auth-identity whether the request came through the proxy, rather than re-reading the header', () => {
+      const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'recovery-codes.js'), 'utf8');
+      assert.match(src, /cameThroughProxy\(headers\)/);
     });
   });
 

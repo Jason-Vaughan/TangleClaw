@@ -399,6 +399,48 @@ recovery codes revoked with the account, Settings and sign-in copy, the recovery
 
 Delivers the A.04d bullet of the split above.
 
+**A.04d decisions (2026-09-13)** — going in; recorded in ADR 0016 "Recorded during #1420 A-04d" at close:
+- **R-4/R-8:** one `server.js#_withHashSlot(res, action, derive)` owns the cap check, the 503 +
+  `Retry-After`, the warn line (so R-8 lands on every route, not two), the counter and the `finally`.
+  All four routes call it; a source guard fails if the counter is touched anywhere else. The login
+  keeps its own busy wording.
+- **R-6:** `clientKey` returns `{ key, address, proxied }` and asks `authIdentity.cameThroughProxy`
+  for presence; `_recoveryClient` stops decoding a string prefix. Keys unchanged (an empty header on
+  loopback still counts against the socket).
+- **R-3/R-14 — new module `lib/ingress-door.js`** (caddy.js cannot require the adapt walker without a
+  cycle). `describeIngressContent(content, { adapt })`:
+  1. no file → no door;
+  2. the text imports another FILE (`gateFallback.importedFile`) → an ungated remote site. Fail
+     closed, and the only way the mtime+size cache stays honest (the fallback refuses imports for the
+     same reason);
+  3. `caddy adapt` over the text → `describeAdaptedDoor`: per top-level route (site and error lists),
+     `gateFallback.walkRoutes` — evaluation order, peer guard and bypass-only routes understood. An
+     `uncovered` route whose hosts are all `localhost`/`127.0.0.1`/`[::1]` is `unguardedLocalSite`;
+     any other uncovered route (no host matcher, or one remote name) is `ungatedRemoteSite`. Caddy
+     apps beyond http/tls/pki, or named routes → ungated remote (cannot read, so over-report);
+  4. adapt unavailable or failing → the TEXT reader, hardened per R-3: a depth-0 `import`, a
+     braceless site or a split header → door; `basic_auth` counted per site AND per scope
+     (`handle`/`handle_path`/`route`/`handle_errors` — found while building: an import inside
+     `handle { }` beside `handle @own { reverse_proxy }` is the live shape's exemption, and per-site
+     alone read it as gated); a snippet counts where imported; a site that forwards nothing (the
+     generator's redirect sites) is not a door. Committed fixtures pin text = adapt on every shape.
+  The answer carries `source: 'adapt'|'text'` and a reason; the server logs a text fallback once per
+  change of the file.
+  **Stricter than today on purpose:** a site with `basic_auth` beside an ungated handle
+  (`/openclaw-direct/*`) now reads as a door, so `authEnabled: false` no longer opens it — the
+  accounts decide. Same direction as the fallback check; a wrong "door" keeps a login on.
+- **R-2:** `_gateIngress` stats, then reads the text itself and hands it to `describeIngressContent`,
+  so a file gone between the two throws (`unreadable`, not cached) as it did before A.04c.
+  `ingressDoor.readIngressDoor(file)` (reset-admin) keeps "missing = no door".
+- **Sync `caddy adapt` on the request path**, once per change of the Caddyfile and only in caddy mode
+  with `authEnabled` off — the trade `_gateFallback` already made, for the same reason: an async check
+  needs a "not yet known" answer, and the text reader cannot be that answer because R-3 is exactly the
+  shapes it misreads.
+- **JSDoc:** `resolveGateState` names the unguarded-localhost-with-accounts case in its caddy-mode
+  paragraph (and the `loadIngress` shape); `resolveIntendedGateState` says an unreadable store
+  enforces only with `authEnabled` on — off, it answers `open` without asking the store.
+- Folded in: `public/ui.js` "Could not check Caddy's password:" missing space.
+
 ### A-VRF — before Checkpoint 2
 - `/prawduct:critic` cumulative on the integration branch.
 - elkaholic VRF per `reference_live_verification_traps` (the launchd `WorkingDirectory` and the

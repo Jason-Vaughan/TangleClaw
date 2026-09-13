@@ -652,3 +652,47 @@ The addendum's "What the switch does", built. Builder decisions, vetoable.
 - **`docs/recovery.md`** is the in-repo walkthrough, generic where the operator's machine-local
   runbook is specific to one install; `SECURITY.md`'s login section describes TangleClaw's own login as
   the gate and Caddy's `basic_auth` as present only by state.
+
+### Recorded during #1420 A-04d (2026-09-13) — the gate machinery
+
+- **Whether the Caddyfile is a door is read through Caddy's own parser.** `lib/ingress-door.js`
+  replaces the text walk the A-03 rule named: `caddy adapt` over the file's text, each top-level
+  route walked in evaluation order with `lib/gate-fallback.js#walkRoutes` (the fallback check's
+  walker, so the peer guard, the generator's gate route and TangleClaw's bypass-only routes read the
+  same in both). A route that forwards before any gate is `unguardedLocalSite` when every host it
+  matches is `localhost`/`127.0.0.1`/`::1`, and `ungatedRemoteSite` otherwise. A Caddy app beyond
+  http/tls/pki, or named routes, reads as an ungated remote site. Every forwarding route counts, not
+  only one dialling TangleClaw: the reader does not know TangleClaw's upstream, and over-reporting
+  keeps a login on. Its own module because `caddy.js` requiring the walker would be a require cycle.
+- **Stricter than A-03 on purpose.** `basic_auth` is weighed per site and in order, no longer "any
+  credential line in the file". A site gated everywhere but one handle — the `/openclaw-direct/*`
+  workaround — is now a door, so `authEnabled: false` no longer opens it and the accounts decide. Same
+  direction as the fallback check; a wrong "door" keeps a login on.
+- **A Caddyfile that imports another file is a door** without asking Caddy: the verdict is cached on
+  the Caddyfile's own mtime and size, so an edit to the imported file would never be read. The
+  fallback check refuses the same shape for the same reason.
+- **When `caddy adapt` cannot run, the text reader answers** (`lib/caddy.js#describeIngressDoor`),
+  hardened to fail toward "door": a top-level `import`, a braceless site or a split header make the
+  file a door; a site is read as nested scopes (`handle`, `handle_path`, `route`, `handle_errors`),
+  and a credential gates its scope and those inside it, so an import inside `handle { }` leaves a
+  matched sibling handle open; a site whose every line forwards nothing (a redirect) is not a door. Its
+  two stated limits are both beyond what the generator or a `(tcauth)` hand edit writes:
+  `basic_auth @name`'s breadth is taken as its scope, and a gate written after a forwarding directive
+  inside a `route` still counts. Committed fixtures pin the text reader to the same answer as Caddy on
+  every shape the generator and the live install's hand edit write. The server logs a text fallback
+  once per change of the file.
+- **`caddy adapt` runs synchronously on the request path**, once per change of the Caddyfile and only
+  in caddy mode with `authEnabled` off — the trade the fallback check already made, for the same
+  reason: an asynchronous check needs a "not yet known" answer, and the text reader cannot be that
+  answer because the shapes it misreads are why Caddy is asked.
+- **`server.js#_gateIngress` reads the file itself after its `stat`**, so a Caddyfile gone between the
+  two throws (`unreadable`, not cached) instead of being answered as missing and cached under the key
+  of the file just `stat`ed. `ingress-door.readIngressDoor` keeps "missing is no door" for
+  `reset-admin.js`, which has no cache.
+- **One `server.js#_withHashSlot` owns the password-hash concurrency cap** — the check, the 503 with
+  `Retry-After`, a warn line naming what was refused, the counter and its `finally` — for the login,
+  the first-account page, a recovery-code redemption and minting codes. A test fails if the counter
+  is touched anywhere else.
+- **`recovery-codes#clientKey` returns `{ key, address, proxied }`** and asks
+  `auth-identity#cameThroughProxy` whether the request came through the proxy, so there is one
+  spelling of that check and the server no longer decodes a string prefix. The keys are unchanged.
