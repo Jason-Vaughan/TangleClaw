@@ -34,6 +34,39 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-13 — #1420 A.04d: the gate machinery carries
+
+<!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->
+
+Train 9 Chunk 04, A.04d. Merges into `train-9/cutover`, not `main`.
+
+**Why.** Carries from three reviews: the hotfix cumulative `rev-20260913T181335Z-09c75281` (R-4 four
+copies of the scrypt cap that already differed, R-8 silent refusals on the recovery routes, R-6
+`clientKey` re-spelling the proxy check), its verify pass (two auth-gate JSDoc claims), the A-03
+cumulative `rev-20260913T055830Z-267e3318` (R-3/R-14 a text Caddyfile reader that under-reports an
+import, a braceless site and per-site `basic_auth`), and the A.04c cumulative
+`rev-20260913T200038Z-f7452635` R-2 (a Caddyfile vanishing between `_gateIngress`'s stat and read was
+cached as "no door").
+
+**What.** New `lib/ingress-door.js` (`describeIngressContent`, `describeAdaptedDoor`,
+`readIngressDoor`): file import → door; `caddy adapt` walked with `gateFallback.walkRoutes`; adapt
+failure → door ("unread"). `lib/caddy.js#describeIngressDoor` and `caddy.readIngressDoor` deleted.
+`gateFallback.eachTopLevelRoute` shared by `checkFallbackDoor` and `describeAdaptedDoor`. `server.js`:
+`_gateIngress` reads after its stat, re-asks an unread answer every 30s, logs each answer once; `_withHashSlot` owns the cap
+for login, set-password, recover, recovery-codes; `_recoveryClient` reads `clientKey`'s object.
+`recovery-codes#clientKey` → `{ key, address, proxied }` via `cameThroughProxy` (lazy require: store
+cycle). `auth-gate` JSDoc fixes. `reset-admin.js` uses `ingress-door`. `public/ui.js` missing space.
+Suites that read the door answer `caddy adapt` from the committed fixtures
+(`test/_caddy-drift-fixtures.js#adaptFromFixtures`), so they pass the same without Caddy on the host.
+Behaviour change recorded in ADR 0016 A-04d: a site gated everywhere but one handle, and a file Caddy
+cannot read, are doors.
+
+**Review.** Critic cumulative `rev-20260913T213731Z-4d046855` — 0 blocking; warnings R-1
+(`handle_errors` misread by the text fallback), R-3 (the text fallback should not decide), R-4 (two
+route walkers) and notes R-7/R-8 fixed in one commit; the rest accepted. verify-resolutions clean.
+PR review 0/0/2 (this entry's stale test list fixed; `resolve-base` answering `origin/main` for a
+train branch accepted).
+
 ## 2026-09-13 — #1420 A.04c: the recovery tools and words follow the gate state
 
 <!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->

@@ -14,6 +14,8 @@
 // `node --test 'test/*.test.js'`, and a helper collected as a test file would
 // report as an empty suite.
 
+const fs = require('node:fs');
+const path = require('node:path');
 const caddy = require('../lib/caddy');
 
 // A throwaway bcrypt hash generated for these fixtures. No live credential is
@@ -214,10 +216,59 @@ const FIXTURE_CADDYFILES = {
   'live-shape-gated': liveShapeCaddyfile(false),
 
   // The same shape with the hand-added ungated `/openclaw-direct/*` handle.
-  'live-shape-own-auth': liveShapeCaddyfile(true)
+  'live-shape-own-auth': liveShapeCaddyfile(true),
+
+  // Each remote shape the generator writes for an armed install, beyond the
+  // tailnet site `armed` already has: none carries `basic_auth`.
+  'armed-catch-all': generatedCaddyfile({ caddyTailnetHost: null, caddyRemoteHttp: true }, 'armed'),
+  'armed-lan': generatedCaddyfile({ caddyTailnetHost: null }, 'armed', { lanHost: 'studio.local' }),
+  'armed-public': generatedCaddyfile({ caddyTailnetHost: null, publicDomain: 'tc.example.com' }, 'armed'),
+
+  // A gated site whose `handle_errors` block proxies. Caddy runs error routes
+  // without the site's `basic_auth`, and a refused password is itself an error.
+  'handle-errors': [
+    'box.example.com {',
+    '\ttls /fixtures/cert.pem /fixtures/key.pem',
+    '\tbasic_auth {',
+    `\t\tfixture ${FIXTURE_HASH}`,
+    '\t}',
+    `\treverse_proxy 127.0.0.1:${FIXTURE_SERVER_PORT}`,
+    '\thandle_errors {',
+    `\t\treverse_proxy 127.0.0.1:${FIXTURE_SERVER_PORT}`,
+    '\t}',
+    '}',
+    ''
+  ].join('\n'),
+
+  // The live shape with the tailnet site's gate removed: `basic_auth` still on
+  // the localhost site and the catch-all, so a credential elsewhere in the file
+  // must not stand in for the one this site lacks.
+  'per-site-gate': (() => {
+    const text = liveShapeCaddyfile(false);
+    const gated = '\thandle {\n\t\timport tcauth\n';
+    if (!text.includes(gated)) throw new Error('the live shape no longer has the handle this fixture ungates');
+    return text.replace(gated, '\thandle {\n');
+  })()
 };
 
+/**
+ * A `caddy adapt` stand-in that answers a fixture Caddyfile's exact text with
+ * its committed JSON, and fails for any other text — the same failure a host
+ * without Caddy produces. For suites whose subject reads a Caddyfile through
+ * `caddy adapt` and must not depend on whether the host has Caddy; install it
+ * over `caddy-drift#adaptCaddyfileContent`, or pass it as `adapt`.
+ * @param {string} content - Caddyfile text.
+ * @returns {{ ok: boolean, config: object|null, reason: string|null }}
+ */
+function adaptFromFixtures(content) {
+  const name = Object.keys(FIXTURE_CADDYFILES).find((n) => FIXTURE_CADDYFILES[n] === content);
+  if (!name) return { ok: false, config: null, reason: 'not a fixture Caddyfile' };
+  const json = fs.readFileSync(path.join(__dirname, 'fixtures', `caddy-adapt-${name}.json`), 'utf8');
+  return { ok: true, config: JSON.parse(json), reason: null };
+}
+
 module.exports = {
+  adaptFromFixtures,
   FIXTURE_CADDYFILES,
   liveShapeCaddyfile,
   fixtureConfig,

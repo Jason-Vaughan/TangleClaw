@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -225,7 +225,10 @@ describe('reset-admin --store (#1418)', () => {
 
   describe('the gate report reads the state a request meets', () => {
     const caddy = require('../lib/caddy');
+    const drift = require('../lib/caddy-drift');
     const gateFallback = require('../lib/gate-fallback');
+    const { FIXTURE_CADDYFILES, adaptFromFixtures } = require('./_caddy-drift-fixtures');
+    let realAdapt;
 
     /** @param {object} patch - Config fields to set */
     function setConfig(patch) {
@@ -233,9 +236,17 @@ describe('reset-admin --store (#1418)', () => {
     }
 
     beforeEach(() => {
+      // The report reads the door through `caddy adapt`; answered from the
+      // committed fixtures so it does not depend on the host having Caddy.
+      realAdapt = drift.adaptCaddyfileContent;
+      drift.adaptCaddyfileContent = adaptFromFixtures;
       fs.rmSync(caddy.getCaddyfilePath(), { force: true });
       fs.rmSync(gateFallback.markerPath(), { force: true });
       setConfig({ ingressMode: 'direct' });
+    });
+
+    afterEach(() => {
+      drift.adaptCaddyfileContent = realAdapt;
     });
 
     after(() => {
@@ -249,7 +260,7 @@ describe('reset-admin --store (#1418)', () => {
       // basic_auth; `authEnabled: false` does not open that install, so telling
       // the operator nothing is enforced would be false.
       setConfig({ ingressMode: 'caddy', authEnabled: false });
-      fs.writeFileSync(caddy.getCaddyfilePath(), 'box.ts.net {\n  reverse_proxy 127.0.0.1:3102\n}\n');
+      fs.writeFileSync(caddy.getCaddyfilePath(), FIXTURE_CADDYFILES.armed);
       await runWithPassword(PASSWORD, { user: 'rosie' });
       assert.match(out, /login gate is now LIVE/);
       assert.match(out, /accounts decide anyway/);
@@ -272,8 +283,7 @@ describe('reset-admin --store (#1418)', () => {
 
     it('names Caddy\'s password as the login when authEnabled is off but the Caddyfile carries basic_auth', async () => {
       setConfig({ ingressMode: 'caddy', authEnabled: false });
-      fs.writeFileSync(caddy.getCaddyfilePath(),
-        `box.ts.net {\n  basic_auth {\n    jason $2a$14$${'a'.repeat(53)}\n  }\n  reverse_proxy 127.0.0.1:3102\n}\n`);
+      fs.writeFileSync(caddy.getCaddyfilePath(), FIXTURE_CADDYFILES.generated);
       await runWithPassword(PASSWORD, { user: 'rosie' });
       assert.match(out, /Caddy's password \(basic_auth\) is the only login in front of this install/);
       assert.doesNotMatch(out, /NO login is enforced/);

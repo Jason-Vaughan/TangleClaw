@@ -652,3 +652,49 @@ The addendum's "What the switch does", built. Builder decisions, vetoable.
 - **`docs/recovery.md`** is the in-repo walkthrough, generic where the operator's machine-local
   runbook is specific to one install; `SECURITY.md`'s login section describes TangleClaw's own login as
   the gate and Caddy's `basic_auth` as present only by state.
+
+### Recorded during #1420 A-04d (2026-09-13) — the gate machinery
+
+- **Whether the Caddyfile is a door is read through Caddy's own parser.** `lib/ingress-door.js`
+  replaces the text walk the A-03 rule named: `caddy adapt` over the file's text, each top-level
+  route walked in evaluation order with `lib/gate-fallback.js#walkRoutes` (the fallback check's
+  walker, so the peer guard, the generator's gate route and TangleClaw's bypass-only routes read the
+  same in both). A route that forwards before any gate is `unguardedLocalSite` when every host it
+  matches is `localhost`/`127.0.0.1`/`::1`, and `ungatedRemoteSite` otherwise. A Caddy app beyond
+  http/tls/pki, or named routes, reads as an ungated remote site. Every forwarding route counts, not
+  only one dialling TangleClaw: the reader does not know TangleClaw's upstream, and over-reporting
+  keeps a login on. Its own module because `caddy.js` requiring the walker would be a require cycle.
+- **Stricter than A-03 on purpose.** `basic_auth` is weighed per site and in order, no longer "any
+  credential line in the file". A site gated everywhere but one handle — the `/openclaw-direct/*`
+  workaround — is now a door, so `authEnabled: false` no longer opens it and the accounts decide. Same
+  direction as the fallback check; a wrong "door" keeps a login on.
+- **A Caddyfile that imports another file is a door** without asking Caddy: the verdict is cached on
+  the Caddyfile's own mtime and size, so an edit to the imported file would never be read. The
+  fallback check refuses the same shape for the same reason.
+- **When `caddy adapt` cannot read the file, it is a door.** No text walk decides. The first build
+  kept the old text reader as a fallback, hardened toward "door"; its review showed a hand-written
+  Caddyfile parser misreading `handle_errors` (Caddy runs error routes without the site's
+  `basic_auth`) and carrying two documented limits on the "no door" side, for a question the fallback
+  check already answers "refuse" when adapt cannot run. The cost, stated: a caddy-mode install with
+  `authEnabled: false` whose TangleClaw process cannot run `caddy` (the service PATH trap) keeps its
+  login on — the accounts decide, and with none the first-account page shows — until `caddy` is
+  reachable. The log names the reason. An "unread" answer is re-asked every 30 seconds rather than
+  held until the file changes, so a passing adapt timeout does not stick.
+- **`caddy adapt` runs synchronously on the request path**, once per change of the Caddyfile and only
+  in caddy mode with `authEnabled` off — the trade the fallback check already made, for the same
+  reason: an asynchronous check needs a "not yet known" answer, which would have to count as a door.
+- **One walk over an adapted config's top-level routes** (`gate-fallback#eachTopLevelRoute`) serves
+  both the fallback check and the door, so a shape either learns to refuse (a plugin app, named
+  routes, error routes) is learned once. Both now agree that a route with one matcher set lacking a
+  host list matches any host; the fallback command probes such a route with no host as well.
+- **`server.js#_gateIngress` reads the file itself after its `stat`**, so a Caddyfile gone between the
+  two throws (`unreadable`, not cached) instead of being answered as missing and cached under the key
+  of the file just `stat`ed. `ingress-door.readIngressDoor` keeps "missing is no door" for
+  `reset-admin.js`, which has no cache.
+- **One `server.js#_withHashSlot` owns the password-hash concurrency cap** — the check, the 503 with
+  `Retry-After`, a warn line naming what was refused, the counter and its `finally` — for the login,
+  the first-account page, a recovery-code redemption and minting codes. A test fails if the counter
+  is touched anywhere else.
+- **`recovery-codes#clientKey` returns `{ key, address, proxied }`** and asks
+  `auth-identity#cameThroughProxy` whether the request came through the proxy, so there is one
+  spelling of that check and the server no longer decodes a string prefix. The keys are unchanged.

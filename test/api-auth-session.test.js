@@ -421,8 +421,15 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
   // must not open them.
   describe('authEnabled: false in caddy mode, against the Caddyfile on disk (#1420)', () => {
     const caddy = require('../lib/caddy');
-    const HASH = '$2a$14$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU';
-    const base = { serverPort: 3102, certPath: '/c/cert.pem', keyPath: '/c/key.pem' };
+    const drift = require('../lib/caddy-drift');
+    const { FIXTURE_CADDYFILES, adaptFromFixtures } = require('./_caddy-drift-fixtures');
+    // The door is read through `caddy adapt`; answered from the committed
+    // fixtures so the verdicts here do not depend on the host having Caddy.
+    let realAdapt;
+    beforeEach(() => {
+      realAdapt = drift.adaptCaddyfileContent;
+      drift.adaptCaddyfileContent = adaptFromFixtures;
+    });
 
     /**
      * Write the Caddyfile the gate reads, and set caddy mode with the gate off.
@@ -440,6 +447,7 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
     }
 
     afterEach(() => {
+      drift.adaptCaddyfileContent = realAdapt;
       fs.rmSync(caddy.getCaddyfilePath(), { force: true });
       const cfg = store.config.load();
       cfg.ingressMode = 'direct';
@@ -447,7 +455,7 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
     });
 
     it('stays closed while the Caddyfile serves a tailnet site with no basic_auth', async () => {
-      caddyOff(caddy.buildCaddyfileContent({ ...base, tailnetHost: 'box.tail0000.ts.net', gateState: 'armed' }));
+      caddyOff(FIXTURE_CADDYFILES.armed);
       const res = await send('GET', '/api/config');
       assert.equal(res.statusCode, 401);
       const me = await send('GET', '/api/auth/me');
@@ -455,15 +463,19 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
     });
 
     it('opens when the Caddyfile still carries basic_auth', async () => {
-      caddyOff(caddy.buildCaddyfileContent({
-        ...base, basicAuthUser: 'jason', basicAuthHash: HASH, tailnetHost: 'box.tail0000.ts.net'
-      }));
+      caddyOff(FIXTURE_CADDYFILES.generated);
       const res = await send('GET', '/api/config');
       assert.equal(res.statusCode, 200);
     });
 
+    it('stays closed while caddy adapt cannot read the Caddyfile, even one that carries basic_auth', async () => {
+      drift.adaptCaddyfileContent = () => ({ ok: false, config: null, reason: 'caddy is not available' });
+      caddyOff(FIXTURE_CADDYFILES.generated);
+      assert.equal((await send('GET', '/api/config')).statusCode, 401);
+    });
+
     it('opens when the Caddyfile serves localhost only, or does not exist', async () => {
-      caddyOff(caddy.buildCaddyfileContent(base));
+      caddyOff(FIXTURE_CADDYFILES.ungated);
       assert.equal((await send('GET', '/api/config')).statusCode, 200);
       caddyOff(null);
       assert.equal((await send('GET', '/api/config')).statusCode, 200);
@@ -768,6 +780,60 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
       }
     });
 
+    it('is ONE cap across every route that hashes a password, and each refusal is logged at warn (#1420)', async () => {
+      const logger = require('../lib/logger');
+      const recoveryCodes = require('../lib/recovery-codes');
+      const prevLevel = logger.getLevel();
+      const lines = [];
+      try {
+        setAuthEnabled(true);
+        const signingIn = login();
+        await tick();
+        pending.shift().release();
+        const { cookie, csrf } = await signingIn;
+        assert.ok(cookie, 'precondition: signed in');
+        const rosie = store.users.list().find((u) => u.username === 'rosie');
+        const [code] = store.recoveryCodes.replaceForUser(rosie.id).map(recoveryCodes.formatCode);
+
+        const first = send('POST', '/api/auth/login', { body: { username: 'rosie', password: PASSWORD } });
+        const second = send('POST', '/api/auth/login', { body: { username: 'rosie', password: PASSWORD } });
+        await tick();
+        assert.equal(pending.length, 2, 'precondition: both slots are held by logins');
+
+        logger.setLevel('warn');
+        logger.setConsoleStream({ write: (s) => { lines.push(String(s)); return true; } });
+        const refusals = {
+          'a recovery-code redemption': await send('POST', '/api/auth/recover',
+            { body: { code, password: 'another-battery-staple-9' } }),
+          'minting recovery codes': await send('POST', '/api/auth/recovery-codes',
+            { cookie, csrf, body: { password: PASSWORD } }),
+          'a login': await send('POST', '/api/auth/login', { body: { username: 'rosie', password: PASSWORD } })
+        };
+        // The first-account page is reachable only with no account on the install.
+        store.getDb().prepare('DELETE FROM auth_sessions').run();
+        store.getDb().prepare('DELETE FROM recovery_codes').run();
+        store.getDb().prepare('DELETE FROM users').run();
+        refusals['a first-account submission'] = await send('POST', '/api/auth/set-password',
+          { body: { username: 'newbie', password: 'another-battery-staple-9' } });
+
+        for (const [action, res] of Object.entries(refusals)) {
+          assert.equal(res.statusCode, 503, action);
+          assert.equal(res.headers['retry-after'], '1', action);
+          assert.match(res.body, /LOGIN_BUSY/, action);
+          assert.ok(lines.some((l) => l.includes(`Refused ${action}: too many password hashes already in flight`)),
+            `${action} is logged`);
+        }
+        assert.equal(pending.length, 2, 'no refused request started a derivation');
+        pending.forEach((p) => p.release());
+        await first; await second;
+      } finally {
+        logger.setConsoleStream(null);
+        logger.setLevel(prevLevel);
+        pending.forEach((p) => p.release());
+        restore();
+      }
+    });
+
     it('does not count a malformed request against the cap', async () => {
       try {
         const a = send('POST', '/api/auth/login', { body: { username: 'rosie', password: PASSWORD } });
@@ -782,6 +848,16 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
         restore();
       }
     });
+  });
+
+  // Outside the cap's describe on purpose: its beforeEach stubs the store, and
+  // only a case that restores it in `finally` may live there.
+  it('touches the in-flight counter only inside the one helper (#1420)', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    const helper = /async function _withHashSlot\([\s\S]*?\n}\n/.exec(src);
+    assert.ok(helper, 'server.js#_withHashSlot exists');
+    const count = (text) => (text.match(/_loginVerificationsInFlight/g) || []).length;
+    assert.equal(count(src), count(helper[0]) + 1, 'the declaration, and otherwise only the helper');
   });
 
   describe('an authenticated session', () => {

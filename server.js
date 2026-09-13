@@ -302,6 +302,7 @@ const authIdentity = require('./lib/auth-identity');
 const authSession = require('./lib/auth-session');
 const authGate = require('./lib/auth-gate');
 const gateFallback = require('./lib/gate-fallback');
+const ingressDoor = require('./lib/ingress-door');
 const recoveryCodes = require('./lib/recovery-codes');
 const passwordHashing = require('./lib/password');
 const sessionOwnership = require('./lib/session-ownership');
@@ -381,6 +382,13 @@ function _gateConfig() {
 }
 
 let _gateIngressCache = null;
+let _gateIngressLogged = null;
+
+/**
+ * How long an answer Caddy could not give ("unread") is reused before
+ * `caddy adapt` is asked again. Every other answer lasts until the file changes.
+ */
+const GATE_INGRESS_UNREAD_RETRY_MS = 30000;
 
 /**
  * The Caddyfile on disk, described as a door, for the auth gate — cached on the
@@ -388,11 +396,24 @@ let _gateIngressCache = null;
  *
  * Asked only in caddy mode with `authEnabled` off
  * (`authGate.resolveGateState`): the opt-out opens the install only while this
- * says the file is not serving a remote site with no `basic_auth`. An edit to
- * the file changes the key, so it takes effect on the next request.
+ * says the file is not a door — what counts as one is `lib/ingress-door.js`'s
+ * to say. An edit to the file changes the key, so it takes effect on the next
+ * request.
  *
- * A MISSING file answers "no ungated remote site" — Caddy has nothing to serve.
- * Any OTHER failure throws, which the gate answers with `unreadable`.
+ * A file MISSING at the `stat` answers "no door" — Caddy has nothing to serve.
+ * Any OTHER failure throws, which the gate answers with `unreadable` — including
+ * a file that was there for the `stat` and gone for the read. That one must not
+ * be answered as "missing": the answer would be cached under the key of the file
+ * that was just `stat`ed.
+ *
+ * The description runs `caddy adapt` over the text, synchronously, once per
+ * change of the file. The same trade `_gateFallback` makes: an asynchronous
+ * check needs a "not yet known" answer, which must count as a door anyway, so
+ * the opt-out would stay closed until it landed. Bounded by `caddy-drift`'s
+ * adapt timeout. When Caddy cannot read the file the answer is a door; that one
+ * is re-asked every {@link GATE_INGRESS_UNREAD_RETRY_MS}, so a passing timeout or
+ * a `caddy` briefly missing from PATH does not keep the login on until someone
+ * edits the Caddyfile. Each distinct answer is logged once, not per request.
  *
  * @returns {{ ungatedRemoteSite: boolean, unguardedLocalSite: boolean }}
  * @throws {Error} If the Caddyfile exists but cannot be read
@@ -403,25 +424,39 @@ function _gateIngress() {
   try {
     st = fs.statSync(file);
   } catch (err) {
-    if (err.code === 'ENOENT') return caddy.describeIngressDoor(null);
+    if (err.code === 'ENOENT') return ingressDoor.describeIngressContent(null);
     throw err;
   }
   const key = `${file}:${st.mtimeMs}:${st.size}`;
-  if (_gateIngressCache && _gateIngressCache.key === key) return _gateIngressCache.value;
-  const value = caddy.readIngressDoor(file);
-  if (value.ungatedRemoteSite) {
-    // Logged once per change of the file, not per request.
-    log.warn('The Caddyfile serves a remote site with no basic_auth, so authEnabled: false does NOT open '
-      + 'TangleClaw\'s login in caddy mode. Re-run the cutover with only a localhost site, or turn '
-      + 'authEnabled back on.', { caddyfile: file });
+  const now = Date.now();
+  if (_gateIngressCache && _gateIngressCache.key === key
+      && (_gateIngressCache.value.source !== 'unread' || now < _gateIngressCache.retryAt)) {
+    return _gateIngressCache.value;
+  }
+  const value = ingressDoor.describeIngressContent(fs.readFileSync(file, 'utf8'));
+  _gateIngressCache = { key, value, retryAt: now + GATE_INGRESS_UNREAD_RETRY_MS };
+  const logged = `${key}|${value.source}|${value.reason}|${value.ungatedRemoteSite}|${value.unguardedLocalSite}`;
+  if (_gateIngressLogged === logged) return value;
+  _gateIngressLogged = logged;
+  if (value.source === 'unread') {
+    log.warn('caddy adapt could not read the Caddyfile, so authEnabled: false does NOT open TangleClaw\'s login '
+      + 'in caddy mode. Make caddy reachable on TangleClaw\'s PATH, or turn authEnabled back on.',
+    { caddyfile: file, reason: value.reason });
+  } else if (value.source === 'import') {
+    log.warn('The Caddyfile imports another file, whose edits the gate would not notice, so authEnabled: false '
+      + 'does NOT open TangleClaw\'s login in caddy mode. Inline the import, or turn authEnabled back on.',
+    { caddyfile: file, reason: value.reason });
+  } else if (value.ungatedRemoteSite) {
+    log.warn('The Caddyfile serves a remote site that forwards a request before any basic_auth, so '
+      + 'authEnabled: false does NOT open TangleClaw\'s login in caddy mode. Re-run the cutover with only a '
+      + 'localhost site, or turn authEnabled back on.', { caddyfile: file });
   } else if (value.unguardedLocalSite) {
-    // Same once-per-change cadence. Whether it closes the opt-out depends on
-    // whether accounts exist, which the gate decides per request.
+    // Whether it closes the opt-out depends on whether accounts exist, which the
+    // gate decides per request.
     log.warn('The Caddyfile has a localhost site with no basic_auth and no peer guard, so other machines '
       + 'asking for localhost reach it. On an install with accounts, authEnabled: false does NOT open '
       + 'TangleClaw\'s login. Run node scripts/guard-ungated-sites.js.', { caddyfile: file });
   }
-  _gateIngressCache = { key, value };
   return value;
 }
 
@@ -2011,6 +2046,46 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
 const MAX_CONCURRENT_LOGIN_VERIFICATIONS = 2;
 let _loginVerificationsInFlight = 0;
 
+/**
+ * Run one password derivation inside the shared concurrency cap, or refuse.
+ *
+ * The ONE place the cap is checked, counted and released. Every route that
+ * hashes or verifies a password calls this — the login, the first-account
+ * page, a recovery-code redemption, minting new codes — because a copy that
+ * drops the `finally` leaks a slot on a route anyone can reach signed-out, and
+ * a leaked slot is a refusal that lasts until the process restarts. The refusal
+ * is logged at warn from here too, so "the server said it was busy" is in the
+ * log whichever route said it.
+ *
+ * Call it only once a derivation is actually about to run, so a malformed
+ * request never holds a slot. An exception from `derive` releases the slot and
+ * propagates to the caller.
+ *
+ * @template T
+ * @param {http.ServerResponse} res - Headers not yet sent
+ * @param {string} action - What was refused, for the log, e.g. `a login`.
+ * @param {() => Promise<T>} derive - The hashing work.
+ * @param {string} [busyMessage] - The 503's message.
+ * @returns {Promise<{ refused: true }|{ refused: false, value: T }>} `refused`
+ *   when the 503 has been sent and the caller must stop.
+ */
+async function _withHashSlot(res, action, derive, busyMessage = 'The server is busy. Try again in a moment.') {
+  if (_loginVerificationsInFlight >= MAX_CONCURRENT_LOGIN_VERIFICATIONS) {
+    log.warn(`Refused ${action}: too many password hashes already in flight`, {
+      inFlight: _loginVerificationsInFlight
+    });
+    res.setHeader('Retry-After', '1');
+    errorResponse(res, 503, busyMessage, 'LOGIN_BUSY');
+    return { refused: true };
+  }
+  _loginVerificationsInFlight += 1;
+  try {
+    return { refused: false, value: await derive() };
+  } finally {
+    _loginVerificationsInFlight -= 1;
+  }
+}
+
 // POST /api/auth/login — exchange a username and password for a session.
 //
 // Exempt from the gate (`lib/auth-gate.js` LOGIN_SURFACE_PATHS) because it is
@@ -2045,25 +2120,11 @@ route('POST', '/api/auth/login', async (req, res, _params, body) => {
   // that cost is the anti-timing-oracle fix, so the answer to blocking is to
   // stop blocking, never to stop paying.
   //
-  // Counted only once a verification is actually about to run, so a malformed
-  // request never holds a slot, and released in `finally`, so a verification
-  // that THROWS cannot leak one — a leaked slot is a login that stays refused
-  // until the process restarts.
-  if (_loginVerificationsInFlight >= MAX_CONCURRENT_LOGIN_VERIFICATIONS) {
-    log.warn('Refused a login: too many password verifications already in flight', {
-      inFlight: _loginVerificationsInFlight
-    });
-    res.setHeader('Retry-After', '1');
-    return errorResponse(res, 503,
-      'The server is busy checking other sign-ins. Try again in a moment.', 'LOGIN_BUSY');
-  }
-  let user;
-  _loginVerificationsInFlight += 1;
-  try {
-    user = await store.users.verifyAsync(username, password);
-  } finally {
-    _loginVerificationsInFlight -= 1;
-  }
+  // Inside the shared cap (`_withHashSlot`).
+  const verified = await _withHashSlot(res, 'a login', () => store.users.verifyAsync(username, password),
+    'The server is busy checking other sign-ins. Try again in a moment.');
+  if (verified.refused) return;
+  const user = verified.value;
   if (!user) return deny();
 
   const session = _signIn(req, res, user);
@@ -2181,14 +2242,10 @@ route('POST', '/api/auth/set-password', async (req, res, _params, body) => {
   // Async scrypt, inside the SAME concurrency cap as the login route. Both are
   // reachable signed-out and both put a derivation on libuv's threadpool, which
   // fs and dns share, so they draw on one budget rather than two.
-  if (_loginVerificationsInFlight >= MAX_CONCURRENT_LOGIN_VERIFICATIONS) {
-    res.setHeader('Retry-After', '1');
-    return errorResponse(res, 503, 'The server is busy. Try again in a moment.', 'LOGIN_BUSY');
-  }
-  let user;
-  _loginVerificationsInFlight += 1;
+  let created;
   try {
-    user = await store.users.createFirstAsync(username, password);
+    created = await _withHashSlot(res, 'a first-account submission',
+      () => store.users.createFirstAsync(username, password));
   } catch (err) {
     if (err.code === 'ACCOUNT_EXISTS') {
       log.warn('Refused a first-account submission: an account was created first', { username });
@@ -2196,9 +2253,9 @@ route('POST', '/api/auth/set-password', async (req, res, _params, body) => {
         'An account already exists on this install. Sign in instead.', 'ACCOUNT_EXISTS');
     }
     throw err;
-  } finally {
-    _loginVerificationsInFlight -= 1;
   }
+  if (created.refused) return;
+  const user = created.value;
   // Warn, not info: this is the moment an install acquires its only key, and an
   // operator reading the log afterwards must be able to see when, and whether it
   // came through the proxy or from the machine itself.
@@ -2256,9 +2313,9 @@ const _recoveryFailures = recoveryCodes.createFailureLimiter();
  * @returns {{ key: string, from: string }}
  */
 function _recoveryClient(req) {
-  const key = recoveryCodes.clientKey(req.socket, req.headers, adminCredential.isLoopbackRemote);
-  const from = key.startsWith('xff:') ? `${key.slice(4)} (through the proxy)` : (key.slice(5) || 'unknown');
-  return { key, from };
+  const client = recoveryCodes.clientKey(req.socket, req.headers, adminCredential.isLoopbackRemote);
+  const from = client.proxied ? `${client.address} (through the proxy)` : (client.address || 'unknown');
+  return { key: client.key, from };
 }
 
 /**
@@ -2343,18 +2400,10 @@ route('POST', '/api/auth/recover', async (req, res, _params, body) => {
   const policy = caddy.validateAdminPassword(password, holder.username);
   if (!policy.ok) return errorResponse(res, 400, policy.error, 'WEAK_PASSWORD');
 
-  if (_loginVerificationsInFlight >= MAX_CONCURRENT_LOGIN_VERIFICATIONS) {
-    res.setHeader('Retry-After', '1');
-    return errorResponse(res, 503, 'The server is busy. Try again in a moment.', 'LOGIN_BUSY');
-  }
-  let hash;
-  _loginVerificationsInFlight += 1;
-  try {
-    hash = await passwordHashing.hashPasswordAsync(password);
-  } finally {
-    _loginVerificationsInFlight -= 1;
-  }
-  const redeemed = store.recoveryCodes.redeem(code, hash, client.from);
+  const hashed = await _withHashSlot(res, 'a recovery-code redemption',
+    () => passwordHashing.hashPasswordAsync(password));
+  if (hashed.refused) return;
+  const redeemed = store.recoveryCodes.redeem(code, hashed.value, client.from);
   if (!redeemed) return deny();
 
   const user = { id: redeemed.id, username: redeemed.username };
@@ -2406,17 +2455,10 @@ route('POST', '/api/auth/recovery-codes', async (req, res, _params, body) => {
   if (!password) {
     return errorResponse(res, 400, 'Enter your current password to generate new codes.', 'BAD_REQUEST');
   }
-  if (_loginVerificationsInFlight >= MAX_CONCURRENT_LOGIN_VERIFICATIONS) {
-    res.setHeader('Retry-After', '1');
-    return errorResponse(res, 503, 'The server is busy. Try again in a moment.', 'LOGIN_BUSY');
-  }
-  let verified;
-  _loginVerificationsInFlight += 1;
-  try {
-    verified = await store.users.verifyAsync(session.username, password);
-  } finally {
-    _loginVerificationsInFlight -= 1;
-  }
+  const reauth = await _withHashSlot(res, 'minting recovery codes',
+    () => store.users.verifyAsync(session.username, password));
+  if (reauth.refused) return;
+  const verified = reauth.value;
   if (!verified) {
     return errorResponse(res, 403, 'That password did not match.', 'REAUTH_FAILED');
   }

@@ -164,18 +164,24 @@ describe('lib/auth-gate — the front-door verdict (#1418, #1420, ADR 0015/0016)
     });
 
     describe('writers resolve the gate from config, not from the file they replace (#1420 merge)', () => {
-      const caddy = require('../lib/caddy');
       const fs = require('node:fs');
       const path = require('node:path');
       const off = () => ({ authEnabled: false, ingressMode: 'caddy' });
-      const gen = (gateState, extra = {}) => caddy.buildCaddyfileContent({
-        serverPort: 3102, certPath: '/c/cert.pem', keyPath: '/c/key.pem', gateState, ...extra
-      });
+      const { adaptFromFixtures: adapt, generatedCaddyfile } = require('./_caddy-drift-fixtures');
+      const ingressDoor = require('../lib/ingress-door');
+      // A localhost-only install, written by the real generator for a gate state.
+      const gen = (gateState) => generatedCaddyfile({ authEnabled: false, caddyTailnetHost: null }, gateState);
 
       it('turning the login off in caddy mode settles on open instead of looping', () => {
         // An armed cutover's file: localhost with no basic_auth and no guard.
         const armedFile = gen(S.ARMED);
-        const readFile = (text) => () => caddy.describeIngressDoor(text);
+        // Read as the server reads it, with `caddy adapt` answered from the
+        // committed fixture JSON of the same text, so no host Caddy is needed.
+        const readFile = (text) => () => {
+          const door = ingressDoor.describeIngressContent(text, { adapt });
+          assert.equal(door.source, 'adapt', 'precondition: every file here is a committed fixture');
+          return door;
+        };
         // The request gate, with accounts, keeps the login on while that file serves.
         assert.equal(authGate.resolveGateState(off, ENABLED, readFile(armedFile)), S.ARMED);
         // A writer asking the request gate's question would write the same file again —
@@ -195,6 +201,13 @@ describe('lib/auth-gate — the front-door verdict (#1418, #1420, ADR 0015/0016)
         const broken = { accountPresence: () => { throw new Error('SQLITE_BUSY'); } };
         assert.equal(authGate.resolveIntendedGateState(() => ({ authEnabled: true }), broken), S.UNREADABLE);
         assert.equal(authGate.resolveIntendedGateState(() => ({ authEnabled: true }), ENABLED), S.ARMED);
+      });
+
+      it('answers open with authEnabled off without asking the store, so a store fault does not change it', () => {
+        let asked = 0;
+        const broken = { accountPresence: () => { asked++; throw new Error('SQLITE_BUSY'); } };
+        assert.equal(authGate.resolveIntendedGateState(off, broken), S.OPEN);
+        assert.equal(asked, 0);
       });
 
       it('both Caddyfile writers use it, and neither reads the old file for the gate', () => {

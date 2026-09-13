@@ -2421,7 +2421,7 @@ async function _loadCredentialSection() {
   if (!box) return;
   const info = await api('/api/auth/credential');
   if (!info) {
-    box.innerHTML = `<div class="form-hint">Could not check Caddy's password:${esc(api.lastError || 'unknown error')}</div>`;
+    box.innerHTML = `<div class="form-hint">Could not check Caddy's password: ${esc(api.lastError || 'unknown error')}</div>`;
     return;
   }
   if (!info.changeable) {

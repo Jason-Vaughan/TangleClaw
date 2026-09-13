@@ -63,6 +63,7 @@ const adminCredential = require(path.join(REPO_DIR, 'lib', 'admin-credential'));
 const { reloadCaddyArgs, writeValidatedCaddyfile } = adminCredential;
 const authGate = require(path.join(REPO_DIR, 'lib', 'auth-gate'));
 const gateFallback = require(path.join(REPO_DIR, 'lib', 'gate-fallback'));
+const ingressDoor = require(path.join(REPO_DIR, 'lib', 'ingress-door'));
 const USAGE =
   'Usage: node scripts/reset-admin.js [--user <name>] [--password-stdin] [--dry-run]\n' +
   '       node scripts/reset-admin.js --create-gate --user <name>\n' +
@@ -228,7 +229,7 @@ function describeLiveGate(store, sessions = store.authSessions) {
   } catch (err) {
     return { error: err.message };
   }
-  const gateState = authGate.resolveGateState(() => config, sessions, () => caddy.readIngressDoor());
+  const gateState = authGate.resolveGateState(() => config, sessions, () => ingressDoor.readIngressDoor());
   let caddyPassword = false;
   let caddyfileError = null;
   if (config && config.ingressMode === 'caddy') {
