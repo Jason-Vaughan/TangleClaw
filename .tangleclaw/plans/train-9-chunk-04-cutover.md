@@ -137,7 +137,7 @@ forwarded host.
 - Covers both transports and `server.js#peerReadTarget` (added by #918 behind the roster gate).
 - Tests: every state × HTTP/upgrade × machine/browser/proxied; mutation-check each new guard.
 
-### A-03 — Caddy's side: drop `basic_auth` by state, and the bind policy
+### Chunk A.03 (A-03) — Caddy's side: drop `basic_auth` by state, and the bind policy
 - `lib/caddy.js`: emit `basic_auth` only while the state is `account-required` or `fallback`; the
   `tailnetHost` / `remoteHttpCatchAll` guards become "requires a gate".
 - Remove `/openclaw-direct/*` from `AUTH_BYPASS_PATHS` in the same change that stops emitting
@@ -247,6 +247,6 @@ forwarded host.
 - [x] Checkpoint 1 — ruled 2026-09-13: 1 + 2
 - [x] A-02a — classifier, gate on it, carve-out + XFF, set-password route/page (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [x] A-02b — OQ2 inversion, identity + authStatus from the classifier, dashboard consumers (reviewed 2026-09-13, PR into `train-9/cutover`)
-- [ ] A-03 — state-driven `basic_auth`, bypass ownership, drift, bind policy, #1055
+- [ ] Chunk A.03 (A-03) — state-driven `basic_auth`, bypass ownership, drift, bind policy, #1055
 - [ ] A-04 — fallback command, recovery codes, ADR 0009 rule 5 text, reset-admin, recovery doc, drills
 - [ ] A-VRF — cumulative Critic, elkaholic VRF, phone drill → Checkpoint 2
