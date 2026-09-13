@@ -346,23 +346,20 @@ let _gateConfigCache = null;
  *
  * **THIS THUNK THROWS, and that is the contract.** `_loadConfigOrNull` turns
  * every failure into `null`, which is the right answer for the Host guard and
- * the wrong one here: `isGateActive` distinguishes a READ FAILURE (fail CLOSED
- * once the gate has been armed) from a successful read of nothing (fail open),
- * and routing the gate through the null-swallowing loader made the fail-closed
- * branch unreachable — a corrupt `config.json` on an armed direct-mode install
- * would have read as "not enforcing", cached on mtime+size and re-served, which
- * is an authentication bypass for as long as the file stays unreadable.
+ * the wrong one here: `authGate.resolveGateState` answers a READ FAILURE with
+ * `unreadable`, which enforces, and a successful read of nothing with `open`.
+ * Routing the gate through the null-swallowing loader would make the enforcing
+ * branch unreachable — a corrupt `config.json` would read as "not enforcing",
+ * cached on mtime+size and re-served, which is an authentication bypass for as
+ * long as the file stays unreadable.
  *
- * A failed `stat` throws too, including ENOENT — so a MISSING `config.json` also
- * closes an armed gate. That is a deliberate departure from the review note
- * that asked for the missing case to stay fail-open, and the reason is that
- * `store.config.load()`'s answer there is `DEFAULT_CONFIG`, whose `authEnabled`
- * is false: honouring it would mean deleting one file silently un-gates an
- * armed install, which is the same bypass this whole guard exists to close,
- * reached by a different route. On an armed install the file existing is a
- * precondition — the gate cannot have armed without reading `authEnabled: true`
- * out of it — so this costs nothing real, and `authEnabled: false` in a file
- * that IS readable remains the recovery lever.
+ * A failed `stat` throws too, including ENOENT — so a MISSING `config.json`
+ * enforces as well. `store.config.load()`'s answer there is `DEFAULT_CONFIG`,
+ * whose `authEnabled` is false: honouring it would mean deleting one file
+ * silently un-gates the install, which is the same bypass reached by a
+ * different route. `store.init()` writes the file at boot, so no running install
+ * is without one, and `authEnabled: false` in a file that IS readable remains
+ * the recovery lever.
  *
  * Nothing is cached on the failure path, so recovery takes effect on the next
  * request rather than being pinned by a cached verdict.
@@ -779,10 +776,38 @@ function serveStatic(res, pathname) {
 // effect. That is the same contract every other module in this process has
 // (nothing here is hot-reloaded) and it is the safer half of the trade: the
 // alternative re-reads a file on the one path an attacker controls the rate of.
-let _loginPageHtml = null;
+const _authPageHtml = new Map();
+
+// What a signed-out person sees if a page file is missing from the install.
+// Plain and self-contained for the reason argued at `_serveAuthPage`.
+const _AUTH_PAGE_FALLBACKS = {
+  'login.html': '<!DOCTYPE html><meta charset="utf-8"><title>Sign in</title>'
+    + '<p>TangleClaw needs you to sign in, but its login page is missing from '
+    + 'this install. Post a username and password to <code>/api/auth/login</code>, '
+    + 'or run <code>node scripts/reset-admin.js --store --user &lt;name&gt;</code> '
+    + 'at a terminal on this machine.</p>',
+  'account-setup.html': '<!DOCTYPE html><meta charset="utf-8"><title>Create an account</title>'
+    + '<p>TangleClaw needs an account before anyone can sign in, but its account '
+    + 'page is missing from this install. Post a username and password to '
+    + '<code>/api/auth/set-password</code>, or run '
+    + '<code>node scripts/reset-admin.js --store --user &lt;name&gt;</code> '
+    + 'at a terminal on this machine.</p>'
+};
 
 /**
  * Serve the login page.
+ *
+ * @param {http.ServerResponse} res
+ * @param {number} status - 200 for a direct visit, 401 for a refusal
+ * @returns {void}
+ */
+function _serveLoginPage(res, status) {
+  _serveAuthPage(res, status, 'login.html');
+}
+
+/**
+ * Serve one of the self-contained pages a signed-out person needs: the login
+ * page, or the page that creates an install's first account.
  *
  * Falls back to a minimal inline document if the file cannot be read. That
  * fallback is not politeness: this is what a locked-out operator is looking at,
@@ -792,27 +817,24 @@ let _loginPageHtml = null;
  *
  * @param {http.ServerResponse} res
  * @param {number} status - 200 for a direct visit, 401 for a refusal
+ * @param {'login.html'|'account-setup.html'} file - The page under `public/`
  * @returns {void}
  */
-function _serveLoginPage(res, status) {
-  let body = _loginPageHtml;
-  if (body === null) {
+function _serveAuthPage(res, status, file) {
+  let body = _authPageHtml.get(file);
+  if (body === undefined) {
     try {
-      body = fs.readFileSync(path.join(PUBLIC_DIR, 'login.html'), 'utf8');
+      body = fs.readFileSync(path.join(PUBLIC_DIR, file), 'utf8');
       // Memoised ONLY on success. Caching the fallback would freeze a transient
       // read failure — a half-finished self-update, a momentary EMFILE — into
-      // the login page for the rest of the process's life, and the operator
-      // would be looking at the degraded document long after the file came
-      // back. The failure path re-reads, which is the one path where the extra
-      // syscall is worth more than the saving.
-      _loginPageHtml = body;
+      // the page for the rest of the process's life, and the operator would be
+      // looking at the degraded document long after the file came back. The
+      // failure path re-reads, which is the one path where the extra syscall is
+      // worth more than the saving.
+      _authPageHtml.set(file, body);
     } catch (err) {
-      log.error('Login page could not be read', { error: err.message });
-      body = '<!DOCTYPE html><meta charset="utf-8"><title>Sign in</title>'
-        + '<p>TangleClaw needs you to sign in, but its login page is missing from '
-        + 'this install. Post a username and password to <code>/api/auth/login</code>, '
-        + 'or run <code>node scripts/reset-admin.js --store --user &lt;name&gt;</code> '
-        + 'at a terminal on this machine.</p>';
+      log.error('Auth page could not be read', { file, error: err.message });
+      body = _AUTH_PAGE_FALLBACKS[file];
     }
   }
   res.writeHead(status, {
@@ -823,9 +845,9 @@ function _serveLoginPage(res, status) {
     // browser's is served back to someone who has since signed in.
     'Cache-Control': 'no-store, must-revalidate',
     'X-Content-Type-Options': 'nosniff',
-    // The page is entirely self-contained, so it can afford the tightest policy
-    // this server writes: its own inline style and script, and nothing else —
-    // no image, no font, no connect target beyond same-origin for the login
+    // Each page is entirely self-contained, so it can afford the tightest
+    // policy this server writes: its own inline style and script, and nothing
+    // else — no image, no font, no connect target beyond same-origin for its
     // POST, and no frame ancestor, so it cannot be framed for clickjacking.
     'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; "
       + "script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; "
@@ -1085,7 +1107,11 @@ route('GET', '/api/server-info', (_req, res) => {
   // the dashboard can warn on a config-vs-live mismatch ('configured-inert' in
   // direct mode, 'configured-no-identity' when caddy is up but no identity
   // arrives). Surfacing only — never enforces. See docs/auth-status-surfacing.md.
-  info.authStatus = authIdentity.resolveAuthStatus(_req.headers, cfg, _req.tcGateActive === true);
+  // `armed` only, not "enforcing": `resolveAuthStatus` reads its flag as "a
+  // session gate is live and identity flows from it", which is not true of an
+  // install still waiting for its first account.
+  info.authStatus = authIdentity.resolveAuthStatus(_req.headers, cfg,
+    _req.tcGateState === authGate.GATE_STATES.ARMED);
   // #227: is the local clone behind origin/main? Cached answer, never waits on
   // the network — a stale cache starts one background fetch for the next poll.
   // `enabled: false` when the operator turned the check off in config.
@@ -1923,6 +1949,92 @@ route('POST', '/api/auth/logout', (req, res) => {
   jsonResponse(res, 200, { ok: true });
 });
 
+// POST /api/auth/set-password — create an install's FIRST account.
+//
+// Reachable by a signed-out person ONLY while the install is `account-required`
+// (`lib/auth-gate.js#ACCOUNT_SETUP_PATH`): `authEnabled` is on and no account
+// row exists. That is where every upgraded install lands, since the bcrypt
+// `basicAuthHash` Caddy's gate used cannot be verified by scrypt.
+//
+// WHAT AUTHORISES IT IS REACH, as ADR 0016 decides. No current-password field:
+// this server cannot verify the bcrypt hash it holds, and a field it cannot
+// check would be theatre. Reach is enough because no code path deletes a user
+// row, so this state exists only before an install's first account, and anyone
+// who can reach this route then could already reach the install ungated or had
+// already passed Caddy's gate. `lib/auth-gate.js#resolveGateState` carries the
+// full argument, and the dependency on rows never being deleted.
+//
+// `basicAuthHash` is deliberately NOT touched. It stays as the fallback
+// credential Caddy's gate can be restored with (ADR 0016 addendum).
+//
+// Policy is `caddy.validateAdminPassword`, the same rules the Caddy credential
+// enforced, so the new door is not weaker than the one it replaces. The check
+// runs BEFORE any hashing, so a stream of rejected submissions costs no scrypt.
+// The hash itself is async and shares the login route's concurrency cap.
+route('POST', '/api/auth/set-password', async (req, res, _params, body) => {
+  // The gate's verdict for THIS request, carried on `req`. The gate lets a
+  // signed-out caller reach this route only in `account-required`, so any other
+  // state here means the install is open or the caller is signed in. The
+  // account check that matters runs again inside `createFirstAsync`, under a
+  // write lock, because another submission or `scripts/reset-admin.js` can land
+  // in between.
+  if (req.tcGateState !== authGate.GATE_STATES.ACCOUNT_REQUIRED) {
+    const open = authGate.isOpen(req.tcGateState);
+    return errorResponse(res, 409,
+      open
+        ? 'This install does not require a login, so there is no account to create here.'
+        : 'An account already exists on this install. Sign in instead.',
+      open ? 'LOGIN_NOT_REQUIRED' : 'ACCOUNT_EXISTS');
+  }
+  const payload = body || {};
+  const username = typeof payload.username === 'string' ? payload.username.trim() : '';
+  const password = typeof payload.password === 'string' ? payload.password : '';
+  if (!username) {
+    return errorResponse(res, 400, 'Choose a username.', 'BAD_REQUEST');
+  }
+  const policy = caddy.validateAdminPassword(password, username);
+  if (!policy.ok) {
+    return errorResponse(res, 400, policy.error, 'WEAK_PASSWORD');
+  }
+
+  // Async scrypt, inside the SAME concurrency cap as the login route. Both are
+  // reachable signed-out and both put a derivation on libuv's threadpool, which
+  // fs and dns share, so they draw on one budget rather than two.
+  if (_loginVerificationsInFlight >= MAX_CONCURRENT_LOGIN_VERIFICATIONS) {
+    res.setHeader('Retry-After', '1');
+    return errorResponse(res, 503, 'The server is busy. Try again in a moment.', 'LOGIN_BUSY');
+  }
+  let user;
+  _loginVerificationsInFlight += 1;
+  try {
+    user = await store.users.createFirstAsync(username, password);
+  } catch (err) {
+    if (err.code === 'ACCOUNT_EXISTS') {
+      log.warn('Refused a first-account submission: an account was created first', { username });
+      return errorResponse(res, 409,
+        'An account already exists on this install. Sign in instead.', 'ACCOUNT_EXISTS');
+    }
+    throw err;
+  } finally {
+    _loginVerificationsInFlight -= 1;
+  }
+  // Warn, not info: this is the moment an install acquires its only key, and an
+  // operator reading the log afterwards must be able to see when, and whether it
+  // came through the proxy or from the machine itself.
+  log.warn('First account created from the account-setup page', {
+    username: user.username,
+    proxied: req.headers['x-forwarded-for'] !== undefined
+  });
+
+  const session = store.authSessions.create(user);
+  const secure = authSession.isSecureRequest(req);
+  res.setHeader('Set-Cookie', [
+    authSession.serializeCookie(session.token, { secure }),
+    authSession.serializeCsrfCookie(session.csrfToken, { secure })
+  ]);
+  jsonResponse(res, 200, { username: user.username, csrfToken: session.csrfToken });
+});
+
 // GET /api/auth/me — who this request is, and whether a login is required.
 //
 // Built from the SESSION and never from the user row. ADR 0016 records why:
@@ -1939,14 +2051,16 @@ route('GET', '/api/auth/me', (req, res) => {
   // Both branches read the verdict `handleRequest` already reached, never a
   // fresh one: one request, one answer.
   const gateActive = req.tcGateActive === true;
+  const gateState = req.tcGateState;
   if (!session) {
     return jsonResponse(res, 200, {
-      authenticated: false, gateActive, username: null, csrfToken: null
+      authenticated: false, gateActive, gateState, username: null, csrfToken: null
     });
   }
   jsonResponse(res, 200, {
     authenticated: true,
     gateActive,
+    gateState,
     username: session.username,
     csrfToken: session.csrfToken
   });
@@ -2665,6 +2779,40 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
       'ADMIN_REQUIRED');
   }
 
+  // The TangleClaw account, from the same username and password. Setting
+  // `authEnabled` closes TangleClaw's own gate while no account exists
+  // (`account-required`), and this route's own browser is the first thing that
+  // would meet it: the wizard keeps polling and loading after this response.
+  // Creating the account here — the one moment the plaintext is in hand — and
+  // signing the wizard in keeps setup from locking itself out, and makes the
+  // password the operator just chose the one that signs in.
+  //
+  // Created BEFORE the config save, so a failure leaves setup unfinished and
+  // retryable rather than finished with no account. An existing account (an
+  // operator who ran `reset-admin.js --store` first) is kept, not replaced.
+  const account = { created: false, required: false };
+  if (adminProvided && config.authEnabled === true) {
+    try {
+      const user = store.users.createFirst(config.basicAuthUser, body.adminPassword);
+      const session = store.authSessions.create(user);
+      const secure = authSession.isSecureRequest(req);
+      res.setHeader('Set-Cookie', [
+        authSession.serializeCookie(session.token, { secure }),
+        authSession.serializeCsrfCookie(session.csrfToken, { secure })
+      ]);
+      account.created = true;
+    } catch (err) {
+      if (err.code !== 'ACCOUNT_EXISTS') throw err;
+      log.info('Setup kept the existing TangleClaw account rather than creating one');
+    }
+  }
+  // Setup that finishes with the gate on and still no account — the adopt path,
+  // whose credential came from a Caddyfile and so has no plaintext — leaves the
+  // install `account-required`. The wizard reads this and sends the operator to
+  // the account page rather than into a dashboard that would refuse it.
+  account.required = config.authEnabled === true
+    && store.authSessions.accountPresence().exists === false;
+
   // Mark setup as complete
   config.setupComplete = true;
   store.config.save(config);
@@ -3018,7 +3166,8 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
     restart: shouldRestart,
     redirectUrl,
     redirectVia,
-    ingress
+    ingress,
+    account
   });
 });
 
@@ -6743,6 +6892,10 @@ function _gateIdentity(req, socket, pathname) {
     // `isLoopbackRemote` is `lib/admin-credential.js`'s, reused because
     // `POST /api/auth/credential` already authorises on exactly this predicate.
     loopback: adminCredential.isLoopbackRemote(conn && conn.remoteAddress),
+    // The header's PRESENCE, whatever its value: Caddy always sets it on a
+    // forwarded request, so even an empty one is not evidence of a local
+    // process. See `authGate.isMachineClient` condition 2.
+    proxied: req.headers['x-forwarded-for'] !== undefined,
     browserShaped,
     hasSessionCookie: sessionToken !== null
   });
@@ -6858,10 +7011,11 @@ function handleUpgrade(req, socket, head) {
   // `/openclaw-direct/*` is gated here too, unlike at Caddy — see
   // `lib/auth-gate.js#isGateBypassPath` for why its exemption does not hold at
   // TangleClaw's gate.
-  const upgradeGateActive = authGate.isGateActive(_gateConfig, store.authSessions);
-  const upgradeIdentity = upgradeGateActive ? _gateIdentity(req, socket, urlObj.pathname) : null;
+  const upgradeGateState = authGate.resolveGateState(_gateConfig, store.authSessions);
+  const upgradeIdentity = authGate.isOpen(upgradeGateState)
+    ? null : _gateIdentity(req, socket, urlObj.pathname);
   const upgradeVerdict = authGate.evaluateUpgrade({
-    gateActive: upgradeGateActive,
+    gateState: upgradeGateState,
     session: upgradeIdentity && upgradeIdentity.session,
     machineClient: upgradeIdentity !== null && upgradeIdentity.machineClient
   });
@@ -7253,8 +7407,8 @@ async function handleRequest(req, res) {
   // ones it then waves through, because the CSRF check needs it and because
   // `/api/auth/me` answers from it.
   let tcSession = null;
-  const gateActive = authGate.isGateActive(_gateConfig, store.authSessions);
-  if (gateActive) {
+  const gateState = authGate.resolveGateState(_gateConfig, store.authSessions);
+  if (!authGate.isOpen(gateState)) {
     // Resolved by the helper `handleUpgrade`'s gate also calls, so the two
     // transports judge the same facts — see `_gateIdentity`.
     const identity = _gateIdentity(req, req.socket, pathname);
@@ -7263,7 +7417,7 @@ async function handleRequest(req, res) {
       method,
       rawUrl: req.url,
       pathname,
-      gateActive,
+      gateState,
       session: tcSession,
       submittedCsrf: authSession.csrfTokenFromRequest(req),
       // The fleet carve-out (#1418 Critic R-1) — see `authGate.isMachineClient`.
@@ -7277,13 +7431,17 @@ async function handleRequest(req, res) {
         'This request is missing a valid CSRF token.', 'CSRF_TOKEN_INVALID');
     }
     if (verdict.action === 'challenge') {
-      log.info('Unauthenticated request refused', { method, path: pathname });
+      log.info('Unauthenticated request refused', { method, path: pathname, gateState });
+      const setup = verdict.for === 'account-setup';
       if (verdict.as === 'json') {
-        return errorResponse(res, 401, 'Sign in to continue.', 'UNAUTHENTICATED');
+        return setup
+          ? errorResponse(res, 401,
+            'No account exists yet. Open this address in a browser to create one.', 'ACCOUNT_REQUIRED')
+          : errorResponse(res, 401, 'Sign in to continue.', 'UNAUTHENTICATED');
       }
       // 401, not 200: a login page served as a success tells caches and uptime
       // monitors the request worked. The body is the page a person needs.
-      return _serveLoginPage(res, 401);
+      return setup ? _serveAuthPage(res, 401, 'account-setup.html') : _serveLoginPage(res, 401);
     }
   }
   // Readable by the routes below, which must never re-derive identity: ADR 0016
@@ -7293,14 +7451,18 @@ async function handleRequest(req, res) {
   // Carried beside the session so a route reads THIS request's decision rather
   // than asking again. `/api/auth/me` recomputed it, which was both a second
   // config read and a seam where the two answers could one day disagree.
-  req.tcGateActive = gateActive;
+  req.tcGateState = gateState;
+  req.tcGateActive = !authGate.isOpen(gateState);
 
   // The login page itself, on the one path `lib/auth-gate.js` exempts for it.
-  // Served whether or not the gate is live, so an operator who has not created
-  // an account yet still gets an honest page rather than a 404 — and so the
-  // path does not blink into existence at the moment the gate turns on.
+  // Served whether or not the gate is live, so the path does not blink into
+  // existence at the moment the gate turns on. While no account exists there is
+  // nothing to sign in to, so the same path answers with the first-account
+  // page rather than a login form that can only fail.
   if (method === 'GET' && pathname === '/login') {
-    return _serveLoginPage(res, 200);
+    return gateState === authGate.GATE_STATES.ACCOUNT_REQUIRED
+      ? _serveAuthPage(res, 200, 'account-setup.html')
+      : _serveLoginPage(res, 200);
   }
 
   // API routes

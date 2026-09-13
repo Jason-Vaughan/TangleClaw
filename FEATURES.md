@@ -119,14 +119,17 @@ fails any auto-stub section older than 14 days.
   `#tokenFromRequest`, `#isSecureRequest`, `#serializeCookie`, `#clearCookie`,
   `#serializeCsrfCookie`, `#clearCsrfCookie`, `#csrfTokenMatches`) — no database handle, no request,
   so the cookie rules are testable without a server. `lib/auth-gate.js` is the verdict
-  (`#isGateActive`, `#isLoginSurfacePath`, `#isGateBypassPath`, `#isMachineClient`, `#evaluate`,
-  `#evaluateUpgrade`), returning a decision object rather than
+  (`#resolveGateState`, `#isOpen`, `#isLoginSurfacePath`, `#isAccountSetupPath`, `#isGateBypassPath`,
+  `#isMachineClient`, `#evaluate`, `#evaluateUpgrade`), returning a decision object rather than
   touching a response. `store.authSessions` is the persistence (`#create`, `#resolve`, `#destroy`,
-  `#destroyForUser`, `#sweepExpired`, `#anyLoginableUser`) over the `auth_sessions` table at schema
+  `#destroyForUser`, `#sweepExpired`, `#accountPresence`) over the `auth_sessions` table at schema
   v37 — named `auth_sessions` because `sessions` is already the tmux/AI table the product is about.
-  Routes: `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`; page:
-  `public/login.html`, one self-contained document because every path that must answer before
-  anyone is logged in is a hole in the gate. Break-glass:
+  Routes: `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me` (reports `gateState`),
+  `POST /api/auth/set-password` (the first account; `store.users#createFirstAsync`, async scrypt inside
+  the login concurrency cap — `POST /api/setup/complete` uses `#createFirst` to create the same
+  account from the wizard's credential and sign the wizard in); pages:
+  `public/login.html` and `public/account-setup.html`, each one self-contained document because
+  every path that must answer before anyone is logged in is a hole in the gate. Break-glass:
   `node scripts/reset-admin.js --store --user <name>` (`scripts/reset-admin.js#runStoreMode`),
   which creates *or* resets because the operator running it is already locked out and should not
   have to find out which first.
@@ -135,37 +138,40 @@ fails any auto-stub section older than 14 days.
   issue is not a bag of live sessions. `csrf_token` IS stored in the clear — it is not a credential,
   only a value the page must echo back, and the comparison is against the SESSION ROW rather than
   against the readable `tc_csrf` cookie, which is what closes plain double-submit's
-  cookie-planting residual. **The gate activates only when `authEnabled` is true AND an enabled
-  account exists**; gating on `authEnabled` alone would lock every caddy-mode install out on first
-  boot, because they all carry `authEnabled: true` with a bcrypt hash and zero user rows. Dormant
-  is not open — Caddy's gate is untouched by this chunk. Chunk 04 (#1420) must REPLACE that
-  predicate with ADR 0016's `credential-migration-required` state, not extend it.
+  cookie-planting residual. **The door has five states** (`#resolveGateState`, #1420): `open`
+  (`authEnabled` not exactly true — ADR 0009's opt-out), `account-required` (`authEnabled` and no
+  account row: CLOSED, and a signed-out person reaches only `public/account-setup.html` and
+  `POST /api/auth/set-password`), `armed` (an enabled account), `locked` (accounts exist, none
+  enabled: closed, no account page, recovered with `scripts/reset-admin.js`), and `unreadable`
+  (enforces). `account-required` is ADR 0016's `credential-migration-required` without its
+  bcrypt-hash condition — every install upgraded from Caddy's gate lands there, since scrypt cannot
+  verify the hash it holds, and so does one with no hash, which would otherwise be an open door
+  once Caddy's gate is gone. Reach authorises the first account, as ADR 0016 decides: no code path
+  deletes a user row, so the state exists only before an install's first account, when anyone who
+  can reach the page could already reach the install. The `basicAuthHash` is kept.
 
   **Placement is load-bearing in both directions**: the gate sits after the three request-shape
   guards (#860/#864) — a cross-site write is refused on what it is, before any question of who is
   asking — and ahead of every route, proxy and static branch, so `/terminal/*` (a writable shell)
   and `/openclaw/*` (the operator's gateway token) are gated by the perimeter rather than by a
-  per-branch check that a sibling could miss. `#isGateActive` takes a config THUNK so the cheap
-  account query runs first: an install with no accounts pays no file I/O per request. The config
-  read IS memoised, keyed on the file's mtime and size (`server.js#_gateConfig`) — which keeps the
-  property that matters, that `authEnabled: false` takes effect on the next request for an operator
-  recovering from a bad gate, because that edit changes both.
-  **Its two reads fail OPEN while the gate is dormant and CLOSED once it has been armed**, and that
-  asymmetry is the contract, not an accident: before arming, refusing everything would take the
-  dashboard away from the operator on the failure they need it to diagnose, and gates nothing that
-  is not already gated; after arming, the install is relying on this door, so a transient store or
-  config error must not silently remove it. `_everArmed` (per-process) is the discriminator, a
-  READABLE `authEnabled: false` stays the recovery lever, and `server.js#_gateConfig` therefore
-  THROWS rather than returning null — routing it through the null-swallowing loader once made the
-  fail-closed branch unreachable. **A #1420 builder replacing this predicate must carry the
-  asymmetry over**; preserving fail-open on a read error while removing Caddy reinstates the bypass. CSRF is evaluated AHEAD of the exemption list so
+  per-branch check that a sibling could miss. `#resolveGateState` takes a config THUNK memoised on
+  the file's mtime and size (`server.js#_gateConfig`), so a request pays one `stat` and one account
+  query — and `authEnabled: false` still takes effect on the next request for an operator recovering
+  from a bad gate, because that edit changes both. **Both reads fail CLOSED, always**: a store or
+  config error answers `unreadable`, which enforces, and the old "fail open while dormant" branch is
+  gone — it was safe only while Caddy's gate stood in front. A READABLE `authEnabled: false` stays
+  the recovery lever, and `server.js#_gateConfig` THROWS rather than returning null, because the
+  null-swallowing loader once made the fail-closed branch unreachable. CSRF is evaluated AHEAD of the exemption list so
   `/api/auth/logout` is protected despite being exempt, and `/api/auth/login` is exempt because its
   authority is the password, not the cookie — without that a browser holding a live session cannot
   submit the login form. **`#isMachineClient` carves the fleet out**: a loopback socket + no
-  `Sec-Fetch-Site`/`Origin` + no session cookie is `bin/tc`, PortHub, shared-docs or the
-  switchboard, none of which can hold a cookie, and all of which the gate would otherwise refuse
-  the moment an account exists. It opens nothing — those callers already reach TangleClaw only over
-  loopback — and #1420 must revisit it once Caddy no longer fronts the remote path. The session
+  `X-Forwarded-For` + no `Sec-Fetch-Site`/`Origin` + no session cookie is `bin/tc`, PortHub,
+  shared-docs or the switchboard, none of which can hold a cookie, and all of which the gate would
+  otherwise refuse the moment an account exists. The `X-Forwarded-For` condition (#1420) is what
+  keeps Caddy's own forwarded traffic — which also arrives from loopback — out of the carve-out:
+  Caddy sets the header on every request it forwards and replaces a client's value (verified
+  against Caddy v2.11.4), so an off-box caller cannot arrive without it. That also closed the
+  off-box, non-browser `/openclaw-direct/*` request #1419 left open. The session
   cookie is stripped before proxying on every path that copies request headers to an upstream
   (`authSession#stripOwnCookiesFromHeaders`, applied in `proxyToTtyd`, `_openclawProxyHeaders`,
   `_openclawWsRequestLines` and the `/terminal` branch of `handleUpgrade`). Dashboard side: `public/api-helper.js#tcCsrfToken`/`#tcWithCsrf`, applied
@@ -182,8 +188,8 @@ fails any auto-stub section older than 14 days.
   an upstream socket, so `/terminal/*` (a `--writable` ttyd), `/openclaw/*` and `/openclaw-direct/*`
   are refused with a `401` before ttyd or a gateway is ever dialled. Both gates resolve who is
   asking through one helper, `server.js#_gateIdentity` (session token, session lookup, browser shape,
-  `#isMachineClient`), after the same `#isGateActive` through the same throwing thunk — so the facts
-  the two verdicts judge are assembled once, and #1420 revisits one carve-out, not two. The verdict is its own function, `#evaluateUpgrade`,
+  `#isMachineClient`), after the same `#resolveGateState` through the same throwing thunk — so the
+  facts the two verdicts judge are assembled once, and the carve-out is one predicate, not two. The verdict is its own function, `#evaluateUpgrade`,
   which takes NO path: the HTTP exemption lists are not WebSocket routes, and routing a handshake
   through them would let a future list addition open a shell socket. **`/openclaw-direct/*` is
   gated on both transports** (`#isGateBypassPath` is Caddy's list minus that prefix): TangleClaw

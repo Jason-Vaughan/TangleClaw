@@ -32,9 +32,11 @@
 // locked out. It moved here from chunk 01 (#1417) because a recovery path for a
 // door that was not installed yet could not be verified end to end.
 //
-// It is also how the TangleClaw gate gets turned on for the first time: the
-// gate is dormant until an enabled account exists (`lib/auth-gate.js`), so this
-// command is the deliberate act that closes the door.
+// It can also create an install's first account from a terminal. With
+// `authEnabled` on and no account the gate is `account-required`
+// (`lib/auth-gate.js`) and offers only the first-account page; creating the
+// account here arms it just the same, for an operator who would rather not use
+// the page.
 //
 // Fail-closed: the patched Caddyfile is `caddy validate`d BEFORE the reload, and
 // the prior file is restored from a timestamped backup if validation fails — a

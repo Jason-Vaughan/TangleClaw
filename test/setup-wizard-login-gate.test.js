@@ -125,7 +125,8 @@ function loadSetup(opts = {}) {
   sandbox.location = {
     origin: 'http://localhost:3102',
     set href(v) { nav.push(v); },
-    get href() { return nav[nav.length - 1] || null; }
+    get href() { return nav[nav.length - 1] || null; },
+    replace(v) { nav.push(v); }
   };
 
   vm.createContext(sandbox);
@@ -1180,5 +1181,62 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       await settle();
       assert.equal(ctx.wizard.provision, null, 'nothing to poll — the gate already exists');
     });
+  });
+});
+
+describe('Leaving the wizard when no account exists yet (#1420)', () => {
+  // With authEnabled on and no account, TangleClaw's gate is closed and the
+  // dashboard refuses every request. Every way out of the wizard runs through
+  // `dismissWizard`, so that is where the install is asked.
+  const withMe = (gateState, extra = {}) => {
+    const ctx = loadSetup(extra);
+    const base = ctx.fetch;
+    ctx.fetch = async (url) => {
+      if (String(url).includes('/api/auth/me')) {
+        ctx.__fetches.push(url);
+        if (gateState instanceof Error) throw gateState;
+        return { ok: true, json: async () => ({ gateState }) };
+      }
+      return base(url);
+    };
+    return ctx;
+  };
+
+  it('goes to the account page when the install is account-required', async () => {
+    const ctx = withMe('account-required');
+    let loaded = false;
+    ctx.loadProjects = async () => { loaded = true; return {}; };
+    await ctx.dismissWizard();
+    assert.deepEqual(ctx.__nav, ['/login']);
+    assert.equal(loaded, false, 'the dashboard must not start loading into a closed gate');
+  });
+
+  it('opens the dashboard as before when a login is not required or already armed', async () => {
+    for (const gateState of ['open', 'armed']) {
+      const ctx = withMe(gateState);
+      let loaded = false;
+      ctx.loadProjects = async () => { loaded = true; return {}; };
+      await ctx.dismissWizard();
+      await settle();
+      assert.deepEqual(ctx.__nav, [], gateState);
+      assert.equal(loaded, true, gateState);
+    }
+  });
+
+  it('opens the dashboard when the question cannot be answered, rather than bouncing an open install away', async () => {
+    const ctx = withMe(new Error('network down'));
+    let loaded = false;
+    ctx.loadProjects = async () => { loaded = true; return {}; };
+    await ctx.dismissWizard();
+    await settle();
+    assert.deepEqual(ctx.__nav, []);
+    assert.equal(loaded, true);
+  });
+
+  it('goes to the account page on the completion response\'s word, without asking again', async () => {
+    const ctx = withMe('open');
+    ctx.wizard.accountRequired = true;
+    await ctx.dismissWizard();
+    assert.deepEqual(ctx.__nav, ['/login']);
   });
 });

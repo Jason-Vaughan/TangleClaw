@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, beforeEach } = require('node:test');
+const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const authGate = require('../lib/auth-gate');
 const caddy = require('../lib/caddy');
@@ -9,47 +9,55 @@ const caddy = require('../lib/caddy');
 // than from the real store — the guard's fixture must come from a different
 // authority than the code it guards, or a bug in the store makes the gate's
 // test agree with it.
-const sessions = (loginable) => ({ anyLoginableUser: () => loginable });
+const presence = (exists, loginable) => ({ accountPresence: () => ({ exists, loginable }) });
+const NO_ACCOUNTS = presence(false, false);
+const ENABLED = presence(true, true);
+const ALL_DISABLED = presence(true, false);
 const throwingSessions = () => ({
-  anyLoginableUser() { throw new Error('database is not open'); }
+  accountPresence() { throw new Error('database is not open'); }
 });
+const S = authGate.GATE_STATES;
+const on = () => ({ authEnabled: true });
 
-describe('lib/auth-gate — the front-door verdict (#1418, ADR 0015/0016)', () => {
-  describe('isGateActive', () => {
-    // The armed memory is process-wide, so each case starts from a clean one —
-    // otherwise an earlier case that armed the gate changes what a later case's
-    // error path answers, and the suite would depend on its own ordering.
-    beforeEach(() => authGate._resetArmedMemory());
-
-    it('is active with authEnabled and an enabled account', () => {
-      assert.equal(
-        authGate.isGateActive(() => ({ authEnabled: true }), sessions(true)),
-        true
-      );
+describe('lib/auth-gate — the front-door verdict (#1418, #1420, ADR 0015/0016)', () => {
+  describe('resolveGateState', () => {
+    it('is armed with authEnabled and an enabled account', () => {
+      assert.equal(authGate.resolveGateState(on, ENABLED), S.ARMED);
     });
 
-    it('is DORMANT when authEnabled is on but no account exists', () => {
-      // The chunk's own decision, and the one that keeps this change from
-      // locking the operator out of the live install on the first boot after
-      // it merges: every caddy-mode install carries authEnabled:true with a
-      // BCRYPT basicAuthHash and zero user rows, so a gate demanding a session
-      // would have no account to issue one against.
-      assert.equal(
-        authGate.isGateActive(() => ({ authEnabled: true }), sessions(false)),
-        false
-      );
+    it('is ACCOUNT-REQUIRED, not dormant, when authEnabled is on and no account exists', () => {
+      // The inversion #1420 exists for. Every install upgraded from Caddy's gate
+      // carries authEnabled:true, a bcrypt basicAuthHash scrypt cannot verify,
+      // and zero accounts. Answering "not gated" there is an open door the
+      // moment Caddy's gate is gone, so the state is closed and offers only the
+      // first-account page.
+      assert.equal(authGate.resolveGateState(on, NO_ACCOUNTS), S.ACCOUNT_REQUIRED);
     });
 
-    it('is inactive when authEnabled is off, even with accounts', () => {
+    it('is account-required with or without a basicAuthHash — the hash is not the key', () => {
+      assert.equal(
+        authGate.resolveGateState(() => ({ authEnabled: true, basicAuthHash: null }), NO_ACCOUNTS),
+        S.ACCOUNT_REQUIRED);
+      assert.equal(
+        authGate.resolveGateState(() => ({ authEnabled: true, basicAuthHash: '$2a$14$x' }), NO_ACCOUNTS),
+        S.ACCOUNT_REQUIRED);
+    });
+
+    it('is LOCKED, not account-required, when accounts exist and none is enabled', () => {
+      // Offering the first-account page here would be a way around the accounts
+      // that already exist.
+      assert.equal(authGate.resolveGateState(on, ALL_DISABLED), S.LOCKED);
+    });
+
+    it('is open when authEnabled is off, with or without accounts', () => {
       // ADR 0009's opt-out survives: an operator can still run with no login.
-      assert.equal(
-        authGate.isGateActive(() => ({ authEnabled: false }), sessions(true)),
-        false
-      );
+      for (const sessions of [NO_ACCOUNTS, ENABLED, ALL_DISABLED]) {
+        assert.equal(authGate.resolveGateState(() => ({ authEnabled: false }), sessions), S.OPEN);
+      }
     });
 
     it('treats a MISSING authEnabled as off, not as truthy', () => {
-      assert.equal(authGate.isGateActive(() => ({}), sessions(true)), false);
+      assert.equal(authGate.resolveGateState(() => ({}), ENABLED), S.OPEN);
     });
 
     it('requires authEnabled to be exactly true, not merely truthy', () => {
@@ -58,80 +66,60 @@ describe('lib/auth-gate — the front-door verdict (#1418, ADR 0015/0016)', () =
       // rest of the codebase treats as not-set.
       for (const v of ['true', 1, 'yes', {}]) {
         assert.equal(
-          authGate.isGateActive(() => ({ authEnabled: v }), sessions(true)), false,
+          authGate.resolveGateState(() => ({ authEnabled: v }), ENABLED), S.OPEN,
           `authEnabled=${JSON.stringify(v)} must not activate the gate`
         );
       }
     });
 
-    it('does not enforce when config reads back as null', () => {
-      // A SUCCESSFUL read of nothing — not an error — so this answer is
-      // unconditional and does not depend on whether the gate was ever armed.
-      // This is NOT the corrupt-file case: the production thunk throws there,
-      // and the fail-closed block below drives that through the real one.
-      assert.equal(authGate.isGateActive(() => null, sessions(true)), false);
-      authGate.isGateActive(() => ({ authEnabled: true }), sessions(true)); // arm it
-      assert.equal(authGate.isGateActive(() => null, sessions(true)), false);
+    it('answers open when config reads back as null — a successful read of nothing', () => {
+      // This is NOT the corrupt-file case: the production thunk throws there.
+      assert.equal(authGate.resolveGateState(() => null, ENABLED), S.OPEN);
     });
 
-    it('does not enforce, and does not throw, when the store is unreadable WHILE DORMANT', () => {
-      // The armed case answers the other way — see the fail-closed block below.
-      assert.equal(authGate.isGateActive(() => ({ authEnabled: true }), throwingSessions()), false);
+    it('ENFORCES when reading config throws, whatever the accounts say', () => {
+      for (const sessions of [NO_ACCOUNTS, ENABLED, ALL_DISABLED]) {
+        assert.equal(
+          authGate.resolveGateState(() => { throw new Error('corrupt'); }, sessions), S.UNREADABLE);
+      }
     });
 
-    it('does not enforce when reading config THROWS while dormant', () => {
-      assert.equal(
-        authGate.isGateActive(() => { throw new Error('corrupt'); }, sessions(true)),
-        false
-      );
+    it('ENFORCES when the store throws', () => {
+      assert.equal(authGate.resolveGateState(on, throwingSessions()), S.UNREADABLE);
     });
 
-    it('asks the cheap question first and never reads config when dormant', () => {
-      // A performance contract, not a style preference: this runs on every
-      // request including every static asset, and `store.config.load()` is an
-      // existsSync + readFileSync + JSON.parse with no cache. An install with
-      // no accounts — which is every install today — must pay no file I/O.
-      let configReads = 0;
-      const loadConfig = () => { configReads++; return { authEnabled: true }; };
-      authGate.isGateActive(loadConfig, sessions(false));
-      assert.equal(configReads, 0, 'config must not be read when no account exists');
-      authGate.isGateActive(loadConfig, sessions(true));
-      assert.equal(configReads, 1, 'config IS read once the account question passes');
+    it('ENFORCES on a malformed store answer rather than reading it as "no accounts"', () => {
+      // "No accounts" opens the first-account page; a store answer that is not
+      // two booleans is not evidence of that.
+      for (const bad of [null, {}, { exists: 0, loginable: 0 }, { exists: 'false', loginable: false },
+        { exists: false }]) {
+        assert.equal(
+          authGate.resolveGateState(on, { accountPresence: () => bad }), S.UNREADABLE,
+          `presence=${JSON.stringify(bad)} must enforce`);
+      }
+    });
+
+    it('does not ask the store when authEnabled is off', () => {
+      // An open install pays no query. Not a correctness property — the answer
+      // is open either way — but the cheapest state is the most common one.
+      let asked = 0;
+      authGate.resolveGateState(() => ({ authEnabled: false }),
+        { accountPresence: () => { asked++; return { exists: true, loginable: true }; } });
+      assert.equal(asked, 0);
+    });
+
+    it('lets authEnabled:false turn an armed gate off — the recovery lever', () => {
+      assert.equal(authGate.resolveGateState(on, ENABLED), S.ARMED);
+      assert.equal(authGate.resolveGateState(() => ({ authEnabled: false }), ENABLED), S.OPEN);
     });
   });
 
-  describe('isGateActive fails CLOSED once the gate has been armed', () => {
-    // Before it is armed, failing open leaves the install as protected as it was
-    // before this module existed. After it is armed, the install is RELYING on
-    // this door, so a transient read error must not silently remove it.
-    beforeEach(() => authGate._resetArmedMemory());
-
-    it('fails open on a store error while still dormant', () => {
-      assert.equal(authGate.isGateActive(() => ({ authEnabled: true }), throwingSessions()), false);
-    });
-
-    it('fails CLOSED on a store error after the gate has been live once', () => {
-      assert.equal(authGate.isGateActive(() => ({ authEnabled: true }), sessions(true)), true);
-      assert.equal(authGate.isGateActive(() => ({ authEnabled: true }), throwingSessions()), true,
-        'an armed install must not be silently un-gated by a store fault');
-    });
-
-    it('fails CLOSED on a config error after the gate has been live once', () => {
-      assert.equal(authGate.isGateActive(() => ({ authEnabled: true }), sessions(true)), true);
-      assert.equal(
-        authGate.isGateActive(() => { throw new Error('corrupt'); }, sessions(true)), true);
-    });
-
-    it('still lets authEnabled:false turn the gate off after it was armed', () => {
-      // The recovery lever must keep working — that is a successful READ of a
-      // false value, not an error, so it is not the fail-closed path.
-      assert.equal(authGate.isGateActive(() => ({ authEnabled: true }), sessions(true)), true);
-      assert.equal(authGate.isGateActive(() => ({ authEnabled: false }), sessions(true)), false);
-    });
-
-    it('still goes dormant when the last account is disabled after arming', () => {
-      assert.equal(authGate.isGateActive(() => ({ authEnabled: true }), sessions(true)), true);
-      assert.equal(authGate.isGateActive(() => ({ authEnabled: true }), sessions(false)), false);
+  describe('isOpen — the one definition of "nothing is enforced"', () => {
+    it('is true only for exactly open', () => {
+      assert.equal(authGate.isOpen('open'), true);
+      for (const v of ['armed', 'account-required', 'locked', 'unreadable', undefined, null, '', 'OPEN', true]) {
+        assert.equal(authGate.isOpen(v), false, `${JSON.stringify(v)} must enforce`);
+      }
     });
   });
 
@@ -139,38 +127,66 @@ describe('lib/auth-gate — the front-door verdict (#1418, ADR 0015/0016)', () =
     // `bin/tc`, PortHub, shared-docs and the switchboard all reach TangleClaw on
     // the loopback listener with no cookie and no way to be handed one. Without
     // this, creating an account refuses every one of them.
-    it('is true for a loopback, non-browser, cookieless request', () => {
-      assert.equal(authGate.isMachineClient({
-        loopback: true, browserShaped: false, hasSessionCookie: false
-      }), true);
+    const local = { loopback: true, proxied: false, browserShaped: false, hasSessionCookie: false };
+
+    it('is true for a loopback, unproxied, non-browser, cookieless request', () => {
+      assert.equal(authGate.isMachineClient(local), true);
     });
 
     it('is FALSE off loopback — the carve-out is local processes only', () => {
-      assert.equal(authGate.isMachineClient({
-        loopback: false, browserShaped: false, hasSessionCookie: false
-      }), false);
+      assert.equal(authGate.isMachineClient({ ...local, loopback: false }), false);
+    });
+
+    it('is FALSE for a request that came through a reverse proxy', () => {
+      // Caddy connects to this listener from loopback, so without this every
+      // off-box request it forwards would be a machine client — which is how
+      // an off-box `curl` to /openclaw-direct/* got the gateway token injected.
+      assert.equal(authGate.isMachineClient({ ...local, proxied: true }), false);
     });
 
     it('is FALSE for anything browser-shaped', () => {
       // A browser cannot suppress Sec-Fetch-Site from script, so a page cannot
       // disguise itself as the CLI.
-      assert.equal(authGate.isMachineClient({
-        loopback: true, browserShaped: true, hasSessionCookie: false
-      }), false);
+      assert.equal(authGate.isMachineClient({ ...local, browserShaped: true }), false);
     });
 
     it('is FALSE when a session cookie is present', () => {
       // A signed-in browser is a person, and must stay subject to the CSRF
       // check rather than slipping into the machine path by dropping a header.
-      assert.equal(authGate.isMachineClient({
-        loopback: true, browserShaped: false, hasSessionCookie: true
-      }), false);
+      assert.equal(authGate.isMachineClient({ ...local, hasSessionCookie: true }), false);
     });
 
-    it('requires every condition explicitly — a missing field is not a pass', () => {
+    it('requires loopback and proxied explicitly — a missing field is not a pass', () => {
       assert.equal(authGate.isMachineClient({}), false);
-      assert.equal(authGate.isMachineClient({ loopback: true }), true);
-      assert.equal(authGate.isMachineClient({ loopback: 'yes' }), false);
+      assert.equal(authGate.isMachineClient({ loopback: 'yes', proxied: false }), false);
+      // The omission that would wave remote traffic through: a caller that
+      // never said whether the request was proxied.
+      assert.equal(authGate.isMachineClient({ loopback: true }), false);
+      assert.equal(authGate.isMachineClient({ loopback: true, proxied: undefined }), false);
+      assert.equal(authGate.isMachineClient({ loopback: true, proxied: 0 }), false);
+      // The two remaining negatives default to absent.
+      assert.equal(authGate.isMachineClient({ loopback: true, proxied: false }), true);
+    });
+  });
+
+  describe('isAccountSetupPath', () => {
+    it('matches the first-account route on its canonical path', () => {
+      for (const p of ['/api/auth/set-password', '//api/auth/set-password',
+        '/api/auth/%73et-password', '/api/x/../auth/set-password']) {
+        assert.equal(authGate.isAccountSetupPath(p), true, p);
+      }
+    });
+
+    it('matches nothing else', () => {
+      for (const p of ['/api/auth/login', '/api/auth/set-password/x', '/api/auth/set-passwordx', '/']) {
+        assert.equal(authGate.isAccountSetupPath(p), false, p);
+      }
+    });
+
+    it('is NOT on the always-exempt login surface — it is exempt only while no account exists', () => {
+      assert.equal(authGate.LOGIN_SURFACE_PATHS.has(authGate.ACCOUNT_SETUP_PATH), false);
+      assert.equal(authGate.isLoginSurfacePath(authGate.ACCOUNT_SETUP_PATH), false);
+      assert.equal(caddy.isCaddyAuthBypassPath(authGate.ACCOUNT_SETUP_PATH), false);
     });
   });
 
@@ -263,7 +279,7 @@ describe('lib/auth-gate — the front-door verdict (#1418, ADR 0015/0016)', () =
   describe('evaluate', () => {
     const base = {
       method: 'GET', rawUrl: '/', pathname: '/',
-      gateActive: true, session: null, submittedCsrf: null,
+      gateState: S.ARMED, session: null, submittedCsrf: null,
       // Off unless a case asks for it: the default subject of these cases is a
       // browser, and leaving it on would wave every one of them through.
       machineClient: false
@@ -271,22 +287,28 @@ describe('lib/auth-gate — the front-door verdict (#1418, ADR 0015/0016)', () =
     const ev = (over) => authGate.evaluate({ ...base, ...over });
     const SESSION = { csrfToken: 'tok', username: 'rosie' };
 
-    it('allows everything when the gate is not active', () => {
-      assert.deepEqual(ev({ gateActive: false }), { action: 'allow' });
+    it('allows everything when the gate is open', () => {
+      assert.deepEqual(ev({ gateState: S.OPEN }), { action: 'allow' });
       assert.deepEqual(
-        ev({ gateActive: false, method: 'POST', pathname: '/api/config' }),
+        ev({ gateState: S.OPEN, method: 'POST', pathname: '/api/config' }),
         { action: 'allow' }
       );
     });
 
+    it('enforces in every state that is not exactly open, including an unknown one', () => {
+      for (const gateState of [S.ARMED, S.ACCOUNT_REQUIRED, S.LOCKED, S.UNREADABLE, undefined, 'bogus']) {
+        assert.equal(ev({ gateState }).action, 'challenge', `${gateState} must enforce`);
+      }
+    });
+
     it('challenges an unauthenticated page request with the login document', () => {
-      assert.deepEqual(ev({}), { action: 'challenge', as: 'html' });
+      assert.deepEqual(ev({}), { action: 'challenge', as: 'html', for: 'sign-in' });
     });
 
     it('challenges an unauthenticated API request with JSON', () => {
       assert.deepEqual(
         ev({ rawUrl: '/api/config', pathname: '/api/config' }),
-        { action: 'challenge', as: 'json' }
+        { action: 'challenge', as: 'json', for: 'sign-in' }
       );
     });
 
@@ -318,7 +340,7 @@ describe('lib/auth-gate — the front-door verdict (#1418, ADR 0015/0016)', () =
 
     it('gates /openclaw-direct/* — its exemption is Caddy\'s, not the gate\'s (#1419)', () => {
       const p = '/openclaw-direct/abc/chat';
-      assert.deepEqual(ev({ rawUrl: p, pathname: p }), { action: 'challenge', as: 'html' });
+      assert.deepEqual(ev({ rawUrl: p, pathname: p }), { action: 'challenge', as: 'html', for: 'sign-in' });
       assert.deepEqual(ev({ rawUrl: p, pathname: p, session: SESSION }), { action: 'allow' });
     });
 
@@ -327,9 +349,62 @@ describe('lib/auth-gate — the front-door verdict (#1418, ADR 0015/0016)', () =
       // `/openclaw/*` carries the operator's gateway token. Neither is a route,
       // so both are gated only by the gate standing ahead of every branch.
       for (const p of ['/terminal/x', '/openclaw/proj/api', '/plans/p/f.md']) {
-        assert.deepEqual(ev({ rawUrl: p, pathname: p }), { action: 'challenge', as: 'html' },
+        assert.deepEqual(ev({ rawUrl: p, pathname: p }), { action: 'challenge', as: 'html', for: 'sign-in' },
           `${p} must be gated`);
       }
+    });
+
+    describe('account-required — no account exists yet', () => {
+      const AR = { gateState: S.ACCOUNT_REQUIRED };
+
+      it('challenges a page with the account-setup document, not the login form', () => {
+        assert.deepEqual(ev(AR), { action: 'challenge', as: 'html', for: 'account-setup' });
+      });
+
+      it('challenges an API call with JSON that says an account is needed', () => {
+        assert.deepEqual(ev({ ...AR, rawUrl: '/api/config', pathname: '/api/config' }),
+          { action: 'challenge', as: 'json', for: 'account-setup' });
+      });
+
+      it('lets the first-account route through, on every spelling of it', () => {
+        for (const rawUrl of ['/api/auth/set-password', '//api/auth/set-password']) {
+          assert.deepEqual(
+            ev({ ...AR, method: 'POST', rawUrl, pathname: '/api/auth/set-password' }),
+            { action: 'allow' }, rawUrl);
+        }
+      });
+
+      it('does NOT let the first-account route through in any other enforcing state', () => {
+        // Once an account exists the route has nothing to do, and an exemption
+        // that outlives its purpose is a hole for a future edit to the route.
+        for (const gateState of [S.ARMED, S.LOCKED, S.UNREADABLE]) {
+          assert.deepEqual(
+            ev({ gateState, method: 'POST', rawUrl: '/api/auth/set-password', pathname: '/api/auth/set-password' }),
+            { action: 'challenge', as: 'json', for: 'sign-in' }, gateState);
+        }
+      });
+
+      it('still lets the fleet and the bypass paths through', () => {
+        assert.deepEqual(ev({ ...AR, rawUrl: '/api/ports', pathname: '/api/ports', machineClient: true }),
+          { action: 'allow' });
+        assert.deepEqual(ev({ ...AR, rawUrl: '/api/health', pathname: '/api/health' }), { action: 'allow' });
+      });
+
+      it('still gates the shell and the gateway proxies', () => {
+        for (const p of ['/terminal/x', '/openclaw/proj/api', '/openclaw-direct/abc/chat']) {
+          assert.equal(ev({ ...AR, rawUrl: p, pathname: p }).action, 'challenge', p);
+        }
+      });
+
+      it('lets the fleet through an UNREADABLE gate — a store fault must not take bin/tc down with it', () => {
+        assert.deepEqual(ev({ gateState: S.UNREADABLE, rawUrl: '/api/ports', pathname: '/api/ports', machineClient: true }),
+          { action: 'allow' });
+        assert.equal(ev({ gateState: S.UNREADABLE, rawUrl: '/api/ports', pathname: '/api/ports' }).action, 'challenge');
+      });
+
+      it('shows a LOCKED install the sign-in challenge, never the account page', () => {
+        assert.deepEqual(ev({ gateState: S.LOCKED }), { action: 'challenge', as: 'html', for: 'sign-in' });
+      });
     });
 
     describe('CSRF', () => {
@@ -362,7 +437,7 @@ describe('lib/auth-gate — the front-door verdict (#1418, ADR 0015/0016)', () =
         // and the documented agent-facing API working untouched.
         assert.deepEqual(
           ev({ method: 'POST', rawUrl: '/api/config', pathname: '/api/config' }),
-          { action: 'challenge', as: 'json' }
+          { action: 'challenge', as: 'json', for: 'sign-in' }
         );
       });
 
@@ -430,12 +505,19 @@ describe('lib/auth-gate — the front-door verdict (#1418, ADR 0015/0016)', () =
   });
 
   describe('evaluateUpgrade — the WebSocket handshake (#1419)', () => {
-    const base = { gateActive: true, session: null, machineClient: false };
+    const base = { gateState: S.ARMED, session: null, machineClient: false };
     const ev = (over) => authGate.evaluateUpgrade({ ...base, ...over });
     const SESSION = { csrfToken: 'tok', username: 'rosie' };
 
-    it('allows every upgrade when the gate is not active', () => {
-      assert.deepEqual(ev({ gateActive: false }), { action: 'allow' });
+    it('allows every upgrade when the gate is open', () => {
+      assert.deepEqual(ev({ gateState: S.OPEN }), { action: 'allow' });
+    });
+
+    it('refuses a sessionless upgrade in every enforcing state — only the fleet gets a socket', () => {
+      for (const gateState of [S.ACCOUNT_REQUIRED, S.LOCKED, S.UNREADABLE]) {
+        assert.deepEqual(ev({ gateState }), { action: 'refuse' }, gateState);
+        assert.deepEqual(ev({ gateState, machineClient: true }), { action: 'allow' }, gateState);
+      }
     });
 
     it('refuses an upgrade with no session', () => {
@@ -460,9 +542,41 @@ describe('lib/auth-gate — the front-door verdict (#1418, ADR 0015/0016)', () =
       }
     });
 
-    it('opens only on a gateActive that is exactly false', () => {
+    it('opens only on a gateState that is exactly open', () => {
       // A verdict computed from a thrown or absent value must not open.
-      assert.deepEqual(ev({ gateActive: undefined }), { action: 'refuse' });
+      for (const gateState of [undefined, null, '', 'OPEN', true]) {
+        assert.deepEqual(ev({ gateState }), { action: 'refuse' }, String(gateState));
+      }
     });
   });
+});
+
+describe('the carve-out\'s proxy premise — what the generated Caddyfile must never say (#1420)', () => {
+  // `isMachineClient` treats "no X-Forwarded-For" as "not forwarded by Caddy".
+  // That holds only while Caddy sets the header on every forwarded request and
+  // refuses a client's value, which it does by default and stops doing the
+  // moment a `trusted_proxies` directive names the client's range, or a
+  // `header_up` removes or rewrites the header. Any of those in a generated file
+  // would let an off-box caller arrive looking local. This pins the generator in
+  // every shape it emits; a hand-edited live file is read by the drift check.
+  const BCRYPT = '$2a$14$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU';
+  const base = { serverPort: 3102, certPath: '/tmp/cert.pem', keyPath: '/tmp/key.pem' };
+  const gated = { basicAuthUser: 'jason', basicAuthHash: BCRYPT };
+  const SHAPES = {
+    'ungated local': base,
+    gated: { ...base, ...gated },
+    'gated + remote http catch-all': { ...base, ...gated, remoteHttpCatchAll: true },
+    'gated + tailnet host': { ...base, ...gated, tailnetHost: 'box.tail0000.ts.net' },
+    'gated + public domain': { ...base, ...gated, publicDomain: 'tc.example.com' },
+    'gated + access log': { ...base, ...gated, accessLogPath: '/tmp/caddy.access.log' }
+  };
+
+  for (const [name, opts] of Object.entries(SHAPES)) {
+    it(`emits no trusted_proxies and never touches X-Forwarded-For — ${name}`, () => {
+      const content = caddy.buildCaddyfileContent(opts);
+      assert.ok(content.includes('reverse_proxy'), 'premise: the shape reaches the upstream');
+      assert.doesNotMatch(content, /trusted_proxies/i);
+      assert.doesNotMatch(content, /X-Forwarded-For/i);
+    });
+  }
 });

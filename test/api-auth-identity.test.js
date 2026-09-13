@@ -105,12 +105,15 @@ describe('AUTH-3 — /api/server-info currentUser (proxy identity over HTTP)', (
     assert.equal(res.body.currentUser, null);
   });
 
-  it("reports authStatus 'configured-no-identity' when a proxied request lacks identity (AUTH-3)", async () => {
+  it('refuses a proxied request on an install with no account, before any identity question (#1420)', async () => {
+    // This case used to report authStatus 'configured-no-identity'. With no
+    // account the install is account-required, TangleClaw's gate refuses a
+    // proxied request outright, and the AUTH-3 identity diagnosis is never
+    // reached over HTTP.
     setConfig({ ingressMode: 'caddy', authEnabled: true });
-    // X-Forwarded-For marks the request as having traversed Caddy, so the
-    // missing identity is real evidence of broken header_up forwarding.
     const res = await get(server, '/api/server-info', { 'X-Forwarded-For': '100.64.0.7' });
-    assert.equal(res.body.authStatus, 'configured-no-identity');
+    assert.equal(res.status, 401);
+    assert.equal(res.body.code, 'ACCOUNT_REQUIRED');
   });
 
   it("reports authStatus 'configured-bypassed' on a direct loopback request (AUTH-5N2J regression)", async () => {

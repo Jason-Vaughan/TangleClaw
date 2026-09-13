@@ -130,24 +130,44 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
     return { res, cookie, csrf: JSON.parse(res.body).csrfToken };
   }
 
-  describe('the gate is dormant until an operator turns it on', () => {
+  describe('which state the door is in (#1420)', () => {
     it('lets everything through with authEnabled off and no accounts', () => {
       return send('GET', '/api/config').then((res) => {
         assert.notEqual(res.statusCode, 401);
       });
     });
 
-    it('is STILL dormant with authEnabled on but no account', async () => {
-      // The decision that keeps this change from locking the operator out of
-      // the live install: every caddy-mode install is authEnabled:true with a
-      // bcrypt hash and zero user rows.
+    it('is CLOSED with authEnabled on but no account — account-required, not dormant', async () => {
+      // Every install upgraded from Caddy's gate is authEnabled:true with a
+      // bcrypt hash and zero user rows. Leaving that dormant is an open door the
+      // moment Caddy's gate is gone.
       setAuthEnabled(true);
       const res = await send('GET', '/api/config');
-      assert.notEqual(res.statusCode, 401,
-        'an install with no account must not be gated — it has no key');
+      assert.equal(res.statusCode, 401);
+      assert.match(res.body, /ACCOUNT_REQUIRED/);
     });
 
-    it('is dormant with an account but authEnabled off', async () => {
+    it('answers a page in account-required with the account-setup document, at 401', async () => {
+      setAuthEnabled(true);
+      const res = await send('GET', '/');
+      assert.equal(res.statusCode, 401);
+      assert.match(res.body, /Create your account/);
+      assert.match(res.headers['cache-control'], /no-store/);
+      assert.match(res.headers['content-security-policy'], /frame-ancestors 'none'/);
+    });
+
+    it('serves the account-setup page at /login while no account exists, and the login form after', async () => {
+      setAuthEnabled(true);
+      const before = await send('GET', '/login');
+      assert.equal(before.statusCode, 200);
+      assert.match(before.body, /Create your account/);
+      store.users.create('rosie', PASSWORD);
+      const after = await send('GET', '/login');
+      assert.match(after.body, /Sign in/);
+      assert.doesNotMatch(after.body, /Create your account/);
+    });
+
+    it('is open with an account but authEnabled off', async () => {
       store.users.create('rosie', PASSWORD);
       const res = await send('GET', '/api/config');
       assert.notEqual(res.statusCode, 401);
@@ -157,15 +177,162 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
       armGate();
       const res = await send('GET', '/api/config');
       assert.equal(res.statusCode, 401);
+      assert.match(res.body, /UNAUTHENTICATED/);
     });
 
-    it('goes dormant again when the only account is disabled', async () => {
-      // The recovery path that does not need a shell: an operator whose gate is
-      // misbehaving can disable the account and get back in.
+    it('stays CLOSED when the only account is disabled — locked, and no account page', async () => {
+      // Disabling the last account used to re-open the install. It now leaves it
+      // locked: the recovery is `scripts/reset-admin.js` at a terminal, and the
+      // first-account page is NOT offered, because creating an account there
+      // would be a way around the one that exists.
       armGate();
       store.users.disable('rosie');
-      const res = await send('GET', '/api/config');
-      assert.notEqual(res.statusCode, 401);
+      const api = await send('GET', '/api/config');
+      assert.equal(api.statusCode, 401);
+      assert.match(api.body, /UNAUTHENTICATED/);
+      const page = await send('GET', '/');
+      assert.match(page.body, /Sign in/);
+      const create = await send('POST', '/api/auth/set-password',
+        { body: { username: 'mallory', password: 'a-long-enough-password' } });
+      assert.equal(create.statusCode, 401, 'the first-account route is closed once any account exists');
+      assert.equal(store.users.getByName('mallory'), null);
+    });
+  });
+
+  describe('POST /api/auth/set-password — the first account (#1420)', () => {
+    beforeEach(() => {
+      const cfg = store.config.load();
+      cfg.authEnabled = true;
+      cfg.basicAuthUser = 'jason';
+      cfg.basicAuthHash = '$2a$14$' + 'x'.repeat(53);
+      store.config.save(cfg);
+    });
+
+    const GOOD = { username: 'jason', password: 'a-long-enough-password' };
+
+    it('creates the account, signs the caller in, and arms the gate', async () => {
+      const res = await send('POST', '/api/auth/set-password', { body: GOOD });
+      assert.equal(res.statusCode, 200, res.body);
+      assert.equal(JSON.parse(res.body).username, 'jason');
+      const cookies = res.headers['set-cookie'];
+      assert.ok(cookies.some((c) => c.startsWith(authSession.SESSION_COOKIE + '=')), 'a session cookie is set');
+      const cookie = cookies.map((c) => c.split(';')[0]).join('; ');
+      assert.notEqual((await send('GET', '/api/config', { cookie })).statusCode, 401,
+        'the new session is live');
+      assert.equal((await send('GET', '/api/config')).statusCode, 401, 'the install is now armed');
+      const { res: loginRes } = await login('jason', GOOD.password);
+      assert.equal(loginRes.statusCode, 200, 'the password set here is the one that signs in');
+    });
+
+    it('keeps the bcrypt basicAuthHash — it is the fallback credential, not garbage', async () => {
+      const hash = store.config.load().basicAuthHash;
+      await send('POST', '/api/auth/set-password', { body: GOOD });
+      assert.equal(store.config.load().basicAuthHash, hash);
+    });
+
+    it('applies the Caddy password policy, before creating anything', async () => {
+      for (const [password, why] of [['short', 'too short'], ['password1234', 'denylisted'],
+        ['jason-is-the-best-user', 'contains the username'], ['', 'empty']]) {
+        const res = await send('POST', '/api/auth/set-password', { body: { username: 'jason', password } });
+        assert.equal(res.statusCode, 400, `${why} must be refused`);
+      }
+      assert.equal(store.users.list().length, 0, 'no refused submission creates an account');
+    });
+
+    it('requires a username', async () => {
+      for (const username of ['', '   ', undefined, 7]) {
+        const res = await send('POST', '/api/auth/set-password',
+          { body: { username, password: GOOD.password } });
+        assert.equal(res.statusCode, 400, `username=${JSON.stringify(username)}`);
+      }
+      assert.equal(store.users.list().length, 0);
+    });
+
+    it('answers 400, not 500, to an empty body', async () => {
+      const res = await send('POST', '/api/auth/set-password', { body: {} });
+      assert.equal(res.statusCode, 400);
+    });
+
+    it('cannot create a second account — once one exists the route is closed', async () => {
+      assert.equal((await send('POST', '/api/auth/set-password', { body: GOOD })).statusCode, 200);
+      const res = await send('POST', '/api/auth/set-password',
+        { body: { username: 'mallory', password: 'another-long-password' } });
+      assert.equal(res.statusCode, 401, 'the gate no longer exempts the route');
+      assert.equal(store.users.getByName('mallory'), null);
+    });
+
+    it('refuses with ACCOUNT_EXISTS when an account appears between the gate and the write', async () => {
+      // The gate saw account-required; `reset-admin.js` (another process) wins
+      // the race. `createFirstAsync`'s own check under the write lock must refuse.
+      const orig = store.users.createFirstAsync;
+      store.users.createFirstAsync = (u, pw) => {
+        store.users.create('raced', 'raced-long-password');
+        return orig.call(store.users, u, pw);
+      };
+      try {
+        const res = await send('POST', '/api/auth/set-password', { body: GOOD });
+        assert.equal(res.statusCode, 409);
+        assert.match(res.body, /ACCOUNT_EXISTS/);
+        assert.equal(store.users.getByName('jason'), null);
+      } finally {
+        store.users.createFirstAsync = orig;
+      }
+    });
+
+    it('refuses on an open install, and says a login is not required rather than that an account exists', async () => {
+      setAuthEnabled(false);
+      const res = await send('POST', '/api/auth/set-password', { body: GOOD });
+      assert.equal(res.statusCode, 409, 'an open install has no first-account step');
+      assert.match(res.body, /LOGIN_NOT_REQUIRED/);
+      assert.doesNotMatch(res.body, /already exists/, 'no account exists, so the message must not claim one');
+      assert.equal(store.users.list().length, 0);
+    });
+
+    it('hashes off the event loop, inside the login route\'s concurrency cap', async () => {
+      // Reachable signed-out until the first account exists, so a burst of
+      // valid submissions must not each run a synchronous scrypt, and must not
+      // occupy more of the threadpool than the login route may. Three at once:
+      // two are admitted, the third is turned away busy, and of the two admitted
+      // exactly one creates the account.
+      //
+      // The async hash is HELD until all three have been handled, so the outcome
+      // does not depend on whether a real scrypt finishes before the third
+      // request arrives — a race a slow CI runner could lose.
+      const passwordLib = require('../lib/password');
+      const realSync = passwordLib.hashPassword;
+      const realAsync = passwordLib.hashPasswordAsync;
+      let syncCalls = 0;
+      let asyncCalls = 0;
+      let release;
+      const held = new Promise((r) => { release = r; });
+      passwordLib.hashPassword = function (...args) { syncCalls++; return realSync.apply(this, args); };
+      passwordLib.hashPasswordAsync = function (...args) {
+        asyncCalls++;
+        return held.then(() => realAsync.apply(this, args));
+      };
+      try {
+        const pending = [1, 2, 3].map((n) =>
+          send('POST', '/api/auth/set-password',
+            { body: { username: `user${n}`, password: 'a-long-enough-password' } }));
+        // Wait (bounded, by counting — never by time) until two hashes are
+        // parked at the cap; the third has then already been refused.
+        for (let i = 0; i < 1000 && asyncCalls < 2; i++) await new Promise((r) => setImmediate(r));
+        assert.equal(asyncCalls, 2, 'precondition: two submissions admitted and holding the cap');
+        release();
+        const statuses = (await Promise.all(pending)).map((r) => r.statusCode).sort();
+        assert.deepEqual(statuses, [200, 409, 503], `got ${JSON.stringify(statuses)}`);
+        assert.equal(syncCalls, 0, 'no synchronous hash on the unauthenticated route');
+        assert.equal(store.users.list().length, 1);
+      } finally {
+        passwordLib.hashPassword = realSync;
+        passwordLib.hashPasswordAsync = realAsync;
+      }
+    });
+
+    it('is reachable through the proxy — reach authorises it, per ADR 0016', async () => {
+      const res = await send('POST', '/api/auth/set-password',
+        { body: GOOD, headers: { 'x-forwarded-for': '100.64.0.7' } });
+      assert.equal(res.statusCode, 200);
     });
   });
 
@@ -230,10 +397,9 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
       assert.match(res.body, /Sign in/);
     });
 
-    it('serves /login even when the gate is dormant', async () => {
+    it('serves /login even when the gate is open', async () => {
       // So the path does not blink into existence at the moment the gate turns
-      // on, and an operator who has not created an account gets an honest page
-      // rather than a 404.
+      // on.
       setAuthEnabled(false);
       const res = await send('GET', '/login');
       assert.equal(res.statusCode, 200);
@@ -473,7 +639,7 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
       const res = await send('GET', '/api/auth/me');
       assert.equal(res.statusCode, 200, 'no login required IS a successful answer');
       assert.deepEqual(JSON.parse(res.body), {
-        authenticated: false, gateActive: false, username: null, csrfToken: null
+        authenticated: false, gateActive: false, gateState: 'open', username: null, csrfToken: null
       });
     });
 
@@ -482,8 +648,15 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
       const { cookie, csrf } = await login();
       const res = await send('GET', '/api/auth/me', { cookie });
       assert.deepEqual(JSON.parse(res.body), {
-        authenticated: true, gateActive: true, username: 'rosie', csrfToken: csrf
+        authenticated: true, gateActive: true, gateState: 'armed', username: 'rosie', csrfToken: csrf
       });
+    });
+
+    it('tells a signed-out caller the install needs an account', async () => {
+      setAuthEnabled(true);
+      const res = await send('GET', '/api/auth/me');
+      assert.equal(res.statusCode, 200);
+      assert.equal(JSON.parse(res.body).gateState, 'account-required');
     });
 
     it('never leaks a password hash', async () => {
@@ -593,23 +766,16 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
     });
   });
 
-  describe('an armed gate fails CLOSED on a corrupt config — through the PRODUCTION thunk', () => {
-    // The first version of this guard was unreachable, and the suite could not
-    // see it: `isGateActive`'s fail-closed branch waits for its config thunk to
-    // THROW, while the real caller routed through a loader that swallowed every
-    // failure into `null` — so a corrupt config.json on an armed install read
-    // as "not enforcing", got cached on mtime+size, and re-served. An
-    // authentication bypass for as long as the file stayed unreadable.
-    //
-    // The old test synthesized `() => { throw }`, an input the real caller
-    // could not produce. This one corrupts the actual file and drives
-    // `handleRequest`, so nothing between the disk and the verdict is
-    // imagined.
+  describe('the gate fails CLOSED on a corrupt config — through the PRODUCTION thunk', () => {
+    // `resolveGateState` answers `unreadable` only when its config thunk
+    // THROWS, so a caller routing it through a loader that swallows failures
+    // into `null` would make that branch unreachable and read a corrupt file as
+    // "not enforcing". A synthesized `() => { throw }` cannot catch that; this
+    // corrupts the actual file and drives `handleRequest`, so nothing between
+    // the disk and the verdict is imagined.
     beforeEach(armGate);
 
     it('challenges a browser when config.json is present but unparseable', async () => {
-      // Arm it for real first: the fail-closed answer is deliberately
-      // conditional on this process having served a gated request.
       const armed = await send('GET', '/api/config');
       assert.equal(armed.statusCode, 401, 'precondition: the gate is armed');
 
@@ -628,13 +794,27 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
       }
     });
 
+    it('enforces on an unreadable config even on an install with NO account and no prior request', async () => {
+      // The fail-closed answer is no longer conditional on the gate having been
+      // armed in this process: with Caddy's gate gone, an unreadable config on a
+      // fresh process is the same bypass as on a warm one.
+      store.getDb().prepare('DELETE FROM users').run();
+      const cfgPath = store._getConfigPath();
+      const good = fs.readFileSync(cfgPath, 'utf8');
+      fs.writeFileSync(cfgPath, '{ not json, and not the same length as before }');
+      try {
+        const res = await send('GET', '/api/config');
+        assert.equal(res.statusCode, 401);
+      } finally {
+        fs.writeFileSync(cfgPath, good);
+      }
+    });
+
     it('also stays gated when config.json is MISSING, not just unparseable', async () => {
-      // A deliberate departure from the review note that asked for the missing
-      // case to stay fail-open, pinned here because it is a CHOICE now and not
-      // an accident of an unguarded stat. `store.config.load()` answers a
-      // missing file with DEFAULT_CONFIG, whose authEnabled is false — so
-      // honouring it would mean deleting one file silently un-gates an armed
-      // install, the same bypass reached by another route.
+      // Pinned because it is a CHOICE and not an accident of an unguarded stat.
+      // `store.config.load()` answers a missing file with DEFAULT_CONFIG, whose
+      // authEnabled is false — so honouring it would mean deleting one file
+      // silently un-gates the install.
       const armed = await send('GET', '/api/config');
       assert.equal(armed.statusCode, 401, 'precondition: the gate is armed');
 
@@ -730,6 +910,23 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
       const res = await send('GET', '/api/config', { machine: true, remoteAddress: '10.0.0.5' });
       assert.equal(res.statusCode, 401, 'the carve-out is local processes only');
     });
+
+    it('a loopback request that came THROUGH THE PROXY is gated, machine-shaped or not', async () => {
+      // Caddy connects from loopback and sends no browser markers for a
+      // non-browser client, so without the X-Forwarded-For condition an off-box
+      // `curl` forwarded by Caddy would be waved through as the fleet.
+      for (const xff of ['100.64.0.7', '']) {
+        const res = await send('GET', '/api/config',
+          { machine: true, headers: { 'x-forwarded-for': xff } });
+        assert.equal(res.statusCode, 401, `x-forwarded-for=${JSON.stringify(xff)} must be gated`);
+      }
+    });
+
+    it('the proxied request to /openclaw-direct/* is gated — the #1419 residual', async () => {
+      const res = await send('GET', '/openclaw-direct/abc/chat',
+        { machine: true, headers: { 'x-forwarded-for': '100.64.0.7' } });
+      assert.equal(res.statusCode, 401);
+    });
   });
 
   describe('the WebSocket upgrade (#1419)', () => {
@@ -783,6 +980,7 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
       const origin = opts.origin === undefined ? 'http://localhost:3102' : opts.origin;
       if (origin !== null) headers.origin = origin;
       if (opts.cookie) headers.cookie = opts.cookie;
+      Object.assign(headers, opts.headers);
       const socket = new PassThrough();
       socket.remoteAddress = opts.remoteAddress || '127.0.0.1';
       socket.written = '';
@@ -915,6 +1113,14 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
         } finally { restore(); }
       });
 
+      it('refuses a machine-shaped upgrade that came through the proxy', async () => {
+        try {
+          const s = await upgrade('/terminal/ws', { origin: null, headers: { 'x-forwarded-for': '100.64.0.7' } });
+          assert.match(s.written, REFUSED);
+          assert.equal(connects.length, 0);
+        } finally { restore(); }
+      });
+
       it('refuses a machine-shaped upgrade from OFF the box', async () => {
         try {
           const s = await upgrade('/terminal/ws', { origin: null, remoteAddress: '10.0.0.5' });
@@ -949,9 +1155,11 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
     });
 
     it('closes the terminal socket, rather than throwing, when config cannot be read', async () => {
-      // Dormant gate (no account), so the gate reads no config and the terminal
-      // branch is the first thing to — an unguarded throw there escapes the
-      // 'upgrade' listener and leaves the client's socket half-open.
+      // The gate reads config first and answers `unreadable`, which enforces —
+      // but this upgrade has the fleet's shape, so the carve-out lets it through
+      // and the terminal branch is the next thing to read config. An unguarded
+      // throw there escapes the 'upgrade' listener and leaves the client's
+      // socket half-open.
       const cfgPath = store._getConfigPath();
       const saved = fs.readFileSync(cfgPath, 'utf8');
       try {
@@ -967,11 +1175,20 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
       }
     });
 
-    describe('with the gate dormant', () => {
-      it('opens the terminal exactly as before — no account, nothing to log in to', async () => {
+    describe('while no account exists (account-required)', () => {
+      it('refuses a browser upgrade — nobody can hold a session yet', async () => {
         try {
-          setAuthEnabled(true); // the caddy-mode shape: switch on, zero accounts
+          setAuthEnabled(true); // the upgraded-install shape: switch on, zero accounts
           const s = await upgrade('/terminal/ws');
+          assert.match(s.written, REFUSED);
+          assert.equal(connects.length, 0);
+        } finally { restore(); }
+      });
+
+      it('still lets the fleet\'s shape through', async () => {
+        try {
+          setAuthEnabled(true);
+          const s = await upgrade('/terminal/ws', { origin: null });
           assert.doesNotMatch(s.written, REFUSED);
           assert.equal(connects.length, 1);
         } finally { restore(); }

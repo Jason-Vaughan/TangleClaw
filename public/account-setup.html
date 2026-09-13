@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Create your account — TangleClaw</title>
+<!--
+  The page an install shows while it has no account yet (`lib/auth-gate.js`
+  state `account-required`) — including every install upgraded from Caddy's
+  password gate, whose old password TangleClaw cannot check.
+
+  Self-contained for the same reasons as `login.html`: every path answered to a
+  signed-out person is a hole in the gate, and a cached copy of this page is how
+  a stale one reaches someone who has since signed in. Not in the service
+  worker's precache and not referenced from `sw.js`.
+
+  The minimum-length hint is the same rule the server enforces
+  (`caddy.validateAdminPassword`), repeated only as a hint: the server's answer
+  is the one shown when they disagree.
+-->
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --fg: #1a1d21;
+    --muted: #5b6470;
+    --line: #d9dee5;
+    --accent: #2f6feb;
+    --danger: #b42318;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c;
+      --card: #1c2027;
+      --fg: #e8ebef;
+      --muted: #9aa4b2;
+      --line: #2c323b;
+      --accent: #5b8cf5;
+      --danger: #f2736a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  main {
+    width: 100%;
+    max-width: 380px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 28px 26px 24px;
+  }
+  h1 { margin: 0 0 4px; font-size: 19px; letter-spacing: -0.01em; }
+  p.sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
+  label { display: block; font-size: 13px; font-weight: 600; margin: 14px 0 5px; }
+  input {
+    width: 100%;
+    padding: 9px 11px;
+    font: inherit;
+    color: var(--fg);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button {
+    width: 100%;
+    margin-top: 20px;
+    padding: 10px;
+    font: inherit;
+    font-weight: 600;
+    color: #fff;
+    background: var(--accent);
+    border: 0;
+    border-radius: 7px;
+    cursor: pointer;
+  }
+  button[disabled] { opacity: 0.6; cursor: default; }
+  /*
+    Always in the DOM, emptied rather than hidden, and marked as a live region:
+    a screen reader must hear "that password is wrong" without the element
+    appearing and disappearing under it. Accessibility From the Start.
+  */
+  #error {
+    margin-top: 14px;
+    min-height: 1.4em;
+    color: var(--danger);
+    font-size: 13px;
+  }
+  p.hint { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>TangleClaw</h1>
+  <p class="sub">Create the account you will sign in with. If you used a password
+    for this dashboard before, it no longer works — choose one here.</p>
+  <form id="f" autocomplete="on">
+    <label for="u">Username</label>
+    <input id="u" name="username" autocomplete="username" autocapitalize="none"
+           autocorrect="off" spellcheck="false" required>
+    <label for="p">Password</label>
+    <input id="p" name="password" type="password" autocomplete="new-password"
+           minlength="12" aria-describedby="p-hint" required>
+    <p id="p-hint" class="hint">At least 12 characters, and not containing the username.</p>
+    <label for="c">Confirm password</label>
+    <input id="c" name="confirm" type="password" autocomplete="new-password" required>
+    <button id="go" type="submit">Create account</button>
+    <p id="error" role="alert" aria-live="polite"></p>
+  </form>
+</main>
+<script>
+'use strict';
+(function () {
+  var form = document.getElementById('f');
+  var err = document.getElementById('error');
+  var go = document.getElementById('go');
+
+  form.addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    err.textContent = '';
+    var password = document.getElementById('p').value;
+    if (password !== document.getElementById('c').value) {
+      err.textContent = 'The two passwords do not match.';
+      return;
+    }
+    go.disabled = true;
+    go.textContent = 'Creating account…';
+    try {
+      var res = await fetch('/api/auth/set-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: document.getElementById('u').value,
+          password: password
+        })
+      });
+      var data = await res.json().catch(function () { return {}; });
+      if (res.ok) {
+        // Replace rather than assign, so Back does not return to a filled-in
+        // password form. Always the dashboard root — never a parameter taken
+        // off the URL, for the open-redirect reason given in `login.html`.
+        window.location.replace('/');
+        return;
+      }
+      if (data.code === 'ACCOUNT_EXISTS') {
+        // Someone (or a terminal) created the account first. The login page is
+        // the only useful place to be now.
+        window.location.replace('/login');
+        return;
+      }
+      err.textContent = data.error || ('Could not create the account (HTTP ' + res.status + ')');
+    } catch (e) {
+      err.textContent = 'Could not reach the server.';
+    }
+    go.disabled = false;
+    go.textContent = 'Create account';
+  });
+
+  document.getElementById('u').focus();
+})();
+</script>
+</body>
+</html>
