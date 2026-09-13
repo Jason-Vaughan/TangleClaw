@@ -61,7 +61,9 @@ It asks for the new password twice. It also:
 - **deletes that account's recovery codes**, so a code someone copied cannot reset the password
   again. Sign in and generate a new set in **Settings → Recovery codes**;
 - re-enables the account if it was disabled;
-- prints what the login does afterwards. If it says `authEnabled is OFF`, no login is enforced at all.
+- prints what the login does afterwards. If it says `authEnabled is OFF` and `NO login is enforced`,
+  nothing asks for a password; if it names Caddy's password as the only login, that pop-up is what
+  protects the install until `authEnabled` is turned on.
 
 Add `--dry-run` to see what it would do without changing anything. The password rules are the same
 everywhere: at least 12 characters, not a common password, not containing the username.

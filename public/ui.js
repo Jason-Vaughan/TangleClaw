@@ -2421,7 +2421,7 @@ async function _loadCredentialSection() {
   if (!box) return;
   const info = await api('/api/auth/credential');
   if (!info) {
-    box.innerHTML = `<div class="form-hint">Could not check the login setting: ${esc(api.lastError || 'unknown error')}</div>`;
+    box.innerHTML = `<div class="form-hint">Could not check Caddy's password:${esc(api.lastError || 'unknown error')}</div>`;
     return;
   }
   if (!info.changeable) {
@@ -2429,7 +2429,7 @@ async function _loadCredentialSection() {
     // change", and each carries the command that does apply.
     box.innerHTML = `
       <div class="form-hint">
-        ${esc(info.reason || 'The login cannot be changed from here.')}
+        ${esc(info.reason || 'Caddy\'s password cannot be changed from here.')}
         ${info.remedy ? `<br><br>${esc(info.remedy)}` : ''}
       </div>`;
     return;
@@ -2455,7 +2455,7 @@ async function _loadCredentialSection() {
       credentials — so the next page you load will ask for the new one. Have it to hand before you
       save. If you lose it, run <code>node scripts/reset-admin.js</code> at a terminal on this machine.
     </div>
-    <button type="button" class="btn" id="gsCredSaveBtn">Change login</button>`;
+    <button type="button" class="btn" id="gsCredSaveBtn">Change Caddy password</button>`;
 
   const saveBtn = document.getElementById('gsCredSaveBtn');
   saveBtn.addEventListener('click', async () => {

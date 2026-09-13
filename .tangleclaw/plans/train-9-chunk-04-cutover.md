@@ -391,7 +391,8 @@ recovery codes revoked with the account, Settings and sign-in copy, the recovery
 - Settings section renamed **Caddy password**.
 - **Carried to A-VRF (docs sweep before Checkpoint 2):** README "Security" and "Security & Remote
   Access", `docs/setup-guide.md` "What a fresh install does" / "Reaching it", and FEATURES' older AUTH-2
-  entries still describe Caddy's `basic_auth` as THE gate (and "no session revocation"). True of the
+  entries still describe Caddy's `basic_auth` as THE gate (and "no session revocation"); and the
+  README "How Do I…?" row "Change the password you sign in with" points at the Caddy password section. True of the
   live install until the cutover runs; rewrite them with the cutover procedure, not piecemeal here.
 
 ### Chunk A.04d (A-04d) — the gate machinery carries
