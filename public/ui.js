@@ -2482,6 +2482,20 @@ function openGlobalSettings() {
   // untouched Save must not write anything.
   const bindShowsOn = !!bindState.wide;
   const bindUnchosen = bindState.choice === 'unchosen';
+  // #1055 — in caddy mode the switch is locked and drawn from the SOCKET, so a
+  // stored value that differs from it is invisible, and it is what applies the
+  // moment the install leaves caddy mode. Named here, from the server's
+  // `choice`, so nobody switches back to direct mode and reopens a wide bind
+  // they cannot see.
+  const BIND_STORED_HINTS = {
+    'opted-in': '<strong>Saved setting: on.</strong> It is ignored while Caddy is the ingress. If you '
+      + 'switch to direct mode, TangleClaw will accept connections from every network interface.',
+    unchosen: '<strong>Saved setting: not chosen.</strong> This install predates the setting. If you '
+      + 'switch to direct mode, TangleClaw will accept connections from every network interface '
+      + 'until you choose.',
+    closed: '<strong>Saved setting: off.</strong> Direct mode would keep TangleClaw on '
+      + '<code>127.0.0.1</code> too.'
+  };
 
   // AUTH-4b — reveal/rotate only make sense against the SAVED gate state (the
   // token is auto-generated server-side on enable + Save, not on the live
@@ -2593,10 +2607,12 @@ function openGlobalSettings() {
       </label>
       <div class="form-hint">
         ${bindLockedByCaddy
-          ? 'Locked while the Caddy ingress is in use. Caddy fronts the server and holds the login '
-            + 'gate, so TangleClaw stays on <code>127.0.0.1</code> behind it — binding the network '
-            + 'directly would open an ungated door beside the gated one. Reach TangleClaw through '
-            + 'Caddy, or switch to direct mode first.'
+          ? 'Locked while the Caddy ingress is in use. Caddy is the front door and already accepts '
+            + 'connections from the network, so TangleClaw stays on <code>127.0.0.1</code> behind it — '
+            + 'a second listener beside Caddy would carry your password unencrypted. Reach TangleClaw '
+            + 'through Caddy, or switch to direct mode first. '
+            + BIND_STORED_HINTS[bindState.choice === 'opted-in' || bindState.choice === 'unchosen'
+              ? bindState.choice : 'closed']
           : 'Off (default): TangleClaw listens on <code>127.0.0.1</code> only, so it is reachable from '
             + 'this machine alone. On: it accepts connections from every network interface — anyone who '
             + 'can reach this machine gets the dashboard, and the dashboard launches AI sessions with '

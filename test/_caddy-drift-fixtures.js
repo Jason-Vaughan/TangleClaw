@@ -55,9 +55,11 @@ function fixtureConfig(overrides = {}) {
  * Build a generated Caddyfile from a fixture config, through the real
  * generator — never a hand-written imitation of its output.
  * @param {object} [configOverrides] - Passed to `fixtureConfig`.
+ * @param {string|null} [gateState] - TangleClaw's gate state, passed to the
+ *   generator exactly as the cutover and the drift baseline pass it.
  * @returns {string} Caddyfile text.
  */
-function generatedCaddyfile(configOverrides = {}) {
+function generatedCaddyfile(configOverrides = {}, gateState = null) {
   const config = fixtureConfig(configOverrides);
   return caddy.buildCaddyfileContent({
     serverPort: config.serverPort,
@@ -68,6 +70,7 @@ function generatedCaddyfile(configOverrides = {}) {
     publicDomain: config.publicDomain,
     basicAuthUser: config.authEnabled ? config.basicAuthUser : null,
     basicAuthHash: config.authEnabled ? config.basicAuthHash : null,
+    gateState,
     remoteHttpCatchAll: config.caddyRemoteHttp === true,
     tailnetHost: config.caddyTailnetHost,
     accessLogPath: config.caddyAccessLogPath
@@ -89,6 +92,13 @@ ${FIXTURE_TAILNET_HOST}:${FIXTURE_STRAY_PORT} {
 }
 `;
 
+// The two settings that end Caddy's "set and replace X-Forwarded-For" default,
+// in the places a hand-edit would put them: `trusted_proxies` on the HTTPS
+// server, and a `header_up` rewriting the header inside the local site's proxy.
+const FORWARDED_FOR_TRUST = `\t\ttrusted_proxies static 100.64.0.0/10\n`;
+const FORWARDED_FOR_REWRITE = `\treverse_proxy 127.0.0.1:${FIXTURE_SERVER_PORT} {\n`
+  + '\t\theader_up X-Forwarded-For {remote_host}\n\t}';
+
 const FIXTURE_CADDYFILES = {
   // What TangleClaw generates today: gated tailnet + localhost sites, an h1-pinned
   // HTTPS listener, an http->https redirect, one upstream.
@@ -102,6 +112,22 @@ const FIXTURE_CADDYFILES = {
   // real product state (direct-mode installs, pre-cutover boxes) and must read
   // as "no gate property to diverge from", not as drift.
   ungated: generatedCaddyfile({ authEnabled: false, caddyTailnetHost: null }),
+
+  // What TangleClaw generates once its own gate is armed: the same sites, no
+  // `basic_auth` anywhere, the tailnet site kept because TangleClaw gates it.
+  armed: generatedCaddyfile({}, 'armed'),
+
+  // The armed file with both X-Forwarded-For settings hand-added — each one a
+  // way for an off-box request to reach TangleClaw looking like a local process.
+  'forwarded-for': (() => {
+    const text = generatedCaddyfile({}, 'armed');
+    const pin = `\t\tprotocols h1\n`;
+    const proxy = `\treverse_proxy 127.0.0.1:${FIXTURE_SERVER_PORT}\n`;
+    if (!text.includes(pin) || !text.includes(proxy)) {
+      throw new Error('the generator no longer emits the lines this fixture edits');
+    }
+    return text.replace(pin, pin + FORWARDED_FOR_TRUST).replace(proxy, `${FORWARDED_FOR_REWRITE}\n`);
+  })(),
 
   // The generated file with the `protocols h1` pin stripped from the HTTPS
   // listener — the h2/h3 regression that breaks terminal WebSockets in Chrome.

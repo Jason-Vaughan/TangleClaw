@@ -236,11 +236,16 @@ docker exec <container> openclaw devices approve --latest --token <gateway-token
 
 ### Blank iframe / black page
 
-- Check that TangleClaw is stripping `X-Frame-Options` headers. Run:
+- Check that TangleClaw is stripping `X-Frame-Options` headers. Run this **on the TangleClaw machine
+  itself**:
   ```bash
   curl -sk -I https://localhost:3102/openclaw-direct/<connId>/chat
   ```
-  There should be no `x-frame-options` header in the response.
+  There should be no `x-frame-options` header in the response. (Use `http://` if TangleClaw serves
+  plain HTTP, as it does behind the Caddy ingress.) With TangleClaw's login on, this works only from
+  the machine itself: a local `curl` sends no browser headers and no cookie, which is what TangleClaw
+  lets through without a session. From any other machine, or through Caddy, the same request answers
+  `401` until you are signed in — that is the login working, not the iframe fault.
 
 ### Certificate warnings on remote browsers
 

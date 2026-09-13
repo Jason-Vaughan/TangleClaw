@@ -118,21 +118,23 @@ automatically once a login exists.
 The first time, your phone or laptop will warn that the certificate is not trusted. That is
 expected: the certificate is issued by your own Mac's local authority, which other devices have
 never heard of. It means the connection is encrypted but unverified — fine on your own network,
-and you can install that authority on the other device to silence it. A *password prompt* is what
+and you can install that authority on the other device to silence it. A *sign-in* is what
 you are checking for here; the certificate warning is a separate question.
 
-1. **Open the dashboard address.** A password prompt should appear before you see
-   anything. If you see the dashboard with no prompt, the gate is not in force —
-   stop and fix that before going further.
-2. **Check a URL that is not the dashboard**, for example `/api/config`. It should
-   also ask for the password — the gate is not just on the front page.
+The sign-in is TangleClaw's own page once your account exists. An install whose Caddyfile still
+carries Caddy's older password gate shows a browser password prompt first instead — either one
+counts.
 
-   Pick that URL deliberately. Three paths are **exempt by design** and will answer
-   without a password: `/api/health` (so an uptime monitor can check liveness without
-   a credential), `/openclaw-direct/*` (the OpenClaw web page sends its own
-   `Authorization` header, which would otherwise make the browser re-prompt in a loop)
-   and `/manifest.json` (browsers fetch PWA manifests anonymously).
-   Testing one of those and seeing a reply proves nothing about your gate.
+1. **Open the dashboard address.** A sign-in should appear before you see anything. If you
+   see the dashboard with no sign-in, the gate is not in force — stop and fix that before
+   going further.
+2. **Check a URL that is not the dashboard**, for example `/api/config`. It should also
+   refuse you until you sign in — the gate is not just on the front page.
+
+   Pick that URL deliberately. Two paths are **exempt by design** and will answer without
+   signing in: `/api/health` (so an uptime monitor can check liveness without a credential)
+   and `/manifest.json` (browsers fetch PWA manifests anonymously). Testing one of those and
+   seeing a reply proves nothing about your gate.
 
 If you have a Tailscale or WireGuard tunnel, use the tunnel address for both checks —
 that is the perimeter you actually rely on.

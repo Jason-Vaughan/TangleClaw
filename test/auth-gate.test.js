@@ -108,6 +108,40 @@ describe('lib/auth-gate — the front-door verdict (#1418, #1420, ADR 0015/0016)
       assert.equal(asked, 0);
     });
 
+    describe('authEnabled:false in caddy mode is honoured only while the Caddyfile is not an ungated remote door (#1420)', () => {
+      const off = () => ({ authEnabled: false, ingressMode: 'caddy' });
+      const door = (ungatedRemoteSite) => () => ({ ungatedRemoteSite });
+
+      it('opens when the Caddyfile has a gate of its own or serves nothing remote', () => {
+        for (const sessions of [NO_ACCOUNTS, ENABLED, ALL_DISABLED]) {
+          assert.equal(authGate.resolveGateState(off, sessions, door(false)), S.OPEN);
+        }
+      });
+
+      it('lets the accounts decide when the Caddyfile serves a remote site with no basic_auth', () => {
+        assert.equal(authGate.resolveGateState(off, ENABLED, door(true)), S.ARMED);
+        assert.equal(authGate.resolveGateState(off, ALL_DISABLED, door(true)), S.LOCKED);
+        assert.equal(authGate.resolveGateState(off, NO_ACCOUNTS, door(true)), S.ACCOUNT_REQUIRED);
+        // A missing authEnabled is off too, and gets the same answer.
+        assert.equal(authGate.resolveGateState(() => ({ ingressMode: 'caddy' }), ENABLED, door(true)), S.ARMED);
+      });
+
+      it('ENFORCES when the Caddyfile cannot be read, or is described malformed', () => {
+        assert.equal(authGate.resolveGateState(off, ENABLED, () => { throw new Error('EACCES'); }), S.UNREADABLE);
+        for (const bad of [null, {}, { ungatedRemoteSite: 'false' }, { ungatedRemoteSite: 0 }]) {
+          assert.equal(authGate.resolveGateState(off, ENABLED, () => bad), S.UNREADABLE, JSON.stringify(bad));
+        }
+      });
+
+      it('never asks about the Caddyfile outside caddy mode, or with authEnabled on', () => {
+        let asked = 0;
+        const counting = () => { asked++; return { ungatedRemoteSite: true }; };
+        assert.equal(authGate.resolveGateState(() => ({ authEnabled: false, ingressMode: 'direct' }), ENABLED, counting), S.OPEN);
+        assert.equal(authGate.resolveGateState(() => ({ authEnabled: true, ingressMode: 'caddy' }), ENABLED, counting), S.ARMED);
+        assert.equal(asked, 0);
+      });
+    });
+
     it('lets authEnabled:false turn an armed gate off — the recovery lever', () => {
       assert.equal(authGate.resolveGateState(on, ENABLED), S.ARMED);
       assert.equal(authGate.resolveGateState(() => ({ authEnabled: false }), ENABLED), S.OPEN);
@@ -232,7 +266,7 @@ describe('lib/auth-gate — the front-door verdict (#1418, #1420, ADR 0015/0016)
           `${p} is a login-surface path and must not ALSO be a Caddy bypass path`);
       }
       // And the reverse: a Caddy bypass path is not silently a login route.
-      for (const p of ['/api/health', '/manifest.json', '/openclaw-direct/x']) {
+      for (const p of authGate.GATE_BYPASS_PATHS) {
         assert.equal(caddy.isCaddyAuthBypassPath(p), true, `precondition: ${p} is a bypass path`);
         assert.equal(authGate.isLoginSurfacePath(p), false,
           `${p} is a Caddy bypass path and must not also be a login-surface path`);
@@ -240,38 +274,53 @@ describe('lib/auth-gate — the front-door verdict (#1418, #1420, ADR 0015/0016)
     });
   });
 
-  describe('isGateBypassPath — Caddy\'s exemptions, minus the one TangleClaw\'s gate cannot honour (#1419)', () => {
-    it('keeps the credential-less exemptions', () => {
-      for (const p of ['/api/health', '/manifest.json']) {
+  describe('isGateBypassPath — TangleClaw\'s own list, which Caddy\'s matcher is generated from (#1420)', () => {
+    it('exempts exactly the credential-less paths', () => {
+      assert.deepEqual([...authGate.GATE_BYPASS_PATHS], ['/api/health', '/manifest.json']);
+      for (const p of authGate.GATE_BYPASS_PATHS) {
         assert.equal(authGate.isGateBypassPath(p), true, `${p} must stay exempt`);
       }
     });
 
-    it('does NOT exempt /openclaw-direct/*, although Caddy still does', () => {
+    it('does NOT exempt /openclaw-direct/*, at this gate or at Caddy\'s', () => {
       // TangleClaw injects the gateway token on this proxy, so "the gateway
       // enforces its own auth" is satisfied BY TANGLECLAW for whoever asked.
-      // Caddy's exemption exists for the Basic prompt loop (#472), which a
-      // session cookie does not have.
-      assert.equal(caddy.isCaddyAuthBypassPath('/openclaw-direct/x'), true,
-        'precondition: Caddy still bypasses it while basic_auth is up');
-      assert.equal(authGate.isGateBypassPath('/openclaw-direct/x'), false);
-      assert.equal(authGate.isGateBypassPath('/openclaw-direct/abc/chat?session=main'), false);
-    });
-
-    it('refuses the exemption on every normalisation variant, not just the plain spelling', () => {
-      // The #472/#473 leak class: the router and a Set disagree about what a
-      // path is. Each of these IS `/openclaw-direct/...` to Caddy's canonicaliser.
-      for (const p of ['//openclaw-direct/x', '/openclaw-direct//x', '/x/../openclaw-direct/y',
+      // The old Caddy exemption existed for the Basic prompt loop (#472), and it
+      // left in the same change that made Caddy's gate state-driven.
+      for (const p of ['/openclaw-direct/x', '/openclaw-direct/abc/chat?session=main',
+        '//openclaw-direct/x', '/openclaw-direct//x', '/x/../openclaw-direct/y',
         '/openclaw-direct%2Fx', '/%6Fpenclaw-direct/x']) {
-        assert.equal(caddy.isCaddyAuthBypassPath(p), true, `precondition: Caddy bypasses ${p}`);
         assert.equal(authGate.isGateBypassPath(p), false, `${p} must not be exempt at the gate`);
+        assert.equal(caddy.isCaddyAuthBypassPath(p), false, `${p} must not be exempt at Caddy`);
       }
     });
 
-    it('never exempts a path Caddy does not', () => {
-      for (const p of ['/', '/api/config', '/terminal/ws', '/openclaw/p/x', '/login']) {
-        assert.equal(caddy.isCaddyAuthBypassPath(p), false, `precondition: ${p}`);
+    it('matches on the canonical path, so every spelling of an exempt path is exempt', () => {
+      for (const p of ['//api/health', '/api//health', '/x/../manifest.json', '/%6Danifest.json', '/api/health?x=1']) {
+        assert.equal(authGate.isGateBypassPath(p), true, p);
+      }
+    });
+
+    it('is exact — no prefix, no case folding, no trailing slash', () => {
+      for (const p of ['/', '/api/config', '/api/health/x', '/api/healthz', '/API/HEALTH',
+        '/manifest.json/', '/terminal/ws', '/openclaw/p/x', '/login']) {
         assert.equal(authGate.isGateBypassPath(p), false, p);
+        assert.equal(caddy.isCaddyAuthBypassPath(p), false, `Caddy agrees on ${p}`);
+      }
+    });
+  });
+
+  describe('guardsTheDoor — whether TangleClaw\'s gate needs nothing in front of it (#1420)', () => {
+    it('is true only for armed and locked', () => {
+      assert.equal(authGate.guardsTheDoor(S.ARMED), true);
+      assert.equal(authGate.guardsTheDoor(S.LOCKED), true);
+    });
+
+    it('is false for every other state, and for anything that is not a state', () => {
+      // account-required: whoever reaches the first-account screen claims the
+      // install. unreadable: a failed read must never remove a gate.
+      for (const v of [S.OPEN, S.ACCOUNT_REQUIRED, S.UNREADABLE, 'fallback', 'ARMED', '', null, undefined, true, {}]) {
+        assert.equal(authGate.guardsTheDoor(v), false, JSON.stringify(v));
       }
     });
   });
@@ -338,7 +387,23 @@ describe('lib/auth-gate — the front-door verdict (#1418, #1420, ADR 0015/0016)
       );
     });
 
-    it('gates /openclaw-direct/* — its exemption is Caddy\'s, not the gate\'s (#1419)', () => {
+    it('exempts a path only when the router serves that same path', () => {
+      // `//login` is `/login` to the canonicaliser and `/` to `new URL`, which
+      // is how the parsed `pathname` arrives. Exempting on the canonical path
+      // alone served the dashboard shell to a request with no session.
+      for (const [rawUrl, pathname] of [['//login', '/'], ['//manifest.json', '/'],
+        ['//api/health', '/health'], ['/api/auth/%6Cogin', '/api/auth/%6Cogin']]) {
+        assert.deepEqual(ev({ rawUrl, pathname }).action, 'challenge', `${rawUrl} → ${pathname}`);
+      }
+      assert.deepEqual(ev({ gateState: S.ACCOUNT_REQUIRED, method: 'POST',
+        rawUrl: '//api/auth/set-password', pathname: '/auth/set-password' }).action, 'challenge');
+      for (const [rawUrl, pathname] of [['/login?next=/', '/login'], ['/x/../login', '/login'],
+        ['/api/health#x', '/api/health']]) {
+        assert.deepEqual(ev({ rawUrl, pathname }), { action: 'allow' }, rawUrl);
+      }
+    });
+
+    it('gates /openclaw-direct/* — it is not a bypass path (#1419, #1420)', () => {
       const p = '/openclaw-direct/abc/chat';
       assert.deepEqual(ev({ rawUrl: p, pathname: p }), { action: 'challenge', as: 'html', for: 'sign-in' });
       assert.deepEqual(ev({ rawUrl: p, pathname: p, session: SESSION }), { action: 'allow' });
@@ -568,7 +633,12 @@ describe('the carve-out\'s proxy premise — what the generated Caddyfile must n
     'gated + remote http catch-all': { ...base, ...gated, remoteHttpCatchAll: true },
     'gated + tailnet host': { ...base, ...gated, tailnetHost: 'box.tail0000.ts.net' },
     'gated + public domain': { ...base, ...gated, publicDomain: 'tc.example.com' },
-    'gated + access log': { ...base, ...gated, accessLogPath: '/tmp/caddy.access.log' }
+    'gated + access log': { ...base, ...gated, accessLogPath: '/tmp/caddy.access.log' },
+    // TangleClaw's gate guarding the door: no `basic_auth`, every remote shape.
+    'armed + every remote shape': {
+      ...base, ...gated, gateState: 'armed', remoteHttpCatchAll: true,
+      tailnetHost: 'box.tail0000.ts.net', publicDomain: 'tc.example.com', lanHost: 'studio.local'
+    }
   };
 
   for (const [name, opts] of Object.entries(SHAPES)) {

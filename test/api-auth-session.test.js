@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -416,6 +416,73 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
     });
   });
 
+  // A caddy-mode install cut over while armed has a Caddyfile whose remote sites
+  // carry no basic_auth — TangleClaw is their only gate. `authEnabled: false`
+  // must not open them.
+  describe('authEnabled: false in caddy mode, against the Caddyfile on disk (#1420)', () => {
+    const caddy = require('../lib/caddy');
+    const HASH = '$2a$14$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU';
+    const base = { serverPort: 3102, certPath: '/c/cert.pem', keyPath: '/c/key.pem' };
+
+    /**
+     * Write the Caddyfile the gate reads, and set caddy mode with the gate off.
+     * @param {string|null} content - File text, or null for no file
+     */
+    function caddyOff(content) {
+      const file = caddy.getCaddyfilePath();
+      fs.rmSync(file, { force: true });
+      if (content !== null) fs.writeFileSync(file, content);
+      if (!store.users.getByName('rosie')) store.users.create('rosie', PASSWORD);
+      const cfg = store.config.load();
+      cfg.ingressMode = 'caddy';
+      cfg.authEnabled = false;
+      store.config.save(cfg);
+    }
+
+    afterEach(() => {
+      fs.rmSync(caddy.getCaddyfilePath(), { force: true });
+      const cfg = store.config.load();
+      cfg.ingressMode = 'direct';
+      store.config.save(cfg);
+    });
+
+    it('stays closed while the Caddyfile serves a tailnet site with no basic_auth', async () => {
+      caddyOff(caddy.buildCaddyfileContent({ ...base, tailnetHost: 'box.tail0000.ts.net', gateState: 'armed' }));
+      const res = await send('GET', '/api/config');
+      assert.equal(res.statusCode, 401);
+      const me = await send('GET', '/api/auth/me');
+      assert.equal(JSON.parse(me.body).gateState, 'armed');
+    });
+
+    it('opens when the Caddyfile still carries basic_auth', async () => {
+      caddyOff(caddy.buildCaddyfileContent({
+        ...base, basicAuthUser: 'jason', basicAuthHash: HASH, tailnetHost: 'box.tail0000.ts.net'
+      }));
+      const res = await send('GET', '/api/config');
+      assert.equal(res.statusCode, 200);
+    });
+
+    it('opens when the Caddyfile serves localhost only, or does not exist', async () => {
+      caddyOff(caddy.buildCaddyfileContent(base));
+      assert.equal((await send('GET', '/api/config')).statusCode, 200);
+      caddyOff(null);
+      assert.equal((await send('GET', '/api/config')).statusCode, 200);
+    });
+
+    it('enforces when the Caddyfile exists but cannot be read', async () => {
+      caddyOff('placeholder');
+      const file = caddy.getCaddyfilePath();
+      fs.rmSync(file);
+      fs.mkdirSync(file); // a directory: stat succeeds, read fails
+      try {
+        const res = await send('GET', '/api/config');
+        assert.equal(res.statusCode, 401);
+      } finally {
+        fs.rmSync(file, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe('what a gated install refuses', () => {
     beforeEach(armGate);
 
@@ -462,6 +529,25 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
         cookie: `${authSession.SESSION_COOKIE}=${'f'.repeat(64)}`
       });
       assert.equal(res.statusCode, 401);
+    });
+
+    // The canonicaliser reads `//login` and `//manifest.json` as exempt paths,
+    // but `new URL` routes both to `/` — the dashboard shell. An exemption the
+    // router does not agree with must not be granted.
+    for (const spelling of ['//login', '//manifest.json', '//api/health', '/api/auth/%6Cogin']) {
+      it(`does not serve the dashboard for an exempt path's router-disagreeing spelling ${spelling}`, async () => {
+        const res = await send('GET', spelling);
+        assert.equal(res.statusCode, 401, `${spelling} must be challenged`);
+        assert.doesNotMatch(res.body, /id="app"|<script src="app\.js"/,
+          'the dashboard shell must not be served');
+      });
+    }
+
+    it('still exempts an exempt path whose spelling the router agrees with', async () => {
+      for (const spelling of ['/login?next=/', '/x/../login', '/api/health?probe=1']) {
+        const res = await send('GET', spelling);
+        assert.notEqual(res.statusCode, 401, spelling);
+      }
     });
 
     it('still serves the Caddy bypass paths', async () => {
@@ -1322,7 +1408,7 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
   describe('/openclaw-direct/* over HTTP (#1419)', () => {
     beforeEach(armGate);
 
-    it('is gated for a browser with no session — its exemption is Caddy\'s, not the gate\'s', async () => {
+    it('is gated for a browser with no session — it is not a bypass path at either gate', async () => {
       const res = await send('GET', '/openclaw-direct/c1/chat?session=main');
       assert.equal(res.statusCode, 401);
     });

@@ -6,9 +6,10 @@
  * crossed with the operator's opt-in (set true / set false / absent).
  *
  * The case that matters most is the one that reads as a contradiction — caddy
- * mode with the opt-in set. Caddy holds the credential gate, so honoring a wide
- * bind there would publish an ungated socket beside the gated one while the
- * operator believes they are protected. It must resolve to loopback AND report
+ * mode with the opt-in set. Caddy is the front door and already listens on every
+ * interface, so honoring a wide bind there would add a plain-HTTP listener beside
+ * it, opened by a stored choice the locked switch does not show (#1055). It must
+ * resolve to loopback AND report
  * that it overrode the request, because a silent divergence between config and
  * socket is the exact class of failure this scope exists to end.
  */
@@ -17,7 +18,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const bindPolicy = require('../lib/bind-policy');
-const { resolveBind, describeNarrowing, migrateLegacyBind, LOOPBACK, OPT_IN_KEY } = bindPolicy;
+const { resolveBind, describeNarrowing, describeBindState, migrateLegacyBind, LOOPBACK, OPT_IN_KEY } = bindPolicy;
 
 describe('bind-policy.resolveBind — the bind matrix', () => {
   it('binds loopback by default in direct mode (the narrowed default)', () => {
@@ -168,6 +169,34 @@ describe('describeBindState — the caddy lock, asserted directly', () => {
   });
 });
 
+describe('describeBindState — guarded, and the stored value in caddy mode (#1420, #1055)', () => {
+  it('reports guarded only when the gate state guards the door, and never changes the binding', () => {
+    for (const [gateState, guarded] of [['armed', true], ['locked', true], ['account-required', false],
+      ['unreadable', false], ['open', false], [undefined, false]]) {
+      for (const config of [
+        { ingressMode: 'caddy', [OPT_IN_KEY]: true },
+        { ingressMode: 'direct', [OPT_IN_KEY]: null },
+        { ingressMode: 'direct', [OPT_IN_KEY]: false }
+      ]) {
+        const withState = describeBindState(config, gateState);
+        const without = describeBindState(config);
+        assert.equal(withState.guarded, guarded, `${gateState} ${JSON.stringify(config)}`);
+        assert.equal(withState.wide, without.wide, 'the gate state must never widen or narrow the socket');
+        assert.equal(withState.reason, without.reason);
+      }
+    }
+  });
+
+  it('keeps caddy mode on loopback with a stored opt-in, even with an armed login', () => {
+    // Honouring the opt-in once armed would open a plain-HTTP listener on the LAN
+    // at the next restart, from a choice the locked switch never showed (#1055).
+    const s = describeBindState({ ingressMode: 'caddy', [OPT_IN_KEY]: true }, 'armed');
+    assert.equal(s.wide, false);
+    assert.equal(s.refusedOptIn, true);
+    assert.equal(s.choice, 'opted-in', 'the stored value is reported, so the UI can name it');
+  });
+});
+
 describe('bind-policy.migrateLegacyBind — the grace state must survive an unrelated save', () => {
   it('records null for a legacy direct install', () => {
     const cfg = { ingressMode: 'direct' };
@@ -242,6 +271,24 @@ describe('bind-policy.describeNarrowing — who gets told', () => {
   it('stays silent for caddy mode, which already bound loopback', () => {
     assert.equal(describeNarrowing({ ingressMode: 'caddy', [OPT_IN_KEY]: null }), null);
   });
+
+  // #1420 — once TangleClaw's own login guards the door, a wide bind is a
+  // guarded one, and "reachable with no password" would be false.
+  for (const gateState of ['armed', 'locked']) {
+    it(`stays silent for a grace install whose login guards the door — ${gateState}`, () => {
+      assert.equal(describeNarrowing({ ingressMode: 'direct', [OPT_IN_KEY]: null }, gateState), null);
+    });
+  }
+
+  for (const gateState of ['open', 'account-required', 'unreadable', null, undefined, 'bogus']) {
+    it(`still warns when the login does not guard the door — ${String(gateState)}`, () => {
+      // account-required: whoever reaches the first-account screen claims the
+      // install. unreadable: a failed read must not silence a security notice.
+      const notice = describeNarrowing({ ingressMode: 'direct', [OPT_IN_KEY]: null }, gateState);
+      assert.ok(notice, 'the exposure notice must survive');
+      assert.equal(notice.severity, 'exposed');
+    });
+  }
 
   it('points at the login gate rather than only at the way to reopen the door', () => {
     // The notice has to offer the safe way to keep remote access, or it reads

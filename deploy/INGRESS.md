@@ -131,16 +131,20 @@ The `basic_auth` credential is canonical in **config** (`basicAuthUser` +
   credential stays here, at a terminal, because a reset behind the gate cannot
   help someone the gate has locked out.
 - **Refuse-to-ungate** — the cutover aborts rather than replace a gated
-  Caddyfile with an ungated one when config carries no credential.
+  Caddyfile with an ungated one when config carries no credential and
+  TangleClaw's own login does not guard the door. Once the login is `armed` or
+  `locked`, the cutover writes no `basic_auth` at all — TangleClaw is the gate —
+  and its preview says which gate the file carries.
 - **Remote plain-HTTP catch-all** — set `caddyRemoteHttp: true` (adopted
   automatically if the live file has an `http:// { ... }` site) to emit a
-  Basic-Auth-gated plain-HTTP catch-all for WireGuard/Tailscale remote access,
-  plus `auto_https disable_redirects`. The generator refuses to emit the
-  catch-all without a credential — an ungated one would be an open door.
+  gated plain-HTTP catch-all for WireGuard/Tailscale remote access, plus
+  `auto_https disable_redirects`. The generator refuses to emit the catch-all
+  without a gate — Caddy's `basic_auth`, or TangleClaw's login in `armed` or
+  `locked` — because an ungated one would be an open door.
 - **Tailnet HTTPS site** — `caddyTailnetHost` (#434, adopted from a live file
   carrying exactly one tls-bearing FQDN site that isn't `publicDomain`). Gated
   for the same reason as the catch-all: the generator refuses it without a
-  credential.
+  gate.
 - **Access log** — `caddyAccessLogPath` (#846, adopted from a live per-site
   `log { output file <absolute path> }`). Unlike the shapes above it needs no
   credential, because a log opens no door. It is refused rather than partially

@@ -89,7 +89,7 @@
                           "not": [
                             {
                               "path_regexp": {
-                                "pattern": "^(/api/health|/openclaw-direct/.*|/manifest\\.json)$"
+                                "pattern": "^(/api/health|/manifest\\.json)$"
                               }
                             }
                           ]
@@ -100,15 +100,6 @@
                       "handle": [
                         {
                           "handler": "reverse_proxy",
-                          "headers": {
-                            "request": {
-                              "set": {
-                                "X-Auth-User": [
-                                  "{http.auth.user.id}"
-                                ]
-                              }
-                            }
-                          },
                           "upstreams": [
                             {
                               "dial": "127.0.0.1:3102"
@@ -159,7 +150,7 @@
                           "not": [
                             {
                               "path_regexp": {
-                                "pattern": "^(/api/health|/openclaw-direct/.*|/manifest\\.json)$"
+                                "pattern": "^(/api/health|/manifest\\.json)$"
                               }
                             }
                           ]
@@ -170,15 +161,6 @@
                       "handle": [
                         {
                           "handler": "reverse_proxy",
-                          "headers": {
-                            "request": {
-                              "set": {
-                                "X-Auth-User": [
-                                  "{http.auth.user.id}"
-                                ]
-                              }
-                            }
-                          },
                           "upstreams": [
                             {
                               "dial": "127.0.0.1:3102"

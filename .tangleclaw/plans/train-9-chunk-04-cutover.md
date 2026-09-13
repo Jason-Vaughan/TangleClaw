@@ -6,6 +6,10 @@
 is a feature branch merged INTO `train-9/cutover`, never into `main`. Only the final cumulative merge
 reaches `main`, and only at Checkpoint 2.
 **Builder:** the TangleClaw-Builder session itself. Never a subagent (sprint plan, Lane A).
+**Requirements Confidence:** High for A-02/A-03 (the issue's acceptance list, ADR 0015/0016 and the
+Checkpoint 1 ruling fix the behaviour; Caddy's header handling is verified, not recalled). Medium for
+A-04's fallback command and recovery-code UX (shape ruled, details open) and for A-VRF (depends on
+the live elkaholic install).
 
 ## Gates
 
@@ -133,7 +137,7 @@ forwarded host.
 - Covers both transports and `server.js#peerReadTarget` (added by #918 behind the roster gate).
 - Tests: every state × HTTP/upgrade × machine/browser/proxied; mutation-check each new guard.
 
-### A-03 — Caddy's side: drop `basic_auth` by state, and the bind policy
+### Chunk A.03 (A-03) — Caddy's side: drop `basic_auth` by state, and the bind policy
 - `lib/caddy.js`: emit `basic_auth` only while the state is `account-required` or `fallback`; the
   `tailnetHost` / `remoteHttpCatchAll` guards become "requires a gate".
 - Remove `/openclaw-direct/*` from `AUTH_BYPASS_PATHS` in the same change that stops emitting
@@ -145,6 +149,80 @@ forwarded host.
   no longer has to refuse the opt-in on principle. **#1055**: name the stored `bindAllInterfaces`
   value in the locked hint and on the rollback path (option b, per the issue's own weighting).
 - Re-check `docs/openclaw-setup.md`'s "Blank iframe" `curl` under the new carve-out.
+
+**A-03 decisions (2026-09-13).**
+- **Which states drop `basic_auth`: `armed` and `locked` — one predicate, `authGate.guardsTheDoor`.**
+  Both are TangleClaw's gate enforcing with an account behind it. `account-required` keeps it
+  (whoever reaches the first-account screen claims the install, so a remote site in front of it
+  needs Caddy's gate), and so does `unreadable` (a state read that failed must never remove a gate).
+  `open` never emits a gate the caller did not ask for. `fallback` is A-04's to add.
+- **`gateState` is an OPTION of the generator, and omitting it keeps `basic_auth`.** The callers that
+  decide the live ingress pass it (the cutover, the drift baseline). `lib/admin-credential.js`
+  (reset-admin's gate creation and rotation) does not, so it behaves exactly as today; aligning it
+  with the state machine is A-04's reset-admin work. Consequence carried to A-04: its round-trip check
+  refuses an armed-generated file that has a tailnet or catch-all site.
+- **The "requires a gate" guards** (`tailnetHost`, `remoteHttpCatchAll`, the LAN name) accept
+  `basic_auth` or `guardsTheDoor(gateState)` — not `account-required`, for the claim reason above.
+- **`header_up X-Auth-User` is no longer emitted** in any state: TangleClaw deletes the header on
+  arrival, so the line was inert.
+- **The bypass list is TangleClaw's** (`authGate.GATE_BYPASS_PATHS`: `/api/health`, `/manifest.json`),
+  and Caddy's `basic_auth` matcher derives from it. `/openclaw-direct/*` leaves both. Carried to A-04:
+  in `fallback`, Caddy's `basic_auth` is the only gate, and #472's prompt loop on `/openclaw-direct/*`
+  comes back with it — decide there whether fallback accepts that or re-adds a Caddy-only exemption.
+- **The cutover's refuse-to-ungate guard** refuses only when the new file carries no `basic_auth` AND
+  TangleClaw's gate does not guard the door.
+- **Drift:** P1 answers `holds` when the state guards the door (TangleClaw is the gate for every site
+  that proxies to it; a site proxying anywhere else is P3's). A new P5 reads the LIVE file for
+  `trusted_proxies` (server or `reverse_proxy` level) and any `header_up` op naming
+  `X-Forwarded-For`, and reports either as divergence. `request_header` is not flagged: the proxy
+  overwrites that value for an untrusted peer. Shapes taken from `caddy adapt` on v2.11.4.
+- **Bind policy: caddy mode KEEPS pinning loopback.** ADR 0015's "a wide bind is guarded without a
+  reverse proxy in front" is about DIRECT mode, and that is where it lands: a direct-mode wide bind
+  (grace or opt-in) with the state guarding the door is no longer reported as "reachable with no
+  password". Honouring a stored `bindAllInterfaces: true` in caddy mode was NOT built: every install
+  that opted in before moving to caddy mode (#1055's population) would open a plain-HTTP listener on
+  the LAN at its next restart after arming, from a choice nobody sees — the exact hazard #1055 is
+  about — and Caddy already listens on every interface, so the side door buys nothing.
+  **#1055 (option b):** the locked hint names the stored value from `bindState.choice` (already on
+  the API) and says what it will do on leaving caddy mode; `ingress-cutover --to direct` prints the
+  same (`describeDirectBind`).
+- **`isProxyHeaderTrusted` keeps its condition (caddy ingress AND `authEnabled`), re-justified.**
+  VERIFIED on Caddy v2.11.4 (throwaway instance, leased ports): `reverse_proxy` replaces a
+  client-forged `X-Forwarded-Host` with the `Host` the client sent, and in caddy mode every remote
+  request comes through Caddy. `authEnabled` stays because only then has the launching request passed
+  a login. Dropping it was considered and not done: it would change a pinned behaviour for no reader.
+- **Found and fixed in the gate: an exemption is honoured only when the router serves that path.**
+  `//login` and `//manifest.json` are exempt to the canonicaliser but `new URL` routes them to `/`, so
+  they served the dashboard shell with no session. `evaluate` requires `pathname` to equal the
+  canonical path for all three exemptions.
+- **Setup on an `unreadable` gate refuses to finish** (`503 GATE_UNREADABLE`, before the config save),
+  so setup stays retryable instead of reporting `account.required: false`.
+- **A-03 review (R-7): `authEnabled: false` does not open a caddy-mode install whose Caddyfile is an
+  ungated remote door.** The file is written for the state at cutover time, the gate is read per
+  request; `lib/caddy.js#describeIngressDoor` via `server.js#_gateIngress` keeps the accounts
+  deciding while the file serves beyond `localhost` with no `basic_auth`. The cutover prints which
+  gate it writes (`gateNote`).
+- **Carried to A-04:** reset-admin passes `gateState` and the Caddyfile door like the cutover does;
+  the bind notice and drift notice are computed once at boot (accepted — both re-evaluate on restart,
+  and the gate itself is per request); close #1055 by hand when `train-9/cutover` reaches `main`.
+  From the A-03 cumulative review (`rev-20260913T055830Z-267e3318`, 0 blocking):
+  - R-6: `lib/admin-credential.js#canChangeCredential` / `#canCreateGate`, `deploy/INGRESS.md`
+    "Creating a gate where there is none" and `public/ui.js`'s "The login is enforced by Caddy" still
+    ask "is there `basic_auth`?". After an armed cutover, Settings > Login says there is nothing to
+    change and `--create-gate` would put `basic_auth` back. Align them with `guardsTheDoor`.
+  - R-1: #472's prompt loop on `/openclaw-direct/*` returns wherever `basic_auth` is written — the
+    fallback, a cutover run before the first account, and reset-admin's gate creation. Decide once.
+  - R-3/R-14: `caddy.describeIngressDoor` reads text and under-reports a top-level `import`, a
+    brace-less site, and a `basic_auth` covering only some remote sites. Consider reading the door
+    through `caddy adapt` (the drift module's rule) with a text fallback that fails closed.
+  - R-8: `resolveGateState` without `loadIngress` opens; the generator without `gateState` keeps the
+    gate. Every caller passes both today (pinned); reset-admin must too.
+  - R-7: `isProxyHeaderTrusted` reads `authEnabled`, so the forwarded host is ignored on a caddy
+    install enforcing with `authEnabled: false` (falls back to `Host`).
+  - A-VRF, R-2: a pre-A-03 generated file still exempts `/openclaw-direct/.*`; with the login off,
+    `//openclaw-direct/x` reaches the page shell (the API behind it stays gated).
+- **`docs/openclaw-setup.md` curl:** still works from the machine itself (loopback, no browser
+  headers, no cookie = the fleet carve-out); from anywhere else it now answers 401 without a session.
 
 ### A-04 — the kill-switch, recovery docs, and the drill
 - The fallback command (name decided in A-04): restore/regenerate the Caddyfile with the retained
@@ -185,6 +263,6 @@ forwarded host.
 - [x] Checkpoint 1 — ruled 2026-09-13: 1 + 2
 - [x] A-02a — classifier, gate on it, carve-out + XFF, set-password route/page (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [x] A-02b — OQ2 inversion, identity + authStatus from the classifier, dashboard consumers (reviewed 2026-09-13, PR into `train-9/cutover`)
-- [ ] A-03 — state-driven `basic_auth`, bypass ownership, drift, bind policy, #1055
+- [x] Chunk A.03 (A-03) — state-driven `basic_auth`, bypass ownership, drift, bind policy, #1055 (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [ ] A-04 — fallback command, recovery codes, ADR 0009 rule 5 text, reset-admin, recovery doc, drills
 - [ ] A-VRF — cumulative Critic, elkaholic VRF, phone drill → Checkpoint 2
