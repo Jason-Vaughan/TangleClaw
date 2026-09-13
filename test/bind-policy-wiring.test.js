@@ -104,6 +104,28 @@ describe('server.js binds through the policy, not around it', () => {
   });
 });
 
+// #1420 — the gate state reaches every consumer that decides by it. Omitted, each
+// one falls back to its fail-safe (a warning kept, a gate kept), so a dropped
+// argument would pass every behavioural test while silently undoing the change.
+describe('the gate state is wired into the boot notice, the settings bind state and the drift check', () => {
+  it('hands the boot narrowing notice a gate state', () => {
+    assert.match(SERVER_SRC,
+      /bindPolicy\.describeNarrowing\(\s*config, authGate\.resolveGateState\(\(\) => config, store\.authSessions\)\s*\)/);
+  });
+
+  it('hands GET /api/config\'s bindState a gate state', () => {
+    assert.match(SERVER_SRC,
+      /bindState: bindPolicy\.describeBindState\(config, authGate\.resolveGateState\(\(\) => config, store\.authSessions\)\)/);
+  });
+
+  it('hands the Caddyfile drift check a gate state', () => {
+    assert.match(SERVER_SRC, /caddyDrift\.checkCaddyDrift\(\{ config, leases, gateState \}\)/);
+    const resolved = SERVER_SRC.indexOf('const gateState = authGate.resolveGateState(() => config, store.authSessions);');
+    const checked = SERVER_SRC.indexOf('caddyDrift.checkCaddyDrift({ config, leases, gateState })');
+    assert.ok(resolved > -1 && resolved < checked, 'the state is resolved before the check runs');
+  });
+});
+
 describe('PATCH /api/config accepts the opt-out setting', () => {
   it('lists bindAllInterfaces as an allowed field', () => {
     const allowed = SERVER_SRC.slice(
@@ -300,6 +322,19 @@ describe('the settings toggle cannot lie about what the socket does', () => {
       'the lock is the server\'s call, not a frontend re-test of ingressMode');
     assert.match(UI_SRC, /\$\{bindShowsOn \? 'checked' : ''\}/,
       'the checked attribute must derive from the effective state, not the raw config');
+  });
+
+  it('names the stored value in the locked hint, for every choice the server reports (#1055)', () => {
+    // The locked switch is drawn from the socket, so a stored opt-in is
+    // otherwise invisible — and it is what applies on leaving caddy mode.
+    assert.match(UI_SRC, /BIND_STORED_HINTS\[bindState\.choice === 'opted-in' \|\| bindState\.choice === 'unchosen'/,
+      'the hint must be keyed off the server\'s choice, not a frontend re-read of the raw key');
+    const hints = UI_SRC.slice(UI_SRC.indexOf('const BIND_STORED_HINTS = {'),
+      UI_SRC.indexOf('};', UI_SRC.indexOf('const BIND_STORED_HINTS = {')));
+    for (const choice of ["'opted-in'", 'unchosen', 'closed']) {
+      assert.match(hints, new RegExp(`\\n\\s*${choice}:`), `a hint for ${choice}`);
+    }
+    assert.match(hints, /every network interface/, 'the opted-in hint says what direct mode will do');
   });
 
   it('marks the locked control as disabled for assistive tech, not just visually', () => {

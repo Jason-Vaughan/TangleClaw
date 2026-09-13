@@ -210,6 +210,29 @@ describe('forced first-run admin credential', () => {
       assert.deepEqual(data.account, { created: false, required: true });
     });
 
+    it('refuses to finish, without saving, when the gate cannot read its account store (#1420)', async () => {
+      // "No account required" would send the wizard into a dashboard that
+      // refuses it; the fault must reach the operator, and setup must stay
+      // retryable. The request itself is a machine client, so the enforcing
+      // `unreadable` gate lets it reach the route.
+      const config = store.config.load();
+      config.authEnabled = true;
+      config.basicAuthUser = 'jason';
+      config.basicAuthHash = '$2a$14$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU';
+      store.config.save(config);
+      const realPresence = store.authSessions.accountPresence;
+      store.authSessions.accountPresence = () => { throw new Error('database is locked'); };
+      let res;
+      try {
+        res = await request(server, 'POST', '/api/setup/complete', {});
+      } finally {
+        store.authSessions.accountPresence = realPresence;
+      }
+      assert.equal(res.status, 503);
+      assert.equal(res.data.code, 'GATE_UNREADABLE');
+      assert.equal(store.config.load().setupComplete, false, 'nothing is saved');
+    });
+
     it('accepts completion when an admin is already configured (no new credential)', async () => {
       const config = store.config.load();
       config.authEnabled = true;

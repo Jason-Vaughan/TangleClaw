@@ -758,3 +758,47 @@ describe('ingress-cutover refuses to run against a relocated base (#828)', () =>
       'the cutover got as far as syncing the ttyd attach script');
   });
 });
+
+// #1055 — a stored `bindAllInterfaces` is inert and unshown in caddy mode, and it
+// is what applies the moment `--to direct` runs. The plan names it.
+describe('ingress-cutover — the direct-mode binding is named on the way out of caddy mode (#1055)', () => {
+  it('warns that a saved opt-in will bind every interface, with no login in front', () => {
+    const note = cutover.describeDirectBind({ ingressMode: 'caddy', bindAllInterfaces: true }, 'open');
+    assert.match(note, /saved bindAllInterfaces is true/);
+    assert.match(note, /EVERY network interface/);
+    assert.match(note, /NO login/);
+    assert.match(note, /"bindAllInterfaces": false/, 'names the way to keep it on loopback');
+  });
+
+  it('says the login still guards it when the gate guards the door', () => {
+    const note = cutover.describeDirectBind({ ingressMode: 'caddy', bindAllInterfaces: true }, 'armed');
+    assert.match(note, /EVERY network interface/);
+    assert.match(note, /login still guards it/);
+  });
+
+  it('names the never-chosen grace state, which also binds wide in direct mode', () => {
+    const note = cutover.describeDirectBind({ ingressMode: 'caddy', bindAllInterfaces: null }, null);
+    assert.match(note, /never chosen/);
+    assert.match(note, /EVERY network interface/);
+  });
+
+  it('says loopback when the saved value is off', () => {
+    const note = cutover.describeDirectBind({ ingressMode: 'caddy', bindAllInterfaces: false }, 'armed');
+    assert.match(note, /127\.0\.0\.1 only/);
+    assert.doesNotMatch(note, /EVERY/);
+  });
+
+  it('is on the --to direct plan and absent from the --to caddy plan', () => {
+    const toDirect = cutover.planCutover('direct', makeCtx({ config: { bindAllInterfaces: true } }));
+    assert.match(toDirect.bindNote, /EVERY network interface/);
+    const toCaddy = cutover.planCutover('caddy', makeCtx());
+    assert.equal(toCaddy.bindNote, null);
+  });
+
+  it('prints the note on the dry run and on the real run, and resolves the gate state before planning', () => {
+    assert.equal((CUTOVER_SRC.match(/if \(plan\.bindNote\) process\.stdout\.write/g) || []).length, 2);
+    const resolved = CUTOVER_SRC.indexOf('ctx.gateState = authGate.resolveGateState(');
+    const planned = CUTOVER_SRC.indexOf('plan = planCutover(target, ctx)');
+    assert.ok(resolved > -1 && resolved < planned, 'the gate state is read before the plan is built');
+  });
+});

@@ -464,6 +464,25 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
       assert.equal(res.statusCode, 401);
     });
 
+    // The canonicaliser reads `//login` and `//manifest.json` as exempt paths,
+    // but `new URL` routes both to `/` — the dashboard shell. An exemption the
+    // router does not agree with must not be granted.
+    for (const spelling of ['//login', '//manifest.json', '//api/health', '/api/auth/%6Cogin']) {
+      it(`does not serve the dashboard for an exempt path's router-disagreeing spelling ${spelling}`, async () => {
+        const res = await send('GET', spelling);
+        assert.equal(res.statusCode, 401, `${spelling} must be challenged`);
+        assert.doesNotMatch(res.body, /id="app"|<script src="app\.js"/,
+          'the dashboard shell must not be served');
+      });
+    }
+
+    it('still exempts an exempt path whose spelling the router agrees with', async () => {
+      for (const spelling of ['/login?next=/', '/x/../login', '/api/health?probe=1']) {
+        const res = await send('GET', spelling);
+        assert.notEqual(res.statusCode, 401, spelling);
+      }
+    });
+
     it('still serves the Caddy bypass paths', async () => {
       // These answer for callers that have no credential to offer — a health
       // probe, an anonymous PWA manifest fetch.
@@ -1322,7 +1341,7 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
   describe('/openclaw-direct/* over HTTP (#1419)', () => {
     beforeEach(armGate);
 
-    it('is gated for a browser with no session — its exemption is Caddy\'s, not the gate\'s', async () => {
+    it('is gated for a browser with no session — it is not a bypass path at either gate', async () => {
       const res = await send('GET', '/openclaw-direct/c1/chat?session=main');
       assert.equal(res.statusCode, 401);
     });

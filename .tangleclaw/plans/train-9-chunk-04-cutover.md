@@ -146,6 +146,56 @@ forwarded host.
   value in the locked hint and on the rollback path (option b, per the issue's own weighting).
 - Re-check `docs/openclaw-setup.md`'s "Blank iframe" `curl` under the new carve-out.
 
+**A-03 decisions (2026-09-13).**
+- **Which states drop `basic_auth`: `armed` and `locked` — one predicate, `authGate.guardsTheDoor`.**
+  Both are TangleClaw's gate enforcing with an account behind it. `account-required` keeps it
+  (whoever reaches the first-account screen claims the install, so a remote site in front of it
+  needs Caddy's gate), and so does `unreadable` (a state read that failed must never remove a gate).
+  `open` never emits a gate the caller did not ask for. `fallback` is A-04's to add.
+- **`gateState` is an OPTION of the generator, and omitting it keeps `basic_auth`.** The callers that
+  decide the live ingress pass it (the cutover, the drift baseline). `lib/admin-credential.js`
+  (reset-admin's gate creation and rotation) does not, so it behaves exactly as today; aligning it
+  with the state machine is A-04's reset-admin work. Consequence carried to A-04: its round-trip check
+  refuses an armed-generated file that has a tailnet or catch-all site.
+- **The "requires a gate" guards** (`tailnetHost`, `remoteHttpCatchAll`, the LAN name) accept
+  `basic_auth` or `guardsTheDoor(gateState)` — not `account-required`, for the claim reason above.
+- **`header_up X-Auth-User` is no longer emitted** in any state: TangleClaw deletes the header on
+  arrival, so the line was inert.
+- **The bypass list is TangleClaw's** (`authGate.GATE_BYPASS_PATHS`: `/api/health`, `/manifest.json`),
+  and Caddy's `basic_auth` matcher derives from it. `/openclaw-direct/*` leaves both. Carried to A-04:
+  in `fallback`, Caddy's `basic_auth` is the only gate, and #472's prompt loop on `/openclaw-direct/*`
+  comes back with it — decide there whether fallback accepts that or re-adds a Caddy-only exemption.
+- **The cutover's refuse-to-ungate guard** refuses only when the new file carries no `basic_auth` AND
+  TangleClaw's gate does not guard the door.
+- **Drift:** P1 answers `holds` when the state guards the door (TangleClaw is the gate for every site
+  that proxies to it; a site proxying anywhere else is P3's). A new P5 reads the LIVE file for
+  `trusted_proxies` (server or `reverse_proxy` level) and any `header_up` op naming
+  `X-Forwarded-For`, and reports either as divergence. `request_header` is not flagged: the proxy
+  overwrites that value for an untrusted peer. Shapes taken from `caddy adapt` on v2.11.4.
+- **Bind policy: caddy mode KEEPS pinning loopback.** ADR 0015's "a wide bind is guarded without a
+  reverse proxy in front" is about DIRECT mode, and that is where it lands: a direct-mode wide bind
+  (grace or opt-in) with the state guarding the door is no longer reported as "reachable with no
+  password". Honouring a stored `bindAllInterfaces: true` in caddy mode was NOT built: every install
+  that opted in before moving to caddy mode (#1055's population) would open a plain-HTTP listener on
+  the LAN at its next restart after arming, from a choice nobody sees — the exact hazard #1055 is
+  about — and Caddy already listens on every interface, so the side door buys nothing.
+  **#1055 (option b):** the locked hint names the stored value from `bindState.choice` (already on
+  the API) and says what it will do on leaving caddy mode; `ingress-cutover --to direct` prints the
+  same (`describeDirectBind`).
+- **`isProxyHeaderTrusted` keeps its condition (caddy ingress AND `authEnabled`), re-justified.**
+  VERIFIED on Caddy v2.11.4 (throwaway instance, leased ports): `reverse_proxy` replaces a
+  client-forged `X-Forwarded-Host` with the `Host` the client sent, and in caddy mode every remote
+  request comes through Caddy. `authEnabled` stays because only then has the launching request passed
+  a login. Dropping it was considered and not done: it would change a pinned behaviour for no reader.
+- **Found and fixed in the gate: an exemption is honoured only when the router serves that path.**
+  `//login` and `//manifest.json` are exempt to the canonicaliser but `new URL` routes them to `/`, so
+  they served the dashboard shell with no session. `evaluate` requires `pathname` to equal the
+  canonical path for all three exemptions.
+- **Setup on an `unreadable` gate refuses to finish** (`503 GATE_UNREADABLE`, before the config save),
+  so setup stays retryable instead of reporting `account.required: false`.
+- **`docs/openclaw-setup.md` curl:** still works from the machine itself (loopback, no browser
+  headers, no cookie = the fleet carve-out); from anywhere else it now answers 401 without a session.
+
 ### A-04 — the kill-switch, recovery docs, and the drill
 - The fallback command (name decided in A-04): restore/regenerate the Caddyfile with the retained
   credential → validate → reload → probe 401 → only then write the `gate-fallback` marker; `--undo`

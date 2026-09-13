@@ -183,14 +183,21 @@ describe('server', () => {
       return res;
     }
 
-    // Each of these is waved through UNAUTHENTICATED by Caddy (verified against a
-    // live caddy run in #473) but does not resolve to the OpenClaw proxy in TC's
-    // router, so before the guard it fell through to the SPA shell. Must now 404.
+    // Each of these is a bypass path to the canonicaliser both gates use (the
+    // #473 parity class, verified against a live caddy run) but does not resolve
+    // to its handler in TC's router, so without the guard it falls through to
+    // the SPA shell unauthenticated. Must 404. (`/openclaw-direct/*` was the
+    // original subject; it is no longer a bypass path at either gate.)
     const LEAK_VARIANTS = [
-      '/openclaw-direct//abc/chat',   // duplicate slash → empty connId segment
-      '//openclaw-direct/abc/chat',   // leading // → new URL host-hijacks to /abc/chat
-      '/openclaw-direct%2Fabc/chat'   // %2F stays encoded in new URL → not the proxy route
+      '//api/health',                 // leading // → new URL host-hijacks to /health
+      '/api%2Fhealth',                // %2F stays encoded in new URL → not the /api route
+      '/%6Danifest.json',             // encoded letter → no such static file
+      '/x/../manifest.json/.'         // dot-segments new URL resolves differently
     ];
+    // A spelling the router sends to a page that DOES exist (`//manifest.json`
+    // routes to `/`) never reaches this guard; TangleClaw's gate refuses to
+    // exempt it instead (`lib/auth-gate.js#evaluate`, pinned in
+    // test/auth-gate.test.js and test/api-auth-session.test.js).
 
     for (const url of LEAK_VARIANTS) {
       it(`refuses bypass-shaped fall-through ${JSON.stringify(url)} with 404, not the SPA shell`, async () => {

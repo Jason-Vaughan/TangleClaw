@@ -61,14 +61,32 @@ of a readable baseline, or of a PortHub lease produces the third — never `hold
 list carries divergences only, so a caller deciding whether to reassure the operator must read
 `measured`, not the emptiness of the list.
 
-## The four properties
+## The five properties
 
 | # | Key | Property | `not-measured` when |
 |---|---|---|---|
-| P1 | `gatedProxies` | No proxying site lacks a gate the generated baseline does not also omit | adapt unavailable, or the config generates no gate at all |
+| P1 | `gatedProxies` | No proxying site lacks a gate the generated baseline does not also omit — or TangleClaw's own login guards the door | adapt unavailable, or the config generates no gate at all and the login does not guard the door |
 | P2 | `httpsProtocols` | The HTTPS listener negotiates the protocols the baseline pins (`h1`) | adapt unavailable, or the baseline has no HTTPS listener |
 | P3 | `knownUpstreams` | No site dials an upstream the generated config does not dial | adapt unavailable |
 | P4 | `leaseReach` | No site fronts a port whose PortHub lease declares a narrower `reach` | adapt unavailable, PortHub unreachable, the port has no lease, or the lease has no readable reach |
+| P5 | `forwardedFor` | Nothing in the live file lets a client decide `X-Forwarded-For` | adapt unavailable |
+
+**The gate state is an input** (`checkCaddyDrift({ gateState })`, resolved at boot by
+`lib/auth-gate.js#resolveGateState`). Caddy's `basic_auth` is emitted by state (#1420): once
+TangleClaw's login guards the door (`authGate.guardsTheDoor` — `armed` or `locked`), the generator
+omits it, the baseline omits it, and P1 holds without reading a site — TangleClaw is the gate for
+every request that reaches it, and a live file that still carries `basic_auth` has two gates, not a
+missing one. In `account-required` the baseline keeps `basic_auth` (whoever reaches the first-account
+screen claims the install), so a live file without it is divergence. A site proxying to anything
+other than TangleClaw is P3's to report in every state.
+
+**P5 guards the premise of TangleClaw's fleet carve-out.** `lib/auth-gate.js#isMachineClient` reads
+"no `X-Forwarded-For`" as "not forwarded by Caddy", which holds because Caddy's `reverse_proxy` sets
+the header and replaces a client's value (verified against v2.11.4). `trusted_proxies` — on the
+server or on a `reverse_proxy` — and a `header_up` that sets, adds, rewrites or deletes the header
+each end that. The generator emits neither, so P5 is an absolute, read off the live file alone.
+`request_header` is not reported: it runs before the proxy, which overwrites the value for an
+untrusted peer.
 
 **P2 names its remedy, and the remedy is held to this check's own standard.** An unpinned
 listener's finding points at `scripts/pin-https-listener.js`, which adds the pin to the live file

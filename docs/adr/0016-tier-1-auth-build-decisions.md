@@ -449,3 +449,40 @@ governs.
   enforces. `docs/auth-status-surfacing.md` records the old model as history.
 - **`lib/auth-identity.js#isProxyHeaderTrusted` stays**, for the forwarded HOST
   `lib/session-ownership.js#resolveOperatorHost` reads — an address, not an identity.
+
+### Recorded during #1420 A-03 (2026-09-13) — Caddy's side
+
+- **`basic_auth` is dropped in `armed` and `locked` only** — one predicate,
+  `lib/auth-gate.js#guardsTheDoor`, read by the generator, the drift check, the cutover and the bind
+  policy. The addendum named `migration-required` and `fallback` as the states that keep it; with the
+  five states A-02a built, `account-required` keeps it (whoever reaches the first-account screen
+  claims the install, so a remote site in front of it still needs Caddy's gate) and so does
+  `unreadable` (a failed read never removes a gate). `fallback` is A-04's.
+- **The generator takes `gateState` as an option, and omitting it keeps `basic_auth`.** The cutover
+  and the drift baseline pass it. `lib/admin-credential.js` (reset-admin's gate creation and
+  rotation) does not yet, and behaves as before.
+- **"Requires `basic_auth`" became "requires a gate"** for the tailnet site, the plain-HTTP
+  catch-all and the LAN name: `basic_auth`, or a state that guards the door. The cutover's
+  refuse-to-ungate guard reads the same condition.
+- **The bypass list moved to TangleClaw** (`GATE_BYPASS_PATHS`: `/api/health`, `/manifest.json`),
+  and Caddy's matcher is generated from it. `/openclaw-direct/*` left both lists together, as
+  "Recorded during #1419" required. No `header_up X-Auth-User` is emitted.
+- **An exemption is honoured only when the router serves the path it matched.** Found while moving
+  the list: the canonicaliser reads `//login` and `//manifest.json` as exempt, but `new URL` routes
+  both to `/`, so a request with no session was served the dashboard shell through the exemption.
+  `evaluate` now requires the parsed `pathname` to equal the canonical path for the bypass list, the
+  login surface and the first-account route; a disagreeing spelling is challenged.
+- **Drift:** P1 holds whenever the state guards the door, and a new P5 reports `trusted_proxies` (on
+  a server or a `reverse_proxy`) or a `header_up` touching `X-Forwarded-For` in the live file — the
+  carve-out's premise, read by Caddy's own adapter.
+- **Bind policy: caddy mode still pins loopback.** ADR 0015's "a wide bind is guarded without a
+  reverse proxy" lands in direct mode: a direct-mode wide bind whose login guards the door is no
+  longer reported as reachable with no password. Honouring a stored opt-in in caddy mode was
+  rejected: every install that opted in before moving to caddy mode would open a plain-HTTP listener
+  at its next restart after arming, from a value the UI does not show (#1055), and Caddy already
+  listens on every interface. #1055 is closed by naming the stored value (option b) in the locked
+  settings hint and in `ingress-cutover --to direct`'s plan.
+- **The forwarded host keeps its condition (caddy ingress with `authEnabled`), with a new reason.**
+  Verified against Caddy v2.11.4: `reverse_proxy` replaces a client-supplied `X-Forwarded-Host` with
+  the `Host` the client sent, and in caddy mode every remote request comes through Caddy.
+  `authEnabled` stays because only then has the launching request passed a login.

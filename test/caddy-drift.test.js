@@ -138,8 +138,8 @@ describe('caddy-drift — P1, every proxying site has a gate', () => {
   });
 
   it('does NOT fire on the generator\'s own ungated bypass routes', () => {
-    // The bypass paths (/api/health, /openclaw-direct/*, /manifest.json) reach
-    // the upstream with no gate BY DESIGN. An absolute "no ungated proxy
+    // The bypass paths (/api/health, /manifest.json) reach the upstream with no
+    // gate BY DESIGN. An absolute "no ungated proxy
     // anywhere" reading of this property fires on every correct install.
     const result = drift.checkGates(summarize('generated').sites, baseline);
     assert.equal(result.status, drift.HOLDS);
@@ -173,6 +173,98 @@ describe('caddy-drift — P1, every proxying site has a gate', () => {
     const live = new Map([[ungatedSite.key, { ...ungatedSite }]]);
     const result = drift.checkGates(live, baselineMixed);
     assert.equal(result.status, drift.HOLDS);
+  });
+});
+
+describe('caddy-drift — P1 when TangleClaw\'s own gate guards the door (#1420)', () => {
+  const armedBaseline = summarize('armed').sites;
+
+  it('fixture precondition: the armed file carries no basic_auth, and the generated one does', () => {
+    for (const site of armedBaseline.values()) assert.deepEqual(site.gates, [], site.key);
+    assert.ok([...summarize('generated').sites.values()].every((site) => site.gates.length > 0));
+  });
+
+  for (const gateState of ['armed', 'locked']) {
+    it(`holds for a live file with no basic_auth — ${gateState}`, () => {
+      const result = drift.checkGates(armedBaseline, armedBaseline, gateState);
+      assert.equal(result.status, drift.HOLDS);
+      assert.deepEqual(result.findings, []);
+    });
+
+    it(`holds for a live file that STILL carries basic_auth — ${gateState}`, () => {
+      // The cutover window: the hand-edited file keeps Caddy's gate until the
+      // operator drops it. Two gates are not a missing one.
+      const result = drift.checkGates(summarize('generated').sites, armedBaseline, gateState);
+      assert.equal(result.status, drift.HOLDS);
+    });
+  }
+
+  for (const gateState of ['account-required', 'unreadable', null]) {
+    it(`reports the missing basic_auth when the state does not guard the door — ${gateState}`, () => {
+      // account-required: whoever reaches the first-account screen claims the
+      // install, so Caddy's gate is still owed. The baseline for these states is
+      // the gated file.
+      const result = drift.checkGates(armedBaseline, summarize('generated').sites, gateState);
+      assert.equal(result.status, drift.DIVERGED);
+      assert.ok(result.findings.length > 0);
+    });
+  }
+});
+
+describe('caddy-drift — P5, nothing lets a client decide X-Forwarded-For (#1420)', () => {
+  for (const name of ['generated', 'armed', 'hand-edited', 'ungated', 'no-h1']) {
+    it(`holds for the ${name} file, which sets neither`, () => {
+      const result = drift.checkForwardedFor(adapted(name));
+      assert.equal(result.status, drift.HOLDS, result.findings.join(' | '));
+    });
+  }
+
+  it('reports trusted_proxies on the server AND a header_up rewrite, each once', () => {
+    const result = drift.checkForwardedFor(adapted('forwarded-for'));
+    assert.equal(result.status, drift.DIVERGED);
+    assert.equal(result.findings.length, 2, result.findings.join(' | '));
+    assert.ok(result.findings.some((f) => /server on :8443 sets trusted_proxies/.test(f)));
+    assert.ok(result.findings.some((f) => /rewrites X-Forwarded-For with header_up/.test(f)));
+  });
+
+  it('reads every header_up form, in any letter case, and trusted_proxies on the proxy itself', () => {
+    // The adapted shapes Caddy v2.11.4 produces: `header_up X-Forwarded-For v`
+    // is `set`, `+X-Forwarded-For` is `add`, a search/replace pair is `replace`,
+    // `-x-forwarded-for` is `delete`.
+    const config = (handler) => ({ apps: { http: { servers: { srv0: {
+      listen: [':8443'],
+      routes: [{ handle: [{ handler: 'subroute', routes: [{ handle: [handler] }] }] }]
+    } } } } });
+    const proxy = (extra) => ({ handler: 'reverse_proxy', upstreams: [{ dial: '127.0.0.1:3102' }], ...extra });
+    for (const request of [
+      { set: { 'X-Forwarded-For': ['1.2.3.4'] } },
+      { add: { 'x-forwarded-for': ['1.2.3.4'] } },
+      { replace: { 'X-FORWARDED-FOR': [{ search_regexp: 'a', replace: 'b' }] } },
+      { delete: ['x-forwarded-for'] }
+    ]) {
+      const result = drift.checkForwardedFor(config(proxy({ headers: { request } })));
+      assert.equal(result.status, drift.DIVERGED, JSON.stringify(request));
+    }
+    const trusted = drift.checkForwardedFor(config(proxy({ trusted_proxies: ['192.168.0.0/16'] })));
+    assert.equal(trusted.status, drift.DIVERGED);
+    assert.match(trusted.findings[0], /reverse_proxy on :8443 to 127\.0\.0\.1:3102 sets trusted_proxies/);
+  });
+
+  it('does not flag other headers, or request_header, which the proxy overwrites', () => {
+    const config = (handlers) => ({ apps: { http: { servers: { srv0: {
+      listen: [':8443'], routes: [{ handle: handlers }]
+    } } } } });
+    const result = drift.checkForwardedFor(config([
+      { handler: 'headers', request: { set: { 'X-Forwarded-For': ['9.9.9.9'] } } },
+      { handler: 'reverse_proxy', headers: { request: { set: { 'X-Real-IP': ['x'] }, delete: ['x-auth-user'] } },
+        upstreams: [{ dial: '127.0.0.1:3102' }] }
+    ]));
+    assert.equal(result.status, drift.HOLDS, result.findings.join(' | '));
+  });
+
+  it('holds for a config with no servers at all', () => {
+    assert.equal(drift.checkForwardedFor({}).status, drift.HOLDS);
+    assert.equal(drift.checkForwardedFor(null).status, drift.HOLDS);
   });
 });
 
@@ -310,6 +402,22 @@ describe('caddy-drift — buildBaseline, which needs no caddy binary', () => {
     assert.match(built.content, /basic_auth/, 'the baseline is gated even though the live file is not');
     assert.match(built.content, new RegExp(`reverse_proxy 127\\.0\\.0\\.1:${FIXTURE_SERVER_PORT}`));
     assert.match(built.content, new RegExp(`servers :${FIXTURE_HTTPS_PORT}`));
+  });
+
+  it('omits basic_auth from the baseline when the gate state guards the door (#1420)', () => {
+    const built = drift.buildBaseline(fixtureConfig(), null, 'armed');
+    assert.equal(built.ok, true, built.reason);
+    assert.ok(!built.content.includes('basic_auth'));
+    assert.match(built.content, new RegExp(FIXTURE_TAILNET_HOST.replace(/\./g, '\\.')),
+      'the tailnet site is kept — TangleClaw gates it');
+  });
+
+  it('keeps basic_auth in the baseline for account-required and an omitted state', () => {
+    for (const gateState of ['account-required', undefined]) {
+      const built = drift.buildBaseline(fixtureConfig(), null, gateState);
+      assert.equal(built.ok, true, built.reason);
+      assert.match(built.content, /basic_auth/, String(gateState));
+    }
   });
 
   it('emits no gate when the config declares none', () => {
@@ -463,6 +571,44 @@ describe('caddy-drift — against real caddy', { skip: !CADDY_AVAILABLE && 'cadd
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  /**
+   * Run the whole check over one fixture file.
+   * @param {string} name - Fixture name.
+   * @param {object} options - Extra `checkCaddyDrift` options.
+   * @returns {object} The drift result.
+   */
+  function runOn(name, options) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-drift-state-'));
+    try {
+      const file = path.join(dir, 'Caddyfile');
+      fs.writeFileSync(file, FIXTURE_CADDYFILES[name], { mode: 0o600 });
+      return drift.checkCaddyDrift({ config: fixtureConfig(), caddyfilePath: file, leases: [], ...options });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('an armed install whose live file has dropped basic_auth holds every property (#1420)', () => {
+    const result = runOn('armed', { gateState: 'armed' });
+    assert.equal(result.measured, true);
+    assert.deepEqual(result.findings, []);
+    for (const [name, property] of Object.entries(result.properties)) {
+      assert.equal(property.status, drift.HOLDS, `${name}: ${property.findings.join(' | ')}`);
+    }
+  });
+
+  it('an account-required install whose live file has no basic_auth is divergence (#1420)', () => {
+    const result = runOn('armed', { gateState: 'account-required' });
+    assert.equal(result.properties.gatedProxies.status, drift.DIVERGED);
+  });
+
+  it('reports the X-Forwarded-For settings in the live file, end to end (#1420)', () => {
+    const result = runOn('forwarded-for', { gateState: 'armed' });
+    assert.equal(result.properties.forwardedFor.status, drift.DIVERGED);
+    assert.equal(result.properties.gatedProxies.status, drift.HOLDS);
+    assert.equal(result.findings.length, 2, result.findings.join(' | '));
   });
 
   it('leaves no baseline temp file behind', () => {

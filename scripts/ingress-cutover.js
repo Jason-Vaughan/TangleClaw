@@ -37,6 +37,8 @@ const REPO_DIR = path.resolve(__dirname, '..');
 const caddy = require(path.join(REPO_DIR, 'lib', 'caddy'));
 const ttydAttach = require(path.join(REPO_DIR, 'lib', 'ttyd-attach'));
 const store = require(path.join(REPO_DIR, 'lib', 'store'));
+const authGate = require(path.join(REPO_DIR, 'lib', 'auth-gate'));
+const bindPolicy = require(path.join(REPO_DIR, 'lib', 'bind-policy'));
 const tangleclawHome = require('../lib/tangleclaw-home');
 
 const DEPLOY_DIR = path.join(REPO_DIR, 'deploy');
@@ -107,7 +109,12 @@ function fillTemplate(tpl, subs) {
  * @param {string} ctx.caddyTemplate - caddy plist template contents.
  * @param {string|null} [ctx.existingCaddyfileText] - Current Caddyfile text (null
  *   when absent) — feeds the #397 refuse-to-ungate guard.
- * @returns {{ target, caddyfile: {path,content}|null, plists: Array<{path,content}>, configPatch: object, launchctl: Array<string[]>, healthUrl: string, rollbackHint: string }}
+ * @param {string|null} [ctx.gateState] - TangleClaw's gate state
+ *   (`lib/auth-gate.js#resolveGateState`). Decides whether the generated file
+ *   still carries `basic_auth`; omitted, it does whenever config has a credential.
+ * @returns {{ target, caddyfile: {path,content}|null, plists: Array<{path,content}>, configPatch: object, launchctl: Array<string[]>, healthUrl: string, rollbackHint: string, bindNote: string|null }}
+ *   `bindNote` is set on a move to direct mode: what the saved
+ *   `bindAllInterfaces` will do there, which caddy mode had hidden (#1055).
  */
 function planCutover(target, ctx) {
   const { config, env, upstreamPort } = ctx;
@@ -119,12 +126,18 @@ function planCutover(target, ctx) {
     const httpsPort = config.caddyHttpsPort || 8443;
     // #397 credential durability — NEVER regenerate a gated ingress into an
     // ungated one. If the existing Caddyfile carries a credential but the
-    // config would emit no gate, abort: the operator must adopt/set the
+    // new file would have no gate, abort: the operator must adopt/set the
     // credential first (boot-time adoption or scripts/reset-admin.js). This is
     // the fail-closed twin of the 2026-07-03 lockout: losing the credential
     // locked the operator OUT; dropping the gate would let everyone else IN.
+    //
+    // "A gate" is Caddy's `basic_auth` OR TangleClaw's own login guarding the
+    // door (`authGate.guardsTheDoor`). Dropping `basic_auth` from an install
+    // whose login is armed is the cutover working, not a gate lost — Caddy's
+    // gate is dropped by state, and this operator-run step is what drops it.
     const effectiveAuth = Boolean(config.authEnabled && config.basicAuthUser && config.basicAuthHash);
-    if (!effectiveAuth && typeof ctx.existingCaddyfileText === 'string'
+    const gatedAfter = effectiveAuth || authGate.guardsTheDoor(ctx.gateState);
+    if (!gatedAfter && typeof ctx.existingCaddyfileText === 'string'
         && caddy.listBasicAuthUsers(ctx.existingCaddyfileText).length > 0) {
       const err = new Error('cutover would replace a basic_auth-GATED Caddyfile with an UNGATED one '
         + '(config has no credential). Set one first: node scripts/reset-admin.js '
@@ -148,6 +161,8 @@ function planCutover(target, ctx) {
       // both-or-neither guard backstops it; passing null/null leaves an open site.
       basicAuthUser: config.authEnabled ? config.basicAuthUser : null,
       basicAuthHash: config.authEnabled ? config.basicAuthHash : null,
+      // #1420 — omits `basic_auth` once TangleClaw's own gate guards the door.
+      gateState: ctx.gateState === undefined ? null : ctx.gateState,
       // #397 — preserve the remote plain-HTTP catch-all shape (adopted from the
       // live file or set explicitly). Generator enforces gate-required.
       remoteHttpCatchAll: config.caddyRemoteHttp === true,
@@ -203,7 +218,8 @@ function planCutover(target, ctx) {
         ['kickstart', '-k', serverTarget]
       ],
       healthUrl: `https://localhost:${httpsPort}/api/health`,
-      rollbackHint: 'node scripts/ingress-cutover.js --to direct'
+      rollbackHint: 'node scripts/ingress-cutover.js --to direct',
+      bindNote: null
     };
   }
 
@@ -241,8 +257,34 @@ function planCutover(target, ctx) {
       ['kickstart', '-k', serverTarget]
     ],
     healthUrl: `${protocol}://localhost:${upstreamPort}/api/health`,
-    rollbackHint: 'node scripts/ingress-cutover.js --to caddy'
+    rollbackHint: 'node scripts/ingress-cutover.js --to caddy',
+    bindNote: describeDirectBind(config, ctx.gateState)
   };
+}
+
+/**
+ * What the saved `bindAllInterfaces` will do once an install is back in direct
+ * mode — the value caddy mode ignores and the locked settings switch does not
+ * show (#1055). Read from the one classification, with the mode swapped, so the
+ * note cannot describe a binding the server would not produce.
+ *
+ * @param {object} config - Loaded config (still in its current mode).
+ * @param {string|null} [gateState] - TangleClaw's gate state.
+ * @returns {string} One operator-facing sentence.
+ */
+function describeDirectBind(config, gateState) {
+  const after = bindPolicy.describeBindState({ ...config, ingressMode: 'direct' }, gateState);
+  if (!after.wide) {
+    return `saved ${bindPolicy.OPT_IN_KEY} is off: the dashboard will listen on 127.0.0.1 only`;
+  }
+  const why = after.grace
+    ? 'this install predates the setting and has never chosen'
+    : `saved ${bindPolicy.OPT_IN_KEY} is true`;
+  const guard = after.guarded
+    ? "TangleClaw's login still guards it"
+    : 'with NO login in front of it';
+  return `${why}: the dashboard will accept connections from EVERY network interface, ${guard}. `
+    + `Set "${bindPolicy.OPT_IN_KEY}": false first to keep it on 127.0.0.1`;
 }
 
 // ── Executor (side-effecting; not unit-tested — VRF-auth-1-cutover) ──
@@ -527,7 +569,10 @@ function main() {
     // is careful today to expose only a state name.
     existingCaddyfileText: (ingress.state === 'absent' || ingress.state === 'unreadable')
       ? null
-      : fs.readFileSync(caddyfilePath, 'utf8')
+      : fs.readFileSync(caddyfilePath, 'utf8'),
+    // #1420 — resolved immediately before planning, below, so it reads the
+    // config as adoption left it.
+    gateState: null
   };
 
   if (target === 'caddy') {
@@ -664,6 +709,12 @@ function main() {
     }
   }
 
+  // #1420 — whether TangleClaw's own login guards the door, which decides
+  // whether the generated file still needs Caddy's `basic_auth`. Read here,
+  // after adoption may have changed `authEnabled`, through the gate's own
+  // classifier against the store this process opened.
+  ctx.gateState = authGate.resolveGateState(() => config, store.authSessions);
+
   let plan;
   try {
     plan = planCutover(target, ctx);
@@ -707,7 +758,9 @@ function main() {
     process.stdout.write(`  config patch:    ${JSON.stringify(plan.configPatch)}\n`);
     for (const c of plan.launchctl) process.stdout.write(`  launchctl ${c.join(' ')}\n`);
     process.stdout.write(`  health check:    ${plan.healthUrl}\n`);
-    process.stdout.write(`  rollback:        ${plan.rollbackHint}\n\n`);
+    process.stdout.write(`  rollback:        ${plan.rollbackHint}\n`);
+    if (plan.bindNote) process.stdout.write(`  network binding: ${plan.bindNote}\n`);
+    process.stdout.write('\n');
     // A preview changes nothing, so it deliberately writes NO result file: a
     // caller polling one must never see a dry run and conclude the ingress moved.
     if (resultFile) process.stdout.write('  note: --result-file is not written for a dry run\n');
@@ -811,7 +864,9 @@ function main() {
     }
   }
 
-  process.stdout.write(`\nIngress switched to '${target}'.\n  Health: ${plan.healthUrl}\n  Rollback: ${plan.rollbackHint}\n\n`);
+  process.stdout.write(`\nIngress switched to '${target}'.\n  Health: ${plan.healthUrl}\n  Rollback: ${plan.rollbackHint}\n`);
+  if (plan.bindNote) process.stdout.write(`  Network binding: ${plan.bindNote}\n`);
+  process.stdout.write('\n');
 
   // 6. Best-effort health poll (non-fatal — the operator VRF confirms end-to-end).
   // Captured so an unbuildable health URL reaches the RESULT FILE, not just
@@ -896,4 +951,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { planCutover, fillTemplate, parseArgs, resolveUpstreamPort, applyDryRunAdoptionPreview, writeCutoverResult, pollHealth, certHostUnion, CUTOVER_CODES };
+module.exports = { planCutover, describeDirectBind, fillTemplate, parseArgs, resolveUpstreamPort, applyDryRunAdoptionPreview, writeCutoverResult, pollHealth, certHostUnion, CUTOVER_CODES };
