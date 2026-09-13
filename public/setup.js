@@ -1814,7 +1814,7 @@ function _renderProvisionScreen() {
       <div class="setup-step" role="status" aria-live="polite">
         <h2 class="setup-heading">Your login is in force</h2>
         <p class="setup-text">TangleClaw is now behind a login${p.user ? ` for <strong>${esc(p.user)}</strong>` : ''}. Every page will ask for it.</p>
-        ${url ? `<p class="setup-text-muted">TangleClaw has moved to <code>${esc(url)}</code>. This address will not work any more.</p>` : ''}
+        ${url ? `<p class="setup-text-muted">TangleClaw has moved to <code>${esc(url)}</code>. This address will not work any more. You will sign in there once, with the password you just set — this page's sign-in does not carry across to a new address.</p>` : ''}
         ${_warningsBlock(p.warnings)}
         ${signIn}
       </div>`;

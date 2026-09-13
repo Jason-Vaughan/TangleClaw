@@ -428,3 +428,24 @@ governs.
   when a different local forwarder (Tailscale Serve, nginx, cloudflared) is pointed at TangleClaw.**
   The generator is pinned against the first two by `test/auth-gate.test.js`; a hand-edited live file
   is the drift check's to read (A-03).
+
+### Recorded during #1420 A-02b (2026-09-13) — OQ2 as built
+
+- **An inbound `X-Auth-User` is deleted at request entry on both transports**
+  (`lib/auth-identity.js#refuseInboundIdentity`, called first in `server.js#handleRequest` and
+  `#handleUpgrade`), as OQ2 decided. **Departure on logging:** OQ2 said its presence is "logged at
+  warn". A hand-edited Caddyfile that still carries `basic_auth` sends Caddy's own `header_up` value on
+  every forwarded request until the operator drops it at Checkpoint 2, so a warn on each would bury the
+  log for the whole cutover window. A header that came through a proxy is therefore logged at debug; one
+  that did NOT come through a proxy cannot be Caddy's, and is logged at warn. Both are deleted.
+- **Identity reads the session only.** `/api/server-info` `currentUser` and a launched session's
+  `owner` read `req.tcSession`. "The `activity_log` writer" in OQ2 is, in the code, the `sessions.owner`
+  column stamped at launch; `activity_log` itself carries no user field.
+- **`authStatus` is the gate state, reported as-is** (`open`, `armed`, `account-required`, `locked`,
+  `unreadable`) — one vocabulary shared with `/api/auth/me`'s `gateState`, never a rename map, so a
+  state added later (A-04's `fallback`) cannot be mislabelled. OQ2 said AUTH-3's
+  `configured-no-identity` would be replaced by a "forged header refused" state. It is not a status
+  value: a refused header is a log line and a deletion, and the status reports only what the gate
+  enforces. `docs/auth-status-surfacing.md` records the old model as history.
+- **`lib/auth-identity.js#isProxyHeaderTrusted` stays**, for the forwarded HOST
+  `lib/session-ownership.js#resolveOperatorHost` reads — an address, not an identity.

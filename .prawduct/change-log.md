@@ -34,6 +34,34 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-13 — #1420 A-02b: identity comes only from the TangleClaw session
+
+<!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->
+
+Train 9 Chunk 04, A-02b. Merges into `train-9/cutover`, not `main`.
+
+**Why.** Once Caddy's `basic_auth` is gone, nothing overwrites `X-Auth-User`, so any code still reading
+it would read the caller's own claim (ADR 0016 OQ2). `authStatus` compared config against that header,
+which stops meaning anything when TangleClaw enforces its own login on every mode.
+
+**What.** `lib/auth-identity.js#refuseInboundIdentity` deletes the header at request entry on both
+transports (`server.js#handleRequest`, `#handleUpgrade`), logged at warn unless it came through a proxy
+(Caddy's transitional `header_up`, logged at debug — a recorded departure from OQ2). `currentUser` and
+a launched session's `owner` read `req.tcSession` only. `authStatus` is the gate state as-is
+(`AUTH_STATUSES` built from `GATE_STATES`); the dashboard chip warns on the three closed states.
+`server.js#_signIn` is the one session issuer (fixation rotation) for login, set-password and
+setup/complete. `authIdentity.cameThroughProxy` is the one spelling of the proxy check. set-password
+answers `503 GATE_UNREADABLE`; the account page treats a 401 as "an account now exists". Docs:
+`SECURITY.md` identity bullet, `docs/auth-status-surfacing.md` rewritten (old model kept as history),
+FEATURES, ADR 0016 "Recorded during #1420 A-02b".
+
+**Review.** Critic `rev-20260913T044901Z-911b7f8e` on `388ac4e2` — 0 blocking, 3 warnings, 10 notes.
+Fixed in `c04fd4e3`: R-8 (SECURITY.md still claimed header trust), R-3 (two status vocabularies), R-4
+(session issuance copied, fixation in one copy), R-1, R-5. Accepted: R-6 (→A-03), R-9 (ADR), the
+informational notes. verify-resolutions clean; its three observations carried to A-03 in the plan.
+Mutation: 12 guards + 8 fixes, all red.
+
+
 ## 2026-09-13 — #1420 A-02a: close an install with no account; keep proxied traffic out of the fleet carve-out
 
 <!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->

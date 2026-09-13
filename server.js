@@ -1093,25 +1093,13 @@ route('GET', '/api/version', (_req, res) => {
 route('GET', '/api/server-info', (_req, res) => {
   const info = serverInfo.getServerInfo();
   const cfg = store.config.load();
-  // AUTH-3: surface the proxy-authenticated user so the dashboard can show
-  // "Logged in as <user>". Null unless the Caddy basic_auth gate is live (the
-  // trust gate is in lib/auth-identity — a direct-mode header is never honored).
-  // Two sources, in the order that makes the answer honest. TangleClaw's own
-  // session is preferred when there is one (#1418): it is identity this server
-  // established itself, and it is the ONLY source in direct mode, where no
-  // proxy sets `X-Auth-User`. The AUTH-3 proxy header remains the answer for a
-  // caddy-mode install that has not armed TangleClaw's gate.
-  info.currentUser = (_req.tcSession && _req.tcSession.username)
-    || authIdentity.resolveRequestUser(_req.headers, cfg);
-  // AUTH-2K9D: surface whether the configured auth gate is actually enforcing, so
-  // the dashboard can warn on a config-vs-live mismatch ('configured-inert' in
-  // direct mode, 'configured-no-identity' when caddy is up but no identity
-  // arrives). Surfacing only — never enforces. See docs/auth-status-surfacing.md.
-  // `armed` only, not "enforcing": `resolveAuthStatus` reads its flag as "a
-  // session gate is live and identity flows from it", which is not true of an
-  // install still waiting for its first account.
-  info.authStatus = authIdentity.resolveAuthStatus(_req.headers, cfg,
-    _req.tcGateState === authGate.GATE_STATES.ARMED);
+  // "Logged in as <user>": the session's username, or null. The session is the
+  // only source of identity (ADR 0016 OQ2) — an inbound `X-Auth-User` was
+  // deleted at request entry.
+  info.currentUser = (_req.tcSession && _req.tcSession.username) || null;
+  // Whether a login is enforced, from the gate's own state for this request.
+  // Surfacing only — never enforces. See docs/auth-status-surfacing.md.
+  info.authStatus = authIdentity.resolveAuthStatus(_req.tcGateState);
   // #227: is the local clone behind origin/main? Cached answer, never waits on
   // the network — a stale cache starts one background fetch for the next poll.
   // `enabled: false` when the operator turned the check off in config.
@@ -1913,22 +1901,38 @@ route('POST', '/api/auth/login', async (req, res, _params, body) => {
   }
   if (!user) return deny();
 
-  // Session fixation: the session the request ARRIVED with is destroyed and a
-  // brand-new token is minted. `store.authSessions.create` has no way to adopt
-  // a caller-supplied id, so the rotation is structural rather than a step that
-  // could be forgotten — but an attacker-planted cookie must also not survive
-  // as a second live session, which is what this destroy is for.
+  const session = _signIn(req, res, user);
+  jsonResponse(res, 200, { username: user.username, csrfToken: session.csrfToken });
+});
+
+/**
+ * Sign a verified user in: rotate away the session the request arrived with,
+ * mint a new one, and set both cookies on the response.
+ *
+ * The ONE place a session is issued. Every route that signs someone in — the
+ * login, the first-account page, the first-run wizard — calls this rather than
+ * repeating the three steps, because the step that matters is the easiest to
+ * leave out of a copy: session fixation. The session the request ARRIVED with
+ * is destroyed; `store.authSessions.create` cannot adopt a caller-supplied id,
+ * so the new token is fresh by construction, and destroying the old one keeps
+ * an attacker-planted cookie from surviving as a second live session.
+ *
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res - Headers not yet sent
+ * @param {{ id: number, username: string }} user - Already authenticated
+ * @returns {{ token: string, csrfToken: string }} The new session
+ */
+function _signIn(req, res, user) {
   const arriving = authSession.tokenFromRequest(req);
   if (arriving) store.authSessions.destroy(arriving);
-
   const session = store.authSessions.create(user);
   const secure = authSession.isSecureRequest(req);
   res.setHeader('Set-Cookie', [
     authSession.serializeCookie(session.token, { secure }),
     authSession.serializeCsrfCookie(session.csrfToken, { secure })
   ]);
-  jsonResponse(res, 200, { username: user.username, csrfToken: session.csrfToken });
-});
+  return session;
+}
 
 // POST /api/auth/logout — end this session.
 //
@@ -1979,12 +1983,21 @@ route('POST', '/api/auth/set-password', async (req, res, _params, body) => {
   // write lock, because another submission or `scripts/reset-admin.js` can land
   // in between.
   if (req.tcGateState !== authGate.GATE_STATES.ACCOUNT_REQUIRED) {
-    const open = authGate.isOpen(req.tcGateState);
+    // Each answer says what is actually true of the install. `armed` and
+    // `locked` do have accounts; `open` needs none; `unreadable` cannot say, so
+    // it must not claim either.
+    if (authGate.isOpen(req.tcGateState)) {
+      return errorResponse(res, 409,
+        'This install does not require a login, so there is no account to create here.',
+        'LOGIN_NOT_REQUIRED');
+    }
+    if (req.tcGateState === authGate.GATE_STATES.UNREADABLE) {
+      return errorResponse(res, 503,
+        'TangleClaw cannot read its login state right now, so it cannot create an account. '
+        + 'Check the server log.', 'GATE_UNREADABLE');
+    }
     return errorResponse(res, 409,
-      open
-        ? 'This install does not require a login, so there is no account to create here.'
-        : 'An account already exists on this install. Sign in instead.',
-      open ? 'LOGIN_NOT_REQUIRED' : 'ACCOUNT_EXISTS');
+      'An account already exists on this install. Sign in instead.', 'ACCOUNT_EXISTS');
   }
   const payload = body || {};
   const username = typeof payload.username === 'string' ? payload.username.trim() : '';
@@ -2023,15 +2036,10 @@ route('POST', '/api/auth/set-password', async (req, res, _params, body) => {
   // came through the proxy or from the machine itself.
   log.warn('First account created from the account-setup page', {
     username: user.username,
-    proxied: req.headers['x-forwarded-for'] !== undefined
+    proxied: authIdentity.cameThroughProxy(req.headers)
   });
 
-  const session = store.authSessions.create(user);
-  const secure = authSession.isSecureRequest(req);
-  res.setHeader('Set-Cookie', [
-    authSession.serializeCookie(session.token, { secure }),
-    authSession.serializeCsrfCookie(session.csrfToken, { secure })
-  ]);
+  const session = _signIn(req, res, user);
   jsonResponse(res, 200, { username: user.username, csrfToken: session.csrfToken });
 });
 
@@ -2794,12 +2802,7 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
   if (adminProvided && config.authEnabled === true) {
     try {
       const user = store.users.createFirst(config.basicAuthUser, body.adminPassword);
-      const session = store.authSessions.create(user);
-      const secure = authSession.isSecureRequest(req);
-      res.setHeader('Set-Cookie', [
-        authSession.serializeCookie(session.token, { secure }),
-        authSession.serializeCsrfCookie(session.csrfToken, { secure })
-      ]);
+      _signIn(req, res, user);
       account.created = true;
     } catch (err) {
       if (err.code !== 'ACCOUNT_EXISTS') throw err;
@@ -2810,8 +2813,10 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
   // whose credential came from a Caddyfile and so has no plaintext — leaves the
   // install `account-required`. The wizard reads this and sends the operator to
   // the account page rather than into a dashboard that would refuse it.
-  account.required = config.authEnabled === true
-    && store.authSessions.accountPresence().exists === false;
+  // Asked of the gate's own classifier against the config about to be saved,
+  // not re-derived here — one owner of what `account-required` means.
+  account.required = authGate.resolveGateState(() => config, store.authSessions)
+    === authGate.GATE_STATES.ACCOUNT_REQUIRED;
 
   // Mark setup as complete
   config.setupComplete = true;
@@ -4622,9 +4627,9 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
     return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
   }
 
-  // AUTH-3: stamp the session with the proxy-authenticated user (null in direct
-  // mode / when the gate is off — resolveRequestUser enforces the trust gate).
-  const owner = authIdentity.resolveRequestUser(_req.headers, store.config.load());
+  // Stamp the session with the signed-in user, or null when no login is
+  // required. The TangleClaw session is the only identity source (ADR 0016 OQ2).
+  const owner = (_req.tcSession && _req.tcSession.username) || null;
 
   // #991: warm the base-branch CI verdict OFF the event loop before the
   // synchronous launch reads it for the prime. Never rejects; a failed probe
@@ -4662,7 +4667,7 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
       // with the matching permissionMode (resolved against the engine
       // profile's bridgePermissionMode mapping).
       launchMode: body ? body.launchMode : null,
-      owner  // AUTH-3: stamp the webui session with the authenticated user too
+      owner  // the webui session is stamped with the signed-in user too
     };
     sessions.launchWebuiSession(params.project, result._conn, result._engineId, result._engineProfile, result._project, launchOpts)
       .then((webuiResult) => {
@@ -6895,7 +6900,7 @@ function _gateIdentity(req, socket, pathname) {
     // The header's PRESENCE, whatever its value: Caddy always sets it on a
     // forwarded request, so even an empty one is not evidence of a local
     // process. See `authGate.isMachineClient` condition 2.
-    proxied: req.headers['x-forwarded-for'] !== undefined,
+    proxied: authIdentity.cameThroughProxy(req.headers),
     browserShaped,
     hasSessionCookie: sessionToken !== null
   });
@@ -6920,6 +6925,31 @@ function _decodeUpgradeSegment(segment) {
 }
 
 /**
+ * Delete an inbound `X-Auth-User` header from a request, and log that it was.
+ *
+ * A header that came through a reverse proxy is almost certainly Caddy's own
+ * `header_up` line on a Caddyfile that still carries the `basic_auth` gate — so
+ * it is logged at debug, once per request, rather than filling the log for the
+ * whole cutover window. One that did NOT come through a proxy cannot be Caddy's:
+ * it is a caller claiming an identity, and it is logged at warn.
+ *
+ * @param {http.IncomingMessage} req
+ * @param {string} where - The path, for the log line only
+ * @returns {void}
+ */
+function _refuseInboundIdentity(req, where) {
+  const refused = authIdentity.refuseInboundIdentity(req.headers);
+  if (!refused.present) return;
+  if (refused.proxied) {
+    log.debug('Dropped an X-Auth-User header forwarded by a proxy; identity comes from the session', { path: where });
+  } else {
+    log.warn('Refused an X-Auth-User header that did not come through a proxy — identity comes from the session', {
+      path: where
+    });
+  }
+}
+
+/**
  * Handle a WebSocket upgrade: the terminal proxy and both OpenClaw proxies.
  *
  * Three checks run before any branch dispatches, in this order — cross-site
@@ -6931,6 +6961,11 @@ function _decodeUpgradeSegment(segment) {
  * @param {Buffer} head
  */
 function handleUpgrade(req, socket, head) {
+  // Deleted before any guard or branch, as on the HTTP path — the upgrade
+  // proxies copy request headers to ttyd and the gateway, so a header left here
+  // would also travel upstream.
+  _refuseInboundIdentity(req, req.url);
+
   // Everything below runs inside the server's 'upgrade' listener, where a throw
   // is caught by no request handler: it reaches the process-level logger and
   // leaves the client's socket open. `reqUrl` throws on a Host header `new URL`
@@ -7234,6 +7269,10 @@ async function handleRequest(req, res) {
   const urlObj = reqUrl(req);
   const pathname = urlObj.pathname;
   const method = req.method.toUpperCase();
+
+  // An inbound identity header is deleted before anything reads the request —
+  // identity is the session's (ADR 0016 OQ2). See `authIdentity.refuseInboundIdentity`.
+  _refuseInboundIdentity(req, pathname);
 
   // Reject state-changing requests a browser tells us came from another site.
   //

@@ -118,6 +118,9 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
     };
     const res = mockRes();
     await handleRequest(req, res);
+    // The request as the handler left it, for cases asserting what the entry
+    // guards removed from it.
+    res.req = req;
     return res;
   }
 
@@ -197,6 +200,67 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
       assert.equal(create.statusCode, 401, 'the first-account route is closed once any account exists');
       assert.equal(store.users.getByName('mallory'), null);
     });
+  });
+
+  describe('sessions are issued in one place, with the fixation rotation (#1420)', () => {
+    it('every route that signs someone in goes through _signIn, and nothing else creates a session', () => {
+      // A copy of the three steps is where the destroy of the arriving session
+      // gets left out. Pinned on the source: `authSessions.create` appears once
+      // in server.js, inside `_signIn`, and each signing-in route calls it.
+      const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+      assert.equal((src.match(/store\.authSessions\.create\(/g) || []).length, 1,
+        'exactly one session-creating call in server.js');
+      const helper = src.slice(src.indexOf('function _signIn('), src.indexOf('\n}\n', src.indexOf('function _signIn(')));
+      assert.match(helper, /store\.authSessions\.destroy\(arriving\)/, 'the helper rotates the arriving session');
+      assert.match(helper, /store\.authSessions\.create\(/);
+      for (const marker of ["route('POST', '/api/auth/login'", "route('POST', '/api/auth/set-password'",
+        "route('POST', '/api/setup/complete'"]) {
+        const start = src.indexOf(marker);
+        const body = src.slice(start, src.indexOf('\n});\n', start));
+        assert.match(body, /_signIn\(req, res, user\)/, `${marker} signs in through the helper`);
+      }
+    });
+
+    it('the first-account route destroys a session cookie the browser arrived with', async () => {
+      // The fixation half, driven for real on a route that used to skip it. A
+      // live session row can exist here only if planted — which is exactly the
+      // case the rotation exists for.
+      setAuthEnabled(true);
+      const token = 'f'.repeat(64);
+      const realDestroy = store.authSessions.destroy;
+      const destroyed = [];
+      store.authSessions.destroy = (t) => { destroyed.push(t); return realDestroy.call(store.authSessions, t); };
+      try {
+        const res = await send('POST', '/api/auth/set-password', {
+          body: { username: 'jason', password: 'a-long-enough-password' },
+          cookie: `${authSession.SESSION_COOKIE}=${token}`
+        });
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(destroyed, [token], 'the arriving session token is destroyed before a new one is issued');
+      } finally {
+        store.authSessions.destroy = realDestroy;
+      }
+    });
+  });
+
+  describe('an inbound X-Auth-User is deleted at request entry (#1420, ADR 0016 OQ2)', () => {
+    // Deleted rather than ignored, so a later reader — or a proxy that copies
+    // request headers upstream — cannot pick it back up. Asserted on the request
+    // the handler leaves behind, on every gate state and for a proxied request.
+    for (const [label, setup] of [
+      ['an open install', () => setAuthEnabled(false)],
+      ['an install with no account', () => setAuthEnabled(true)],
+      ['an armed install', () => armGate()]
+    ]) {
+      it(`on ${label}`, async () => {
+        setup();
+        for (const headers of [{ 'x-auth-user': 'attacker' },
+          { 'x-auth-user': 'jason', 'x-forwarded-for': '100.64.0.7' }]) {
+          const res = await send('GET', '/api/auth/me', { headers });
+          assert.equal('x-auth-user' in res.req.headers, false, JSON.stringify(headers));
+        }
+      });
+    }
   });
 
   describe('POST /api/auth/set-password — the first account (#1420)', () => {
@@ -327,6 +391,22 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
         passwordLib.hashPassword = realSync;
         passwordLib.hashPasswordAsync = realAsync;
       }
+    });
+
+    it('answers 503 GATE_UNREADABLE when the gate cannot read its state — never a claim either way', async () => {
+      // Reachable by a local tool through the carve-out. "An account already
+      // exists" would be a guess; the gate does not know.
+      const orig = store.authSessions.accountPresence;
+      store.authSessions.accountPresence = () => { throw new Error('database is locked'); };
+      try {
+        const res = await send('POST', '/api/auth/set-password', { body: GOOD, machine: true });
+        assert.equal(res.statusCode, 503);
+        assert.match(res.body, /GATE_UNREADABLE/);
+        assert.doesNotMatch(res.body, /already exists/);
+      } finally {
+        store.authSessions.accountPresence = orig;
+      }
+      assert.equal(store.users.list().length, 0);
     });
 
     it('is reachable through the proxy — reach authorises it, per ADR 0016', async () => {
@@ -1022,6 +1102,17 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
           assert.equal(sent.includes(authSession.SESSION_COOKIE), false,
             'the session cookie must not reach a --writable ttyd');
           assert.equal(sent.includes(authSession.CSRF_COOKIE), false);
+        } finally { restore(); }
+      });
+
+      it('does not carry an inbound X-Auth-User to ttyd — it is deleted before any branch (#1420)', async () => {
+        try {
+          const { cookie } = await login();
+          const s = await upgrade('/terminal/ws', { cookie, headers: { 'x-auth-user': 'attacker' } });
+          assert.doesNotMatch(s.written, REFUSED);
+          assert.equal(connects.length, 1, 'precondition: the ttyd connection was opened');
+          assert.equal(/x-auth-user/i.test(connects[0].upstream.written), false,
+            'a claimed identity must not travel to the shell');
         } finally { restore(); }
       });
 

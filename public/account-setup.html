@@ -153,9 +153,12 @@
         window.location.replace('/');
         return;
       }
-      if (data.code === 'ACCOUNT_EXISTS') {
-        // Someone (or a terminal) created the account first. The login page is
-        // the only useful place to be now.
+      if (data.code === 'ACCOUNT_EXISTS' || res.status === 401) {
+        // Someone (or a terminal) created the account first. A signed-out page
+        // usually learns that as a 401 — once an account exists the gate stops
+        // letting this route through at all — and only rarely as ACCOUNT_EXISTS,
+        // when the account landed between the gate and the write. Either way the
+        // login page is the only useful place to be now.
         window.location.replace('/login');
         return;
       }

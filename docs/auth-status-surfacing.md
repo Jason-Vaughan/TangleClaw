@@ -1,72 +1,67 @@
-# Auth status surfacing (AUTH-2K9D)
+# Auth status surfacing
 
-**Status: built (2026-07-08). `/api/server-info.authStatus` + dashboard warning chip. Amended 2026-07-17 (AUTH-5N2J): direct-loopback bypass split out of `configured-no-identity`.**
+**Status: built. Re-derived 2026-09-13 (#1420 A-02b) from TangleClaw's own gate state; the original
+AUTH-2K9D design (2026-07-08, amended 2026-07-17 by AUTH-5N2J) compared config against a Caddy-set
+identity header, and is kept below as history.**
 
-Related: [ADR 0003 — Ingress model](adr/0003-ingress-model.md), [ADR 0004 — AUTH-2 basic_auth gate](adr/0004-auth-2-basic-auth-gate.md), `lib/auth-identity.js`, `lib/server-info.js`.
+Related: [ADR 0016 — Tier 1 auth build decisions](adr/0016-tier-1-auth-build-decisions.md) (OQ2,
+"Recorded during #1420 A-02a" for the gate states, and "Recorded during #1420 A-02b" for this status), `lib/auth-gate.js#resolveGateState`, `lib/auth-identity.js`,
+`lib/server-info.js`.
 
 ## Problem
 
-An operator can persist `authEnabled=true` and believe TangleClaw is access-controlled while the runtime enforces nothing. The config claims protection the runtime does not deliver, and the mismatch is **silent** — on a Tailscale-reachable box that is a real exposure-vs-perception gap. Two distinct failure shapes, folded into one requirement:
+An operator must not believe TangleClaw is access-controlled while it enforces nothing, nor be left
+guessing why a login is closed. `GET /api/server-info` reports `authStatus`, and the dashboard shows a
+warning chip for the states that need the operator.
 
-- **AUTH-2 inert-config.** `authEnabled=true` with `ingressMode='direct'`. The flag is *settable but inert* — only the Caddy cutover reads `authEnabled` (`scripts/ingress-cutover.js`); direct mode has no in-process gate. So the config reads "auth on" with zero enforcement in front of it. (Critic NOTE on AUTH-2 slice 2b.)
-- **AUTH-3 missing-identity.** `authEnabled=true` with `ingressMode='caddy'` yet `currentUser` resolves to `null`. The basic_auth gate may be live but not forwarding identity — e.g. a hand-edited live Caddyfile missing the `header_up X-Auth-User {http.auth.user.id}` line (the live-state hazard documented in auto-memory). Nothing today distinguishes "gate not configured" from "`header_up` missing." (Critic NOTE on AUTH-3, folded in 2026-06-28.)
+## State model (current)
 
-## Constraint (why this is *surfacing*, not *enforcing*)
+`authStatus` IS the request's gate state (`lib/auth-identity.js#resolveAuthStatus`), reported as-is —
+the same value `/api/auth/me` reports as `gateState`. The gate state is the single owner of whether a
+login is enforced; nothing here reads config or a request header, and there is no second vocabulary
+mapped onto it (a rename map is where a newly added state gets labelled wrongly).
 
-Direct mode deliberately has **no in-process auth gate** — the gate is Caddy's job (ADR 0003 / 0004); direct mode is the trusted-LAN posture. TangleClaw cannot and should not start enforcing auth in-process to "fix" the inert-config case. The correct remedy is to make the mismatch **visible** so the operator activates the real gate (run the cutover / repair the Caddyfile), not to invent a second enforcement path. This mirrors SR-7K2P's record-not-enforce shape.
+| `authStatus` (= gate state) | Meaning | Dashboard chip |
+|---|---|---|
+| `open` | `authEnabled` is not on — no login required (ADR 0009's opt-out) | none |
+| `armed` | TangleClaw enforces its login, on any ingress mode | none |
+| `account-required` | login on, no account yet — closed | ⚠ open a new tab to create the account |
+| `locked` | accounts exist, none enabled — closed | ⚠ run `reset-admin.js --store` at a terminal |
+| `unreadable` | the gate could not read its state — closed | ⚠ check the server log |
 
-## Design (decided)
+A value that is not a gate state maps to `unreadable`, never `open`: a status that fails toward "no
+login required" would tell the operator the door is open when the code cannot say so. A state added to
+the gate is a valid status automatically, and `test/auth-status-warning.test.js` goes red until the
+chip's rendering of it is decided.
 
-### State model
+**A browser rarely sees the three warnings.** A closed gate refuses the `/api/server-info` poll that
+would carry them to a signed-out page. They reach a local tool through the fleet carve-out, and a
+signed-in page left open across a change. The chip exists so that, when it does render, it names the
+state honestly rather than showing nothing.
 
-Derived from config `{authEnabled, ingressMode}` and the request-resolved `currentUser` (`authIdentity.resolveRequestUser`, the existing spoof-defense trust gate — unchanged here):
+`currentUser` is the TangleClaw session's username, or null. An inbound `X-Auth-User` header is deleted
+at request entry (`lib/auth-identity.js#refuseInboundIdentity`) and is never identity.
 
-| `authStatus` | Condition | Meaning | Surface |
-|---|---|---|---|
-| `off` | `authEnabled` falsy | Auth not configured (expected) | none |
-| `live` | `authEnabled` && `ingressMode='caddy'` && `currentUser` present | Gate enforcing, identity flowing | existing 👤 chip |
-| `live` | `authEnabled` && TangleClaw's own session gate is active (#1418) | TangleClaw enforces the login in-process, on ANY ingress mode. Checked FIRST — it is true whatever Caddy is doing | none |
-| `configured-inert` | `authEnabled` && TangleClaw's gate NOT active && `ingressMode !== 'caddy'` | AUTH-2: config claims auth, no gate enforces it | ⚠ warning |
-| `configured-no-identity` | `authEnabled` && `ingressMode='caddy'` && `currentUser` null && `x-forwarded-for` present | AUTH-3: request traversed Caddy but no identity arrived (missing `header_up`) | ⚠ warning |
-| `configured-bypassed` | `authEnabled` && `ingressMode='caddy'` && `currentUser` null && no `x-forwarded-for` | AUTH-5N2J: request hit TC's loopback bind directly without traversing Caddy — gate health unknowable from this request | none |
+### Surface
 
-### The loopback-bypass split (AUTH-5N2J, 2026-07-17)
+`public/landing.js#_authStatusWarning` maps the value to text; `#renderAuthStatus` shows or clears the
+chip on every poll. **State-driven, not a notification** — no dismiss control and no timer (the
+no-UI-timers rule); removing the cause removes the chip on the next poll. Text carries the meaning so
+the chip is not color-only (a11y).
 
-The original design claimed `configured-no-identity` could not false-positive because "a browser reaching `/api/server-info` should traverse Caddy." That held for the intended remote access path but not for local access: TC's `127.0.0.1` bind in caddy mode still accepts direct connections from the machine itself (`localhost:3102` in a local browser, AI-session `curl` checks), and those legitimately carry no identity — the chip went amber against a perfectly healthy gate on every such load (surfaced during the AUTH-2K9D VRF, 2026-07-09).
+## History — the AUTH-2K9D design this replaced
 
-**Discriminator: proxy evidence, not remote address.** Caddy connects to TC from loopback exactly like a direct local client, so `req.socket.remoteAddress` cannot tell the two apart. What does distinguish them: Caddy's `reverse_proxy` sets `X-Forwarded-For` on every upstream request (Caddy 2.x default, all blocks in the live Caddyfile included), while a direct client sends none. So with no trusted identity:
+The first design derived `authStatus` from config `{authEnabled, ingressMode}` plus the Caddy-forwarded
+`X-Auth-User` identity, because at the time Caddy's `basic_auth` was the only gate and direct mode had no
+in-process login:
 
-- `x-forwarded-for` present → the request traversed a proxy that failed to forward identity → **`configured-no-identity`** (the real AUTH-3 warning, preserved).
-- `x-forwarded-for` absent → the request never passed the gate → **`configured-bypassed`**, and the chip deliberately renders nothing: this request proves nothing about gate health, and the operator's actual access path (through Caddy) still reports truthfully.
+- `configured-inert` — `authEnabled` in direct mode, where nothing enforced it.
+- `configured-no-identity` — caddy mode, a request that came through Caddy (`X-Forwarded-For`) with no
+  identity: a Caddyfile missing `header_up X-Auth-User`.
+- `configured-bypassed` (AUTH-5N2J) — caddy mode, a request that reached the loopback listener without
+  Caddy, whose missing identity said nothing about gate health.
 
-**Spoof direction is safe.** `X-Forwarded-For` is consulted only to *classify the diagnostic*, never for identity trust — `resolveRequestUser`'s config-gated spoof defense is unchanged. A direct client spoofing `X-Forwarded-For` can at most show *itself* a false amber chip; it gains no identity and no access. The residual fail-silent case — a proxied request arriving with `X-Forwarded-For` stripped — would suppress a real warning, but Caddy sets the header unconditionally, so that requires a deliberately misconfigured non-Caddy proxy, outside this design's ingress model (ADR 0003).
-
-**Trade-off accepted: the mid-cutover window goes quiet on loopback.** The original design noted that the window after flipping to `caddy` mode but before the cutover regenerates the Caddyfile landed in `configured-no-identity` ("configured but not live" — a useful nudge). In that window the only reachable path is direct loopback, which now classifies as `configured-bypassed` (silent) — by construction indistinguishable, from the request alone, from a deliberate loopback load against a healthy gate. The nudge isn't lost entirely: the API still reports the distinct `configured-bypassed` value, and any through-proxy load during a broken cutover still warns. Accepted as the cost of killing the standing false positive on an access path operators and AI sessions use routinely.
-
-### Signal — `/api/server-info`
-
-Add an `authStatus` field (enum above) to the `GET /api/server-info` response, computed server-side from the loaded config + the same `resolveRequestUser(req.headers, config)` call the route already makes for `currentUser`. Pure derivation, single source of truth, unit-testable. Backward-compatible additive field; older clients ignore it.
-
-Derivation lives in a small pure helper (e.g. `authIdentity.resolveAuthStatus(headers, config)` or a `server-info` helper) so the state logic is tested independently of the route.
-
-**Exposure note:** in direct mode `/api/server-info` is already reachable unauthenticated, and every endpoint already responds — so revealing `configured-inert` leaks nothing an attacker couldn't determine by probing. In caddy mode the endpoint is behind the gate. No new exposure.
-
-### Surface — dashboard indicator (operator's chosen placement)
-
-`public/landing.js` `loadServerInfo` already polls `/api/server-info` and calls `renderAuthUser(data.currentUser)`. Extend that path to also render a **warning chip** next to the existing login chip when `authStatus` is `configured-inert` or `configured-no-identity`:
-
-- `configured-inert` → `⚠ Auth enabled but direct mode isn't enforcing it — run the Caddy cutover to activate the gate.`
-  Since #1418 this no longer fires merely because the mode is direct: TangleClaw's own gate returns `live` first, so this warning now means what it says — **nothing** is enforcing. On a direct-mode install the cheaper remedy is `node scripts/reset-admin.js --store --user <name>`, which arms TangleClaw's own gate without a Caddy cutover.
-- `configured-no-identity` → `⚠ Auth gate is up but no identity is arriving — the live Caddyfile may be missing 'header_up X-Auth-User'.`
-
-**State-driven, not a notification** — the chip reflects the latest poll and self-clears when the state resolves (cutover runs / header fixed). **No dismiss control and no timer** (per the no-UI-timers rule): there is nothing to auto-dismiss and nothing to hide — the indicator is a live mirror of server state, so removing the cause removes the chip on the next poll.
-
-Text + an amber/warning color (reuse the existing `.badge-drift`/`.badge-secret` amber palette for one visual language); text carries the meaning so it is not color-only (a11y).
-
-## Out of scope
-
-- Enforcing auth in direct mode (deliberately Caddy's job — ADR 0003/0004).
-- Running the cutover, or probing/parsing the live Caddyfile contents (the signal is derived from config + request identity, not from reading Caddy's on-disk file).
-- Any change to `resolveRequestUser`'s spoof-defense (the header is still trusted only when the gate is live).
-- A Settings-modal surface (operator chose the dashboard indicator only; a Settings line was the runner-up and can be added later if wanted).
-- Version-history / audit of auth-status transitions.
+All three described a disagreement between Caddy's gate and a header. #1418 gave TangleClaw its own
+login on every mode, and #1420 stopped reading the header, so none of the three can occur and all were
+removed. The AUTH-5N2J observation survives in a different place: Caddy's `X-Forwarded-For` is now what
+keeps forwarded traffic out of the fleet carve-out (`lib/auth-gate.js#isMachineClient`).

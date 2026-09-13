@@ -1,13 +1,11 @@
 'use strict';
 
-// AUTH-3 (#1): the proxy-authenticated identity reaches TC through a REAL HTTP
-// request. Unit tests cover the trust gate (auth-identity.test.js) and the
-// Caddy header emission (caddy.test.js); this proves the server wiring — that
-// `/api/server-info` reports `currentUser` from the request's X-Auth-User header
-// only when the gate is live. The launch endpoint reads the same header via the
-// same helper, so this also covers the header-from-HTTP path it depends on.
+// Identity over a REAL HTTP request (#1420, ADR 0016 OQ2): `currentUser` and
+// `authStatus` on `/api/server-info` come from TangleClaw's own session and gate
+// state, and an inbound `X-Auth-User` header is never believed — on any ingress
+// mode, including the caddy-mode shape where Caddy's gate used to set it.
 
-const { describe, it, before, after } = require('node:test');
+const { describe, it, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -20,15 +18,20 @@ setLevel('error');
 const store = require('../lib/store');
 const { createServer } = require('../server');
 
-/** GET with optional extra headers; returns { status, body }. */
-function get(server, urlPath, extraHeaders = {}) {
+const PASSWORD = 'correct-horse-battery';
+
+/**
+ * Make a request with optional extra headers and body.
+ * @returns {Promise<{status:number, body:any, headers:object}>}
+ */
+function request(server, method, urlPath, extraHeaders = {}, body) {
   return new Promise((resolve, reject) => {
     const addr = server.address();
     const req = http.request({
       hostname: '127.0.0.1',
       port: addr.port,
       path: urlPath,
-      method: 'GET',
+      method,
       headers: { 'Content-Type': 'application/json', ...extraHeaders }
     }, (res) => {
       const chunks = [];
@@ -37,11 +40,11 @@ function get(server, urlPath, extraHeaders = {}) {
         const raw = Buffer.concat(chunks).toString('utf8');
         let parsed;
         try { parsed = JSON.parse(raw); } catch { parsed = raw; }
-        resolve({ status: res.statusCode, body: parsed });
+        resolve({ status: res.statusCode, body: parsed, headers: res.headers });
       });
     });
     req.on('error', reject);
-    req.end();
+    req.end(body === undefined ? undefined : JSON.stringify(body));
   });
 }
 
@@ -52,7 +55,7 @@ function setConfig(patch) {
   store.config.save(config);
 }
 
-describe('AUTH-3 — /api/server-info currentUser (proxy identity over HTTP)', () => {
+describe('/api/server-info identity comes from the session, never a header (#1420)', () => {
   let tmpDir;
   let server;
 
@@ -70,65 +73,81 @@ describe('AUTH-3 — /api/server-info currentUser (proxy identity over HTTP)', (
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('reports currentUser when the Caddy gate is live and the header is present', async () => {
-    setConfig({ ingressMode: 'caddy', authEnabled: true });
-    const res = await get(server, '/api/server-info', { 'X-Auth-User': 'jason' });
-    assert.equal(res.status, 200);
-    assert.equal(res.body.currentUser, 'jason');
-  });
-
-  it('ignores the header in direct mode — currentUser is null (spoof defense)', async () => {
+  beforeEach(() => {
+    store.getDb().prepare('DELETE FROM auth_sessions').run();
+    store.getDb().prepare('DELETE FROM users').run();
     setConfig({ ingressMode: 'direct', authEnabled: false });
-    const res = await get(server, '/api/server-info', { 'X-Auth-User': 'attacker' });
+  });
+
+  /** Sign in and return browser headers carrying the session. */
+  async function signIn() {
+    const res = await request(server, 'POST', '/api/auth/login', {}, { username: 'rosie', password: PASSWORD });
+    assert.equal(res.status, 200, 'precondition: signed in');
+    return {
+      Cookie: res.headers['set-cookie'].map((c) => c.split(';')[0]).join('; '),
+      'Sec-Fetch-Site': 'same-origin'
+    };
+  }
+
+  it('ignores a forged X-Auth-User in the caddy-mode shape Caddy\'s gate used to populate', async () => {
+    // Loopback, no browser markers: the fleet's shape, which the gate lets
+    // through an open install — the header is the only claim of identity.
+    setConfig({ ingressMode: 'caddy', authEnabled: false });
+    const res = await request(server, 'GET', '/api/server-info', { 'X-Auth-User': 'attacker' });
     assert.equal(res.status, 200);
+    assert.equal(res.body.currentUser, null);
+    assert.equal(res.body.authStatus, 'open');
+  });
+
+  it('ignores it through a proxy too — even Caddy\'s own transitional value is not identity', async () => {
+    setConfig({ ingressMode: 'caddy', authEnabled: false });
+    const res = await request(server, 'GET', '/api/server-info',
+      { 'X-Auth-User': 'jason', 'X-Forwarded-For': '100.64.0.7' });
     assert.equal(res.body.currentUser, null);
   });
 
-  it('reports null when the gate is live but no identity header is sent', async () => {
+  it('reports the SESSION\'s user when signed in, whatever header rides along', async () => {
+    store.users.create('rosie', PASSWORD);
     setConfig({ ingressMode: 'caddy', authEnabled: true });
-    const res = await get(server, '/api/server-info');
+    const auth = await signIn();
+    const res = await request(server, 'GET', '/api/server-info', { ...auth, 'X-Auth-User': 'attacker' });
     assert.equal(res.status, 200);
-    assert.equal(res.body.currentUser, null);
+    assert.equal(res.body.currentUser, 'rosie');
+    assert.equal(res.body.authStatus, 'armed');
   });
 
-  // AUTH-2K9D — /api/server-info also reports authStatus (config-vs-live mismatch).
-  it("reports authStatus 'live' when caddy gate is up and identity arrives", async () => {
-    setConfig({ ingressMode: 'caddy', authEnabled: true });
-    const res = await get(server, '/api/server-info', { 'X-Auth-User': 'jason' });
-    assert.equal(res.body.authStatus, 'live');
-  });
-
-  it("reports authStatus 'configured-inert' when authEnabled but direct mode (AUTH-2)", async () => {
+  it('reports armed in DIRECT mode for a signed-in session — the mode no longer decides', async () => {
+    store.users.create('rosie', PASSWORD);
     setConfig({ ingressMode: 'direct', authEnabled: true });
-    const res = await get(server, '/api/server-info');
-    assert.equal(res.body.authStatus, 'configured-inert');
+    const auth = await signIn();
+    const res = await request(server, 'GET', '/api/server-info', auth);
+    assert.equal(res.body.authStatus, 'armed');
+    assert.equal(res.body.currentUser, 'rosie');
+  });
+
+  it('reports account-required to a local tool on an install with no account', async () => {
+    setConfig({ ingressMode: 'caddy', authEnabled: true });
+    const res = await request(server, 'GET', '/api/server-info');
+    assert.equal(res.status, 200, 'the fleet reads it through the carve-out');
+    assert.equal(res.body.authStatus, 'account-required');
     assert.equal(res.body.currentUser, null);
   });
 
-  it('refuses a proxied request on an install with no account, before any identity question (#1420)', async () => {
-    // This case used to report authStatus 'configured-no-identity'. With no
-    // account the install is account-required, TangleClaw's gate refuses a
-    // proxied request outright, and the AUTH-3 identity diagnosis is never
-    // reached over HTTP.
+  it('refuses a proxied request on an install with no account, before any identity question', async () => {
     setConfig({ ingressMode: 'caddy', authEnabled: true });
-    const res = await get(server, '/api/server-info', { 'X-Forwarded-For': '100.64.0.7' });
+    const res = await request(server, 'GET', '/api/server-info',
+      { 'X-Forwarded-For': '100.64.0.7', 'X-Auth-User': 'jason' });
     assert.equal(res.status, 401);
     assert.equal(res.body.code, 'ACCOUNT_REQUIRED');
   });
 
-  it("reports authStatus 'configured-bypassed' on a direct loopback request (AUTH-5N2J regression)", async () => {
-    setConfig({ ingressMode: 'caddy', authEnabled: true });
-    // This request really does hit the server's loopback listener with no proxy
-    // in front — exactly the dashboard-on-localhost load that used to
-    // false-positive the amber configured-no-identity warning.
-    const res = await get(server, '/api/server-info');
-    assert.equal(res.body.authStatus, 'configured-bypassed');
-    assert.equal(res.body.currentUser, null);
-  });
-
-  it("reports authStatus 'off' when auth is disabled", async () => {
-    setConfig({ ingressMode: 'direct', authEnabled: false });
-    const res = await get(server, '/api/server-info');
-    assert.equal(res.body.authStatus, 'off');
+  it('stamps a launched session\'s owner from the session, never the header', async () => {
+    // `POST /api/sessions/:project` reads the owner the same way; asserted on
+    // the source because a launch needs a real engine and project.
+    const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    const start = src.indexOf("route('POST', '/api/sessions/:project'");
+    const body = src.slice(start, src.indexOf('const result = sessions.launchSession', start));
+    assert.match(body, /const owner = \(_req\.tcSession && _req\.tcSession\.username\) \|\| null;/);
+    assert.doesNotMatch(body, /x-auth-user|resolveRequestUser/i);
   });
 });

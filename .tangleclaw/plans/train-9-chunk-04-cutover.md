@@ -70,8 +70,47 @@ Caddy honour a client's value.
   (`store.users#createFirstAsync`) — it is reachable signed-out (Critic R-2).
 
 **Carried out of the A-02a review, into the chunk that will touch the code anyway:**
-- A-02b: `gateActive` means "enforcing" on `/api/auth/me` but `resolveAuthStatus`'s flag means
-  "armed". Rename one when `authStatus` is re-derived from the classifier.
+- ~~A-02b: `gateActive` means "enforcing" on `/api/auth/me` but `resolveAuthStatus`'s flag means
+  "armed".~~ **Done in A-02b** — `resolveAuthStatus` takes the gate state itself, so the second
+  meaning is gone; `gateActive` on `/api/auth/me` keeps "enforcing".
+
+**Done in A-02b (the verify-resolutions and PR-review observations carried from A-02a):**
+- set-password answers `503 GATE_UNREADABLE` in `unreadable` (it had said "an account already
+  exists"); `ACCOUNT_EXISTS` stays for `armed`/`locked`, which do have accounts.
+- The provisioning screen tells the operator they sign in once at the new address with the password
+  they just set.
+- The stale `lib/auth-identity.js` comment is gone with the rewrite.
+- **Accepted, not changed:** `dismissWizard` became async and its three callers do not await it.
+  Its only awaited step (`_installNeedsAccount`) never rejects, and the rest of its body is the same
+  synchronous DOM work that already ran unawaited before; awaiting it at the callers would change
+  nothing a caller does next.
+
+**Carried out of the A-02b review:**
+- A-03: `lib/auth-identity.js#isProxyHeaderTrusted` justifies trusting `X-Forwarded-Host` by Caddy's
+  `basic_auth` gate standing in front. When A-03 drops that gate on an armed install, re-state (or
+  change) the condition the forwarded host is believed under — it names an address in hidden model
+  context, not an identity, but its stated reason goes away.
+- A-03 (verify-resolutions observations, prose only): `lib/session-ownership.js` and `lib/store.js`
+  still describe `owner` as the "proxy-authenticated user (null in direct mode)", and so does FEATURES'
+  "Session ownership" entry; `lib/caddy.js#_pushSiteBlock`'s JSDoc mentions AUTH-3 forwarding without
+  saying the header is inert. A-03 rewrites `lib/caddy.js` anyway.
+- A-03 (PR review note): `lib/auth-identity.js` comments narrate history — the module header's "no
+  longer interprets", `isProxyHeaderTrusted`'s "Identity no longer answers to this", and
+  `resolveAuthStatus`'s paragraph on the retired `configured-*` values. Delete those clauses when
+  `isProxyHeaderTrusted`'s justification is rewritten; the history lives in ADR 0016 and
+  `docs/auth-status-surfacing.md`.
+- A-03: `POST /api/setup/complete` answers `account.required: false` when the gate is `unreadable`, so
+  the wizard moves on rather than surfacing the fault (the gate still enforces — nothing is exposed).
+  Decide whether setup should refuse to finish on an unreadable gate, and test it.
+- A-04: `SECURITY.md`'s login section still describes Caddy's `basic_auth` as THE gate. Its identity
+  bullet was corrected in A-02b; the section is rewritten with the recovery doc, when the new door's
+  recovery exists to describe.
+
+**A-02b decisions (2026-09-13).** Recorded in ADR 0016 "Recorded during #1420 A-02b": the header is
+deleted on both transports, logged at debug when it came through a proxy (Caddy's transitional
+`header_up`) and at warn when it did not — a departure from OQ2's "logged at warn"; identity and
+`owner` read the session; `authStatus` is the gate state; `isProxyHeaderTrusted` stays for the
+forwarded host.
 - A-03: the drift check reads the LIVE Caddyfile for `trusted_proxies` and any `header_up` touching
   `X-Forwarded-For`, and reports either as divergence — the carve-out's premise.
 - A-04: the login page tells a `locked` or `unreadable` install apart from a wrong password (the
@@ -145,7 +184,7 @@ Caddy honour a client's value.
 - [x] A-01 — ADR 0016 addendum + this plan
 - [x] Checkpoint 1 — ruled 2026-09-13: 1 + 2
 - [x] A-02a — classifier, gate on it, carve-out + XFF, set-password route/page (reviewed 2026-09-13, PR into `train-9/cutover`)
-- [ ] A-02b — OQ2 inversion, identity + authStatus from the classifier, dashboard consumers
+- [x] A-02b — OQ2 inversion, identity + authStatus from the classifier, dashboard consumers (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [ ] A-03 — state-driven `basic_auth`, bypass ownership, drift, bind policy, #1055
 - [ ] A-04 — fallback command, recovery codes, ADR 0009 rule 5 text, reset-admin, recovery doc, drills
 - [ ] A-VRF — cumulative Critic, elkaholic VRF, phone drill → Checkpoint 2
