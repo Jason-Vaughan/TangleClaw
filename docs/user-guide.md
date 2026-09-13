@@ -368,13 +368,30 @@ Two things to know before you use it:
 - **The username cannot be changed here.** It names *which* login to re-hash rather than setting one,
   so changing it in this form would leave the gate on the old name. To change a username, or to
   recover a login you have lost entirely, run `node scripts/reset-admin.js` at a terminal on the
-  machine — recovery deliberately requires physical access, because a reset that lives behind the
-  gate cannot help someone the gate has locked out.
+  machine — a reset that lives behind the gate cannot help someone the gate has locked out.
 
 There is no "current password" field, and that is deliberate rather than an oversight: the tools
 available here can hash a password but cannot verify one against a stored hash, and a field that
 does not check anything is theatre. What authenticates the change is that Caddy already asked you
 for the current password to let you reach this screen.
+
+#### Recovery codes
+
+If you forget the password you sign in to TangleClaw with, a **recovery code** sets a new one from the
+sign-in page — no terminal needed. Follow **Forgot your password? Use a recovery code**, enter one
+code and a new password, and you are signed in.
+
+- **You get a set of eight when you create your account.** They are shown once. Save them somewhere
+  safe and apart from the device you sign in on — a password manager or printed paper.
+- **Each code works once.** Using one signs out every other browser on that account, and the
+  dashboard then shows a notice saying a code was used, when, and from where. Choose **That was me**
+  to clear it. If it was not you, change your password and generate new codes straight away.
+- **Settings → Recovery codes** shows how many you have left and generates a new set. Generating asks
+  for your current password, and the old set stops working at once.
+- Accounts created at a terminal or by the setup wizard start with no codes — generate them in
+  Settings.
+- A code cannot turn a disabled account back on, and it cannot fix a broken login gate. For those,
+  and if you lose your codes, run `node scripts/reset-admin.js` at a terminal on the machine.
 
 See the [Configuration Reference](configuration-reference.md) for all config fields and API endpoints.
 

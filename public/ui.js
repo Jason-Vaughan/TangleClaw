@@ -2345,6 +2345,68 @@ async function confirmBypassHidden() {
 // ── Global Settings Modal ──
 
 /**
+ * Render the Recovery codes section: how many unused codes the signed-in account
+ * holds, and a form that replaces them (#1420).
+ *
+ * Replacing needs the current password, which the server verifies — a session
+ * alone must not be able to mint a key that survives a password change. The new
+ * codes are shown once, written with textContent, and never fetched again: the
+ * server keeps only their digests.
+ *
+ * On an install with no login the server answers LOGIN_NOT_REQUIRED, and the
+ * section says so rather than offering a form that cannot work.
+ * @returns {Promise<void>}
+ */
+async function _loadRecoveryCodesSection() {
+  const box = document.getElementById('gsRecoveryCodesSection');
+  if (!box) return;
+  const info = await api('/api/auth/recovery-codes');
+  if (!info) {
+    box.innerHTML = api.lastErrorCode === 'LOGIN_NOT_REQUIRED'
+      ? '<div class="form-hint">Recovery codes belong to a login, and this install does not require one.</div>'
+      : `<div class="form-hint">Could not check your recovery codes: ${esc(api.lastError || 'unknown error')}</div>`;
+    return;
+  }
+  const summary = info.total === 0
+    ? 'You have no recovery codes. Generate a set so you can reset a forgotten password from the sign-in page.'
+    : `You have <strong>${esc(String(info.remaining))}</strong> unused recovery code${info.remaining === 1 ? '' : 's'} of ${esc(String(info.total))}.`;
+  box.innerHTML = `
+    <div class="form-hint">
+      ${summary}
+      Each code sets a new password once, from the sign-in page, without a terminal. Anyone holding one
+      can do that, so keep them somewhere safe. Generating a new set cancels the old one.
+    </div>
+    <label class="form-label" for="gsRecoveryPassword">Current password</label>
+    <input type="password" class="form-input" id="gsRecoveryPassword" autocomplete="current-password">
+    <button type="button" class="btn" id="gsRecoveryGenerateBtn">Generate new codes</button>
+    <div class="form-hint" id="gsRecoveryHint" aria-live="polite"></div>
+    <ol class="recovery-code-list hidden" id="gsRecoveryList"></ol>`;
+
+  const btn = document.getElementById('gsRecoveryGenerateBtn');
+  btn.addEventListener('click', async () => {
+    const hint = document.getElementById('gsRecoveryHint');
+    const input = document.getElementById('gsRecoveryPassword');
+    btn.disabled = true;
+    const res = await apiMutate('/api/auth/recovery-codes', 'POST', { password: input.value });
+    btn.disabled = false;
+    if (!res) {
+      hint.innerHTML = `<strong>No new codes were generated.</strong> ${esc(api.lastError || 'Unknown error')}`;
+      return;
+    }
+    input.value = '';
+    const list = document.getElementById('gsRecoveryList');
+    list.textContent = '';
+    for (const code of res.codes) {
+      const li = document.createElement('li');
+      li.textContent = code;
+      list.appendChild(li);
+    }
+    list.classList.remove('hidden');
+    hint.innerHTML = '<strong>Save these now — they will not be shown again.</strong> Your old codes no longer work.';
+  });
+}
+
+/**
  * Render the Login section from the server's own answer about this install.
  *
  * The form is drawn only when `GET /api/auth/credential` says a change is
@@ -2636,6 +2698,11 @@ function openGlobalSettings() {
       <div class="form-hint">Checking what this install can change…</div>
     </div>
 
+    <div class="gs-section-label">Recovery codes</div>
+    <div class="form-group" id="gsRecoveryCodesSection">
+      <div class="form-hint">Checking your recovery codes…</div>
+    </div>
+
     <div class="gs-section-label">Diagnostics</div>
     <div class="form-group">
       <button type="button" class="btn" id="gsRestartBtn"
@@ -2695,6 +2762,7 @@ function openGlobalSettings() {
   // (tokenManageMarkup). Both render the raw token into #gsTokenDisplay via
   // textContent (XSS-safe, selectable for copy); rotate confirms first.
   _loadCredentialSection();
+  _loadRecoveryCodesSection();
 
   const revealTokenBtn = document.getElementById('gsRevealTokenBtn');
   if (revealTokenBtn) {
