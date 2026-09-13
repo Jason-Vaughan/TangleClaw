@@ -173,6 +173,54 @@ describe('store.recoveryCodes — one password reset per code (#1420)', () => {
     });
   });
 
+  describe('revocation with the account', () => {
+    const countFor = (userId) => store.getDb()
+      .prepare('SELECT COUNT(*) n FROM recovery_codes WHERE user_id = ?').get(userId).n;
+
+    it('disable deletes the account\'s codes, so re-enabling it does not revive them', () => {
+      // Without this, a code the revoked person kept redeems again the day the
+      // operator re-enables the account at the terminal.
+      const user = mkUser();
+      const other = mkUser('other');
+      const codes = store.recoveryCodes.replaceForUser(user.id);
+      store.recoveryCodes.replaceForUser(other.id);
+      store.recoveryCodes.redeem(codes[0], newHash(), 'test');
+      assert.equal(store.users.disable('rosie'), true);
+      assert.equal(countFor(user.id), 0, 'used rows go too');
+      assert.equal(countFor(other.id), rc.CODES_PER_SET, 'another account\'s set is untouched');
+      store.users.enable('rosie');
+      assert.equal(store.recoveryCodes.peek(codes[1]), null, 'a revoked code stays dead after enable');
+    });
+
+    it('enable deletes codes left on a row disabled by any other means', () => {
+      const user = mkUser();
+      const codes = store.recoveryCodes.replaceForUser(user.id);
+      store.getDb().prepare("UPDATE users SET disabled_at = datetime('now') WHERE id = ?").run(user.id);
+      assert.equal(countFor(user.id), rc.CODES_PER_SET, 'precondition: a hand-disabled row kept its set');
+      assert.equal(store.users.enable('rosie'), true);
+      assert.equal(countFor(user.id), 0);
+      assert.equal(store.recoveryCodes.peek(codes[0]), null);
+    });
+
+    it('a no-op disable or enable deletes nothing', () => {
+      const user = mkUser();
+      store.recoveryCodes.replaceForUser(user.id);
+      assert.equal(store.users.enable('rosie'), false, 'already enabled');
+      assert.equal(countFor(user.id), rc.CODES_PER_SET);
+      assert.equal(store.users.disable('nobody'), false);
+      assert.equal(countFor(user.id), rc.CODES_PER_SET);
+    });
+
+    it('deleteForUsername counts what it removed and answers 0 for an unknown account', () => {
+      const user = mkUser();
+      store.recoveryCodes.replaceForUser(user.id);
+      assert.equal(store.recoveryCodes.deleteForUsername('nobody'), 0);
+      assert.equal(store.recoveryCodes.deleteForUsername(''), 0);
+      assert.equal(store.recoveryCodes.deleteForUsername('rosie'), rc.CODES_PER_SET);
+      assert.equal(countFor(user.id), 0);
+    });
+  });
+
   describe('status, pendingNotice, clearNotice', () => {
     it('reports no codes for an account that never generated any', () => {
       const user = mkUser();

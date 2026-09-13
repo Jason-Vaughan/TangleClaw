@@ -143,9 +143,15 @@ that is the perimeter you actually rely on.
 
 ## If you are locked out
 
-There is always a way back in, and it deliberately requires **physical access to the
-machine** rather than a second way in over the network. A "reset my password" link
-that worked remotely would be exactly the door the password exists to close.
+There is always a way back in. **[Getting back into TangleClaw](recovery.md)** covers every case —
+a forgotten account password (a recovery code from the sign-in page, or
+`reset-admin.js --store` at a terminal), a disabled account, a login that cannot read its settings,
+and a login that is itself broken.
+
+This section covers one of those cases in depth: **Caddy's password**, the browser pop-up that asks
+before any page loads, on an install where Caddy's `basic_auth` still stands in front. Resetting it
+requires **physical access to the machine**. If the tool answers that the install's login is its
+TangleClaw account, there is no Caddy password to reset — use the recovery guide instead.
 
 Open a terminal on the computer TangleClaw runs on and:
 
@@ -202,7 +208,8 @@ echo 'the-new-password' | node scripts/reset-admin.js --password-stdin --dry-run
 
 An install that finished setup before a login was required — and later moved to Caddy
 — can end up with no password at all and no obvious way to add one. If
-`reset-admin.js` says there is nothing to reset, create the login instead:
+`reset-admin.js` says there is nothing to reset and offers `--create-gate`, create the login
+instead (it is not offered, and refuses, on an install whose own TangleClaw login already guards it):
 
 ```sh
 node scripts/reset-admin.js --create-gate --user <name>

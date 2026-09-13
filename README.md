@@ -139,7 +139,7 @@ What started as session persistence grew into a full orchestration platform — 
 ### Security & Remote Access
 - **Caddy ingress** — the default on a fresh install (and reversible) reverse-proxy mode, provisioned by the setup wizard and driveable by hand with `scripts/ingress-cutover.js`, that fronts the dashboard, terminals, and APIs with TLS and a `basic_auth` password gate — including an auto-provisioned HTTPS site on your Tailscale tailnet. Fail-closed cutover with validation and health checks; full guide in [deploy/INGRESS.md](deploy/INGRESS.md)
 - **Forced admin setup** — the first-run wizard requires creating an admin login on any machine that can enforce one, which is the default; there is no default credential and no way to skip past it
-- **Change it from settings** — global settings has a Login section for changing the password later; it may change a login but never create or blank one, and it tells you it will sign you out before you commit
+- **Change it from settings** — global settings has a Caddy password section for changing Caddy's password while it stands in front of TangleClaw; it may change it but never create or blank one, and it tells you it will sign you out before you commit
 - **Break-glass reset** — lost admin password? A local CLI resets it without disabling the gate
 - **Service tokens** — machine-to-machine tokens gate the PortHub and shared-docs APIs so other projects' scripts keep working after you lock the ingress down ([ADR 0005](docs/adr/0005-service-tokens.md))
 - **User attribution** — when the ingress authenticates a user, TangleClaw records who did what
@@ -240,7 +240,7 @@ Quick answers, with links into the full docs:
 | Find what a past session did, or search old transcripts | [User Guide — Session History](docs/user-guide.md#session-history) |
 | Put a password and TLS in front of everything | [Ingress Guide](deploy/INGRESS.md) |
 | Change the password you sign in with | [User Guide — Changing your login](docs/user-guide.md#changing-your-login) |
-| Reset a lost admin password | [Ingress Guide — break-glass reset](deploy/INGRESS.md#admin-credential-reset-break-glass-auth-2) |
+| Get back in: a forgotten password, a disabled account, a broken login | [Recovery](docs/recovery.md) |
 | Let my sessions message each other (Medusa switchboard) | [User Guide — Session Switchboard](docs/user-guide.md#session-switchboard-medusa) |
 | Share docs between related projects | [User Guide — Project Groups and Shared Documents](docs/user-guide.md#project-groups-and-shared-documents) |
 | Connect a remote OpenClaw machine | [OpenClaw Setup](docs/openclaw-setup.md) |
@@ -256,6 +256,7 @@ Quick answers, with links into the full docs:
 ## Documentation
 
 - **[Setup Guide](docs/setup-guide.md)** — setting up safely with no prior background: what the login protects, reaching it from another device, checking it worked, getting back in if you are locked out
+- **[Recovery](docs/recovery.md)** — getting back in: forgotten passwords, recovery codes, a locked or broken login, nothing loading
 - **[User Guide](docs/user-guide.md)** — getting started, full UI walkthrough, sessions, groups, mobile setup, troubleshooting
 - **[Ingress Guide](deploy/INGRESS.md)** — Caddy reverse proxy, TLS, password gate, break-glass reset, public domains
 - **[Session Rules & Self-Improvement](docs/session-rules-self-improvement.md)** — durable session directives, the Critic gate, version history

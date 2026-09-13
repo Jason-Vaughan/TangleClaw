@@ -203,6 +203,117 @@ describe('reset-admin --store (#1418)', () => {
       await runWithPassword('a-different-password', { user: 'rosie' });
       assert.ok(store.users.verify('other', PASSWORD));
     });
+
+    it('revokes the account\'s recovery codes, so a copied code cannot reset it again', async () => {
+      const u = store.users.create('rosie', PASSWORD);
+      const other = store.users.create('other', PASSWORD);
+      const codes = store.recoveryCodes.replaceForUser(u.id);
+      store.recoveryCodes.replaceForUser(other.id);
+      await runWithPassword('a-different-password', { user: 'rosie' });
+      assert.equal(store.recoveryCodes.peek(codes[0]), null);
+      assert.equal(store.recoveryCodes.status(u.id).total, 0);
+      assert.ok(store.recoveryCodes.status(other.id).remaining > 0, 'only this account\'s set');
+      assert.match(out, /recovery code\(s\) no longer work — generate a new set in Settings/);
+    });
+
+    it('says nothing about codes when the account had none', async () => {
+      store.users.create('rosie', PASSWORD);
+      await runWithPassword('a-different-password', { user: 'rosie' });
+      assert.doesNotMatch(out, /recovery code/);
+    });
+  });
+
+  describe('the gate report reads the state a request meets', () => {
+    const caddy = require('../lib/caddy');
+    const gateFallback = require('../lib/gate-fallback');
+
+    /** @param {object} patch - Config fields to set */
+    function setConfig(patch) {
+      store.config.save({ ...store.config.load(), ...patch });
+    }
+
+    beforeEach(() => {
+      fs.rmSync(caddy.getCaddyfilePath(), { force: true });
+      fs.rmSync(gateFallback.markerPath(), { force: true });
+      setConfig({ ingressMode: 'direct' });
+    });
+
+    after(() => {
+      fs.rmSync(caddy.getCaddyfilePath(), { force: true });
+      fs.rmSync(gateFallback.markerPath(), { force: true });
+      setConfig({ ingressMode: 'direct' });
+    });
+
+    it('does not say "NO login" when a caddy-mode door keeps the accounts deciding with authEnabled off', async () => {
+      // A Caddyfile written for an armed install serves remote sites with no
+      // basic_auth; `authEnabled: false` does not open that install, so telling
+      // the operator nothing is enforced would be false.
+      setConfig({ ingressMode: 'caddy', authEnabled: false });
+      fs.writeFileSync(caddy.getCaddyfilePath(), 'box.ts.net {\n  reverse_proxy 127.0.0.1:3102\n}\n');
+      await runWithPassword(PASSWORD, { user: 'rosie' });
+      assert.match(out, /login gate is now LIVE/);
+      assert.match(out, /accounts decide anyway/);
+      assert.doesNotMatch(out, /NO login is enforced/);
+    });
+
+    it('drops the old "until the cutover" line, and names Caddy\'s password only when the file carries one', async () => {
+      setConfig({ ingressMode: 'caddy', authEnabled: true });
+      fs.writeFileSync(caddy.getCaddyfilePath(), 'box.ts.net {\n  reverse_proxy 127.0.0.1:3102\n}\n');
+      await runWithPassword(PASSWORD, { user: 'rosie' });
+      assert.doesNotMatch(out, /until the cutover/);
+      assert.doesNotMatch(out, /basic_auth\) still stands in front/);
+
+      out = '';
+      fs.writeFileSync(caddy.getCaddyfilePath(),
+        `box.ts.net {\n  basic_auth {\n    jason $2a$14$${'a'.repeat(53)}\n  }\n  reverse_proxy 127.0.0.1:3102\n}\n`);
+      await runWithPassword('a-different-password', { user: 'rosie' });
+      assert.match(out, /Caddy's password \(basic_auth\) still stands in front of this login/);
+    });
+
+    it('names Caddy\'s password as the login when authEnabled is off but the Caddyfile carries basic_auth', async () => {
+      setConfig({ ingressMode: 'caddy', authEnabled: false });
+      fs.writeFileSync(caddy.getCaddyfilePath(),
+        `box.ts.net {\n  basic_auth {\n    jason $2a$14$${'a'.repeat(53)}\n  }\n  reverse_proxy 127.0.0.1:3102\n}\n`);
+      await runWithPassword(PASSWORD, { user: 'rosie' });
+      assert.match(out, /Caddy's password \(basic_auth\) is the only login in front of this install/);
+      assert.doesNotMatch(out, /NO login is enforced/);
+    });
+
+    it('says it could not check for Caddy\'s password when the Caddyfile exists but cannot be read', async () => {
+      // With authEnabled on the gate state never reads the file, so without this
+      // the report printed LIVE and nothing about the door in front of it.
+      setConfig({ ingressMode: 'caddy', authEnabled: true });
+      fs.mkdirSync(caddy.getCaddyfilePath());
+      try {
+        await runWithPassword(PASSWORD, { user: 'rosie' });
+        assert.match(out, /login gate is now LIVE/);
+        assert.match(out, /could not read the Caddyfile to check for Caddy's password/);
+      } finally {
+        fs.rmSync(caddy.getCaddyfilePath(), { recursive: true, force: true });
+      }
+    });
+
+    it('says nothing about the Caddyfile when caddy mode has none', async () => {
+      setConfig({ ingressMode: 'caddy', authEnabled: true });
+      await runWithPassword(PASSWORD, { user: 'rosie' });
+      assert.doesNotMatch(out, /could not read the Caddyfile/);
+    });
+
+    it('reports a fallback marker and the command that ends it', async () => {
+      setAuthEnabled(true);
+      fs.writeFileSync(gateFallback.markerPath(), '{}\n');
+      await runWithPassword(PASSWORD, { user: 'rosie' });
+      assert.match(out, /fallback marker is present/);
+      assert.match(out, /gate-fallback\.js --undo/);
+    });
+
+    it('previews the state the run would leave, through the same report', async () => {
+      setConfig({ ingressMode: 'caddy', authEnabled: false });
+      fs.writeFileSync(caddy.getCaddyfilePath(), 'box.ts.net {\n  reverse_proxy 127.0.0.1:3102\n}\n');
+      await run({ user: 'rosie', dryRun: true });
+      assert.match(out, /login gate would be LIVE/);
+      assert.equal(store.users.getByName('rosie'), null, 'still writes nothing');
+    });
   });
 
   describe('password policy', () => {
@@ -257,6 +368,7 @@ describe('reset-admin --store (#1418)', () => {
       await run({ user: 'rosie', dryRun: true });
       assert.match(out, /reset TangleClaw account/);
       assert.match(out, /destroy every live session/);
+      assert.match(out, /delete this account's recovery codes/);
     });
 
     it('reports a disabled account, and that it would be re-enabled', async () => {

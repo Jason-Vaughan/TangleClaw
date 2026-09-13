@@ -121,7 +121,7 @@ The `basic_auth` credential is canonical in **config** (`basicAuthUser` +
 - **Byte-for-byte re-emission** — every regeneration path (cutover,
   `reset-admin`) emits the stored hash exactly; regression-tested.
 - **Three writers, one sequence** — the cutover, `reset-admin.js`, and
-  `POST /api/auth/credential` (global settings → Login) are the only things that
+  `POST /api/auth/credential` (global settings → Caddy password) are the only things that
   change a credential. The latter two share one implementation,
   `lib/admin-credential.js applyCredentialChange`: patch the live Caddyfile,
   `caddy validate` fail-closed restoring the original, only then record it in
@@ -488,6 +488,12 @@ does not break the login on purpose.
 
 ## Admin credential reset (break-glass, AUTH-2)
 
+This resets **Caddy's** password. A forgotten TangleClaw account password — the sign-in page, not the
+browser pop-up — is a recovery code or `node scripts/reset-admin.js --store --user <name>`; every
+case is in [docs/recovery.md](../docs/recovery.md). On an install whose own login guards the door
+(`armed`, `locked`) the Caddyfile carries no `basic_auth`, and this tool says so and points at
+`--store`.
+
 When the Caddy `basic_auth` gate is active (AUTH-2) and the admin password is lost,
 recover it from a terminal **on the host** — the gate runs in Caddy locally, so
 physical/SSH access to the box is always a sufficient recovery path (no working
@@ -504,8 +510,9 @@ It patches the credential **in place** (it does not regenerate a hand-edited
 Caddyfile), re-validates fail-closed (restoring a timestamped `.bak` if the patch
 is invalid), reloads Caddy, and syncs the stored `basicAuthUser`/`basicAuthHash`
 so a later cutover stays consistent. New passwords must be ≥12 chars, not a common
-weak password, and must not contain the username. The machine-local
-`~/.tangleclaw/EMERGENCY-RECOVERY.md` carries the full runbook + a manual fallback.
+weak password, and must not contain the username. [docs/recovery.md](../docs/recovery.md) is the full
+walkthrough, and the manual fallback without the tool is `caddy hash-password`, the hash pasted into
+the Caddyfile, `caddy validate`, and a Caddy restart.
 
 **The reload is a restart, and it drops connections.** `admin off` is set in both
 the generated and the hand-edited Caddyfile, so Caddy's `localhost:2019` admin API
@@ -554,6 +561,8 @@ It refuses far more than it accepts, and each refusal names its own remedy:
 | Refusal | Meaning | What to do |
 |---|---|---|
 | `not-caddy-mode` | The install is not in caddy ingress mode, so nothing would enforce a gate written into this file. A Caddyfile left behind by `--to direct` is a file, not a live gate. | `ingress-cutover.js --to caddy` first |
+| `account-login` | TangleClaw's own login guards this install (`armed` or `locked`), so a Caddyfile without `basic_auth` is the intended shape. Adding one would put a second password in front of the account that works. | `reset-admin.js --store --user <name>` for a forgotten account password; `gate-fallback.js` for a broken login |
+| `gate-state-unknown` | TangleClaw's config or account store could not be read, so whether this install wants a Caddy password cannot be decided. | Fix the read error named in `~/.tangleclaw/logs/tangleclaw.log`, then run it again |
 | `gate-exists` | A credential is already present. | Use the ordinary reset above |
 | `not-generated` | The Caddyfile is hand-maintained. **Refused, not reshaped** — adding a gate means placing directives inside site blocks this code did not write, and guessing wrong either drops your configuration or leaves an opening that looks closed. | Add the `basic_auth` block by hand, then reset |
 | `unrecognized-shape` | The file is TangleClaw-generated but the ungated rebuild does not reproduce it byte-for-byte, so something in it would be silently dropped. **A `publicDomain` ACME site is the common case** — see the section below. | `ingress-cutover.js`, which builds from your full config |

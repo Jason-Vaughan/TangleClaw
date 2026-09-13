@@ -357,14 +357,17 @@ The settings modal lets you configure:
 
 #### Changing your login
 
-Global settings has a **Login** section for changing the password set during setup. It appears only
-on an install where a login is actually in force — where none is, it says so and names the command
-that puts one in place, rather than offering a change that would not take.
+Global settings has a **Caddy password** section for changing the password Caddy asks for — the
+browser pop-up — on an install where Caddy's `basic_auth` still stands in front of TangleClaw. It
+appears only where that password is actually in force. Where it is not, it says why and where to go
+instead: on an install whose login is its TangleClaw account, that account's password is reset with a
+recovery code or `node scripts/reset-admin.js --store --user <name>` (see
+[Getting back into TangleClaw](recovery.md)).
 
 Two things to know before you use it:
 
-- **Saving signs you out.** The login is enforced by Caddy, and a browser cannot be handed new
-  credentials, so the next page you load asks for the new password. Have it to hand before saving.
+- **Saving signs you out of Caddy.** A browser cannot be handed new credentials, so the next page you
+  load asks for the new password. Have it to hand before saving.
 - **The username cannot be changed here.** It names *which* login to re-hash rather than setting one,
   so changing it in this form would leave the gate on the old name. To change a username, or to
   recover a login you have lost entirely, run `node scripts/reset-admin.js` at a terminal on the
@@ -391,7 +394,9 @@ code and a new password, and you are signed in.
 - Accounts created at a terminal or by the setup wizard start with no codes — generate them in
   Settings.
 - A code cannot turn a disabled account back on, and it cannot fix a broken login gate. For those,
-  and if you lose your codes, run `node scripts/reset-admin.js` at a terminal on the machine.
+  and if you lose your codes, see [Getting back into TangleClaw](recovery.md). Resetting an account at
+  the terminal (`node scripts/reset-admin.js --store --user <name>`) deletes its codes; generate a new
+  set once signed in.
 
 See the [Configuration Reference](configuration-reference.md) for all config fields and API endpoints.
 
