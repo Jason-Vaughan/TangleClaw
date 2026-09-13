@@ -210,13 +210,63 @@ describe('lib/auth-gate — the front-door verdict (#1418, #1420, ADR 0015/0016)
       assert.equal(authGate.resolveGateState(on, ENABLED), S.ARMED);
       assert.equal(authGate.resolveGateState(() => ({ authEnabled: false }), ENABLED), S.OPEN);
     });
+
+    describe('fallback — the marker, weighed last and only over an enforcing state (#1420)', () => {
+      const honoured = () => ({ honoured: true, reason: null });
+      const refused = () => ({ honoured: false, reason: 'no gate in front' });
+      const unreadableConfig = () => { throw new Error('EACCES'); };
+
+      it('stands the gate down over every enforcing state, unreadable included', () => {
+        // `unreadable` is what a broken gate usually looks like, so the recovery
+        // must reach it.
+        assert.equal(authGate.resolveGateState(on, ENABLED, null, honoured), S.FALLBACK);
+        assert.equal(authGate.resolveGateState(on, ALL_DISABLED, null, honoured), S.FALLBACK);
+        assert.equal(authGate.resolveGateState(on, NO_ACCOUNTS, null, honoured), S.FALLBACK);
+        assert.equal(authGate.resolveGateState(on, throwingSessions(), null, honoured), S.FALLBACK);
+        assert.equal(authGate.resolveGateState(unreadableConfig, ENABLED, null, honoured), S.FALLBACK);
+      });
+
+      it('never replaces open, and is not even asked there', () => {
+        let asked = false;
+        const spy = () => { asked = true; return { honoured: true }; };
+        assert.equal(authGate.resolveGateState(() => ({ authEnabled: false }), ENABLED, null, spy), S.OPEN);
+        assert.equal(asked, false);
+      });
+
+      it('keeps the enforcing state when the marker is not honoured, or its check fails', () => {
+        const throwing = () => { throw new Error('stat EACCES'); };
+        for (const thunk of [refused, throwing, () => null, () => ({}), () => ({ honoured: 'true' }),
+          () => ({ honoured: 1 }), 'not a function']) {
+          assert.equal(authGate.resolveGateState(on, ENABLED, null, thunk), S.ARMED, String(thunk));
+          assert.equal(authGate.resolveGateState(unreadableConfig, ENABLED, null, thunk), S.UNREADABLE,
+            String(thunk));
+        }
+      });
+
+      it('writers never resolve fallback — the marker is not what the operator configured', () => {
+        // resolveIntendedGateState takes no fallback thunk at all.
+        assert.equal(authGate.resolveIntendedGateState.length, 2);
+        assert.equal(authGate.resolveIntendedGateState(on, ENABLED), S.ARMED);
+      });
+    });
   });
 
   describe('isOpen — the one definition of "nothing is enforced"', () => {
     it('is true only for exactly open', () => {
       assert.equal(authGate.isOpen('open'), true);
-      for (const v of ['armed', 'account-required', 'locked', 'unreadable', undefined, null, '', 'OPEN', true]) {
-        assert.equal(authGate.isOpen(v), false, `${JSON.stringify(v)} must enforce`);
+      for (const v of ['armed', 'account-required', 'locked', 'unreadable', 'fallback', undefined, null, '', 'OPEN', true]) {
+        assert.equal(authGate.isOpen(v), false, `${JSON.stringify(v)} is not open`);
+      }
+    });
+  });
+
+  describe('standsDown — whether TangleClaw asks nothing of a request (#1420)', () => {
+    it('is true only for exactly open and exactly fallback', () => {
+      assert.equal(authGate.standsDown(S.OPEN), true);
+      assert.equal(authGate.standsDown(S.FALLBACK), true);
+      for (const v of [S.ARMED, S.ACCOUNT_REQUIRED, S.LOCKED, S.UNREADABLE, 'FALLBACK', 'Fallback', undefined,
+        null, '', true, {}]) {
+        assert.equal(authGate.standsDown(v), false, JSON.stringify(v));
       }
     });
   });
@@ -430,8 +480,16 @@ describe('lib/auth-gate — the front-door verdict (#1418, #1420, ADR 0015/0016)
       );
     });
 
-    it('enforces in every state that is not exactly open, including an unknown one', () => {
-      for (const gateState of [S.ARMED, S.ACCOUNT_REQUIRED, S.LOCKED, S.UNREADABLE, undefined, 'bogus']) {
+    it('allows everything in fallback — Caddy\'s gate is the one asking (#1420)', () => {
+      assert.deepEqual(ev({ gateState: S.FALLBACK }), { action: 'allow' });
+      assert.deepEqual(
+        ev({ gateState: S.FALLBACK, method: 'POST', pathname: '/api/config', session: SESSION }),
+        { action: 'allow' }
+      );
+    });
+
+    it('enforces in every state that is not exactly open or fallback, including an unknown one', () => {
+      for (const gateState of [S.ARMED, S.ACCOUNT_REQUIRED, S.LOCKED, S.UNREADABLE, undefined, 'bogus', 'FALLBACK']) {
         assert.equal(ev({ gateState }).action, 'challenge', `${gateState} must enforce`);
       }
     });
@@ -512,7 +570,9 @@ describe('lib/auth-gate — the front-door verdict (#1418, #1420, ADR 0015/0016)
           { action: 'allow' });
       });
 
-      for (const gateState of [S.ACCOUNT_REQUIRED, S.LOCKED, S.UNREADABLE, 'fallback', undefined]) {
+      // Not `fallback`: there TangleClaw stands down entirely and the route itself
+      // refuses with GATE_FALLBACK (`test/api-gate-fallback.test.js`).
+      for (const gateState of [S.ACCOUNT_REQUIRED, S.LOCKED, S.UNREADABLE, 'FALLBACK', undefined]) {
         it(`challenges them in ${String(gateState)} — no code can succeed there`, () => {
           assert.equal(ev({ gateState, rawUrl: '/recover', pathname: '/recover' }).action, 'challenge');
           assert.equal(ev({ gateState, method: 'POST', rawUrl: '/api/auth/recover',
@@ -685,8 +745,9 @@ describe('lib/auth-gate — the front-door verdict (#1418, #1420, ADR 0015/0016)
     const ev = (over) => authGate.evaluateUpgrade({ ...base, ...over });
     const SESSION = { csrfToken: 'tok', username: 'rosie' };
 
-    it('allows every upgrade when the gate is open', () => {
+    it('allows every upgrade when the gate is open or in fallback', () => {
       assert.deepEqual(ev({ gateState: S.OPEN }), { action: 'allow' });
+      assert.deepEqual(ev({ gateState: S.FALLBACK }), { action: 'allow' });
     });
 
     it('refuses a sessionless upgrade in every enforcing state — only the fleet gets a socket', () => {
@@ -718,9 +779,9 @@ describe('lib/auth-gate — the front-door verdict (#1418, #1420, ADR 0015/0016)
       }
     });
 
-    it('opens only on a gateState that is exactly open', () => {
+    it('opens only on a gateState that is exactly open or fallback', () => {
       // A verdict computed from a thrown or absent value must not open.
-      for (const gateState of [undefined, null, '', 'OPEN', true]) {
+      for (const gateState of [undefined, null, '', 'OPEN', 'FALLBACK', true]) {
         assert.deepEqual(ev({ gateState }), { action: 'refuse' }, String(gateState));
       }
     });

@@ -102,6 +102,65 @@ const FORWARDED_FOR_TRUST = `\t\ttrusted_proxies static 100.64.0.0/10\n`;
 const FORWARDED_FOR_REWRITE = `\treverse_proxy 127.0.0.1:${FIXTURE_SERVER_PORT} {\n`
   + '\t\theader_up X-Forwarded-For {remote_host}\n\t}';
 
+/**
+ * The live install's hand-maintained SHAPE: a `(tcauth)` snippet imported into
+ * each site, the tailnet site split into `handle` blocks, a redirect, and a
+ * plain-HTTP catch-all. Fixture host and hash, never live values.
+ * @param {boolean} ownAuthExemption - Keep the hand-added `handle @ownauth`
+ *   block that proxies `/openclaw-direct/*` with no gate (#472's prompt-loop
+ *   workaround) — the one route a fallback door must not carry.
+ * @returns {string} Caddyfile text.
+ */
+function liveShapeCaddyfile(ownAuthExemption) {
+  const exemption = ownAuthExemption
+    ? [
+      '\t@ownauth path /openclaw-direct/* /manifest.json',
+      '\thandle @ownauth {',
+      `\t\treverse_proxy 127.0.0.1:${FIXTURE_SERVER_PORT}`,
+      '\t}'
+    ]
+    : [];
+  return [
+    '{',
+    `\thttps_port ${FIXTURE_HTTPS_PORT}`,
+    `\thttp_port ${FIXTURE_HTTP_PORT}`,
+    '\tadmin off',
+    '\tauto_https disable_redirects',
+    '}',
+    '',
+    '(tcauth) {',
+    '\tbasic_auth {',
+    `\t\tfixture ${FIXTURE_HASH}`,
+    '\t}',
+    '}',
+    '',
+    'localhost {',
+    '\ttls /fixtures/cert.pem /fixtures/key.pem',
+    '\timport tcauth',
+    `\treverse_proxy 127.0.0.1:${FIXTURE_SERVER_PORT}`,
+    '}',
+    '',
+    `${FIXTURE_TAILNET_HOST} {`,
+    '\ttls /fixtures/cert.pem /fixtures/key.pem',
+    ...exemption,
+    '\thandle {',
+    '\t\timport tcauth',
+    `\t\treverse_proxy 127.0.0.1:${FIXTURE_SERVER_PORT}`,
+    '\t}',
+    '}',
+    '',
+    `http://${FIXTURE_TAILNET_HOST} {`,
+    `\tredir https://${FIXTURE_TAILNET_HOST}:${FIXTURE_HTTPS_PORT}{uri}`,
+    '}',
+    '',
+    'http:// {',
+    '\timport tcauth',
+    `\treverse_proxy 127.0.0.1:${FIXTURE_SERVER_PORT}`,
+    '}',
+    ''
+  ].join('\n');
+}
+
 const FIXTURE_CADDYFILES = {
   // What TangleClaw generates today: gated tailnet + localhost sites, an h1-pinned
   // HTTPS listener, an http->https redirect, one upstream.
@@ -148,11 +207,19 @@ const FIXTURE_CADDYFILES = {
       throw new Error('the generator no longer emits the h1 pin this fixture strips');
     }
     return text.replace(pinned, '');
-  })()
+  })(),
+
+  // The live install's hand-maintained shape, gated at every route — the door a
+  // fallback may stand TangleClaw down behind.
+  'live-shape-gated': liveShapeCaddyfile(false),
+
+  // The same shape with the hand-added ungated `/openclaw-direct/*` handle.
+  'live-shape-own-auth': liveShapeCaddyfile(true)
 };
 
 module.exports = {
   FIXTURE_CADDYFILES,
+  liveShapeCaddyfile,
   fixtureConfig,
   generatedCaddyfile,
   FIXTURE_HASH,
