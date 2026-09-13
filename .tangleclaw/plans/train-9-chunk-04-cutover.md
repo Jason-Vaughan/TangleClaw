@@ -424,8 +424,8 @@ Delivers the A.04d bullet of the split above.
      `handle_errors` and carried limits on the "no door" side, so it was deleted — fail closed, the
      fallback check's rule. Cost: an install whose TangleClaw cannot run `caddy` keeps its login on.
   R-4: both door questions walk one `gate-fallback#eachTopLevelRoute`.
-  The answer carries `source: 'adapt'|'text'` and a reason; the server logs a text fallback once per
-  change of the file.
+  The answer carries `source: 'none'|'import'|'adapt'|'unread'` and a reason; the server logs each
+  distinct answer once.
   **Stricter than today on purpose:** a site with `basic_auth` beside an ungated handle
   (`/openclaw-direct/*`) now reads as a door, so `authEnabled: false` no longer opens it — the
   accounts decide. Same direction as the fallback check; a wrong "door" keeps a login on.
@@ -434,8 +434,8 @@ Delivers the A.04d bullet of the split above.
   `ingressDoor.readIngressDoor(file)` (reset-admin) keeps "missing = no door".
 - **Sync `caddy adapt` on the request path**, once per change of the Caddyfile and only in caddy mode
   with `authEnabled` off — the trade `_gateFallback` already made, for the same reason: an async check
-  needs a "not yet known" answer, and the text reader cannot be that answer because R-3 is exactly the
-  shapes it misreads.
+  needs a "not yet known" answer, which would have to count as a door and keep the opt-out closed
+  until it landed.
 - **JSDoc:** `resolveGateState` names the unguarded-localhost-with-accounts case in its caddy-mode
   paragraph (and the `loadIngress` shape); `resolveIntendedGateState` says an unreadable store
   enforces only with `authEnabled` on — off, it answers `open` without asking the store.
@@ -465,5 +465,5 @@ Delivers the A.04d bullet of the split above.
 - [x] Chunk A.04a (A-04a) — recovery codes end to end, ADR 0009 rule 5 + security-model Direction amendment (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [x] Chunk A.04b (A-04b) — fallback state + marker + command, drill, #472 decision (reviewed 2026-09-13, PR into `train-9/cutover`; R-3/R-14 moved to A.04c)
 - [x] Chunk A.04c (A-04c) — reset-admin + credential predicates aligned with the state machine, login copy, recovery doc (reviewed 2026-09-13, PR into `train-9/cutover`)
-- [ ] Chunk A.04d (A-04d) — gate machinery carries: scrypt-cap helper, recovery warn line, `clientKey`, JSDoc fixes, `describeIngressDoor` through `caddy adapt`
+- [x] Chunk A.04d (A-04d) — gate machinery carries: scrypt-cap helper, recovery warn line, `clientKey`, JSDoc fixes, the Caddyfile door through `caddy adapt` (reviewed 2026-09-13, PR into `train-9/cutover`; unread file = door)
 - [ ] A-VRF — cumulative Critic, elkaholic VRF, phone drill → Checkpoint 2
