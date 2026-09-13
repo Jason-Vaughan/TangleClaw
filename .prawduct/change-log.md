@@ -56,9 +56,16 @@ failure → door ("unread"). `lib/caddy.js#describeIngressDoor` and `caddy.readI
 for login, set-password, recover, recovery-codes; `_recoveryClient` reads `clientKey`'s object.
 `recovery-codes#clientKey` → `{ key, address, proxied }` via `cameThroughProxy` (lazy require: store
 cycle). `auth-gate` JSDoc fixes. `reset-admin.js` uses `ingress-door`. `public/ui.js` missing space.
-Fixture `per-site-gate`. Tests: `test/ingress-door.test.js`, `test/api-ingress-door.test.js`, cap
-across routes + counter source guard, `caddy.test.js` scope cases, `auth-gate` intended-state case.
-Behaviour change recorded in ADR 0016 A-04d: a site gated everywhere but one handle is now a door.
+Suites that read the door answer `caddy adapt` from the committed fixtures
+(`test/_caddy-drift-fixtures.js#adaptFromFixtures`), so they pass the same without Caddy on the host.
+Behaviour change recorded in ADR 0016 A-04d: a site gated everywhere but one handle, and a file Caddy
+cannot read, are doors.
+
+**Review.** Critic cumulative `rev-20260913T213731Z-4d046855` — 0 blocking; warnings R-1
+(`handle_errors` misread by the text fallback), R-3 (the text fallback should not decide), R-4 (two
+route walkers) and notes R-7/R-8 fixed in one commit; the rest accepted. verify-resolutions clean.
+PR review 0/0/2 (this entry's stale test list fixed; `resolve-base` answering `origin/main` for a
+train branch accepted).
 
 ## 2026-09-13 — #1420 A.04c: the recovery tools and words follow the gate state
 
