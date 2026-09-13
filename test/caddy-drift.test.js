@@ -435,7 +435,10 @@ describe('caddy-drift — against real caddy', { skip: !CADDY_AVAILABLE && 'cadd
       assert.equal(result.properties.httpsProtocols.status, drift.HOLDS);
       assert.equal(result.properties.knownUpstreams.status, drift.DIVERGED);
       assert.equal(result.properties.leaseReach.status, drift.DIVERGED);
-      assert.equal(result.findings.length, 3, result.findings.join(' | '));
+      // The stray block proxies with no gate and no peer guard, so it serves
+      // other machines as well — the fifth property's finding, about the same block.
+      assert.equal(result.properties.offboxRefused.status, drift.DIVERGED);
+      assert.equal(result.findings.length, 4, result.findings.join(' | '));
       for (const finding of result.findings) {
         assert.match(finding, new RegExp(String(FIXTURE_STRAY_PORT)));
         assert.ok(!finding.includes(FIXTURE_HASH));
