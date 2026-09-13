@@ -235,3 +235,114 @@ Caddy keeps the exemption while `basic_auth` exists; #1420 removes both together
 Mechanism: `lib/auth-gate.js#isGateBypassPath` — Caddy's list minus that prefix, on the same
 canonical path, so it can never exempt anything Caddy's list does not. The WebSocket verdict,
 `#evaluateUpgrade`, takes no path at all, so no HTTP exemption reaches an upgrade.
+
+---
+
+## Addendum (proposed 2026-09-13, Checkpoint 1): the cutover's kill-switch, migration state, and the machine carve-out
+
+**Status: PROPOSED — awaiting the operator's ruling at Checkpoint 1.** Nothing past #1420's design
+chunk is built until the operator picks a kill-switch shape below. Recorded during A-01 (#1420
+discovery). Everything under "Builder decisions" is the Builder's call and vetoable; only the
+kill-switch is put to the operator, because any off-box recovery path is itself a way past the gate.
+
+### What discovery found that changes the cutover's shape
+
+1. **The requirement conflicts with ADR 0009 rule 5.** The train plan asks for a kill-switch
+   "reachable from the tailnet" that needs no shell on this machine. ADR 0009 rule 5 says recovery
+   "proves physical control", is "a terminal tool on the machine", and "deliberately opens no second
+   remote door" — and ADR 0015 re-affirms it unchanged. Both cannot hold. The ruling below decides
+   which yields.
+2. **"Needs a shell" is not "needs physical access."** macOS Remote Login is on for this machine
+   (verified listening on :22, 2026-09-13), reachable over the tailnet from elkaholic or a phone SSH
+   client. And `~/.tangleclaw/EMERGENCY-RECOVERY.md` already addresses "a cold/remote Claude session"
+   — a Claude Code session on this machine reached through claude.ai, which rule 5 already permits
+   ("An AI assistant running locally may perform it"). Two off-box shells exist today without
+   TangleClaw's dashboard in the path.
+3. **Merging #1420 does not remove `basic_auth` from the live install.** The live `~/.tangleclaw/Caddyfile`
+   is hand-edited (`caddy.isGeneratedCaddyfile()` is false for it, 2026-09-13) and nothing
+   regenerates it on boot; the generator only writes on `ingress-cutover` and `reset-admin`. Field
+   installs with a *generated* file likewise keep their `basic_auth` until something regenerates it.
+   So "the generator stops emitting `basic_auth`" is not the cutover — removing the Caddy gate is a
+   separate, later, state-driven step. That is good news: it gives the migration a natural
+   double-gated window and gives the kill-switch a concrete "previous door" to return to.
+
+### The question for the operator — how does the operator re-open a broken gate from off-box?
+
+Whatever the reach, **the switch restores the previous door; it never opens one** (see "What the
+switch does" below). The options differ only in how the operator triggers it.
+
+| | Option | ADR 0009 rule 5 | New attack surface | Fails when |
+|---|---|---|---|---|
+| **1** | **No new door.** A terminal command, reached off-box through the shells that already exist: SSH over the tailnet (elkaholic, or a phone SSH client), or a remote Claude session on this machine. The drill proves it from the phone. | Unchanged | None | sshd is off AND no Claude session is reachable; the phone has no SSH key set up |
+| 2 | **Recovery code.** A 256-bit one-time code shown once at cutover, kept offline by the operator (password manager). A route handled *before* the gate accepts it and triggers the same switch; single use, rate-limited, logged, re-issued by terminal command. | **Amended** — a second remote door, bounded to "fall back to the old gate" | Anyone holding the code can downgrade the install to its previous `basic_auth` gate (never to open) | TangleClaw's own request path is what broke — the code rides the process it is recovering |
+| 3 | **Dead-man auto-revert.** For a probation window after the gate first arms, if no remote login succeeds while challenges are being served, TangleClaw falls back on its own. | Unchanged | None (silence can only cause a revert to the older gate) | Breakage after the window; a quiet week reverts a working cutover |
+
+Rejected without a row: a GitHub-signalled switch (TangleClaw polls a repo or issue) — it makes the
+operator's GitHub account a TangleClaw credential and adds an outbound dependency to the recovery path.
+
+**Builder's recommendation: Option 1.** It keeps ADR 0009 rule 5 exactly as ratified and adds no
+surface to an install whose threat model is arbitrary code execution. Its real weakness is that it
+needs a working shell route, so the Checkpoint 2 drill must be run **from the phone**, not from this
+box or elkaholic — if the operator cannot reach a shell from the phone on drill day, that is the
+finding, and Option 2 is the fallback design. Option 2 is the strongest answer to "no shell at all",
+but it shares a process with the failure it recovers and it is a standing bypass of the gate. Option 3
+covers only the deploy window, which is when the risk is highest but not the only time.
+
+### What the switch does (Builder decision, applies to every option)
+
+**One command, fail-closed ordering: restore Caddy's gate, verify it, and only then stand
+TangleClaw's gate down.**
+
+1. Regenerate or restore the Caddyfile with `basic_auth` from the **retained** bcrypt credential,
+   `caddy validate`, reload, and probe the front door for a 401.
+2. Only if step 1 verified: persist a `gate-fallback` marker that TangleClaw's gate reads per request.
+3. `--undo` reverses both, in the opposite order (re-arm TangleClaw first, then drop `basic_auth`).
+
+TangleClaw honours the marker **only while the gate it falls back to is observably present** — in caddy
+mode the Caddyfile on disk carries `basic_auth` (mtime-cached read); in direct mode the listener is
+loopback. If the marker is set but the fallback door is absent, the gate stays armed and logs an
+error. A marker can therefore never become an open door, even if the Caddyfile is later edited out
+from under it.
+
+**This changes one earlier decision.** "`basicAuthHash` is retained … until the new credential
+verifies once" becomes: **retained as the fallback credential** until the operator deliberately
+retires it after the VRF (chunk 05 or later). Cost: a second, older password stays live as the
+fallback, and the operator has to still know it.
+
+Direct mode has no Caddy, so its fallback is `authEnabled: false` with the listener forced to
+loopback — reachable only from the box, which is ADR 0009's floor. No live install runs direct mode
+remotely today.
+
+### Builder decisions (vetoable, not part of the checkpoint)
+
+**The migration state machine** replaces `isGateActive`'s dormancy predicate (per `lib/auth-gate.js`'s
+CHUNK 04 note). One classifier, like `bind-policy#describeBindState`, read by the HTTP gate, the
+upgrade gate, the generator and the dashboard:
+
+| State | Condition | Gate |
+|---|---|---|
+| `open` | `authEnabled` false | allow (ADR 0009 opt-out) |
+| `migration-required` | `authEnabled` + `basicAuthHash` + no loginable user | CLOSED; serves only the set-password screen, which applies `caddy.validateAdminPassword` |
+| `armed` | `authEnabled` + a loginable user | session required |
+| `fallback` | marker set AND the fallback door observably present | stand down behind the previous door |
+
+`authEnabled` + no hash + no user (a wizard not finished) keeps today's behaviour and belongs to
+#803/#804 (chunk 05). A read failure fails closed in every state except a successfully read `open`.
+
+**Caddy's `basic_auth` is dropped by state, not by release.** The generator emits `basic_auth` while
+the state is `migration-required` or `fallback`, and omits it only once the state is `armed`. Its two
+"requires `basic_auth`" guards (`tailnetHost`, `remoteHttpCatchAll`) become "requires a gate": `basic_auth`
+or an armed TangleClaw gate. On the live hand-edited file the drop is an operator-run step inside
+Checkpoint 2, never an automatic rewrite.
+
+**The machine carve-out keys on the proxy's fingerprint.** `isMachineClient` gains a fourth
+condition: no `X-Forwarded-For`. Caddy's `reverse_proxy` sets it on every proxied request and replaces
+a client-supplied value from an untrusted peer, so a remote caller cannot arrive without it; the `tc`
+CLI, PortHub and the switchboard never send it. That also closes the `/openclaw-direct/*` residual
+carried from #1419, because an off-box request to it now arrives proxied. The Caddy default is
+**recalled, not yet verified** — A-02 verifies it against the installed Caddy (v2.11.4), both the
+generated and the hand-edited shapes, before building on it. Residual named: a local process that
+tunnels remote traffic without adding the header (an `ssh -L` forward) is treated as local, which is
+correct only because holding that tunnel already means holding a shell. The rejected alternative, a
+separate listener for Caddy's upstream, is structurally stronger but rewrites every live Caddyfile's
+upstream line.
