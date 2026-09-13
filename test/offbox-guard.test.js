@@ -321,6 +321,40 @@ describe('offbox guard — the in-place plan', () => {
     }
   });
 
+  it('refuses, never "already guarded", when TangleClaw\'s port is missing or invalid', () => {
+    // Without a port no site is TangleClaw's, so the property would judge
+    // nothing and read as holding — "Nothing to do" over a file still open.
+    for (const port of [undefined, null, 0, -1, 70000, 3102.5, '3102']) {
+      const plan = drift.planOffboxGuard(FIXTURE_CADDYFILES['ungated-unguarded'], port, adapt);
+      assert.equal(plan.status, drift.GUARD_REFUSED, String(port));
+      assert.match(plan.reason, /server port is not a valid port/);
+    }
+  });
+
+  it('the command refuses with no port rather than reporting nothing to do', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-offbox-noport-'));
+    try {
+      const file = path.join(dir, 'Caddyfile');
+      fs.writeFileSync(file, FIXTURE_CADDYFILES['ungated-unguarded'], { mode: 0o600 });
+      let out = '';
+      let err = '';
+      const code = run({
+        caddyfilePath: file, serverPort: undefined, uid: 501, stamp: 'S',
+        stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } },
+        deps: {
+          plan: (text, port) => drift.planOffboxGuard(text, port, adapt),
+          validate: () => assert.fail('validated'), reload: () => assert.fail('reloaded')
+        }
+      });
+      assert.equal(code, 1);
+      assert.doesNotMatch(out, /Nothing to do/);
+      assert.match(err, /REFUSED/);
+      assert.equal(fs.readFileSync(file, 'utf8'), FIXTURE_CADDYFILES['ungated-unguarded']);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('refuses when the live file cannot be adapted', () => {
     const plan = drift.planOffboxGuard('garbage', 3102, () => ({ ok: false, config: null, reason: `bad ${FIXTURE_HASH}` }));
     assert.equal(plan.status, drift.GUARD_REFUSED);
