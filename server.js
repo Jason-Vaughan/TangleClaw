@@ -1970,13 +1970,21 @@ route('POST', '/api/auth/logout', (req, res) => {
 // Policy is `caddy.validateAdminPassword`, the same rules the Caddy credential
 // enforced, so the new door is not weaker than the one it replaces. The check
 // runs BEFORE any hashing, so a stream of rejected submissions costs no scrypt.
-route('POST', '/api/auth/set-password', (req, res, _params, body) => {
-  // Re-read, not trusted from the gate's verdict alone: the gate only waves
-  // this path through in `account-required`, but the answer this route acts on
-  // must be its own, and `createFirst` re-checks it again under a write lock.
+// The hash itself is async and shares the login route's concurrency cap.
+route('POST', '/api/auth/set-password', async (req, res, _params, body) => {
+  // The gate's verdict for THIS request, carried on `req`. The gate lets a
+  // signed-out caller reach this route only in `account-required`, so any other
+  // state here means the install is open or the caller is signed in. The
+  // account check that matters runs again inside `createFirstAsync`, under a
+  // write lock, because another submission or `scripts/reset-admin.js` can land
+  // in between.
   if (req.tcGateState !== authGate.GATE_STATES.ACCOUNT_REQUIRED) {
+    const open = authGate.isOpen(req.tcGateState);
     return errorResponse(res, 409,
-      'An account already exists on this install. Sign in instead.', 'ACCOUNT_EXISTS');
+      open
+        ? 'This install does not require a login, so there is no account to create here.'
+        : 'An account already exists on this install. Sign in instead.',
+      open ? 'LOGIN_NOT_REQUIRED' : 'ACCOUNT_EXISTS');
   }
   const payload = body || {};
   const username = typeof payload.username === 'string' ? payload.username.trim() : '';
@@ -1989,9 +1997,17 @@ route('POST', '/api/auth/set-password', (req, res, _params, body) => {
     return errorResponse(res, 400, policy.error, 'WEAK_PASSWORD');
   }
 
+  // Async scrypt, inside the SAME concurrency cap as the login route. Both are
+  // reachable signed-out and both put a derivation on libuv's threadpool, which
+  // fs and dns share, so they draw on one budget rather than two.
+  if (_loginVerificationsInFlight >= MAX_CONCURRENT_LOGIN_VERIFICATIONS) {
+    res.setHeader('Retry-After', '1');
+    return errorResponse(res, 503, 'The server is busy. Try again in a moment.', 'LOGIN_BUSY');
+  }
   let user;
+  _loginVerificationsInFlight += 1;
   try {
-    user = store.users.createFirst(username, password);
+    user = await store.users.createFirstAsync(username, password);
   } catch (err) {
     if (err.code === 'ACCOUNT_EXISTS') {
       log.warn('Refused a first-account submission: an account was created first', { username });
@@ -1999,6 +2015,8 @@ route('POST', '/api/auth/set-password', (req, res, _params, body) => {
         'An account already exists on this install. Sign in instead.', 'ACCOUNT_EXISTS');
     }
     throw err;
+  } finally {
+    _loginVerificationsInFlight -= 1;
   }
   // Warn, not info: this is the moment an install acquires its only key, and an
   // operator reading the log afterwards must be able to see when, and whether it
@@ -2761,6 +2779,40 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
       'ADMIN_REQUIRED');
   }
 
+  // The TangleClaw account, from the same username and password. Setting
+  // `authEnabled` closes TangleClaw's own gate while no account exists
+  // (`account-required`), and this route's own browser is the first thing that
+  // would meet it: the wizard keeps polling and loading after this response.
+  // Creating the account here — the one moment the plaintext is in hand — and
+  // signing the wizard in keeps setup from locking itself out, and makes the
+  // password the operator just chose the one that signs in.
+  //
+  // Created BEFORE the config save, so a failure leaves setup unfinished and
+  // retryable rather than finished with no account. An existing account (an
+  // operator who ran `reset-admin.js --store` first) is kept, not replaced.
+  const account = { created: false, required: false };
+  if (adminProvided && config.authEnabled === true) {
+    try {
+      const user = store.users.createFirst(config.basicAuthUser, body.adminPassword);
+      const session = store.authSessions.create(user);
+      const secure = authSession.isSecureRequest(req);
+      res.setHeader('Set-Cookie', [
+        authSession.serializeCookie(session.token, { secure }),
+        authSession.serializeCsrfCookie(session.csrfToken, { secure })
+      ]);
+      account.created = true;
+    } catch (err) {
+      if (err.code !== 'ACCOUNT_EXISTS') throw err;
+      log.info('Setup kept the existing TangleClaw account rather than creating one');
+    }
+  }
+  // Setup that finishes with the gate on and still no account — the adopt path,
+  // whose credential came from a Caddyfile and so has no plaintext — leaves the
+  // install `account-required`. The wizard reads this and sends the operator to
+  // the account page rather than into a dashboard that would refuse it.
+  account.required = config.authEnabled === true
+    && store.authSessions.accountPresence().exists === false;
+
   // Mark setup as complete
   config.setupComplete = true;
   store.config.save(config);
@@ -3114,7 +3166,8 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
     restart: shouldRestart,
     redirectUrl,
     redirectVia,
-    ingress
+    ingress,
+    account
   });
 });
 

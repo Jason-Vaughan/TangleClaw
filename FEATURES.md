@@ -125,7 +125,9 @@ fails any auto-stub section older than 14 days.
   `#destroyForUser`, `#sweepExpired`, `#accountPresence`) over the `auth_sessions` table at schema
   v37 — named `auth_sessions` because `sessions` is already the tmux/AI table the product is about.
   Routes: `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me` (reports `gateState`),
-  `POST /api/auth/set-password` (the first account; `store.users#createFirst`); pages:
+  `POST /api/auth/set-password` (the first account; `store.users#createFirstAsync`, async scrypt inside
+  the login concurrency cap — `POST /api/setup/complete` uses `#createFirst` to create the same
+  account from the wizard's credential and sign the wizard in); pages:
   `public/login.html` and `public/account-setup.html`, each one self-contained document because
   every path that must answer before anyone is logged in is a hole in the gate. Break-glass:
   `node scripts/reset-admin.js --store --user <name>` (`scripts/reset-admin.js#runStoreMode`),

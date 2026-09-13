@@ -550,3 +550,33 @@ describe('lib/auth-gate — the front-door verdict (#1418, #1420, ADR 0015/0016)
     });
   });
 });
+
+describe('the carve-out\'s proxy premise — what the generated Caddyfile must never say (#1420)', () => {
+  // `isMachineClient` treats "no X-Forwarded-For" as "not forwarded by Caddy".
+  // That holds only while Caddy sets the header on every forwarded request and
+  // refuses a client's value, which it does by default and stops doing the
+  // moment a `trusted_proxies` directive names the client's range, or a
+  // `header_up` removes or rewrites the header. Any of those in a generated file
+  // would let an off-box caller arrive looking local. This pins the generator in
+  // every shape it emits; a hand-edited live file is read by the drift check.
+  const BCRYPT = '$2a$14$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU';
+  const base = { serverPort: 3102, certPath: '/tmp/cert.pem', keyPath: '/tmp/key.pem' };
+  const gated = { basicAuthUser: 'jason', basicAuthHash: BCRYPT };
+  const SHAPES = {
+    'ungated local': base,
+    gated: { ...base, ...gated },
+    'gated + remote http catch-all': { ...base, ...gated, remoteHttpCatchAll: true },
+    'gated + tailnet host': { ...base, ...gated, tailnetHost: 'box.tail0000.ts.net' },
+    'gated + public domain': { ...base, ...gated, publicDomain: 'tc.example.com' },
+    'gated + access log': { ...base, ...gated, accessLogPath: '/tmp/caddy.access.log' }
+  };
+
+  for (const [name, opts] of Object.entries(SHAPES)) {
+    it(`emits no trusted_proxies and never touches X-Forwarded-For — ${name}`, () => {
+      const content = caddy.buildCaddyfileContent(opts);
+      assert.ok(content.includes('reverse_proxy'), 'premise: the shape reaches the upstream');
+      assert.doesNotMatch(content, /trusted_proxies/i);
+      assert.doesNotMatch(content, /X-Forwarded-For/i);
+    });
+  }
+});

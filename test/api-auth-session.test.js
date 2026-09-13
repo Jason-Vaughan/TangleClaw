@@ -263,9 +263,9 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
 
     it('refuses with ACCOUNT_EXISTS when an account appears between the gate and the write', async () => {
       // The gate saw account-required; `reset-admin.js` (another process) wins
-      // the race. `createFirst`'s own check under the write lock must refuse.
-      const orig = store.users.createFirst;
-      store.users.createFirst = (u, pw) => {
+      // the race. `createFirstAsync`'s own check under the write lock must refuse.
+      const orig = store.users.createFirstAsync;
+      store.users.createFirstAsync = (u, pw) => {
         store.users.create('raced', 'raced-long-password');
         return orig.call(store.users, u, pw);
       };
@@ -275,15 +275,40 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
         assert.match(res.body, /ACCOUNT_EXISTS/);
         assert.equal(store.users.getByName('jason'), null);
       } finally {
-        store.users.createFirst = orig;
+        store.users.createFirstAsync = orig;
       }
     });
 
-    it('is not reachable at all while the install is open', async () => {
+    it('refuses on an open install, and says a login is not required rather than that an account exists', async () => {
       setAuthEnabled(false);
       const res = await send('POST', '/api/auth/set-password', { body: GOOD });
       assert.equal(res.statusCode, 409, 'an open install has no first-account step');
+      assert.match(res.body, /LOGIN_NOT_REQUIRED/);
+      assert.doesNotMatch(res.body, /already exists/, 'no account exists, so the message must not claim one');
       assert.equal(store.users.list().length, 0);
+    });
+
+    it('hashes off the event loop, inside the login route\'s concurrency cap', async () => {
+      // Reachable signed-out until the first account exists, so a burst of
+      // valid submissions must not each run a synchronous scrypt, and must not
+      // occupy more of the threadpool than the login route may. Three at once:
+      // two are admitted, the third is turned away busy, and of the two admitted
+      // exactly one creates the account.
+      const passwordLib = require('../lib/password');
+      const realSync = passwordLib.hashPassword;
+      let syncCalls = 0;
+      passwordLib.hashPassword = function (...args) { syncCalls++; return realSync.apply(this, args); };
+      try {
+        const results = await Promise.all([1, 2, 3].map((n) =>
+          send('POST', '/api/auth/set-password',
+            { body: { username: `user${n}`, password: 'a-long-enough-password' } })));
+        const statuses = results.map((r) => r.statusCode).sort();
+        assert.deepEqual(statuses, [200, 409, 503], `got ${JSON.stringify(statuses)}`);
+        assert.equal(syncCalls, 0, 'no synchronous hash on the unauthenticated route');
+        assert.equal(store.users.list().length, 1);
+      } finally {
+        passwordLib.hashPassword = realSync;
+      }
     });
 
     it('is reachable through the proxy — reach authorises it, per ADR 0016', async () => {

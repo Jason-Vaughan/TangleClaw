@@ -195,7 +195,17 @@ function showWizard() {
 /**
  * Dismiss the wizard overlay and initialize the landing page.
  */
-function dismissWizard() {
+async function dismissWizard() {
+  // Setup can end with TangleClaw's login on and no account to sign in with —
+  // an adopted Caddy credential has no plaintext to create one from, and Skip
+  // creates nothing. The dashboard would then refuse every request, so go to the
+  // page that creates the account instead. Asked of the server on EVERY path
+  // into the dashboard rather than carried from one response, so no route out of
+  // the wizard can miss it. `/api/auth/me` answers signed-out by design.
+  if (wizard.accountRequired || await _installNeedsAccount()) {
+    window.location.replace('/login');
+    return;
+  }
   const overlay = document.getElementById('setupOverlay');
   overlay.classList.remove('open');
   document.body.classList.remove('setup-active');
@@ -206,6 +216,28 @@ function dismissWizard() {
     maybeShowFilter();
     if (typeof startPolling === 'function') startPolling();
   });
+}
+
+/**
+ * Whether TangleClaw's login is on and no account exists yet.
+ *
+ * A failed or unreadable answer is "no": this only decides whether to leave the
+ * wizard for the account page, and a dashboard that then meets a login challenge
+ * still shows the right page on reload — whereas redirecting on a network blip
+ * would bounce an ungated install away from its own dashboard.
+ *
+ * @returns {Promise<boolean>}
+ */
+async function _installNeedsAccount() {
+  try {
+    const res = await fetch('/api/auth/me', { cache: 'no-store' });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data && data.gateState === 'account-required';
+  } catch (err) { // prawduct:allow prawduct/broad-except -- network or parse failure means "unknown", answered "no" for the reason in the JSDoc; logged to the console
+    console.warn('Could not ask whether this install needs an account', err);
+    return false;
+  }
 }
 
 // ── Step Navigation ──
@@ -1484,6 +1516,8 @@ async function wizardComplete() {
       err.classList.remove('hidden');
     }
   }
+
+  wizard.accountRequired = !!(result.account && result.account.required);
 
   // What happened to the login, before anything else — it is the one outcome the
   // operator must not be left guessing about.

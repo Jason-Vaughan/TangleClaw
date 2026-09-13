@@ -277,6 +277,24 @@ describe('store.authSessions — the browser session (#1418, ADR 0016)', () => {
       store.users.createFirst('rosie', 'correct-horse-battery');
     });
 
+    it('createFirstAsync creates the account with the async hash, and refuses the same way', async () => {
+      const passwordLib = require('../lib/password');
+      const realSync = passwordLib.hashPassword;
+      let syncCalls = 0;
+      passwordLib.hashPassword = function (...args) { syncCalls++; return realSync.apply(this, args); };
+      try {
+        const u = await store.users.createFirstAsync('rosie', 'correct-horse-battery');
+        assert.equal(u.username, 'rosie');
+        assert.equal(syncCalls, 0, 'the async variant must not fall back to scryptSync');
+      } finally {
+        passwordLib.hashPassword = realSync;
+      }
+      assert.ok(store.users.verify('rosie', 'correct-horse-battery'), 'the async hash verifies');
+      await assert.rejects(store.users.createFirstAsync('sam', 'correct-horse-battery'),
+        (err) => err.code === 'ACCOUNT_EXISTS');
+      await assert.rejects(store.users.createFirstAsync('', 'correct-horse-battery'), /username is required/);
+    });
+
     it('makes the second of two first-account submissions fail, whichever name it carries', () => {
       store.users.createFirst('rosie', 'correct-horse-battery');
       assert.throws(() => store.users.createFirst('sam', 'correct-horse-battery'),

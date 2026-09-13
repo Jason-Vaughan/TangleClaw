@@ -46,10 +46,11 @@ Caddy honour a client's value.
 - **The closed state is "no account exists", with or without a bcrypt hash.** ADR 0016's
   `credential-migration-required` requires a `basicAuthHash`, but `authEnabled` + no hash + no account
   would otherwise stay DORMANT, which is an open door once Caddy's gate is gone. It is the same
-  situation (no key yet), so it gets the same answer. The state is named `account-required`. Four states:
-  `open` (`authEnabled` not exactly true), `account-required` (no user row), `armed` (an enabled
-  account), `locked` (accounts exist, none enabled: closed, recovered by terminal or recovery code).
-  An unreadable store or config is its own `unreadable` state, and it ENFORCES.
+  situation (no key yet), so it gets the same answer. The state is named `account-required`. Five
+  states: `open` (`authEnabled` not exactly true), `account-required` (no user row), `armed` (an
+  enabled account), `locked` (accounts exist, none enabled: closed, recovered by terminal or recovery
+  code), and `unreadable` (a store or config read failed: ENFORCES). This overrides the addendum's
+  deferral of the no-hash case to #803/#804.
 - **Reach authorises the set, as ADR 0016 says — no extra rule.** User rows are never deleted by any
   code path (only `disable`), so `account-required` exists only before an install's first account.
   Anyone who can reach the screen in that state could already reach an ungated dashboard, or had
@@ -61,12 +62,29 @@ Caddy honour a client's value.
   `scripts/reset-admin.js`) cannot both create a first account.
 - **Fallback is not in A-02a.** The `fallback` state lands with its command in A-04, where its
   "door observably present" check is built, rather than as unreachable code now.
+- **The wizard creates the account (Critic R-1).** `POST /api/setup/complete` creates the first
+  TangleClaw account from the credential it was given and signs the wizard in; setup that ends with no
+  account (adopt, Skip) reports `account.required` and `public/setup.js#dismissWizard` sends the
+  operator to `/login`. Without this the wizard locked itself out as it finished.
+- **The first-account route hashes asynchronously** inside the login concurrency cap
+  (`store.users#createFirstAsync`) — it is reachable signed-out (Critic R-2).
+
+**Carried out of the A-02a review, into the chunk that will touch the code anyway:**
+- A-02b: `gateActive` means "enforcing" on `/api/auth/me` but `resolveAuthStatus`'s flag means
+  "armed". Rename one when `authStatus` is re-derived from the classifier.
+- A-03: the drift check reads the LIVE Caddyfile for `trusted_proxies` and any `header_up` touching
+  `X-Forwarded-For`, and reports either as divergence — the carve-out's premise.
+- A-04: the login page tells a `locked` or `unreadable` install apart from a wrong password (the
+  recovery doc and the page copy land together); `unreadable` logging an error per request is kept,
+  because a gate that cannot read its own state is the thing an operator must see.
+- A-VRF: re-verify Caddy's `X-Forwarded-For` behaviour on the live Caddy version, and confirm nothing
+  else local (Tailscale Serve, nginx, cloudflared) is pointed at TangleClaw's port.
 
 
 - `lib/auth-gate.js`: replace the dormancy predicate with the state classifier (see the A-02a
   decisions above); one owner, read by `evaluate` and `evaluateUpgrade`.
-- The set-password screen and route for `migration-required`, applying `caddy.validateAdminPassword`,
-  using the async scrypt path, retaining `basicAuthHash`.
+- The set-password screen and route for `account-required`, applying `caddy.validateAdminPassword`,
+  using the async scrypt path (`store.users#createFirstAsync`), retaining `basicAuthHash`.
 - `isMachineClient` gains "no `X-Forwarded-For`". **First step: verify Caddy v2.11.4 sets and replaces
   the header**, against a generated and a hand-edited-shape Caddyfile on a PortHub-leased 5000+ port.
   If it does not, stop and re-open the carve-out decision; do not build on the recall.
@@ -77,13 +95,13 @@ Caddy honour a client's value.
 - Tests: every state × HTTP/upgrade × machine/browser/proxied; mutation-check each new guard.
 
 ### A-03 — Caddy's side: drop `basic_auth` by state, and the bind policy
-- `lib/caddy.js`: emit `basic_auth` only while the state is `migration-required` or `fallback`; the
+- `lib/caddy.js`: emit `basic_auth` only while the state is `account-required` or `fallback`; the
   `tailnetHost` / `remoteHttpCatchAll` guards become "requires a gate".
 - Remove `/openclaw-direct/*` from `AUTH_BYPASS_PATHS` in the same change that stops emitting
   `basic_auth`. TangleClaw's gate-bypass list becomes TangleClaw-owned (ADR 0015: moved, not
   duplicated) — `isGateBypassPath` stops deriving from Caddy's list.
 - `lib/caddy-drift.js` (#1394): an armed install's missing `basic_auth` is not divergence; a
-  `migration-required` install's missing `basic_auth` IS.
+  `account-required` install's missing `basic_auth` IS.
 - `lib/bind-policy.js`: an armed TangleClaw gate satisfies "something guards the door", so caddy mode
   no longer has to refuse the opt-in on principle. **#1055**: name the stored `bindAllInterfaces`
   value in the locked hint and on the rollback path (option b, per the issue's own weighting).
@@ -96,13 +114,13 @@ Caddy honour a client's value.
 - Recovery codes (the ruling): generate a small set of long random codes, show once, store hashed,
   single-use; a pre-gate redemption route + page that sets a new password under
   `caddy.validateAdminPassword` and signs in; rate-limited, and identical answers for a wrong code and
-  an exhausted one; each redemption logged + a dashboard notice. Issued on the `migration-required`
+  an exhausted one; each redemption logged + a dashboard notice. Issued on the `account-required`
   set-password screen; a "regenerate recovery codes" action invalidates the old set. Wizard issuance
   for fresh installs is #803 (chunk 05).
 - ADR 0009 rule 5 AND `.prawduct/artifacts/security-model.md` § Direction (the norm that binds it —
   "no second remote door"): amend both to match the ruling (off-box password reset by code holders only).
 - `scripts/reset-admin.js`: aligned with the state machine (it recovers a forgotten password in
-  `armed`; it must not silently leave `migration-required`).
+  `armed`; it must not silently leave `account-required`).
 - An in-repo recovery doc (the parts of `~/.tangleclaw/EMERGENCY-RECOVERY.md` that describe the new
   door), linked from `README.md`.
 - The drill script: break the gate on purpose, recover with the documented procedure, confirm the
