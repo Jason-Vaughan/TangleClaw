@@ -26,10 +26,15 @@ can reach Caddy's port and names that host is served. TangleClaw's served-Host c
 4. Tests: generator (ungated sites guarded, gated sites not, fail-closed guards unchanged), the drift
    property against committed adapt fixtures, the script's `run()` with injected collaborators, and a
    mutation check on each new guard.
-5. Docs: `deploy/INGRESS.md` manual steps, `docs/caddy-drift-check.md`, `.prawduct/artifacts/security-model.md`,
-   CHANGELOG `### Security`. The generator's "stay localhost-only" comment is corrected.
-6. Critic review; PR into `main`; patch release through `docs/release-process.md`; publish the advisory
-   with `patched_versions`.
+5. Docs: `deploy/INGRESS.md` manual steps, `docs/caddy-drift-check.md`, `docs/configuration-reference.md`,
+   FEATURES, CHANGELOG `### Security`. The generator's "stay localhost-only" comment is corrected.
+   **Descoped: `.prawduct/artifacts/security-model.md`.** It is gitignored, and its canonical copy lives
+   in the primary checkout, which is the live install and is not edited from a builder worktree. The
+   paragraph it needs (a site name is not a boundary; ungated sites carry a peer guard; relays on this
+   machine pass it) is flagged to the operator instead.
+6. Critic review; PR into `main`. **No release now (ruled 2026-09-13):** the fix ships with the sprint
+   release at Checkpoint 2 — a cut from `main` would be 5.24.0, not a patch. Publish the advisory with
+   `patched_versions` then.
 
 ## Out of scope
 

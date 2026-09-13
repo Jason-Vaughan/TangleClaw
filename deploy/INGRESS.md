@@ -374,20 +374,30 @@ The generator therefore adds a guard to every site it writes without a password,
 ```
 
 `remote_ip` reads the socket peer, not a header (this file never sets `trusted_proxies`), so every
-connection that is not from this machine is dropped before it reaches TangleClaw. A site **with**
-`basic_auth` carries no guard: the login is what admits other machines.
+connection that is not from this machine is dropped before it reaches TangleClaw — dropped rather
+than answered `403`, so a caller is not even told a TangleClaw lives there. A site **with**
+`basic_auth` carries no guard: the login is what admits other machines. A `publicDomain` site with no
+login is guarded too, so it refuses the internet it was published to; publish a site only with a login.
+
+**What the guard does not cover.** The peer is whoever opened the connection to Caddy. Something
+running on this machine that relays outside traffic in — Tailscale Serve, an `ssh -L` forward, a
+tunnel agent — connects from loopback, so its traffic passes. Check any such relay before pointing it
+at Caddy or TangleClaw.
 
 **Installs whose Caddyfile was written before the guard are still open** until the file is rewritten.
 The [drift check](../docs/caddy-drift-check.md) reports such a site on the dashboard banner at boot
-("every site with no gate refuses other machines"). The fix, for a pristine or hand-edited file:
+("every TangleClaw site with no gate refuses other machines" — judged only for sites that forward
+to TangleClaw; a hand-added site fronting another service is PortHub's reach question, not this one).
+The fix, for a pristine or hand-edited file:
 
 ```bash
 node scripts/guard-ungated-sites.js --dry-run   # what it would change; writes nothing
 node scripts/guard-ungated-sites.js             # add the guard, then restart Caddy
 ```
 
-It adds only the two lines above, to each top-level site block that proxies directly with no
-`basic_auth`, `forward_auth` or `import`, and keeps every other edit. It writes nothing unless
+It adds only the two lines above, to each top-level site block that proxies directly to TangleClaw
+(`127.0.0.1:<serverPort>`) with no `basic_auth`, `forward_auth` or `import`, and keeps every other
+edit — a block forwarding anywhere else is left as it is. It writes nothing unless
 `caddy adapt` reads the result as your file plus the guard routes, with every ungated site now
 refusing other machines — anything less exact is **refused with the reason**. A generated file stays
 generated (re-stamped), so a later cutover or `reset-admin.js --create-gate` still accepts it. The

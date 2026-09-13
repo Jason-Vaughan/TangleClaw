@@ -197,9 +197,11 @@ Defaults below are read from `DEFAULT_CONFIG` in `lib/store.js`.
 > **Reaching the dashboard from another device.** A gated caddy-mode install serves the machine's
 > own mDNS name (`<hostname>.local`) alongside `localhost`, so a phone or laptop on the same network
 > can reach it at `https://<hostname>.local:8443` and is asked for the password (#863). This is
-> automatic — there is no setting for it — and it applies **only** when a login exists; an install
-> with no credential stays `localhost`-only rather than exposing an ungated dashboard to the
-> network. The certificate is regenerated if it does not already cover the name.
+> automatic — there is no setting for it — and it applies **only** when a login exists. An install
+> with no credential names only `localhost`, and because a site name alone keeps no one out (Caddy
+> listens on every interface and picks a site by the name the client sends), each of its sites also
+> drops connections from any other machine — see "Sites without a password answer only this
+> machine" in [deploy/INGRESS.md](../deploy/INGRESS.md). The certificate is regenerated if it does not already cover the name.
 >
 > Because the certificate is issued by your machine's own local authority, another device will warn
 > the first time until that authority is trusted on it; `mkcert -install` covers the machine

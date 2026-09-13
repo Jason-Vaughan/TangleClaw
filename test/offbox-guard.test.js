@@ -30,6 +30,8 @@ const { FIXTURE_CADDYFILES, FIXTURE_HASH } = require('./_caddy-drift-fixtures');
 const FIXTURE_DIR = path.join(__dirname, 'fixtures');
 const CADDY_AVAILABLE = caddy.detectCaddy().available;
 const GUARD = caddy.OFFBOX_GUARD_LINES.join('\n');
+/** TangleClaw's upstream in every fixture here. */
+const OURS = new Set(['127.0.0.1:3102']);
 
 /**
  * Load a committed `caddy adapt` fixture.
@@ -126,7 +128,7 @@ describe('offbox guard — placement in an existing file', () => {
   it('turns a pre-guard generated file into exactly what the generator writes now', () => {
     const legacy = caddy.buildCaddyfileContent(opts({ publicDomain: 'tc.example.com', offboxGuard: false }));
     const current = caddy.buildCaddyfileContent(opts({ publicDomain: 'tc.example.com' }));
-    const out = caddy.insertOffboxGuard(legacy);
+    const out = caddy.insertOffboxGuard(legacy, '127.0.0.1:3102');
     assert.equal(out.content, current, 'byte-identical, so a later create-gate round trip holds');
     assert.equal(caddy.isGeneratedCaddyfile(out.content), true, 're-stamped');
     assert.deepEqual(out.guarded, ['localhost', 'tc.example.com']);
@@ -134,7 +136,7 @@ describe('offbox guard — placement in an existing file', () => {
 
   it('keeps a hand-edited file\'s first line, so the cutover still protects it', () => {
     const hand = '# my notes\n{\n\tadmin off\n}\n\nlocalhost {\n\treverse_proxy 127.0.0.1:3102\n}\n';
-    const out = caddy.insertOffboxGuard(hand);
+    const out = caddy.insertOffboxGuard(hand, '127.0.0.1:3102');
     assert.equal(out.content.split('\n')[0], '# my notes');
     assert.equal(caddy.isGeneratedCaddyfile(out.content), false);
     assert.ok(out.content.includes(`localhost {\n${GUARD}\n\treverse_proxy`));
@@ -148,7 +150,7 @@ describe('offbox guard — placement in an existing file', () => {
       '\tforward_auth 127.0.0.1:9 {\n\t\turi /check\n\t}\n\treverse_proxy 127.0.0.1:3102'
     ]) {
       const content = `localhost {\n${inner}\n}\n`;
-      const out = caddy.insertOffboxGuard(content);
+      const out = caddy.insertOffboxGuard(content, '127.0.0.1:3102');
       assert.equal(out.content, content, inner);
       assert.deepEqual(out.guarded, []);
     }
@@ -157,12 +159,21 @@ describe('offbox guard — placement in an existing file', () => {
   it('places nothing where the proxy is nested, and ignores snippets and the global block', () => {
     const content = '{\n\tadmin off\n}\n(snip) {\n\treverse_proxy 127.0.0.1:1\n}\n'
       + 'localhost {\n\thandle /x {\n\t\treverse_proxy 127.0.0.1:3102\n\t}\n}\n';
-    assert.deepEqual(caddy.insertOffboxGuard(content).guarded, []);
+    assert.deepEqual(caddy.insertOffboxGuard(content, '127.0.0.1:3102').guarded, []);
+  });
+
+  it('leaves a block that forwards somewhere other than TangleClaw alone', () => {
+    // A hand-added block may front a service meant to be reachable; whether it
+    // is belongs to PortHub's declared reach, not to this guard.
+    const content = 'box.ts.net:3250 {\n\treverse_proxy 127.0.0.1:3250\n}\n\nlocalhost {\n\treverse_proxy 127.0.0.1:3102\n}\n';
+    const out = caddy.insertOffboxGuard(content, '127.0.0.1:3102');
+    assert.deepEqual(out.guarded, ['localhost']);
+    assert.ok(out.content.startsWith('box.ts.net:3250 {\n\treverse_proxy 127.0.0.1:3250\n}'));
   });
 
   it('does not count a brace inside a placeholder as a block', () => {
     const content = 'http://box {\n\tredir https://box:8443{uri}\n}\n\nlocalhost {\n\treverse_proxy 127.0.0.1:3102\n}\n';
-    assert.deepEqual(caddy.insertOffboxGuard(content).guarded, ['localhost']);
+    assert.deepEqual(caddy.insertOffboxGuard(content, '127.0.0.1:3102').guarded, ['localhost']);
   });
 });
 
@@ -234,7 +245,7 @@ describe('offbox guard — the drift property', () => {
   it('holds for what the generator writes, gated or not', () => {
     for (const name of ['generated', 'ungated']) {
       const sites = drift.summarizeConfig(adapted(name)).sites;
-      assert.equal(drift.checkOffboxRefused(sites).status, drift.HOLDS, name);
+      assert.equal(drift.checkOffboxRefused(sites, OURS).status, drift.HOLDS, name);
     }
   });
 
@@ -248,12 +259,23 @@ describe('offbox guard — the drift property', () => {
       config.apps.http.servers.srv0.routes = order;
       const sites = drift.summarizeConfig(config).sites;
       assert.equal(sites.size, 1, 'precondition: one merged site');
-      assert.equal(drift.checkOffboxRefused(sites).status, drift.DIVERGED);
+      assert.equal(drift.checkOffboxRefused(sites, OURS).status, drift.DIVERGED);
     }
   });
 
+  it('does not judge an ungated site that forwards to something other than TangleClaw', () => {
+    const sites = drift.summarizeConfig(adapted('hand-edited')).sites;
+    const stray = [...sites.values()].find((s) => s.proxies.includes('127.0.0.1:3250'));
+    assert.ok(stray && stray.gates.length === 0 && !stray.offboxRefused, 'precondition: the stray block is open');
+    assert.equal(drift.checkOffboxRefused(sites, OURS).status, drift.HOLDS);
+    assert.equal(drift.checkOffboxRefused(sites, new Set(['127.0.0.1:3250'])).status, drift.DIVERGED,
+      'the same site IS judged once its upstream is named as ours');
+    assert.equal(drift.checkOffboxRefused(drift.summarizeConfig(adapted('ungated-unguarded')).sites).status,
+      drift.HOLDS, 'with no upstream named, nothing is TangleClaw\'s');
+  });
+
   it('diverges for a pre-guard ungated file, and names the fix', () => {
-    const result = drift.checkOffboxRefused(drift.summarizeConfig(adapted('ungated-unguarded')).sites);
+    const result = drift.checkOffboxRefused(drift.summarizeConfig(adapted('ungated-unguarded')).sites, OURS);
     assert.equal(result.status, drift.DIVERGED);
     assert.equal(result.findings.length, 1);
     assert.match(result.findings[0], /for localhost proxies to 127\.0\.0\.1:3102 with no gate/);
@@ -287,7 +309,7 @@ describe('offbox guard — the in-place plan', () => {
   });
 
   it('plans exactly the file the generator now writes', () => {
-    const plan = drift.planOffboxGuard(FIXTURE_CADDYFILES['ungated-unguarded'], adapt);
+    const plan = drift.planOffboxGuard(FIXTURE_CADDYFILES['ungated-unguarded'], 3102, adapt);
     assert.equal(plan.status, drift.GUARD_READY, plan.reason || '');
     assert.equal(plan.content, FIXTURE_CADDYFILES.ungated);
     assert.deepEqual(plan.guarded, ['localhost']);
@@ -295,12 +317,12 @@ describe('offbox guard — the in-place plan', () => {
 
   it('has nothing to do for a file already guarded or gated', () => {
     for (const name of ['ungated', 'generated']) {
-      assert.equal(drift.planOffboxGuard(FIXTURE_CADDYFILES[name], adapt).status, drift.GUARD_ALREADY, name);
+      assert.equal(drift.planOffboxGuard(FIXTURE_CADDYFILES[name], 3102, adapt).status, drift.GUARD_ALREADY, name);
     }
   });
 
   it('refuses when the live file cannot be adapted', () => {
-    const plan = drift.planOffboxGuard('garbage', () => ({ ok: false, config: null, reason: `bad ${FIXTURE_HASH}` }));
+    const plan = drift.planOffboxGuard('garbage', 3102, () => ({ ok: false, config: null, reason: `bad ${FIXTURE_HASH}` }));
     assert.equal(plan.status, drift.GUARD_REFUSED);
     assert.ok(!plan.reason.includes(FIXTURE_HASH), 'redacted');
   });
@@ -309,7 +331,7 @@ describe('offbox guard — the in-place plan', () => {
     const before = adapted('ungated-unguarded');
     const after = adapted('ungated');
     after.apps.http.servers.srv0.listen = [':9999'];
-    const plan = drift.planOffboxGuard(FIXTURE_CADDYFILES['ungated-unguarded'],
+    const plan = drift.planOffboxGuard(FIXTURE_CADDYFILES['ungated-unguarded'], 3102,
       (text) => ({ ok: true, config: text === FIXTURE_CADDYFILES.ungated ? after : before, reason: null }));
     assert.equal(plan.status, drift.GUARD_REFUSED);
     assert.match(plan.reason, /change other settings/);
@@ -317,7 +339,7 @@ describe('offbox guard — the in-place plan', () => {
 
   it('refuses when a site still serves other machines after placement', () => {
     const before = adapted('ungated-unguarded');
-    const plan = drift.planOffboxGuard(FIXTURE_CADDYFILES['ungated-unguarded'],
+    const plan = drift.planOffboxGuard(FIXTURE_CADDYFILES['ungated-unguarded'], 3102,
       () => ({ ok: true, config: before, reason: null }));
     assert.equal(plan.status, drift.GUARD_REFUSED);
     assert.match(plan.reason, /still serves other machines/);
@@ -325,7 +347,7 @@ describe('offbox guard — the in-place plan', () => {
 
   it('refuses when no block can take the guard', () => {
     const before = adapted('ungated-unguarded');
-    const plan = drift.planOffboxGuard('localhost {\n\timport x\n\treverse_proxy 127.0.0.1:3102\n}\n',
+    const plan = drift.planOffboxGuard('localhost {\n\timport x\n\treverse_proxy 127.0.0.1:3102\n}\n', 3102,
       () => ({ ok: true, config: before, reason: null }));
     assert.equal(plan.status, drift.GUARD_REFUSED);
     assert.match(plan.reason, /no block was found/);
@@ -367,7 +389,7 @@ describe('guard-ungated-sites — the command', () => {
     try {
       let reloads = 0;
       const code = run({
-        caddyfilePath: h.caddyfilePath, uid: 501, stamp: 'S', stdout: h.stdout, stderr: h.stderr,
+        caddyfilePath: h.caddyfilePath, serverPort: 3102, uid: 501, stamp: 'S', stdout: h.stdout, stderr: h.stderr,
         deps: { plan: readyPlan, validate: () => ({ ok: true }), reload: () => { reloads++; return { ok: true }; } }
       });
       assert.equal(code, 0, h.err.text);
@@ -381,12 +403,14 @@ describe('guard-ungated-sites — the command', () => {
     const h = harness(legacy);
     try {
       const code = run({
-        caddyfilePath: h.caddyfilePath, uid: 501, stamp: 'S', stdout: h.stdout, stderr: h.stderr,
-        deps: { plan: readyPlan, validate: () => ({ ok: true }), reload: () => ({ ok: false, command: 'launchctl x' }) }
+        caddyfilePath: h.caddyfilePath, serverPort: 3102, uid: 501, stamp: 'S', stdout: h.stdout, stderr: h.stderr,
+        deps: { plan: readyPlan, validate: () => ({ ok: true }), reload: () => ({ ok: false, error: 'boom', command: 'launchctl x' }) }
       });
       assert.equal(code, 2);
       assert.equal(h.read(), FIXTURE_CADDYFILES.ungated);
       assert.match(h.err.text, /NOT live/);
+      assert.match(h.err.text, /Why: boom/, 'the reason Caddy did not restart is shown');
+      assert.match(h.err.text, /Run: launchctl x/);
     } finally { h.cleanup(); }
   });
 
@@ -395,7 +419,7 @@ describe('guard-ungated-sites — the command', () => {
     try {
       let reloads = 0;
       const code = run({
-        caddyfilePath: h.caddyfilePath, uid: 501, stamp: 'S', stdout: h.stdout, stderr: h.stderr,
+        caddyfilePath: h.caddyfilePath, serverPort: 3102, uid: 501, stamp: 'S', stdout: h.stdout, stderr: h.stderr,
         deps: { plan: readyPlan, validate: () => ({ ok: false, error: 'bad' }), reload: () => { reloads++; return { ok: true }; } }
       });
       assert.equal(code, 1);
@@ -414,7 +438,7 @@ describe('guard-ungated-sites — the command', () => {
       const h = harness(legacy);
       try {
         const code = run({
-          caddyfilePath: h.caddyfilePath, uid: 501, stamp: 'S', dryRun: c.dryRun,
+          caddyfilePath: h.caddyfilePath, serverPort: 3102, uid: 501, stamp: 'S', dryRun: c.dryRun,
           stdout: h.stdout, stderr: h.stderr,
           deps: { plan: c.plan, validate: () => assert.fail('validated'), reload: () => assert.fail('reloaded') }
         });
@@ -428,7 +452,7 @@ describe('guard-ungated-sites — the command', () => {
 
 describe('offbox guard — against real caddy', { skip: !CADDY_AVAILABLE && 'caddy is not installed' }, () => {
   it('guards a real pre-guard file into what the generator writes now', () => {
-    const plan = drift.planOffboxGuard(FIXTURE_CADDYFILES['ungated-unguarded']);
+    const plan = drift.planOffboxGuard(FIXTURE_CADDYFILES['ungated-unguarded'], 3102);
     assert.equal(plan.status, drift.GUARD_READY, plan.reason || '');
     assert.equal(plan.content, FIXTURE_CADDYFILES.ungated);
   });
@@ -447,7 +471,7 @@ describe('offbox guard — against real caddy', { skip: !CADDY_AVAILABLE && 'cad
       'http://box.tail-example.ts.net {', '\tredir https://box.tail-example.ts.net:8443{uri}', '}', '',
       'http:// {', '\timport tcauth', '\treverse_proxy 127.0.0.1:3102', '}', ''
     ].join('\n');
-    assert.equal(drift.planOffboxGuard(shape).status, drift.GUARD_ALREADY);
+    assert.equal(drift.planOffboxGuard(shape, 3102).status, drift.GUARD_ALREADY);
   });
 
   it('scores hand-placed guards the way Caddy orders them', () => {
@@ -458,7 +482,7 @@ describe('offbox guard — against real caddy', { skip: !CADDY_AVAILABLE && 'cad
     const verdict = (text) => {
       const a = drift.adaptCaddyfileContent(text);
       assert.equal(a.ok, true, a.reason || '');
-      return drift.checkOffboxRefused(drift.summarizeConfig(a.config).sites).status;
+      return drift.checkOffboxRefused(drift.summarizeConfig(a.config).sites, OURS).status;
     };
     assert.equal(verdict(site(`${guard('\t')}\n\thandle {\n\t\treverse_proxy 127.0.0.1:3102\n\t}`)), drift.DIVERGED);
     assert.equal(verdict(site(`\t@m path /manifest.json\n\thandle @m {\n${guard('\t\t')}\n\t\treverse_proxy 127.0.0.1:3102\n\t}\n`
@@ -469,7 +493,7 @@ describe('offbox guard — against real caddy', { skip: !CADDY_AVAILABLE && 'cad
 
   it('refuses a hand-edited ungated site it cannot place into', () => {
     const shape = '{\n\tadmin off\n}\n\nlocalhost {\n\thandle {\n\t\treverse_proxy 127.0.0.1:3102\n\t}\n}\n';
-    const plan = drift.planOffboxGuard(shape);
+    const plan = drift.planOffboxGuard(shape, 3102);
     assert.equal(plan.status, drift.GUARD_REFUSED);
   });
 });

@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 'use strict';
 
-// Restrict every site without a password in an ALREADY-DEPLOYED Caddyfile to
-// this machine, in place, changing nothing else in it.
+// Restrict every site that forwards to TangleClaw without a password, in an
+// ALREADY-DEPLOYED Caddyfile, to this machine — in place, changing nothing else.
+// A site forwarding anywhere else is left alone: it may front a service the
+// operator means to be reachable.
 //
 //   node scripts/guard-ungated-sites.js --dry-run   say what would change, touch nothing
 //   node scripts/guard-ungated-sites.js             apply it, then restart Caddy
@@ -34,8 +36,9 @@ const adminCredential = require(path.join(REPO_DIR, 'lib', 'admin-credential'));
 
 const USAGE =
   'Usage: node scripts/guard-ungated-sites.js [--dry-run]\n' +
-  '  Restricts every site in the live Caddyfile that has no password to this\n' +
-  '  machine, without changing anything else in the file, then restarts Caddy.\n' +
+  '  Restricts every site in the live Caddyfile that forwards to TangleClaw with\n' +
+  '  no password to this machine, without changing anything else in the file,\n' +
+  '  then restarts Caddy.\n' +
   '  Refuses, and says why, whenever Caddy would read any other difference.\n' +
   '  Run this at a terminal ON the TangleClaw host.\n';
 
@@ -65,6 +68,7 @@ function parseArgs(argv) {
  *
  * @param {object} opts
  * @param {string} opts.caddyfilePath - The Caddyfile to guard.
+ * @param {number} opts.serverPort - TangleClaw's port (`config.serverPort`).
  * @param {boolean} [opts.dryRun=false] - Report only.
  * @param {number} opts.uid - Numeric uid for the launchctl target.
  * @param {string} opts.stamp - Filename-safe timestamp for the backup.
@@ -80,7 +84,7 @@ function parseArgs(argv) {
  */
 function run(opts) {
   const {
-    caddyfilePath, dryRun = false, uid, stamp,
+    caddyfilePath, serverPort, dryRun = false, uid, stamp,
     deps = {},
     stdout = process.stdout,
     stderr = process.stderr
@@ -97,9 +101,9 @@ function run(opts) {
     return 1;
   }
 
-  const planned = plan(content);
+  const planned = plan(content, serverPort);
   if (planned.status === drift.GUARD_ALREADY) {
-    stdout.write('Every site without a password already refuses other machines. Nothing to do.\n');
+    stdout.write('Every site forwarding to TangleClaw without a password already refuses other machines. Nothing to do.\n');
     return 0;
   }
   if (planned.status !== drift.GUARD_READY) {
@@ -141,6 +145,7 @@ function run(opts) {
     stdout.write('  ✓ Caddy restarted. Restart TangleClaw too, so the dashboard notice re-checks.\n\n');
   } else {
     stderr.write('WARNING: the guard is written but NOT live — Caddy could not be restarted automatically.\n'
+      + `  Why: ${caddy.redactHashes(reloaded.error || 'no reason given')}\n`
       + `  Run: ${reloaded.command}\n`
       + '  Then restart TangleClaw too, so the dashboard notice re-checks.\n');
     return 2;
@@ -163,12 +168,15 @@ function main() {
     process.exit(1);
   }
 
-  // The store is opened only to resolve the base path the Caddyfile lives under.
+  // Config for TangleClaw's port — which sites are TangleClaw's — and the store
+  // for the base path the Caddyfile lives under.
   const store = require(path.join(REPO_DIR, 'lib', 'store'));
   store.init();
   let caddyfilePath;
+  let config;
   try {
     caddyfilePath = caddy.getCaddyfilePath();
+    config = store.config.load();
   } finally {
     store.close();
   }
@@ -181,6 +189,7 @@ function main() {
 
   const code = run({
     caddyfilePath,
+    serverPort: config.serverPort,
     dryRun: args.dryRun,
     uid: process.getuid(),
     stamp: new Date().toISOString().replace(/[:.]/g, '-')

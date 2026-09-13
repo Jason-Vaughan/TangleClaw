@@ -69,7 +69,7 @@ list carries divergences only, so a caller deciding whether to reassure the oper
 | P2 | `httpsProtocols` | The HTTPS listener negotiates the protocols the baseline pins (`h1`) | adapt unavailable, or the baseline has no HTTPS listener |
 | P3 | `knownUpstreams` | No site dials an upstream the generated config does not dial | adapt unavailable |
 | P4 | `leaseReach` | No site fronts a port whose PortHub lease declares a narrower `reach` | adapt unavailable, PortHub unreachable, the port has no lease, or the lease has no readable reach |
-| P5 | `offboxRefused` | Every site that proxies with no gate refuses every peer but this machine | adapt unavailable |
+| P5 | `offboxRefused` | Every site that proxies to TangleClaw with no gate refuses every peer but this machine | adapt unavailable |
 
 **P2 names its remedy, and the remedy is held to this check's own standard.** An unpinned
 listener's finding points at `scripts/pin-https-listener.js`, which adds the pin to the live file
@@ -87,7 +87,10 @@ the guard strictly out of the adapted JSON (`lib/caddy-drift.js#isOffboxGuardRou
 matcher over one `remote_ip` whose ranges are all loopback, handled only by an aborting
 `static_response`, and ahead of every route that proxies (`#refusesOffboxBeforeProxy`). A guard
 inside a matched route covers only that route, and every route merged into a site must refuse. A
-gated site is P1's to judge. The finding names `scripts/guard-ungated-sites.js`, which adds the guard
+gated site is P1's to judge, and a site that forwards only to something other than TangleClaw (an
+upstream the baseline does not dial) is P3's and P4's: it may front a service meant to be reachable,
+which PortHub's declared reach answers, so a peer guard there could cut off a deliberate exposure.
+The finding names `scripts/guard-ungated-sites.js`, which adds the guard
 in place and writes nothing unless `caddy adapt` reads the guard routes as the only change
 (`#planOffboxGuard`) — the same standard as P2's remedy.
 
