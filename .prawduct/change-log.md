@@ -34,6 +34,37 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-13 — #1420 A.04b: the fallback — TangleClaw stands down behind a proven Caddy gate
+
+<!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->
+
+Train 9 Chunk 04, A.04b. Merges into `train-9/cutover`, not `main`.
+
+**Why.** ADR 0016's "What the switch does": when TangleClaw's login is what broke, the operator needs a
+terminal command that puts Caddy's old gate back in front and only then stands the login down. The
+original A.04b was split (A.04b fallback / A.04c reset-admin + login copy + recovery doc) because the
+two share no code path.
+
+**What.** Gate state `fallback` (`lib/auth-gate.js#resolveGateState` fourth argument, `#standsDown`).
+`lib/gate-fallback.js`: marker path/write/remove, `walkRoutes` (evaluation-order gate coverage),
+`checkFallbackDoor` / `checkFallbackFile` (imports refuse), `decideFallback`. `server.js#_gateFallback`
+(request + upgrade gates; listener from the socket's server; cached on marker/listener/mode/Caddyfile;
+read failures logged once; stand-down end logged) and `GATE_FALLBACK` refusals on set-password,
+recover and recovery-codes. `scripts/gate-fallback.js` (write-if-needed → validate → restart → Basic
+401 probe → marker → gateState check; rollback on failure; `--undo`, `--restore`, exit 4 when the undo
+keeps basic_auth). `scripts/drill-gate-fallback.js` (snapshot, round trip, byte-for-byte check).
+`lib/admin-credential.js#applyCaddyfileInPlace`, now used by `guard-ungated-sites.js` and
+`pin-https-listener.js` too. Dashboard chip for `fallback`. Fixtures: `live-shape-gated`,
+`live-shape-own-auth` (real `caddy adapt`). #472 decided: no Caddy-only `/openclaw-direct/*`
+exemption in a fallback door. Records: ADR 0016 "Recorded during #1420 A-04b", `deploy/INGRESS.md`,
+CHANGELOG, FEATURES, auth-status-surfacing, configuration-reference, PROJECT-MAP, skip ledger.
+
+**Review.** Critic `rev-20260913T190512Z-da22257f` — 1 blocking (plan carried the pre-split list), 7
+warnings, 10 notes; fixed in one commit (R-1 unparsable dials, R-2 imports, R-3/R-14 drill, R-4 plan,
+R-5 rewrite, R-6 caddy-less server tests, R-9 shared tail, R-13 rollback, R-15 logs); accepted R-10,
+R-11, R-18 and the informational notes. Verify `rev-20260913T192233Z-d76dc3ef` found the dial check
+judged loopback by spelling (`::ffff:7f00:1`); fixed with `net.BlockList`, then verified again.
+
 ## 2026-09-13 — #1420 A-04a: one-time recovery codes, ADR 0009 rule 5 amended
 
 <!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->

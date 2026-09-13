@@ -379,6 +379,6 @@ paragraph above names):
 - [x] A-02b — OQ2 inversion, identity + authStatus from the classifier, dashboard consumers (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [x] Chunk A.03 (A-03) — state-driven `basic_auth`, bypass ownership, drift, bind policy, #1055 (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [x] Chunk A.04a (A-04a) — recovery codes end to end, ADR 0009 rule 5 + security-model Direction amendment (reviewed 2026-09-13, PR into `train-9/cutover`)
-- [ ] Chunk A.04b (A-04b) — fallback state + marker + command, drill, #472 decision, door read through `caddy adapt`
+- [x] Chunk A.04b (A-04b) — fallback state + marker + command, drill, #472 decision (reviewed 2026-09-13, PR into `train-9/cutover`; R-3/R-14 moved to A.04c)
 - [ ] Chunk A.04c (A-04c) — reset-admin aligned with the state machine, login copy, recovery doc, R-4/R-6/R-8 + R-3/R-14 carries
 - [ ] A-VRF — cumulative Critic, elkaholic VRF, phone drill → Checkpoint 2
