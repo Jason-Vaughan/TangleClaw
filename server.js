@@ -408,7 +408,7 @@ function _gateIngress() {
   }
   const key = `${file}:${st.mtimeMs}:${st.size}`;
   if (_gateIngressCache && _gateIngressCache.key === key) return _gateIngressCache.value;
-  const value = caddy.describeIngressDoor(fs.readFileSync(file, 'utf8'));
+  const value = caddy.readIngressDoor(file);
   if (value.ungatedRemoteSite) {
     // Logged once per change of the file, not per request.
     log.warn('The Caddyfile serves a remote site with no basic_auth, so authEnabled: false does NOT open '
@@ -1984,12 +1984,12 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
 // ── TangleClaw's own session routes (#1418) ──
 //
 // These three are TangleClaw's login, distinct from the `/api/auth/credential`
-// pair below them, which manages the CADDY basic_auth credential. The two live
-// side by side for one more train: chunk 04 (#1420) removes Caddy's gate and
-// with it the reason for that pair. Until then a reader needs to know which
-// door a route is about, so: `/api/auth/login|logout|me` are TangleClaw's own
-// (scrypt, a session cookie), `/api/auth/credential` is Caddy's (bcrypt, a
-// Caddyfile).
+// pair below them, which manages the CADDY basic_auth credential. Caddy's
+// password stands in front of TangleClaw only in some gate states
+// (`authGate.guardsTheDoor` says when it is not needed), so a reader needs to
+// know which door a route is about: `/api/auth/login|logout|me` are
+// TangleClaw's own (scrypt, a session cookie), `/api/auth/credential` is
+// Caddy's (bcrypt, a Caddyfile).
 
 // How many password verifications `POST /api/auth/login` runs at once.
 //
@@ -2483,7 +2483,8 @@ route('GET', '/api/auth/credential', (req, res) => {
   const ingressState = caddy.classifyIngressState();
   const check = adminCredential.canChangeCredential(
     config, ingressState, caddy.detectCaddy().available,
-    adminCredential.isLoopbackRemote(req.socket && req.socket.remoteAddress));
+    adminCredential.isLoopbackRemote(req.socket && req.socket.remoteAddress),
+    req.tcGateState);
   jsonResponse(res, 200, {
     changeable: check.allowed,
     // Same spelling the POST's refusal uses, from the same translator — a client
@@ -2532,7 +2533,8 @@ route('POST', '/api/auth/credential', (req, res, _params, body) => {
   // client-vs-server disagreement this surface already had to fix once.
   const check = adminCredential.canChangeCredential(
     config, ingressState, caddy.detectCaddy().available,
-    adminCredential.isLoopbackRemote(req.socket && req.socket.remoteAddress));
+    adminCredential.isLoopbackRemote(req.socket && req.socket.remoteAddress),
+    req.tcGateState);
   if (!check.allowed) {
     return errorResponse(res, 409, `${check.reason} ${check.remedy}`, adminCredential.httpCode(check.code));
   }

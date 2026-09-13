@@ -352,6 +352,77 @@ describe('the rehearsal refuses what the run refuses (#929)', () => {
     assert.match(gated.stdout, /would REFUSE: this install is not in caddy ingress mode/);
   });
 
+  /**
+   * Run the script against a home whose install is ARMED in caddy mode: an
+   * enabled account, `authEnabled` on, and a Caddyfile with no basic_auth — the
+   * shape the state-driven cutover writes.
+   * @param {string[]} args - CLI arguments.
+   * @param {string} input - stdin contents.
+   * @param {{authEnabled?: boolean}} [opts] - `authEnabled: false` keeps the
+   *   install armed through the ungated remote Caddyfile alone.
+   * @returns {{status:number, stdout:string, stderr:string, caddyfile:string}}
+   */
+  function runArmed(args, input, { authEnabled = true } = {}) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-reset-armed-'));
+    const caddyfile = path.join(home, 'Caddyfile');
+    const ungated = 'box.ts.net {\n\treverse_proxy 127.0.0.1:3102\n}\n';
+    fs.writeFileSync(caddyfile, ungated);
+    // A stub `caddy` first on PATH: the real run hashes the password before it
+    // reaches the refusal, and CI has no Caddy.
+    const bin = path.join(home, 'bin');
+    fs.mkdirSync(bin);
+    require('./_caddy-stub').writeCaddyStub(bin);
+    const env = { ...process.env, TANGLECLAW_HOME: home, PATH: `${bin}:${process.env.PATH}` };
+    try {
+      const seed = spawnSync(process.execPath, ['-e', [
+        `const s = require(${JSON.stringify(path.join(__dirname, '..', 'lib', 'store'))});`,
+        's.init();',
+        `s.config.save({ ...s.config.load(), ingressMode: "caddy", authEnabled: ${authEnabled} });`,
+        's.users.create("rosie", "correct-horse-battery");',
+        's.close();'
+      ].join('\n')], { encoding: 'utf8', env });
+      assert.equal(seed.status, 0, `seeding failed: ${seed.stderr}`);
+      const r = spawnSync(process.execPath,
+        [path.join(__dirname, '..', 'scripts', 'reset-admin.js'), ...args],
+        { input, encoding: 'utf8', env });
+      return {
+        status: r.status, stdout: r.stdout || '', stderr: r.stderr || '',
+        caddyfile: fs.readFileSync(caddyfile, 'utf8'), ungated
+      };
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  }
+
+  it('on an armed install, points a Caddy reset at the account instead of offering --create-gate', () => {
+    // No basic_auth is the intended shape there. Offering --create-gate would put
+    // Caddy's password back in front of the account that works.
+    const r = runArmed([], '');
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /login is its TangleClaw account \(armed\)/);
+    assert.match(r.stderr, /reset-admin\.js --store --user <name>/);
+    assert.doesNotMatch(r.stderr, /--create-gate/);
+  });
+
+  it('names the account when authEnabled is off but the Caddyfile keeps the accounts deciding', () => {
+    // The configured intent is `open`, but a request meets `armed`: the hint
+    // describes the door a request meets, so it must not stay silent here.
+    const r = runArmed([], '', { authEnabled: false });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /login is its TangleClaw account \(armed\)/);
+  });
+
+  it('on an armed install, --create-gate refuses in the preview and the run alike, writing nothing', () => {
+    const rehearsal = runArmed(['--create-gate', '--user', 'jason', '--password-stdin', '--dry-run'],
+      'a-perfectly-fine-passphrase\n');
+    assert.match(rehearsal.stdout, /would REFUSE: TangleClaw's own login guards this install \(armed\)/);
+    const real = runArmed(['--create-gate', '--user', 'jason', '--password-stdin'],
+      'a-perfectly-fine-passphrase\n');
+    assert.equal(real.status, 1);
+    assert.match(real.stderr, /TangleClaw's own login guards this install/);
+    assert.equal(real.caddyfile, real.ungated, 'the Caddyfile must be untouched');
+  });
+
   it('still describes a prompt — and reads no password — without --password-stdin', () => {
     // The fix must not turn every dry run into a stdin read. With no flag there
     // is no password to judge, and a preview that prompted would be a dry run

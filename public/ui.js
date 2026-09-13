@@ -2450,10 +2450,10 @@ async function _loadCredentialSection() {
     <label class="form-label" for="gsCredConfirm">Confirm new password</label>
     <input type="password" class="form-input" id="gsCredConfirm" autocomplete="new-password">
     <div class="form-hint" id="gsCredHint">
-      <strong>Changing this signs you out.</strong> The login is enforced by Caddy, and a browser
-      cannot be handed new credentials — so the next page you load will ask for the new password.
-      Have it to hand before you save. If you lose it, run
-      <code>node scripts/reset-admin.js</code> at a terminal on this machine.
+      <strong>Changing this signs you out of Caddy.</strong> This is the password Caddy asks for in
+      front of TangleClaw, not a TangleClaw account's password, and a browser cannot be handed new
+      credentials — so the next page you load will ask for the new one. Have it to hand before you
+      save. If you lose it, run <code>node scripts/reset-admin.js</code> at a terminal on this machine.
     </div>
     <button type="button" class="btn" id="gsCredSaveBtn">Change login</button>`;
 
@@ -2693,7 +2693,7 @@ function openGlobalSettings() {
       <button type="button" class="btn" id="gsBindKeepOpen">Keep network access, and stop warning me</button>
     </div>` : ''}
 
-    <div class="gs-section-label">Login</div>
+    <div class="gs-section-label">Caddy password</div>
     <div class="form-group" id="gsCredentialSection">
       <div class="form-hint">Checking what this install can change…</div>
     </div>

@@ -700,6 +700,22 @@ describe('caddy', () => {
         assert.equal(door(undefined), false);
       });
 
+      it('readIngressDoor: reads the file on disk, answers a missing one as no door, and throws on any other failure', () => {
+        // The thunk the gate reads: a throw is what makes it `unreadable`.
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-door-'));
+        try {
+          const file = path.join(dir, 'Caddyfile');
+          assert.deepEqual(caddy.readIngressDoor(file), { ungatedRemoteSite: false, unguardedLocalSite: false });
+          fs.writeFileSync(file, 'box.ts.net {\n\treverse_proxy 127.0.0.1:3102\n}\n');
+          assert.equal(caddy.readIngressDoor(file).ungatedRemoteSite, true);
+          const asDir = path.join(dir, 'is-a-directory');
+          fs.mkdirSync(asDir);
+          assert.throws(() => caddy.readIngressDoor(asDir), (e) => e.code === 'EISDIR');
+        } finally {
+          fs.rmSync(dir, { recursive: true, force: true });
+        }
+      });
+
       it('reads every remote shape the generator writes without basic_auth as a door', () => {
         assert.equal(door(caddy.buildCaddyfileContent({ ...opts, tailnetHost: TAILNET, gateState: 'armed' })), true);
         assert.equal(door(caddy.buildCaddyfileContent({ ...opts, remoteHttpCatchAll: true, gateState: 'armed' })), true);

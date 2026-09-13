@@ -616,3 +616,39 @@ The addendum's "What the switch does", built. Builder decisions, vetoable.
   byte-for-byte as it started. The state machine stands down over every enforcing state alike (unit-tested over
   each), so damaging a live store to prove it again adds risk and no coverage. This narrows the
   plan's "break the gate on purpose"; the operator may veto.
+
+### Recorded during #1420 A-04c (2026-09-13) — the recovery tools and words, by state
+
+- **A Caddy-credential tool asks the gate state before it describes the install.** On an install whose
+  own login guards the door (`armed`, `locked`), a Caddyfile with no `basic_auth` is the intended
+  shape. `lib/admin-credential.js#canChangeCredential` (the Settings surface) refuses there as
+  `account-login` and names the account's recovery routes; it reads the request's gate state and only
+  chooses between refusals, so it cannot allow anything it would otherwise refuse. While Caddy's
+  password still stands in front of an armed login, it stays changeable.
+- **`canCreateGate` requires the gate state, as it requires config** — a writer's
+  (`resolveIntendedGateState`). It refuses `armed`/`locked` (a second password in front of the
+  account), refuses `unreadable` (a gate built on a guess would also record `authEnabled: true`) and
+  any value that is not `open` or `account-required`, and builds its byte-for-byte round trip for the
+  same state it writes for. `scripts/reset-admin.js` passes it, and its Caddy modes send an armed
+  install to `--store` instead of offering `--create-gate`.
+- **Recovery codes go with the account's revocation.** `store.users#disable` deletes the account's
+  codes with its sessions, and `#enable` deletes any left on a row disabled by other means — a revoked
+  person's copy must not work when the account comes back. **`reset-admin.js --store` deletes them on
+  a reset too**, for the reason it ends the account's sessions: a code copied by whoever took the
+  password would reset it again the moment the run ends. The cost, stated: an operator who simply
+  forgot the password loses their codes and generates a new set in Settings once signed in. The
+  operator may veto this one; the disable/enable half is the plan's.
+- **`reset-admin.js --store` reports the state a request meets**, `resolveGateState` over the config
+  and the Caddyfile on disk (`caddy.readIngressDoor`, the reader the server's gate uses), not
+  `authEnabled` alone — which said "NO login is enforced" on a caddy-mode install whose Caddyfile keeps
+  the accounts deciding. It names Caddy's password when the file carries one, and a fallback marker
+  when present (whether one is honoured depends on a request's socket, which a terminal has not got).
+- **The sign-in page reads `gateState` from `/api/auth/me`** and, where a sign-in cannot succeed
+  (`locked`, `unreadable`) or is not asked for (`fallback`, `open`), replaces the form with why and what
+  to do. The recovery link is hidden in the markup and shown only for `armed`, so a page whose request
+  failed stays the plain form without advertising `/recover`. Telling `locked` apart from a wrong
+  password is visible to a signed-out caller; accepted, because `/api/auth/me` already reports
+  `gateState` to one.
+- **`docs/recovery.md`** is the in-repo walkthrough, generic where the operator's machine-local
+  runbook is specific to one install; `SECURITY.md`'s login section describes TangleClaw's own login as
+  the gate and Caddy's `basic_auth` as present only by state.

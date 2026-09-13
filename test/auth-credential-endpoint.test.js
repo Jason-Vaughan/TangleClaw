@@ -484,6 +484,38 @@ describe('POST /api/auth/credential', () => {
       const { data } = await request(server, 'GET', '/api/auth/credential');
       assert.equal(data.user, null);
     });
+
+    it('names the TangleClaw account when its login guards the door and Caddy carries no password', async () => {
+      // The armed cutover's shape: accounts exist, the Caddyfile has no basic_auth.
+      // Both routes read the request's own gate state, so the GET and the POST
+      // say the same thing, and neither says "the Caddy config carries no login".
+      store.users.create('rosie', GOOD_PASSWORD);
+      fs.writeFileSync(caddy.getCaddyfilePath(),
+        'localhost:8443 {\n  reverse_proxy 127.0.0.1:3102\n}\n', { mode: 0o600 });
+      try {
+        const get = await request(server, 'GET', '/api/auth/credential');
+        assert.equal(get.data.changeable, false);
+        assert.equal(get.data.code, 'ACCOUNT_LOGIN');
+        assert.match(get.data.remedy, /recovery code/);
+        const post = await request(server, 'POST', '/api/auth/credential', { password: GOOD_PASSWORD });
+        assert.equal(post.status, 409);
+        assert.equal(post.data.code, 'ACCOUNT_LOGIN');
+        assert.equal(store.config.load().basicAuthHash, OLD_HASH, 'nothing may have changed');
+      } finally {
+        store.getDb().prepare('DELETE FROM users').run();
+      }
+    });
+
+    it('still offers Caddy\'s password while it stands in front of an armed login', async () => {
+      store.users.create('rosie', GOOD_PASSWORD);
+      try {
+        const get = await request(server, 'GET', '/api/auth/credential');
+        assert.equal(get.data.changeable, true);
+        assert.equal(get.data.user, 'jason');
+      } finally {
+        store.getDb().prepare('DELETE FROM users').run();
+      }
+    });
   });
 });
 
