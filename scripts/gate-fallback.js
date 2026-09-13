@@ -53,7 +53,9 @@ const EXIT = Object.freeze({
   OK: 0,
   REFUSED: 1,
   NOT_LIVE: 2,
-  NOT_HONOURED: 3
+  NOT_HONOURED: 3,
+  // --undo re-armed the login but left Caddy's password in front of it.
+  KEPT: 4
 });
 
 /**
@@ -81,11 +83,12 @@ function parseArgs(argv) {
  * Rebuild a TangleClaw-generated Caddyfile for another gate state, proving first
  * that the same inputs reproduce the file on disk byte for byte.
  *
- * The inputs are the ones the cutover used: ports, certificate and access log
- * read back out of the file, and the sites (tailnet host, plain-HTTP catch-all,
- * public domain, LAN name) from config. The round trip is what makes the rebuild
- * differ from the original by exactly the gate: a file carrying anything these
- * inputs do not reproduce is refused, never approximated.
+ * Ports, certificate and access log are read back out of the file; the sites
+ * (tailnet host, plain-HTTP catch-all, public domain, LAN name) come from
+ * config. The round trip is what makes the rebuild differ from the original by
+ * exactly the gate: a file carrying anything these inputs do not reproduce —
+ * including one written by a generator version that emitted a different shape —
+ * is refused, never approximated, and the operator is pointed at `--restore`.
  *
  * @param {string} content - The Caddyfile on disk.
  * @param {object} config - Loaded TangleClaw config.
@@ -273,6 +276,7 @@ async function run(opts) {
     reload: adminCredential.reloadCaddy,
     probe: probeBasicChallenge,
     queryState: queryGateState,
+    writeMarker: gateFallback.writeMarker,
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     tries: 10,
     delayMs: 1000,
@@ -308,29 +312,37 @@ async function run(opts) {
   }
 
   /**
-   * Write new content with a backup, validate, restart Caddy.
+   * Write new content through the shared in-place tail.
    * @param {string} content
-   * @returns {number|null} An exit code on failure, null on success.
+   * @param {string} change - For the not-live warning.
+   * @returns {{ code: number, backup: string|null, written: boolean }}
    */
-  const writeAndReload = (content) => {
-    const written = adminCredential.writeValidatedCaddyfile(caddyfilePath, content, d.validate, stamp);
-    if (!written.ok) {
-      fail(`ERROR: ${written.error || 'the write failed'}`);
-      fail(written.restored
-        ? `  The original was restored. Backup kept at: ${written.backup}`
-        : `  The Caddyfile could not be put back. A copy of the original is at: ${written.backup}`);
-      return EXIT.REFUSED;
+  const apply = (content, change) => adminCredential.applyCaddyfileInPlace({
+    caddyfilePath, content, validate: d.validate, reload: d.reload, uid, stamp, stdout, stderr,
+    change,
+    nextStep: undo ? null : 'Run this command again once Caddy is up, to finish the fallback.',
+    onWritten: (backup) => say(`  Caddyfile written. Backup of the previous one: ${backup}`)
+  });
+
+  /**
+   * Put the Caddyfile this run replaced back, and restart Caddy, after a later
+   * step failed — so a failed fallback leaves the install as it found it rather
+   * than behind two passwords with nothing recorded.
+   * @param {string} backup - From the write.
+   * @returns {void}
+   */
+  const rollBack = (backup) => {
+    try {
+      fs.copyFileSync(backup, caddyfilePath);
+    } catch (err) {
+      fail(`  The previous Caddyfile could NOT be put back (${err.message}). The live Caddyfile now carries`);
+      fail(`  Caddy's password. Restore it with: node scripts/gate-fallback.js --undo --restore ${backup}`);
+      return;
     }
-    say(`  Caddyfile written (backup: ${written.backup}).`);
     const reloaded = d.reload(uid);
-    if (!reloaded.ok) {
-      fail('WARNING: the Caddyfile is written but Caddy could not be restarted, so it is NOT live yet.');
-      fail(`  Why: ${reloaded.error || 'no reason given'}`);
-      fail(`  Run: ${reloaded.command}  then run this command again.`);
-      return EXIT.NOT_LIVE;
-    }
-    say('  ✓ Caddy restarted.');
-    return null;
+    fail(reloaded.ok
+      ? `  The previous Caddyfile was put back and Caddy restarted (backup kept at ${backup}).`
+      : `  The previous Caddyfile was put back but Caddy could not be restarted: run ${reloaded.command}`);
   };
 
   if (undo) return runUndo();
@@ -340,6 +352,7 @@ async function run(opts) {
   async function runForward() {
     say(`\n${dryRun ? '[dry-run] ' : ''}Fall back from TangleClaw's login to Caddy's password`);
     let door;
+    let writtenBackup = null;
 
     if (current === null) {
       if (config.ingressMode !== 'direct') {
@@ -352,7 +365,7 @@ async function run(opts) {
       door = { ok: true, reason: null, probes: [] };
     } else {
       const live = d.adapt(caddyfilePath);
-      const liveDoor = live.ok ? gateFallback.checkFallbackDoor(live.config, port) : null;
+      const liveDoor = live.ok ? gateFallback.checkFallbackFile(current, live.config, port) : null;
       let candidate = null;
 
       if (restored !== null) {
@@ -369,7 +382,7 @@ async function run(opts) {
           fail(`REFUSED: the live Caddyfile is not a fallback door (${why}),`);
           fail(`  and it cannot be rebuilt as one: ${rebuilt.reason}.`);
           fail('  Nothing was written. Either restore a Caddyfile that gates every route with');
-          fail('  --restore <file> (a .bak next to the Caddyfile), or remove the ungated routes by hand.');
+          fail('  --restore <file> (a Caddyfile.*.bak beside it), or remove the ungated routes by hand.');
           return EXIT.REFUSED;
         }
         candidate = rebuilt.content;
@@ -381,7 +394,7 @@ async function run(opts) {
           fail(`REFUSED: caddy adapt could not read the fallback Caddyfile: ${adapted.reason}. Nothing was written.`);
           return EXIT.REFUSED;
         }
-        door = gateFallback.checkFallbackDoor(adapted.config, port);
+        door = gateFallback.checkFallbackFile(candidate, adapted.config, port);
         if (!door.ok) {
           fail(`REFUSED: the fallback Caddyfile would not gate TangleClaw: ${door.reason}. Nothing was written.`);
           return EXIT.REFUSED;
@@ -390,8 +403,15 @@ async function run(opts) {
           say(`  would: write ${restored !== null ? restore : 'a rebuilt Caddyfile carrying basic_auth'} to ${caddyfilePath}`);
           say(`         → backup + caddy validate (restore on failure) → launchctl ${adminCredential.reloadCaddyArgs(uid).join(' ')}`);
         } else {
-          const code = writeAndReload(candidate);
-          if (code !== null) return code;
+          const applied = apply(candidate, 'the fallback Caddyfile');
+          if (applied.code !== EXIT.OK) {
+            if (applied.written) {
+              fail('  The marker was NOT written, so TangleClaw\'s login still enforces. The Caddyfile on disk now');
+              fail(`  carries Caddy's password; the previous one is at ${applied.backup}.`);
+            }
+            return applied.code;
+          }
+          writtenBackup = applied.backup;
         }
       }
     }
@@ -409,12 +429,19 @@ async function run(opts) {
       if (!result.ok) {
         fail(`ERROR: ${label} did not answer with Caddy's password challenge (${result.detail}).`);
         fail('  The marker was NOT written, so TangleClaw\'s login still enforces.');
+        if (writtenBackup) rollBack(writtenBackup);
         return EXIT.REFUSED;
       }
       say(`  ✓ ${label} challenges for Caddy's password.`);
     }
 
-    gateFallback.writeMarker(markerFile, { createdAt: d.now().toISOString() });
+    try {
+      d.writeMarker(markerFile, { createdAt: d.now().toISOString() });
+    } catch (err) {
+      fail(`ERROR: the marker could not be written (${err.message}), so TangleClaw's login still enforces.`);
+      if (writtenBackup) rollBack(writtenBackup);
+      return EXIT.REFUSED;
+    }
     say(`  Marker written: ${markerFile}`);
 
     const answer = await retry(() => d.queryState(port), (r) => r.state === authGate.GATE_STATES.FALLBACK,
@@ -440,20 +467,28 @@ async function run(opts) {
   async function runUndo() {
     say(`\n${dryRun ? '[dry-run] ' : ''}Stand TangleClaw's login back up`);
     const markerPresent = fs.existsSync(markerFile);
-    if (!markerPresent) {
-      say('  No fallback marker is set, so TangleClaw is not stood down. Nothing to undo.\n');
+    // With no marker there is still something to undo when the live Caddyfile is
+    // this tool's own fallback rebuild, or --restore names what to put back: a
+    // fallback that stopped after writing Caddy's password.
+    const leftover = current !== null && (restored !== null || rebuildGenerated(current, config, {
+      fromState: authGate.GATE_STATES.FALLBACK, toState: intendedGateState, lanHosts
+    }).ok);
+    if (!markerPresent && !leftover) {
+      say('  No fallback marker is set and the Caddyfile is not a fallback this tool wrote. Nothing to undo.\n');
       return EXIT.OK;
     }
     if (dryRun) {
-      say(`  would remove the marker: ${markerFile}`);
-      say(`  would ask TangleClaw on port ${port} to confirm its login enforces again`);
+      if (markerPresent) say(`  would remove the marker: ${markerFile}`);
+      say(`  would ask TangleClaw on port ${port} to confirm its login enforces`);
       say('  would then take basic_auth out of the Caddyfile only if TangleClaw guards the door and the');
       say('  file is one this tool wrote (or --restore names one)\n');
       return EXIT.OK;
     }
 
-    gateFallback.removeMarker(markerFile);
-    say(`  Marker removed: ${markerFile}`);
+    if (markerPresent) {
+      gateFallback.removeMarker(markerFile);
+      say(`  Marker removed: ${markerFile}`);
+    }
     const answer = await retry(() => d.queryState(port), (r) => r.state !== null && r.state !== authGate.GATE_STATES.FALLBACK,
       d.tries, d.sleep, d.delayMs);
     const live = answer.state;
@@ -468,11 +503,11 @@ async function run(opts) {
         ? `  TangleClaw reports "${live}", which does not guard the door by itself, so Caddy's password STAYS.`
         : `  TangleClaw did not answer (${answer.error}), so Caddy's password STAYS in front of it.`);
       say('  Run --undo again once the login is armed, or remove basic_auth by hand.\n');
-      return EXIT.OK;
+      return EXIT.KEPT;
     }
     if (!authGate.guardsTheDoor(intendedGateState)) {
       say(`  Config resolves to "${intendedGateState}", which needs Caddy's password, so it STAYS.\n`);
-      return EXIT.OK;
+      return EXIT.KEPT;
     }
 
     let candidate;
@@ -489,14 +524,14 @@ async function run(opts) {
         fromState: authGate.GATE_STATES.FALLBACK, toState: intendedGateState, lanHosts
       });
       if (!rebuilt.ok) {
-        say(`  TangleClaw's login is armed. Caddy's password stays in front of it: ${rebuilt.reason}.`);
+        say(`  TangleClaw's login is armed. Caddy's password STAYS in front of it: ${rebuilt.reason}.`);
         say('  To drop it, remove basic_auth by hand or pass --restore <file>.\n');
-        return EXIT.OK;
+        return EXIT.KEPT;
       }
       candidate = rebuilt.content;
     }
-    const code = writeAndReload(candidate);
-    if (code !== null) return code;
+    const applied = apply(candidate, 'the Caddyfile without basic_auth');
+    if (applied.code !== EXIT.OK) return applied.code;
     say(`  ✓ TangleClaw's login ("${live}") is the gate again.\n`);
     return EXIT.OK;
   }

@@ -446,26 +446,34 @@ What it does, in this order, and why the order matters — a step that fails lea
 3. **Only then the marker**, `~/.tangleclaw/gate-fallback`, and a check that TangleClaw reports
    `gateState: "fallback"` on `GET /api/auth/me`.
 
+If a probe fails, or the marker cannot be written, a Caddyfile the run wrote is put back and Caddy
+restarted onto it, so a failed fallback leaves the install as it found it.
+
 Sign in with the Caddy username and password. TangleClaw honours the marker only while it listens on
 loopback and the Caddyfile on disk still gates every route to it (re-checked whenever the file
-changes); in direct mode with no Caddyfile, only loopback. If either stops holding, the login
+changes); in direct mode with no Caddyfile, only loopback. A Caddyfile that `import`s another file
+(anything but a snippet defined in it) is refused, because an edit to that file would not be noticed. If either stops holding, the login
 enforces again and the log says `Fallback marker present but NOT honoured` with the reason.
 
 **What counts as gating every route** is read in Caddy's evaluation order, and is stricter than the
 drift check: a `basic_auth` in one `handle` does not cover a sibling `handle` that proxies without it.
-The one ungated route allowed is one matching only TangleClaw's own public paths (`/api/health`,
-`/manifest.json`). **An ungated `/openclaw-direct/*` block is refused** — that path adds the gateway
+A proxy counts as reaching TangleClaw unless every upstream provably points elsewhere (another port,
+or a concrete non-loopback address) — `reverse_proxy :3102`, a placeholder or dynamic upstreams all
+count. The one ungated route allowed is one matching only TangleClaw's own public paths
+(`/api/health`, `/manifest.json`) that does not rewrite the path. **An ungated `/openclaw-direct/*` block is refused** — that path adds the gateway
 token for whoever asks — so during a fallback the OpenClaw page may prompt for the Caddy password
 more than once (#472). A hand-maintained Caddyfile carrying that block needs a copy without it, kept
 ready for `--restore`, before the day you need it.
 
 `--undo` removes the marker, waits until TangleClaw reports `armed` or `locked`, and only then takes
 `basic_auth` out — of a Caddyfile this tool can reproduce, or a `--restore` file. Otherwise Caddy's
-password stays in front of the login, which is safe, and you remove it by hand.
+password stays in front of the login, which is safe, and you remove it by hand. With no marker it
+still undoes a fallback Caddyfile it wrote (a run that stopped after writing).
 
-Exit status: `0` done (or dry run), `1` refused or failed with the marker not written, `2` the
-Caddyfile is written but Caddy could not be restarted (run the printed `launchctl` command, then
-re-run), `3` the marker is written but TangleClaw did not honour it (its log says why; run `--undo`).
+Exit status: `0` done (or dry run), `1` refused or failed with the marker not written (any Caddyfile
+the run wrote was put back), `2` a Caddyfile is written but Caddy could not be restarted (run the
+printed `launchctl` command, then re-run), `3` the marker is written but TangleClaw did not honour it
+(its log says why; run `--undo`), `4` `--undo` re-armed the login but left Caddy's password in front.
 
 **Rehearse it** on a working install (the Checkpoint 2 drill):
 
@@ -473,8 +481,10 @@ re-run), `3` the marker is written but TangleClaw did not honour it (its log say
 read -s PW && printf %s "$PW" | node scripts/drill-gate-fallback.js --user <caddy user> --password-stdin
 ```
 
-It falls back, signs in to each site with the Caddy password, confirms `fallback`, undoes, and
-confirms the login is the gate again. It does not break the login on purpose.
+It copies the Caddyfile aside, falls back, signs in to each site with the Caddy password (each must
+answer 2xx/3xx), confirms `fallback`, undoes by restoring that copy, and confirms the login is the gate
+again and the Caddyfile is byte-for-byte what it was. A failed drill keeps the copy and names it. It
+does not break the login on purpose.
 
 ## Admin credential reset (break-glass, AUTH-2)
 

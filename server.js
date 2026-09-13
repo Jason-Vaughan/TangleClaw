@@ -426,6 +426,7 @@ function _gateIngress() {
 }
 
 let _gateFallbackCache = null;
+let _gateFallbackReadFailure = null;
 
 /**
  * Whether the operator's fallback marker is honoured for a connection on this
@@ -434,11 +435,12 @@ let _gateFallbackCache = null;
  *
  * The marker is `stat`ed on every call, which is the only per-request cost: the
  * gate asks this only while its state would enforce, and with no marker the
- * answer is immediate. The rest — the listener, the config's ingress mode and
- * `caddy adapt` over the Caddyfile — is cached on everything it reads (the
- * marker's mtime, the listener address and port, the ingress mode, the
+ * answer is immediate. The rest — the listener, the config's ingress mode, the
+ * Caddyfile's text and `caddy adapt` over it — is cached on everything it reads
+ * (the marker's mtime, the listener address and port, the ingress mode, the
  * Caddyfile's mtime and size), so an edit to any of them is weighed on the next
- * request.
+ * request. A Caddyfile that imports another file is refused by the decision
+ * itself, because an edit there would change none of those.
  *
  * `caddy adapt` runs synchronously, once per change of those facts and only
  * while a marker exists. A deliberate trade: an asynchronous check needs a
@@ -450,18 +452,34 @@ let _gateFallbackCache = null;
  * The listener is read from the socket's own server, not from config: what
  * decides who can reach TangleClaw is the address actually bound.
  *
+ * A marker or Caddyfile that exists but cannot be `stat`ed or read answers "not
+ * honoured" — logged once per distinct failure, not per request — and the end of
+ * an honoured fallback is logged when its marker goes, so the log shows both
+ * edges of a stand-down.
+ *
  * @param {net.Socket|null|undefined} socket - The request's socket.
  * @returns {{ honoured: boolean, reason: string|null }}
- * @throws {Error} When the marker or the Caddyfile exists but cannot be
- *   `stat`ed — the gate answers that by keeping its enforcing state.
  */
 function _gateFallback(socket) {
+  const refuseOnce = (what, err) => {
+    const failure = `${what}:${err.code || err.message}`;
+    if (_gateFallbackReadFailure !== failure) {
+      _gateFallbackReadFailure = failure;
+      log.error(`Fallback check could not read the ${what}, so the login still enforces`, { error: err.message });
+    }
+    return { honoured: false, reason: `the ${what} could not be read (${err.code || err.message})` };
+  };
   let markerStat;
   try {
     markerStat = fs.statSync(gateFallback.markerPath());
   } catch (err) {
-    if (err.code === 'ENOENT') return { honoured: false, reason: null };
-    throw err;
+    if (err.code !== 'ENOENT') return refuseOnce('fallback marker', err);
+    if (_gateFallbackCache && _gateFallbackCache.value.honoured) {
+      log.warn('Fallback marker removed: TangleClaw\'s login enforces again.');
+    }
+    _gateFallbackCache = null;
+    _gateFallbackReadFailure = null;
+    return { honoured: false, reason: null };
   }
   const server = socket && socket.server;
   const bound = server && typeof server.address === 'function' ? server.address() : null;
@@ -478,18 +496,28 @@ function _gateFallback(socket) {
   try {
     caddyStat = fs.statSync(caddyfile);
   } catch (err) {
-    if (err.code !== 'ENOENT') throw err;
+    if (err.code !== 'ENOENT') return refuseOnce('Caddyfile', err);
   }
   const key = [
     markerStat.mtimeMs, listenerAddress, upstreamPort, ingressMode,
     caddyStat ? `${caddyStat.mtimeMs}:${caddyStat.size}` : 'absent'
   ].join('|');
   if (_gateFallbackCache && _gateFallbackCache.key === key) return _gateFallbackCache.value;
+  let caddyfileContent = null;
+  if (caddyStat) {
+    try {
+      caddyfileContent = fs.readFileSync(caddyfile, 'utf8');
+    } catch (err) {
+      return refuseOnce('Caddyfile', err);
+    }
+  }
+  _gateFallbackReadFailure = null;
   const value = gateFallback.decideFallback({
     markerPresent: true,
     listenerAddress,
     upstreamPort,
     caddyfileExists: caddyStat !== null,
+    caddyfileContent,
     adapted: caddyStat ? caddyDrift.adaptCaddyfile(caddyfile) : null,
     ingressMode
   });

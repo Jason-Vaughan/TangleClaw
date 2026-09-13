@@ -128,32 +128,15 @@ function run(opts) {
     return 0;
   }
 
-  const written = adminCredential.writeValidatedCaddyfile(caddyfilePath, planned.content, validate, stamp);
-  if (!written.ok) {
-    stderr.write(`ERROR: ${caddy.redactHashes(written.error || 'the write failed')}\n`);
-    if (written.restored) {
-      stderr.write(`  The original was restored (ingress untouched). Backup kept at: ${written.backup}\n`);
-    } else {
-      stderr.write('  The Caddyfile could not be put back, so it may now be broken.\n'
-        + `  A copy of the original is at: ${written.backup}\n`
-        + '  Restore it by hand before restarting Caddy.\n');
+  return adminCredential.applyCaddyfileInPlace({
+    caddyfilePath, content: planned.content, validate, reload, uid, stamp, stdout, stderr,
+    change: 'the guard',
+    nextStep: 'Restart TangleClaw too, so the dashboard notice re-checks.',
+    onWritten: (backup) => {
+      stdout.write(`\nRestricted ${sites} to this machine.\n`);
+      stdout.write(`  Caddyfile: ${caddyfilePath}\n  Backup:    ${backup}\n`);
     }
-    return 1;
-  }
-
-  stdout.write(`\nRestricted ${sites} to this machine.\n`);
-  stdout.write(`  Caddyfile: ${caddyfilePath}\n  Backup:    ${written.backup}\n`);
-  const reloaded = reload(uid);
-  if (reloaded.ok) {
-    stdout.write('  ✓ Caddy restarted. Restart TangleClaw too, so the dashboard notice re-checks.\n\n');
-  } else {
-    stderr.write('WARNING: the guard is written but NOT live — Caddy could not be restarted automatically.\n'
-      + `  Why: ${caddy.redactHashes(reloaded.error || 'no reason given')}\n`
-      + `  Run: ${reloaded.command}\n`
-      + '  Then restart TangleClaw too, so the dashboard notice re-checks.\n');
-    return 2;
-  }
-  return 0;
+  }).code;
 }
 
 /**

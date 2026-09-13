@@ -579,7 +579,15 @@ The addendum's "What the switch does", built. Builder decisions, vetoable.
   `not path_regexp` bypass gate; a matched gate covers its own route only; the peer guard covers what
   follows it; a route matching only TangleClaw's own bypass paths may proxy ungated; any handler not
   known to be inert (`invoke`, a plugin), named routes, and Caddy apps beyond `http`/`tls`/`pki` refuse.
-  Error routes are checked too.
+  Error routes are checked too. A proxy counts as reaching TangleClaw unless every upstream provably
+  points elsewhere (another port, or a concrete non-loopback address); the bypass-path allowance is
+  void in a route that rewrites the path; and a Caddyfile that imports another file refuses, since the
+  honoured verdict is cached on the Caddyfile's own mtime and size.
+- **CSRF during a fallback is the Basic-auth era's posture.** TangleClaw's session CSRF step does not
+  run while it stands down, and Caddy's cached Basic credential is ambient authority. The three
+  request guards that were built for exactly that — `Sec-Fetch-Site: cross-site` refusal, the served-
+  Host check, and the JSON-body rule on `/api/` — run before the gate in every state, so a fallback
+  returns to them rather than to nothing.
 - **#472 (A-03 R-1), decided: the fallback does not carry a Caddy-only `/openclaw-direct/*`
   exemption.** That path injects the stored gateway token for whoever asks, so while TangleClaw stands
   down an ungated handle for it is an open door. The door check refuses such a file, and the prompt
@@ -598,9 +606,13 @@ The addendum's "What the switch does", built. Builder decisions, vetoable.
   `WWW-Authenticate: Basic` (TangleClaw's own `401` carries no Basic challenge), and only then the
   marker, followed by asking TangleClaw for `gateState`. `--undo` removes the marker, waits for
   TangleClaw to report a state that guards the door, and only then drops `basic_auth` — from a file
-  it can reproduce, or a `--restore` file; a hand-maintained file keeps it.
+  it can reproduce, or a `--restore` file; a hand-maintained file keeps it. A failed probe or marker
+  write puts back any Caddyfile the run wrote. The write/validate/restart tail is
+  `lib/admin-credential.js#applyCaddyfileInPlace`, shared with `guard-ungated-sites.js` and
+  `pin-https-listener.js` (the third in-place tool was the recorded trigger for extracting it).
 - **The drill does not break the login on purpose.** `scripts/drill-gate-fallback.js` rehearses the
   fallback, a sign-in with the Caddy password at every site, `gateState: fallback`, and the undo, on a
-  working install. The state machine stands down over every enforcing state alike (unit-tested over
+  working install — restoring a copy of the Caddyfile it took first, and failing unless the file ends
+  byte-for-byte as it started. The state machine stands down over every enforcing state alike (unit-tested over
   each), so damaging a live store to prove it again adds risk and no coverage. This narrows the
   plan's "break the gate on purpose"; the operator may veto.

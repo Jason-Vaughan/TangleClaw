@@ -191,6 +191,73 @@ describe('the fallback marker, end to end (#1420)', () => {
       setMarker();
       assert.equal(await gateStateOf(), 'armed');
     });
+
+    describe('with caddy adapt answered from the committed fixtures', () => {
+      // The same decision `against real caddy` makes below, runnable where caddy
+      // is absent: the server's cache key, its re-read on a Caddyfile edit, and
+      // the text it hands the decision.
+      const drift = require('../lib/caddy-drift');
+      let realAdapt;
+      let adapts;
+      beforeEach(() => {
+        realAdapt = drift.adaptCaddyfile;
+        adapts = 0;
+        drift.adaptCaddyfile = (file) => {
+          adapts++;
+          const text = fs.readFileSync(file, 'utf8');
+          const name = Object.keys(FIXTURE_CADDYFILES).find((n) => FIXTURE_CADDYFILES[n] === text);
+          if (!name) return { ok: false, config: null, reason: 'not a fixture Caddyfile' };
+          const json = fs.readFileSync(path.join(__dirname, 'fixtures', `caddy-adapt-${name}.json`), 'utf8');
+          return { ok: true, config: JSON.parse(json), reason: null };
+        };
+      });
+      const restoreAdapt = () => { drift.adaptCaddyfile = realAdapt; };
+
+      it('re-decides when the Caddyfile changes, and adapts once per change', async () => {
+        try {
+          arm();
+          patchConfig({ ingressMode: 'caddy' });
+          setMarker();
+          const file = caddy.getCaddyfilePath();
+          fs.writeFileSync(file, FIXTURE_CADDYFILES.generated, { mode: 0o600 });
+          assert.equal(await gateStateOf(), 'fallback');
+          assert.equal(await gateStateOf(), 'fallback');
+          assert.equal(adapts, 1, 'a second request reuses the verdict');
+          fs.writeFileSync(file, FIXTURE_CADDYFILES['live-shape-own-auth'], { mode: 0o600 });
+          assert.equal(await gateStateOf(), 'armed');
+          fs.writeFileSync(file, FIXTURE_CADDYFILES['live-shape-gated'], { mode: 0o600 });
+          assert.equal(await gateStateOf(), 'fallback');
+        } finally { restoreAdapt(); }
+      });
+
+      it('refuses a Caddyfile that imports another file, even when adapt reads it as gated', async () => {
+        try {
+          arm();
+          patchConfig({ ingressMode: 'caddy' });
+          setMarker();
+          const file = caddy.getCaddyfilePath();
+          const importing = `${FIXTURE_CADDYFILES.generated}import extra.caddy\n`;
+          fs.writeFileSync(file, importing, { mode: 0o600 });
+          drift.adaptCaddyfile = () => ({ ok: true, config: JSON.parse(fs.readFileSync(
+            path.join(__dirname, 'fixtures', 'caddy-adapt-generated.json'), 'utf8')), reason: null });
+          assert.equal(await gateStateOf(), 'armed');
+        } finally { restoreAdapt(); }
+      });
+    });
+  });
+
+  describe('a marker that cannot be read', () => {
+    it('keeps the login enforcing, without throwing into the gate', async () => {
+      arm();
+      const marker = gateFallback.markerPath();
+      fs.symlinkSync(marker, marker); // stat answers ELOOP
+      try {
+        assert.equal(await gateStateOf(), 'armed');
+        assert.equal((await send('GET', '/api/config')).statusCode, 401);
+      } finally {
+        fs.rmSync(marker, { force: true });
+      }
+    });
   });
 
   describe('the upgrade gate asks the marker too', () => {

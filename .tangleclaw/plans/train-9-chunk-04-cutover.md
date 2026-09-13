@@ -348,26 +348,17 @@ is wider than one reviewable diff, and the two halves share no code path:
   error logged.
 - The command's 401 probe requires `WWW-Authenticate: Basic` (TangleClaw's own gate answers 401 too).
 
-- The fallback command (name decided in A-04): restore/regenerate the Caddyfile with the retained
-  credential → validate → reload → probe 401 → only then write the `gate-fallback` marker; `--undo`
-  in reverse order. TangleClaw honours the marker only while the fallback door is observably present.
-- Recovery codes (the ruling): generate a small set of long random codes, show once, store hashed,
-  single-use; a pre-gate redemption route + page that sets a new password under
-  `caddy.validateAdminPassword` and signs in; rate-limited, and identical answers for a wrong code and
-  an exhausted one; each redemption logged + a dashboard notice. Issued on the `account-required`
-  set-password screen; a "regenerate recovery codes" action invalidates the old set. Wizard issuance
-  for fresh installs is #803 (chunk 05).
-- ADR 0009 rule 5 AND `.prawduct/artifacts/security-model.md` § Direction (the norm that binds it —
-  "no second remote door"): amend both to match the ruling (off-box password reset by code holders only).
-- `scripts/reset-admin.js`: aligned with the state machine (it recovers a forgotten password in
-  `armed`; it must not silently leave `account-required`).
-- An in-repo recovery doc (the parts of `~/.tangleclaw/EMERGENCY-RECOVERY.md` that describe the new
-  door), linked from `README.md`.
-- The drill script: break the gate on purpose, recover with the documented procedure, confirm the
-  front door answers 401 then 200 with the fallback credential.
+**The pre-split A-04 list, dispositioned** (kept as a record; this chunk builds only what the split
+paragraph above names):
+- The fallback command and its marker, and the drill → **A.04b**, built as recorded in the decisions
+  above (`scripts/gate-fallback.js`, `scripts/drill-gate-fallback.js`; the drill does not break the
+  login on purpose).
+- Recovery codes, and the ADR 0009 rule 5 + security-model Direction amendments → **A.04a**, shipped.
+- `scripts/reset-admin.js` aligned with the state machine, and the in-repo recovery doc linked from
+  the README (drawn from the operator's local emergency runbook) → **A.04c**.
 
 ### A-VRF — before Checkpoint 2
-- `/prawduct:critic` cumulative on `train-9/cutover`.
+- `/prawduct:critic` cumulative on the integration branch.
 - elkaholic VRF per `reference_live_verification_traps` (the launchd `WorkingDirectory` and the
   service PATH), on a caddy-mode install carrying a bcrypt credential: migration, login, `basic_auth`
   drop, the `/openclaw-direct/*` iframe, the terminal socket, `tc` CLI + PortHub still working.

@@ -13,7 +13,9 @@
 //      front and proves every site challenges for it;
 //   3. signs in to each site with the Caddy password and expects to get through;
 //   4. confirms TangleClaw reports `fallback`;
-//   5. undoes it (`--undo`) and confirms TangleClaw's login is the gate again.
+//   5. undoes it (`--undo`, restoring a copy of the Caddyfile taken first), and
+//      confirms TangleClaw's login is the gate again and the Caddyfile is
+//      byte-for-byte what it was.
 //
 // It does NOT break the login on purpose. The fallback stands down over every
 // enforcing state alike (`lib/auth-gate.js#resolveGateState`), so a drill that
@@ -97,25 +99,33 @@ function getWithCredential(target, user, password, timeoutMs = 3000) {
  * Run the drill. Collaborators are injected so the sequence and its verdicts
  * are testable with no live install.
  *
+ * The Caddyfile is copied aside before anything changes, the undo restores that
+ * copy, and the last step checks the file on disk is byte-for-byte the one the
+ * drill started with — so a drill cannot pass while leaving the install
+ * different from how it found it. The copy is kept whenever the drill fails.
+ *
  * @param {object} opts
  * @param {string} opts.user - The Caddy fallback username.
  * @param {string} opts.password - The Caddy fallback password.
  * @param {number} opts.port - TangleClaw's port.
  * @param {object} opts.fallbackOpts - Everything `gate-fallback.js#run` needs
  *   except `undo`.
+ * @param {string} opts.snapshotPath - Where to copy the Caddyfile aside (0600).
  * @param {object} [opts.deps]
  * @param {{write: Function}} [opts.stdout]
  * @returns {Promise<{ passed: boolean, steps: Array<{ step: string, ok: boolean, detail: string }> }>}
  */
 async function drill(opts) {
-  const { user, password, port, fallbackOpts, stdout = process.stdout } = opts;
+  const { user, password, port, fallbackOpts, snapshotPath, stdout = process.stdout } = opts;
   const d = {
     queryState: fallbackCmd.queryGateState,
     runFallback: fallbackCmd.run,
     getWithCredential,
     readDoor: () => {
       const adapted = drift.adaptCaddyfile(fallbackOpts.caddyfilePath);
-      return adapted.ok ? gateFallback.checkFallbackDoor(adapted.config, port) : { ok: false, probes: [], reason: adapted.reason };
+      return adapted.ok
+        ? gateFallback.checkFallbackFile(fs.readFileSync(fallbackOpts.caddyfilePath, 'utf8'), adapted.config, port)
+        : { ok: false, probes: [], reason: adapted.reason };
     },
     ...(opts.deps || {})
   };
@@ -125,18 +135,45 @@ async function drill(opts) {
     stdout.write(`${ok ? '✓' : '✗'} ${step} — ${detail}\n`);
     return ok;
   };
-  const finish = () => ({ passed: steps.every((s) => s.ok), steps });
+  const readCaddyfile = () => {
+    try {
+      return fs.readFileSync(fallbackOpts.caddyfilePath, 'utf8');
+    } catch (err) {
+      if (err.code === 'ENOENT') return null;
+      throw err;
+    }
+  };
+  const finish = (snapshotted) => {
+    const passed = steps.every((s) => s.ok);
+    if (snapshotted) {
+      if (passed) fs.rmSync(snapshotPath, { force: true });
+      else stdout.write(`\nThe Caddyfile as it was before the drill is kept at ${snapshotPath}\n`);
+    }
+    return { passed, steps };
+  };
+  const unchanged = (original) => {
+    const now = readCaddyfile();
+    return record('the Caddyfile is as it was before the drill', now === original,
+      now === original ? 'byte-for-byte' : 'it DIFFERS — Caddy\'s password may still be in front of the login');
+  };
 
   const before = await d.queryState(port);
   if (!record('the login is the gate before the drill', authGate.guardsTheDoor(before.state),
     before.state ? `TangleClaw reports "${before.state}"` : `TangleClaw did not answer (${before.error})`)) {
-    return finish();
+    return finish(false);
+  }
+
+  const original = readCaddyfile();
+  if (original !== null) {
+    fs.writeFileSync(snapshotPath, original, { mode: 0o600 });
+    fs.chmodSync(snapshotPath, 0o600);
   }
 
   const quiet = { write: () => {} };
   const forward = await d.runFallback({ ...fallbackOpts, undo: false, stdout: quiet, stderr: stdout });
   if (!record('fall back to Caddy\'s password', forward === fallbackCmd.EXIT.OK, `gate-fallback exited ${forward}`)) {
-    return finish();
+    unchanged(original);
+    return finish(original !== null);
   }
 
   const door = d.readDoor();
@@ -144,7 +181,7 @@ async function drill(opts) {
   for (const target of door.probes || []) {
     const label = `${target.tls ? 'https' : 'http'}://${target.host || '127.0.0.1'}:${target.port}/`;
     const res = await d.getWithCredential(target, user, password);
-    record(`sign in to ${label} with Caddy's password`, res.status !== null && res.status !== 401,
+    record(`sign in to ${label} with Caddy's password`, res.status !== null && res.status >= 200 && res.status < 400,
       res.status === null ? res.error : `HTTP ${res.status}`);
   }
 
@@ -152,14 +189,19 @@ async function drill(opts) {
   record('TangleClaw reports fallback', during.state === authGate.GATE_STATES.FALLBACK,
     during.state ? `"${during.state}"` : `no answer (${during.error})`);
 
-  const undo = await d.runFallback({ ...fallbackOpts, undo: true, restore: null, stdout: quiet, stderr: stdout });
+  // The undo's own report reaches the operator: every case where it keeps
+  // Caddy's password in front is explained there.
+  const undo = await d.runFallback({
+    ...fallbackOpts, undo: true, restore: original !== null ? snapshotPath : null, stdout, stderr: stdout
+  });
   record('undo the fallback', undo === fallbackCmd.EXIT.OK, `gate-fallback --undo exited ${undo}`);
 
   const after = await d.queryState(port);
   record('the login is the gate again', authGate.guardsTheDoor(after.state),
     after.state ? `TangleClaw reports "${after.state}"` : `no answer (${after.error})`);
+  unchanged(original);
 
-  return finish();
+  return finish(original !== null);
 }
 
 /**
@@ -212,19 +254,22 @@ async function main() {
     store.close();
   }
   const lanHost = httpsSetup.mdnsHostFor(require('node:os').hostname());
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const caddyfilePath = caddy.getCaddyfilePath();
   const result = await drill({
+    snapshotPath: path.join(path.dirname(caddyfilePath), `drill-gate-fallback-${stamp}.Caddyfile`),
     user: args.user,
     password,
     port: config.serverPort,
     fallbackOpts: {
-      caddyfilePath: caddy.getCaddyfilePath(),
+      caddyfilePath,
       markerFile: gateFallback.markerPath(),
       config,
       intendedGateState,
       lanHosts: lanHost ? [null, lanHost] : [null],
       restore: args.restore,
       uid: process.getuid(),
-      stamp: new Date().toISOString().replace(/[:.]/g, '-')
+      stamp
     }
   });
   if (fs.existsSync(gateFallback.markerPath())) {

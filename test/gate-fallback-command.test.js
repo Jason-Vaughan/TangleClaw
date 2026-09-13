@@ -156,14 +156,34 @@ describe('scripts/gate-fallback.js (#1420)', () => {
       assert.equal(markerExists(), false);
     });
 
-    it('does not write the marker when a site does not answer with Caddy\'s challenge', async () => {
+    it('does not write the marker when a site does not answer with Caddy\'s challenge, and puts the old file back', async () => {
       writeLive('armed');
       const code = await go({
-        deps: { probe: async () => ({ ok: false, detail: 'HTTP 401' }) }
+        deps: { probe: async () => { calls.push('probe'); return { ok: false, detail: 'HTTP 401' }; } }
       });
       assert.equal(code, cmd.EXIT.REFUSED);
       assert.match(err, /marker was NOT written/);
       assert.equal(markerExists(), false);
+      assert.equal(live(), FIXTURE_CADDYFILES.armed, 'a failed fallback leaves the install as it found it');
+      assert.deepEqual(calls.filter((c) => c === 'reload').length, 2, 'Caddy restarted onto the old file too');
+      assert.match(err, /previous Caddyfile was put back/);
+    });
+
+    it('puts the old file back when the marker cannot be written', async () => {
+      writeLive('armed');
+      const code = await go({ deps: { writeMarker: () => { throw new Error('EROFS'); } } });
+      assert.equal(code, cmd.EXIT.REFUSED);
+      assert.match(err, /marker could not be written \(EROFS\)/);
+      assert.equal(live(), FIXTURE_CADDYFILES.armed);
+      assert.equal(calls.includes('query'), false);
+    });
+
+    it('leaves a pre-existing gated file alone on a failed probe — it wrote nothing to roll back', async () => {
+      writeLive('generated');
+      const code = await go({ deps: { probe: async () => ({ ok: false, detail: 'ECONNREFUSED' }) } });
+      assert.equal(code, cmd.EXIT.REFUSED);
+      assert.equal(live(), FIXTURE_CADDYFILES.generated);
+      assert.equal(calls.includes('reload'), false);
     });
 
     it('does not write the marker when Caddy cannot be restarted', async () => {
@@ -174,6 +194,8 @@ describe('scripts/gate-fallback.js (#1420)', () => {
       assert.equal(code, cmd.EXIT.NOT_LIVE);
       assert.equal(markerExists(), false);
       assert.match(err, /NOT live/);
+      // Said plainly: the file on disk changed even though nothing is live.
+      assert.match(err, /now\s+carries Caddy's password; the previous one is at .*credential\.bak/);
     });
 
     it('refuses to rebuild with no retained credential — the generator will not emit an ungated remote site', async () => {
@@ -256,7 +278,7 @@ describe('scripts/gate-fallback.js (#1420)', () => {
         setMarker();
         calls = [];
         const code = await go({ undo: true, deps: { queryState: async () => answer } });
-        assert.equal(code, cmd.EXIT.OK, err);
+        assert.equal(code, cmd.EXIT.KEPT, err);
         assert.equal(live(), FIXTURE_CADDYFILES.generated, JSON.stringify(answer));
         assert.equal(calls.includes('reload'), false);
         assert.equal(markerExists(), false);
@@ -268,18 +290,36 @@ describe('scripts/gate-fallback.js (#1420)', () => {
       writeLive('live-shape-gated');
       setMarker();
       const code = await go({ undo: true, deps: { queryState: async () => ({ state: 'armed', error: null }) } });
-      assert.equal(code, cmd.EXIT.OK, err);
+      assert.equal(code, cmd.EXIT.KEPT, err);
       assert.equal(live(), FIXTURE_CADDYFILES['live-shape-gated']);
       assert.equal(markerExists(), false);
-      assert.match(out, /stays in front/);
+      assert.match(out, /STAYS in front/);
     });
 
-    it('has nothing to do with no marker, and changes nothing', async () => {
-      writeLive('generated');
+    it('has nothing to do with no marker and a Caddyfile that is not its fallback, and changes nothing', async () => {
+      writeLive('armed');
       const code = await go({ undo: true });
       assert.equal(code, cmd.EXIT.OK);
       assert.deepEqual(calls, []);
-      assert.equal(live(), FIXTURE_CADDYFILES.generated);
+      assert.equal(live(), FIXTURE_CADDYFILES.armed);
+      assert.match(out, /Nothing to undo/);
+    });
+
+    it('with no marker, still takes out a fallback Caddyfile it wrote — a fallback that stopped partway', async () => {
+      writeLive('generated');
+      const code = await go({ undo: true, deps: { queryState: async () => ({ state: 'armed', error: null }) } });
+      assert.equal(code, cmd.EXIT.OK, err);
+      assert.equal(live(), FIXTURE_CADDYFILES.armed);
+    });
+
+    it('--restore puts a named Caddyfile back once the login is armed', async () => {
+      writeLive('live-shape-gated');
+      setMarker();
+      const saved = path.join(dir, 'before-the-drill.Caddyfile');
+      fs.writeFileSync(saved, FIXTURE_CADDYFILES['live-shape-own-auth']);
+      const code = await go({ undo: true, restore: saved, deps: { queryState: async () => ({ state: 'armed', error: null }) } });
+      assert.equal(code, cmd.EXIT.OK, err);
+      assert.equal(live(), FIXTURE_CADDYFILES['live-shape-own-auth']);
     });
 
     it('--dry-run keeps the marker', async () => {

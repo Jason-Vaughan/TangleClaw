@@ -174,6 +174,35 @@ describe('lib/gate-fallback — the door TangleClaw may stand down behind (#1420
       assert.equal(gf.checkFallbackDoor(site([hostRoute('a.example', routes)]), PORT).ok, false);
     });
 
+    it('counts a proxy as reaching TangleClaw unless every upstream provably points elsewhere', () => {
+      const ungated = (handler) => site([hostRoute('a.example', [{ handle: [handler] }])]);
+      const dialing = (...dials) => ({ handler: 'reverse_proxy', upstreams: dials.map((dial) => ({ dial })) });
+      for (const dial of [`:${PORT}`, `0.0.0.0:${PORT}`, `[::]:${PORT}`, `127.0.0.2:${PORT}`, `localhost:${PORT}`,
+        `{env.UPSTREAM}:${PORT}`, 'unix//tmp/tc.sock', `tcp/127.0.0.1:${PORT}`, `tc.internal:${PORT}`, '127.0.0.1:{env.P}']) {
+        assert.equal(gf.checkFallbackDoor(ungated(dialing(dial)), PORT).ok, false, dial);
+      }
+      assert.equal(gf.checkFallbackDoor(ungated({ handler: 'reverse_proxy', dynamic_upstreams: { source: 'srv' } }), PORT).ok,
+        false, 'dynamic upstreams');
+      assert.equal(gf.checkFallbackDoor(ungated({ handler: 'reverse_proxy' }), PORT).ok, false, 'no upstreams');
+      // One unknown upstream among known-elsewhere ones still counts.
+      assert.equal(gf.checkFallbackDoor(ungated(dialing('127.0.0.1:3250', `:${PORT}`)), PORT).ok, false);
+      for (const dial of ['127.0.0.1:3250', `192.168.1.5:${PORT}`, `[fd00::1]:${PORT}`]) {
+        assert.equal(gf.checkFallbackDoor(ungated(dialing(dial)), PORT).ok, true, dial);
+      }
+    });
+
+    it('drops the bypass-path allowance when the route rewrites the path', () => {
+      const exempt = (handlers) => site([hostRoute('a.example', [
+        { match: [{ path: ['/api/health'] }], handle: handlers },
+        { handle: [auth(), proxy()] }
+      ])]);
+      assert.equal(gf.checkFallbackDoor(exempt([proxy()]), PORT).ok, true);
+      assert.equal(gf.checkFallbackDoor(exempt([{ handler: 'rewrite', uri: '/api/config' }, proxy()]), PORT).ok, false);
+      assert.equal(gf.checkFallbackDoor(exempt([{ ...proxy(), rewrite: { uri: '/api/config' } }]), PORT).ok, false);
+      assert.equal(gf.checkFallbackDoor(exempt([{ handler: 'subroute', routes: [{ handle: [{ handler: 'rewrite', uri: '/x' }] }] },
+        proxy()]), PORT).ok, false);
+    });
+
     it('refuses with a reason when it has nothing to read', () => {
       assert.equal(gf.checkFallbackDoor(null, PORT).ok, false);
       assert.equal(gf.checkFallbackDoor(fixture('generated'), null).ok, false);
@@ -185,7 +214,7 @@ describe('lib/gate-fallback — the door TangleClaw may stand down behind (#1420
     const generated = { ok: true, config: fixture('generated'), reason: null };
     const base = {
       markerPresent: true, listenerAddress: '127.0.0.1', upstreamPort: PORT,
-      caddyfileExists: true, adapted: generated, ingressMode: 'caddy'
+      caddyfileExists: true, caddyfileContent: FIXTURE_CADDYFILES.generated, adapted: generated, ingressMode: 'caddy'
     };
     const decide = (over) => gf.decideFallback({ ...base, ...over });
 
@@ -215,9 +244,22 @@ describe('lib/gate-fallback — the door TangleClaw may stand down behind (#1420
       assert.equal(failed.honoured, false);
       assert.match(failed.reason, /caddy is not available/);
       assert.equal(decide({ adapted: null }).honoured, false);
-      const armed = decide({ adapted: { ok: true, config: fixture('armed'), reason: null } });
+      const armed = decide({
+        caddyfileContent: FIXTURE_CADDYFILES.armed, adapted: { ok: true, config: fixture('armed'), reason: null }
+      });
       assert.equal(armed.honoured, false);
       assert.match(armed.reason, /without passing Caddy's gate/);
+    });
+
+    it('refuses a Caddyfile that imports another file, or whose text was not read', () => {
+      const importing = `${FIXTURE_CADDYFILES.generated}\nimport sites/*.caddy\n`;
+      const d = decide({ caddyfileContent: importing });
+      assert.equal(d.honoured, false);
+      assert.match(d.reason, /imports `sites\/\*\.caddy`/);
+      assert.equal(decide({ caddyfileContent: null }).honoured, false);
+      // A snippet defined in the same file is not another file.
+      assert.equal(decide({ caddyfileContent: FIXTURE_CADDYFILES['live-shape-gated'],
+        adapted: { ok: true, config: fixture('live-shape-gated'), reason: null } }).honoured, true);
     });
 
     it('with no Caddyfile, honours direct mode only', () => {
@@ -232,6 +274,17 @@ describe('lib/gate-fallback — the door TangleClaw may stand down behind (#1420
     it('refuses a direct-mode listener on every interface even with no Caddyfile', () => {
       assert.equal(decide({ caddyfileExists: false, adapted: null, ingressMode: 'direct', listenerAddress: '::' })
         .honoured, false);
+    });
+  });
+
+  describe('importedFile', () => {
+    it('names an import that is not a local snippet, ignoring comments', () => {
+      assert.equal(gf.importedFile(FIXTURE_CADDYFILES['live-shape-gated']), null);
+      assert.equal(gf.importedFile('(a) {\n}\nx {\n\timport a\n}\n'), null);
+      assert.equal(gf.importedFile('x {\n\timport /etc/caddy/gate.caddy\n}\n'), '/etc/caddy/gate.caddy');
+      assert.equal(gf.importedFile('# import elsewhere.caddy\nx {\n}\n'), null);
+      assert.equal(gf.importedFile('import other\n(a) {\n}\n'), 'other');
+      assert.equal(gf.importedFile(null), null);
     });
   });
 
