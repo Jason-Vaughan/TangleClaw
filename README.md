@@ -248,6 +248,7 @@ Quick answers, with links into the full docs:
 | Let the AI improve its own session rules (safely) | [Session Rules & Self-Improvement](docs/session-rules-self-improvement.md) |
 | Add a custom engine | [Engine Guide](docs/engine-guide.md) |
 | Cut a release, or work out why one never reached installs | [Release Process](docs/release-process.md) |
+| Handle a Dependabot dependency-bump PR (never merged — audited and reconstructed) | [Dependency Bump Audit](docs/dependency-bump-audit.md) |
 | Change any config setting | [Configuration Reference](docs/configuration-reference.md) |
 | Fix something that's broken | [User Guide — Troubleshooting](docs/user-guide.md#troubleshooting), or [Service Management](#service-management) below |
 | Set it up safely, or get back in when locked out | [Setup Guide](docs/setup-guide.md) |

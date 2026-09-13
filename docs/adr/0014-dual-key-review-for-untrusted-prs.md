@@ -4,7 +4,7 @@
 **Source:** PR #1334 — the first external contribution to reach this repository, against #1287.
 **Decides:** How an untrusted external pull request is audited, reconstructed, credited and answered.
 **Governs:** Every pull request from outside the repository, in this repo and in any that adopts this ADR.
-**Related:** ADR 0009 (secure by default) is the stance this applies to contributions. `CONTRIBUTING.md` is the contributor-facing half and publishes the forbidden-file list; the divergence between what it publishes and what the macro filter rejects is handled under "Not every rejection reason is one the contributor could have read". Follow-ups found by the first application: #1338, #1339.
+**Related:** ADR 0009 (secure by default) is the stance this applies to contributions. `CONTRIBUTING.md` is the contributor-facing half and publishes the forbidden-file list; the divergence between what it publishes and what the macro filter rejects is handled under "Not every rejection reason is one the contributor could have read". Follow-ups found by the first application: #1338, #1339. Dependabot pull requests are untrusted PRs under this ADR; the one narrow exemption (a `uses:`-only bump, checked by `scripts/check-bump-diff.js`) is ruled under Decision item 1, and how a dependency bump is audited and reconstructed is [`docs/dependency-bump-audit.md`](../dependency-bump-audit.md) (#1361).
 
 ## Context
 Under the Swarm Protocol and our Zero-Trust security model, we process external Pull Requests using the "Clean Room Reconstruction Standard (Option A)". This dictates that we never merge external bytes directly; instead, we re-implement the logic from scratch.
@@ -55,6 +55,27 @@ We establish a **Dual-Key (Two-Person) Review** mechanism for all untrusted exte
    **Not every rejection reason is one the contributor could have read, and the two must not be confused.** `CONTRIBUTING.md` §4 publishes the execute-on-our-machine list, so a rejection there is a rule the contributor was told. It deliberately does *not* forbid `public/**` — that omission is a recorded decision, because forbidding the UI surface would block every legitimate UI contribution for no gain when reconstruction already covers it. **In a repo where the live-serving surface DOES reject, that rejection rests on an unpublished boundary** — the contributor did nothing they were warned against. Two obligations follow there. The reply must not cite `CONTRIBUTING.md` as though it said so; it says plainly that the deployment serves `public/` off the working tree and that the omission is ours. And such a repo must decide, before its first use, whether to publish that boundary or keep the asymmetry knowingly; what it must not do is reject on a rule it never wrote down and then point at a page that does not contain it.
 
    **This repo is not that repo, as of the ruling above** — its live-serving category does not reject, so it has no unpublished rejection rule and the obligation is discharged rather than deferred. The paragraph is kept because the obligation still binds any repo adopting this ADR that rules the other way, and because the reply to a live-surface contributor must still say plainly that this deployment serves `public/` off the working tree.
+
+   **A Dependabot bump that changes ONLY `uses:` refs does not reject on `.github/workflows/`. Ruled by the operator 2026-09-12 (#1361, relayed by the Coordinator session and recorded here).**
+   Every GitHub Actions bump edits a workflow file, so under the execute-on-our-machine category
+   every Dependabot PR would be a security trip, and #1361 asked for those PRs to be audited and
+   reconstructed instead. The category exists to stop foreign bytes executing in CI or on this host;
+   reconstruction already guarantees that, because the bot's bytes are never merged and the rebuilt
+   ref change is a maintainer's own edit. Rejecting would reach the same bytes by a slower path and
+   add no protection. The exemption is deliberately narrow, and its condition is **checked by a
+   command, never by eye** — the operator's own addition, because a one-line bump is exactly the
+   shape a reader waves through:
+   - the PR's author is `app/dependabot`, **and**
+   - `gh pr diff <N> | node scripts/check-bump-diff.js` exits `0`: every changed file is a workflow
+     modified in place, every changed line is a `uses:` ref for one action moving to one new ref, and
+     no step is added, dropped or re-indented.
+
+   Anything else — any other author, or any non-zero exit — is an ordinary untrusted PR, and a
+   `.github/workflows/` touch is a security trip as written above. A passing PR proceeds to the
+   micro filter and reconstruction in [`docs/dependency-bump-audit.md`](../dependency-bump-audit.md);
+   it is never merged, auto-merged or allow-listed. The exemption does not close a tag moved
+   upstream while workflows reference actions by tag; that is #1436.
+
 2. **The Builder (Micro Filter):** If the PR clears the Coordinator's macro audit, the Coordinator passes the PR details to the Builder via Medusa. The Builder performs a secondary independent raw-text audit, focusing on logical soundness, regressions, and subtle implementation flaws.
 3. **Execution:** Only when both sessions have passed the PR does the Builder reconstruct, on a clean branch off `main`.
 
