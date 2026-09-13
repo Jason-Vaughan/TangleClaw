@@ -1,8 +1,9 @@
 # Hotfix — Caddy sites without a password refuse other machines
 
-**Advisory:** GHSA-fhgg-4h57-q2f9 (private until the patch release publishes it).
-**Ruled by the operator 2026-09-13, in the Builder pane:** patch release on `main` now; the matching
-change folds into #1420 (`train-9/cutover`) separately.
+**Advisory:** GHSA-fhgg-4h57-q2f9 (a private draft until the release that ships this fix publishes it).
+**Ruled by the operator 2026-09-13, in the Builder pane:** merge to `main`, with **no release now** — it
+ships with the sprint release (see Done-when item 6); the matching change folds into #1420
+(`train-9/cutover`) separately.
 **Type:** security bugfix, medium. **Branch:** `fix/caddy-site-peer-guard` off `origin/main`.
 **Requirements Confidence:** High. The behaviour and the mitigation are verified on Caddy v2.11.4.
 
