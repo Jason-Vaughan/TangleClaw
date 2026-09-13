@@ -2345,6 +2345,68 @@ async function confirmBypassHidden() {
 // ── Global Settings Modal ──
 
 /**
+ * Render the Recovery codes section: how many unused codes the signed-in account
+ * holds, and a form that replaces them (#1420).
+ *
+ * Replacing needs the current password, which the server verifies — a session
+ * alone must not be able to mint a key that survives a password change. The new
+ * codes are shown once, written with textContent, and never fetched again: the
+ * server keeps only their digests.
+ *
+ * On an install with no login the server answers LOGIN_NOT_REQUIRED, and the
+ * section says so rather than offering a form that cannot work.
+ * @returns {Promise<void>}
+ */
+async function _loadRecoveryCodesSection() {
+  const box = document.getElementById('gsRecoveryCodesSection');
+  if (!box) return;
+  const info = await api('/api/auth/recovery-codes');
+  if (!info) {
+    box.innerHTML = api.lastErrorCode === 'LOGIN_NOT_REQUIRED'
+      ? '<div class="form-hint">Recovery codes belong to a login, and this install does not require one.</div>'
+      : `<div class="form-hint">Could not check your recovery codes: ${esc(api.lastError || 'unknown error')}</div>`;
+    return;
+  }
+  const summary = info.total === 0
+    ? 'You have no recovery codes. Generate a set so you can reset a forgotten password from the sign-in page.'
+    : `You have <strong>${esc(String(info.remaining))}</strong> unused recovery code${info.remaining === 1 ? '' : 's'} of ${esc(String(info.total))}.`;
+  box.innerHTML = `
+    <div class="form-hint">
+      ${summary}
+      Each code sets a new password once, from the sign-in page, without a terminal. Anyone holding one
+      can do that, so keep them somewhere safe. Generating a new set cancels the old one.
+    </div>
+    <label class="form-label" for="gsRecoveryPassword">Current password</label>
+    <input type="password" class="form-input" id="gsRecoveryPassword" autocomplete="current-password">
+    <button type="button" class="btn" id="gsRecoveryGenerateBtn">Generate new codes</button>
+    <div class="form-hint" id="gsRecoveryHint" aria-live="polite"></div>
+    <ol class="recovery-code-list hidden" id="gsRecoveryList"></ol>`;
+
+  const btn = document.getElementById('gsRecoveryGenerateBtn');
+  btn.addEventListener('click', async () => {
+    const hint = document.getElementById('gsRecoveryHint');
+    const input = document.getElementById('gsRecoveryPassword');
+    btn.disabled = true;
+    const res = await apiMutate('/api/auth/recovery-codes', 'POST', { password: input.value });
+    btn.disabled = false;
+    if (!res) {
+      hint.innerHTML = `<strong>No new codes were generated.</strong> ${esc(api.lastError || 'Unknown error')}`;
+      return;
+    }
+    input.value = '';
+    const list = document.getElementById('gsRecoveryList');
+    list.textContent = '';
+    for (const code of res.codes) {
+      const li = document.createElement('li');
+      li.textContent = code;
+      list.appendChild(li);
+    }
+    list.classList.remove('hidden');
+    hint.innerHTML = '<strong>Save these now — they will not be shown again.</strong> Your old codes no longer work.';
+  });
+}
+
+/**
  * Render the Login section from the server's own answer about this install.
  *
  * The form is drawn only when `GET /api/auth/credential` says a change is
@@ -2359,7 +2421,7 @@ async function _loadCredentialSection() {
   if (!box) return;
   const info = await api('/api/auth/credential');
   if (!info) {
-    box.innerHTML = `<div class="form-hint">Could not check the login setting: ${esc(api.lastError || 'unknown error')}</div>`;
+    box.innerHTML = `<div class="form-hint">Could not check Caddy's password: ${esc(api.lastError || 'unknown error')}</div>`;
     return;
   }
   if (!info.changeable) {
@@ -2367,7 +2429,7 @@ async function _loadCredentialSection() {
     // change", and each carries the command that does apply.
     box.innerHTML = `
       <div class="form-hint">
-        ${esc(info.reason || 'The login cannot be changed from here.')}
+        ${esc(info.reason || 'Caddy\'s password cannot be changed from here.')}
         ${info.remedy ? `<br><br>${esc(info.remedy)}` : ''}
       </div>`;
     return;
@@ -2388,12 +2450,12 @@ async function _loadCredentialSection() {
     <label class="form-label" for="gsCredConfirm">Confirm new password</label>
     <input type="password" class="form-input" id="gsCredConfirm" autocomplete="new-password">
     <div class="form-hint" id="gsCredHint">
-      <strong>Changing this signs you out.</strong> The login is enforced by Caddy, and a browser
-      cannot be handed new credentials — so the next page you load will ask for the new password.
-      Have it to hand before you save. If you lose it, run
-      <code>node scripts/reset-admin.js</code> at a terminal on this machine.
+      <strong>Changing this signs you out of Caddy.</strong> This is the password Caddy asks for in
+      front of TangleClaw, not a TangleClaw account's password, and a browser cannot be handed new
+      credentials — so the next page you load will ask for the new one. Have it to hand before you
+      save. If you lose it, run <code>node scripts/reset-admin.js</code> at a terminal on this machine.
     </div>
-    <button type="button" class="btn" id="gsCredSaveBtn">Change login</button>`;
+    <button type="button" class="btn" id="gsCredSaveBtn">Change Caddy password</button>`;
 
   const saveBtn = document.getElementById('gsCredSaveBtn');
   saveBtn.addEventListener('click', async () => {
@@ -2482,6 +2544,20 @@ function openGlobalSettings() {
   // untouched Save must not write anything.
   const bindShowsOn = !!bindState.wide;
   const bindUnchosen = bindState.choice === 'unchosen';
+  // #1055 — in caddy mode the switch is locked and drawn from the SOCKET, so a
+  // stored value that differs from it is invisible, and it is what applies the
+  // moment the install leaves caddy mode. Named here, from the server's
+  // `choice`, so nobody switches back to direct mode and reopens a wide bind
+  // they cannot see.
+  const BIND_STORED_HINTS = {
+    'opted-in': '<strong>Saved setting: on.</strong> It is ignored while Caddy is the ingress. If you '
+      + 'switch to direct mode, TangleClaw will accept connections from every network interface.',
+    unchosen: '<strong>Saved setting: not chosen.</strong> This install predates the setting. If you '
+      + 'switch to direct mode, TangleClaw will accept connections from every network interface '
+      + 'until you choose.',
+    closed: '<strong>Saved setting: off.</strong> Direct mode would keep TangleClaw on '
+      + '<code>127.0.0.1</code> too.'
+  };
 
   // AUTH-4b — reveal/rotate only make sense against the SAVED gate state (the
   // token is auto-generated server-side on enable + Save, not on the live
@@ -2593,10 +2669,12 @@ function openGlobalSettings() {
       </label>
       <div class="form-hint">
         ${bindLockedByCaddy
-          ? 'Locked while the Caddy ingress is in use. Caddy fronts the server and holds the login '
-            + 'gate, so TangleClaw stays on <code>127.0.0.1</code> behind it — binding the network '
-            + 'directly would open an ungated door beside the gated one. Reach TangleClaw through '
-            + 'Caddy, or switch to direct mode first.'
+          ? 'Locked while the Caddy ingress is in use. Caddy is the front door and already accepts '
+            + 'connections from the network, so TangleClaw stays on <code>127.0.0.1</code> behind it — '
+            + 'a second listener beside Caddy would carry your password unencrypted. Reach TangleClaw '
+            + 'through Caddy, or switch to direct mode first. '
+            + BIND_STORED_HINTS[bindState.choice === 'opted-in' || bindState.choice === 'unchosen'
+              ? bindState.choice : 'closed']
           : 'Off (default): TangleClaw listens on <code>127.0.0.1</code> only, so it is reachable from '
             + 'this machine alone. On: it accepts connections from every network interface — anyone who '
             + 'can reach this machine gets the dashboard, and the dashboard launches AI sessions with '
@@ -2615,9 +2693,14 @@ function openGlobalSettings() {
       <button type="button" class="btn" id="gsBindKeepOpen">Keep network access, and stop warning me</button>
     </div>` : ''}
 
-    <div class="gs-section-label">Login</div>
+    <div class="gs-section-label">Caddy password</div>
     <div class="form-group" id="gsCredentialSection">
       <div class="form-hint">Checking what this install can change…</div>
+    </div>
+
+    <div class="gs-section-label">Recovery codes</div>
+    <div class="form-group" id="gsRecoveryCodesSection">
+      <div class="form-hint">Checking your recovery codes…</div>
     </div>
 
     <div class="gs-section-label">Diagnostics</div>
@@ -2679,6 +2762,7 @@ function openGlobalSettings() {
   // (tokenManageMarkup). Both render the raw token into #gsTokenDisplay via
   // textContent (XSS-safe, selectable for copy); rotate confirms first.
   _loadCredentialSection();
+  _loadRecoveryCodesSection();
 
   const revealTokenBtn = document.getElementById('gsRevealTokenBtn');
   if (revealTokenBtn) {

@@ -566,9 +566,9 @@ describe('caddy', () => {
     // real `caddy validate` syntax is exercised in verification.
     const AUTH = { basicAuthUser: 'jason', basicAuthHash: '$2a$14$wThequ7Ahgg6dT3KZ8x9KuOk0o0gO3pQF1m6Xq9r4tFz8sJgVn3bC' };
     // Case-sensitive RE2 bypass matcher emitted by _bypassPathRegexp() (#472
-    // residual-risk #2 fix): exact-cased /api/health, /openclaw-direct/* prefix,
-    // /manifest.json — anchored, `.` in manifest escaped.
-    const BYPASS_MATCHER = '@protected not path_regexp ^(/api/health|/openclaw-direct/.*|/manifest\\.json)$';
+    // residual-risk #2 fix), generated from TangleClaw's GATE_BYPASS_PATHS:
+    // exact-cased /api/health and /manifest.json — anchored, `.` escaped.
+    const BYPASS_MATCHER = '@protected not path_regexp ^(/api/health|/manifest\\.json)$';
 
     it('emits no basic_auth gate by default (ungated ingress unchanged)', () => {
       const out = caddy.buildCaddyfileContent(opts);
@@ -594,9 +594,21 @@ describe('caddy', () => {
       assert.doesNotMatch(out, /@protected not path \//);
     });
 
-    it('bypasses exactly /api/health, /openclaw-direct/*, /manifest.json (probe, OpenClaw own-auth, credential-less manifest)', () => {
+    it('bypasses exactly /api/health and /manifest.json — TangleClaw\'s list, with no /openclaw-direct/* (#1420)', () => {
       const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH });
       assert.ok(out.includes(`\t${BYPASS_MATCHER}`));
+      assert.doesNotMatch(out, /openclaw-direct/);
+    });
+
+    it('derives the bypass matcher from auth-gate\'s GATE_BYPASS_PATHS, not a second list', () => {
+      // One definition: every path TangleClaw's gate exempts appears in the
+      // matcher, and nothing else does.
+      const authGate = require('../lib/auth-gate');
+      const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH });
+      const regex = out.split('\n').find((l) => l.includes('@protected not path_regexp'))
+        .trim().replace('@protected not path_regexp ', '');
+      const alts = regex.slice(2, -2).split('|').map((a) => a.replace(/\\\./g, '.'));
+      assert.deepEqual(alts, [...authGate.GATE_BYPASS_PATHS]);
     });
 
     it('applies the same bypass matcher to every gated site block (local + public + remote catch-all)', () => {
@@ -629,25 +641,19 @@ describe('caddy', () => {
       assert.equal(caddy.isGeneratedCaddyfile(out), true);
     });
 
-    // AUTH-3 — forward the authenticated identity to TC via header_up.
-    it('forwards the authenticated user via header_up on a gated site (AUTH-3)', () => {
-      const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH });
-      assert.match(out, /\treverse_proxy 127\.0\.0\.1:3101 \{/);
-      assert.match(out, /\t\theader_up X-Auth-User \{http\.auth\.user\.id\}/);
-      // header_up lives inside reverse_proxy, which runs after the basic_auth gate.
-      assert.ok(out.indexOf('basic_auth') < out.indexOf('header_up'));
+    // TangleClaw reads identity from its own session and deletes an inbound
+    // X-Auth-User, so no Caddyfile forwards one.
+    it('emits no header_up on a gated site — identity is TangleClaw\'s session (#1420)', () => {
+      const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH, publicDomain: 'tc.example.com' });
+      assert.doesNotMatch(out, /header_up/);
+      assert.doesNotMatch(out, /X-Auth-User/);
+      assert.equal((out.match(/\treverse_proxy 127\.0\.0\.1:3101\n/g) || []).length, 2);
     });
 
-    it('emits NO header_up on an ungated site (no identity to forward, output unchanged)', () => {
+    it('emits NO header_up on an ungated site, and reverse_proxy stays single-line', () => {
       const out = caddy.buildCaddyfileContent(opts);
       assert.doesNotMatch(out, /header_up/);
-      // ungated reverse_proxy stays the single-line AUTH-1 form (no block braces).
       assert.match(out, /\treverse_proxy 127\.0\.0\.1:3101\n/);
-    });
-
-    it('forwards identity on BOTH the local and public sites when gated + publicDomain', () => {
-      const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH, publicDomain: 'tc.example.com' });
-      assert.equal((out.match(/header_up X-Auth-User \{http\.auth\.user\.id\}/g) || []).length, 2);
     });
 
     // #434 — tailnet HTTPS site + http→https redirect (codifies the 2026-07-04 hand-edit).
@@ -659,7 +665,6 @@ describe('caddy', () => {
       const siteBlock = out.slice(out.indexOf(`${TAILNET} {`));
       assert.match(siteBlock, /\ttls \/c\/cert\.pem \/c\/key\.pem/);
       assert.ok(siteBlock.includes(BYPASS_MATCHER));
-      assert.match(siteBlock, /header_up X-Auth-User \{http\.auth\.user\.id\}/);
     });
 
     it('emits an http→https redirect block for the tailnet host, pointing at the https port', () => {
@@ -675,7 +680,7 @@ describe('caddy', () => {
 
     it('throws when tailnetHost is set without basic_auth (fail closed — no ungated remote HTTPS site)', () => {
       assert.throws(() => caddy.buildCaddyfileContent({ ...opts, tailnetHost: TAILNET }),
-        /tailnetHost requires basicAuthUser and basicAuthHash/);
+        /tailnetHost requires a gate/);
     });
 
     it('emits no tailnet site, redirect, or auto_https when tailnetHost is unset (output unchanged)', () => {
@@ -683,6 +688,63 @@ describe('caddy', () => {
       assert.doesNotMatch(out, /ts\.net/);
       assert.doesNotMatch(out, /\tredir /);
       assert.doesNotMatch(out, /auto_https disable_redirects/);
+    });
+
+    it('refuses a glob in GATE_BYPASS_PATHS rather than turning it into a prefix Caddy alone honours', () => {
+      const gatePath = require.resolve('../lib/auth-gate');
+      const real = require.cache[gatePath].exports;
+      require.cache[gatePath].exports = { ...real, GATE_BYPASS_PATHS: ['/api/health', '/assets/*'] };
+      try {
+        assert.throws(() => caddy.buildCaddyfileContent({ ...opts, ...AUTH }), /is a glob; bypass paths are exact/);
+      } finally {
+        require.cache[gatePath].exports = real;
+      }
+    });
+
+    // #1420 — Caddy's gate is dropped by TangleClaw's gate STATE, never by release.
+    describe('basic_auth by gate state (#1420)', () => {
+      const REMOTE = { tailnetHost: TAILNET, remoteHttpCatchAll: true, publicDomain: 'tc.example.com' };
+
+      for (const gateState of ['armed', 'locked']) {
+        it(`omits basic_auth when TangleClaw's gate guards the door — ${gateState}`, () => {
+          const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH, ...REMOTE, gateState });
+          assert.doesNotMatch(out, /basic_auth/);
+          assert.doesNotMatch(out, /@protected/);
+          assert.ok(!out.includes(AUTH.basicAuthHash), 'the retained credential must not be written');
+          // The remote shapes survive: TangleClaw is their gate now.
+          assert.match(out, /^your-host\.tailnet-name\.ts\.net \{$/m);
+          assert.match(out, /^http:\/\/ \{$/m);
+          assert.equal(caddy.isGeneratedCaddyfile(out), true);
+        });
+
+        it(`allows a remote site with no credential at all — ${gateState}`, () => {
+          const out = caddy.buildCaddyfileContent({ ...opts, ...REMOTE, lanHost: 'studio.local', gateState });
+          assert.match(out, /^your-host\.tailnet-name\.ts\.net \{$/m);
+          assert.match(out, /^localhost, studio\.local \{$/m, 'the LAN name is gated by TangleClaw');
+        });
+      }
+
+      // Every state that does NOT guard the door keeps Caddy's gate, including a
+      // state this module does not know and a caller that says nothing.
+      for (const gateState of ['account-required', 'unreadable', 'open', 'fallback-typo', null, undefined]) {
+        const label = gateState === undefined ? 'omitted' : JSON.stringify(gateState);
+        it(`keeps basic_auth when a credential is given — gateState ${label}`, () => {
+          const out = caddy.buildCaddyfileContent({ ...opts, ...AUTH, tailnetHost: TAILNET, gateState });
+          assert.equal((out.match(/basic_auth @protected \{/g) || []).length, 2);
+        });
+
+        it(`refuses a remote site with no credential — gateState ${label}`, () => {
+          assert.throws(() => caddy.buildCaddyfileContent({ ...opts, tailnetHost: TAILNET, gateState }),
+            /tailnetHost requires a gate/);
+          assert.throws(() => caddy.buildCaddyfileContent({ ...opts, remoteHttpCatchAll: true, gateState }),
+            /remoteHttpCatchAll requires a gate/);
+        });
+
+        it(`adds no LAN name with no credential — gateState ${label}`, () => {
+          const out = caddy.buildCaddyfileContent({ ...opts, lanHost: 'studio.local', gateState });
+          assert.ok(!out.includes('studio.local'));
+        });
+      }
     });
   });
 
@@ -1094,16 +1156,24 @@ describe('caddy', () => {
     const PROBE = [
       // [rawUrl, canonical, caddyBypasses]
       ['/api/health', '/api/health', true],
-      ['/openclaw-direct/abc/chat', '/openclaw-direct/abc/chat', true],
+      ['/openclaw-direct/abc/chat', '/openclaw-direct/abc/chat', false],
+      ['/manifest.json', '/manifest.json', true],
       ['/manifest.json', '/manifest.json', true],
       // duplicate slashes collapse (Caddy merges; new URL does not) — leak variants
-      ['/openclaw-direct//abc/chat', '/openclaw-direct/abc/chat', true],
-      ['//openclaw-direct/abc/chat', '/openclaw-direct/abc/chat', true],
+      ['/api//health', '/api/health', true],
+      ['//manifest.json', '/manifest.json', true],
+      // /openclaw-direct/* is no longer exempt at either gate (#1420): same
+      // canonical form, no bypass.
+      ['/openclaw-direct//abc/chat', '/openclaw-direct/abc/chat', false],
+      ['//openclaw-direct/abc/chat', '/openclaw-direct/abc/chat', false],
       // percent-encoded slash decodes before matching (new URL leaves %2F encoded)
-      ['/openclaw-direct%2Fabc/chat', '/openclaw-direct/abc/chat', true],
-      ['/openclaw-direct/abc%2Fchat', '/openclaw-direct/abc/chat', true],
+      ['/api%2Fhealth', '/api/health', true],
+      ['/%6Danifest.json', '/manifest.json', true],
+      ['/openclaw-direct%2Fabc/chat', '/openclaw-direct/abc/chat', false],
+      ['/openclaw-direct/abc%2Fchat', '/openclaw-direct/abc/chat', false],
       // dot-segments resolve; traversal out of the bypass prefix is NOT bypassed
-      ['/openclaw-direct/./abc', '/openclaw-direct/abc', true],
+      ['/openclaw-direct/./abc', '/openclaw-direct/abc', false],
+      ['/x/../api/health', '/api/health', true],
       ['/./manifest.json', '/manifest.json', true],
       ['/openclaw-direct/../api/system', '/api/system', false],
       ['/openclaw-direct/..%2fapi/system', '/api/system', false],
@@ -1116,8 +1186,10 @@ describe('caddy', () => {
       ['/api/health/.', '/api/health', true],
       // case-sensitive (the #472 fix); query/fragment stripped
       ['/OPENCLAW-DIRECT/abc', '/OPENCLAW-DIRECT/abc', false],
-      ['/openclaw-direct/abc?x=1&y=2', '/openclaw-direct/abc', true],
-      ['/openclaw-direct/abc#frag', '/openclaw-direct/abc', true],
+      ['/API/HEALTH', '/API/HEALTH', false],
+      ['/openclaw-direct/abc?x=1&y=2', '/openclaw-direct/abc', false],
+      ['/manifest.json?v=2', '/manifest.json', true],
+      ['/api/health#frag', '/api/health', true],
       ['/openclaw-direct', '/openclaw-direct', false]
     ];
 
@@ -1125,14 +1197,17 @@ describe('caddy', () => {
       it(`canonicalizes ${JSON.stringify(raw)} → ${JSON.stringify(canonical)} (bypass=${bypass})`, () => {
         assert.equal(caddy.caddyCanonicalPath(raw), canonical);
         assert.equal(caddy.isCaddyAuthBypassPath(raw), bypass);
+        // The regex Caddy is given and TangleClaw's own gate must agree on
+        // every target — that parity is what the fail-closed guard relies on.
+        assert.equal(require('../lib/auth-gate').isGateBypassPath(raw), bypass);
       });
     }
 
     it('does not throw on malformed percent-encoding (leaves it undecoded)', () => {
       // A lone `%` cannot be decoded; Caddy forwards it rather than 400ing, so the
-      // helper must not throw. `/openclaw-direct/%` stays a bypass-prefixed path.
+      // helper must not throw, and still cleans the raw form.
       assert.doesNotThrow(() => caddy.caddyCanonicalPath('/openclaw-direct/%'));
-      assert.equal(caddy.isCaddyAuthBypassPath('/openclaw-direct/%zz'), true);
+      assert.equal(caddy.isCaddyAuthBypassPath('/%zz/../manifest.json'), true);
       assert.equal(caddy.isCaddyAuthBypassPath('/%zz'), false);
     });
   });

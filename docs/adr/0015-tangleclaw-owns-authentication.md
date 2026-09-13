@@ -1,6 +1,6 @@
 # ADR 0015: TangleClaw owns authentication — the gate moves out of Caddy
 
-**Status:** **Accepted (2026-09-11, operator-ratified in-pane).** Not built. The operator accepted the cost explicitly — 1-2 trains of work — to get a front door that works on any ingress mode, and a principal to hang per-user resource defaults on. `basic_auth` can provide neither: it is one shared credential, and it exists only in caddy mode.
+**Status:** **Accepted (2026-09-11, operator-ratified in-pane).** Built by #1420 (the Tier 1 cutover); the build decisions are recorded in ADR 0016. The operator accepted the cost explicitly — 1-2 trains of work — to get a front door that works on any ingress mode, and a principal to hang per-user resource defaults on. `basic_auth` can provide neither: it is one shared credential, and it exists only in caddy mode.
 **Source issues:** #1149 (v6 multi-user architecture), #803 (the wizard's opt-out), #1055.
 **Supersedes, conditionally:** ADR 0004 / `auth-2-authelia-gate.md`'s Path A choice — on the exact
 condition that choice named for itself.
@@ -247,7 +247,8 @@ since changed, and on a requirement — one operator — that #1149 retires.
   that scrypt cannot verify. Operators must set a password once under the new scheme. It cannot be
   converted silently, and per ADR 0009 it must not degrade to no gate meanwhile.
 - **Recovery must stay outside the gate.** ADR 0009 rule 5 is unchanged: `scripts/reset-admin.js` on
-  the machine, never a dashboard feature.
+  the machine, never a dashboard feature. *(Rule 5 was later amended, 2026-09-13, to allow one-time
+  recovery codes that reset a password from off the machine — ADR 0016 "The ruling".)*
 - **The bypass paths change owner.** `/api/health`, `/openclaw-direct/*` and `/manifest.json` are
   currently exempted in the generated Caddyfile (`AUTH_BYPASS_PATHS`). They become TangleClaw's to
   enforce, and `isCaddyAuthBypassPath` already models them — one definition, moved, not duplicated.

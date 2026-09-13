@@ -209,15 +209,15 @@ async function loadServerInfo() {
   state.restartMechanism = (typeof data.restartMechanism === 'string' && data.restartMechanism.length > 0)
     ? data.restartMechanism
     : null;
-  // AUTH-3: show "Logged in as <user>" when behind the Caddy login gate.
-  // `currentUser` is null unless the gate is live (the server-side trust gate
-  // never honors a direct-mode header), so this is hidden in direct mode.
+  // "Logged in as <user>": the TangleClaw session's username, null when no one
+  // is signed in (including every install with no login required).
   renderAuthUser(data.currentUser);
-  // AUTH-2K9D: warn when auth is configured but not actually enforcing.
+  // Warn when the login is closed in a state that needs the operator.
   renderAuthStatus(data.authStatus);
   renderBindNotice(data.bindNotice);
   renderBindNotice(data.ttydNotice, 'ttydNotice');
   renderCaddyDriftBanner(data.caddyDriftNotice);
+  renderRecoveryNotice(data.recoveryNotice);
 
   // The version label is written on every tick, not only when something looks
   // wrong. It was previously set once at page load, so a restart this page did
@@ -513,29 +513,37 @@ function renderBehindOriginBanner(info) {
 }
 
 /**
- * Human-readable warning for an auth config-vs-live mismatch (AUTH-2K9D), or null
- * for the healthy/expected states (`off`, `live`, `configured-bypassed` — a
- * direct-loopback load that never traversed the gate says nothing about gate
- * health, so it deliberately renders no warning — or an older server that omits
- * `authStatus`). Text carries the meaning so the chip is not color-only (a11y).
+ * Human-readable warning for a login state that needs the operator, or null for
+ * the expected states (`open`, `armed`, or an older server that omits
+ * `authStatus`). The three warnings name CLOSED states: the login is being
+ * enforced, and something about it needs attention. A browser rarely sees them —
+ * a closed gate refuses the poll that would carry them — but a signed-in page
+ * left open across a change can. Text carries the meaning so the chip is not
+ * color-only (a11y).
  * @param {string|null|undefined} authStatus
  * @returns {string|null}
  */
 function _authStatusWarning(authStatus) {
-  if (authStatus === 'configured-inert') {
-    return '⚠ Auth enabled but direct mode is not enforcing it — run the Caddy cutover to activate the login gate.';
+  if (authStatus === 'account-required') {
+    return '⚠ No account exists yet, so the login is closed — open this address in a new tab to create one.';
   }
-  if (authStatus === 'configured-no-identity') {
-    return '⚠ Auth gate is up but no identity is arriving — the live Caddyfile may be missing "header_up X-Auth-User".';
+  if (authStatus === 'locked') {
+    return '⚠ Every account is disabled, so the login is closed — run "node scripts/reset-admin.js --store --user <name>" at a terminal on this machine.';
+  }
+  if (authStatus === 'unreadable') {
+    return '⚠ TangleClaw cannot read its login state, so the login stays closed — check the server log.';
+  }
+  if (authStatus === 'fallback') {
+    return '⚠ TangleClaw\'s login is stood down behind Caddy\'s password (fallback) — once the login works, run "node scripts/gate-fallback.js --undo" at a terminal on this machine.';
   }
   return null;
 }
 
 /**
- * Show or hide the auth config-vs-live mismatch warning chip (AUTH-2K9D). Purely
- * state-driven: it mirrors the latest `/api/server-info` poll and self-clears when
- * the mismatch resolves (cutover runs / header fixed). No dismiss control and no
- * timer — removing the cause removes the chip on the next poll.
+ * Show or hide the login-state warning chip. Purely state-driven: it mirrors the
+ * latest `/api/server-info` poll and self-clears when the state resolves. No
+ * dismiss control and no timer — removing the cause removes the chip on the next
+ * poll.
  * @param {string|null|undefined} authStatus
  */
 function renderAuthStatus(authStatus) {
@@ -631,6 +639,53 @@ function renderCaddyDriftBanner(notice) {
   const list = items.length ? `<ul class="caddy-drift-findings">${items.join('')}</ul>` : '';
   textEl.innerHTML = `⚠ <strong>${esc(message)}</strong>${list}`;
   banner.classList.remove('hidden');
+}
+
+/**
+ * Show or hide the notice that this account's password was reset with a
+ * recovery code (#1420).
+ *
+ * Mirrors the latest `/api/server-info` poll. Unlike the banners above it has
+ * an acknowledge button, because its cause does not go away on its own: a code
+ * was used, and only the account can say whether that was them. It clears when
+ * the account acknowledges it or generates a new set of codes — never on a
+ * timer. If the use was NOT theirs, the text says what to do.
+ *
+ * `from` is a server-recorded client address and is escaped like every other
+ * server string reaching innerHTML.
+ *
+ * @param {{redemptions: Array<{usedAt: number, from: string|null}>, remaining: number}|null|undefined} notice
+ */
+function renderRecoveryNotice(notice) {
+  const banner = document.getElementById('recoveryNoticeBanner');
+  const textEl = document.getElementById('recoveryNoticeBannerText');
+  const ackBtn = document.getElementById('recoveryNoticeAckBtn');
+  if (!banner || !textEl) return;
+  const uses = notice && Array.isArray(notice.redemptions) ? notice.redemptions : [];
+  if (uses.length === 0) {
+    textEl.textContent = '';
+    banner.classList.add('hidden');
+    return;
+  }
+  const latest = uses[0];
+  const when = new Date(latest.usedAt).toLocaleString();
+  const count = uses.length === 1 ? 'A recovery code was used' : `${uses.length} recovery codes were used`;
+  textEl.innerHTML = `⚠ <strong>${esc(count)} to reset your password</strong>`
+    + ` — most recently ${esc(when)} from ${esc(latest.from || 'an unknown address')}.`
+    + ` ${esc(String(notice.remaining))} left. If this was not you, whoever used it chose the password:`
+    + ' set one only you know with another recovery code, or with'
+    + ' <code>node scripts/reset-admin.js --store --user &lt;name&gt;</code> on the machine, then generate'
+    + ' new codes in Settings → Recovery codes.';
+  banner.classList.remove('hidden');
+  if (ackBtn && !ackBtn.dataset.wired) {
+    ackBtn.dataset.wired = '1';
+    ackBtn.addEventListener('click', async () => {
+      ackBtn.disabled = true;
+      const res = await apiMutate('/api/auth/recovery-codes/acknowledge', 'POST', {});
+      ackBtn.disabled = false;
+      if (res) renderRecoveryNotice(null);
+    });
+  }
 }
 
 /**

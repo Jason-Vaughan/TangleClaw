@@ -121,7 +121,7 @@ The `basic_auth` credential is canonical in **config** (`basicAuthUser` +
 - **Byte-for-byte re-emission** — every regeneration path (cutover,
   `reset-admin`) emits the stored hash exactly; regression-tested.
 - **Three writers, one sequence** — the cutover, `reset-admin.js`, and
-  `POST /api/auth/credential` (global settings → Login) are the only things that
+  `POST /api/auth/credential` (global settings → Caddy password) are the only things that
   change a credential. The latter two share one implementation,
   `lib/admin-credential.js applyCredentialChange`: patch the live Caddyfile,
   `caddy validate` fail-closed restoring the original, only then record it in
@@ -131,16 +131,20 @@ The `basic_auth` credential is canonical in **config** (`basicAuthUser` +
   credential stays here, at a terminal, because a reset behind the gate cannot
   help someone the gate has locked out.
 - **Refuse-to-ungate** — the cutover aborts rather than replace a gated
-  Caddyfile with an ungated one when config carries no credential.
+  Caddyfile with an ungated one when config carries no credential and
+  TangleClaw's own login does not guard the door. Once the login is `armed` or
+  `locked`, the cutover writes no `basic_auth` at all — TangleClaw is the gate —
+  and its preview says which gate the file carries.
 - **Remote plain-HTTP catch-all** — set `caddyRemoteHttp: true` (adopted
   automatically if the live file has an `http:// { ... }` site) to emit a
-  Basic-Auth-gated plain-HTTP catch-all for WireGuard/Tailscale remote access,
-  plus `auto_https disable_redirects`. The generator refuses to emit the
-  catch-all without a credential — an ungated one would be an open door.
+  gated plain-HTTP catch-all for WireGuard/Tailscale remote access, plus
+  `auto_https disable_redirects`. The generator refuses to emit the catch-all
+  without a gate — Caddy's `basic_auth`, or TangleClaw's login in `armed` or
+  `locked` — because an ungated one would be an open door.
 - **Tailnet HTTPS site** — `caddyTailnetHost` (#434, adopted from a live file
   carrying exactly one tls-bearing FQDN site that isn't `publicDomain`). Gated
   for the same reason as the catch-all: the generator refuses it without a
-  credential.
+  gate.
 - **Access log** — `caddyAccessLogPath` (#846, adopted from a live per-site
   `log { output file <absolute path> }`). Unlike the shapes above it needs no
   credential, because a log opens no door. It is refused rather than partially
@@ -376,7 +380,10 @@ The generator therefore adds a guard to every site it writes without a password,
 `remote_ip` reads the socket peer, not a header (this file never sets `trusted_proxies`), so every
 connection that is not from this machine is dropped before it reaches TangleClaw — dropped rather
 than answered `403`, so a caller is not even told a TangleClaw lives there. A site **with**
-`basic_auth` carries no guard: the login is what admits other machines. A `publicDomain` site with no
+`basic_auth` carries no guard: the login is what admits other machines. Neither does a site that
+**TangleClaw's own login** guards (an account exists and `authEnabled` is on, so the cutover wrote it
+without `basic_auth`): it must answer other machines, and `guard-ungated-sites.js` refuses on such an
+install rather than lock you out of it. A `publicDomain` site with no
 login is guarded too, so it refuses the internet it was published to; publish a site only with a login.
 
 **What the guard does not cover.** The peer is whoever opened the connection to Caddy. Something
@@ -416,7 +423,76 @@ Then `caddy validate --config ~/.tangleclaw/Caddyfile`, restart Caddy, and resta
 banner clears only when Caddy's own reading of the file shows every ungated site refusing other
 machines. Or put a login on the install instead: `node scripts/reset-admin.js --create-gate --user <name>`.
 
+## When TangleClaw's login is broken: fall back to Caddy's password
+
+For a login that is **broken** — not a forgotten password (that is a recovery code, or
+`reset-admin.js` below). Run at a terminal on the TangleClaw host; SSH from a phone works.
+
+```bash
+node scripts/gate-fallback.js --dry-run      # the plan; writes nothing
+node scripts/gate-fallback.js                # fall back
+node scripts/gate-fallback.js --undo         # once the login works again
+```
+
+What it does, in this order, and why the order matters — a step that fails leaves the login enforcing:
+
+1. **Caddy's password in front of every route to TangleClaw.** A Caddyfile that already has it is
+   left alone. A generated one is rebuilt with `basic_auth` from the credential kept in config
+   (`basicAuthUser`/`basicAuthHash`) — only if the same inputs reproduce the file on disk exactly.
+   A hand-maintained one is never rewritten: pass `--restore <file>` naming a saved Caddyfile (a
+   `Caddyfile.*.bak` beside it) that gates every route. `caddy adapt` checks the result either way.
+2. **`caddy validate`, restart Caddy, and probe each site from this machine.** Each must answer `401`
+   with a `WWW-Authenticate: Basic` challenge — TangleClaw's own `401` has none, so it cannot pass.
+3. **Only then the marker**, `~/.tangleclaw/gate-fallback`, and a check that TangleClaw reports
+   `gateState: "fallback"` on `GET /api/auth/me`.
+
+If a probe fails, or the marker cannot be written, a Caddyfile the run wrote is put back and Caddy
+restarted onto it, so a failed fallback leaves the install as it found it.
+
+Sign in with the Caddy username and password. TangleClaw honours the marker only while it listens on
+loopback and the Caddyfile on disk still gates every route to it (re-checked whenever the file
+changes); in direct mode with no Caddyfile, only loopback. A Caddyfile that `import`s another file
+(anything but a snippet defined in it) is refused, because an edit to that file would not be noticed. If either stops holding, the login
+enforces again and the log says `Fallback marker present but NOT honoured` with the reason.
+
+**What counts as gating every route** is read in Caddy's evaluation order, and is stricter than the
+drift check: a `basic_auth` in one `handle` does not cover a sibling `handle` that proxies without it.
+A proxy counts as reaching TangleClaw unless every upstream provably points elsewhere (another port,
+or a concrete non-loopback address) — `reverse_proxy :3102`, a placeholder or dynamic upstreams all
+count. The one ungated route allowed is one matching only TangleClaw's own public paths
+(`/api/health`, `/manifest.json`) that does not rewrite the path. **An ungated `/openclaw-direct/*` block is refused** — that path adds the gateway
+token for whoever asks — so during a fallback the OpenClaw page may prompt for the Caddy password
+more than once (#472). A hand-maintained Caddyfile carrying that block needs a copy without it, kept
+ready for `--restore`, before the day you need it.
+
+`--undo` removes the marker, waits until TangleClaw reports `armed` or `locked`, and only then takes
+`basic_auth` out — of a Caddyfile this tool can reproduce, or a `--restore` file. Otherwise Caddy's
+password stays in front of the login, which is safe, and you remove it by hand. With no marker it
+still undoes a fallback Caddyfile it wrote (a run that stopped after writing).
+
+Exit status: `0` done (or dry run), `1` refused or failed with the marker not written (any Caddyfile
+the run wrote was put back), `2` a Caddyfile is written but Caddy could not be restarted (run the
+printed `launchctl` command, then re-run), `3` the marker is written but TangleClaw did not honour it
+(its log says why; run `--undo`), `4` `--undo` re-armed the login but left Caddy's password in front.
+
+**Rehearse it** on a working install (the Checkpoint 2 drill):
+
+```bash
+read -s PW && printf %s "$PW" | node scripts/drill-gate-fallback.js --user <caddy user> --password-stdin
+```
+
+It copies the Caddyfile aside, falls back, signs in to each site with the Caddy password (each must
+answer 2xx/3xx), confirms `fallback`, undoes by restoring that copy, and confirms the login is the gate
+again and the Caddyfile is byte-for-byte what it was. A failed drill keeps the copy and names it. It
+does not break the login on purpose.
+
 ## Admin credential reset (break-glass, AUTH-2)
+
+This resets **Caddy's** password. A forgotten TangleClaw account password — the sign-in page, not the
+browser pop-up — is a recovery code or `node scripts/reset-admin.js --store --user <name>`; every
+case is in [docs/recovery.md](../docs/recovery.md). On an install whose own login guards the door
+(`armed`, `locked`) the Caddyfile carries no `basic_auth`, and this tool says so and points at
+`--store`.
 
 When the Caddy `basic_auth` gate is active (AUTH-2) and the admin password is lost,
 recover it from a terminal **on the host** — the gate runs in Caddy locally, so
@@ -434,8 +510,9 @@ It patches the credential **in place** (it does not regenerate a hand-edited
 Caddyfile), re-validates fail-closed (restoring a timestamped `.bak` if the patch
 is invalid), reloads Caddy, and syncs the stored `basicAuthUser`/`basicAuthHash`
 so a later cutover stays consistent. New passwords must be ≥12 chars, not a common
-weak password, and must not contain the username. The machine-local
-`~/.tangleclaw/EMERGENCY-RECOVERY.md` carries the full runbook + a manual fallback.
+weak password, and must not contain the username. [docs/recovery.md](../docs/recovery.md) is the full
+walkthrough, and the manual fallback without the tool is `caddy hash-password`, the hash pasted into
+the Caddyfile, `caddy validate`, and a Caddy restart.
 
 **The reload is a restart, and it drops connections.** `admin off` is set in both
 the generated and the hand-edited Caddyfile, so Caddy's `localhost:2019` admin API
@@ -484,6 +561,8 @@ It refuses far more than it accepts, and each refusal names its own remedy:
 | Refusal | Meaning | What to do |
 |---|---|---|
 | `not-caddy-mode` | The install is not in caddy ingress mode, so nothing would enforce a gate written into this file. A Caddyfile left behind by `--to direct` is a file, not a live gate. | `ingress-cutover.js --to caddy` first |
+| `account-login` | TangleClaw's own login guards this install (`armed` or `locked`), so a Caddyfile without `basic_auth` is the intended shape. Adding one would put a second password in front of the account that works. | `reset-admin.js --store --user <name>` for a forgotten account password; `gate-fallback.js` for a broken login |
+| `gate-state-unknown` | TangleClaw's config or account store could not be read, so whether this install wants a Caddy password cannot be decided. | Fix the read error named in `~/.tangleclaw/logs/tangleclaw.log`, then run it again |
 | `gate-exists` | A credential is already present. | Use the ordinary reset above |
 | `not-generated` | The Caddyfile is hand-maintained. **Refused, not reshaped** — adding a gate means placing directives inside site blocks this code did not write, and guessing wrong either drops your configuration or leaves an opening that looks closed. | Add the `basic_auth` block by hand, then reset |
 | `unrecognized-shape` | The file is TangleClaw-generated but the ungated rebuild does not reproduce it byte-for-byte, so something in it would be silently dropped. **A `publicDomain` ACME site is the common case** — see the section below. | `ingress-cutover.js`, which builds from your full config |

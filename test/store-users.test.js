@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -268,6 +268,73 @@ describe('store.users — the tier-1 principal (ADR 0015, #1417)', () => {
       assert.equal(rows.length, 1);
       assert.ok(rows[0].disabled_at);
     });
+  });
+});
+
+describe('the accounts-established marker (#1420)', () => {
+  let tempDir;
+  let prevBase;
+  const marker = () => path.join(tempDir, 'accounts-established');
+
+  beforeEach(() => {
+    prevBase = store._getBasePath();
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-marker-test-'));
+    store.close();
+    store._setBasePath(tempDir);
+    store.init();
+  });
+
+  afterEach(() => {
+    store.close();
+    store._setBasePath(prevBase);
+    fs.chmodSync(tempDir, 0o700);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('is absent on an install that never had an account', () => {
+    assert.equal(store.users.accountsEstablished(), false);
+    assert.equal(fs.existsSync(marker()), false);
+  });
+
+  for (const [verb, make] of [
+    ['create', () => store.users.create('rosie', 'pw')],
+    ['createFirst', () => store.users.createFirst('rosie', 'pw')],
+    ['createFirstAsync', () => store.users.createFirstAsync('rosie', 'pw')]
+  ]) {
+    it(`is written by ${verb}, owner-only`, async () => {
+      await make();
+      assert.equal(store.users.accountsEstablished(), true);
+      assert.equal(fs.statSync(marker()).mode & 0o777, 0o600);
+    });
+  }
+
+  it('outlives the account rows — the case it exists for', () => {
+    store.users.create('rosie', 'pw');
+    store.close();
+    for (const f of fs.readdirSync(tempDir).filter((n) => n.startsWith('tangleclaw.db'))) {
+      fs.rmSync(path.join(tempDir, f));
+    }
+    store.init();
+    assert.equal(store.users.list().length, 0, 'the store came back empty');
+    assert.equal(store.users.accountsEstablished(), true);
+  });
+
+  it('is backfilled at init for accounts that predate it', () => {
+    store.users.create('rosie', 'pw');
+    fs.rmSync(marker());
+    store.close();
+    store.init();
+    assert.equal(store.users.accountsEstablished(), true);
+  });
+
+  it('a second account does not fail on the existing marker', () => {
+    store.users.create('rosie', 'pw');
+    assert.doesNotThrow(() => store.users.create('jason', 'pw'));
+  });
+
+  it('throws, rather than answering false, when the marker cannot be checked', { skip: process.getuid && process.getuid() === 0 }, () => {
+    fs.chmodSync(tempDir, 0o000);
+    assert.throws(() => store.users.accountsEstablished(), (err) => err.code !== 'ENOENT');
   });
 });
 

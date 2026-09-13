@@ -261,6 +261,40 @@ describe('https-setup', () => {
     });
   });
 
+  describe('installedServerPort (#1420)', () => {
+    let tmp;
+    before(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-installed-port-')); });
+    after(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+    it('reads the installed plist over config — config stays 3101 while the service binds 3102', () => {
+      const p = path.join(tmp, 'server.plist');
+      fs.writeFileSync(p, '<dict><key>TANGLECLAW_PORT</key>\n\t<string>3102</string></dict>');
+      assert.equal(httpsSetup.installedServerPort(p, { serverPort: 3101 }), 3102);
+    });
+
+    it('uses config, then the shipped default, when no plist is installed', () => {
+      const none = path.join(tmp, 'absent.plist');
+      assert.equal(httpsSetup.installedServerPort(none, { serverPort: 3201 }), 3201);
+      assert.equal(httpsSetup.installedServerPort(none, {}), store.DEFAULT_CONFIG.serverPort);
+    });
+
+    it('ignores an ambient TANGLECLAW_PORT — it describes the shell, not the service', () => {
+      const had = Object.prototype.hasOwnProperty.call(process.env, 'TANGLECLAW_PORT');
+      const prev = process.env.TANGLECLAW_PORT;
+      try {
+        process.env.TANGLECLAW_PORT = '3999';
+        assert.equal(httpsSetup.installedServerPort(path.join(tmp, 'absent.plist'), { serverPort: 3201 }), 3201);
+      } finally {
+        if (had) process.env.TANGLECLAW_PORT = prev;
+        else delete process.env.TANGLECLAW_PORT;
+      }
+    });
+
+    it('defaults to the per-user LaunchAgents plist', () => {
+      assert.match(httpsSetup.installedServerPlistPath(), /Library\/LaunchAgents\/com\.tangleclaw\.server\.plist$/);
+    });
+  });
+
   describe('effectiveServerPort (#654)', () => {
     it('lets TANGLECLAW_PORT win over config — the standard-install case', () => {
       // The installed launchd plist sets TANGLECLAW_PORT=3102 and never touches

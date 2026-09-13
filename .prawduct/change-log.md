@@ -34,6 +34,239 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-13 — #1420 A.04d: the gate machinery carries
+
+<!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->
+
+Train 9 Chunk 04, A.04d. Merges into `train-9/cutover`, not `main`.
+
+**Why.** Carries from three reviews: the hotfix cumulative `rev-20260913T181335Z-09c75281` (R-4 four
+copies of the scrypt cap that already differed, R-8 silent refusals on the recovery routes, R-6
+`clientKey` re-spelling the proxy check), its verify pass (two auth-gate JSDoc claims), the A-03
+cumulative `rev-20260913T055830Z-267e3318` (R-3/R-14 a text Caddyfile reader that under-reports an
+import, a braceless site and per-site `basic_auth`), and the A.04c cumulative
+`rev-20260913T200038Z-f7452635` R-2 (a Caddyfile vanishing between `_gateIngress`'s stat and read was
+cached as "no door").
+
+**What.** New `lib/ingress-door.js` (`describeIngressContent`, `describeAdaptedDoor`,
+`readIngressDoor`): file import → door; `caddy adapt` walked with `gateFallback.walkRoutes`; adapt
+failure → door ("unread"). `lib/caddy.js#describeIngressDoor` and `caddy.readIngressDoor` deleted.
+`gateFallback.eachTopLevelRoute` shared by `checkFallbackDoor` and `describeAdaptedDoor`. `server.js`:
+`_gateIngress` reads after its stat, re-asks an unread answer every 30s, logs each answer once; `_withHashSlot` owns the cap
+for login, set-password, recover, recovery-codes; `_recoveryClient` reads `clientKey`'s object.
+`recovery-codes#clientKey` → `{ key, address, proxied }` via `cameThroughProxy` (lazy require: store
+cycle). `auth-gate` JSDoc fixes. `reset-admin.js` uses `ingress-door`. `public/ui.js` missing space.
+Suites that read the door answer `caddy adapt` from the committed fixtures
+(`test/_caddy-drift-fixtures.js#adaptFromFixtures`), so they pass the same without Caddy on the host.
+Behaviour change recorded in ADR 0016 A-04d: a site gated everywhere but one handle, and a file Caddy
+cannot read, are doors.
+
+**Review.** Critic cumulative `rev-20260913T213731Z-4d046855` — 0 blocking; warnings R-1
+(`handle_errors` misread by the text fallback), R-3 (the text fallback should not decide), R-4 (two
+route walkers) and notes R-7/R-8 fixed in one commit; the rest accepted. verify-resolutions clean.
+PR review 0/0/2 (this entry's stale test list fixed; `resolve-base` answering `origin/main` for a
+train branch accepted).
+
+## 2026-09-13 — #1420 A.04c: the recovery tools and words follow the gate state
+
+<!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->
+
+Train 9 Chunk 04, A.04c. Merges into `train-9/cutover`, not `main`.
+
+**Why.** After the state-driven cutover an armed install's Caddyfile has no `basic_auth` on purpose,
+and the recovery surfaces still asked "is there basic_auth?" (A-03 cumulative
+`rev-20260913T055830Z-267e3318` R-6, R-8), a re-enabled account revived its old recovery codes
+(A-04a review carry), and the sign-in page could not tell a locked install from a typo. A.04c was
+split again (A.04c words and tools / A.04d gate machinery carries) because the halves share no code.
+
+**What.** `lib/admin-credential.js`: `canChangeCredential` gains the request's gate state and an
+`account-login` refusal; `canCreateGate`/`createGate` require the writer's gate state (refuse
+armed/locked/unreadable, round trip built for it). `store.users#disable`/`#enable` delete recovery
+codes (`store.recoveryCodes#deleteForUsername`); `reset-admin --store` deletes them on a reset
+(vetoable, ADR 0016 A-04c), reports `resolveGateState` over the file on disk (`#describeLiveGate`,
+`#describeGateLines`) including an unreadable Caddyfile and Caddy's password as the only login, and
+its Caddy modes point an armed install at `--store`. `lib/caddy.js#readIngressDoor`, used by
+`server.js#_gateIngress` too. `public/login.html` reads `gateState` (locked/unreadable/fallback/open
+copy; recovery link only while armed). Settings section renamed Caddy password. `docs/recovery.md`;
+SECURITY.md login section; README, setup/user guides, INGRESS, FEATURES, ADR 0016, CHANGELOG. Broad
+README/setup-guide "Caddy is the gate" prose carried to A-VRF.
+
+**Review.** Critic cumulative `rev-20260913T200038Z-f7452635` — 0 blocking, 1 warning (R-9 report
+swallowed an unreadable Caddyfile), notes R-1/R-6/R-7/R-8 fixed in one commit; R-2 accepted and
+carried to A.04d, R-5 accepted. Verify `rev-20260913T200736Z-dea91552` clean.
+
+## 2026-09-13 — #1420 A.04b: the fallback — TangleClaw stands down behind a proven Caddy gate
+
+<!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->
+
+Train 9 Chunk 04, A.04b. Merges into `train-9/cutover`, not `main`.
+
+**Why.** ADR 0016's "What the switch does": when TangleClaw's login is what broke, the operator needs a
+terminal command that puts Caddy's old gate back in front and only then stands the login down. The
+original A.04b was split (A.04b fallback / A.04c reset-admin + login copy + recovery doc) because the
+two share no code path.
+
+**What.** Gate state `fallback` (`lib/auth-gate.js#resolveGateState` fourth argument, `#standsDown`).
+`lib/gate-fallback.js`: marker path/write/remove, `walkRoutes` (evaluation-order gate coverage),
+`checkFallbackDoor` / `checkFallbackFile` (imports refuse), `decideFallback`. `server.js#_gateFallback`
+(request + upgrade gates; listener from the socket's server; cached on marker/listener/mode/Caddyfile;
+read failures logged once; stand-down end logged) and `GATE_FALLBACK` refusals on set-password,
+recover and recovery-codes. `scripts/gate-fallback.js` (write-if-needed → validate → restart → Basic
+401 probe → marker → gateState check; rollback on failure; `--undo`, `--restore`, exit 4 when the undo
+keeps basic_auth). `scripts/drill-gate-fallback.js` (snapshot, round trip, byte-for-byte check).
+`lib/admin-credential.js#applyCaddyfileInPlace`, now used by `guard-ungated-sites.js` and
+`pin-https-listener.js` too. Dashboard chip for `fallback`. Fixtures: `live-shape-gated`,
+`live-shape-own-auth` (real `caddy adapt`). #472 decided: no Caddy-only `/openclaw-direct/*`
+exemption in a fallback door. Records: ADR 0016 "Recorded during #1420 A-04b", `deploy/INGRESS.md`,
+CHANGELOG, FEATURES, auth-status-surfacing, configuration-reference, PROJECT-MAP, skip ledger.
+
+**Review.** Critic `rev-20260913T190512Z-da22257f` — 1 blocking (plan carried the pre-split list), 7
+warnings, 10 notes; fixed in one commit (R-1 unparsable dials, R-2 imports, R-3/R-14 drill, R-4 plan,
+R-5 rewrite, R-6 caddy-less server tests, R-9 shared tail, R-13 rollback, R-15 logs); accepted R-10,
+R-11, R-18 and the informational notes. Verify `rev-20260913T192233Z-d76dc3ef` found the dial check
+judged loopback by spelling (`::ffff:7f00:1`); fixed with `net.BlockList`, then verified again.
+
+## 2026-09-13 — #1420 A-04a: one-time recovery codes, ADR 0009 rule 5 amended
+
+<!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->
+
+Train 9 Chunk 04, A-04a. Merges into `train-9/cutover`, not `main`.
+
+**Why.** The Checkpoint 1 ruling ("1 + 2") adds an off-box recovery path for non-technical installers:
+a one-time code that resets a forgotten password. It is a second way past the password, so it gets
+its own chunk and review, split from A-04b's fallback command and terminal recovery work.
+
+**What.** `lib/recovery-codes.js` (generation, normalisation, SHA-256 digest, client key, bounded
+failure limiter). `store.recoveryCodes` over `recovery_codes` (schema v38, UNIQUE `code_hash`
+postcondition): atomic `#replaceForUser`, side-effect-free `#peek`, `#redeem` (re-check under
+`BEGIN IMMEDIATE`, mark used, set the precomputed hash, destroy sessions), status and per-account
+notice. Gate: `RECOVERY_PATHS` exempt only in `armed`; `/api/auth/recover` CSRF-exempt like login.
+Routes: `POST /api/auth/recover` (per-client failure limit, one answer for wrong/used/disabled,
+policy after the code is known valid, hash inside the login cap, `_signIn`), `GET`/`POST
+/api/auth/recovery-codes` (regeneration needs the current password), `.../acknowledge`;
+`/api/server-info` `recoveryNotice`. Issued by `POST /api/auth/set-password`. Pages:
+`public/recover.html`, login link, codes shown once on `account-setup.html`; dashboard banner and
+Settings → Recovery codes. Records: ADR 0009 rule 5 + amendment, ADR 0015 pointer, ADR 0016
+"Recorded during #1420 A-04a", SECURITY.md recovery bullet, user guide, FEATURES,
+`security-model.md` Direction (gitignored copy).
+
+**Review.** Critic `rev-20260913T153542Z-387ef554` over `de11c380..e45fdd58` — 0 blocking, 0 warnings,
+0 notes; PR gate satisfied. Two observations: `users.enable` revives an account's old codes (carried
+to A-04b's reset-admin rework), and record-lint's plan pick was correct. Mutation: 15 new guards, all
+red. Real-socket smoke on a throwaway store: create → codes → redeem → reuse refused → notice →
+regenerate → old set dead.
+
+## 2026-09-13 — #1420 A-03: Caddy's gate by state, a TangleClaw-owned bypass list, drift P5, #1055
+
+<!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->
+
+Train 9 Chunk 04, A-03. Merges into `train-9/cutover`, not `main`.
+
+**Why.** TangleClaw's login is the gate on every mode now, so Caddy's `basic_auth` has to follow the
+gate state rather than the release, the bypass list has to be TangleClaw's, the drift check must stop
+calling an armed install's missing `basic_auth` drift, and the carve-out's `X-Forwarded-For` premise
+needs a reader for the live file.
+
+**What.** `lib/auth-gate.js#guardsTheDoor` (`armed`, `locked`) is the one predicate the generator
+(`gateState` option; omitted keeps `basic_auth`), drift, cutover and bind policy read.
+`GATE_BYPASS_PATHS` (exact: `/api/health`, `/manifest.json`) generates Caddy's matcher; a glob throws;
+`/openclaw-direct/*` left both. Exemptions apply only when the router serves the path matched
+(`//login` served the shell with no session — found while retargeting the parity test). Drift P1 holds
+when the state guards the door; P5 `checkForwardedFor` reports `trusted_proxies`/`header_up`
+X-Forwarded-For. In caddy mode `authEnabled: false` opens only while `caddy.describeIngressDoor` says
+the Caddyfile on disk is not an ungated remote door (`server.js#_gateIngress`). Caddy mode still pins
+loopback (a stored opt-in would open a plain-HTTP LAN listener); #1055 option b names the stored value
+in the locked hint and `ingress-cutover --to direct`; the cutover prints which gate it writes. Setup
+refuses on an unreadable gate. `isProxyHeaderTrusted` re-justified after VERIFYING Caddy v2.11.4
+replaces a forged `X-Forwarded-Host`. Docs: ADR 0016 "Recorded during #1420 A-03", configuration
+reference, setup guide, INGRESS, drift-check doc, openclaw-setup curl, FEATURES.
+
+**Review.** Critic cumulative `rev-20260913T053802Z-6bb4caa5` on `bb9fe93e` — 2 blocking, 7 warnings.
+Fixed in `73394f10`: R-7 (an armed cutover's remote sites opened on `authEnabled: false`), R-2, R-3,
+R-8, R-9, R-10, R-13, R-14; verify-resolutions 8/8. R-1 (record-lint could not read hyphenated chunk
+ids) cleared by `de11c380`'s `Chunk A.03` heading and cumulative `rev-20260913T055830Z-267e3318` —
+0 blocking, 2 warnings (R-1, R-6), notes; all accepted and carried to A-04 in the plan. Accepted from
+the first round: R-4, R-11, R-19. Mutation: 25 guards + 12 finding-fixes, all red.
+
+
+## 2026-09-13 — #1420 A-02b: identity comes only from the TangleClaw session
+
+<!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->
+
+Train 9 Chunk 04, A-02b. Merges into `train-9/cutover`, not `main`.
+
+**Why.** Once Caddy's `basic_auth` is gone, nothing overwrites `X-Auth-User`, so any code still reading
+it would read the caller's own claim (ADR 0016 OQ2). `authStatus` compared config against that header,
+which stops meaning anything when TangleClaw enforces its own login on every mode.
+
+**What.** `lib/auth-identity.js#refuseInboundIdentity` deletes the header at request entry on both
+transports (`server.js#handleRequest`, `#handleUpgrade`), logged at warn unless it came through a proxy
+(Caddy's transitional `header_up`, logged at debug — a recorded departure from OQ2). `currentUser` and
+a launched session's `owner` read `req.tcSession` only. `authStatus` is the gate state as-is
+(`AUTH_STATUSES` built from `GATE_STATES`); the dashboard chip warns on the three closed states.
+`server.js#_signIn` is the one session issuer (fixation rotation) for login, set-password and
+setup/complete. `authIdentity.cameThroughProxy` is the one spelling of the proxy check. set-password
+answers `503 GATE_UNREADABLE`; the account page treats a 401 as "an account now exists". Docs:
+`SECURITY.md` identity bullet, `docs/auth-status-surfacing.md` rewritten (old model kept as history),
+FEATURES, ADR 0016 "Recorded during #1420 A-02b".
+
+**Review.** Critic `rev-20260913T044901Z-911b7f8e` on `388ac4e2` — 0 blocking, 3 warnings, 10 notes.
+Fixed in `c04fd4e3`: R-8 (SECURITY.md still claimed header trust), R-3 (two status vocabularies), R-4
+(session issuance copied, fixation in one copy), R-1, R-5. Accepted: R-6 (→A-03), R-9 (ADR), the
+informational notes. verify-resolutions clean; its three observations carried to A-03 in the plan.
+Mutation: 12 guards + 8 fixes, all red.
+
+
+## 2026-09-13 — #1420 A-02a: close an install with no account; keep proxied traffic out of the fleet carve-out
+
+<!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->
+
+Train 9 Chunk 04, A-02a. Merges into `train-9/cutover`, not `main`.
+
+**Why.** TangleClaw's gate stayed dormant on an install with `authEnabled` and no account, which was
+safe only while Caddy's `basic_auth` stood in front — and the cutover removes it. The fleet carve-out
+trusted a loopback socket, which Caddy's forwarded traffic also has, so an off-box non-browser request
+(including to `/openclaw-direct/*`, where TangleClaw injects the gateway token) skipped the login.
+
+**What.** `lib/auth-gate.js#resolveGateState` — five states (`open`, `account-required`, `armed`,
+`locked`, `unreadable`), every non-`open` one enforcing, read failures fail closed always.
+`account-required` serves `public/account-setup.html` and admits only `POST /api/auth/set-password`
+(async scrypt via `store.users#createFirstAsync`, inside the login concurrency cap, atomic under
+`BEGIN IMMEDIATE`). `#isMachineClient` requires no `X-Forwarded-For` — verified against a throwaway
+Caddy v2.11.4 (sets it on every forwarded request, replaces a forged one); the generator is pinned
+against `trusted_proxies`. The first-run wizard creates the TangleClaw account from its credential and
+signs in; setup that ends with no account sends the operator to `/login`. `store.authSessions`
+`anyLoginableUser` → `#accountPresence`. `test/server.test.js` moved onto a temp store (it read the
+live `~/.tangleclaw`). Decisions: ADR 0016 "Recorded during #1420 A-02a" and the plan.
+
+**Review.** Critic `rev-20260913T041308Z-54834227` on `bb66e336` — 0 blocking, 8 warnings, 12 notes.
+Fixed in `5095fbb5` (the wizard locked itself out as it finished; sync scrypt on a signed-out route;
+stale config-reference; unrecorded XFF re-verify triggers; unrecorded wizard effect). Accepted with
+reasons: R-4, R-5, R-8 (→A-02b), R-12, R-17 (→A-04), R-18, R-19, R-20. verify-resolutions clean; the
+timing-dependent concurrency test made deterministic in `0828d3fe`, verify-resolutions clean. Mutation:
+14 guards + 1 + 12 fixes + 1, all red. Filed #1445 (out of scope).
+
+## 2026-09-13 — #1420: the peer guard folded into the Tier 1 cutover
+
+<!-- prawduct: type=bugfix | scope=train-9-chunk-04-cutover -->
+
+Sprint v5.24 Lane A, before chunk A.04b. Merges `main` (PR #1451) into `train-9/cutover`.
+
+**Why.** The peer-guard fix on `main` assumed Caddy's `basic_auth` is the only gate. On this branch
+TangleClaw's own login can guard a site with no `basic_auth`, and A-03's `describeIngressDoor` treated a
+`localhost` site as local — so `authEnabled: false` after an armed cutover opened the install to any
+machine asking for `localhost`. Operator ruling 2026-09-13: an unguarded `localhost` site counts
+against the opt-out only when accounts exist.
+
+**What.** Merge conflicts resolved in `lib/caddy.js` (guard only when neither `basic_auth` nor
+`authGate.guardsTheDoor`), `lib/caddy-drift.js` (both new properties kept: P5 `forwardedFor`, P6
+`offboxRefused`, gate-aware; `planOffboxGuard` refuses when the login guards the door), the fixtures,
+CHANGELOG, FEATURES and `docs/caddy-drift-check.md`. `lib/caddy.js#describeIngressDoor` gains
+`unguardedLocalSite`; `lib/auth-gate.js#resolveGateState` weighs it per the ruling, fail-closed on a
+store error or a malformed description; `server.js#_gateIngress` warns once per file change;
+`scripts/guard-ungated-sites.js` resolves and passes the gate state. ADR 0016 records it; the train plan
+carries the A.04b consequence. Hotfix plan archived; `active_build_plan` restored.
+
 ## 2026-09-13 — GHSA-fhgg-4h57-q2f9: Caddy sites without a password refuse other machines
 
 <!-- prawduct: type=bugfix | scope=security-offbox-guard -->

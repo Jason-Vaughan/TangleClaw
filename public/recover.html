@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Use a recovery code — TangleClaw</title>
+<!--
+  Where a signed-out person who forgot their password sets a new one with a
+  one-time recovery code (`POST /api/auth/recover`). The gate serves it to a
+  signed-out person only while the install is `armed` (`lib/auth-gate.js`
+  RECOVERY_PATHS).
+
+  Self-contained for the same reasons as `login.html`: every path answered to a
+  signed-out person is a hole in the gate, and a cached copy is how a stale page
+  reaches someone who has since signed in. Not in the service worker's precache
+  and not referenced from `sw.js`.
+
+  The password hint repeats `caddy.validateAdminPassword`'s rule as a hint only;
+  the server's answer is the one shown when they disagree.
+-->
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --fg: #1a1d21;
+    --muted: #5b6470;
+    --line: #d9dee5;
+    --accent: #2f6feb;
+    --danger: #b42318;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c;
+      --card: #1c2027;
+      --fg: #e8ebef;
+      --muted: #9aa4b2;
+      --line: #2c323b;
+      --accent: #5b8cf5;
+      --danger: #f2736a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  main {
+    width: 100%;
+    max-width: 380px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 28px 26px 24px;
+  }
+  h1 { margin: 0 0 4px; font-size: 19px; letter-spacing: -0.01em; }
+  p.sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
+  label { display: block; font-size: 13px; font-weight: 600; margin: 14px 0 5px; }
+  input {
+    width: 100%;
+    padding: 9px 11px;
+    font: inherit;
+    color: var(--fg);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+  }
+  input#code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.04em; }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button {
+    width: 100%;
+    margin-top: 20px;
+    padding: 10px;
+    font: inherit;
+    font-weight: 600;
+    color: #fff;
+    background: var(--accent);
+    border: 0;
+    border-radius: 7px;
+    cursor: pointer;
+  }
+  button[disabled] { opacity: 0.6; cursor: default; }
+  /* Always in the DOM, emptied rather than hidden, as on the login page. */
+  #error {
+    margin-top: 14px;
+    min-height: 1.4em;
+    color: var(--danger);
+    font-size: 13px;
+  }
+  p.hint { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+  p.alt { margin: 16px 0 0; font-size: 13px; text-align: center; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>TangleClaw</h1>
+  <p class="sub">Forgot your password? Enter one of the recovery codes you saved when you
+    created your account, and choose a new password. Each code works once.</p>
+  <form id="f" autocomplete="off">
+    <label for="code">Recovery code</label>
+    <input id="code" name="code" autocapitalize="characters" autocorrect="off"
+           spellcheck="false" placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" required>
+    <label for="p">New password</label>
+    <input id="p" name="password" type="password" autocomplete="new-password"
+           minlength="12" aria-describedby="p-hint" required>
+    <p id="p-hint" class="hint">At least 12 characters, and not containing your username.</p>
+    <label for="c">Confirm new password</label>
+    <input id="c" name="confirm" type="password" autocomplete="new-password" required>
+    <button id="go" type="submit">Set new password</button>
+    <p id="error" role="alert" aria-live="polite"></p>
+  </form>
+  <p class="alt"><a href="/login">Back to sign in</a></p>
+</main>
+<script>
+'use strict';
+(function () {
+  var form = document.getElementById('f');
+  var err = document.getElementById('error');
+  var go = document.getElementById('go');
+
+  form.addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    err.textContent = '';
+    var password = document.getElementById('p').value;
+    if (password !== document.getElementById('c').value) {
+      err.textContent = 'The two passwords do not match.';
+      return;
+    }
+    go.disabled = true;
+    go.textContent = 'Checking…';
+    try {
+      var res = await fetch('/api/auth/recover', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: document.getElementById('code').value, password: password })
+      });
+      var data = await res.json().catch(function () { return {}; });
+      if (res.ok) {
+        // Always the dashboard root, never a parameter off the URL — the
+        // open-redirect reason given in `login.html`. The dashboard shows how
+        // many codes are left and that one was used.
+        window.location.replace('/');
+        return;
+      }
+      err.textContent = data.error || ('Could not reset the password (HTTP ' + res.status + ')');
+    } catch (e) {
+      err.textContent = 'Could not reach the server.';
+    }
+    go.disabled = false;
+    go.textContent = 'Set new password';
+  });
+
+  document.getElementById('code').focus();
+})();
+</script>
+</body>
+</html>

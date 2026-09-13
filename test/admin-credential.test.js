@@ -181,6 +181,41 @@ describe('canChangeCredential — the one predicate that guards this surface', (
       assert.equal(r.allowed, false, `state '${state}' with no live user must not be changeable`);
     }
   });
+
+  it('names the TangleClaw account when that login guards the door and no Caddy password stands in front', () => {
+    // After the state-driven cutover an armed install's Caddyfile carries no
+    // basic_auth. "The Caddy config carries no login" is true of Caddy and false
+    // of the install, and its remedy (`reset-admin.js`, the Caddy mode) resets a
+    // password that does not exist.
+    for (const gateState of ['armed', 'locked']) {
+      const caddyMode = cred.canChangeCredential(configured, { state: 'generated', user: null }, true, true, gateState);
+      assert.equal(caddyMode.allowed, false);
+      assert.equal(caddyMode.code, 'account-login', `${gateState}, caddy mode, no basic_auth`);
+      assert.match(caddyMode.remedy, /recovery code/);
+      assert.match(caddyMode.remedy, /reset-admin\.js --store/);
+      // Direct mode: "nothing is enforcing a login" would be false too.
+      const direct = cred.canChangeCredential(
+        { ...configured, ingressMode: 'direct' }, { state: 'absent', user: null }, true, true, gateState);
+      assert.equal(direct.code, 'account-login', `${gateState}, direct mode`);
+    }
+  });
+
+  it('still allows changing a Caddy password that stands in front of an armed login', () => {
+    // An install upgraded before its cutover drops basic_auth has both doors, and
+    // Caddy's password is a real one in force — changeable here.
+    const r = cred.canChangeCredential(configured, gated, true, true, 'armed');
+    assert.equal(r.allowed, true);
+  });
+
+  it('never lets the gate state turn a refusal into an allowance', () => {
+    // The parameter only chooses which refusal is said. The connection guard runs
+    // before it, and a state outside armed/locked changes nothing.
+    assert.equal(cred.canChangeCredential(configured, gated, true, false, 'armed').code, 'remote-connection');
+    for (const gateState of ['open', 'account-required', 'unreadable', 'fallback', 'bogus', null, undefined]) {
+      const r = cred.canChangeCredential(configured, { state: 'ungated', user: null }, true, true, gateState);
+      assert.equal(r.code, 'no-gate', `${String(gateState)} keeps the Caddy refusal`);
+    }
+  });
 });
 
 describe('applyCredentialChange', () => {
@@ -212,7 +247,7 @@ describe('applyCredentialChange', () => {
   it('patches the gate, records the credential, and reloads Caddy', () => {
     const calls = [];
     const r = cred.applyCredentialChange({
-      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
       execFn: (cmd, argv) => { calls.push({ cmd, argv }); },
       validateFn: () => ({ ok: true })
     });
@@ -232,7 +267,7 @@ describe('applyCredentialChange', () => {
     // every part of this chunk exists to prevent.
     let reloadAttempted = false;
     const r = cred.applyCredentialChange({
-      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
       execFn: () => { reloadAttempted = true; },
       validateFn: () => ({ ok: false, error: 'bad directive' })
     });
@@ -251,7 +286,7 @@ describe('applyCredentialChange', () => {
     // credential HAS changed. Reporting failure would send the operator to undo a
     // change that already took, and hide the one command still to run.
     const r = cred.applyCredentialChange({
-      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
       execFn: () => { throw new Error('launchctl: no such process'); },
       validateFn: () => ({ ok: true })
     });
@@ -364,7 +399,7 @@ describe('applyCredentialChange', () => {
         return realCopy(from, to);
       };
       r = cred.applyCredentialChange({
-        caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+        caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
         execFn: () => {}, validateFn: () => ({ ok: true })
       });
     } finally {
@@ -393,7 +428,7 @@ describe('applyCredentialChange', () => {
         return realCopy(from, to);
       };
       r = cred.applyCredentialChange({
-        caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+        caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
         execFn: () => {}, validateFn: () => ({ ok: false, error: 'bad directive' })
       });
     } finally {
@@ -418,7 +453,7 @@ describe('applyCredentialChange', () => {
         return realWrite(p, ...rest);
       };
       r = cred.applyCredentialChange({
-        caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+        caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
         execFn: () => {}, validateFn: () => ({ ok: true })
       });
     } finally {
@@ -459,7 +494,7 @@ describe('applyCredentialChange', () => {
     let r;
     try {
       r = cred.applyCredentialChange({
-        caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+        caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
         execFn: () => {}, validateFn: () => ({ ok: true })
       });
     } finally {
@@ -691,7 +726,7 @@ describe('createGate — an install that completed setup with no login', () => {
   it('puts a working gate on the file and records it', () => {
     const calls = [];
     const r = cred.createGate({
-      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
       execFn: (cmd, argv) => { calls.push({ cmd, argv }); },
       validateFn: () => ({ ok: true })
     });
@@ -718,10 +753,10 @@ describe('createGate — an install that completed setup with no login', () => {
     }), { mode: 0o600 });
     assert.ok(!fs.readFileSync(caddyfilePath, 'utf8').includes('remote_ip'),
       'precondition: the fixture is the pre-guard form');
-    assert.equal(cred.canCreateGate(store.config.load(), fs.readFileSync(caddyfilePath, 'utf8'), 'jason').allowed,
+    assert.equal(cred.canCreateGate(store.config.load(), fs.readFileSync(caddyfilePath, 'utf8'), 'jason', 'open').allowed,
       true);
     const r = cred.createGate({
-      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
       execFn: () => {}, validateFn: () => ({ ok: true })
     });
     assert.equal(r.ok, true, r.error || '');
@@ -738,7 +773,7 @@ describe('createGate — an install that completed setup with no login', () => {
     // the round trip rather than from a broken stamp.
     const content = `${full.split('\n')[0].replace(/sha256:[0-9a-f]{64}/, `sha256:${sha}`)}\n${body}`;
     assert.equal(caddy.isGeneratedCaddyfile(content), true, 'precondition: stamp is valid');
-    const verdict = cred.canCreateGate(store.config.load(), content, 'jason');
+    const verdict = cred.canCreateGate(store.config.load(), content, 'jason', 'open');
     assert.equal(verdict.allowed, false);
     assert.equal(verdict.code, cred.CREDENTIAL_CODES.UNRECOGNIZED_SHAPE);
   });
@@ -751,7 +786,7 @@ describe('createGate — an install that completed setup with no login', () => {
     // a regression names the setting it moved.
     const before = fs.readFileSync(caddyfilePath, 'utf8');
     cred.createGate({
-      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
       execFn: () => {}, validateFn: () => ({ ok: true })
     });
     const after = fs.readFileSync(caddyfilePath, 'utf8');
@@ -782,7 +817,7 @@ describe('createGate — an install that completed setup with no login', () => {
 
   it('stays fail-closed: a rejected file leaves no gate and no recorded credential', () => {
     const r = cred.createGate({
-      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
       execFn: () => { throw new Error('reload must not be reached'); },
       validateFn: () => ({ ok: false, error: 'bad directive' })
     });
@@ -799,7 +834,7 @@ describe('createGate — an install that completed setup with no login', () => {
   it('refuses a file that already has a login, naming who holds it', () => {
     fs.writeFileSync(caddyfilePath, gatedCaddyfile('alice'));
     const r = cred.createGate({
-      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
       execFn: () => {}, validateFn: () => ({ ok: true })
     });
     assert.equal(r.ok, false);
@@ -814,7 +849,7 @@ describe('createGate — an install that completed setup with no login', () => {
     const handEdited = ungenerated().split('\n').slice(1).join('\n') + '\n# operator note\n';
     fs.writeFileSync(caddyfilePath, handEdited);
     const r = cred.createGate({
-      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
       execFn: () => {}, validateFn: () => ({ ok: true })
     });
     assert.equal(r.ok, false);
@@ -824,7 +859,7 @@ describe('createGate — an install that completed setup with no login', () => {
 
   it('requires a username, because there is no existing line to read one from', () => {
     const r = cred.createGate({
-      caddyfilePath, hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      caddyfilePath, hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
       execFn: () => {}, validateFn: () => ({ ok: true })
     });
     assert.equal(r.ok, false);
@@ -834,7 +869,7 @@ describe('createGate — an install that completed setup with no login', () => {
   it('refuses a missing file instead of provisioning one from nothing', () => {
     fs.rmSync(caddyfilePath);
     const r = cred.createGate({
-      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
       execFn: () => {}, validateFn: () => ({ ok: true })
     });
     assert.equal(r.ok, false);
@@ -852,7 +887,7 @@ describe('createGate — an install that completed setup with no login', () => {
     const noTls = ungenerated().split('\n').filter((l) => !/^\s*tls\s/.test(l)).join('\n');
     fs.writeFileSync(caddyfilePath, noTls);
     const r = cred.createGate({
-      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
       execFn: () => {}, validateFn: () => ({ ok: true })
     });
     assert.equal(r.ok, false);
@@ -904,11 +939,11 @@ describe('canCreateGate — the preview and the real run answer the same questio
     it(`agrees with createGate on ${label}`, () => {
       const content = build();
       fs.writeFileSync(caddyfilePath, content);
-      const predicted = cred.canCreateGate(CADDY_CFG, content, user);
+      const predicted = cred.canCreateGate(CADDY_CFG, content, user, 'open');
       assert.equal(predicted.allowed, expected, `predicate said ${predicted.allowed}`);
 
       const actual = cred.createGate({
-        caddyfilePath, user, hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+        caddyfilePath, user, hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
         execFn: () => {}, validateFn: () => ({ ok: true })
       });
       // The property is agreement, not two independently-correct answers: a
@@ -974,7 +1009,7 @@ describe('createGate refuses a file it cannot reproduce', () => {
     fs.writeFileSync(caddyfilePath, withPublic);
 
     const r = cred.createGate({
-      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP',
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
       execFn: () => { throw new Error('Caddy must not be restarted'); },
       validateFn: () => ({ ok: true })
     });
@@ -990,7 +1025,7 @@ describe('createGate refuses a file it cannot reproduce', () => {
     const withPublic = caddy.buildCaddyfileContent({
       serverPort: 3102, certPath, keyPath, publicDomain: 'tc.example.com'
     });
-    const v = cred.canCreateGate(CADDY_CFG, withPublic, 'jason');
+    const v = cred.canCreateGate(CADDY_CFG, withPublic, 'jason', 'open');
     assert.equal(v.allowed, false);
     assert.equal(v.code, 'unrecognized-shape');
   });
@@ -1000,7 +1035,7 @@ describe('createGate refuses a file it cannot reproduce', () => {
     const plain = caddy.buildCaddyfileContent({
       serverPort: 3102, certPath, keyPath, httpsPort: 9443, httpPort: 9080
     });
-    assert.equal(cred.canCreateGate(CADDY_CFG, plain, 'jason').allowed, true);
+    assert.equal(cred.canCreateGate(CADDY_CFG, plain, 'jason', 'open').allowed, true);
   });
 
   it('still allows a file carrying an access log (#846)', () => {
@@ -1014,7 +1049,7 @@ describe('createGate refuses a file it cannot reproduce', () => {
       accessLogPath: '/Users/test/.tangleclaw/logs/caddy.access.log'
     });
     assert.match(logged, /^\t\toutput file /m, 'fixture must actually carry the log');
-    assert.equal(cred.canCreateGate(CADDY_CFG, logged, 'jason').allowed, true);
+    assert.equal(cred.canCreateGate(CADDY_CFG, logged, 'jason', 'open').allowed, true);
   });
 });
 
@@ -1030,7 +1065,7 @@ describe('createGate will not gate an install nothing is gating', () => {
     const content = caddy.buildCaddyfileContent({
       serverPort: 3102, certPath: '/c/cert.pem', keyPath: '/c/key.pem'
     });
-    const r = cred.canCreateGate({ ingressMode: 'direct' }, content, 'jason');
+    const r = cred.canCreateGate({ ingressMode: 'direct' }, content, 'jason', 'open');
     assert.equal(r.allowed, false);
     assert.equal(r.code, 'not-caddy-mode');
     assert.match(r.reason, /not a live gate|ingress-cutover/);
@@ -1040,8 +1075,8 @@ describe('createGate will not gate an install nothing is gating', () => {
     const content = caddy.buildCaddyfileContent({
       serverPort: 3102, certPath: '/c/cert.pem', keyPath: '/c/key.pem'
     });
-    assert.equal(cred.canCreateGate(null, content, 'jason').allowed, false);
-    assert.equal(cred.canCreateGate(undefined, content, 'jason').code, 'not-caddy-mode');
+    assert.equal(cred.canCreateGate(null, content, 'jason', 'open').allowed, false);
+    assert.equal(cred.canCreateGate(undefined, content, 'jason', 'open').code, 'not-caddy-mode');
   });
 
   it('asks about the ingress BEFORE anything about the file', () => {
@@ -1049,7 +1084,51 @@ describe('createGate will not gate an install nothing is gating', () => {
     // refusals describe the machine's Caddyfile, and there is no reason to
     // report its shape when the answer is "nothing here is gating anything".
     const gated = gatedCaddyfile('alice');
-    assert.equal(cred.canCreateGate({ ingressMode: 'direct' }, gated, 'jason').code,
+    assert.equal(cred.canCreateGate({ ingressMode: 'direct' }, gated, 'jason', 'open').code,
       'not-caddy-mode', 'not gate-exists');
+  });
+});
+
+describe('canCreateGate — asks the gate state before building a Caddy gate', () => {
+  const caddy = require('../lib/caddy');
+  const opts = { serverPort: 3102, certPath: '/tmp/c.pem', keyPath: '/tmp/k.pem', httpsPort: 9443, httpPort: 9080 };
+
+  it('refuses to put Caddy\'s password in front of a login that guards the door', () => {
+    // After the state-driven cutover an armed install's Caddyfile has no
+    // basic_auth ON PURPOSE. Building one here would add a second password in
+    // front of the account that works, and record authEnabled from it.
+    const ungated = caddy.buildCaddyfileContent({ ...opts, gateState: 'armed' });
+    for (const gateState of ['armed', 'locked']) {
+      const v = cred.canCreateGate(CADDY_CFG, ungated, 'jason', gateState);
+      assert.equal(v.allowed, false);
+      assert.equal(v.code, 'account-login', gateState);
+      assert.match(v.reason, /--store/);
+      assert.match(v.reason, /gate-fallback/);
+    }
+  });
+
+  it('refuses when the gate state is unreadable, missing or not an intended state', () => {
+    const plain = caddy.buildCaddyfileContent(opts);
+    for (const gateState of ['unreadable', 'fallback', undefined, null, 'bogus']) {
+      const v = cred.canCreateGate(CADDY_CFG, plain, 'jason', gateState);
+      assert.equal(v.allowed, false, String(gateState));
+      assert.equal(v.code, 'gate-state-unknown', String(gateState));
+    }
+  });
+
+  it('allows the two states that want a Caddy gate', () => {
+    // account-required's generated file carries the peer guard; open's does too.
+    // The round trip is built for the same state, so both reproduce.
+    for (const gateState of ['open', 'account-required']) {
+      const file = caddy.buildCaddyfileContent({ ...opts, gateState });
+      assert.equal(cred.canCreateGate(CADDY_CFG, file, 'jason', gateState).allowed, true, gateState);
+    }
+  });
+
+  it('refuses before reading the file, so an armed install is not told its file is the wrong shape', () => {
+    // A hand-maintained file on an armed install would otherwise answer
+    // not-generated, sending the operator to hand-edit a gate in.
+    const v = cred.canCreateGate(CADDY_CFG, 'localhost {\n  reverse_proxy 127.0.0.1:3102\n}\n', 'jason', 'armed');
+    assert.equal(v.code, 'account-login');
   });
 });

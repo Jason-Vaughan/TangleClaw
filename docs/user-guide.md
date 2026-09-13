@@ -357,24 +357,52 @@ The settings modal lets you configure:
 
 #### Changing your login
 
-Global settings has a **Login** section for changing the password set during setup. It appears only
-on an install where a login is actually in force — where none is, it says so and names the command
-that puts one in place, rather than offering a change that would not take.
+**The password you sign in to TangleClaw with** belongs to your TangleClaw account. There is no
+change-password form in the dashboard yet; set a new one with a recovery code from the sign-in page, or
+at a terminal on the machine with `node scripts/reset-admin.js --store --user <name>` (see
+[Getting back into TangleClaw](recovery.md)). Either one signs out the account's other browsers.
+
+**Caddy's password** — the browser pop-up that asks before any page loads — exists only on an install
+where Caddy's `basic_auth` still stands in front of TangleClaw: before the first account exists, or
+during a fallback. Global settings has a **Caddy password** section for changing it. It appears only
+where that password is actually in force; where it is not, it says so and names the account routes
+above.
 
 Two things to know before you use it:
 
-- **Saving signs you out.** The login is enforced by Caddy, and a browser cannot be handed new
-  credentials, so the next page you load asks for the new password. Have it to hand before saving.
+- **Saving signs you out of Caddy.** A browser cannot be handed new credentials, so the next page you
+  load asks for the new password. Have it to hand before saving.
 - **The username cannot be changed here.** It names *which* login to re-hash rather than setting one,
   so changing it in this form would leave the gate on the old name. To change a username, or to
   recover a login you have lost entirely, run `node scripts/reset-admin.js` at a terminal on the
-  machine — recovery deliberately requires physical access, because a reset that lives behind the
-  gate cannot help someone the gate has locked out.
+  machine — a reset that lives behind the gate cannot help someone the gate has locked out.
 
 There is no "current password" field, and that is deliberate rather than an oversight: the tools
 available here can hash a password but cannot verify one against a stored hash, and a field that
 does not check anything is theatre. What authenticates the change is that Caddy already asked you
 for the current password to let you reach this screen.
+
+#### Recovery codes
+
+If you forget the password you sign in to TangleClaw with, a **recovery code** sets a new one from the
+sign-in page — no terminal needed. Follow **Forgot your password? Use a recovery code**, enter one
+code and a new password, and you are signed in.
+
+- **You get a set of eight when you create your account.** They are shown once. Save them somewhere
+  safe and apart from the device you sign in on — a password manager or printed paper.
+- **Each code works once.** Using one signs out every other browser on that account, and the
+  dashboard then shows a notice saying a code was used, when, and from where. Choose **That was me**
+  to clear it. If it was not you, whoever used the code chose your password: set one only you know
+  with another code, or with `node scripts/reset-admin.js --store --user <name>` on the machine, and
+  generate new codes straight away.
+- **Settings → Recovery codes** shows how many you have left and generates a new set. Generating asks
+  for your current password, and the old set stops working at once.
+- Accounts created at a terminal or by the setup wizard start with no codes — generate them in
+  Settings.
+- A code cannot turn a disabled account back on, and it cannot fix a broken login gate. For those,
+  and if you lose your codes, see [Getting back into TangleClaw](recovery.md). Resetting an account at
+  the terminal (`node scripts/reset-admin.js --store --user <name>`) deletes its codes; generate a new
+  set once signed in.
 
 See the [Configuration Reference](configuration-reference.md) for all config fields and API endpoints.
 

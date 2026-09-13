@@ -24,13 +24,13 @@ const STUB_HASH = '$2a$14$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU'
 const OLD_HASH = '$2b$12$' + 'o'.repeat(53);
 const GOOD_PASSWORD = 'a-perfectly-fine-passphrase';
 
-/** Make a JSON request to the test server. */
-function request(server, method, urlPath, body) {
+/** Make a JSON request to the test server. `headers` are added to the defaults. */
+function request(server, method, urlPath, body, headers = {}) {
   return new Promise((resolve, reject) => {
     const addr = server.address();
     const req = http.request({
       hostname: '127.0.0.1', port: addr.port, path: urlPath, method,
-      headers: { 'Content-Type': 'application/json' }
+      headers: Object.assign({ 'Content-Type': 'application/json' }, headers)
     }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
@@ -38,7 +38,7 @@ function request(server, method, urlPath, body) {
         const raw = Buffer.concat(chunks).toString('utf8');
         let data;
         try { data = JSON.parse(raw); } catch { data = raw; }
-        resolve({ status: res.statusCode, data, raw });
+        resolve({ status: res.statusCode, data, raw, setCookie: res.headers['set-cookie'] || [] });
       });
     });
     req.on('error', reject);
@@ -387,21 +387,41 @@ describe('POST /api/auth/credential', () => {
       // case is produced at the seam the route calls. That pins the route's
       // BEHAVIOUR; the assertion below pins that the value comes from the socket,
       // and `isLoopbackRemote` itself is unit-tested on every address spelling.
+      //
+      // An off-box caller no longer reaches this route at all unless it is signed
+      // in: with no account TangleClaw's own gate is `account-required` and
+      // refuses a non-local request first (#1420). So the caller here is a person
+      // with a live session, which is the one off-box caller the route's own
+      // check still has to turn away.
       const adminCredential = require('../lib/admin-credential');
+      store.users.create('rosie', GOOD_PASSWORD);
+      const login = await request(server, 'POST', '/api/auth/login',
+        { username: 'rosie', password: GOOD_PASSWORD });
+      assert.equal(login.status, 200, 'precondition: signed in');
+      const auth = {
+        Cookie: login.setCookie.map((c) => c.split(';')[0]).join('; '),
+        'X-CSRF-Token': login.data.csrfToken
+      };
       const realCheck = adminCredential.isLoopbackRemote;
       adminCredential.isLoopbackRemote = () => false;
       try {
-        const post = await request(server, 'POST', '/api/auth/credential',
+        const offBoxUnsigned = await request(server, 'POST', '/api/auth/credential',
           { password: GOOD_PASSWORD });
+        assert.equal(offBoxUnsigned.status, 401, 'a signed-out off-box caller is refused by the gate');
+
+        const post = await request(server, 'POST', '/api/auth/credential',
+          { password: GOOD_PASSWORD }, auth);
         assert.equal(post.status, 409);
         assert.equal(post.data.code, 'REMOTE_CONNECTION');
         assert.equal(store.config.load().basicAuthHash, OLD_HASH, 'nothing may have changed');
 
-        const get = await request(server, 'GET', '/api/auth/credential');
+        const get = await request(server, 'GET', '/api/auth/credential', undefined, auth);
         assert.equal(get.data.changeable, false, 'the GET must refuse the same caller');
         assert.equal(get.data.user, null, 'and must not disclose the username in force');
       } finally {
         adminCredential.isLoopbackRemote = realCheck;
+        store.getDb().prepare('DELETE FROM auth_sessions').run();
+        store.getDb().prepare('DELETE FROM users').run();
       }
     });
 
@@ -463,6 +483,38 @@ describe('POST /api/auth/credential', () => {
       store.config.save(config);
       const { data } = await request(server, 'GET', '/api/auth/credential');
       assert.equal(data.user, null);
+    });
+
+    it('names the TangleClaw account when its login guards the door and Caddy carries no password', async () => {
+      // The armed cutover's shape: accounts exist, the Caddyfile has no basic_auth.
+      // Both routes read the request's own gate state, so the GET and the POST
+      // say the same thing, and neither says "the Caddy config carries no login".
+      store.users.create('rosie', GOOD_PASSWORD);
+      fs.writeFileSync(caddy.getCaddyfilePath(),
+        'localhost:8443 {\n  reverse_proxy 127.0.0.1:3102\n}\n', { mode: 0o600 });
+      try {
+        const get = await request(server, 'GET', '/api/auth/credential');
+        assert.equal(get.data.changeable, false);
+        assert.equal(get.data.code, 'ACCOUNT_LOGIN');
+        assert.match(get.data.remedy, /recovery code/);
+        const post = await request(server, 'POST', '/api/auth/credential', { password: GOOD_PASSWORD });
+        assert.equal(post.status, 409);
+        assert.equal(post.data.code, 'ACCOUNT_LOGIN');
+        assert.equal(store.config.load().basicAuthHash, OLD_HASH, 'nothing may have changed');
+      } finally {
+        store.getDb().prepare('DELETE FROM users').run();
+      }
+    });
+
+    it('still offers Caddy\'s password while it stands in front of an armed login', async () => {
+      store.users.create('rosie', GOOD_PASSWORD);
+      try {
+        const get = await request(server, 'GET', '/api/auth/credential');
+        assert.equal(get.data.changeable, true);
+        assert.equal(get.data.user, 'jason');
+      } finally {
+        store.getDb().prepare('DELETE FROM users').run();
+      }
     });
   });
 });

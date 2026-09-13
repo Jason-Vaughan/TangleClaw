@@ -14,6 +14,8 @@
 // `node --test 'test/*.test.js'`, and a helper collected as a test file would
 // report as an empty suite.
 
+const fs = require('node:fs');
+const path = require('node:path');
 const caddy = require('../lib/caddy');
 
 // A throwaway bcrypt hash generated for these fixtures. No live credential is
@@ -55,11 +57,13 @@ function fixtureConfig(overrides = {}) {
  * Build a generated Caddyfile from a fixture config, through the real
  * generator — never a hand-written imitation of its output.
  * @param {object} [configOverrides] - Passed to `fixtureConfig`.
+ * @param {string|null} [gateState] - TangleClaw's gate state, passed to the
+ *   generator exactly as the cutover and the drift baseline pass it.
  * @param {object} [generatorOverrides] - Generator options with no config field,
  *   e.g. `{ offboxGuard: false }` for a file written before the peer guard.
  * @returns {string} Caddyfile text.
  */
-function generatedCaddyfile(configOverrides = {}, generatorOverrides = {}) {
+function generatedCaddyfile(configOverrides = {}, gateState = null, generatorOverrides = {}) {
   const config = fixtureConfig(configOverrides);
   return caddy.buildCaddyfileContent({
     serverPort: config.serverPort,
@@ -70,6 +74,7 @@ function generatedCaddyfile(configOverrides = {}, generatorOverrides = {}) {
     publicDomain: config.publicDomain,
     basicAuthUser: config.authEnabled ? config.basicAuthUser : null,
     basicAuthHash: config.authEnabled ? config.basicAuthHash : null,
+    gateState,
     remoteHttpCatchAll: config.caddyRemoteHttp === true,
     tailnetHost: config.caddyTailnetHost,
     accessLogPath: config.caddyAccessLogPath,
@@ -92,6 +97,72 @@ ${FIXTURE_TAILNET_HOST}:${FIXTURE_STRAY_PORT} {
 }
 `;
 
+// The two settings that end Caddy's "set and replace X-Forwarded-For" default,
+// in the places a hand-edit would put them: `trusted_proxies` on the HTTPS
+// server, and a `header_up` rewriting the header inside the local site's proxy.
+const FORWARDED_FOR_TRUST = `\t\ttrusted_proxies static 100.64.0.0/10\n`;
+const FORWARDED_FOR_REWRITE = `\treverse_proxy 127.0.0.1:${FIXTURE_SERVER_PORT} {\n`
+  + '\t\theader_up X-Forwarded-For {remote_host}\n\t}';
+
+/**
+ * The live install's hand-maintained SHAPE: a `(tcauth)` snippet imported into
+ * each site, the tailnet site split into `handle` blocks, a redirect, and a
+ * plain-HTTP catch-all. Fixture host and hash, never live values.
+ * @param {boolean} ownAuthExemption - Keep the hand-added `handle @ownauth`
+ *   block that proxies `/openclaw-direct/*` with no gate (#472's prompt-loop
+ *   workaround) — the one route a fallback door must not carry.
+ * @returns {string} Caddyfile text.
+ */
+function liveShapeCaddyfile(ownAuthExemption) {
+  const exemption = ownAuthExemption
+    ? [
+      '\t@ownauth path /openclaw-direct/* /manifest.json',
+      '\thandle @ownauth {',
+      `\t\treverse_proxy 127.0.0.1:${FIXTURE_SERVER_PORT}`,
+      '\t}'
+    ]
+    : [];
+  return [
+    '{',
+    `\thttps_port ${FIXTURE_HTTPS_PORT}`,
+    `\thttp_port ${FIXTURE_HTTP_PORT}`,
+    '\tadmin off',
+    '\tauto_https disable_redirects',
+    '}',
+    '',
+    '(tcauth) {',
+    '\tbasic_auth {',
+    `\t\tfixture ${FIXTURE_HASH}`,
+    '\t}',
+    '}',
+    '',
+    'localhost {',
+    '\ttls /fixtures/cert.pem /fixtures/key.pem',
+    '\timport tcauth',
+    `\treverse_proxy 127.0.0.1:${FIXTURE_SERVER_PORT}`,
+    '}',
+    '',
+    `${FIXTURE_TAILNET_HOST} {`,
+    '\ttls /fixtures/cert.pem /fixtures/key.pem',
+    ...exemption,
+    '\thandle {',
+    '\t\timport tcauth',
+    `\t\treverse_proxy 127.0.0.1:${FIXTURE_SERVER_PORT}`,
+    '\t}',
+    '}',
+    '',
+    `http://${FIXTURE_TAILNET_HOST} {`,
+    `\tredir https://${FIXTURE_TAILNET_HOST}:${FIXTURE_HTTPS_PORT}{uri}`,
+    '}',
+    '',
+    'http:// {',
+    '\timport tcauth',
+    `\treverse_proxy 127.0.0.1:${FIXTURE_SERVER_PORT}`,
+    '}',
+    ''
+  ].join('\n');
+}
+
 const FIXTURE_CADDYFILES = {
   // What TangleClaw generates today: gated tailnet + localhost sites, an h1-pinned
   // HTTPS listener, an http->https redirect, one upstream.
@@ -107,10 +178,26 @@ const FIXTURE_CADDYFILES = {
   // carries the peer guard, so it refuses other machines.
   ungated: generatedCaddyfile({ authEnabled: false, caddyTailnetHost: null }),
 
+  // What TangleClaw generates once its own gate is armed: the same sites, no
+  // `basic_auth` anywhere, the tailnet site kept because TangleClaw gates it.
+  armed: generatedCaddyfile({}, 'armed'),
+
+  // The armed file with both X-Forwarded-For settings hand-added — each one a
+  // way for an off-box request to reach TangleClaw looking like a local process.
+  'forwarded-for': (() => {
+    const text = generatedCaddyfile({}, 'armed');
+    const pin = `\t\tprotocols h1\n`;
+    const proxy = `\treverse_proxy 127.0.0.1:${FIXTURE_SERVER_PORT}\n`;
+    if (!text.includes(pin) || !text.includes(proxy)) {
+      throw new Error('the generator no longer emits the lines this fixture edits');
+    }
+    return text.replace(pin, pin + FORWARDED_FOR_TRUST).replace(proxy, `${FORWARDED_FOR_REWRITE}\n`);
+  })(),
+
   // The same ungated config as an earlier release wrote it, before the peer
   // guard: a `localhost` site that serves any machine naming `localhost`.
   'ungated-unguarded': generatedCaddyfile(
-    { authEnabled: false, caddyTailnetHost: null }, { offboxGuard: false }
+    { authEnabled: false, caddyTailnetHost: null }, null, { offboxGuard: false }
   ),
 
   // The generated file with the `protocols h1` pin stripped from the HTTPS
@@ -122,11 +209,68 @@ const FIXTURE_CADDYFILES = {
       throw new Error('the generator no longer emits the h1 pin this fixture strips');
     }
     return text.replace(pinned, '');
+  })(),
+
+  // The live install's hand-maintained shape, gated at every route — the door a
+  // fallback may stand TangleClaw down behind.
+  'live-shape-gated': liveShapeCaddyfile(false),
+
+  // The same shape with the hand-added ungated `/openclaw-direct/*` handle.
+  'live-shape-own-auth': liveShapeCaddyfile(true),
+
+  // Each remote shape the generator writes for an armed install, beyond the
+  // tailnet site `armed` already has: none carries `basic_auth`.
+  'armed-catch-all': generatedCaddyfile({ caddyTailnetHost: null, caddyRemoteHttp: true }, 'armed'),
+  'armed-lan': generatedCaddyfile({ caddyTailnetHost: null }, 'armed', { lanHost: 'studio.local' }),
+  'armed-public': generatedCaddyfile({ caddyTailnetHost: null, publicDomain: 'tc.example.com' }, 'armed'),
+
+  // A gated site whose `handle_errors` block proxies. Caddy runs error routes
+  // without the site's `basic_auth`, and a refused password is itself an error.
+  'handle-errors': [
+    'box.example.com {',
+    '\ttls /fixtures/cert.pem /fixtures/key.pem',
+    '\tbasic_auth {',
+    `\t\tfixture ${FIXTURE_HASH}`,
+    '\t}',
+    `\treverse_proxy 127.0.0.1:${FIXTURE_SERVER_PORT}`,
+    '\thandle_errors {',
+    `\t\treverse_proxy 127.0.0.1:${FIXTURE_SERVER_PORT}`,
+    '\t}',
+    '}',
+    ''
+  ].join('\n'),
+
+  // The live shape with the tailnet site's gate removed: `basic_auth` still on
+  // the localhost site and the catch-all, so a credential elsewhere in the file
+  // must not stand in for the one this site lacks.
+  'per-site-gate': (() => {
+    const text = liveShapeCaddyfile(false);
+    const gated = '\thandle {\n\t\timport tcauth\n';
+    if (!text.includes(gated)) throw new Error('the live shape no longer has the handle this fixture ungates');
+    return text.replace(gated, '\thandle {\n');
   })()
 };
 
+/**
+ * A `caddy adapt` stand-in that answers a fixture Caddyfile's exact text with
+ * its committed JSON, and fails for any other text — the same failure a host
+ * without Caddy produces. For suites whose subject reads a Caddyfile through
+ * `caddy adapt` and must not depend on whether the host has Caddy; install it
+ * over `caddy-drift#adaptCaddyfileContent`, or pass it as `adapt`.
+ * @param {string} content - Caddyfile text.
+ * @returns {{ ok: boolean, config: object|null, reason: string|null }}
+ */
+function adaptFromFixtures(content) {
+  const name = Object.keys(FIXTURE_CADDYFILES).find((n) => FIXTURE_CADDYFILES[n] === content);
+  if (!name) return { ok: false, config: null, reason: 'not a fixture Caddyfile' };
+  const json = fs.readFileSync(path.join(__dirname, 'fixtures', `caddy-adapt-${name}.json`), 'utf8');
+  return { ok: true, config: JSON.parse(json), reason: null };
+}
+
 module.exports = {
+  adaptFromFixtures,
   FIXTURE_CADDYFILES,
+  liveShapeCaddyfile,
   fixtureConfig,
   generatedCaddyfile,
   FIXTURE_HASH,

@@ -397,6 +397,15 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
     <div id="caddyDriftBanner" class="orphan-banner caddy-drift-banner hidden" role="alert">
       <span class="orphan-banner-text" id="caddyDriftBannerText"></span>
     </div>
+    <!-- Recovery-code notice (#1420). Hidden until /api/server-info reports a
+         recoveryNotice: this account's password was reset with a recovery code.
+         It stays until the account acknowledges it or generates new codes — an
+         explicit act, never a timer, because a use the operator did not make is
+         the thing this exists to surface. -->
+    <div id="recoveryNoticeBanner" class="orphan-banner hidden" role="alert">
+      <span class="orphan-banner-text" id="recoveryNoticeBannerText"></span>
+      <button type="button" class="btn btn-small orphan-banner-btn" id="recoveryNoticeAckBtn">That was me</button>
+    </div>
     <!-- Orphan hooks repair banner (#145, chunk 2). Hidden until scan reports orphans. -->
     <div id="orphanHooksBanner" class="orphan-banner hidden" role="alert">
       <span class="orphan-banner-text" id="orphanHooksBannerText"></span>

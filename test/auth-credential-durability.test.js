@@ -150,7 +150,8 @@ function makeCtx(overrides = {}) {
     caddyTemplate: CADDY_TEMPLATE,
     existingCaddyfileText: overrides.existingCaddyfileText !== undefined
       ? overrides.existingCaddyfileText
-      : null
+      : null,
+    gateState: overrides.gateState
   };
 }
 
@@ -717,6 +718,44 @@ describe('auth credential durability (#397 / 2026-07-03 lockout)', () => {
       const plan = cutover.planCutover('caddy', makeCtx({ existingCaddyfileText: ungated }));
       assert.ok(plan.caddyfile.content);
     });
+
+    // #1420 — Caddy's gate is dropped by state. TangleClaw's own login guarding
+    // the door IS a gate, so dropping `basic_auth` there is the cutover working.
+    for (const gateState of ['armed', 'locked']) {
+      it(`drops basic_auth from a gated file when TangleClaw's login guards the door — ${gateState}`, () => {
+        const withCredential = cutover.planCutover('caddy', makeCtx({
+          config: { authEnabled: true, basicAuthUser: 'jason', basicAuthHash: HASH_A, caddyRemoteHttp: true },
+          existingCaddyfileText: liveShapedCaddyfile(),
+          gateState
+        }));
+        assert.ok(!withCredential.caddyfile.content.includes('basic_auth'));
+        assert.ok(!withCredential.caddyfile.content.includes(HASH_A), 'the retained hash is not written');
+        assert.ok(caddy.hasRemoteHttpCatchAll(withCredential.caddyfile.content), 'the remote shape survives');
+
+        // And with no credential in config at all: not refused, because the
+        // new file is still gated — by TangleClaw.
+        const plan = cutover.planCutover('caddy', makeCtx({ existingCaddyfileText: liveShapedCaddyfile(), gateState }));
+        assert.ok(!plan.caddyfile.content.includes('basic_auth'));
+      });
+    }
+
+    for (const gateState of ['account-required', 'unreadable', 'open', undefined]) {
+      it(`still refuses to ungate when TangleClaw's login does not guard the door — ${gateState}`, () => {
+        assert.throws(
+          () => cutover.planCutover('caddy', makeCtx({ existingCaddyfileText: liveShapedCaddyfile(), gateState })),
+          /UNGATED/
+        );
+      });
+
+      it(`keeps basic_auth when config has the credential — ${gateState}`, () => {
+        const plan = cutover.planCutover('caddy', makeCtx({
+          config: { authEnabled: true, basicAuthUser: 'jason', basicAuthHash: HASH_A },
+          existingCaddyfileText: liveShapedCaddyfile(),
+          gateState
+        }));
+        assert.ok(plan.caddyfile.content.includes(`jason ${HASH_A}`));
+      });
+    }
   });
 });
 

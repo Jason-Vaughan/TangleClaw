@@ -531,3 +531,69 @@ describe('offbox guard — against real caddy', { skip: !CADDY_AVAILABLE && 'cad
     assert.equal(plan.status, drift.GUARD_REFUSED);
   });
 });
+
+describe('offbox guard — with TangleClaw\'s own login (#1420 gate states)', () => {
+  const { GATE_STATES } = require('../lib/auth-gate');
+  const withCredential = { basicAuthUser: 'jason', basicAuthHash: FIXTURE_HASH };
+
+  it('puts no guard on a site the login guards — it must answer other machines', () => {
+    for (const gateState of [GATE_STATES.ARMED, GATE_STATES.LOCKED]) {
+      for (const extra of [{}, withCredential]) {
+        const content = caddy.buildCaddyfileContent(opts({ ...extra, gateState, tailnetHost: 'box.tail-example.ts.net' }));
+        assert.ok(!content.includes('basic_auth'), `${gateState}: the login is the gate`);
+        assert.ok(!content.includes('remote_ip'), `${gateState}: and no peer guard locks others out`);
+      }
+    }
+  });
+
+  it('guards a site that has no gate of either kind, in every state that is not guarding the door', () => {
+    for (const gateState of [null, GATE_STATES.OPEN, GATE_STATES.ACCOUNT_REQUIRED, GATE_STATES.UNREADABLE]) {
+      const content = caddy.buildCaddyfileContent(opts({ gateState }));
+      assert.ok(content.includes(GUARD), String(gateState));
+    }
+  });
+
+  it('keeps basic_auth and adds no guard where Caddy\'s gate still stands', () => {
+    for (const gateState of [GATE_STATES.ACCOUNT_REQUIRED, GATE_STATES.UNREADABLE]) {
+      const content = caddy.buildCaddyfileContent(opts({ ...withCredential, gateState }));
+      assert.ok(content.includes('basic_auth'), gateState);
+      assert.ok(!content.includes('remote_ip'), gateState);
+    }
+  });
+
+  it('holds P6 outright when the login guards the door, and judges the sites otherwise', () => {
+    const armedSites = drift.summarizeConfig(adapted('armed')).sites;
+    assert.equal(drift.checkOffboxRefused(armedSites, OURS, GATE_STATES.ARMED).status, drift.HOLDS);
+    assert.equal(drift.checkOffboxRefused(armedSites, OURS, GATE_STATES.LOCKED).status, drift.HOLDS);
+    assert.equal(drift.checkOffboxRefused(armedSites, OURS, GATE_STATES.ACCOUNT_REQUIRED).status, drift.DIVERGED,
+      'the same file with no account behind the login is open to other machines');
+  });
+
+  it('refuses to plan a guard on an install the login guards, so the operator is not locked out', () => {
+    const plan = drift.planOffboxGuard(FIXTURE_CADDYFILES.armed, 3102, () => assert.fail('adapted'), GATE_STATES.ARMED);
+    assert.equal(plan.status, drift.GUARD_REFUSED);
+    assert.match(plan.reason, /own login guards this install/);
+  });
+
+  it('the command hands its gate state to the plan', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-offbox-gate-'));
+    try {
+      const file = path.join(dir, 'Caddyfile');
+      fs.writeFileSync(file, FIXTURE_CADDYFILES.armed, { mode: 0o600 });
+      let seen = 'unset';
+      const code = run({
+        caddyfilePath: file, serverPort: 3102, gateState: GATE_STATES.ARMED, uid: 501, stamp: 'S',
+        stdout: { write: () => {} }, stderr: { write: () => {} },
+        deps: {
+          plan: (text, port, adapt, gateState) => { seen = gateState; return drift.planOffboxGuard(text, port, adapt, gateState); },
+          validate: () => assert.fail('validated'), reload: () => assert.fail('reloaded')
+        }
+      });
+      assert.equal(seen, GATE_STATES.ARMED);
+      assert.equal(code, 1);
+      assert.equal(fs.readFileSync(file, 'utf8'), FIXTURE_CADDYFILES.armed);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

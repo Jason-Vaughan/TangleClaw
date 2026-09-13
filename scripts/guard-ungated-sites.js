@@ -68,7 +68,10 @@ function parseArgs(argv) {
  *
  * @param {object} opts
  * @param {string} opts.caddyfilePath - The Caddyfile to guard.
- * @param {number} opts.serverPort - TangleClaw's port (`config.serverPort`).
+ * @param {number} opts.serverPort - The installed service's port (`https-setup#installedServerPort`).
+ * @param {string|null} [opts.gateState] - TangleClaw's gate state
+ *   (`lib/auth-gate.js#resolveGateState`). When its own login guards the door
+ *   the plan refuses: those sites answer other machines on purpose.
  * @param {boolean} [opts.dryRun=false] - Report only.
  * @param {number} opts.uid - Numeric uid for the launchctl target.
  * @param {string} opts.stamp - Filename-safe timestamp for the backup.
@@ -84,7 +87,7 @@ function parseArgs(argv) {
  */
 function run(opts) {
   const {
-    caddyfilePath, serverPort, dryRun = false, uid, stamp,
+    caddyfilePath, serverPort, gateState = null, dryRun = false, uid, stamp,
     deps = {},
     stdout = process.stdout,
     stderr = process.stderr
@@ -101,7 +104,7 @@ function run(opts) {
     return 1;
   }
 
-  const planned = plan(content, serverPort);
+  const planned = plan(content, serverPort, undefined, gateState);
   if (planned.status === drift.GUARD_ALREADY) {
     stdout.write('Every site forwarding to TangleClaw without a password already refuses other machines. Nothing to do.\n');
     return 0;
@@ -125,32 +128,15 @@ function run(opts) {
     return 0;
   }
 
-  const written = adminCredential.writeValidatedCaddyfile(caddyfilePath, planned.content, validate, stamp);
-  if (!written.ok) {
-    stderr.write(`ERROR: ${caddy.redactHashes(written.error || 'the write failed')}\n`);
-    if (written.restored) {
-      stderr.write(`  The original was restored (ingress untouched). Backup kept at: ${written.backup}\n`);
-    } else {
-      stderr.write('  The Caddyfile could not be put back, so it may now be broken.\n'
-        + `  A copy of the original is at: ${written.backup}\n`
-        + '  Restore it by hand before restarting Caddy.\n');
+  return adminCredential.applyCaddyfileInPlace({
+    caddyfilePath, content: planned.content, validate, reload, uid, stamp, stdout, stderr,
+    change: 'the guard',
+    nextStep: 'Restart TangleClaw too, so the dashboard notice re-checks.',
+    onWritten: (backup) => {
+      stdout.write(`\nRestricted ${sites} to this machine.\n`);
+      stdout.write(`  Caddyfile: ${caddyfilePath}\n  Backup:    ${backup}\n`);
     }
-    return 1;
-  }
-
-  stdout.write(`\nRestricted ${sites} to this machine.\n`);
-  stdout.write(`  Caddyfile: ${caddyfilePath}\n  Backup:    ${written.backup}\n`);
-  const reloaded = reload(uid);
-  if (reloaded.ok) {
-    stdout.write('  ✓ Caddy restarted. Restart TangleClaw too, so the dashboard notice re-checks.\n\n');
-  } else {
-    stderr.write('WARNING: the guard is written but NOT live — Caddy could not be restarted automatically.\n'
-      + `  Why: ${caddy.redactHashes(reloaded.error || 'no reason given')}\n`
-      + `  Run: ${reloaded.command}\n`
-      + '  Then restart TangleClaw too, so the dashboard notice re-checks.\n');
-    return 2;
-  }
-  return 0;
+  }).code;
 }
 
 /**
@@ -168,15 +154,21 @@ function main() {
     process.exit(1);
   }
 
-  // Config for TangleClaw's port — which sites are TangleClaw's — and the store
-  // for the base path the Caddyfile lives under.
+  // Config for TangleClaw's port — which sites are TangleClaw's — the store for
+  // the base path the Caddyfile lives under, and the gate state as CONFIGURED,
+  // exactly as the cutover reads it: a writer asking the file it rewrites would
+  // keep refusing to guard a file whose missing gate it read as the login's.
+  // `authGate.resolveIntendedGateState` says why.
   const store = require(path.join(REPO_DIR, 'lib', 'store'));
+  const authGate = require(path.join(REPO_DIR, 'lib', 'auth-gate'));
   store.init();
   let caddyfilePath;
   let config;
+  let gateState;
   try {
     caddyfilePath = caddy.getCaddyfilePath();
     config = store.config.load();
+    gateState = authGate.resolveIntendedGateState(() => config, store.authSessions);
   } finally {
     store.close();
   }
@@ -189,7 +181,10 @@ function main() {
 
   const code = run({
     caddyfilePath,
-    serverPort: config.serverPort,
+    // The installed service's port, not config's (3101 while the plist binds
+    // 3102): a site proxying to the real port must read as TangleClaw's.
+    serverPort: require(path.join(REPO_DIR, 'lib', 'https-setup')).installedServerPort(undefined, config),
+    gateState,
     dryRun: args.dryRun,
     uid: process.getuid(),
     stamp: new Date().toISOString().replace(/[:.]/g, '-')

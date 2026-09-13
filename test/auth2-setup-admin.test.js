@@ -42,7 +42,7 @@ function request(server, method, urlPath, body) {
         const raw = Buffer.concat(chunks).toString('utf8');
         let data;
         try { data = JSON.parse(raw); } catch { data = raw; }
-        resolve({ status: res.statusCode, data });
+        resolve({ status: res.statusCode, data, headers: res.headers });
       });
     });
     req.on('error', reject);
@@ -95,6 +95,9 @@ describe('forced first-run admin credential', () => {
     config.basicAuthUser = null;
     config.basicAuthHash = null;
     store.config.save(config);
+    // An account from an earlier case would change which state the gate is in.
+    store.getDb().prepare('DELETE FROM auth_sessions').run();
+    store.getDb().prepare('DELETE FROM users').run();
   }
 
   describe('POST /api/setup/complete', () => {
@@ -155,6 +158,79 @@ describe('forced first-run admin credential', () => {
       assert.equal(config.basicAuthUser, 'admin');
       assert.match(config.basicAuthHash, /^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/);
       assert.equal(config.setupComplete, true);
+    });
+
+    it('creates the TangleClaw account from the same credential and signs the wizard in (#1420)', async () => {
+      // Without this, setting authEnabled leaves the install `account-required`
+      // before the response returns, and the wizard's own follow-up requests —
+      // the provisioning poll, the dashboard load — meet a login challenge.
+      const { status, data, headers } = await request(server, 'POST', '/api/setup/complete',
+        { adminUser: 'admin', adminPassword: 'a-strong-passphrase-42' });
+      assert.equal(status, 200);
+      assert.deepEqual(data.account, { created: true, required: false });
+      assert.ok(store.users.verify('admin', 'a-strong-passphrase-42'),
+        'the password the wizard set is the one that signs in');
+      const cookies = headers['set-cookie'] || [];
+      assert.ok(cookies.some((c) => c.startsWith('tc_session=')), 'the wizard gets a session');
+
+      // The wizard's follow-up, as its browser sends it: browser-shaped, with the
+      // cookie it was just given.
+      const cookie = cookies.map((c) => c.split(';')[0]).join('; ');
+      const follow = await new Promise((resolve, reject) => {
+        const r = http.request({
+          hostname: '127.0.0.1', port: server.address().port, path: '/api/setup/provision-status',
+          method: 'GET', headers: { Cookie: cookie, 'Sec-Fetch-Site': 'same-origin' }
+        }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+        r.on('error', reject);
+        r.end();
+      });
+      assert.notEqual(follow, 401, 'the wizard\'s poll must not meet the login gate');
+    });
+
+    it('keeps an existing TangleClaw account rather than creating a second one', async () => {
+      store.users.create('rosie', 'rosies-long-passphrase');
+      const { status, data } = await request(server, 'POST', '/api/setup/complete',
+        { adminUser: 'admin', adminPassword: 'a-strong-passphrase-42' });
+      assert.equal(status, 200);
+      assert.deepEqual(data.account, { created: false, required: false });
+      assert.equal(store.users.getByName('admin'), null);
+    });
+
+    it('reports account.required when setup ends with the gate on and no account', async () => {
+      // The adopt shape: a credential already in config, none typed, so there is
+      // no plaintext to create an account from. Reached here through a
+      // pre-configured credential, which is what the adopt path leaves behind.
+      const config = store.config.load();
+      config.authEnabled = true;
+      config.basicAuthUser = 'jason';
+      config.basicAuthHash = '$2a$14$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU';
+      store.config.save(config);
+      const { status, data } = await request(server, 'POST', '/api/setup/complete', {});
+      assert.equal(status, 200);
+      assert.deepEqual(data.account, { created: false, required: true });
+    });
+
+    it('refuses to finish, without saving, when the gate cannot read its account store (#1420)', async () => {
+      // "No account required" would send the wizard into a dashboard that
+      // refuses it; the fault must reach the operator, and setup must stay
+      // retryable. The request itself is a machine client, so the enforcing
+      // `unreadable` gate lets it reach the route.
+      const config = store.config.load();
+      config.authEnabled = true;
+      config.basicAuthUser = 'jason';
+      config.basicAuthHash = '$2a$14$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU';
+      store.config.save(config);
+      const realPresence = store.authSessions.accountPresence;
+      store.authSessions.accountPresence = () => { throw new Error('database is locked'); };
+      let res;
+      try {
+        res = await request(server, 'POST', '/api/setup/complete', {});
+      } finally {
+        store.authSessions.accountPresence = realPresence;
+      }
+      assert.equal(res.status, 503);
+      assert.equal(res.data.code, 'GATE_UNREADABLE');
+      assert.equal(store.config.load().setupComplete, false, 'nothing is saved');
     });
 
     it('accepts completion when an admin is already configured (no new credential)', async () => {

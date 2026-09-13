@@ -36,6 +36,12 @@ finish. It then puts that login in front of everything TangleClaw serves.
 That is the finished, intended state: reachable from this computer, and from
 elsewhere only with a password.
 
+Two things setup does not do for you yet. It does not hand you **recovery codes** —
+generate them in **Settings → Recovery codes** once you are signed in, and keep them
+off the device you sign in on; one resets a forgotten password from the sign-in page.
+And there is no change-password form: a new password is set with a recovery code or at
+a terminal (see [Getting back into TangleClaw](recovery.md)).
+
 ---
 
 ## Reaching it from your phone or another computer
@@ -44,15 +50,19 @@ To open the dashboard from somewhere other than the machine it runs on, somethin
 to accept connections from the outside. TangleClaw uses **Caddy** for this.
 
 **What Caddy is, in one paragraph.** Caddy is a small, separate program that sits in
-front of TangleClaw and answers the network on its behalf. Requests arrive at Caddy;
-Caddy checks the password, and only then passes the request along to TangleClaw,
-which is still listening only to `127.0.0.1`. That arrangement — one program
-answering the outside world and forwarding to another — is what "reverse proxy"
-means. Caddy also handles **TLS**, which is what makes the address start with
-`https://` and stops other people on the network from reading the traffic.
+front of TangleClaw and answers the network on its behalf. Requests arrive at Caddy,
+and Caddy passes them along to TangleClaw, which is still listening only to
+`127.0.0.1`. That arrangement — one program answering the outside world and
+forwarding to another — is what "reverse proxy" means. Caddy also handles **TLS**,
+which is what makes the address start with `https://` and stops other people on the
+network from reading the traffic.
 
-The advantage of doing it this way is that the password check happens *before*
-anything reaches TangleClaw. There is one door, and it is locked.
+**Who checks the password.** TangleClaw does, with the account setup created: every
+page, terminal and API asks for a signed-in account before it answers. Caddy asks for a
+password of its own — a browser pop-up — only while TangleClaw cannot guard the door by
+itself: on an install upgraded from an older version that has not created its first
+account yet, or after a terminal fallback when the login broke. Either way there is one
+way in, and it is locked.
 
 Setup **configures** this for you — you do not need to write any Caddy
 configuration by hand. It does not *install* Caddy: `deploy/install.sh` does that,
@@ -89,15 +99,27 @@ node scripts/ingress-cutover.js --to caddy
 node scripts/reset-admin.js --create-gate --user <your-name>
 ```
 
+Step 3 puts Caddy's password in front and turns TangleClaw's login on. Then, from a
+browser: sign in with that password, and create your TangleClaw account on the page that
+follows (it also shows your recovery codes, once). Finally take Caddy's password out —
+TangleClaw's login now guards the door — by running the cutover again:
+
+```sh
+node scripts/ingress-cutover.js --to caddy --dry-run   # its preview names which gate the file carries
+node scripts/ingress-cutover.js --to caddy
+```
+
 > **Step 3 is not optional, and the order matters.** The cutover configures the
 > *ingress*; it does not invent a password. Stop after step 2 and it will succeed, print
-> `✓ health check passed`, and leave your dashboard reachable **with no login at all** —
-> a green result for a machine that is not protected.
+> `✓ health check passed`, and leave your dashboard **with no login at all** — a green
+> result for a machine that is not protected. Caddy refuses other machines that reach it
+> directly, but anything on this machine that relays traffic in (Tailscale Serve, an SSH
+> forward, a tunnel agent) reaches a dashboard with no password.
 >
 > Step 3 has to come last because it edits the Caddy config file that step 2 creates: run
 > it first, on an install with no Caddy config, and it exits with
 > `ERROR: no Caddyfile … there is nothing to reset`. **Between step 2 and step 3 the
-> dashboard is up with no password**, so do not stop in the middle — and if the machine is
+> dashboard has no password**, so do not stop in the middle — and if the machine is
 > reachable from your network, run the two back to back.
 >
 > Then do not take this section's word for it — use **"Checking it actually worked"**
@@ -118,21 +140,23 @@ automatically once a login exists.
 The first time, your phone or laptop will warn that the certificate is not trusted. That is
 expected: the certificate is issued by your own Mac's local authority, which other devices have
 never heard of. It means the connection is encrypted but unverified — fine on your own network,
-and you can install that authority on the other device to silence it. A *password prompt* is what
+and you can install that authority on the other device to silence it. A *sign-in* is what
 you are checking for here; the certificate warning is a separate question.
 
-1. **Open the dashboard address.** A password prompt should appear before you see
-   anything. If you see the dashboard with no prompt, the gate is not in force —
-   stop and fix that before going further.
-2. **Check a URL that is not the dashboard**, for example `/api/config`. It should
-   also ask for the password — the gate is not just on the front page.
+The sign-in is TangleClaw's own page once your account exists. An install whose Caddyfile still
+carries Caddy's older password gate shows a browser password prompt first instead — either one
+counts.
 
-   Pick that URL deliberately. Three paths are **exempt by design** and will answer
-   without a password: `/api/health` (so an uptime monitor can check liveness without
-   a credential), `/openclaw-direct/*` (the OpenClaw web page sends its own
-   `Authorization` header, which would otherwise make the browser re-prompt in a loop)
-   and `/manifest.json` (browsers fetch PWA manifests anonymously).
-   Testing one of those and seeing a reply proves nothing about your gate.
+1. **Open the dashboard address.** A sign-in should appear before you see anything. If you
+   see the dashboard with no sign-in, the gate is not in force — stop and fix that before
+   going further.
+2. **Check a URL that is not the dashboard**, for example `/api/config`. It should also
+   refuse you until you sign in — the gate is not just on the front page.
+
+   Pick that URL deliberately. Two paths are **exempt by design** and will answer without
+   signing in: `/api/health` (so an uptime monitor can check liveness without a credential)
+   and `/manifest.json` (browsers fetch PWA manifests anonymously). Testing one of those and
+   seeing a reply proves nothing about your gate.
 
 If you have a Tailscale or WireGuard tunnel, use the tunnel address for both checks —
 that is the perimeter you actually rely on.
@@ -141,9 +165,15 @@ that is the perimeter you actually rely on.
 
 ## If you are locked out
 
-There is always a way back in, and it deliberately requires **physical access to the
-machine** rather than a second way in over the network. A "reset my password" link
-that worked remotely would be exactly the door the password exists to close.
+There is always a way back in. **[Getting back into TangleClaw](recovery.md)** covers every case —
+a forgotten account password (a recovery code from the sign-in page, or
+`reset-admin.js --store` at a terminal), a disabled account, a login that cannot read its settings,
+and a login that is itself broken.
+
+This section covers one of those cases in depth: **Caddy's password**, the browser pop-up that asks
+before any page loads, on an install where Caddy's `basic_auth` still stands in front. Resetting it
+requires **physical access to the machine**. If the tool answers that the install's login is its
+TangleClaw account, there is no Caddy password to reset — use the recovery guide instead.
 
 Open a terminal on the computer TangleClaw runs on and:
 
@@ -200,7 +230,8 @@ echo 'the-new-password' | node scripts/reset-admin.js --password-stdin --dry-run
 
 An install that finished setup before a login was required — and later moved to Caddy
 — can end up with no password at all and no obvious way to add one. If
-`reset-admin.js` says there is nothing to reset, create the login instead:
+`reset-admin.js` says there is nothing to reset and offers `--create-gate`, create the login
+instead (it is not offered, and refuses, on an install whose own TangleClaw login already guards it):
 
 ```sh
 node scripts/reset-admin.js --create-gate --user <name>
@@ -223,9 +254,9 @@ and create it again with the right name.
 WireGuard; on a network you fully control, behind the login.
 
 **Not supported:** exposed to the open internet. This is not a strong recommendation,
-it is a boundary. The login is a single shared username and password with no rate
-limiting, no lockout after repeated guesses, no second factor and no way to revoke a
-session — sitting in front of something that runs commands on your computer. Put it
+it is a boundary. The login is a password with no second factor, no lockout after
+repeated guesses, and no per-user permissions — every account can do everything —
+sitting in front of something that runs commands on your computer. Put it
 behind a tunnel instead; the reasoning is written up in
 [ADR 0009](adr/0009-secure-by-default.md).
 

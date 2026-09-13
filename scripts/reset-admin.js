@@ -32,9 +32,18 @@
 // locked out. It moved here from chunk 01 (#1417) because a recovery path for a
 // door that was not installed yet could not be verified end to end.
 //
-// It is also how the TangleClaw gate gets turned on for the first time: the
-// gate is dormant until an enabled account exists (`lib/auth-gate.js`), so this
-// command is the deliberate act that closes the door.
+// It can also create an install's first account from a terminal. With
+// `authEnabled` on and no account the gate is `account-required`
+// (`lib/auth-gate.js`) and offers only the first-account page; creating the
+// account here arms it just the same, for an operator who would rather not use
+// the page.
+//
+// WHICH DOOR IS THE LOGIN depends on the gate state (`lib/auth-gate.js`). Where
+// TangleClaw's own login guards the door (`armed`, `locked`), a Caddyfile with no
+// `basic_auth` is the intended shape, so the Caddy modes send the operator to
+// `--store` instead of offering to build a Caddy password in front of the
+// account. And `--store` reports the state a request meets, not `authEnabled`
+// alone.
 //
 // Fail-closed: the patched Caddyfile is `caddy validate`d BEFORE the reload, and
 // the prior file is restored from a timestamped backup if validation fails — a
@@ -52,6 +61,9 @@ const caddy = require(path.join(REPO_DIR, 'lib', 'caddy'));
 // contract is unchanged.
 const adminCredential = require(path.join(REPO_DIR, 'lib', 'admin-credential'));
 const { reloadCaddyArgs, writeValidatedCaddyfile } = adminCredential;
+const authGate = require(path.join(REPO_DIR, 'lib', 'auth-gate'));
+const gateFallback = require(path.join(REPO_DIR, 'lib', 'gate-fallback'));
+const ingressDoor = require(path.join(REPO_DIR, 'lib', 'ingress-door'));
 const USAGE =
   'Usage: node scripts/reset-admin.js [--user <name>] [--password-stdin] [--dry-run]\n' +
   '       node scripts/reset-admin.js --create-gate --user <name>\n' +
@@ -190,6 +202,111 @@ async function acquirePassword({ passwordStdin, user }) {
 }
 
 /**
+ * What TangleClaw's login is doing on this install, for this tool's report.
+ *
+ * The state is `authGate.resolveGateState` over the config and the Caddyfile on
+ * disk — the state a request meets — because `authEnabled` alone does not say:
+ * in caddy mode a Caddyfile that serves beyond this machine with no password of
+ * its own keeps the accounts deciding with `authEnabled` off. The fallback
+ * marker is reported beside it rather than weighed: whether TangleClaw honours
+ * it depends on the socket a request arrives on, which a terminal tool has not
+ * got.
+ *
+ * @param {object} store - The initialised store module
+ * @param {{ accountPresence: Function }} [sessions] - Defaults to
+ *   `store.authSessions`; a `--dry-run` passes the presence the run would leave.
+ * @returns {{ error: string }|{ config: object, gateState: string,
+ *   caddyPassword: boolean, caddyfileError: (string|null), markerPresent: boolean,
+ *   markerPath: string }}
+ *   `error` when the config cannot be read. `caddyfileError` when a caddy-mode
+ *   Caddyfile exists but could not be read, so whether Caddy's password stands
+ *   in front is unknown and the report says so.
+ */
+function describeLiveGate(store, sessions = store.authSessions) {
+  let config;
+  try {
+    config = store.config.load();
+  } catch (err) {
+    return { error: err.message };
+  }
+  const gateState = authGate.resolveGateState(() => config, sessions, () => ingressDoor.readIngressDoor());
+  let caddyPassword = false;
+  let caddyfileError = null;
+  if (config && config.ingressMode === 'caddy') {
+    try {
+      caddyPassword = caddy.listBasicAuthUsers(fs.readFileSync(caddy.getCaddyfilePath(), 'utf8')).length > 0;
+    } catch (err) {
+      // Missing: Caddy serves nothing, so no password stands in front. Anything
+      // else is not knowing, which the report must say rather than print as
+      // "no Caddy password" — the gate state above reads the file only while
+      // `authEnabled` is off, so it does not cover this.
+      if (err.code !== 'ENOENT') caddyfileError = err.message;
+    }
+  }
+  const markerPath = gateFallback.markerPath(store._getBasePath());
+  return {
+    config, gateState, caddyPassword, caddyfileError, markerPresent: fs.existsSync(markerPath), markerPath
+  };
+}
+
+/**
+ * The lines that tell the operator what their login does now.
+ *
+ * ANSWERS the condition rather than stating it. The operator running this tool
+ * cannot reach the dashboard to look, so "…when authEnabled is on" would leave
+ * them holding a conditional they cannot evaluate. The population most likely
+ * to be on the wrong side of it: a direct-mode install that finished the wizard
+ * ungated carries `authEnabled: false`, and without a warning the operator
+ * creates an account, reads a success message, and still has no login.
+ *
+ * @param {ReturnType<typeof describeLiveGate>} live
+ * @param {boolean} preview - Word it as what WOULD be true (`--dry-run`).
+ * @returns {string} Newline-terminated lines
+ */
+function describeGateLines(live, preview) {
+  // Never fatal, and never read as "no login": the account change is reported
+  // either way, and refusing to report it because a status read failed would be
+  // the worse outcome for someone locked out.
+  if (live.error) return `  (could not read config to report gate status: ${live.error})\n`;
+  const lines = [];
+  const would = preview ? 'would be' : 'is now';
+  if (live.gateState === authGate.GATE_STATES.ARMED) {
+    lines.push(`  ✓ The TangleClaw login gate ${would} LIVE for this install.`);
+    if (live.config.authEnabled !== true) {
+      lines.push('    authEnabled is off, but the Caddyfile serves beyond this machine without a password of',
+        '    its own, so the accounts decide anyway.');
+    }
+  } else if (live.gateState === authGate.GATE_STATES.OPEN && live.caddyPassword) {
+    // TangleClaw asks nothing, but the install is not unprotected: Caddy's
+    // password is its login. "NO login is enforced" would be false.
+    lines.push(`  ⚠ authEnabled is OFF — TangleClaw's login ${preview ? 'would enforce' : 'enforces'} nothing here.`,
+      '    Caddy\'s password (basic_auth) is the only login in front of this install.',
+      '    Turn authEnabled on in Settings for the account to be the login.');
+  } else if (live.gateState === authGate.GATE_STATES.OPEN) {
+    lines.push(preview
+      ? '  ⚠ authEnabled is OFF — the account would exist but enforce nothing'
+      : '  ⚠ authEnabled is OFF — this account exists but NO login is enforced.\n'
+        + '    Turn it on in Settings, or the account does nothing.');
+  } else if (live.gateState === authGate.GATE_STATES.UNREADABLE) {
+    lines.push('  ⚠ TangleClaw could not read its login state, so it refuses every sign-in.',
+      '    Its log names the read error.');
+  } else {
+    lines.push(`  The TangleClaw login gate ${would} ${live.gateState}.`);
+  }
+  if (live.caddyPassword && live.gateState !== authGate.GATE_STATES.OPEN) {
+    lines.push('  Caddy\'s password (basic_auth) still stands in front of this login, so a browser meets it first.');
+  }
+  if (live.caddyfileError) {
+    lines.push(`  (could not read the Caddyfile to check for Caddy's password in front: ${live.caddyfileError})`);
+  }
+  if (live.markerPresent) {
+    lines.push(`  ⚠ A fallback marker is present (${live.markerPath}). While TangleClaw honours it, Caddy's`,
+      '    password is the only login. Once this account can sign in: node scripts/gate-fallback.js --undo');
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+/**
  * Create or reset a TangleClaw account in the user store (`--store`).
  *
  * Runs BEFORE any Caddyfile is looked at, and never touches one: TangleClaw's
@@ -243,18 +360,15 @@ async function runStoreMode({ store, user, dryRun, passwordStdin }) {
     process.stdout.write(`  would: ${passwordStep} → scrypt hash → ${action} the users row\n`);
     if (existing) {
       process.stdout.write('         → destroy every live session for this account\n');
+      process.stdout.write('         → delete this account\'s recovery codes (a new set is generated in Settings)\n');
     }
     if (existing && existing.disabled_at) {
       process.stdout.write('         → re-enable the account\n');
     }
     process.stdout.write('         → no Caddyfile touched, no reload\n');
-    try {
-      process.stdout.write(store.config.load().authEnabled === true
-        ? '  after this, the TangleClaw login gate would be LIVE\n\n'
-        : '  ⚠ authEnabled is OFF — the account would exist but enforce nothing\n\n');
-    } catch {
-      process.stdout.write('  (could not read config to report gate status)\n\n');
-    }
+    // The state the run would leave: this account enabled, whatever else exists.
+    const after = { accountPresence: () => ({ exists: true, loginable: true }) };
+    process.stdout.write(`${describeGateLines(describeLiveGate(store, after), true)}\n`);
     return 0;
   }
 
@@ -272,12 +386,17 @@ async function runStoreMode({ store, user, dryRun, passwordStdin }) {
     return 1;
   }
 
+  let codesDeleted = 0;
   if (existing) {
     // setPassword also destroys the account's live sessions. That is the
     // property that makes this recovery rather than a password change: someone
     // running it because they believe the credential is compromised must not
     // leave the attacker's session valid for another 30 days.
     store.users.setPassword(user, password);
+    // The recovery codes go for the same reason: a code the attacker copied
+    // would reset the password again the moment this run finishes. The owner
+    // generates a new set in Settings once signed in.
+    codesDeleted = store.recoveryCodes.deleteForUsername(user);
     // Ordered AFTER the password change, deliberately. Re-enabling first would
     // open a window in which the account is live under the OLD password.
     if (existing.disabled_at) store.users.enable(user);
@@ -289,35 +408,11 @@ async function runStoreMode({ store, user, dryRun, passwordStdin }) {
   if (existing && existing.disabled_at) {
     process.stdout.write('  ✓ Account re-enabled.\n');
   }
+  if (codesDeleted > 0) {
+    process.stdout.write(`  ✓ Its ${codesDeleted} recovery code(s) no longer work — generate a new set in Settings.\n`);
+  }
   process.stdout.write(`  Store: ${store._getBasePath()}\n`);
-
-  // ANSWER the condition rather than stating it. The gate needs authEnabled
-  // AND an enabled account; this command supplies the account. Printing "…when
-  // authEnabled is on" left the operator holding a conditional they cannot
-  // evaluate — on the tool they are running precisely because they cannot reach
-  // the dashboard to look. And the population this mode exists for is the one
-  // most likely to be on the wrong side of it: a direct-mode install that
-  // finished the wizard ungated under #803's ruling carries authEnabled:false,
-  // so without this the operator creates an account, reads a success message,
-  // and still has no login with nothing anywhere saying so.
-  let authEnabled = null;
-  try {
-    authEnabled = store.config.load().authEnabled === true;
-  } catch (err) {
-    // Never fatal: the account IS created, and refusing to report that because
-    // a status read failed would be the worse outcome for someone locked out.
-    process.stdout.write(`  (could not read config to report gate status: ${err.message})\n`);
-  }
-  if (authEnabled === true) {
-    process.stdout.write('  ✓ The TangleClaw login gate is now LIVE for this install.\n');
-  } else if (authEnabled === false) {
-    process.stdout.write(
-      '  ⚠ authEnabled is OFF — this account exists but NO login is enforced.\n'
-      + '    Turn it on in Settings, or the account does nothing.\n');
-  }
-  process.stdout.write(
-    '  In caddy ingress mode Caddy\'s basic_auth still sits in front of this\n'
-    + '  gate until the cutover.\n\n');
+  process.stdout.write(`${describeGateLines(describeLiveGate(store), false)}\n`);
   return 0;
 }
 
@@ -362,6 +457,17 @@ async function main() {
   const original = fs.readFileSync(caddyfilePath, 'utf8');
 
   const existingUsers = caddy.listBasicAuthUsers(original);
+  // The state a Caddyfile WRITER must build for — config and accounts, never the
+  // file being replaced (`authGate.resolveIntendedGateState`). Asked by
+  // `--create-gate`.
+  const intendedGateState = authGate.resolveIntendedGateState(() => store.config.load(), store.authSessions);
+  // The state a request meets, which is what the no-password refusal describes:
+  // with `authEnabled` off, a Caddyfile serving other machines without a
+  // password keeps the accounts deciding, so the login there IS the account
+  // even though the configured intent is `open`.
+  const live = describeLiveGate(store);
+  const liveGateState = live.error ? null : live.gateState;
+  const loginGuards = authGate.guardsTheDoor(liveGateState);
 
   let targetUser;
   if (createGate) {
@@ -382,9 +488,17 @@ async function main() {
       // people: the message was true and led nowhere. Only offered when this file
       // is one the tool can actually build in, so it never advertises a command
       // that will refuse.
-      if (existingUsers.length === 0 && caddy.classifyCaddyfileContent(original).safeToWrite) {
+      if (existingUsers.length === 0 && caddy.classifyCaddyfileContent(original).safeToWrite && !loginGuards) {
         process.stderr.write('\n  This install has no login yet. Create one with:\n'
           + '    node scripts/reset-admin.js --create-gate --user <name>\n');
+      }
+      // An install whose own login guards the door has no Caddy password on
+      // purpose. Offering `--create-gate` there would put one back in front of
+      // the account that works; the password to reset is the account's.
+      if (existingUsers.length === 0 && loginGuards) {
+        process.stderr.write(`\n  This install's login is its TangleClaw account (${liveGateState}), not a Caddy password.\n`
+          + '  Reset the account with:\n'
+          + '    node scripts/reset-admin.js --store --user <name>\n');
       }
       store.close();
       process.exit(1);
@@ -419,7 +533,7 @@ async function main() {
     // locked out. It asks the SAME predicate the real run will, so it can never
     // describe a rebuild that would then be refused.
     const verdict = createGate
-      ? adminCredential.canCreateGate(store.config.load(), original, targetUser)
+      ? adminCredential.canCreateGate(store.config.load(), original, targetUser, intendedGateState)
       : { allowed: true, reason: null };
     if (!verdict.allowed) {
       process.stdout.write(`  would REFUSE: ${verdict.reason}\n\n`);
@@ -461,6 +575,9 @@ async function main() {
     caddyfilePath,
     user: targetUser,
     hash,
+    // Read by `createGate` only; the in-place change patches whatever gate the
+    // file already carries.
+    gateState: intendedGateState,
     uid: process.getuid(),
     stamp: new Date().toISOString().replace(/[:.]/g, '-')
   };
@@ -520,5 +637,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  parseArgs, resolveTargetUser, reloadCaddyArgs, writeValidatedCaddyfile, runStoreMode
+  parseArgs, resolveTargetUser, reloadCaddyArgs, writeValidatedCaddyfile, runStoreMode,
+  describeLiveGate, describeGateLines
 };

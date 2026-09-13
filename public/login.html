@@ -97,12 +97,23 @@
     color: var(--danger);
     font-size: 13px;
   }
+  p.alt { margin: 16px 0 0; font-size: 13px; text-align: center; }
+  p.notice { margin: 0 0 4px; font-size: 14px; }
+  code { font-size: 12px; overflow-wrap: anywhere; }
+  [hidden] { display: none !important; }
+  a { color: var(--accent); }
 </style>
 </head>
 <body>
 <main>
   <h1>TangleClaw</h1>
-  <p class="sub">Sign in to continue.</p>
+  <p class="sub" id="sub">Sign in to continue.</p>
+  <!--
+    Filled in from the gate state when signing in cannot work here, or is not
+    needed. Empty and hidden otherwise, so a page that could not learn the state
+    is the plain sign-in form.
+  -->
+  <p class="notice" id="state" role="status" hidden></p>
   <form id="f" autocomplete="on">
     <label for="u">Username</label>
     <input id="u" name="username" autocomplete="username" autocapitalize="none"
@@ -112,6 +123,11 @@
     <button id="go" type="submit">Sign in</button>
     <p id="error" role="alert" aria-live="polite"></p>
   </form>
+  <!--
+    Hidden until the gate state says `armed`, the one state `/recover` answers a
+    signed-out person in. Anywhere else the link would lead back to this page.
+  -->
+  <p class="alt" id="recover" hidden><a href="/recover">Forgot your password? Use a recovery code</a></p>
 </main>
 <script>
 'use strict';
@@ -119,6 +135,68 @@
   var form = document.getElementById('f');
   var err = document.getElementById('error');
   var go = document.getElementById('go');
+  var sub = document.getElementById('sub');
+  var stateNote = document.getElementById('state');
+  var recover = document.getElementById('recover');
+
+  // What this page says for each gate state in which a sign-in cannot succeed
+  // or is not asked for. Without these, a locked or unreadable install answers
+  // every attempt with "that username and password did not match" — the same
+  // words as a typo, sending the person to retry a password that was never the
+  // problem. Built with text nodes and one link, never innerHTML.
+  var TERMINAL = 'node scripts/reset-admin.js --store --user <name>';
+  var STATES = {
+    locked: {
+      text: 'Every account on this install is disabled, so no one can sign in. Someone at a terminal '
+        + 'on the TangleClaw machine can re-enable one with ',
+      code: TERMINAL,
+      after: ' (see docs/recovery.md).'
+    },
+    unreadable: {
+      text: 'TangleClaw cannot read its own login settings right now, so no one can sign in. Someone '
+        + 'at a terminal on the TangleClaw machine needs to check its log (see docs/recovery.md).'
+    },
+    fallback: {
+      text: 'TangleClaw\'s own login is standing down, and Caddy\'s password guards this install instead. ',
+      link: 'Continue to TangleClaw'
+    },
+    open: {
+      text: 'This install does not ask for a TangleClaw sign-in. ',
+      link: 'Continue to TangleClaw'
+    }
+  };
+
+  /**
+   * Show what this page can honestly offer for a gate state.
+   * @param {string|null} gateState - From GET /api/auth/me, or null if unknown
+   * @returns {void}
+   */
+  function applyGateState(gateState) {
+    if (gateState === 'armed') {
+      recover.hidden = false;
+      return;
+    }
+    var copy = Object.prototype.hasOwnProperty.call(STATES, gateState) ? STATES[gateState] : null;
+    // Unknown or unreadable answer: leave the plain form. A page that guessed a
+    // state would tell someone who can sign in that they cannot.
+    if (!copy) return;
+    stateNote.textContent = copy.text;
+    if (copy.code) {
+      var code = document.createElement('code');
+      code.textContent = copy.code;
+      stateNote.appendChild(code);
+    }
+    if (copy.after) stateNote.appendChild(document.createTextNode(copy.after));
+    if (copy.link) {
+      var a = document.createElement('a');
+      a.href = '/';
+      a.textContent = copy.link;
+      stateNote.appendChild(a);
+    }
+    stateNote.hidden = false;
+    sub.hidden = true;
+    form.hidden = true;
+  }
 
   form.addEventListener('submit', async function (ev) {
     ev.preventDefault();
@@ -155,6 +233,11 @@
   });
 
   document.getElementById('u').focus();
+
+  fetch('/api/auth/me', { headers: { Accept: 'application/json' } })
+    .then(function (res) { return res.ok ? res.json() : null; })
+    .then(function (me) { applyGateState(me && typeof me.gateState === 'string' ? me.gateState : null); })
+    .catch(function () { applyGateState(null); });
 })();
 </script>
 </body>
