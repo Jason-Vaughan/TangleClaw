@@ -137,13 +137,14 @@ What started as session persistence grew into a full orchestration platform — 
 - **PortHub** — central port registry with permanent and TTL leases, heartbeats, and next-free-port auto-allocation
 
 ### Security & Remote Access
-- **Caddy ingress** — the default on a fresh install (and reversible) reverse-proxy mode, provisioned by the setup wizard and driveable by hand with `scripts/ingress-cutover.js`, that fronts the dashboard, terminals, and APIs with TLS and a `basic_auth` password gate — including an auto-provisioned HTTPS site on your Tailscale tailnet. Fail-closed cutover with validation and health checks; full guide in [deploy/INGRESS.md](deploy/INGRESS.md)
-- **Forced admin setup** — the first-run wizard requires creating an admin login on any machine that can enforce one, which is the default; there is no default credential and no way to skip past it
-- **Change it from settings** — global settings has a Caddy password section for changing Caddy's password while it stands in front of TangleClaw; it may change it but never create or blank one, and it tells you it will sign you out before you commit
-- **Break-glass reset** — lost admin password? A local CLI resets it without disabling the gate
+- **Caddy ingress** — the default on a fresh install (and reversible) reverse-proxy mode, provisioned by the setup wizard and driveable by hand with `scripts/ingress-cutover.js`, that fronts the dashboard, terminals, and APIs with TLS — including an auto-provisioned HTTPS site on your Tailscale tailnet. Fail-closed cutover with validation and health checks; full guide in [deploy/INGRESS.md](deploy/INGRESS.md)
+- **TangleClaw's own login** — accounts with hashed passwords and a server-side session, enforced by TangleClaw on the dashboard, terminals, APIs, and the proxied gateway, on every ingress mode. Signing out, disabling an account, or resetting its password ends its sessions
+- **Forced first account** — the first-run wizard creates your account on any machine that can enforce a login, which is the default; there is no default credential and no way to skip past it
+- **Recovery without a lockout** — one-time recovery codes reset a forgotten password from the sign-in page, from any device; at a terminal, `scripts/reset-admin.js --store` resets or re-enables an account and `scripts/gate-fallback.js` puts Caddy's password back in front if the login itself breaks ([docs/recovery.md](docs/recovery.md))
+- **Caddy's password, only while it is needed** — Caddy's `basic_auth` stands in front of TangleClaw only until the first account exists (an install upgraded from the older Caddy-only gate) or during a fallback; while it does, global settings → **Caddy password** can change it
 - **Service tokens** — machine-to-machine tokens gate the PortHub and shared-docs APIs so other projects' scripts keep working after you lock the ingress down ([ADR 0005](docs/adr/0005-service-tokens.md))
-- **User attribution** — when the ingress authenticates a user, TangleClaw records who did what
-- **Auth-drift warning** — the dashboard flags when the ingress auth *config* and the *live* Caddy state disagree, so a half-applied gate can't quietly masquerade as protection
+- **User attribution** — the signed-in account is recorded as the owner of every session it launches
+- **Login and Caddyfile warnings** — the dashboard warns while the login is closed (no account yet, every account disabled, or its settings unreadable), and flags a live Caddyfile whose security properties differ from what TangleClaw would write, so a hand edit can't quietly masquerade as protection
 - **HTTPS via mkcert, one click** — for direct (no-ingress) mode, a wizard generates localhost certs and hot-swaps the server to HTTPS
 
 ### Integrations
@@ -238,7 +239,7 @@ Quick answers, with links into the full docs:
 | Launch an AI session and pick a permission mode | [User Guide — Launching a Session](docs/user-guide.md#launching-a-session) |
 | End a session properly (and why wraps matter) | [User Guide — Wrapping a Session](docs/user-guide.md#wrapping-a-session) |
 | Find what a past session did, or search old transcripts | [User Guide — Session History](docs/user-guide.md#session-history) |
-| Put a password and TLS in front of everything | [Ingress Guide](deploy/INGRESS.md) |
+| Put TLS in front and reach it from other devices | [Ingress Guide](deploy/INGRESS.md) |
 | Change the password you sign in with | [User Guide — Changing your login](docs/user-guide.md#changing-your-login) |
 | Get back in: a forgotten password, a disabled account, a broken login | [Recovery](docs/recovery.md) |
 | Let my sessions message each other (Medusa switchboard) | [User Guide — Session Switchboard](docs/user-guide.md#session-switchboard-medusa) |
@@ -270,26 +271,38 @@ Quick answers, with links into the full docs:
 
 TangleClaw runs a local server with browser-based terminal access, so reaching the dashboard means running shell commands as you. It therefore **listens on `127.0.0.1` only** unless you tell it otherwise — a fresh install is reachable from the machine it runs on, and nowhere else. The terminal listener (`ttyd`) is pinned to loopback on every install, new or upgraded. The `deletePassword` config option protects destructive operations only; it is not a login.
 
-**Upgrading from a version before this changed?** Your dashboard binding is left as it was, deliberately — narrowing it would take away remote access you may be relying on before there is a password to put in its place. TangleClaw says so on every start and on the dashboard until you resolve it, either by enabling the login gate below (recommended — it keeps remote access) or by setting `"bindAllInterfaces": false` to close it entirely.
+**Upgrading from a version before this changed?** Your dashboard binding is left as it was, deliberately — narrowing it would take away remote access you may be relying on before there is a password to put in its place. TangleClaw says so on every start and on the dashboard until you resolve it, either by turning on the login below (recommended — it keeps remote access) or by setting `"bindAllInterfaces": false` to close it entirely.
 
-**A fresh install sets a login during setup.** The wizard asks for a username and password and then
-configures the Caddy gate itself, so the password-gated ingress below is the **default outcome of
-installing**, not something you go and turn on afterwards. There is no default credential — you set
-one, or setup does not finish. TangleClaw skips the step only where it could not enforce a
-credential anyway (Caddy not installed, or a Caddy config it must not overwrite), and then says
-plainly that no login is in force rather than implying one.
+**A fresh install sets a login during setup.** The wizard asks for a username and password and
+creates your TangleClaw account from them, so the login is the **default outcome of installing**, not
+something you go and turn on afterwards. There is no default credential — you set one, or setup does
+not finish. TangleClaw skips the step only where setup cannot put Caddy in front (Caddy not installed,
+or a Caddy config it must not overwrite), and then says plainly that no login is in force rather than
+implying one. Once you are in, generate one-time **recovery codes** in **Settings → Recovery codes**
+and keep them apart from the device you sign in on: one resets a forgotten password from the sign-in
+page. (The wizard does not issue codes yet; an account created on the first-account page gets them.)
+
+**The login is TangleClaw's own**, enforced by the server on the dashboard, the terminals, the APIs
+and the proxied gateway, on every ingress mode. Local tools on this machine that are not browsers —
+the `tc` CLI, PortHub, the switchboard — are outside it; the optional service-token gate covers them.
+Caddy's `basic_auth` password pop-up appears only while TangleClaw's login cannot guard the door by
+itself: before an install's first account exists, or during a terminal fallback. **Upgrading an install
+that has only Caddy's password?** Sign in with it as before, create your account on the page that
+follows, then run `node scripts/ingress-cutover.js --to caddy` to take Caddy's password out of a
+Caddyfile TangleClaw generated (a hand-maintained one is yours to edit). Locked out, or the login
+itself broke? [Getting back into TangleClaw](docs/recovery.md) covers every case.
 
 To reach TangleClaw from another device, pick one of two things — never neither:
 
-- **The Caddy ingress** (the default, and recommended): a reversible cutover that fronts the dashboard, terminals, and APIs with TLS and a `basic_auth` password gate, forces admin-account creation on first run, and issues service tokens for machine-to-machine API callers. Setup provisions this for you; `scripts/ingress-cutover.js` is the manual path for upgrades and recovery. See [deploy/INGRESS.md](deploy/INGRESS.md).
-- **`"bindAllInterfaces": true`** in `~/.tangleclaw/config.json` (or Settings → Network Exposure): accept connections from every interface **with no password**. Only sensible on a network you fully control, and it is the deliberate opt-out from the protection above. Requires a restart.
+- **The Caddy ingress** (the default, and recommended): a reversible cutover that fronts the dashboard, terminals, and APIs with TLS, forces the first account on first run, and issues service tokens for machine-to-machine API callers. Setup provisions this for you; `scripts/ingress-cutover.js` is the manual path for upgrades and recovery. See [deploy/INGRESS.md](deploy/INGRESS.md).
+- **`"bindAllInterfaces": true`** in `~/.tangleclaw/config.json` (or Settings → Network Exposure): accept connections from every interface directly, with no TLS — and with no password unless TangleClaw's login is on. Only sensible on a network you fully control. Requires a restart.
 
 **Recommendations:**
 - **Enable the ingress** (or at minimum mkcert HTTPS) for any non-localhost access
 - Run TangleClaw on a trusted network or behind a VPN (e.g., Tailscale, WireGuard)
 - If accessing from mobile over Wi-Fi, ensure your network is private
 
-**Internet exposure is unsupported** — not merely discouraged. The gate is a single shared Basic credential with no rate limiting, lockout, second factor, or session revocation, sitting in front of arbitrary code execution. Supported perimeters are loopback, a private tunnel (Tailscale/WireGuard), or a trusted LAN behind the gate. The reasoning is recorded in [ADR 0009](docs/adr/0009-secure-by-default.md).
+**Internet exposure is unsupported** — not merely discouraged. The login is a password with no second factor, no per-address lockout, and no per-user permissions, sitting in front of arbitrary code execution. Supported perimeters are loopback, a private tunnel (Tailscale/WireGuard), or a trusted LAN behind the gate. The reasoning is recorded in [ADR 0009](docs/adr/0009-secure-by-default.md).
 
 ## Stay Updated
 

@@ -357,12 +357,16 @@ The settings modal lets you configure:
 
 #### Changing your login
 
-Global settings has a **Caddy password** section for changing the password Caddy asks for — the
-browser pop-up — on an install where Caddy's `basic_auth` still stands in front of TangleClaw. It
-appears only where that password is actually in force. Where it is not, it says why and where to go
-instead: on an install whose login is its TangleClaw account, that account's password is reset with a
-recovery code or `node scripts/reset-admin.js --store --user <name>` (see
-[Getting back into TangleClaw](recovery.md)).
+**The password you sign in to TangleClaw with** belongs to your TangleClaw account. There is no
+change-password form in the dashboard yet; set a new one with a recovery code from the sign-in page, or
+at a terminal on the machine with `node scripts/reset-admin.js --store --user <name>` (see
+[Getting back into TangleClaw](recovery.md)). Either one signs out the account's other browsers.
+
+**Caddy's password** — the browser pop-up that asks before any page loads — exists only on an install
+where Caddy's `basic_auth` still stands in front of TangleClaw: before the first account exists, or
+during a fallback. Global settings has a **Caddy password** section for changing it. It appears only
+where that password is actually in force; where it is not, it says so and names the account routes
+above.
 
 Two things to know before you use it:
 
