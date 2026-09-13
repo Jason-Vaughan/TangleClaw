@@ -86,6 +86,19 @@ describe('check-bump-diff', () => {
       assert.equal(checkBumpDiff(d).ok, true);
     });
 
+    it('two adjacent uses: lines, as git groups them (removed block, then added block)', () => {
+      // Captured from a real `git diff` of two consecutive steps both bumped.
+      const d = fileDiff('.github/workflows/test.yml', [
+        '     steps:',
+        '-      - uses: actions/checkout@v7',
+        '-      - uses: actions/checkout@v7',
+        '+      - uses: actions/checkout@v8',
+        '+      - uses: actions/checkout@v8',
+        '         with:'
+      ]);
+      assert.equal(checkBumpDiff(d).ok, true, checkBumpDiff(d).reason);
+    });
+
     it('a .yaml workflow and a sub-path action', () => {
       const d = bump('.github/workflows/ci.yaml', 'v3', 'v4', 'github/codeql-action/init');
       assert.equal(checkBumpDiff(d).ok, true);
@@ -153,6 +166,39 @@ describe('check-bump-diff', () => {
         '+      - uses: actions/checkout@v8'
       ], { meta: ['new file mode 100644'] }),
       'a mode change': bump('.github/workflows/test.yml', 'v7', 'v8').replace('\nindex ', '\nold mode 100644\nnew mode 100755\nindex '),
+      'a uses: line moved to another step': fileDiff('.github/workflows/test.yml', [
+        '-      - uses: actions/checkout@v7',
+        '       - run: npm test',
+        '+      - uses: actions/checkout@v8'
+      ]),
+      'a uses: line moved to another hunk': fileDiff('.github/workflows/test.yml', [
+        '-      - uses: actions/checkout@v7',
+        '       - run: echo one',
+        '@@ -40,3 +40,4 @@ jobs:',
+        '       - run: echo two',
+        '+      - uses: actions/checkout@v8'
+      ]),
+      'a quoted path header before any bump (git quotes unusual paths)':
+        'diff --git "a/.github/workflows/t\\303\\251st.yml" "b/.github/workflows/t\\303\\251st.yml"\n'
+        + bump('.github/workflows/test.yml', 'v7', 'v8').split('\n').slice(1).join('\n'),
+      'a spaced-path file after a real bump (captured from git)': bump('.github/workflows/test.yml', 'v7', 'v8')
+        + 'diff --git a/we ird.txt b/we ird.txt\nindex 587be6b..b77b4eb 100644\n--- a/we ird.txt\t\n+++ b/we ird.txt\t\n@@ -1 +1,2 @@\n x\n+y\n',
+      'a quoted non-workflow path after a real bump, carrying a bump-shaped change': bump('.github/workflows/test.yml', 'v7', 'v8')
+        + 'diff --git "a/scripts/r\\303\\251lease.yml" "b/scripts/r\\303\\251lease.yml"\n'
+        + '@@ -1,1 +1,1 @@\n-      - uses: actions/checkout@v7\n+      - uses: actions/checkout@v8\n',
+      'a hunk ending in a removal and the next hunk opening with an addition': fileDiff('.github/workflows/test.yml', [
+        '       - run: echo one',
+        '-      - uses: actions/checkout@v7',
+        '@@ -40,3 +40,3 @@ jobs:',
+        '+      - uses: actions/checkout@v8',
+        '       - run: echo two'
+      ]),
+      'a stray line before the first file header': 'Subject: bump\n' + bump('.github/workflows/test.yml', 'v7', 'v8'),
+      'an unrecognised line inside a hunk': fileDiff('.github/workflows/test.yml', [
+        '-      - uses: actions/checkout@v7',
+        '+      - uses: actions/checkout@v8',
+        '?unknown'
+      ]),
       'an empty diff': ''
     };
     for (const [name, diff] of Object.entries(cases)) {

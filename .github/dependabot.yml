@@ -6,7 +6,7 @@
 # maintainer on a clean branch off main. The protocol is
 # docs/dependency-bump-audit.md.
 #
-# Why a bot gets no exemption: Dependabot's own infrastructure is not the
+# Why a bot gets no exemption from audit or rebuild: Dependabot's own infrastructure is not the
 # threat. The threat is upstream. If a maintainer account behind an action is
 # compromised and a malicious release is published, Dependabot opens a PR to
 # pull it in, and nothing about the PR looks unusual. Letting that PR through

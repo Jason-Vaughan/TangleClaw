@@ -7,9 +7,9 @@ How a pull request from Dependabot is audited and turned into a change that ship
 **A Dependabot PR is an untrusted pull request.** It goes through
 [ADR 0014](adr/0014-dual-key-review-for-untrusted-prs.md) the same way a stranger's PR does. Two
 filters audit the raw diff, a maintainer rebuilds the change on a clean branch, and the bot's PR is
-never merged. There is no allow-list, no auto-merge and no bot exemption, and none will be added.
+never merged. There is no allow-list, no auto-merge and no bot exemption from audit or rebuild, and none will be added. (ADR 0014's one Dependabot exemption is narrower: a `uses:`-only bump skips the workflows *rejection* and goes to this audit instead.)
 
-## Why a bot gets no exemption
+## Why a bot gets no exemption from audit
 
 Dependabot's own infrastructure is not the threat. The threat is upstream. Suppose the account
 behind an action gets compromised, or a release tag gets moved to point at a malicious commit.

@@ -55,8 +55,6 @@ We establish a **Dual-Key (Two-Person) Review** mechanism for all untrusted exte
    **Not every rejection reason is one the contributor could have read, and the two must not be confused.** `CONTRIBUTING.md` §4 publishes the execute-on-our-machine list, so a rejection there is a rule the contributor was told. It deliberately does *not* forbid `public/**` — that omission is a recorded decision, because forbidding the UI surface would block every legitimate UI contribution for no gain when reconstruction already covers it. **In a repo where the live-serving surface DOES reject, that rejection rests on an unpublished boundary** — the contributor did nothing they were warned against. Two obligations follow there. The reply must not cite `CONTRIBUTING.md` as though it said so; it says plainly that the deployment serves `public/` off the working tree and that the omission is ours. And such a repo must decide, before its first use, whether to publish that boundary or keep the asymmetry knowingly; what it must not do is reject on a rule it never wrote down and then point at a page that does not contain it.
 
    **This repo is not that repo, as of the ruling above** — its live-serving category does not reject, so it has no unpublished rejection rule and the obligation is discharged rather than deferred. The paragraph is kept because the obligation still binds any repo adopting this ADR that rules the other way, and because the reply to a live-surface contributor must still say plainly that this deployment serves `public/` off the working tree.
-2. **The Builder (Micro Filter):** If the PR clears the Coordinator's macro audit, the Coordinator passes the PR details to the Builder via Medusa. The Builder performs a secondary independent raw-text audit, focusing on logical soundness, regressions, and subtle implementation flaws.
-3. **Execution:** Only when both sessions have passed the PR does the Builder reconstruct, on a clean branch off `main`.
 
    **A Dependabot bump that changes ONLY `uses:` refs does not reject on `.github/workflows/`. Ruled by the operator 2026-09-12 (#1361, relayed by the Coordinator session and recorded here).**
    Every GitHub Actions bump edits a workflow file, so under the execute-on-our-machine category
@@ -77,6 +75,9 @@ We establish a **Dual-Key (Two-Person) Review** mechanism for all untrusted exte
    micro filter and reconstruction in [`docs/dependency-bump-audit.md`](../dependency-bump-audit.md);
    it is never merged, auto-merged or allow-listed. The exemption does not close a tag moved
    upstream while workflows reference actions by tag; that is #1436.
+
+2. **The Builder (Micro Filter):** If the PR clears the Coordinator's macro audit, the Coordinator passes the PR details to the Builder via Medusa. The Builder performs a secondary independent raw-text audit, focusing on logical soundness, regressions, and subtle implementation flaws.
+3. **Execution:** Only when both sessions have passed the PR does the Builder reconstruct, on a clean branch off `main`.
 
    **Reconstruct from the ISSUE, not from their diff.** This is the difference between a clean room and laundering, and it is the step most easily skipped because transcription is faster and looks identical in the final diff. Re-derive the fix from the requirement — the issue text, the code, the artifacts — and consult their diff only to confirm the audit already performed, never as the source. Two things fall out of doing it properly, both observed on this ADR's first application (#1287 / PR #1334):
    - **Their flaws do not become ours.** An independently written validator contained a clause that a mutation proved *dead*; it was deleted. A transcription would have shipped it, with our name on it.

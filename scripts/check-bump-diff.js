@@ -19,8 +19,10 @@
  *   - every added or removed line is a `uses: owner/repo[/path]@ref` line, with at
  *     most a trailing version comment (`# v4.2.0`, as SHA-pinned refs carry);
  *   - every such line names the SAME action;
- *   - each file removes and adds the same lines apart from the ref, so no step is
- *     added, dropped or re-indented;
+ *   - each removed `uses:` line is replaced IN PLACE by one added line differing
+ *     only in its ref, so no step is added, dropped, moved or re-indented;
+ *   - every diff line is one the parser recognises (a quoted path, stray header or
+ *     any unknown shape fails closed rather than being skipped);
  *   - exactly one new ref, and it is not one of the old refs.
  *
  * Exit: 0 bump-only · 1 not bump-only (reason on stderr) · 2 no diff on stdin.
@@ -32,34 +34,59 @@ const WORKFLOW_RE = /^\.github\/workflows\/[^/]+\.ya?ml$/;
 
 /**
  * Split a unified diff (as `gh pr diff` / `git diff` print it) into per-file
- * records.
+ * records, grouping each run of changed lines as git prints it: a block of
+ * removed lines followed by its block of added lines. Strict by design — any
+ * line the parser does not recognise is returned as `unparsed`, so a diff shape
+ * this tool was not written for fails closed instead of being skipped.
  * @param {string} text - The diff text.
- * @returns {Array<{a: string, b: string, meta: string[], removed: string[], added: string[]}>}
+ * @returns {{ files: Array<{a: string, b: string, meta: string[], groups: Array<{removed: string[], added: string[]}>}>, unparsed: string|null }}
  */
 function parseDiff(text) {
   const files = [];
   let cur = null;
   let inHunk = false;
-  for (const line of text.split('\n')) {
-    const header = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
-    if (header) {
-      cur = { a: header[1], b: header[2], meta: [], removed: [], added: [] };
+  let group = null;
+  const flush = () => {
+    if (cur && group && (group.removed.length || group.added.length)) cur.groups.push(group);
+    group = { removed: [], added: [] };
+  };
+  const lines = text.split('\n');
+  if (lines.length && lines[lines.length - 1] === '') lines.pop();
+  for (const line of lines) {
+    if (line.startsWith('diff --git ')) {
+      flush();
+      const header = /^diff --git a\/(\S+) b\/(\S+)$/.exec(line);
+      if (!header) return { files, unparsed: line };
+      cur = { a: header[1], b: header[2], meta: [], groups: [] };
       files.push(cur);
       inHunk = false;
       continue;
     }
-    if (!cur) continue;
-    if (line.startsWith('@@')) { inHunk = true; continue; }
-    if (!inHunk) {
-      if (!line.startsWith('index ') && !line.startsWith('--- ') && !line.startsWith('+++ ')) {
-        cur.meta.push(line);
-      }
+    if (!cur) {
+      if (line.trim() !== '') return { files, unparsed: line };
       continue;
     }
-    if (line.startsWith('+')) cur.added.push(line.slice(1));
-    else if (line.startsWith('-')) cur.removed.push(line.slice(1));
+    if (line.startsWith('@@ ')) { flush(); inHunk = true; continue; }
+    if (!inHunk) {
+      if (line.startsWith('index ') || line.startsWith('--- ') || line.startsWith('+++ ')) continue;
+      cur.meta.push(line);
+      continue;
+    }
+    if (line.startsWith('-')) {
+      if (group.added.length) flush();
+      group.removed.push(line.slice(1));
+    } else if (line.startsWith('+')) {
+      group.added.push(line.slice(1));
+    } else if (line.startsWith(' ') || line === '') {
+      flush();
+    } else if (line.startsWith('\\')) {
+      // "\ No newline at end of file" — describes the line before it.
+    } else {
+      return { files, unparsed: line };
+    }
   }
-  return files;
+  flush();
+  return { files, unparsed: null };
 }
 
 /**
@@ -69,36 +96,48 @@ function parseDiff(text) {
  */
 function checkBumpDiff(text) {
   const fail = (reason) => ({ ok: false, reason, action: null, from: [], to: null });
-  const files = parseDiff(text || '');
+  const { files, unparsed } = parseDiff(text || '');
+  if (unparsed !== null) return fail(`unrecognised diff line: ${JSON.stringify(unparsed)}`);
   if (files.length === 0) return fail('the diff changes no files');
 
   const actions = new Set();
   const oldRefs = new Set();
   const newRefs = new Set();
+  /**
+   * Parse one changed line as a `uses:` ref, recording its action and ref.
+   * @param {string} l
+   * @param {Set<string>} refs
+   * @returns {string|null} The line with its ref removed, or null if not a uses: line.
+   */
+  const shapeOf = (l, refs) => {
+    const m = USES_RE.exec(l);
+    if (!m) return null;
+    actions.add(m[2]);
+    refs.add(m[3]);
+    return `${m[1]}uses: ${m[2]}`;
+  };
+
   for (const f of files) {
     if (f.a !== f.b) return fail(`${f.a} → ${f.b}: a rename is not a bump`);
     if (!WORKFLOW_RE.test(f.b)) return fail(`${f.b} is not a workflow file under .github/workflows/`);
     const meta = f.meta.filter((m) => m.trim() !== '');
     if (meta.length) return fail(`${f.b}: ${meta[0]} (only in-place text edits are a bump)`);
-    if (f.added.length === 0 && f.removed.length === 0) return fail(`${f.b}: no changed lines`);
+    if (f.groups.length === 0) return fail(`${f.b}: no changed lines`);
 
-    const shape = (lines, refs) => {
-      const out = [];
-      for (const l of lines) {
-        const m = USES_RE.exec(l);
-        if (!m) return { bad: l };
-        actions.add(m[2]);
-        refs.add(m[3]);
-        out.push(`${m[1]}uses: ${m[2]}`);
+    for (const g of f.groups) {
+      // A bump rewrites each uses: line in place, so every removed line is
+      // replaced at the same position by exactly one added line. A line removed
+      // in one place and added in another is a moved step, not a bump.
+      if (g.removed.length !== g.added.length) {
+        return fail(`${f.b}: ${g.removed.length} removed vs ${g.added.length} added line(s) at one position (a step was added, dropped or moved)`);
       }
-      return { out: out.sort() };
-    };
-    const rem = shape(f.removed, oldRefs);
-    if (rem.bad !== undefined) return fail(`${f.b}: removed line is not a uses: ref: ${JSON.stringify(rem.bad)}`);
-    const add = shape(f.added, newRefs);
-    if (add.bad !== undefined) return fail(`${f.b}: added line is not a uses: ref: ${JSON.stringify(add.bad)}`);
-    if (rem.out.join('\n') !== add.out.join('\n')) {
-      return fail(`${f.b}: removed and added uses: lines differ beyond the ref (a step was added, dropped or re-indented)`);
+      for (let i = 0; i < g.removed.length; i++) {
+        const before = shapeOf(g.removed[i], oldRefs);
+        if (before === null) return fail(`${f.b}: removed line is not a uses: ref: ${JSON.stringify(g.removed[i])}`);
+        const after = shapeOf(g.added[i], newRefs);
+        if (after === null) return fail(`${f.b}: added line is not a uses: ref: ${JSON.stringify(g.added[i])}`);
+        if (before !== after) return fail(`${f.b}: ${JSON.stringify(g.removed[i])} became ${JSON.stringify(g.added[i])} (more than the ref changed)`);
+      }
     }
   }
 
