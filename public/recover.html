@@ -3,20 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in — TangleClaw</title>
+<title>Use a recovery code — TangleClaw</title>
 <!--
-  Deliberately ONE self-contained document: styles and script inline, no
-  external asset, no favicon link, no font fetch.
+  Where a signed-out person who forgot their password sets a new one with a
+  one-time recovery code (`POST /api/auth/recover`). The gate serves it to a
+  signed-out person only while the install is `armed` (`lib/auth-gate.js`
+  RECOVERY_PATHS).
 
-  Every path that has to answer before anyone is logged in is a hole in the
-  gate (`lib/auth-gate.js` LOGIN_SURFACE_PATHS), so a login page split into
-  page + stylesheet + script would be three holes instead of one. That is also
-  why this page does not load `api-helper.js` — it posts with a bare `fetch`
-  and needs nothing the dashboard has.
+  Self-contained for the same reasons as `login.html`: every path answered to a
+  signed-out person is a hole in the gate, and a cached copy is how a stale page
+  reaches someone who has since signed in. Not in the service worker's precache
+  and not referenced from `sw.js`.
 
-  NOT registered in the service worker's precache and not referenced from
-  `sw.js`: caching a login page is how a stale one gets served to someone who
-  is already signed in.
+  The password hint repeats `caddy.validateAdminPassword`'s rule as a hint only;
+  the server's answer is the one shown when they disagree.
 -->
 <style>
   :root {
@@ -72,6 +72,7 @@
     border: 1px solid var(--line);
     border-radius: 7px;
   }
+  input#code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.04em; }
   input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   button {
     width: 100%;
@@ -86,17 +87,14 @@
     cursor: pointer;
   }
   button[disabled] { opacity: 0.6; cursor: default; }
-  /*
-    Always in the DOM, emptied rather than hidden, and marked as a live region:
-    a screen reader must hear "that password is wrong" without the element
-    appearing and disappearing under it. Accessibility From the Start.
-  */
+  /* Always in the DOM, emptied rather than hidden, as on the login page. */
   #error {
     margin-top: 14px;
     min-height: 1.4em;
     color: var(--danger);
     font-size: 13px;
   }
+  p.hint { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
   p.alt { margin: 16px 0 0; font-size: 13px; text-align: center; }
   a { color: var(--accent); }
 </style>
@@ -104,17 +102,22 @@
 <body>
 <main>
   <h1>TangleClaw</h1>
-  <p class="sub">Sign in to continue.</p>
-  <form id="f" autocomplete="on">
-    <label for="u">Username</label>
-    <input id="u" name="username" autocomplete="username" autocapitalize="none"
-           autocorrect="off" spellcheck="false" required>
-    <label for="p">Password</label>
-    <input id="p" name="password" type="password" autocomplete="current-password" required>
-    <button id="go" type="submit">Sign in</button>
+  <p class="sub">Forgot your password? Enter one of the recovery codes you saved when you
+    created your account, and choose a new password. Each code works once.</p>
+  <form id="f" autocomplete="off">
+    <label for="code">Recovery code</label>
+    <input id="code" name="code" autocapitalize="characters" autocorrect="off"
+           spellcheck="false" placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" required>
+    <label for="p">New password</label>
+    <input id="p" name="password" type="password" autocomplete="new-password"
+           minlength="12" aria-describedby="p-hint" required>
+    <p id="p-hint" class="hint">At least 12 characters, and not containing your username.</p>
+    <label for="c">Confirm new password</label>
+    <input id="c" name="confirm" type="password" autocomplete="new-password" required>
+    <button id="go" type="submit">Set new password</button>
     <p id="error" role="alert" aria-live="polite"></p>
   </form>
-  <p class="alt"><a href="/recover">Forgot your password? Use a recovery code</a></p>
+  <p class="alt"><a href="/login">Back to sign in</a></p>
 </main>
 <script>
 'use strict';
@@ -126,38 +129,36 @@
   form.addEventListener('submit', async function (ev) {
     ev.preventDefault();
     err.textContent = '';
+    var password = document.getElementById('p').value;
+    if (password !== document.getElementById('c').value) {
+      err.textContent = 'The two passwords do not match.';
+      return;
+    }
     go.disabled = true;
-    go.textContent = 'Signing in…';
+    go.textContent = 'Checking…';
     try {
-      var res = await fetch('/api/auth/login', {
+      var res = await fetch('/api/auth/recover', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: document.getElementById('u').value,
-          password: document.getElementById('p').value
-        })
+        body: JSON.stringify({ code: document.getElementById('code').value, password: password })
       });
       var data = await res.json().catch(function () { return {}; });
       if (res.ok) {
-        // Replace rather than assign, so Back does not land on this page with
-        // a live session and a filled-in password field.
-        //
-        // The destination is always the dashboard root, never a `?next=`
-        // parameter taken off the URL. An open redirect on a login page is a
-        // credential-phishing primitive, and nothing here needs deep-linking
-        // badly enough to introduce one.
+        // Always the dashboard root, never a parameter off the URL — the
+        // open-redirect reason given in `login.html`. The dashboard shows how
+        // many codes are left and that one was used.
         window.location.replace('/');
         return;
       }
-      err.textContent = data.error || ('Sign in failed (HTTP ' + res.status + ')');
+      err.textContent = data.error || ('Could not reset the password (HTTP ' + res.status + ')');
     } catch (e) {
       err.textContent = 'Could not reach the server.';
     }
     go.disabled = false;
-    go.textContent = 'Sign in';
+    go.textContent = 'Set new password';
   });
 
-  document.getElementById('u').focus();
+  document.getElementById('code').focus();
 })();
 </script>
 </body>

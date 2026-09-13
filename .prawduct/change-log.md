@@ -34,6 +34,36 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-13 — #1420 A-04a: one-time recovery codes, ADR 0009 rule 5 amended
+
+<!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->
+
+Train 9 Chunk 04, A-04a. Merges into `train-9/cutover`, not `main`.
+
+**Why.** The Checkpoint 1 ruling ("1 + 2") adds an off-box recovery path for non-technical installers:
+a one-time code that resets a forgotten password. It is a second way past the password, so it gets
+its own chunk and review, split from A-04b's fallback command and terminal recovery work.
+
+**What.** `lib/recovery-codes.js` (generation, normalisation, SHA-256 digest, client key, bounded
+failure limiter). `store.recoveryCodes` over `recovery_codes` (schema v38, UNIQUE `code_hash`
+postcondition): atomic `#replaceForUser`, side-effect-free `#peek`, `#redeem` (re-check under
+`BEGIN IMMEDIATE`, mark used, set the precomputed hash, destroy sessions), status and per-account
+notice. Gate: `RECOVERY_PATHS` exempt only in `armed`; `/api/auth/recover` CSRF-exempt like login.
+Routes: `POST /api/auth/recover` (per-client failure limit, one answer for wrong/used/disabled,
+policy after the code is known valid, hash inside the login cap, `_signIn`), `GET`/`POST
+/api/auth/recovery-codes` (regeneration needs the current password), `.../acknowledge`;
+`/api/server-info` `recoveryNotice`. Issued by `POST /api/auth/set-password`. Pages:
+`public/recover.html`, login link, codes shown once on `account-setup.html`; dashboard banner and
+Settings → Recovery codes. Records: ADR 0009 rule 5 + amendment, ADR 0015 pointer, ADR 0016
+"Recorded during #1420 A-04a", SECURITY.md recovery bullet, user guide, FEATURES,
+`security-model.md` Direction (gitignored copy).
+
+**Review.** Critic `rev-20260913T153542Z-387ef554` over `de11c380..e45fdd58` — 0 blocking, 0 warnings,
+0 notes; PR gate satisfied. Two observations: `users.enable` revives an account's old codes (carried
+to A-04b's reset-admin rework), and record-lint's plan pick was correct. Mutation: 15 new guards, all
+red. Real-socket smoke on a throwaway store: create → codes → redeem → reuse refused → notice →
+regenerate → old set dead.
+
 ## 2026-09-13 — #1420 A-03: Caddy's gate by state, a TangleClaw-owned bypass list, drift P5, #1055
 
 <!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->

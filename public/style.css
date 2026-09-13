@@ -2681,6 +2681,17 @@ body {
 .gs-toggle-label.gs-toggle-locked input:disabled + .toggle-switch {
   background: var(--border, #333);
 }
+/* Recovery codes shown once after generation (#1420). Monospace so a code read
+   back from the screen is unambiguous, and select-all so one tap copies it. */
+.recovery-code-list {
+  margin: 10px 0 0;
+  padding-left: 1.6em;
+  font: 13px/1.9 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.03em;
+  user-select: all;
+}
+.recovery-code-list.hidden { display: none; }
+
 .gs-section-label {
   font-size: 10px;
   font-weight: 700;

@@ -301,6 +301,8 @@ const medusaWake = require('./lib/medusa-wake');
 const authIdentity = require('./lib/auth-identity');
 const authSession = require('./lib/auth-session');
 const authGate = require('./lib/auth-gate');
+const recoveryCodes = require('./lib/recovery-codes');
+const passwordHashing = require('./lib/password');
 const sessionOwnership = require('./lib/session-ownership');
 const planDocs = require('./lib/plan-docs');
 const serviceToken = require('./lib/service-token');
@@ -831,6 +833,11 @@ const _AUTH_PAGE_FALLBACKS = {
     + 'page is missing from this install. Post a username and password to '
     + '<code>/api/auth/set-password</code>, or run '
     + '<code>node scripts/reset-admin.js --store --user &lt;name&gt;</code> '
+    + 'at a terminal on this machine.</p>',
+  'recover.html': '<!DOCTYPE html><meta charset="utf-8"><title>Use a recovery code</title>'
+    + '<p>TangleClaw\'s recovery page is missing from this install. Post a recovery code '
+    + 'and a new password to <code>/api/auth/recover</code>, or run '
+    + '<code>node scripts/reset-admin.js --store --user &lt;name&gt;</code> '
     + 'at a terminal on this machine.</p>'
 };
 
@@ -857,7 +864,7 @@ function _serveLoginPage(res, status) {
  *
  * @param {http.ServerResponse} res
  * @param {number} status - 200 for a direct visit, 401 for a refusal
- * @param {'login.html'|'account-setup.html'} file - The page under `public/`
+ * @param {'login.html'|'account-setup.html'|'recover.html'} file - The page under `public/`
  * @returns {void}
  */
 function _serveAuthPage(res, status, file) {
@@ -1140,6 +1147,9 @@ route('GET', '/api/server-info', (_req, res) => {
   // Whether a login is enforced, from the gate's own state for this request.
   // Surfacing only — never enforces. See docs/auth-status-surfacing.md.
   info.authStatus = authIdentity.resolveAuthStatus(_req.tcGateState);
+  // A recovery code this account's password was reset with, not yet
+  // acknowledged. Per account: only the signed-in account's own redemptions.
+  info.recoveryNotice = _req.tcSession ? store.recoveryCodes.pendingNotice(_req.tcSession.userId) : null;
   // #227: is the local clone behind origin/main? Cached answer, never waits on
   // the network — a stale cache starts one background fetch for the next poll.
   // `enabled: false` when the operator turned the check off in config.
@@ -2079,8 +2089,219 @@ route('POST', '/api/auth/set-password', async (req, res, _params, body) => {
     proxied: authIdentity.cameThroughProxy(req.headers)
   });
 
+  // The account's first recovery codes, shown once by the page that asked. A
+  // failure here must not undo the account that was just created — the person
+  // is signed in and can generate codes in Settings — so it is logged and
+  // reported as `recoveryCodes: null` rather than turned into a 500 that would
+  // read as "the account was not created".
+  let codes = null;
+  try {
+    codes = store.recoveryCodes.replaceForUser(user.id).map(recoveryCodes.formatCode);
+  } catch (err) { // prawduct:allow prawduct/broad-except -- the account already exists; any failure is logged and reported as no codes
+    log.error('Could not generate recovery codes for the first account', {
+      username: user.username, error: err.message
+    });
+  }
+
   const session = _signIn(req, res, user);
-  jsonResponse(res, 200, { username: user.username, csrfToken: session.csrfToken });
+  jsonResponse(res, 200, { username: user.username, csrfToken: session.csrfToken, recoveryCodes: codes });
+});
+
+// ── Recovery codes (#1420, ADR 0016 "The ruling") ──
+//
+// A code resets one account's password once, from anywhere the login page can be
+// reached. That is a second way past the password, accepted by the operator for
+// installers for whom "SSH in and run a script" is no recovery at all, and every
+// choice below keeps it worth exactly that:
+//
+//   - redemption is exempt from the gate only while `armed`
+//     (`lib/auth-gate.js#RECOVERY_PATHS`);
+//   - a wrong code, a used code and a disabled account's code get one answer
+//     (`store.recoveryCodes#peek` is one query for all three);
+//   - failures are counted per client and refused past a limit;
+//   - a redemption ends every session the account holds, is logged at warn, and
+//     raises a notice on the account's dashboard;
+//   - minting codes needs the current PASSWORD, not only a session, because a
+//     stolen cookie that could mint codes would leave the thief a key that
+//     survives the operator's next password change.
+
+// Failed redemptions per client. Only failures count, so the operator's own
+// success is never slowed. The code's 125 bits already make guessing hopeless;
+// this bounds the log and CPU a flood can cost, and it is per client so one
+// flood cannot lock everyone else out of recovery.
+const _recoveryFailures = recoveryCodes.createFailureLimiter();
+
+/**
+ * Who is redeeming: the limiter's key, and a readable origin for the log and
+ * the dashboard notice.
+ * @param {http.IncomingMessage} req
+ * @returns {{ key: string, from: string }}
+ */
+function _recoveryClient(req) {
+  const key = recoveryCodes.clientKey(req.socket, req.headers, adminCredential.isLoopbackRemote);
+  const from = key.startsWith('xff:') ? `${key.slice(4)} (through the proxy)` : (key.slice(5) || 'unknown');
+  return { key, from };
+}
+
+/**
+ * Refuse a recovery request on an install where no code can succeed, saying what
+ * is actually true of it.
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res
+ * @returns {boolean} true when a refusal was sent
+ */
+function _refuseRecoveryOutsideArmed(req, res) {
+  if (req.tcGateState === authGate.GATE_STATES.ARMED) return false;
+  if (authGate.isOpen(req.tcGateState)) {
+    errorResponse(res, 409, 'This install does not require a login, so there is no password to recover.',
+      'LOGIN_NOT_REQUIRED');
+  } else if (req.tcGateState === authGate.GATE_STATES.UNREADABLE) {
+    errorResponse(res, 503, 'TangleClaw cannot read its login state right now, so it cannot check a '
+      + 'recovery code. Check the server log.', 'GATE_UNREADABLE');
+  } else {
+    errorResponse(res, 409, 'No account on this install can be recovered with a code. '
+      + 'Run node scripts/reset-admin.js at a terminal on the machine.', 'RECOVERY_UNAVAILABLE');
+  }
+  return true;
+}
+
+// POST /api/auth/recover — set a new password with a one-time recovery code.
+//
+// Order is argued:
+//   1. Not `armed` → refuse. The gate normally challenges first; the fleet
+//      carve-out can still reach here in any state.
+//   2. The per-client failure limit, before anything is read.
+//   3. Both fields present — a 400 that reads nothing and costs no failure.
+//   4. The code (`peek`, no side effect). Unknown, used, or a disabled
+//      account's → the one answer, counted as a failure.
+//   5. Password policy, which needs the account's username. Reached only by
+//      someone already holding a valid code, and the code is not consumed.
+//   6. Hash the new password off the event loop, inside the login cap.
+//   7. `redeem` re-checks the code under the write lock and applies everything
+//      at once; a code used in between gets the step-4 answer.
+//   8. Sign the redeemer in through `_signIn`.
+route('POST', '/api/auth/recover', async (req, res, _params, body) => {
+  if (_refuseRecoveryOutsideArmed(req, res)) return;
+  const client = _recoveryClient(req);
+  if (_recoveryFailures.isLimited(client.key)) {
+    log.warn('Refused a recovery attempt: too many failures from this client', { from: client.from });
+    res.setHeader('Retry-After', '900');
+    return errorResponse(res, 429,
+      'Too many recovery attempts from here. Wait a few minutes and try again.', 'RECOVERY_RATE_LIMITED');
+  }
+  const payload = body || {};
+  const code = typeof payload.code === 'string' ? payload.code : '';
+  const password = typeof payload.password === 'string' ? payload.password : '';
+  if (!code || !password) {
+    return errorResponse(res, 400, 'Enter a recovery code and a new password.', 'BAD_REQUEST');
+  }
+
+  // ONE message and ONE code for an unknown, used or disabled-account code —
+  // "wrong" and "already used" must not be told apart.
+  const deny = () => {
+    _recoveryFailures.recordFailure(client.key);
+    log.warn('Recovery code refused', { from: client.from });
+    return errorResponse(res, 401, 'That recovery code is not valid.', 'INVALID_RECOVERY_CODE');
+  };
+  const holder = store.recoveryCodes.peek(code);
+  if (!holder) return deny();
+
+  const policy = caddy.validateAdminPassword(password, holder.username);
+  if (!policy.ok) return errorResponse(res, 400, policy.error, 'WEAK_PASSWORD');
+
+  if (_loginVerificationsInFlight >= MAX_CONCURRENT_LOGIN_VERIFICATIONS) {
+    res.setHeader('Retry-After', '1');
+    return errorResponse(res, 503, 'The server is busy. Try again in a moment.', 'LOGIN_BUSY');
+  }
+  let hash;
+  _loginVerificationsInFlight += 1;
+  try {
+    hash = await passwordHashing.hashPasswordAsync(password);
+  } finally {
+    _loginVerificationsInFlight -= 1;
+  }
+  const redeemed = store.recoveryCodes.redeem(code, hash, client.from);
+  if (!redeemed) return deny();
+
+  const user = { id: redeemed.id, username: redeemed.username };
+  const session = _signIn(req, res, user);
+  jsonResponse(res, 200, { username: user.username, remaining: redeemed.remaining, csrfToken: session.csrfToken });
+});
+
+/**
+ * The signed-in session a recovery-code management route acts for, or null
+ * after sending the refusal. An `open` install resolves no session at all, so
+ * the answer there says a login is not in use.
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res
+ * @returns {object|null}
+ */
+function _recoveryCodesSession(req, res) {
+  if (req.tcSession) return req.tcSession;
+  if (authGate.isOpen(req.tcGateState)) {
+    errorResponse(res, 409, 'Recovery codes belong to a login, and this install does not require one.',
+      'LOGIN_NOT_REQUIRED');
+  } else {
+    errorResponse(res, 401, 'Sign in to manage recovery codes.', 'UNAUTHENTICATED');
+  }
+  return null;
+}
+
+// GET /api/auth/recovery-codes — how many unused codes the signed-in account
+// holds, and any redemption it has not acknowledged. Never a code: codes exist
+// in the clear only in the response that minted them.
+route('GET', '/api/auth/recovery-codes', (req, res) => {
+  const session = _recoveryCodesSession(req, res);
+  if (!session) return;
+  jsonResponse(res, 200, Object.assign(store.recoveryCodes.status(session.userId), {
+    notice: store.recoveryCodes.pendingNotice(session.userId)
+  }));
+});
+
+// POST /api/auth/recovery-codes — replace the signed-in account's codes.
+//
+// Requires the current password in the body: a session alone must not mint a
+// key that outlives a password change. Verified with the login route's
+// equal-cost `verifyAsync`, inside the same concurrency cap.
+route('POST', '/api/auth/recovery-codes', async (req, res, _params, body) => {
+  const session = _recoveryCodesSession(req, res);
+  if (!session) return;
+  const password = body && typeof body.password === 'string' ? body.password : '';
+  if (!password) {
+    return errorResponse(res, 400, 'Enter your current password to generate new codes.', 'BAD_REQUEST');
+  }
+  if (_loginVerificationsInFlight >= MAX_CONCURRENT_LOGIN_VERIFICATIONS) {
+    res.setHeader('Retry-After', '1');
+    return errorResponse(res, 503, 'The server is busy. Try again in a moment.', 'LOGIN_BUSY');
+  }
+  let verified;
+  _loginVerificationsInFlight += 1;
+  try {
+    verified = await store.users.verifyAsync(session.username, password);
+  } finally {
+    _loginVerificationsInFlight -= 1;
+  }
+  if (!verified) {
+    return errorResponse(res, 403, 'That password did not match.', 'REAUTH_FAILED');
+  }
+  let codes;
+  try {
+    codes = store.recoveryCodes.replaceForUser(verified.id);
+  } catch (err) {
+    if (err.code === 'NO_SUCH_ACCOUNT') {
+      return errorResponse(res, 409, 'This account cannot hold recovery codes.', 'NO_SUCH_ACCOUNT');
+    }
+    throw err;
+  }
+  jsonResponse(res, 200, { codes: codes.map(recoveryCodes.formatCode), remaining: codes.length });
+});
+
+// POST /api/auth/recovery-codes/acknowledge — clear the signed-in account's
+// redemption notice. The one way it goes away besides regenerating the codes.
+route('POST', '/api/auth/recovery-codes/acknowledge', (req, res) => {
+  const session = _recoveryCodesSession(req, res);
+  if (!session) return;
+  jsonResponse(res, 200, { cleared: store.recoveryCodes.clearNotice(session.userId) });
 });
 
 // GET /api/auth/me — who this request is, and whether a login is required.
@@ -7553,6 +7774,12 @@ async function handleRequest(req, res) {
       ? _serveAuthPage(res, 200, 'account-setup.html')
       : _serveLoginPage(res, 200);
   }
+  // The recovery-code page. The gate lets a signed-out person reach it only in
+  // `armed`; anywhere else it is reached only when the gate is open or the
+  // caller is signed in, and the route it posts to says why a code cannot help.
+  if (method === 'GET' && pathname === '/recover') {
+    return _serveAuthPage(res, 200, 'recover.html');
+  }
 
   // API routes
   if (pathname.startsWith('/api/')) {
@@ -8959,4 +9186,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, serverProtocol, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, _setRestartScheduler, _setCutoverSpawner, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers };
+module.exports = { createServer, serverProtocol, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers };

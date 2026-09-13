@@ -59,11 +59,15 @@ that off; they never have to turn it on.**
 4. **A settings surface may change the credential, never blank it.** Two routes to "no password" is
    one more than this ADR allows; the only unprotected state is the deliberate opt-out.
 
-5. **Recovery proves physical control and lives outside the gate.** Break-glass is a terminal tool on
-   the machine (`scripts/reset-admin.js`), never a dashboard feature — a reset behind the gate cannot
-   help the person the gate locked out. Being on the box is the authorization, which is the correct
-   bar: local shell access already confers everything TangleClaw could give. An AI assistant running
-   locally may perform it. This deliberately opens no second remote door.
+5. **Recovery lives outside the gate, and proves either physical control or a one-time code.**
+   *(Amended 2026-09-13 — see "Amendment 2026-09-13" below; the original text said recovery proves
+   physical control in every case and "deliberately opens no second remote door".)* Break-glass is a
+   terminal tool on the machine (`scripts/reset-admin.js`), never a feature behind the gate — a reset
+   behind the gate cannot help the person the gate locked out. Being on the box is the authorization
+   for it, which is the correct bar: local shell access already confers everything TangleClaw could
+   give. An AI assistant running locally may perform it. **One bounded exception:** the holder of an
+   unused one-time recovery code may reset that account's password from off the machine, through a
+   route that answers before the gate. A broken gate is still recovered from a shell.
 
 6. **Internet exposure is unsupported**, not merely discouraged. A single shared Basic credential
    with no rate limiting, lockout, second factor, or session revocation is too thin a margin in front
@@ -191,6 +195,24 @@ is that the terminal path carries a backup and a rollback and the browser path c
 
 Recorded here rather than in the build plan because build plans are deleted when their work ships,
 and `.prawduct/` is gitignored — the same failure mode this ADR's closing paragraph describes.
+
+**Amendment 2026-09-13 — rule 5 gains one off-box recovery path: a one-time recovery code resets a
+password (operator ruling at #1420 Checkpoint 1, recorded in ADR 0016 "The ruling").** TangleClaw now
+has non-technical outside installers, for whom "SSH in and run a script" is no recovery at all, and
+what they actually hit is a forgotten password rather than a broken gate. So:
+
+- An account may hold a small set of long random codes, shown once, stored hashed, each single-use.
+  Redeeming one from the sign-in page sets a new password (under the same password rules) and signs
+  the holder in. Every redemption is logged, ends the account's other sessions, and raises a notice on
+  that account's dashboard. The route answers before the gate, counts failures per client, and gives
+  a wrong code and a used code the same answer.
+- A code never re-enables a disabled account, and minting new codes needs the current password.
+- **What stands unchanged:** the terminal tool remains, and no recovery feature lives behind the
+  gate. A broken gate is still recovered from a shell — a code is handled by TangleClaw's own request
+  path, so it cannot recover that path.
+- **The cost, accepted as stated:** a second way past the password, bounded by the code's entropy, so
+  the practical risk is theft of the codes. Codes are usually kept beside the password, so a
+  compromised password manager exposes both anyway; the genuinely new surface is the pre-gate route.
 
 **Why this ADR exists at all.** The superseded posture was written down — in a project artifact under
 `.prawduct/`, which is gitignored. It was therefore invisible to a fresh clone, to contributors, and

@@ -224,6 +224,28 @@ describe('lib/auth-gate — the front-door verdict (#1418, #1420, ADR 0015/0016)
     });
   });
 
+  describe('isRecoveryPath (#1420)', () => {
+    it('matches the recovery page and route on their canonical paths', () => {
+      for (const p of ['/recover', '/api/auth/recover', '//recover', '/api/auth/%72ecover', '/x/../recover']) {
+        assert.equal(authGate.isRecoveryPath(p), true, p);
+      }
+    });
+
+    it('matches nothing else', () => {
+      for (const p of ['/recoverx', '/recover/x', '/api/auth/recovery-codes', '/api/auth/recover/x', '/']) {
+        assert.equal(authGate.isRecoveryPath(p), false, p);
+      }
+    });
+
+    it('is NOT on the always-exempt login surface or the bypass list — it is exempt only while armed', () => {
+      for (const p of authGate.RECOVERY_PATHS) {
+        assert.equal(authGate.isLoginSurfacePath(p), false, p);
+        assert.equal(authGate.isGateBypassPath(p), false, p);
+        assert.equal(caddy.isCaddyAuthBypassPath(p), false, p);
+      }
+    });
+  });
+
   describe('isLoginSurfacePath', () => {
     it('covers the login page and the three auth routes', () => {
       for (const p of ['/login', '/api/auth/login', '/api/auth/logout', '/api/auth/me']) {
@@ -419,6 +441,31 @@ describe('lib/auth-gate — the front-door verdict (#1418, #1420, ADR 0015/0016)
       }
     });
 
+    describe('the recovery page and route — exempt only while armed (#1420)', () => {
+      it('allows a signed-out request to both in armed', () => {
+        assert.deepEqual(ev({ rawUrl: '/recover', pathname: '/recover' }), { action: 'allow' });
+        assert.deepEqual(ev({ method: 'POST', rawUrl: '/api/auth/recover', pathname: '/api/auth/recover' }),
+          { action: 'allow' });
+      });
+
+      for (const gateState of [S.ACCOUNT_REQUIRED, S.LOCKED, S.UNREADABLE, 'fallback', undefined]) {
+        it(`challenges them in ${String(gateState)} — no code can succeed there`, () => {
+          assert.equal(ev({ gateState, rawUrl: '/recover', pathname: '/recover' }).action, 'challenge');
+          assert.equal(ev({ gateState, method: 'POST', rawUrl: '/api/auth/recover',
+            pathname: '/api/auth/recover' }).action, 'challenge');
+        });
+      }
+
+      it('does not exempt a spelling the router serves as a different path', () => {
+        assert.equal(ev({ rawUrl: '//recover', pathname: '/' }).action, 'challenge');
+      });
+
+      it('lets a browser that still holds a session submit a code without a CSRF token', () => {
+        assert.deepEqual(ev({ method: 'POST', rawUrl: '/api/auth/recover', pathname: '/api/auth/recover',
+          session: SESSION, submittedCsrf: null }), { action: 'allow' });
+      });
+    });
+
     describe('account-required — no account exists yet', () => {
       const AR = { gateState: S.ACCOUNT_REQUIRED };
 
@@ -554,7 +601,7 @@ describe('lib/auth-gate — the front-door verdict (#1418, #1420, ADR 0015/0016)
         // The boundary. Logout's authority IS the cookie, so an unprotected
         // logout lets any page on the internet sign the operator out.
         assert.equal(authGate.CSRF_EXEMPT_PATHS.has('/api/auth/logout'), false);
-        assert.deepEqual([...authGate.CSRF_EXEMPT_PATHS], ['/api/auth/login']);
+        assert.deepEqual([...authGate.CSRF_EXEMPT_PATHS], ['/api/auth/login', '/api/auth/recover']);
       });
 
       it('applies on a Caddy bypass path as well', () => {

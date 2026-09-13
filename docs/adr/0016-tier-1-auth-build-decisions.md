@@ -496,3 +496,33 @@ governs.
   Verified against Caddy v2.11.4: `reverse_proxy` replaces a client-supplied `X-Forwarded-Host` with
   the `Host` the client sent, and in caddy mode every remote request comes through Caddy.
   `authEnabled` stays because only then has the launching request passed a login.
+
+### Recorded during #1420 A-04a (2026-09-13) — recovery codes as built
+
+Where the build sharpened "The ruling" above. Where they differ, this section governs.
+
+- **A code belongs to one account.** Eight per set, 25 Crockford base32 characters (125 bits),
+  normalised on input for case, spaces, hyphens and `O`/`I`/`L` so a code retyped from paper works.
+- **Stored as unsalted SHA-256, not scrypt** — CSPRNG output has no dictionary to stretch against, and
+  an indexed lookup by digest is what makes a wrong code, a used code and a disabled account's code
+  ONE query with one answer.
+- **A code never re-enables a disabled account.** `disable` is "revoke one person", and a revoked
+  person's own codes must not undo it. `locked` therefore stays terminal-only, and the redemption
+  route is exempt from the gate only in `armed`, the one state a code can succeed in.
+- **Redemption is atomic and ends every session** the account holds; the new password is hashed
+  before the write lock is taken and the code re-checked under it, so a concurrent redemption of the
+  same code gets the wrong-code answer. The redeemer is signed in through the one session-issuing
+  helper.
+- **The password policy runs only after the code is known valid**, because it needs the account's
+  username. A weak password is thus told apart from a wrong code only to someone already holding a
+  valid code, and the code is not consumed.
+- **"Rate-limited" is per client, failures only**: the socket address, or Caddy's `X-Forwarded-For`
+  when the request came through the proxy on loopback (Caddy replaces the client's value, verified in
+  A-02a); ten failures per fifteen minutes, in a bounded in-memory map. Per client rather than
+  global, so one flood cannot lock the operator out of their own recovery; the entropy already makes
+  guessing hopeless, so the limit bounds log and CPU churn.
+- **Minting a new set needs the current password**, not only a session: a stolen cookie that could
+  mint codes would leave the thief a key that survives the operator's next password change.
+- **The notice is per account** and stays until the account acknowledges it or regenerates its codes.
+- **Issued on the first-account screen only.** Accounts created by the first-run wizard or by
+  `scripts/reset-admin.js` start with none and generate them in Settings; wizard issuance is #803.

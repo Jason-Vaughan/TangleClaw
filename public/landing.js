@@ -217,6 +217,7 @@ async function loadServerInfo() {
   renderBindNotice(data.bindNotice);
   renderBindNotice(data.ttydNotice, 'ttydNotice');
   renderCaddyDriftBanner(data.caddyDriftNotice);
+  renderRecoveryNotice(data.recoveryNotice);
 
   // The version label is written on every tick, not only when something looks
   // wrong. It was previously set once at page load, so a restart this page did
@@ -635,6 +636,51 @@ function renderCaddyDriftBanner(notice) {
   const list = items.length ? `<ul class="caddy-drift-findings">${items.join('')}</ul>` : '';
   textEl.innerHTML = `⚠ <strong>${esc(message)}</strong>${list}`;
   banner.classList.remove('hidden');
+}
+
+/**
+ * Show or hide the notice that this account's password was reset with a
+ * recovery code (#1420).
+ *
+ * Mirrors the latest `/api/server-info` poll. Unlike the banners above it has
+ * an acknowledge button, because its cause does not go away on its own: a code
+ * was used, and only the account can say whether that was them. It clears when
+ * the account acknowledges it or generates a new set of codes — never on a
+ * timer. If the use was NOT theirs, the text says what to do.
+ *
+ * `from` is a server-recorded client address and is escaped like every other
+ * server string reaching innerHTML.
+ *
+ * @param {{redemptions: Array<{usedAt: number, from: string|null}>, remaining: number}|null|undefined} notice
+ */
+function renderRecoveryNotice(notice) {
+  const banner = document.getElementById('recoveryNoticeBanner');
+  const textEl = document.getElementById('recoveryNoticeBannerText');
+  const ackBtn = document.getElementById('recoveryNoticeAckBtn');
+  if (!banner || !textEl) return;
+  const uses = notice && Array.isArray(notice.redemptions) ? notice.redemptions : [];
+  if (uses.length === 0) {
+    textEl.textContent = '';
+    banner.classList.add('hidden');
+    return;
+  }
+  const latest = uses[0];
+  const when = new Date(latest.usedAt).toLocaleString();
+  const count = uses.length === 1 ? 'A recovery code was used' : `${uses.length} recovery codes were used`;
+  textEl.innerHTML = `⚠ <strong>${esc(count)} to reset your password</strong>`
+    + ` — most recently ${esc(when)} from ${esc(latest.from || 'an unknown address')}.`
+    + ` ${esc(String(notice.remaining))} left. If this was not you, change your password and`
+    + ' generate new codes in Settings now.';
+  banner.classList.remove('hidden');
+  if (ackBtn && !ackBtn.dataset.wired) {
+    ackBtn.dataset.wired = '1';
+    ackBtn.addEventListener('click', async () => {
+      ackBtn.disabled = true;
+      const res = await apiMutate('/api/auth/recovery-codes/acknowledge', 'POST', {});
+      ackBtn.disabled = false;
+      if (res) renderRecoveryNotice(null);
+    });
+  }
 }
 
 /**

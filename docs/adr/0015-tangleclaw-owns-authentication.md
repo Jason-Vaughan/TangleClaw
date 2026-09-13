@@ -247,7 +247,8 @@ since changed, and on a requirement — one operator — that #1149 retires.
   that scrypt cannot verify. Operators must set a password once under the new scheme. It cannot be
   converted silently, and per ADR 0009 it must not degrade to no gate meanwhile.
 - **Recovery must stay outside the gate.** ADR 0009 rule 5 is unchanged: `scripts/reset-admin.js` on
-  the machine, never a dashboard feature.
+  the machine, never a dashboard feature. *(Rule 5 was later amended, 2026-09-13, to allow one-time
+  recovery codes that reset a password from off the machine — ADR 0016 "The ruling".)*
 - **The bypass paths change owner.** `/api/health`, `/openclaw-direct/*` and `/manifest.json` are
   currently exempted in the generated Caddyfile (`AUTH_BYPASS_PATHS`). They become TangleClaw's to
   enforce, and `isCaddyAuthBypassPath` already models them — one definition, moved, not duplicated.

@@ -225,6 +225,67 @@ forwarded host.
   headers, no cookie = the fleet carve-out); from anywhere else it now answers 401 without a session.
 
 ### A-04 — the kill-switch, recovery docs, and the drill
+
+**Split into A-04a (recovery codes) and A-04b (the fallback, reset-admin, docs, drill), one review
+each** — same reason as A-02: A-04a is a new pre-gate route, a store table and a Settings surface;
+A-04b is the terminal side of recovery and the carried A-03 items. Neither depends on the other's code.
+
+**A-04a:** recovery codes end to end (store, pre-gate redemption route + page, issuance on the
+first-account screen, re-authenticated regeneration in Settings, the post-redemption dashboard
+notice), plus the ADR 0009 rule 5 / security-model Direction amendment the ruling requires.
+**A-04b:** the `fallback` state + command + marker, reset-admin aligned with the state machine (and
+A-03's R-6/R-8), the #472 decision (R-1), the login page telling `locked`/`unreadable` apart, the
+in-repo recovery doc + `SECURITY.md` login section + README link, and the drill script.
+
+### Chunk A.04a (A-04a) — recovery codes
+
+Delivers the "Recovery codes" and "ADR 0009 rule 5" bullets of the original A-04 list (kept verbatim
+under A-04b's heading below, for the record).
+
+**A-04a decisions (2026-09-13).**
+- **Codes are per account, 8 of them, 25 Crockford base32 characters (125 bits)**, shown grouped in
+  fives. Input is normalised (case, spaces, hyphens, `O`→`0`, `I`/`L`→`1`) before hashing, so a code
+  read aloud or retyped from paper still works.
+- **Stored as SHA-256, not scrypt.** A code is CSPRNG output with no dictionary to stretch against —
+  the reason `auth-session#hashToken` is unsalted SHA-256 — and an indexed lookup by digest is what
+  makes "wrong" and "already used" one query with one answer.
+- **Redemption is atomic and ends every session.** The new password is hashed before the
+  transaction; under `BEGIN IMMEDIATE` the code is re-checked unused, marked used, the password
+  replaced and the account's sessions destroyed (the reset-admin reason: a reset that leaves the
+  thief's session alive recovered nothing). Then the redeemer is signed in.
+- **A code never re-enables a disabled account.** Codes for a disabled account answer exactly as a
+  wrong code. `disable` is "revoke one person"; a revoked person's own codes must not undo it.
+  So `locked` stays terminal-only — this narrows the A-02a note that said "terminal or recovery code".
+- **Password policy runs after the code is known valid** (it needs the account's username). A weak
+  password is then told apart from a wrong code only to someone already holding a valid code, and the
+  code is not consumed.
+- **Rate limit: failed redemptions per client**, where the client is the socket address, or Caddy's
+  `X-Forwarded-For` when the request came through the proxy on loopback (Caddy replaces that value,
+  verified in A-02a). A fixed window, bounded map. Only failures count. The entropy makes guessing
+  hopeless regardless; the limit bounds log and CPU churn, and per-client (not global) so a flood
+  cannot lock the operator out of their own recovery.
+- **Exempt from the gate only in `armed`** — the one state a code can succeed in — and CSRF-exempt like
+  login (its authority is the code in the body).
+- **Regeneration requires the current password**, not just a session: a stolen session cookie that
+  could mint codes would leave the thief a key that survives the operator's next password change.
+- **The notice** is per account, shown in the dashboard to the account whose code was used, until that
+  account acknowledges it or regenerates its codes. An explicit action, not a timer.
+- Issued on the first-account screen. Accounts created by the wizard or `reset-admin.js` have none
+  until regenerated in Settings (wizard issuance is #803).
+
+**Carried to A-04b from the A-04a review (`rev-20260913T153542Z-387ef554`, 0 findings):**
+- `store.users.enable` (reset-admin) leaves the account's old recovery codes in place, so re-enabling
+  a disabled account at the terminal revives codes the revoked person may hold. Decide in the
+  reset-admin rework: delete an account's codes on `disable` (as its sessions are), or on `enable`.
+- The login page's "Use a recovery code" link also shows in `locked`/`unreadable`, where `/recover` is
+  challenged back to the login page — lands with the login-page copy for those states.
+- `.prawduct/artifacts/security-model.md` Direction was amended in the A-04a worktree copy only
+  (gitignored); the primary checkout's copy needs the same paragraph.
+
+### Chunk A.04b (A-04b) — the fallback, reset-admin, recovery doc, drill
+
+The original A-04 list; the recovery-code and ADR 0009 bullets are A-04a's.
+
 - The fallback command (name decided in A-04): restore/regenerate the Caddyfile with the retained
   credential → validate → reload → probe 401 → only then write the `gate-fallback` marker; `--undo`
   in reverse order. TangleClaw honours the marker only while the fallback door is observably present.
@@ -264,5 +325,6 @@ forwarded host.
 - [x] A-02a — classifier, gate on it, carve-out + XFF, set-password route/page (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [x] A-02b — OQ2 inversion, identity + authStatus from the classifier, dashboard consumers (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [x] Chunk A.03 (A-03) — state-driven `basic_auth`, bypass ownership, drift, bind policy, #1055 (reviewed 2026-09-13, PR into `train-9/cutover`)
-- [ ] A-04 — fallback command, recovery codes, ADR 0009 rule 5 text, reset-admin, recovery doc, drills
+- [x] Chunk A.04a (A-04a) — recovery codes end to end, ADR 0009 rule 5 + security-model Direction amendment (reviewed 2026-09-13, PR into `train-9/cutover`)
+- [ ] Chunk A.04b (A-04b) — fallback state + command, reset-admin, #472 decision, login copy, recovery doc, drill
 - [ ] A-VRF — cumulative Critic, elkaholic VRF, phone drill → Checkpoint 2
