@@ -179,7 +179,7 @@ If the Coordinator's resume message does not arrive, the operator can paste:
 ## Status
 
 - [x] Checkpoint 0 answered (#846 = b, closed 2026-09-12)
-- [ ] Session 1 — Wave 1: D (#848) · B (#918) · C (#1361)
+- [x] Session 1 — Wave 1: D (#848, PR #1439) · B (#918, PR — this merge) · C (#1361, PR #1440) — 2026-09-12
 - [ ] Session 2 — A-01 discovery + kill-switch/migration ADR addendum → Checkpoint 1
 - [ ] Sessions 3–5 — A-02 · A-03 · A-04 on `train-9/cutover`
 - [ ] A-VRF — cumulative review, elkaholic VRF, kill-switch drill → Checkpoint 2 → merge
