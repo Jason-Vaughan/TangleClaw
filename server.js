@@ -359,7 +359,8 @@ let _gateConfigCache = null;
  * silently un-gates the install, which is the same bypass reached by a
  * different route. `store.init()` writes the file at boot, so no running install
  * is without one, and `authEnabled: false` in a file that IS readable remains
- * the recovery lever.
+ * the recovery lever — outside caddy mode's ungated-remote-Caddyfile case, which
+ * `_gateIngress` and `authGate.resolveGateState` own.
  *
  * Nothing is cached on the failure path, so recovery takes effect on the next
  * request rather than being pinned by a cached verdict.
@@ -373,6 +374,45 @@ function _gateConfig() {
   if (_gateConfigCache && _gateConfigCache.key === key) return _gateConfigCache.value;
   const value = store.config.load();
   _gateConfigCache = { key, value };
+  return value;
+}
+
+let _gateIngressCache = null;
+
+/**
+ * The Caddyfile on disk, described as a door, for the auth gate — cached on the
+ * file's mtime and size like {@link _gateConfig}.
+ *
+ * Asked only in caddy mode with `authEnabled` off
+ * (`authGate.resolveGateState`): the opt-out opens the install only while this
+ * says the file is not serving a remote site with no `basic_auth`. An edit to
+ * the file changes the key, so it takes effect on the next request.
+ *
+ * A MISSING file answers "no ungated remote site" — Caddy has nothing to serve.
+ * Any OTHER failure throws, which the gate answers with `unreadable`.
+ *
+ * @returns {{ ungatedRemoteSite: boolean }}
+ * @throws {Error} If the Caddyfile exists but cannot be read
+ */
+function _gateIngress() {
+  const file = caddy.getCaddyfilePath();
+  let st;
+  try {
+    st = fs.statSync(file);
+  } catch (err) {
+    if (err.code === 'ENOENT') return { ungatedRemoteSite: false };
+    throw err;
+  }
+  const key = `${file}:${st.mtimeMs}:${st.size}`;
+  if (_gateIngressCache && _gateIngressCache.key === key) return _gateIngressCache.value;
+  const value = caddy.describeIngressDoor(fs.readFileSync(file, 'utf8'));
+  if (value.ungatedRemoteSite) {
+    // Logged once per change of the file, not per request.
+    log.warn('The Caddyfile serves a remote site with no basic_auth, so authEnabled: false does NOT open '
+      + 'TangleClaw\'s login in caddy mode. Re-run the cutover with only a localhost site, or turn '
+      + 'authEnabled back on.', { caddyfile: file });
+  }
+  _gateIngressCache = { key, value };
   return value;
 }
 
@@ -1307,7 +1347,7 @@ function _withBindState(config) {
   bindPolicy.migrateLegacyBind(config, store.config.isKeyPersisted(bindPolicy.OPT_IN_KEY));
   return {
     ...redactConfigSecrets(config),
-    bindState: bindPolicy.describeBindState(config, authGate.resolveGateState(() => config, store.authSessions)),
+    bindState: bindPolicy.describeBindState(config, authGate.resolveGateState(() => config, store.authSessions, _gateIngress)),
     protectedRoots: _protectedRoots()
   };
 }
@@ -2815,7 +2855,7 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
   // the account page rather than into a dashboard that would refuse it.
   // Asked of the gate's own classifier against the config about to be saved,
   // not re-derived here — one owner of what `account-required` means.
-  const setupGateState = authGate.resolveGateState(() => config, store.authSessions);
+  const setupGateState = authGate.resolveGateState(() => config, store.authSessions, _gateIngress);
   // A gate that cannot read its own store cannot say whether an account exists,
   // and "no account required" would send the wizard on into a dashboard that
   // refuses it. Refused BEFORE the save, so setup stays unfinished and can be
@@ -2823,7 +2863,8 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
   if (setupGateState === authGate.GATE_STATES.UNREADABLE) {
     return errorResponse(res, 503,
       'TangleClaw could not read its account store, so it cannot tell whether setup left you an account. '
-      + 'Nothing was saved; try again, and check the server log if it persists.',
+      + 'Setup did not finish (an account you entered may already exist, and trying again keeps it); '
+      + 'try again, and check the server log if it persists.',
       'GATE_UNREADABLE');
   }
   account.required = setupGateState === authGate.GATE_STATES.ACCOUNT_REQUIRED;
@@ -7053,10 +7094,9 @@ function handleUpgrade(req, socket, head) {
   // the operator's token injected. HTTP's gate cannot stand in for this one;
   // `handleRequest` never sees an upgrade.
   //
-  // `/openclaw-direct/*` is gated here too, unlike at Caddy — see
-  // `lib/auth-gate.js#isGateBypassPath` for why its exemption does not hold at
-  // TangleClaw's gate.
-  const upgradeGateState = authGate.resolveGateState(_gateConfig, store.authSessions);
+  // `/openclaw-direct/*` is gated here like every other path: it is not on
+  // `lib/auth-gate.js#GATE_BYPASS_PATHS`, and an upgrade takes no path anyway.
+  const upgradeGateState = authGate.resolveGateState(_gateConfig, store.authSessions, _gateIngress);
   const upgradeIdentity = authGate.isOpen(upgradeGateState)
     ? null : _gateIdentity(req, socket, urlObj.pathname);
   const upgradeVerdict = authGate.evaluateUpgrade({
@@ -7456,7 +7496,7 @@ async function handleRequest(req, res) {
   // ones it then waves through, because the CSRF check needs it and because
   // `/api/auth/me` answers from it.
   let tcSession = null;
-  const gateState = authGate.resolveGateState(_gateConfig, store.authSessions);
+  const gateState = authGate.resolveGateState(_gateConfig, store.authSessions, _gateIngress);
   if (!authGate.isOpen(gateState)) {
     // Resolved by the helper `handleUpgrade`'s gate also calls, so the two
     // transports judge the same facts — see `_gateIdentity`.
@@ -8747,7 +8787,7 @@ if (require.main === module) {
   // whose own login is armed is not "reachable with no password". Read once, at
   // boot, like the binding it describes.
   const bindNotice = bindPolicy.describeNarrowing(
-    config, authGate.resolveGateState(() => config, store.authSessions)
+    config, authGate.resolveGateState(() => config, store.authSessions, _gateIngress)
   );
   if (bindNotice) {
     log.warn(bindNotice.message, { setting: bindNotice.setting, severity: bindNotice.severity });
@@ -8781,7 +8821,7 @@ if (require.main === module) {
         // The gate state decides whether the baseline still carries
         // `basic_auth`: once TangleClaw's own gate guards the door, a live file
         // without it has not lost a gate.
-        const gateState = authGate.resolveGateState(() => config, store.authSessions);
+        const gateState = authGate.resolveGateState(() => config, store.authSessions, _gateIngress);
         const result = caddyDrift.checkCaddyDrift({ config, leases, gateState });
         const notice = caddyDrift.describeDrift(result);
         serverInfo.setCaddyDriftNotice(notice);

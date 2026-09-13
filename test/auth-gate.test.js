@@ -108,6 +108,40 @@ describe('lib/auth-gate — the front-door verdict (#1418, #1420, ADR 0015/0016)
       assert.equal(asked, 0);
     });
 
+    describe('authEnabled:false in caddy mode is honoured only while the Caddyfile is not an ungated remote door (#1420)', () => {
+      const off = () => ({ authEnabled: false, ingressMode: 'caddy' });
+      const door = (ungatedRemoteSite) => () => ({ ungatedRemoteSite });
+
+      it('opens when the Caddyfile has a gate of its own or serves nothing remote', () => {
+        for (const sessions of [NO_ACCOUNTS, ENABLED, ALL_DISABLED]) {
+          assert.equal(authGate.resolveGateState(off, sessions, door(false)), S.OPEN);
+        }
+      });
+
+      it('lets the accounts decide when the Caddyfile serves a remote site with no basic_auth', () => {
+        assert.equal(authGate.resolveGateState(off, ENABLED, door(true)), S.ARMED);
+        assert.equal(authGate.resolveGateState(off, ALL_DISABLED, door(true)), S.LOCKED);
+        assert.equal(authGate.resolveGateState(off, NO_ACCOUNTS, door(true)), S.ACCOUNT_REQUIRED);
+        // A missing authEnabled is off too, and gets the same answer.
+        assert.equal(authGate.resolveGateState(() => ({ ingressMode: 'caddy' }), ENABLED, door(true)), S.ARMED);
+      });
+
+      it('ENFORCES when the Caddyfile cannot be read, or is described malformed', () => {
+        assert.equal(authGate.resolveGateState(off, ENABLED, () => { throw new Error('EACCES'); }), S.UNREADABLE);
+        for (const bad of [null, {}, { ungatedRemoteSite: 'false' }, { ungatedRemoteSite: 0 }]) {
+          assert.equal(authGate.resolveGateState(off, ENABLED, () => bad), S.UNREADABLE, JSON.stringify(bad));
+        }
+      });
+
+      it('never asks about the Caddyfile outside caddy mode, or with authEnabled on', () => {
+        let asked = 0;
+        const counting = () => { asked++; return { ungatedRemoteSite: true }; };
+        assert.equal(authGate.resolveGateState(() => ({ authEnabled: false, ingressMode: 'direct' }), ENABLED, counting), S.OPEN);
+        assert.equal(authGate.resolveGateState(() => ({ authEnabled: true, ingressMode: 'caddy' }), ENABLED, counting), S.ARMED);
+        assert.equal(asked, 0);
+      });
+    });
+
     it('lets authEnabled:false turn an armed gate off — the recovery lever', () => {
       assert.equal(authGate.resolveGateState(on, ENABLED), S.ARMED);
       assert.equal(authGate.resolveGateState(() => ({ authEnabled: false }), ENABLED), S.OPEN);

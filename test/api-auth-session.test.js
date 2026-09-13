@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -413,6 +413,73 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
       const res = await send('POST', '/api/auth/set-password',
         { body: GOOD, headers: { 'x-forwarded-for': '100.64.0.7' } });
       assert.equal(res.statusCode, 200);
+    });
+  });
+
+  // A caddy-mode install cut over while armed has a Caddyfile whose remote sites
+  // carry no basic_auth — TangleClaw is their only gate. `authEnabled: false`
+  // must not open them.
+  describe('authEnabled: false in caddy mode, against the Caddyfile on disk (#1420)', () => {
+    const caddy = require('../lib/caddy');
+    const HASH = '$2a$14$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU';
+    const base = { serverPort: 3102, certPath: '/c/cert.pem', keyPath: '/c/key.pem' };
+
+    /**
+     * Write the Caddyfile the gate reads, and set caddy mode with the gate off.
+     * @param {string|null} content - File text, or null for no file
+     */
+    function caddyOff(content) {
+      const file = caddy.getCaddyfilePath();
+      fs.rmSync(file, { force: true });
+      if (content !== null) fs.writeFileSync(file, content);
+      if (!store.users.getByName('rosie')) store.users.create('rosie', PASSWORD);
+      const cfg = store.config.load();
+      cfg.ingressMode = 'caddy';
+      cfg.authEnabled = false;
+      store.config.save(cfg);
+    }
+
+    afterEach(() => {
+      fs.rmSync(caddy.getCaddyfilePath(), { force: true });
+      const cfg = store.config.load();
+      cfg.ingressMode = 'direct';
+      store.config.save(cfg);
+    });
+
+    it('stays closed while the Caddyfile serves a tailnet site with no basic_auth', async () => {
+      caddyOff(caddy.buildCaddyfileContent({ ...base, tailnetHost: 'box.tail0000.ts.net', gateState: 'armed' }));
+      const res = await send('GET', '/api/config');
+      assert.equal(res.statusCode, 401);
+      const me = await send('GET', '/api/auth/me');
+      assert.equal(JSON.parse(me.body).gateState, 'armed');
+    });
+
+    it('opens when the Caddyfile still carries basic_auth', async () => {
+      caddyOff(caddy.buildCaddyfileContent({
+        ...base, basicAuthUser: 'jason', basicAuthHash: HASH, tailnetHost: 'box.tail0000.ts.net'
+      }));
+      const res = await send('GET', '/api/config');
+      assert.equal(res.statusCode, 200);
+    });
+
+    it('opens when the Caddyfile serves localhost only, or does not exist', async () => {
+      caddyOff(caddy.buildCaddyfileContent(base));
+      assert.equal((await send('GET', '/api/config')).statusCode, 200);
+      caddyOff(null);
+      assert.equal((await send('GET', '/api/config')).statusCode, 200);
+    });
+
+    it('enforces when the Caddyfile exists but cannot be read', async () => {
+      caddyOff('placeholder');
+      const file = caddy.getCaddyfilePath();
+      fs.rmSync(file);
+      fs.mkdirSync(file); // a directory: stat succeeds, read fails
+      try {
+        const res = await send('GET', '/api/config');
+        assert.equal(res.statusCode, 401);
+      } finally {
+        fs.rmSync(file, { recursive: true, force: true });
+      }
     });
   });
 

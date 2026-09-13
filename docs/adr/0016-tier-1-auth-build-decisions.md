@@ -482,6 +482,16 @@ governs.
   at its next restart after arming, from a value the UI does not show (#1055), and Caddy already
   listens on every interface. #1055 is closed by naming the stored value (option b) in the locked
   settings hint and in `ingress-cutover --to direct`'s plan.
+- **`authEnabled: false` does not open a caddy-mode install whose Caddyfile is an ungated remote
+  door.** The Caddyfile is written for the state at cutover time; the gate is read on every request.
+  An armed cutover writes remote sites with no `basic_auth`, so flipping `authEnabled` off afterwards
+  would open them. The opt-out is therefore honoured in caddy mode only while the file on disk
+  carries `basic_auth`, serves nothing beyond `localhost`, or is absent
+  (`lib/caddy.js#describeIngressDoor`, read per request through `server.js#_gateIngress`, cached on
+  the file's mtime and size); otherwise the accounts decide as if `authEnabled` were on, and an
+  unreadable file enforces. This is the addendum's fallback-marker rule — honoured only while the
+  previous door is observably present — applied to the other way the gate stands down. Recovery for
+  that install is `reset-admin.js --store`, or a cutover to a `localhost`-only site first.
 - **The forwarded host keeps its condition (caddy ingress with `authEnabled`), with a new reason.**
   Verified against Caddy v2.11.4: `reverse_proxy` replaces a client-supplied `X-Forwarded-Host` with
   the `Host` the client sent, and in caddy mode every remote request comes through Caddy.

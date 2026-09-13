@@ -690,6 +690,61 @@ describe('caddy', () => {
       assert.doesNotMatch(out, /auto_https disable_redirects/);
     });
 
+    // #1420 — whether a Caddyfile serves beyond this machine with no gate of its
+    // own, which decides whether authEnabled:false may open a caddy-mode install.
+    describe('describeIngressDoor (#1420)', () => {
+      const door = (content) => caddy.describeIngressDoor(content).ungatedRemoteSite;
+
+      it('is not a door when there is no file', () => {
+        assert.equal(door(null), false);
+        assert.equal(door(undefined), false);
+      });
+
+      it('reads every remote shape the generator writes without basic_auth as a door', () => {
+        assert.equal(door(caddy.buildCaddyfileContent({ ...opts, tailnetHost: TAILNET, gateState: 'armed' })), true);
+        assert.equal(door(caddy.buildCaddyfileContent({ ...opts, remoteHttpCatchAll: true, gateState: 'armed' })), true);
+        assert.equal(door(caddy.buildCaddyfileContent({ ...opts, lanHost: 'studio.local', gateState: 'armed' })), true);
+        assert.equal(door(caddy.buildCaddyfileContent({ ...opts, publicDomain: 'tc.example.com', gateState: 'armed' })), true);
+      });
+
+      it('is not a door when the file carries basic_auth, whatever it serves', () => {
+        assert.equal(door(caddy.buildCaddyfileContent({ ...opts, ...AUTH, tailnetHost: TAILNET, remoteHttpCatchAll: true })), false);
+        assert.equal(door(`(tcauth) {\n\tbasic_auth {\n\t\tjason ${AUTH.basicAuthHash}\n\t}\n}\n:8080 {\n\timport tcauth\n\treverse_proxy 127.0.0.1:3102\n}\n`), false);
+      });
+
+      it('is not a door for a localhost-only ungated file', () => {
+        assert.equal(door(caddy.buildCaddyfileContent(opts)), false);
+        assert.equal(door('127.0.0.1:8443 {\n\treverse_proxy 127.0.0.1:3102\n}\n[::1] {\n}\nhttps://localhost:9443 {\n}\n'), false);
+      });
+
+      it('counts a bare port, a scheme-only catch-all and one remote name in a list', () => {
+        assert.equal(door(':8080 {\n\treverse_proxy 127.0.0.1:3102\n}\n'), true);
+        assert.equal(door('http:// {\n\treverse_proxy 127.0.0.1:3102\n}\n'), true);
+        assert.equal(door('localhost, box.local {\n\treverse_proxy 127.0.0.1:3102\n}\n'), true);
+      });
+
+      it('ignores the global block, snippets, nested blocks, placeholders and comments', () => {
+        const text = [
+          '{', '\tservers :8443 {', '\t\tprotocols h1', '\t}', '}',
+          '(snip) {', '\theader X-Frame-Options DENY', '}',
+          '# evil.example.com {',
+          'localhost {', '\tredir https://localhost:8443{uri}', '\thandle /x {', '\t\trespond ok', '\t}', '}', ''
+        ].join('\n');
+        assert.equal(door(text), false);
+      });
+    });
+
+    it('refuses a glob in GATE_BYPASS_PATHS rather than turning it into a prefix Caddy alone honours', () => {
+      const gatePath = require.resolve('../lib/auth-gate');
+      const real = require.cache[gatePath].exports;
+      require.cache[gatePath].exports = { ...real, GATE_BYPASS_PATHS: ['/api/health', '/assets/*'] };
+      try {
+        assert.throws(() => caddy.buildCaddyfileContent({ ...opts, ...AUTH }), /is a glob; bypass paths are exact/);
+      } finally {
+        require.cache[gatePath].exports = real;
+      }
+    });
+
     // #1420 — Caddy's gate is dropped by TangleClaw's gate STATE, never by release.
     describe('basic_auth by gate state (#1420)', () => {
       const REMOTE = { tailnetHost: TAILNET, remoteHttpCatchAll: true, publicDomain: 'tc.example.com' };

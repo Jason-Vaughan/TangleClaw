@@ -110,17 +110,26 @@ describe('server.js binds through the policy, not around it', () => {
 describe('the gate state is wired into the boot notice, the settings bind state and the drift check', () => {
   it('hands the boot narrowing notice a gate state', () => {
     assert.match(SERVER_SRC,
-      /bindPolicy\.describeNarrowing\(\s*config, authGate\.resolveGateState\(\(\) => config, store\.authSessions\)\s*\)/);
+      /bindPolicy\.describeNarrowing\(\s*config, authGate\.resolveGateState\(\(\) => config, store\.authSessions, _gateIngress\)\s*\)/);
   });
 
   it('hands GET /api/config\'s bindState a gate state', () => {
     assert.match(SERVER_SRC,
-      /bindState: bindPolicy\.describeBindState\(config, authGate\.resolveGateState\(\(\) => config, store\.authSessions\)\)/);
+      /bindState: bindPolicy\.describeBindState\(config, authGate\.resolveGateState\(\(\) => config, store\.authSessions, _gateIngress\)\)/);
+  });
+
+  it('passes the Caddyfile door to EVERY gate-state read in server.js', () => {
+    // Without it `authEnabled: false` opens a caddy-mode install whose Caddyfile
+    // serves a remote site with no basic_auth — at whichever call site forgot.
+    // Every CALL names `store.authSessions`; prose mentioning the function does not.
+    const calls = SERVER_SRC.match(/authGate\.resolveGateState\([^()]*(\(\)[^()]*)?store\.authSessions[^)]*\)/g) || [];
+    assert.ok(calls.length >= 6, `premise: the call sites exist (${calls.length})`);
+    for (const call of calls) assert.match(call, /_gateIngress\)/, call);
   });
 
   it('hands the Caddyfile drift check a gate state', () => {
     assert.match(SERVER_SRC, /caddyDrift\.checkCaddyDrift\(\{ config, leases, gateState \}\)/);
-    const resolved = SERVER_SRC.indexOf('const gateState = authGate.resolveGateState(() => config, store.authSessions);');
+    const resolved = SERVER_SRC.indexOf('const gateState = authGate.resolveGateState(() => config, store.authSessions, _gateIngress);');
     const checked = SERVER_SRC.indexOf('caddyDrift.checkCaddyDrift({ config, leases, gateState })');
     assert.ok(resolved > -1 && resolved < checked, 'the state is resolved before the check runs');
   });

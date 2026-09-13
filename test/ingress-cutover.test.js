@@ -795,6 +795,21 @@ describe('ingress-cutover — the direct-mode binding is named on the way out of
     assert.equal(toCaddy.bindNote, null);
   });
 
+  it('names which gate the written Caddyfile carries, and the state that decided it (#1420)', () => {
+    const creds = { authEnabled: true, basicAuthUser: 'jason', basicAuthHash: '$2a$14$abcdefghijklmnopqrstuv0123456789ABCDEFGHIJKLMNOPQRSTU' };
+    const kept = cutover.planCutover('caddy', { ...makeCtx({ config: creds }), gateState: 'account-required' });
+    assert.match(kept.gateNote, /basic_auth is KEPT/);
+    assert.match(kept.gateNote, /account-required/);
+    const dropped = cutover.planCutover('caddy', { ...makeCtx({ config: creds }), gateState: 'armed' });
+    assert.match(dropped.gateNote, /basic_auth is NOT written/);
+    assert.match(dropped.gateNote, /\(armed\)/);
+    const none = cutover.planCutover('caddy', makeCtx());
+    assert.match(none.gateNote, /no gate in the Caddyfile/);
+    assert.equal(cutover.planCutover('direct', makeCtx()).gateNote, null);
+    assert.equal((CUTOVER_SRC.match(/if \(plan\.gateNote\) process\.stdout\.write/g) || []).length, 2,
+      'printed on the dry run and the real run');
+  });
+
   it('prints the note on the dry run and on the real run, and resolves the gate state before planning', () => {
     assert.equal((CUTOVER_SRC.match(/if \(plan\.bindNote\) process\.stdout\.write/g) || []).length, 2);
     const resolved = CUTOVER_SRC.indexOf('ctx.gateState = authGate.resolveGateState(');

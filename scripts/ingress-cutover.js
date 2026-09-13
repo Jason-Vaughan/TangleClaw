@@ -112,7 +112,9 @@ function fillTemplate(tpl, subs) {
  * @param {string|null} [ctx.gateState] - TangleClaw's gate state
  *   (`lib/auth-gate.js#resolveGateState`). Decides whether the generated file
  *   still carries `basic_auth`; omitted, it does whenever config has a credential.
- * @returns {{ target, caddyfile: {path,content}|null, plists: Array<{path,content}>, configPatch: object, launchctl: Array<string[]>, healthUrl: string, rollbackHint: string, bindNote: string|null }}
+ * @returns {{ target, caddyfile: {path,content}|null, plists: Array<{path,content}>, configPatch: object, launchctl: Array<string[]>, healthUrl: string, rollbackHint: string, bindNote: string|null, gateNote: string|null }}
+ *   `gateNote` is set on a move to caddy mode: whether the written Caddyfile
+ *   carries `basic_auth`, and the gate state that decided it.
  *   `bindNote` is set on a move to direct mode: what the saved
  *   `bindAllInterfaces` will do there, which caddy mode had hidden (#1055).
  */
@@ -219,7 +221,8 @@ function planCutover(target, ctx) {
       ],
       healthUrl: `https://localhost:${httpsPort}/api/health`,
       rollbackHint: 'node scripts/ingress-cutover.js --to direct',
-      bindNote: null
+      bindNote: null,
+      gateNote: describeGeneratedGate(caddyfile, ctx.gateState)
     };
   }
 
@@ -258,8 +261,30 @@ function planCutover(target, ctx) {
     ],
     healthUrl: `${protocol}://localhost:${upstreamPort}/api/health`,
     rollbackHint: 'node scripts/ingress-cutover.js --to caddy',
-    bindNote: describeDirectBind(config, ctx.gateState)
+    bindNote: describeDirectBind(config, ctx.gateState),
+    gateNote: null
   };
+}
+
+/**
+ * Which gate the Caddyfile a cutover writes carries, and the state that decided
+ * it — the one operator-run step that can remove Caddy's gate says so before it
+ * does. Read off the generated TEXT, so the note cannot describe a file other
+ * than the one written.
+ *
+ * @param {string} content - The generated Caddyfile.
+ * @param {string|null} [gateState] - TangleClaw's gate state.
+ * @returns {string} One operator-facing sentence.
+ */
+function describeGeneratedGate(content, gateState) {
+  const state = gateState || 'not read';
+  if (caddy.listBasicAuthUsers(content).length > 0) {
+    return `Caddy's basic_auth is KEPT — TangleClaw's login is ${state}, which does not guard the door by itself`;
+  }
+  if (authGate.guardsTheDoor(gateState)) {
+    return `Caddy's basic_auth is NOT written — TangleClaw's login (${state}) is the gate for every site`;
+  }
+  return `no gate in the Caddyfile — TangleClaw's login is ${state}, and only a localhost site is written`;
 }
 
 /**
@@ -713,7 +738,8 @@ function main() {
   // whether the generated file still needs Caddy's `basic_auth`. Read here,
   // after adoption may have changed `authEnabled`, through the gate's own
   // classifier against the store this process opened.
-  ctx.gateState = authGate.resolveGateState(() => config, store.authSessions);
+  ctx.gateState = authGate.resolveGateState(() => config, store.authSessions,
+    () => caddy.describeIngressDoor(ctx.existingCaddyfileText));
 
   let plan;
   try {
@@ -759,6 +785,7 @@ function main() {
     for (const c of plan.launchctl) process.stdout.write(`  launchctl ${c.join(' ')}\n`);
     process.stdout.write(`  health check:    ${plan.healthUrl}\n`);
     process.stdout.write(`  rollback:        ${plan.rollbackHint}\n`);
+    if (plan.gateNote) process.stdout.write(`  login gate:      ${plan.gateNote}\n`);
     if (plan.bindNote) process.stdout.write(`  network binding: ${plan.bindNote}\n`);
     process.stdout.write('\n');
     // A preview changes nothing, so it deliberately writes NO result file: a
@@ -865,6 +892,7 @@ function main() {
   }
 
   process.stdout.write(`\nIngress switched to '${target}'.\n  Health: ${plan.healthUrl}\n  Rollback: ${plan.rollbackHint}\n`);
+  if (plan.gateNote) process.stdout.write(`  Login gate: ${plan.gateNote}\n`);
   if (plan.bindNote) process.stdout.write(`  Network binding: ${plan.bindNote}\n`);
   process.stdout.write('\n');
 
@@ -951,4 +979,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { planCutover, describeDirectBind, fillTemplate, parseArgs, resolveUpstreamPort, applyDryRunAdoptionPreview, writeCutoverResult, pollHealth, certHostUnion, CUTOVER_CODES };
+module.exports = { planCutover, describeDirectBind, describeGeneratedGate, fillTemplate, parseArgs, resolveUpstreamPort, applyDryRunAdoptionPreview, writeCutoverResult, pollHealth, certHostUnion, CUTOVER_CODES };

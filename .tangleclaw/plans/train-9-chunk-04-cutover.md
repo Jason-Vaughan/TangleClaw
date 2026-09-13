@@ -6,6 +6,10 @@
 is a feature branch merged INTO `train-9/cutover`, never into `main`. Only the final cumulative merge
 reaches `main`, and only at Checkpoint 2.
 **Builder:** the TangleClaw-Builder session itself. Never a subagent (sprint plan, Lane A).
+**Requirements Confidence:** High for A-02/A-03 (the issue's acceptance list, ADR 0015/0016 and the
+Checkpoint 1 ruling fix the behaviour; Caddy's header handling is verified, not recalled). Medium for
+A-04's fallback command and recovery-code UX (shape ruled, details open) and for A-VRF (depends on
+the live elkaholic install).
 
 ## Gates
 
@@ -193,6 +197,14 @@ forwarded host.
   canonical path for all three exemptions.
 - **Setup on an `unreadable` gate refuses to finish** (`503 GATE_UNREADABLE`, before the config save),
   so setup stays retryable instead of reporting `account.required: false`.
+- **A-03 review (R-7): `authEnabled: false` does not open a caddy-mode install whose Caddyfile is an
+  ungated remote door.** The file is written for the state at cutover time, the gate is read per
+  request; `lib/caddy.js#describeIngressDoor` via `server.js#_gateIngress` keeps the accounts
+  deciding while the file serves beyond `localhost` with no `basic_auth`. The cutover prints which
+  gate it writes (`gateNote`).
+- **Carried to A-04:** reset-admin passes `gateState` and the Caddyfile door like the cutover does;
+  the bind notice and drift notice are computed once at boot (accepted — both re-evaluate on restart,
+  and the gate itself is per request); close #1055 by hand when `train-9/cutover` reaches `main`.
 - **`docs/openclaw-setup.md` curl:** still works from the machine itself (loopback, no browser
   headers, no cookie = the fleet carve-out); from anywhere else it now answers 401 without a session.
 
