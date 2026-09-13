@@ -256,15 +256,18 @@ async function main() {
   const lanHost = httpsSetup.mdnsHostFor(require('node:os').hostname());
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const caddyfilePath = caddy.getCaddyfilePath();
+  // The installed service's port, not config's: see `https-setup#installedServerPort`.
+  const serverPort = httpsSetup.installedServerPort(undefined, config);
   const result = await drill({
     snapshotPath: path.join(path.dirname(caddyfilePath), `drill-gate-fallback-${stamp}.Caddyfile`),
     user: args.user,
     password,
-    port: config.serverPort,
+    port: serverPort,
     fallbackOpts: {
       caddyfilePath,
       markerFile: gateFallback.markerPath(),
       config,
+      serverPort,
       intendedGateState,
       lanHosts: lanHost ? [null, lanHost] : [null],
       restore: args.restore,

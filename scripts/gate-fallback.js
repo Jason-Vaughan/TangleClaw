@@ -253,6 +253,7 @@ async function retry(fn, done, tries, sleep, delayMs) {
  * @param {object} opts.config - Loaded TangleClaw config.
  * @param {string} opts.intendedGateState - `authGate.resolveIntendedGateState`.
  * @param {Array<string|null>} opts.lanHosts - LAN names a generated file may carry.
+ * @param {number} [opts.serverPort] - The installed service's port; `config.serverPort` when omitted.
  * @param {boolean} [opts.undo=false]
  * @param {boolean} [opts.dryRun=false]
  * @param {string|null} [opts.restore=null] - A saved Caddyfile to use.
@@ -283,7 +284,10 @@ async function run(opts) {
     now: () => new Date(),
     ...deps
   };
-  const port = config.serverPort;
+  // The INSTALLED service's port (main passes `https-setup#installedServerPort`):
+  // config's `serverPort` stays 3101 while the launchd plist binds 3102, and a
+  // wrong port makes every route to TangleClaw read as someone else's.
+  const port = Number.isInteger(opts.serverPort) ? opts.serverPort : config.serverPort;
   const say = (text) => stdout.write(`${text}\n`);
   const fail = (text) => stderr.write(`${caddy.redactHashes(text)}\n`);
 
@@ -575,6 +579,7 @@ async function main() {
     caddyfilePath,
     markerFile,
     config,
+    serverPort: httpsSetup.installedServerPort(undefined, config),
     intendedGateState,
     lanHosts: lanHost ? [null, lanHost] : [null],
     undo: args.undo,

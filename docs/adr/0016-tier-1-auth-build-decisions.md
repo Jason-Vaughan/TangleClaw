@@ -720,6 +720,10 @@ The addendum's "What the switch does", built. Builder decisions, vetoable.
     cutover. The marker separates the two populations exactly: an upgrade has never had an account.
   - Not covered, accepted: a whole `~/.tangleclaw` replaced (or `TANGLECLAW_HOME` pointed at a fresh
     home) takes the marker with it. A fresh home also has a fresh config that has not finished setup.
+- **Out-of-process Caddyfile tools find TangleClaw by the installed service's port**
+  (`https-setup#installedServerPort`: the server plist's `TANGLECLAW_PORT`, else config). The VRF guest
+  ran the fallback with config at 3101 and the service at 3102 — every standard install's shape — and
+  the command judged an ungated file as gated. The server refused the marker, so the fail-safe held.
 - **The dashboard's bind notice is derived per request** from the bind recorded at listen time and
   the request's gate state, so it agrees with `authStatus` in the same response.
 - **Deferred, with issues:** changing an account's password from Settings with the current password

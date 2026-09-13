@@ -439,21 +439,19 @@ function applyDryRunAdoptionPreview(config, existingCaddyfileText) {
 }
 
 
-/** Resolve TC's actual listen port: the installed server plist's TANGLECLAW_PORT wins, else config. */
+/**
+ * Resolve TC's actual listen port: the installed server plist's TANGLECLAW_PORT
+ * wins, else config. One owner, `https-setup#installedServerPort`, shared with
+ * every other out-of-process Caddyfile tool. Deliberately NOT
+ * `effectiveServerPort` — an ambient TANGLECLAW_PORT describes the shell, not the
+ * installed service Caddy must proxy to; pinned by a test that sets it.
+ *
+ * @param {string} serverPlistPath - The installed server plist.
+ * @param {object} config - Global config.
+ * @returns {number}
+ */
 function resolveUpstreamPort(serverPlistPath, config) {
-  try {
-    const xml = fs.readFileSync(serverPlistPath, 'utf8');
-    const m = xml.match(/<key>TANGLECLAW_PORT<\/key>\s*<string>(\d+)<\/string>/);
-    if (m) return Number(m[1]);
-  } catch { /* not installed yet — fall through */ }
-  // Config, then the shipped default — deliberately NOT `effectiveServerPort`.
-  // This script runs out-of-process, so a TANGLECLAW_PORT in its environment
-  // describes whoever launched the shell (a TangleClaw-spawned session inherits
-  // it from the server), not the installed service Caddy must proxy to. The
-  // plist above is that authority; config is the better second guess than an
-  // ambient variable. Pinned by a test that sets the variable and asserts it is
-  // ignored, so a later "unification" onto the helper fails loudly.
-  return config.serverPort || store.DEFAULT_CONFIG.serverPort;
+  return require('../lib/https-setup').installedServerPort(serverPlistPath, config);
 }
 
 function which(bin) {

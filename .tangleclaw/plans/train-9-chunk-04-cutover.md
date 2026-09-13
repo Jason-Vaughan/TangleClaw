@@ -459,6 +459,11 @@ Delivers the A.04d bullet of the split above.
   `accounts-established` marker (ADR 0016 A-VRF); R-5 (bind notice frozen at boot), R-2 (recovery
   notice named a Settings form that does not exist), R-6/R-7 (disable and sign-out overclaimed) fixed;
   R-11 filed as #1457, and the disable command as #1458.
+- Verify-resolutions `rev-20260913T223344Z-ba754f89`: clean. VRF re-check: the store-loss claim now
+  answers 403 through Caddy and from another machine.
+- The SSH fallback drill FAILED on the guest: `gate-fallback.js` (and its drill, and
+  `guard-ungated-sites.js`) read TangleClaw's port from config (3101) while the service binds 3102.
+  Fixed onto `https-setup#installedServerPort`; the drill is re-run after it.
 - VRF venue: the macOS/tart guest on habitat (a clone of `tc-vrf-v5`, `tc-vrf-a04`), not elkaholic —
   elkaholic is the operator's workstation and its key is refused today. Same shape as the live install:
   launchd services, Caddy 2.11.4 on the service PATH, a caddy-mode install with a bcrypt credential,

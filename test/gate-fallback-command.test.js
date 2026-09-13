@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const cmd = require('../scripts/gate-fallback');
 const {
-  FIXTURE_CADDYFILES, FIXTURE_HASH, fixtureConfig, generatedCaddyfile
+  FIXTURE_CADDYFILES, FIXTURE_HASH, FIXTURE_SERVER_PORT, fixtureConfig, generatedCaddyfile
 } = require('./_caddy-drift-fixtures');
 
 // `scripts/gate-fallback.js` driven through `run` with every side effect
@@ -71,6 +71,7 @@ describe('scripts/gate-fallback.js (#1420)', () => {
       caddyfilePath,
       markerFile,
       config: fixtureConfig({ ingressMode: 'caddy', ...(over.config || {}) }),
+      ...(over.serverPort === undefined ? {} : { serverPort: over.serverPort }),
       intendedGateState: over.intendedGateState || 'armed',
       lanHosts: [null],
       undo: over.undo === true,
@@ -111,6 +112,29 @@ describe('scripts/gate-fallback.js (#1420)', () => {
       assert.equal(fs.statSync(markerFile).mode & 0o777, 0o600);
       assert.match(out, /reports "fallback"/);
       noHash();
+    });
+
+    it('judges routes by the installed service\'s port, not config\'s — a standard install binds 3102 with config at 3101', async () => {
+      writeLive('armed');
+      let askedPort = null;
+      const code = await go({
+        config: { serverPort: FIXTURE_SERVER_PORT - 1 },
+        serverPort: FIXTURE_SERVER_PORT,
+        deps: { queryState: async (port) => { askedPort = port; calls.push('query'); return { state: 'fallback', error: null }; } }
+      });
+      assert.equal(code, cmd.EXIT.OK, err);
+      assert.equal(live(), FIXTURE_CADDYFILES.generated,
+        'the ungated file must be rebuilt with basic_auth, not read as already gating every route to TangleClaw');
+      assert.doesNotMatch(out, /already puts a gate/);
+      assert.equal(askedPort, FIXTURE_SERVER_PORT, 'the running server is asked on the port it listens on');
+    });
+
+    it('every out-of-process Caddyfile tool resolves the port from the installed service', () => {
+      for (const script of ['gate-fallback.js', 'drill-gate-fallback.js', 'guard-ungated-sites.js']) {
+        const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', script), 'utf8');
+        assert.match(src, /installedServerPort\(undefined, config\)/, script);
+        assert.doesNotMatch(src.replace(/^\s*(\*|\/\/).*$/gm, ''), /(port|serverPort):\s*config\.serverPort/, script);
+      }
     });
 
     it('leaves a file that already gates every route alone, and still probes it', async () => {
