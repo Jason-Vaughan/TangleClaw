@@ -341,7 +341,9 @@ pages SAY and which door they touch; the other refactors the request path's gate
   R-4 (one scrypt-cap helper), R-8 (the cap's warn line on the recovery routes), R-6 (`clientKey` via
   `cameThroughProxy`); the two JSDoc fixes from its verify pass; and from the A-03 cumulative review
   (`rev-20260913T055830Z-267e3318`) R-3/R-14 (`describeIngressDoor` through `caddy adapt`, a text
-  fallback that fails closed).
+  fallback that fails closed). Plus, from the A.04c review (`rev-20260913T200038Z-f7452635` R-2):
+  `server.js#_gateIngress` stats then reads, so a Caddyfile deleted between the two caches a "no door"
+  answer under the old stat key — close it when the reader is reworked.
 
 **A.04c decisions (2026-09-13)** — recorded in full in ADR 0016 "Recorded during #1420 A-04c":
 - `canChangeCredential` takes the request's gate state and refuses `account-login` where the login
