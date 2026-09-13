@@ -466,9 +466,27 @@ describe('caddy-drift — against real caddy', { skip: !CADDY_AVAILABLE && 'cadd
   });
 
   it('leaves no baseline temp file behind', () => {
-    const before = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('tc-caddy-baseline-'));
-    drift.adaptCaddyfileContent(FIXTURE_CADDYFILES.generated);
-    const after = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('tc-caddy-baseline-'));
-    assert.deepEqual(after, before, 'the baseline carries the credential; it must not linger in /tmp');
+    // Tracks the directory THIS call created rather than diffing a listing of the
+    // shared temp root: suites run in parallel, and any other suite adapting at
+    // the same moment puts its own `tc-caddy-baseline-*` there, which a listing
+    // diff reads as a leak.
+    const created = [];
+    const realMkdtemp = fs.mkdtempSync;
+    fs.mkdtempSync = (...args) => {
+      const dir = realMkdtemp(...args);
+      created.push(dir);
+      return dir;
+    };
+    let result;
+    try {
+      result = drift.adaptCaddyfileContent(FIXTURE_CADDYFILES.generated);
+    } finally {
+      fs.mkdtempSync = realMkdtemp;
+    }
+    assert.equal(result.ok, true, result.reason);
+    assert.equal(created.length, 1, 'precondition: the baseline went through one private temp dir');
+    assert.ok(path.basename(created[0]).startsWith('tc-caddy-baseline-'));
+    assert.equal(fs.existsSync(created[0]), false,
+      'the baseline carries the credential; it must not linger in /tmp');
   });
 });
