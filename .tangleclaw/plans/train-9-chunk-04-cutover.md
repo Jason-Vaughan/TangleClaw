@@ -304,6 +304,10 @@ the sprint release); and the #1420 side lands here, on a sync branch that merges
   recovery-codes) and the copies differ; one helper should own acquire/release. R-8 — the recovery
   routes answer the cap's 503 without the warn line login logs. R-6 — `lib/recovery-codes.js#clientKey`
   re-spells the proxy check `lib/auth-identity.js#cameThroughProxy` owns.
+- **Carried to A.04b from the verify pass (observations):** `resolveGateState`'s JSDoc still says the
+  opt-out holds while the file "serves nothing beyond `localhost`" — add the unguarded-localhost-with-
+  accounts case; `resolveIntendedGateState`'s JSDoc says an unreadable store enforces — true only with
+  `authEnabled: true`.
 
 ### Chunk A.04b (A-04b) — the fallback, reset-admin, recovery doc, drill
 
