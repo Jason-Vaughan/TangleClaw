@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **A sender can see why a peer has not picked up its message (#918).** `GET /api/sessions/<project>/medusa/peers/<workspace-id>` (and `/api/master/medusa/peers/<workspace-id>`), or `tc message status <workspace-id>` from a pane, returns the wake monitor's latest verdict on that peer as a reason code with its `meaning`, when it was first and last observed, and whether the monitor is still refreshing it — never anything from the peer's screen. Codes include `pane-no-prompt` (a dialog, menu or scrolled pane), `pane-composer-has-input`, `wake-not-opted-in`, `no-mail`, `nudged`, `not-observed` and `not-running` (a stopped Project Master). A workspace that is not a TangleClaw session on this host answers `local: false`. The read is gated exactly like the roster. The wake monitor's `pane-no-bare-prompt` refusal is split into `pane-composer-has-input` and `pane-no-prompt`; ledger rows written before the split keep the old code. The dialog-exit drain #918 first asked for had already shipped, and is now pinned by a regression test.
+
 ### Fixed
 
 - An install whose Caddyfile predates the HTTP/1.1 pin can now be fixed in place: `node scripts/pin-https-listener.js` (try `--dry-run` first) adds only `servers :<httpsPort> { protocols h1 }` and keeps every other hand edit. It writes nothing unless `caddy adapt` reads the pin as the only change, refuses outside `ingressMode: caddy`, backs the file up, restores it if `caddy validate` fails, then restarts Caddy — exiting `2` when the pin is on disk but Caddy could not be restarted, so a pin that is not live never reports success. The Caddyfile drift banner now names this command for an unpinned listener. The cutover could not do this: it refuses a hand-edited file, and `--force` replaces the whole file. The open question of *why* Chrome aborts WebSockets under h2/h3 moves to #1438. (#848)

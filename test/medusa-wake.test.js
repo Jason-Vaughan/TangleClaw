@@ -245,14 +245,14 @@ describe('medusa-wake — _composerEmpty (cursor-based input detection, #1103)',
 
   it('refuses a whitespace-only composer through the full gate, cursor present (#1109)', () => {
     const verdict = wake._assessPane(['❯  '], CLAUDE, { x: 3, line: '❯  ' });
-    assert.deepEqual(verdict, { idle: false, reason: 'no-bare-prompt' });
+    assert.deepEqual(verdict, { idle: false, reason: 'composer-has-input' });
   });
 
   it('refuses a whitespace-only composer on the no-cursor fallback path (#1109)', () => {
     // The degraded path: no cursor, so the rendered line alone decides. A
     // trailing typed space must not read as a bare prompt.
     const verdict = wake._assessPane(['❯  '], CLAUDE, undefined);
-    assert.deepEqual(verdict, { idle: false, reason: 'no-bare-prompt' });
+    assert.deepEqual(verdict, { idle: false, reason: 'no-prompt' });
   });
 
   it('carries faintness across an SGR reset and a specific un-faint', () => {
@@ -327,20 +327,20 @@ describe('medusa-wake — placeholder styling is declared per engine (#1105)', (
 
 describe('medusa-wake — _assessPane with cursor (#1103)', () => {
   it('judges a pane idle when its prompt line holds only a suggestion', () => {
-    // The regression. Without the cursor this same pane reads `no-bare-prompt`,
+    // The regression. Without the cursor this same pane reads `no-prompt`,
     // because the suggestion is indistinguishable from typed input once the
     // escape sequences are stripped.
     const withSuggestion = PANE_WITH_PROMPT_TEXT.slice();
     withSuggestion[2] = 'add case law to the reading list too, then branch and PR';
     assert.deepEqual(wake._assessPane(withSuggestion, CLAUDE),
-      { idle: false, reason: 'no-bare-prompt' });
+      { idle: false, reason: 'no-prompt' });
     assert.deepEqual(wake._assessPane(withSuggestion, CLAUDE, SUGGESTION_CURSOR),
       { idle: true, reason: 'at-prompt' });
   });
 
   it('still refuses a pane whose composer really holds typed input', () => {
     assert.deepEqual(wake._assessPane(PANE_WITH_PROMPT_TEXT, CLAUDE, TYPED_CURSOR),
-      { idle: false, reason: 'no-bare-prompt' });
+      { idle: false, reason: 'composer-has-input' });
   });
 
   it('falls back to the text check when the cursor is unavailable', () => {
@@ -348,7 +348,7 @@ describe('medusa-wake — _assessPane with cursor (#1103)', () => {
     assert.deepEqual(wake._assessPane(IDLE_PANE, CLAUDE, null),
       { idle: true, reason: 'at-prompt' });
     assert.deepEqual(wake._assessPane(PANE_WITH_PROMPT_TEXT, CLAUDE, null),
-      { idle: false, reason: 'no-bare-prompt' });
+      { idle: false, reason: 'no-prompt' });
   });
 
   it('lets the busy and fleet gates win over an empty composer', () => {
@@ -436,10 +436,10 @@ describe('medusa-wake — _assessPane (Claude idle policy, pinned byte-for-byte)
     assert.deepEqual(wake._assessPane(BUSY_PANE, CLAUDE), { idle: false, reason: 'turn-in-flight' });
   });
   it('refuses a permission dialog (selector row is not a bare prompt)', () => {
-    assert.deepEqual(wake._assessPane(DIALOG_PANE, CLAUDE), { idle: false, reason: 'no-bare-prompt' });
+    assert.deepEqual(wake._assessPane(DIALOG_PANE, CLAUDE), { idle: false, reason: 'no-prompt' });
   });
   it('refuses to type over an operator\'s half-typed input', () => {
-    assert.deepEqual(wake._assessPane(TYPING_PANE, CLAUDE), { idle: false, reason: 'no-bare-prompt' });
+    assert.deepEqual(wake._assessPane(TYPING_PANE, CLAUDE), { idle: false, reason: 'no-prompt' });
   });
   it('strips ANSI before judging (a colored busy marker still blocks)', () => {
     const colored = ['❯ ', '[2mesc to interrupt[0m'];
@@ -466,7 +466,7 @@ describe('medusa-wake — _assessPane (antigravity idle policy, #560)', () => {
     assert.deepEqual(wake._assessPane(AG_DIALOG_PANE, ANTIGRAVITY), { idle: false, reason: 'not-at-rest' });
   });
   it('refuses to type over half-typed antigravity input (prompt non-bare)', () => {
-    assert.deepEqual(wake._assessPane(AG_TYPING_PANE, ANTIGRAVITY), { idle: false, reason: 'no-bare-prompt' });
+    assert.deepEqual(wake._assessPane(AG_TYPING_PANE, ANTIGRAVITY), { idle: false, reason: 'no-prompt' });
   });
   it('a Claude-idle pane is NOT idle under the antigravity profile (markers do not cross)', () => {
     // The bug this chunk fixes, from the other direction: Claude's `❯` never
@@ -655,6 +655,33 @@ describe('medusa-wake — gates (each one blocks alone)', () => {
     const world = installWorld({ pane: DIALOG_PANE });
     for (let i = 0; i < 5; i++) wake._internal.tick();
     assert.equal(world.injected.length, 0);
+  });
+
+  // #918. A session blocked on a dialog is unreachable for exactly as long as
+  // the dialog is up; what makes that bounded rather than permanent is that the
+  // refusal HOLDS the mail edge instead of consuming it. Nothing new arrives
+  // while the dialog is open, so a monitor that only nudged on arrival would
+  // never wake this session at all once the dialog cleared.
+  it('holds the mail edge while a dialog is up and nudges once it clears, with no new arrival (#918)', () => {
+    const world = installWorld({ pane: DIALOG_PANE });
+    for (let i = 0; i < 6; i++) wake._internal.tick();
+    assert.equal(world.injected.length, 0, 'never types into the dialog');
+    assert.equal(
+      world.recorded.filter((r) => r.skipReason === 'pane-no-prompt').length, 1,
+      'the dialog is recorded as the reason, once — a transition, not a row per tick'
+    );
+
+    world.pane = IDLE_PANE; // the operator answers the dialog; the inbox is unchanged
+    // Clearing the dialog redraws the transcript, which is movement (#1114), so
+    // the first tick after it settles rather than counts toward the streak.
+    wake._internal.tick();
+    assert.equal(world.injected.length, 0, 'the redraw is a settle tick, not an idle one');
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1, 'the held mail is nudged after the dialog clears');
+    assert.equal(world.recorded[world.recorded.length - 1].outcome, 'nudged');
+
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1, 'and exactly once — the drain consumed the edge');
   });
 
   it('a busy interruption resets the idle debounce (no stale half-count)', () => {
@@ -1027,5 +1054,472 @@ describe('medusa-wake — the delivery ledger (#792, #791)', () => {
     wake._internal.recordDelivery = () => { throw new Error('db is locked'); };
     assert.doesNotThrow(() => tickThroughDebounce());
     assert.equal(world.injected.length, 1, 'the nudge still went out');
+  });
+});
+
+// #918. A sender cannot see a peer's pane, so "why has my message not been
+// picked up?" was answerable only by leaving the protocol. The monitor already
+// decides the answer on every tick; these pin that what it hands a sender is
+// that decision — a reason code with a timestamp — and nothing it did not see.
+describe('medusa-wake — peer reachability verdicts (#918)', () => {
+  let saved;
+  let clock;
+  const PEER = 'proj-a-abc123';
+
+  beforeEach(() => {
+    wake.stop();
+    saved = { ...wake._internal };
+    clock = Date.parse('2026-09-12T10:00:00.000Z');
+    wake._internal.now = () => clock;
+    wake._internal.masterKey = () => 'master';
+    wake._internal.registeredWorkspaceId = () => null;
+  });
+  afterEach(() => { Object.assign(wake._internal, saved); wake.stop(); });
+
+  /** Advance the stub clock by `ms` and run one tick. */
+  function tickAt(ms) {
+    clock += ms;
+    wake._internal.tick();
+  }
+
+  it('reports a dialog as `pane-no-prompt`, and keeps `since` while `observedAt` moves', () => {
+    installWorld({ pane: DIALOG_PANE });
+    tickAt(0);
+    const first = wake.peerReachability(PEER);
+    assert.equal(first.local, true);
+    assert.equal(first.reason, 'pane-no-prompt');
+    assert.equal(first.since, '2026-09-12T10:00:00.000Z');
+    assert.equal(first.observedAt, '2026-09-12T10:00:00.000Z');
+
+    tickAt(5000);
+    const second = wake.peerReachability(PEER);
+    assert.equal(second.reason, 'pane-no-prompt');
+    assert.equal(second.since, '2026-09-12T10:00:00.000Z', 'the dialog has been up since the first observation');
+    assert.equal(second.observedAt, '2026-09-12T10:00:05.000Z', 'but it was re-confirmed just now');
+  });
+
+  it('reports typed input under the cursor as `pane-composer-has-input`, in the verdict and the ledger', () => {
+    const world = installWorld({ pane: PANE_WITH_PROMPT_TEXT, cursor: TYPED_CURSOR });
+    tickAt(0);
+    assert.equal(wake.peerReachability(PEER).reason, 'pane-composer-has-input');
+    assert.deepEqual(world.recorded.map((r) => r.skipReason), ['pane-composer-has-input']);
+  });
+
+  it('resets `since` when the reason changes', () => {
+    const world = installWorld({ pane: DIALOG_PANE });
+    tickAt(0);
+    world.pane = BUSY_PANE;
+    tickAt(5000);
+    const v = wake.peerReachability(PEER);
+    assert.equal(v.reason, 'pane-turn-in-flight');
+    assert.equal(v.since, '2026-09-12T10:00:05.000Z');
+  });
+
+  it('says `wake-not-opted-in` explicitly — even with no mail, because that gate is what the monitor observed', () => {
+    const world = installWorld({ config: { medusaWake: false } });
+    tickAt(0);
+    assert.equal(wake.peerReachability(PEER).reason, 'wake-not-opted-in');
+    world.status = { ...world.status, unread: 0 };
+    tickAt(5000);
+    assert.equal(wake.peerReachability(PEER).reason, 'wake-not-opted-in');
+  });
+
+  it('says `no-mail` for an opted-in session with nothing unread', () => {
+    installWorld({ status: { state: 'listening', workspaceId: PEER, unread: 0, lastError: null } });
+    tickAt(0);
+    assert.equal(wake.peerReachability(PEER).reason, 'no-mail');
+  });
+
+  it('reports `pane-at-prompt` during the debounce, then `nudged` — and `nudged` holds while the mail sits unhandled', () => {
+    installWorld();
+    tickAt(0);
+    assert.equal(wake.peerReachability(PEER).reason, 'pane-at-prompt');
+    tickAt(5000);
+    assert.equal(wake.peerReachability(PEER).reason, 'nudged');
+    tickAt(5000);
+    const held = wake.peerReachability(PEER);
+    assert.equal(held.reason, 'nudged');
+    assert.equal(held.since, '2026-09-12T10:00:05.000Z');
+  });
+
+  it('names a failed injection by code, without the tmux error text', () => {
+    installWorld({ injectResult: { ok: false, error: 'tmux: /private/secret path gone' } });
+    tickAt(0);
+    tickAt(5000);
+    const v = wake.peerReachability(PEER);
+    assert.equal(v.reason, 'inject-failed');
+    assert.ok(!JSON.stringify(v).includes('secret'));
+  });
+
+  it('never carries pane content — only the fixed fields', () => {
+    const SECRET = 'API_KEY=sk-do-not-leak';
+    installWorld({ pane: [SECRET, '  Do you want to proceed?', '❯ 1. Yes', '  2. No'] });
+    tickAt(0);
+    const v = wake.peerReachability(PEER);
+    assert.deepEqual(Object.keys(v).sort(), ['local', 'meaning', 'monitorRunning', 'observedAt', 'reason', 'since', 'workspaceId']);
+    assert.equal(v.meaning, wake.PEER_REASON_MEANINGS['pane-no-prompt'], 'the meaning is the declared text for the code, nothing captured');
+    assert.ok(!JSON.stringify(v).includes(SECRET));
+  });
+
+  it('answers `local: false` and nothing else for a workspace no local session holds', () => {
+    installWorld();
+    tickAt(0);
+    assert.deepEqual(wake.peerReachability('someone-elses-host-1234abcd'), {
+      workspaceId: 'someone-elses-host-1234abcd', local: false
+    });
+    assert.deepEqual(wake.peerReachability(''), { workspaceId: '', local: false });
+  });
+
+  it('answers `not-observed` for a local session the monitor has not scanned yet — never a guessed state', () => {
+    installWorld();
+    const v = wake.peerReachability(PEER);
+    assert.equal(v.local, true);
+    assert.equal(v.reason, 'not-observed');
+    assert.equal(v.since, null);
+    assert.equal(v.observedAt, null);
+  });
+
+  it('resolves a session whose listener is off through the registry', () => {
+    const world = installWorld({ status: { state: 'off', workspaceId: null, unread: 0, lastError: null } });
+    wake._internal.registeredWorkspaceId = (c) => (c.key === world.sessions[0].id ? 'toggled-off-9999aaaa' : null);
+    tickAt(0);
+    const v = wake.peerReachability('toggled-off-9999aaaa');
+    assert.equal(v.local, true);
+    assert.equal(v.reason, 'listener-off', 'and its verdict is the off listener the monitor saw');
+  });
+
+  it('resolves the Project Master by its listener key, with no tmux probe', () => {
+    const world = installWorld({ sessions: [] });
+    wake._internal.getStatus = (key) => (key === 'master'
+      ? { state: 'listening', workspaceId: 'project-master-0000beef', unread: 0, lastError: null }
+      : { state: 'off', workspaceId: null, unread: 0, lastError: null });
+    wake._internal.masterWakeRecord = () => { throw new Error('peer resolution must not probe tmux'); };
+    const v = wake.peerReachability('project-master-0000beef');
+    assert.equal(v.local, true);
+    assert.equal(v.reason, 'not-observed');
+    assert.equal(world.injected.length, 0);
+  });
+
+  // R-2. The Master is always a candidate, so unlike an ended project session
+  // it never drops out to `local: false`. Before this, a stopped Master read
+  // `not-observed` forever — a promise of an assessment nothing would make.
+  describe('a Project Master that is not running', () => {
+    const MASTER_WS = 'project-master-0000beef';
+
+    /** A world with no project sessions whose Master is registered but its listener is off. */
+    function masterWorld(masterRecord) {
+      const world = installWorld({ sessions: [], masterRecord });
+      wake._internal.getStatus = () => ({ state: 'off', workspaceId: null, unread: 0, lastError: null });
+      wake._internal.registeredWorkspaceId = (c) => (c.record === null ? MASTER_WS : null);
+      return world;
+    }
+
+    it('reads `not-running` once a tick found no Master, stamped with that tick', () => {
+      masterWorld(null);
+      tickAt(0);
+      const v = wake.peerReachability(MASTER_WS);
+      assert.equal(v.local, true, 'still this host\'s Master — only stopped');
+      assert.equal(v.reason, 'not-running');
+      assert.equal(v.meaning, wake.PEER_REASON_MEANINGS['not-running']);
+      assert.equal(v.since, '2026-09-12T10:00:00.000Z');
+      assert.equal(v.observedAt, '2026-09-12T10:00:00.000Z');
+
+      tickAt(5000);
+      const again = wake.peerReachability(MASTER_WS);
+      assert.equal(again.since, '2026-09-12T10:00:00.000Z', 'stopped since the first observation');
+      assert.equal(again.observedAt, '2026-09-12T10:00:05.000Z', 're-observed just now');
+    });
+
+    it('is `not-observed` before any tick has looked, not `not-running`', () => {
+      masterWorld(null);
+      assert.equal(wake.peerReachability(MASTER_WS).reason, 'not-observed');
+    });
+
+    it('reports a running Master\'s own verdict, and `not-running` from the tick it stops', () => {
+      const world = masterWorld({
+        id: 'master', isMaster: true, name: 'Project Master', tmuxSession: 'tangleclaw-master',
+        engineId: 'claude', sessionMode: 'tmux', status: 'active', medusaWake: true, apiBase: '/api/master/medusa'
+      });
+      tickAt(0);
+      assert.equal(wake.peerReachability(MASTER_WS).reason, 'listener-off');
+      world.masterRecord = null;
+      tickAt(5000);
+      const v = wake.peerReachability(MASTER_WS);
+      assert.equal(v.reason, 'not-running');
+      assert.equal(v.since, '2026-09-12T10:00:05.000Z');
+    });
+
+    it('does not read a probe that THREW as a stopped Master', () => {
+      masterWorld(null);
+      wake._internal.masterWakeRecord = () => { throw new Error('tmux exploded'); };
+      tickAt(0);
+      assert.equal(wake.peerReachability(MASTER_WS).reason, 'not-observed');
+    });
+  });
+
+  // R-11. The registry lookup runs per candidate; an unreadable registry used to
+  // log once per live session on every request. Guarded by COUNTING.
+  describe('registry reads per lookup', () => {
+    /** Three live sessions of one project, none holding a running listener. */
+    function threeSessionWorld() {
+      const world = installWorld({
+        sessions: [claudeSession(1), claudeSession(2), claudeSession(3)],
+        status: { state: 'off', workspaceId: null, unread: 0, lastError: null }
+      });
+      wake._internal.registeredWorkspaceId = saved.registeredWorkspaceId;
+      wake._internal.masterKey = () => 'master';
+      return world;
+    }
+
+    /** Capture warn-level log lines for the duration of `fn`. */
+    function captureWarnings(fn) {
+      const logger = require('../lib/logger');
+      const lines = [];
+      logger.setLevel('warn');
+      logger.setConsoleStream({ write: (line) => lines.push(line) });
+      try { fn(); } finally {
+        logger.setConsoleStream(null);
+        logger.setLevel('error');
+      }
+      return lines;
+    }
+
+    it('reads each project\'s registry once however many of its sessions are candidates', () => {
+      threeSessionWorld();
+      const reads = [];
+      wake._internal.readRegistry = (projectPath) => {
+        reads.push(projectPath);
+        return { 3: 'third-session-1234abcd' };
+      };
+      const realMaster = require('../lib/master').masterMedusaTarget;
+      require('../lib/master').masterMedusaTarget = () => ({ projectPath: '/tmp/master-home', sessionId: 'master' });
+      try {
+        assert.equal(wake.peerReachability('nobody-here-00000000').local, false);
+      } finally {
+        require('../lib/master').masterMedusaTarget = realMaster;
+      }
+      assert.deepEqual(reads.sort(), ['/tmp/master-home', '/tmp/proj-a'], 'one read per registry file, not one per session');
+      const found = wake.peerReachability('third-session-1234abcd');
+      assert.equal(found.local, true);
+    });
+
+    it('logs one warning per lookup when the registry cannot be read, not one per session', () => {
+      threeSessionWorld();
+      wake._internal.getProject = () => { throw new Error('store is gone'); };
+      const lines = captureWarnings(() => {
+        assert.equal(wake.peerReachability('nobody-here-00000000').local, false);
+      });
+      const registryWarnings = lines.filter((l) => l.includes('registry read failed'));
+      assert.equal(registryWarnings.length, 1, lines.join(''));
+    });
+
+    it('an unparsable registry file on disk warns once per lookup through the real registry module', () => {
+      const fs = require('node:fs');
+      const os = require('node:os');
+      const path = require('node:path');
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wake-registry-'));
+      try {
+        fs.mkdirSync(path.join(dir, '.tangleclaw', 'medusa'), { recursive: true });
+        fs.writeFileSync(path.join(dir, '.tangleclaw', 'medusa', 'registry.json'), '{not json');
+        const world = threeSessionWorld();
+        world.project = { id: 10, name: 'proj-a', path: dir };
+        wake._internal.readRegistry = saved.readRegistry;
+        wake._internal.masterKey = () => 'master';
+        const realMaster = require('../lib/master').masterMedusaTarget;
+        require('../lib/master').masterMedusaTarget = () => ({ projectPath: path.join(dir, 'no-master'), sessionId: 'master' });
+        let lines;
+        try {
+          lines = captureWarnings(() => {
+            assert.equal(wake.peerReachability('nobody-here-00000000').local, false);
+          });
+        } finally {
+          require('../lib/master').masterMedusaTarget = realMaster;
+        }
+        assert.equal(lines.filter((l) => l.includes('corrupt JSON')).length, 1, lines.join(''));
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  // R-8/R-10. A gate that returns no code is a defect; the docstring promised it
+  // would be loud, so it is — once per session per entry into the state.
+  it('logs a missing reason code once on entering `unclassified`, not on every tick', () => {
+    const logger = require('../lib/logger');
+    const lines = [];
+    logger.setLevel('warn');
+    logger.setConsoleStream({ write: (line) => lines.push(line) });
+    const st = { verdict: null };
+    try {
+      wake._noteVerdict(st, undefined, 7);
+      wake._noteVerdict(st, undefined, 7);
+      wake._noteVerdict(st, '', 7);
+      assert.equal(st.verdict.reason, 'unclassified');
+      wake._noteVerdict(st, 'no-mail', 7);
+      wake._noteVerdict(st, undefined, 7);
+    } finally {
+      logger.setConsoleStream(null);
+      logger.setLevel('error');
+    }
+    const warned = lines.filter((l) => l.includes('returned no reason code'));
+    assert.equal(warned.length, 2, `one per transition into unclassified:\n${lines.join('')}`);
+    assert.match(warned[0], /sessionId=7/);
+  });
+
+  it('says whether the monitor is still refreshing the verdict', () => {
+    installWorld();
+    tickAt(0);
+    assert.equal(wake.peerReachability(PEER).monitorRunning, false);
+    wake.start({ intervalMs: 60 * 60 * 1000 });
+    assert.equal(wake.peerReachability(PEER).monitorRunning, true);
+  });
+
+  it('every gate names what it observed — no tick leaves an unclassified verdict', () => {
+    const worlds = [
+      { sessions: [{ ...claudeSession(1), sessionMode: 'webui' }] },
+      { sessions: [{ ...claudeSession(1), engineId: 'codex' }] },
+      { sessions: [{ ...claudeSession(1), status: 'ended' }] },
+      { project: null },
+      { wrapRunning: true },
+      { config: { medusaWake: false } },
+      { status: { state: 'connecting', workspaceId: PEER, unread: 1, lastError: null } },
+      { status: { state: 'listening', workspaceId: PEER, unread: 0, lastError: null } },
+      { status: { state: 'listening', workspaceId: PEER, unread: 2, lastError: null }, inbox: [] },
+      { pane: DIALOG_PANE },
+      { pane: BUSY_PANE },
+      {}
+    ];
+    for (const w of worlds) {
+      wake.stop();
+      installWorld(w);
+      tickAt(5000);
+      tickAt(5000);
+      const v = wake.peerReachability(PEER);
+      assert.equal(v.local, true, `fixture resolves: ${JSON.stringify(w)}`);
+      assert.notEqual(v.reason, 'unclassified', `a gate returned no code for ${JSON.stringify(w)}`);
+      assert.notEqual(v.reason, 'not-observed', `the tick recorded nothing for ${JSON.stringify(w)}`);
+    }
+  });
+});
+
+// R-7. The reason vocabulary is declared ONCE (`PEER_REASON_MEANINGS`). These
+// derive the codes the monitor can emit from the producing SOURCE — the return
+// sites of `_judgeSession`, the assessor reasons it prefixes, and the answers
+// `peerReachability`/`_noteVerdict` build — rather than from a typed list, so a
+// new gate that is not declared turns this red instead of shipping a bare code.
+describe('medusa-wake — the peer reason vocabulary is declared for every code emitted (#918)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const SRC = fs.readFileSync(path.join(__dirname, '..', 'lib', 'medusa-wake.js'), 'utf8');
+
+  /** The source of a top-level function, through its closing column-0 brace. */
+  function topLevelFunction(name) {
+    const start = SRC.search(new RegExp(`^function ${name}\\(`, 'm'));
+    assert.ok(start >= 0, `lib/medusa-wake.js has no top-level function ${name}`);
+    const end = SRC.indexOf('\n}\n', start);
+    return SRC.slice(start, end + 2);
+  }
+
+  /** Drop comments so prose naming a code is never read as producing it. */
+  function stripComments(src) {
+    return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
+  }
+
+  /** Kebab-case string literals, minus those only compared against. */
+  function codeLiterals(expr) {
+    const cleaned = expr.replace(/[!=]==\s*'[^']*'/g, '');
+    return [...cleaned.matchAll(/'([a-z]+(?:-[a-z]+)*)'/g)].map((m) => m[1]);
+  }
+
+  /** Template-literal prefixes (`` `listener-${…}` `` → `listener-`). */
+  function templatePrefixes(expr) {
+    return [...expr.matchAll(/`([a-z-]*)\$\{/g)].map((m) => m[1]);
+  }
+
+  /** Every reason code the wake monitor can hand a sender, derived from source. */
+  function emittedCodes() {
+    const exact = new Set();
+    const prefixes = new Set();
+
+    // The assessor reasons `_judgeSession` prefixes with `pane-`.
+    const assessorReasons = ['_assessActivity', '_assessPane']
+      .flatMap((fn) => [...stripComments(topLevelFunction(fn)).matchAll(/reason:\s*'([a-z-]+)'/g)].map((m) => m[1]));
+    assert.ok(assessorReasons.length >= 5, `the assessor scan found reasons: ${assessorReasons}`);
+    const idleOwn = [...stripComments(topLevelFunction('assessSessionIdle')).matchAll(/reason:\s*'(pane-[a-z-]+)'/g)].map((m) => m[1]);
+
+    let judge = stripComments(topLevelFunction('_judgeSession'));
+    const recordStart = judge.indexOf('  function record(');
+    assert.ok(recordStart >= 0, 'the nested ledger writer moved; update this scan');
+    judge = judge.slice(0, recordStart) + judge.slice(judge.indexOf('\n  }\n', recordStart) + 4);
+
+    const returns = [...judge.matchAll(/\breturn\b([^;]*);/g)].map((m) => m[1].trim());
+    assert.ok(returns.length >= 10, `the return scan found ${returns.length} sites`);
+    for (const expr of returns) {
+      let source = expr;
+      if (/^[A-Za-z_$][\w$]*$/.test(expr)) {
+        const def = judge.match(new RegExp(`const ${expr} = ([^;]*);`));
+        assert.ok(def, `return ${expr}: no single-line const definition to derive its codes from`);
+        source = def[1];
+      } else {
+        assert.ok(/^('[^']*'|`[^`]*`)$/.test(expr),
+          `_judgeSession returns \`${expr || '(nothing)'}\` — a site this scan cannot derive a code from`);
+      }
+      const lits = codeLiterals(source);
+      const pres = templatePrefixes(source);
+      assert.ok(lits.length + pres.length > 0, `return ${expr}: yields no code`);
+      lits.forEach((c) => exact.add(c));
+      pres.forEach((p) => prefixes.add(p));
+    }
+    if (prefixes.delete('pane-')) {
+      assessorReasons.forEach((r) => exact.add(`pane-${r}`));
+      idleOwn.forEach((r) => exact.add(r));
+    }
+
+    for (const fn of ['peerReachability', '_noteVerdict']) {
+      codeLiterals(stripComments(topLevelFunction(fn))).forEach((c) => exact.add(c));
+    }
+    return { exact, prefixes };
+  }
+
+  it('every exact code a return site can emit has a declared meaning', () => {
+    const { exact } = emittedCodes();
+    for (const code of exact) {
+      assert.equal(typeof wake.peerReasonMeaning(code), 'string', `\`${code}\` is emitted but has no declared meaning`);
+    }
+  });
+
+  it('every variable-tail code a return site can emit has a declared prefix', () => {
+    const { prefixes } = emittedCodes();
+    assert.ok(prefixes.size >= 2, `found prefixes: ${[...prefixes]}`);
+    for (const prefix of prefixes) {
+      assert.ok(Object.prototype.hasOwnProperty.call(wake.PEER_REASON_PREFIX_MEANINGS, prefix),
+        `\`${prefix}<tail>\` is emitted but no prefix meaning is declared`);
+    }
+  });
+
+  it('declares nothing no site emits — every declared code is derived from a producer', () => {
+    const { exact } = emittedCodes();
+    for (const code of Object.keys(wake.PEER_REASON_MEANINGS)) {
+      assert.ok(exact.has(code), `\`${code}\` is declared but nothing in lib/medusa-wake.js emits it`);
+    }
+  });
+
+  it('every declared code, exact or prefixed, has a non-empty meaning', () => {
+    for (const [code, meaning] of Object.entries(wake.PEER_REASON_MEANINGS)) {
+      assert.ok(typeof meaning === 'string' && meaning.length > 0, code);
+      assert.equal(wake.peerReasonMeaning(code), meaning);
+    }
+    for (const prefix of Object.keys(wake.PEER_REASON_PREFIX_MEANINGS)) {
+      const meaning = wake.peerReasonMeaning(`${prefix}sometail`);
+      assert.match(meaning, /sometail/, `${prefix} fills its tail`);
+      assert.equal(wake.peerReasonMeaning(prefix), null, 'a bare prefix is not a code');
+    }
+  });
+
+  it('an unknown code has no meaning — relayed as-is, never given a guessed one', () => {
+    assert.equal(wake.peerReasonMeaning('a-future-code'), null);
+    assert.equal(wake.peerReasonMeaning(''), null);
+    assert.equal(wake.peerReasonMeaning(undefined), null);
+    assert.equal(wake.peerReasonMeaning('toString'), null, 'no prototype key reads as declared');
   });
 });

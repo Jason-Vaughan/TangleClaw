@@ -1550,6 +1550,43 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     assert.equal(data.code, 'NO_SESSION');
   });
 
+  // #918. The reachability read is gated exactly as the roster is — whatever
+  // may list the peers may ask about one, and nothing else may. Each refusal
+  // is asserted against the roster's own answer, so the two cannot drift.
+  describe('GET /peers/:workspaceId (#918)', () => {
+    it('refuses an unknown project exactly as the roster does', async () => {
+      const roster = await req('/api/sessions/nope/medusa/roster', 'GET');
+      const peers = await req('/api/sessions/nope/medusa/peers/live-ws', 'GET');
+      assert.equal(roster.status, 404);
+      assert.deepEqual([peers.status, peers.data.code], [roster.status, roster.data.code]);
+    });
+
+    it('refuses a project with no live session exactly as the roster does', async () => {
+      const roster = await req('/api/sessions/no-session-c03/medusa/roster', 'GET');
+      const peers = await req('/api/sessions/no-session-c03/medusa/peers/live-ws', 'GET');
+      assert.equal(roster.status, 409);
+      assert.deepEqual([peers.status, peers.data.code], [roster.status, roster.data.code]);
+    });
+
+    it('answers local:false for a workspace no TangleClaw session on this host holds', async () => {
+      const { status, data } = await req('/api/sessions/sender/medusa/peers/live-ws', 'GET');
+      assert.equal(status, 200);
+      assert.deepEqual(data, { workspaceId: 'live-ws', local: false });
+    });
+
+    it('answers a local session with a reason code, not-observed until the monitor has scanned it', async () => {
+      const { status, data } = await req(`/api/sessions/sender/medusa/peers/${encodeURIComponent(workspaceId)}`, 'GET');
+      assert.equal(status, 200);
+      assert.equal(data.workspaceId, workspaceId);
+      assert.equal(data.local, true);
+      assert.equal(data.reason, 'not-observed');
+      assert.equal(data.meaning, require('../lib/medusa-wake').PEER_REASON_MEANINGS['not-observed'],
+        'the route carries the declared meaning beside the code (R-7)');
+      assert.equal(data.observedAt, null);
+      assert.equal(typeof data.monitorRunning, 'boolean');
+    });
+  });
+
   it('loop route returns 404 for an unknown project', async () => {
     const { status } = await req('/api/sessions/nope/medusa/loop', 'POST', {
       target: 'live-ws', task: 't', doneCriteria: 'd'

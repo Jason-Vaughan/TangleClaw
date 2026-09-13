@@ -372,7 +372,7 @@ switch that does nothing.
 Independent of any config file or prime, every tmux session TangleClaw launches gets the `tc` CLI
 on its `PATH` plus `TANGLECLAW_API` / `TANGLECLAW_PROJECT_ID` (and `TANGLECLAW_WORKSPACE_ID` when
 the switchboard minted one) in the pane environment. The verbs come from a declared roster
-(`lib/tc-verbs.js`): `whoami`, `capabilities`, `sessions`, `message send|read|ack`, `ports`,
+(`lib/tc-verbs.js`): `whoami`, `capabilities`, `sessions`, `message send|read|ack|status`, `ports`,
 `docs`, `rules`, `learnings` — each answers honestly (an empty inbox or idle fleet says so in
 words; a disabled capability states its reason), and the server records each invocation as a
 verb-labeled **awareness receipt**, so a session that never discovered the floor is a detectable

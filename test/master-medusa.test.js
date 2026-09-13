@@ -562,6 +562,27 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     assert.equal((await req('/api/master/medusa/roster')).status, 200);
   });
 
+  // #918. The peer read shares the roster's gate: it answers wherever the
+  // roster answers, and refuses with the roster's refusal where it does not.
+  it('the peer read is not gated at read-only either — it answers wherever the roster does', async () => {
+    startListening();
+    setMaster({ accessLevel: 'read-only' });
+    const roster = await req('/api/master/medusa/roster');
+    const peers = await req('/api/master/medusa/peers/live-ws');
+    assert.equal(roster.status, 200);
+    assert.equal(peers.status, roster.status);
+    assert.deepEqual(peers.data, { workspaceId: 'live-ws', local: false });
+  });
+
+  it('the peer read refuses a Master that is not running with the roster\'s own 409', async () => {
+    liveness = { live: false, answered: true, cause: null };
+    const roster = await req('/api/master/medusa/roster');
+    const peers = await req('/api/master/medusa/peers/live-ws');
+    assert.equal(roster.status, 409);
+    assert.deepEqual([peers.status, peers.data.code], [roster.status, roster.data.code]);
+    assert.match(peers.data.error, /Project Master is not running/);
+  });
+
   it('loop open is gated the same way: 403 at read-only, 200 at write', async () => {
     startListening();
     setMaster({ accessLevel: 'read-only' });
