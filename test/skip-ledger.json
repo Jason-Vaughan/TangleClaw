@@ -69,6 +69,12 @@
       "match": "^caddy-drift \u2014 credentials never reach a report > redacts the bcrypt hash out of an adapt failure$",
       "why": "Needs a real `caddy adapt` PARSE FAILURE to produce the stderr that quotes the offending Caddyfile line \u2014 that line can be `basic_auth <user> <hash>`, which is the only way a credential enters text nobody wrote by hand (#821). A stub cannot generate it, so there is nothing to redact without the binary. The sibling case in the same describe (`redacts findings on the way out`) needs no caddy and runs here.",
       "runsWhere": "any developer or operator machine with caddy installed \u2014 including the live install, whose Caddyfile carries a real hash."
+    },
+    {
+      "id": "caddy-adapt-absent-pin",
+      "match": "^pin-https-listener \u2014 against real caddy$",
+      "why": "Hands real Caddyfiles to `caddy adapt` to prove the in-place HTTP/1.1 pin (#848) is read by Caddy as the only change \u2014 including the address-less `servers` block whose settings Caddy drops once a listener gains its own block, which no fixture can show without Caddy's parser. The runner has no caddy binary. The DECISION layer of the suite runs on committed adapt fixtures with `adapt` injected, so what counts as a pin-only change is covered here; only the parts that need Caddy itself skip.",
+      "runsWhere": "any developer or operator machine with caddy installed \u2014 the population the pin tool is run on."
     }
   ]
 }

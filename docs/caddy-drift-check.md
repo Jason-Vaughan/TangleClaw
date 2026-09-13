@@ -70,6 +70,14 @@ list carries divergences only, so a caller deciding whether to reassure the oper
 | P3 | `knownUpstreams` | No site dials an upstream the generated config does not dial | adapt unavailable |
 | P4 | `leaseReach` | No site fronts a port whose PortHub lease declares a narrower `reach` | adapt unavailable, PortHub unreachable, the port has no lease, or the lease has no readable reach |
 
+**P2 names its remedy, and the remedy is held to this check's own standard.** An unpinned
+listener's finding points at `scripts/pin-https-listener.js`, which adds the pin to the live file
+in place (#848) — a cutover would refuse a hand-edited file, and `--force` would replace it whole.
+Placement is done on text, but `lib/caddy-drift.js#planHttpsListenerPin` writes nothing unless
+`caddy adapt` reads the result as the original with only the listener's `protocols` changed, so
+the retrofit is decided by Caddy's parser just as the finding was. A listener set to other
+protocols on purpose is diverged too, but its finding names no tool: the pin tool refuses it.
+
 **P1 asks its question per SITE, and a site is `(listen address, host)`.** `summarizeConfig` merges
 every route under one site, so a gate anywhere in that site satisfies P1 for all of it. An ungated
 path-scoped block sitting beside a real gate on the same host and port therefore reads as `holds`.
