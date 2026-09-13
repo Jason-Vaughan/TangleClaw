@@ -139,12 +139,13 @@ describe('No merge or privilege path for dependency-bump PRs (.github/workflows/
 
   it('no workflow runs on a trigger that grants base-repository privileges', () => {
     // CI running a bump PR's new action version is accepted only because
-    // pull_request runs are read-only and secret-less. These two triggers
-    // are not.
+    // pull_request runs are read-only and secret-less. These three
+    // triggers are not.
     for (const { name, src } of workflows()) {
       const code = stripYamlComments(src);
       assert.doesNotMatch(code, /\bpull_request_target\b/, `${name} uses pull_request_target`);
       assert.doesNotMatch(code, /\bworkflow_run\b/, `${name} uses workflow_run`);
+      assert.doesNotMatch(code, /\bissue_comment\b/, `${name} uses issue_comment`);
     }
   });
 });

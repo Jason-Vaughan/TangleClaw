@@ -22,8 +22,14 @@ printed CI secrets into workflow logs (CVE-2025-30066). Every workflow that refe
 by tag ran the payload. A bump PR opened in that window would have looked exactly like a routine
 update.
 
-The stakes in this repository are concrete. `.github/workflows/release.yml` runs on every push to
-`main` with `contents: write`, and it runs the same `actions/checkout` and `actions/setup-node`
+This audit does not close that exact attack on its own. Our workflows also reference actions by
+tag, so a tag moved upstream runs in CI with no PR at all, and Dependabot never sees it. What
+limits the exposure today is that every action we use comes from GitHub's own `actions/*`
+organization. Pinning every `uses:` ref to a full commit SHA closes it, and is tracked in #1436;
+once pinned, every change arrives as a bump PR and goes through this audit.
+
+The stakes in this repository are concrete. `.github/workflows/release.yml` runs with `contents: write`
+whenever a push to `main` changes `version.json` (and on manual dispatch), and it runs the same `actions/checkout` and `actions/setup-node`
 that a bump PR changes. An action merged unaudited would run with permission to push tags to the
 repository whose newest tag is the update path for every install (see
 [Release process](release-process.md)).
@@ -52,8 +58,8 @@ GitHub-hosted runner, the `GITHUB_TOKEN` is read-only, and no Actions secrets ar
 workflow that Dependabot triggers.
 
 Those terms hold only while no workflow uses a trigger that runs with the base repository's
-privileges. `pull_request_target` and `workflow_run` are the two that do.
-`test/dependabot-config.test.js` fails if either appears. A green CI run on a bump PR tells you the
+privileges: `pull_request_target`, `workflow_run` and `issue_comment` do.
+`test/dependabot-config.test.js` fails if any of them appears. A green CI run on a bump PR tells you the
 new version did not break the suite. It tells you nothing about whether the new version is safe.
 
 ## The audit
@@ -93,9 +99,10 @@ Record each answer. They go into the rebuild's PR body.
 4. **The tag resolves to a commit on the default branch.** Run
    `gh api repos/<owner>/<repo>/git/ref/tags/<new-tag>` to get the commit. If the ref points to an
    annotated tag object, dereference it first. Then run
-   `gh api repos/<owner>/<repo>/compare/<sha>...<default-branch> --jq .status`, which must return
-   `behind` or `identical`. A tag on a commit that is not in the default branch's history is how
-   the `tj-actions` attack looked. Stop.
+   `gh api repos/<owner>/<repo>/compare/<default-branch>...<sha> --jq .status`. GitHub reports the
+   status of the second ref (the tag's commit) relative to the first (the default branch), so it
+   must return `behind` or `identical`. `ahead` or `diverged` means the commit is not in the
+   default branch's history. A tag on such a commit is how the `tj-actions` attack looked. Stop.
 5. **Read the upstream change.** Run
    `gh api repos/<owner>/<repo>/compare/<old-ref>...<new-ref>` and look at `action.yml` first:
    `runs.using`, the `main`/`pre`/`post` entrypoints, new inputs that default to on, handling of
@@ -144,9 +151,15 @@ These are permanent, not defaults to revisit:
 - `gh pr merge` in any form on a Dependabot PR, `--auto` included, or an `@dependabot merge` or
   `@dependabot squash and merge` comment.
 - Adding `dependabot[bot]` to a branch-protection bypass list or a ruleset exemption.
-- A `pull_request_target` or `workflow_run` trigger in any workflow. Either one would give a bump
-  PR's code the base repository's privileges.
+- A `pull_request_target`, `workflow_run` or `issue_comment` trigger in any workflow. Each one runs
+  with the base repository's privileges, so a bump PR could reach them.
 
 `test/dependabot-config.test.js` scans `.github/workflows/` for the workflow-side items. The
 branch-protection item is a repository setting the suite cannot see, and it is held by this
 document alone.
+
+## When Dependabot goes quiet
+
+A failed scheduled run looks the same as "no updates" from the PR list. Check the repository's
+**Insights → Dependency graph → Dependabot** tab, which shows each ecosystem's last check and any
+error. A run that keeps failing there is a configuration problem to fix, not a quiet week.
