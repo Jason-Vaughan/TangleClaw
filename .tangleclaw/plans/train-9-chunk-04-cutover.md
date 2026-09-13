@@ -345,21 +345,6 @@ pages SAY and which door they touch; the other refactors the request path's gate
   `server.js#_gateIngress` stats then reads, so a Caddyfile deleted between the two caches a "no door"
   answer under the old stat key — close it when the reader is reworked.
 
-**A.04c decisions (2026-09-13)** — recorded in full in ADR 0016 "Recorded during #1420 A-04c":
-- `canChangeCredential` takes the request's gate state and refuses `account-login` where the login
-  guards the door and no Caddy password stands in front; the parameter only chooses between refusals.
-- `canCreateGate` requires the writer's gate state; allowed only in `open`/`account-required`.
-- Recovery codes deleted on `disable` AND `enable` (the plan said "or"; both, because `enable` also
-  covers a row disabled outside `disable`), and on a `reset-admin --store` reset (vetoable — not in
-  the plan; same reason as ending sessions).
-- `reset-admin --store` reports `resolveGateState` over the file on disk via the new
-  `caddy.readIngressDoor`, which the server's `_gateIngress` now uses too (A.04d reworks its inside).
-- Settings section renamed **Caddy password**.
-- **Carried to A-VRF (docs sweep before Checkpoint 2):** README "Security" and "Security & Remote
-  Access", `docs/setup-guide.md` "What a fresh install does" / "Reaching it", and FEATURES' older AUTH-2
-  entries still describe Caddy's `basic_auth` as THE gate (and "no session revocation"). True of the
-  live install until the cutover runs; rewrite them with the cutover procedure, not piecemeal here.
-
 **A.04b decisions (2026-09-13)** — recorded in full in ADR 0016 "Recorded during #1420 A-04b":
 - `fallback` is a sixth gate state, weighed last, over any enforcing state (never `open`);
   `authGate.standsDown` = `open` or `fallback`. Writers never resolve it.
@@ -389,6 +374,30 @@ paragraph above names):
 - `scripts/reset-admin.js` aligned with the state machine, and the in-repo recovery doc linked from
   the README (drawn from the operator's local emergency runbook) → **A.04c**.
 
+### Chunk A.04c (A-04c) — reset-admin and the words
+
+Delivers the A.04c bullet of the split above (credential predicates and reset-admin by gate state,
+recovery codes revoked with the account, Settings and sign-in copy, the recovery doc and its links).
+
+**A.04c decisions (2026-09-13)** — recorded in full in ADR 0016 "Recorded during #1420 A-04c":
+- `canChangeCredential` takes the request's gate state and refuses `account-login` where the login
+  guards the door and no Caddy password stands in front; the parameter only chooses between refusals.
+- `canCreateGate` requires the writer's gate state; allowed only in `open`/`account-required`.
+- Recovery codes deleted on `disable` AND `enable` (the plan said "or"; both, because `enable` also
+  covers a row disabled outside `disable`), and on a `reset-admin --store` reset (vetoable — not in
+  the plan; same reason as ending sessions).
+- `reset-admin --store` reports `resolveGateState` over the file on disk via the new
+  `caddy.readIngressDoor`, which the server's `_gateIngress` now uses too (A.04d reworks its inside).
+- Settings section renamed **Caddy password**.
+- **Carried to A-VRF (docs sweep before Checkpoint 2):** README "Security" and "Security & Remote
+  Access", `docs/setup-guide.md` "What a fresh install does" / "Reaching it", and FEATURES' older AUTH-2
+  entries still describe Caddy's `basic_auth` as THE gate (and "no session revocation"). True of the
+  live install until the cutover runs; rewrite them with the cutover procedure, not piecemeal here.
+
+### Chunk A.04d (A-04d) — the gate machinery carries
+
+Delivers the A.04d bullet of the split above.
+
 ### A-VRF — before Checkpoint 2
 - `/prawduct:critic` cumulative on the integration branch.
 - elkaholic VRF per `reference_live_verification_traps` (the launchd `WorkingDirectory` and the
@@ -412,6 +421,6 @@ paragraph above names):
 - [x] Chunk A.03 (A-03) — state-driven `basic_auth`, bypass ownership, drift, bind policy, #1055 (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [x] Chunk A.04a (A-04a) — recovery codes end to end, ADR 0009 rule 5 + security-model Direction amendment (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [x] Chunk A.04b (A-04b) — fallback state + marker + command, drill, #472 decision (reviewed 2026-09-13, PR into `train-9/cutover`; R-3/R-14 moved to A.04c)
-- [ ] Chunk A.04c (A-04c) — reset-admin + credential predicates aligned with the state machine, login copy, recovery doc
+- [x] Chunk A.04c (A-04c) — reset-admin + credential predicates aligned with the state machine, login copy, recovery doc (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [ ] Chunk A.04d (A-04d) — gate machinery carries: scrypt-cap helper, recovery warn line, `clientKey`, JSDoc fixes, `describeIngressDoor` through `caddy adapt`
 - [ ] A-VRF — cumulative Critic, elkaholic VRF, phone drill → Checkpoint 2
