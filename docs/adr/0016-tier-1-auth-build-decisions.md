@@ -443,8 +443,9 @@ governs.
   column stamped at launch; `activity_log` itself carries no user field.
 - **`authStatus` is the gate state, reported as-is** (`open`, `armed`, `account-required`, `locked`,
   `unreadable`) — one vocabulary shared with `/api/auth/me`'s `gateState`, never a rename map, so a
-  state added later (A-04's `fallback`) cannot be mislabelled. The AUTH-3 "configured-no-identity" state the OQ2 text says is "replaced by a forged
-  header refused" state is not a status value: a refused header is a log line and a deletion, and the
-  status reports what the gate enforces. `docs/auth-status-surfacing.md` records the old model as history.
+  state added later (A-04's `fallback`) cannot be mislabelled. OQ2 said AUTH-3's
+  `configured-no-identity` would be replaced by a "forged header refused" state. It is not a status
+  value: a refused header is a log line and a deletion, and the status reports only what the gate
+  enforces. `docs/auth-status-surfacing.md` records the old model as history.
 - **`lib/auth-identity.js#isProxyHeaderTrusted` stays**, for the forwarded HOST
   `lib/session-ownership.js#resolveOperatorHost` reads — an address, not an identity.

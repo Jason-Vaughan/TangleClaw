@@ -4,8 +4,8 @@
 AUTH-2K9D design (2026-07-08, amended 2026-07-17 by AUTH-5N2J) compared config against a Caddy-set
 identity header, and is kept below as history.**
 
-Related: [ADR 0016 — Tier 1 auth build decisions](adr/0016-tier-1-auth-build-decisions.md) (OQ2 and
-"Recorded during #1420 A-02a"), `lib/auth-gate.js#resolveGateState`, `lib/auth-identity.js`,
+Related: [ADR 0016 — Tier 1 auth build decisions](adr/0016-tier-1-auth-build-decisions.md) (OQ2,
+"Recorded during #1420 A-02a" for the gate states, and "Recorded during #1420 A-02b" for this status), `lib/auth-gate.js#resolveGateState`, `lib/auth-identity.js`,
 `lib/server-info.js`.
 
 ## Problem

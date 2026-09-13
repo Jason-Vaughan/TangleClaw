@@ -94,6 +94,11 @@ Caddy honour a client's value.
   still describe `owner` as the "proxy-authenticated user (null in direct mode)", and so does FEATURES'
   "Session ownership" entry; `lib/caddy.js#_pushSiteBlock`'s JSDoc mentions AUTH-3 forwarding without
   saying the header is inert. A-03 rewrites `lib/caddy.js` anyway.
+- A-03 (PR review note): `lib/auth-identity.js` comments narrate history — the module header's "no
+  longer interprets", `isProxyHeaderTrusted`'s "Identity no longer answers to this", and
+  `resolveAuthStatus`'s paragraph on the retired `configured-*` values. Delete those clauses when
+  `isProxyHeaderTrusted`'s justification is rewritten; the history lives in ADR 0016 and
+  `docs/auth-status-surfacing.md`.
 - A-03: `POST /api/setup/complete` answers `account.required: false` when the gate is `unreadable`, so
   the wizard moves on rather than surfacing the fault (the gate still enforces — nothing is exposed).
   Decide whether setup should refuse to finish on an unreadable gate, and test it.
