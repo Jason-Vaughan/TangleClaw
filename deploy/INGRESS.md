@@ -203,7 +203,10 @@ as identical to your file apart from the pin — anything less exact is **refuse
 the reason**, and the manual steps below still apply. The write keeps a timestamped
 backup and restores it if the new file fails `caddy validate`. The port is
 `caddyHttpsPort` from config (default `8443`), the same port the drift check
-measured. Restart TangleClaw afterwards so the banner re-checks.
+measured. Restart TangleClaw afterwards so the banner re-checks. It refuses outside
+`ingressMode: caddy`. Exit status: `0` pinned and Caddy restarted (or already pinned),
+`1` refused or failed with nothing live changed, `2` the pin is on disk but Caddy could
+not be restarted — run the printed `launchctl` command, since the pin is not live yet.
 
 What it refuses, and why: a listener already set to other protocols (a deliberate
 setting, yours to change); no listener on the configured port (a pin there fixes

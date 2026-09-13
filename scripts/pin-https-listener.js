@@ -62,6 +62,7 @@ function parseArgs(argv) {
  * @param {object} opts
  * @param {string} opts.caddyfilePath - The Caddyfile to pin.
  * @param {number} opts.httpsPort - The configured HTTPS port.
+ * @param {string} opts.ingressMode - The configured ingress mode; only `caddy` is pinned.
  * @param {boolean} [opts.dryRun=false] - Report only.
  * @param {number} opts.uid - Numeric uid for the launchctl target.
  * @param {string} opts.stamp - Filename-safe timestamp for the backup.
@@ -71,11 +72,13 @@ function parseArgs(argv) {
  * @param {Function} [opts.deps.reload] - `adminCredential.reloadCaddy`.
  * @param {{write: Function}} [opts.stdout]
  * @param {{write: Function}} [opts.stderr]
- * @returns {number} Process exit code: 0 pinned or already pinned, 1 otherwise.
+ * @returns {number} Process exit code: 0 pinned (and Caddy restarted) or already
+ *   pinned or dry run; 1 refused or failed with nothing live changed; 2 pinned on
+ *   disk but Caddy could not be restarted, so the pin is NOT live yet.
  */
 function run(opts) {
   const {
-    caddyfilePath, httpsPort, dryRun = false, uid, stamp,
+    caddyfilePath, httpsPort, ingressMode, dryRun = false, uid, stamp,
     deps = {},
     stdout = process.stdout,
     stderr = process.stderr
@@ -83,6 +86,14 @@ function run(opts) {
   const plan = deps.plan || drift.planHttpsListenerPin;
   const validate = deps.validate || caddy.validateCaddyfile;
   const reload = deps.reload || adminCredential.reloadCaddy;
+
+  // Caddy is only the ingress in caddy mode. A direct-mode install can still
+  // have a Caddyfile left over; rewriting it and restarting its job fixes nothing.
+  if (ingressMode !== 'caddy') {
+    stderr.write(`REFUSED: ingressMode is ${JSON.stringify(ingressMode)}, not "caddy".\n`
+      + '  The pin belongs to caddy ingress mode; nothing was written.\n');
+    return 1;
+  }
 
   let content;
   try {
@@ -137,7 +148,10 @@ function run(opts) {
   if (reloaded.ok) {
     stdout.write('  ✓ Caddy restarted. Restart TangleClaw too, so the dashboard notice re-checks.\n\n');
   } else {
-    stderr.write(`WARNING: could not restart Caddy automatically.\n  Run: ${reloaded.command}\n`);
+    stderr.write('WARNING: the pin is written but NOT live — Caddy could not be restarted automatically.\n'
+      + `  Run: ${reloaded.command}\n`
+      + '  Then restart TangleClaw too, so the dashboard notice re-checks.\n');
+    return 2;
   }
   return 0;
 }
@@ -179,6 +193,7 @@ function main() {
   const code = run({
     caddyfilePath,
     httpsPort: config.caddyHttpsPort || 8443,
+    ingressMode: config.ingressMode,
     dryRun: args.dryRun,
     uid: process.getuid(),
     stamp: new Date().toISOString().replace(/[:.]/g, '-')

@@ -277,7 +277,7 @@ describe('pin-https-listener script', () => {
    * @returns {{ code: number, out: string, err: string, file: string, dir: string,
    *   reloads: number[], validated: string[] }}
    */
-  function runIn({ content, plan, dryRun = false, validate, reload }) {
+  function runIn({ content, plan, dryRun = false, validate, reload, ingressMode = 'caddy' }) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-pin-h1-'));
     const file = path.join(dir, 'Caddyfile');
     fs.writeFileSync(file, content, { mode: 0o600 });
@@ -288,6 +288,7 @@ describe('pin-https-listener script', () => {
     const code = run({
       caddyfilePath: file,
       httpsPort: FIXTURE_HTTPS_PORT,
+      ingressMode,
       dryRun,
       uid: 501,
       stamp: '2026-09-12T00-00-00-000Z',
@@ -397,17 +398,34 @@ describe('pin-https-listener script', () => {
     }
   });
 
-  it('keeps the pin and prints the restart command when Caddy cannot be restarted', () => {
+  it('keeps the pin, says it is not live and exits 2 when Caddy cannot be restarted', () => {
     const r = runIn({
       content: FIXTURE_CADDYFILES['no-h1'],
       reload: () => ({ ok: false, error: 'no launchd', command: 'launchctl kickstart -k gui/501/x' })
     });
     try {
-      assert.equal(r.code, 0);
+      assert.equal(r.code, 2, 'a pin that is not live must not exit 0');
       assert.equal(fs.readFileSync(r.file, 'utf8'), FIXTURE_CADDYFILES.generated);
+      assert.match(r.err, /NOT live/);
       assert.match(r.err, /Run: launchctl kickstart -k gui\/501\/x/);
+      assert.match(r.err, /restart TangleClaw too/);
     } finally {
       fs.rmSync(r.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses outside caddy ingress mode: writes nothing, restarts nothing', () => {
+    for (const ingressMode of ['direct', null]) {
+      const r = runIn({ content: FIXTURE_CADDYFILES['no-h1'], ingressMode });
+      try {
+        assert.equal(r.code, 1);
+        assert.equal(fs.readFileSync(r.file, 'utf8'), FIXTURE_CADDYFILES['no-h1']);
+        assert.deepEqual(r.reloads, []);
+        assert.deepEqual(r.validated, []);
+        assert.match(r.err, /REFUSED: ingressMode/);
+      } finally {
+        fs.rmSync(r.dir, { recursive: true, force: true });
+      }
     }
   });
 
@@ -416,6 +434,7 @@ describe('pin-https-listener script', () => {
     const code = run({
       caddyfilePath: path.join(os.tmpdir(), 'tc-no-such-caddyfile-848'),
       httpsPort: FIXTURE_HTTPS_PORT,
+      ingressMode: 'caddy',
       uid: 501,
       stamp: 'x',
       deps: { plan: () => assert.fail('must not plan without a file') },
