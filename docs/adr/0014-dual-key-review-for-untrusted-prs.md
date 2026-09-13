@@ -4,7 +4,7 @@
 **Source:** PR #1334 — the first external contribution to reach this repository, against #1287.
 **Decides:** How an untrusted external pull request is audited, reconstructed, credited and answered.
 **Governs:** Every pull request from outside the repository, in this repo and in any that adopts this ADR.
-**Related:** ADR 0009 (secure by default) is the stance this applies to contributions. `CONTRIBUTING.md` is the contributor-facing half and publishes the forbidden-file list; the divergence between what it publishes and what the macro filter rejects is handled under "Not every rejection reason is one the contributor could have read". Follow-ups found by the first application: #1338, #1339.
+**Related:** ADR 0009 (secure by default) is the stance this applies to contributions. `CONTRIBUTING.md` is the contributor-facing half and publishes the forbidden-file list; the divergence between what it publishes and what the macro filter rejects is handled under "Not every rejection reason is one the contributor could have read". Follow-ups found by the first application: #1338, #1339. Dependabot pull requests are untrusted PRs under this ADR with no bot exemption; how a dependency bump is audited and reconstructed is [`docs/dependency-bump-audit.md`](../dependency-bump-audit.md) (#1361).
 
 ## Context
 Under the Swarm Protocol and our Zero-Trust security model, we process external Pull Requests using the "Clean Room Reconstruction Standard (Option A)". This dictates that we never merge external bytes directly; instead, we re-implement the logic from scratch.

@@ -1,0 +1,44 @@
+# Dependabot version updates.
+#
+# Every pull request Dependabot opens is UNTRUSTED and is handled under ADR 0014
+# exactly like an external contributor's: audited as a raw diff, never merged,
+# never auto-merged, never allow-listed. The fix is reconstructed by a
+# maintainer on a clean branch off main. The protocol is
+# docs/dependency-bump-audit.md.
+#
+# Why a bot gets no exemption: Dependabot's own infrastructure is not the
+# threat. The threat is upstream. If a maintainer account behind an action is
+# compromised and a malicious release is published, Dependabot opens a PR to
+# pull it in, and nothing about the PR looks unusual. Letting that PR through
+# unaudited makes the bot a delivery mechanism for the attack.
+#
+# Ecosystems:
+#
+# - github-actions: the only third-party code this repository pulls in through
+#   a manifest. The workflows reference actions by tag, and those actions run in
+#   CI on every push and pull request.
+#
+# - npm: deliberately NOT configured. TangleClaw has zero npm dependencies. No
+#   package.json or lockfile is tracked, and CONTRIBUTING.md rejects any PR
+#   that adds one. An npm entry with no manifest makes Dependabot fail every
+#   scheduled run with "dependency file not found". A failure on every run
+#   teaches the operator to ignore Dependabot's status. If a package.json is
+#   ever tracked, test/dependabot-config.test.js fails until an npm entry is
+#   added here.
+#
+# Conservative by design. Each PR is a unit of audit work that ends in a manual
+# reconstruction. So the schedule is weekly and the open-PR limit is small.
+# Updates are not grouped: one bump per PR gives one verdict per upstream
+# release.
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    # "/" makes Dependabot scan .github/workflows/.
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: chore(deps)
