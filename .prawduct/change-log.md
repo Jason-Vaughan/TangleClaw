@@ -58,7 +58,11 @@ Settings → Recovery codes. Records: ADR 0009 rule 5 + amendment, ADR 0015 poin
 "Recorded during #1420 A-04a", SECURITY.md recovery bullet, user guide, FEATURES,
 `security-model.md` Direction (gitignored copy).
 
-**Review.** (pending)
+**Review.** Critic `rev-20260913T153542Z-387ef554` over `de11c380..e45fdd58` — 0 blocking, 0 warnings,
+0 notes; PR gate satisfied. Two observations: `users.enable` revives an account's old codes (carried
+to A-04b's reset-admin rework), and record-lint's plan pick was correct. Mutation: 15 new guards, all
+red. Real-socket smoke on a throwaway store: create → codes → redeem → reuse refused → notice →
+regenerate → old set dead.
 
 ## 2026-09-13 — #1420 A-03: Caddy's gate by state, a TangleClaw-owned bypass list, drift P5, #1055
 

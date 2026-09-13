@@ -273,6 +273,15 @@ under A-04b's heading below, for the record).
 - Issued on the first-account screen. Accounts created by the wizard or `reset-admin.js` have none
   until regenerated in Settings (wizard issuance is #803).
 
+**Carried to A-04b from the A-04a review (`rev-20260913T153542Z-387ef554`, 0 findings):**
+- `store.users.enable` (reset-admin) leaves the account's old recovery codes in place, so re-enabling
+  a disabled account at the terminal revives codes the revoked person may hold. Decide in the
+  reset-admin rework: delete an account's codes on `disable` (as its sessions are), or on `enable`.
+- The login page's "Use a recovery code" link also shows in `locked`/`unreadable`, where `/recover` is
+  challenged back to the login page — lands with the login-page copy for those states.
+- `.prawduct/artifacts/security-model.md` Direction was amended in the A-04a worktree copy only
+  (gitignored); the primary checkout's copy needs the same paragraph.
+
 ### Chunk A.04b (A-04b) — the fallback, reset-admin, recovery doc, drill
 
 The original A-04 list; the recovery-code and ADR 0009 bullets are A-04a's.
@@ -316,6 +325,6 @@ The original A-04 list; the recovery-code and ADR 0009 bullets are A-04a's.
 - [x] A-02a — classifier, gate on it, carve-out + XFF, set-password route/page (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [x] A-02b — OQ2 inversion, identity + authStatus from the classifier, dashboard consumers (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [x] Chunk A.03 (A-03) — state-driven `basic_auth`, bypass ownership, drift, bind policy, #1055 (reviewed 2026-09-13, PR into `train-9/cutover`)
-- [ ] Chunk A.04a (A-04a) — recovery codes end to end, ADR 0009 rule 5 + security-model Direction amendment
+- [x] Chunk A.04a (A-04a) — recovery codes end to end, ADR 0009 rule 5 + security-model Direction amendment (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [ ] Chunk A.04b (A-04b) — fallback state + command, reset-admin, #472 decision, login copy, recovery doc, drill
 - [ ] A-VRF — cumulative Critic, elkaholic VRF, phone drill → Checkpoint 2
