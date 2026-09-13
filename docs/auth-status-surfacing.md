@@ -28,13 +28,14 @@ mapped onto it (a rename map is where a newly added state gets labelled wrongly)
 | `account-required` | login on, no account yet — closed | ⚠ open a new tab to create the account |
 | `locked` | accounts exist, none enabled — closed | ⚠ run `reset-admin.js --store` at a terminal |
 | `unreadable` | the gate could not read its state — closed | ⚠ check the server log |
+| `fallback` | the login is stood down behind Caddy's password (`scripts/gate-fallback.js`) | ⚠ run `gate-fallback.js --undo` once the login works |
 
 A value that is not a gate state maps to `unreadable`, never `open`: a status that fails toward "no
 login required" would tell the operator the door is open when the code cannot say so. A state added to
 the gate is a valid status automatically, and `test/auth-status-warning.test.js` goes red until the
 chip's rendering of it is decided.
 
-**A browser rarely sees the three warnings.** A closed gate refuses the `/api/server-info` poll that
+**A browser rarely sees the three closed-state warnings.** A closed gate refuses the `/api/server-info` poll that
 would carry them to a signed-out page. They reach a local tool through the fleet carve-out, and a
 signed-in page left open across a change. The chip exists so that, when it does render, it names the
 state honestly rather than showing nothing.

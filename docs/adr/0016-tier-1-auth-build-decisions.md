@@ -555,3 +555,64 @@ Two #1420 decisions above rested on "`localhost` is local", and change with it:
   `authEnabled: false` could never take effect in caddy mode through any tool. Writing for the
   configured intent breaks the loop: an `authEnabled: false` cutover writes guarded local sites (or
   refuses a remote one, which needs a gate), and the request gate reading that file agrees.
+
+### Recorded during #1420 A-04b (2026-09-13) — the fallback as built
+
+The addendum's "What the switch does", built. Builder decisions, vetoable.
+
+- **`fallback` is a sixth gate state, weighed last and only over a state that enforces.** It
+  overrides `account-required`, `armed`, `locked` and `unreadable` alike — `unreadable` is what a
+  broken login usually looks like — and never `open`. TangleClaw asks nothing in it
+  (`lib/auth-gate.js#standsDown`, used by both verdicts); `isOpen` stays exactly `open` for the
+  routes whose answers must tell the two apart. `guardsTheDoor(fallback)` is false, so every writer
+  and the drift check keep `basic_auth`. Writers never resolve it: the marker says the login is broken
+  right now, not what the operator configured.
+- **The marker** is `<TangleClaw home>/gate-fallback`, `stat`ed per request while the state would
+  enforce. It is honoured only while (1) the listener TangleClaw is actually bound to — read from the
+  socket's server, not config — is loopback, and (2) `caddy adapt` over the Caddyfile on disk shows
+  every route reaching TangleClaw passes a gate first; or there is no Caddyfile and config says direct
+  mode. Anything unreadable refuses, logged once per change of those facts.
+- **The door check is stricter than the drift check's P1.** P1 merges a site's routes, so one gate
+  anywhere in it satisfies the site. Here TangleClaw is about to stop asking, so routes are walked in
+  evaluation order (`lib/gate-fallback.js#walkRoutes`): an `authentication` handler covers the rest of
+  its list only in an unmatched route or one matched exactly as the generator's case-sensitive
+  `not path_regexp` bypass gate; a matched gate covers its own route only; the peer guard covers what
+  follows it; a route matching only TangleClaw's own bypass paths may proxy ungated; any handler not
+  known to be inert (`invoke`, a plugin), named routes, and Caddy apps beyond `http`/`tls`/`pki` refuse.
+  Error routes are checked too. A proxy counts as reaching TangleClaw unless every upstream provably
+  points elsewhere (another port, or a concrete non-loopback address); the bypass-path allowance is
+  void in a route that rewrites the path; and a Caddyfile that imports another file refuses, since the
+  honoured verdict is cached on the Caddyfile's own mtime and size.
+- **CSRF during a fallback is the Basic-auth era's posture.** TangleClaw's session CSRF step does not
+  run while it stands down, and Caddy's cached Basic credential is ambient authority. The three
+  request guards that were built for exactly that — `Sec-Fetch-Site: cross-site` refusal, the served-
+  Host check, and the JSON-body rule on `/api/` — run before the gate in every state, so a fallback
+  returns to them rather than to nothing.
+- **#472 (A-03 R-1), decided: the fallback does not carry a Caddy-only `/openclaw-direct/*`
+  exemption.** That path injects the stored gateway token for whoever asks, so while TangleClaw stands
+  down an ungated handle for it is an open door. The door check refuses such a file, and the prompt
+  loop #472 worked around returns for the gateway UI during a fallback. Accepted: a fallback is
+  temporary, and the loop costs re-entering the Caddy password, not access. **Consequence for the live
+  install:** its hand-maintained Caddyfile carries that handle today, so `gate-fallback.js` refuses it
+  until a gated copy (the handle removed) is kept to `--restore` — a Checkpoint 2 preparation step.
+- **The door check runs `caddy adapt` synchronously, once per change and only while a marker exists.**
+  An asynchronous check needs a "not yet known" answer, which must enforce, so the operator recovering
+  would meet the broken login until it landed. Bounded by the adapt timeout.
+- **The command, `scripts/gate-fallback.js`**, in the addendum's order: a live file that already gates
+  every route is left alone; otherwise `--restore <file>` or, for a generated file, a rebuild proven
+  byte-identical to the file on disk from the cutover's inputs before it is rebuilt for `fallback`
+  with the retained bcrypt credential — a hand-maintained file is never rewritten. Then `caddy
+  validate` + restart, a probe of each site from this machine that must answer `401` with
+  `WWW-Authenticate: Basic` (TangleClaw's own `401` carries no Basic challenge), and only then the
+  marker, followed by asking TangleClaw for `gateState`. `--undo` removes the marker, waits for
+  TangleClaw to report a state that guards the door, and only then drops `basic_auth` — from a file
+  it can reproduce, or a `--restore` file; a hand-maintained file keeps it. A failed probe or marker
+  write puts back any Caddyfile the run wrote. The write/validate/restart tail is
+  `lib/admin-credential.js#applyCaddyfileInPlace`, shared with `guard-ungated-sites.js` and
+  `pin-https-listener.js` (the third in-place tool was the recorded trigger for extracting it).
+- **The drill does not break the login on purpose.** `scripts/drill-gate-fallback.js` rehearses the
+  fallback, a sign-in with the Caddy password at every site, `gateState: fallback`, and the undo, on a
+  working install — restoring a copy of the Caddyfile it took first, and failing unless the file ends
+  byte-for-byte as it started. The state machine stands down over every enforcing state alike (unit-tested over
+  each), so damaging a live store to prove it again adds risk and no coverage. This narrows the
+  plan's "break the gate on purpose"; the operator may veto.

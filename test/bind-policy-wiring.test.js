@@ -124,7 +124,18 @@ describe('the gate state is wired into the boot notice, the settings bind state 
     // Every CALL names `store.authSessions`; prose mentioning the function does not.
     const calls = SERVER_SRC.match(/authGate\.resolveGateState\([^()]*(\(\)[^()]*)?store\.authSessions[^)]*\)/g) || [];
     assert.ok(calls.length >= 6, `premise: the call sites exist (${calls.length})`);
-    for (const call of calls) assert.match(call, /_gateIngress\)/, call);
+    for (const call of calls) assert.match(call, /_gateIngress(\)|,\s*\(\))/, call);
+  });
+
+  it('lets only the request and upgrade gates weigh the fallback marker, each with its own socket (#1420)', () => {
+    // The marker is honoured per listener, read from the socket's server, so it
+    // belongs where a socket exists. Boot-time reads and the settings view keep
+    // the enforcing state they would report without it.
+    const withFallback = SERVER_SRC.match(/_gateIngress,\s*\(\) => _gateFallback\([^)]*\)\)/g) || [];
+    assert.deepEqual(withFallback.map((c) => c.replace(/\s+/g, ' ')).sort(), [
+      '_gateIngress, () => _gateFallback(req.socket))',
+      '_gateIngress, () => _gateFallback(socket))'
+    ]);
   });
 
   it('hands the Caddyfile drift check a gate state', () => {

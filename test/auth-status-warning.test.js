@@ -44,17 +44,19 @@ describe('AUTH-2K9D dashboard warning surface', () => {
     assert.match(landing, /function _authStatusWarning\(/);
   });
 
-  it('warns on the three closed states that need the operator, and only those (#1420)', () => {
+  it('warns on the four states that need the operator, and only those (#1420)', () => {
     const mapperBody = landing.slice(landing.indexOf('function _authStatusWarning('));
     const fnBody = mapperBody.slice(0, mapperBody.indexOf('\n}\n') + 2);
-    for (const status of ['account-required', 'locked', 'unreadable']) {
+    for (const status of ['account-required', 'locked', 'unreadable', 'fallback']) {
       assert.match(fnBody, new RegExp(`authStatus === '${status}'`), status);
     }
-    assert.equal((fnBody.match(/return '⚠/g) || []).length, 3);
+    assert.equal((fnBody.match(/return '⚠/g) || []).length, 4);
     // The expected states stay silent.
     assert.doesNotMatch(fnBody, /authStatus === '(open|armed)'/);
     // A locked install names the one recovery that works for it.
     assert.match(fnBody, /reset-admin\.js --store/);
+    // A fallback is temporary by design, so the chip names the way back.
+    assert.match(fnBody, /gate-fallback\.js --undo/);
     // The proxy-header diagnostics are gone: nothing reads that header any more.
     assert.doesNotMatch(landing, /configured-inert|configured-no-identity|configured-bypassed|header_up X-Auth-User/);
   });

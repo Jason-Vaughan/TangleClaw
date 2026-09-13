@@ -301,6 +301,7 @@ const medusaWake = require('./lib/medusa-wake');
 const authIdentity = require('./lib/auth-identity');
 const authSession = require('./lib/auth-session');
 const authGate = require('./lib/auth-gate');
+const gateFallback = require('./lib/gate-fallback');
 const recoveryCodes = require('./lib/recovery-codes');
 const passwordHashing = require('./lib/password');
 const sessionOwnership = require('./lib/session-ownership');
@@ -421,6 +422,114 @@ function _gateIngress() {
       + 'TangleClaw\'s login. Run node scripts/guard-ungated-sites.js.', { caddyfile: file });
   }
   _gateIngressCache = { key, value };
+  return value;
+}
+
+let _gateFallbackCache = null;
+let _gateFallbackReadFailure = null;
+
+/**
+ * Whether the operator's fallback marker is honoured for a connection on this
+ * socket's listener — `lib/gate-fallback.js#decideFallback` over facts gathered
+ * here, for `authGate.resolveGateState`.
+ *
+ * The marker is `stat`ed on every call, which is the only per-request cost: the
+ * gate asks this only while its state would enforce, and with no marker the
+ * answer is immediate. The rest — the listener, the config's ingress mode, the
+ * Caddyfile's text and `caddy adapt` over it — is cached on everything it reads
+ * (the marker's mtime, the listener address and port, the ingress mode, the
+ * Caddyfile's mtime and size), so an edit to any of them is weighed on the next
+ * request. A Caddyfile that imports another file is refused by the decision
+ * itself, because an edit there would change none of those.
+ *
+ * `caddy adapt` runs synchronously, once per change of those facts and only
+ * while a marker exists. A deliberate trade: an asynchronous check needs a
+ * "not yet known" answer, which must enforce, so the operator recovering a broken
+ * login would meet the login they are recovering from until it lands. One
+ * subprocess on a recovery path is cheaper than that, and it is bounded by
+ * `caddy-drift`'s adapt timeout.
+ *
+ * The listener is read from the socket's own server, not from config: what
+ * decides who can reach TangleClaw is the address actually bound.
+ *
+ * A marker or Caddyfile that exists but cannot be `stat`ed or read answers "not
+ * honoured" — logged once per distinct failure, not per request — and the end of
+ * an honoured fallback is logged when its marker goes, so the log shows both
+ * edges of a stand-down.
+ *
+ * @param {net.Socket|null|undefined} socket - The request's socket.
+ * @returns {{ honoured: boolean, reason: string|null }}
+ */
+function _gateFallback(socket) {
+  const refuseOnce = (what, err) => {
+    const failure = `${what}:${err.code || err.message}`;
+    if (_gateFallbackReadFailure !== failure) {
+      _gateFallbackReadFailure = failure;
+      log.error(`Fallback check could not read the ${what}, so the login still enforces`, { error: err.message });
+    }
+    return { honoured: false, reason: `the ${what} could not be read (${err.code || err.message})` };
+  };
+  let markerStat;
+  try {
+    markerStat = fs.statSync(gateFallback.markerPath());
+  } catch (err) {
+    if (err.code !== 'ENOENT') return refuseOnce('fallback marker', err);
+    if (_gateFallbackCache && _gateFallbackCache.value.honoured) {
+      log.warn('Fallback marker removed: TangleClaw\'s login enforces again.');
+    }
+    _gateFallbackCache = null;
+    _gateFallbackReadFailure = null;
+    return { honoured: false, reason: null };
+  }
+  const server = socket && socket.server;
+  const bound = server && typeof server.address === 'function' ? server.address() : null;
+  const listenerAddress = bound && typeof bound === 'object' ? bound.address : null;
+  const upstreamPort = bound && typeof bound === 'object' ? bound.port : null;
+  let ingressMode = null;
+  try {
+    ingressMode = _gateConfig().ingressMode || null;
+  } catch (err) { // prawduct:allow prawduct/broad-except -- an unreadable config is a fact decideFallback weighs (null refuses a Caddyfile-less fallback); resolveGateState already logs the read failure
+    ingressMode = null;
+  }
+  const caddyfile = caddy.getCaddyfilePath();
+  let caddyStat = null;
+  try {
+    caddyStat = fs.statSync(caddyfile);
+  } catch (err) {
+    if (err.code !== 'ENOENT') return refuseOnce('Caddyfile', err);
+  }
+  const key = [
+    markerStat.mtimeMs, listenerAddress, upstreamPort, ingressMode,
+    caddyStat ? `${caddyStat.mtimeMs}:${caddyStat.size}` : 'absent'
+  ].join('|');
+  if (_gateFallbackCache && _gateFallbackCache.key === key) return _gateFallbackCache.value;
+  let caddyfileContent = null;
+  if (caddyStat) {
+    try {
+      caddyfileContent = fs.readFileSync(caddyfile, 'utf8');
+    } catch (err) {
+      return refuseOnce('Caddyfile', err);
+    }
+  }
+  _gateFallbackReadFailure = null;
+  const value = gateFallback.decideFallback({
+    markerPresent: true,
+    listenerAddress,
+    upstreamPort,
+    caddyfileExists: caddyStat !== null,
+    caddyfileContent,
+    adapted: caddyStat ? caddyDrift.adaptCaddyfile(caddyfile) : null,
+    ingressMode
+  });
+  // Once per change of the facts, not per request.
+  if (value.honoured) {
+    log.warn('Fallback marker honoured: TangleClaw\'s login is STOOD DOWN behind Caddy\'s gate. '
+      + 'Run node scripts/gate-fallback.js --undo once the login works again.', { marker: gateFallback.markerPath() });
+  } else {
+    log.error('Fallback marker present but NOT honoured, so the login still enforces',
+      { reason: value.reason, marker: gateFallback.markerPath() });
+  }
+  _gateFallbackCache = { key, value };
   return value;
 }
 
@@ -2047,6 +2156,9 @@ route('POST', '/api/auth/set-password', async (req, res, _params, body) => {
         'This install does not require a login, so there is no account to create here.',
         'LOGIN_NOT_REQUIRED');
     }
+    if (req.tcGateState === authGate.GATE_STATES.FALLBACK) {
+      return _refuseDuringFallback(res, 'create an account');
+    }
     if (req.tcGateState === authGate.GATE_STATES.UNREADABLE) {
       return errorResponse(res, 503,
         'TangleClaw cannot read its login state right now, so it cannot create an account. '
@@ -2150,6 +2262,20 @@ function _recoveryClient(req) {
 }
 
 /**
+ * Refuse a login-management request while TangleClaw's login is stood down
+ * behind Caddy's gate. Every such request would act on a login that is not in
+ * force, and the operator's next step is at the terminal, not here.
+ * @param {http.ServerResponse} res
+ * @param {string} action - What was asked, e.g. `create an account`.
+ * @returns {void}
+ */
+function _refuseDuringFallback(res, action) {
+  errorResponse(res, 409, `TangleClaw's login is stood down behind Caddy's password (fallback), so it cannot ${action} `
+    + 'right now. Fix the login, then run node scripts/gate-fallback.js --undo at a terminal on the machine.',
+  'GATE_FALLBACK');
+}
+
+/**
  * Refuse a recovery request on an install where no code can succeed, saying what
  * is actually true of it.
  * @param {http.IncomingMessage} req
@@ -2161,6 +2287,8 @@ function _refuseRecoveryOutsideArmed(req, res) {
   if (authGate.isOpen(req.tcGateState)) {
     errorResponse(res, 409, 'This install does not require a login, so there is no password to recover.',
       'LOGIN_NOT_REQUIRED');
+  } else if (req.tcGateState === authGate.GATE_STATES.FALLBACK) {
+    _refuseDuringFallback(res, 'check a recovery code');
   } else if (req.tcGateState === authGate.GATE_STATES.UNREADABLE) {
     errorResponse(res, 503, 'TangleClaw cannot read its login state right now, so it cannot check a '
       + 'recovery code. Check the server log.', 'GATE_UNREADABLE');
@@ -2247,6 +2375,8 @@ function _recoveryCodesSession(req, res) {
   if (authGate.isOpen(req.tcGateState)) {
     errorResponse(res, 409, 'Recovery codes belong to a login, and this install does not require one.',
       'LOGIN_NOT_REQUIRED');
+  } else if (req.tcGateState === authGate.GATE_STATES.FALLBACK) {
+    _refuseDuringFallback(res, 'manage recovery codes');
   } else {
     errorResponse(res, 401, 'Sign in to manage recovery codes.', 'UNAUTHENTICATED');
   }
@@ -7323,8 +7453,9 @@ function handleUpgrade(req, socket, head) {
   //
   // `/openclaw-direct/*` is gated here like every other path: it is not on
   // `lib/auth-gate.js#GATE_BYPASS_PATHS`, and an upgrade takes no path anyway.
-  const upgradeGateState = authGate.resolveGateState(_gateConfig, store.authSessions, _gateIngress);
-  const upgradeIdentity = authGate.isOpen(upgradeGateState)
+  const upgradeGateState = authGate.resolveGateState(_gateConfig, store.authSessions, _gateIngress,
+    () => _gateFallback(socket));
+  const upgradeIdentity = authGate.standsDown(upgradeGateState)
     ? null : _gateIdentity(req, socket, urlObj.pathname);
   const upgradeVerdict = authGate.evaluateUpgrade({
     gateState: upgradeGateState,
@@ -7723,8 +7854,9 @@ async function handleRequest(req, res) {
   // ones it then waves through, because the CSRF check needs it and because
   // `/api/auth/me` answers from it.
   let tcSession = null;
-  const gateState = authGate.resolveGateState(_gateConfig, store.authSessions, _gateIngress);
-  if (!authGate.isOpen(gateState)) {
+  const gateState = authGate.resolveGateState(_gateConfig, store.authSessions, _gateIngress,
+    () => _gateFallback(req.socket));
+  if (!authGate.standsDown(gateState)) {
     // Resolved by the helper `handleUpgrade`'s gate also calls, so the two
     // transports judge the same facts — see `_gateIdentity`.
     const identity = _gateIdentity(req, req.socket, pathname);
@@ -7768,7 +7900,7 @@ async function handleRequest(req, res) {
   // than asking again. `/api/auth/me` recomputed it, which was both a second
   // config read and a seam where the two answers could one day disagree.
   req.tcGateState = gateState;
-  req.tcGateActive = !authGate.isOpen(gateState);
+  req.tcGateActive = !authGate.standsDown(gateState);
 
   // The login page itself, on the one path `lib/auth-gate.js` exempts for it.
   // Served whether or not the gate is live, so the path does not blink into

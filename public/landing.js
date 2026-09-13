@@ -533,6 +533,9 @@ function _authStatusWarning(authStatus) {
   if (authStatus === 'unreadable') {
     return '⚠ TangleClaw cannot read its login state, so the login stays closed — check the server log.';
   }
+  if (authStatus === 'fallback') {
+    return '⚠ TangleClaw\'s login is stood down behind Caddy\'s password (fallback) — once the login works, run "node scripts/gate-fallback.js --undo" at a terminal on this machine.';
+  }
   return null;
 }
 
