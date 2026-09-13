@@ -53,8 +53,10 @@ published release, 7-day cooling-off, tag on default branch, upstream diff), rec
 ruling under Decision item 1. `test/dependabot-config.test.js`, `test/check-bump-diff.test.js`.
 
 **Review.** Critic `rev-20260913T015803Z-f54d59b0` — 2 blocking (inverted compare direction in the
-tag check) fixed in `a212e36f`; verify-resolutions clean. The ruling's amendment and checker are
-reviewed by a further verify-resolutions pass.
+tag check) fixed in `a212e36f`; verify-resolutions clean. Cumulative `rev-20260913T024230Z-87d72fe1`
+on the ruling's amendment and checker — 0 blocking, 3 warnings (checker skipped unknown lines;
+sorted comparison let a moved step pass; ADR block under the wrong item) fixed in `9c057f32`;
+verify-resolutions clean.
 
 ## 2026-09-12 — #848: an already-deployed unpinned HTTPS listener can be pinned in place
 
