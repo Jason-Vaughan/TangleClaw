@@ -8,6 +8,10 @@ All notable changes to TangleClaw are documented in this file.
 
 - An install whose Caddyfile predates the HTTP/1.1 pin can now be fixed in place: `node scripts/pin-https-listener.js` (try `--dry-run` first) adds only `servers :<httpsPort> { protocols h1 }` and keeps every other hand edit. It writes nothing unless `caddy adapt` reads the pin as the only change, refuses outside `ingressMode: caddy`, backs the file up, restores it if `caddy validate` fails, then restarts Caddy — exiting `2` when the pin is on disk but Caddy could not be restarted, so a pin that is not live never reports success. The Caddyfile drift banner now names this command for an unpinned listener. The cutover could not do this: it refuses a hand-edited file, and `--force` replaces the whole file. The open question of *why* Chrome aborts WebSockets under h2/h3 moves to #1438. (#848)
 
+### Internal
+
+- Dependabot now proposes GitHub Actions version bumps weekly, capped at 3 open PRs (`.github/dependabot.yml`). npm is deliberately left out — the repo tracks no npm manifest, and `test/dependabot-config.test.js` fails if one ever appears without an npm entry. Every bump PR stays untrusted under ADR 0014: never merged, auto-merged or allow-listed, audited from raw text and rebuilt by a maintainer per `docs/dependency-bump-audit.md`. ADR 0014 gains one operator-ruled exemption: a Dependabot PR does not trip the `.github/workflows/` rejection when `gh pr diff <N> | node scripts/check-bump-diff.js` exits `0` — every changed line a `uses:` ref for one action moving to one new ref, no step added, dropped or re-indented — because the ruling requires that condition be checked by a command, never by eye. The same test fails if any workflow references Dependabot or runs on `pull_request_target`, `workflow_run` or `issue_comment`. A tag moved upstream is not closed by this; SHA pinning is #1436. (#1361)
+
 ## [5.23.0] - 2026-09-12
 
 ### Added
