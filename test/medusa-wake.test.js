@@ -657,6 +657,33 @@ describe('medusa-wake — gates (each one blocks alone)', () => {
     assert.equal(world.injected.length, 0);
   });
 
+  // #918. A session blocked on a dialog is unreachable for exactly as long as
+  // the dialog is up; what makes that bounded rather than permanent is that the
+  // refusal HOLDS the mail edge instead of consuming it. Nothing new arrives
+  // while the dialog is open, so a monitor that only nudged on arrival would
+  // never wake this session at all once the dialog cleared.
+  it('holds the mail edge while a dialog is up and nudges once it clears, with no new arrival (#918)', () => {
+    const world = installWorld({ pane: DIALOG_PANE });
+    for (let i = 0; i < 6; i++) wake._internal.tick();
+    assert.equal(world.injected.length, 0, 'never types into the dialog');
+    assert.equal(
+      world.recorded.filter((r) => r.skipReason === 'pane-no-bare-prompt').length, 1,
+      'the dialog is recorded as the reason, once — a transition, not a row per tick'
+    );
+
+    world.pane = IDLE_PANE; // the operator answers the dialog; the inbox is unchanged
+    // Clearing the dialog redraws the transcript, which is movement (#1114), so
+    // the first tick after it settles rather than counts toward the streak.
+    wake._internal.tick();
+    assert.equal(world.injected.length, 0, 'the redraw is a settle tick, not an idle one');
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1, 'the held mail is nudged after the dialog clears');
+    assert.equal(world.recorded[world.recorded.length - 1].outcome, 'nudged');
+
+    tickThroughDebounce();
+    assert.equal(world.injected.length, 1, 'and exactly once — the drain consumed the edge');
+  });
+
   it('a busy interruption resets the idle debounce (no stale half-count)', () => {
     const world = installWorld();
     wake._internal.tick();          // idle tick 1
