@@ -27,28 +27,6 @@
                     {
                       "handle": [
                         {
-                          "abort": true,
-                          "handler": "static_response"
-                        }
-                      ],
-                      "match": [
-                        {
-                          "not": [
-                            {
-                              "remote_ip": {
-                                "ranges": [
-                                  "127.0.0.1/8",
-                                  "::1"
-                                ]
-                              }
-                            }
-                          ]
-                        }
-                      ]
-                    },
-                    {
-                      "handle": [
-                        {
                           "handler": "reverse_proxy",
                           "upstreams": [
                             {

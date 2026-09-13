@@ -154,6 +154,53 @@ reasons: R-4, R-5, R-8 (→A-02b), R-12, R-17 (→A-04), R-18, R-19, R-20. verif
 timing-dependent concurrency test made deterministic in `0828d3fe`, verify-resolutions clean. Mutation:
 14 guards + 1 + 12 fixes + 1, all red. Filed #1445 (out of scope).
 
+## 2026-09-13 — #1420: the peer guard folded into the Tier 1 cutover
+
+<!-- prawduct: type=bugfix | scope=train-9-chunk-04-cutover -->
+
+Sprint v5.24 Lane A, before chunk A.04b. Merges `main` (PR #1451) into `train-9/cutover`.
+
+**Why.** The peer-guard fix on `main` assumed Caddy's `basic_auth` is the only gate. On this branch
+TangleClaw's own login can guard a site with no `basic_auth`, and A-03's `describeIngressDoor` treated a
+`localhost` site as local — so `authEnabled: false` after an armed cutover opened the install to any
+machine asking for `localhost`. Operator ruling 2026-09-13: an unguarded `localhost` site counts
+against the opt-out only when accounts exist.
+
+**What.** Merge conflicts resolved in `lib/caddy.js` (guard only when neither `basic_auth` nor
+`authGate.guardsTheDoor`), `lib/caddy-drift.js` (both new properties kept: P5 `forwardedFor`, P6
+`offboxRefused`, gate-aware; `planOffboxGuard` refuses when the login guards the door), the fixtures,
+CHANGELOG, FEATURES and `docs/caddy-drift-check.md`. `lib/caddy.js#describeIngressDoor` gains
+`unguardedLocalSite`; `lib/auth-gate.js#resolveGateState` weighs it per the ruling, fail-closed on a
+store error or a malformed description; `server.js#_gateIngress` warns once per file change;
+`scripts/guard-ungated-sites.js` resolves and passes the gate state. ADR 0016 records it; the train plan
+carries the A.04b consequence. Hotfix plan archived; `active_build_plan` restored.
+
+## 2026-09-13 — GHSA-fhgg-4h57-q2f9: Caddy sites without a password refuse other machines
+
+<!-- prawduct: type=bugfix | scope=security-offbox-guard -->
+
+Sprint v5.24, inserted ahead of Lane A chunk A.04b by operator ruling.
+
+**Why.** Found during A-04b discovery and verified on a throwaway Caddy v2.11.4: Caddy listens on every
+interface and chooses a site by the Host/SNI the client sends, so a generated `localhost` site with no
+`basic_auth` served the dashboard to any LAN or tailnet machine naming `localhost`; TangleClaw's
+served-Host check accepts the name. The operator ruled 2026-09-13, in the Builder pane: a private
+advisory, the fix merged to `main`, shipped with the sprint release (a cut from `main` now would be
+5.24.0, not a patch), and the matching change folded into #1420 separately.
+
+**What.** `lib/caddy.js#OFFBOX_GUARD_LINES` (`not remote_ip` loopback + `abort`) ahead of
+`reverse_proxy` in every site written without `basic_auth`; drift property P5
+`lib/caddy-drift.js#checkOffboxRefused`, judged only for sites forwarding to TangleClaw;
+`scripts/guard-ungated-sites.js` retrofits in place via `lib/caddy.js#insertOffboxGuard` +
+`lib/caddy-drift.js#planOffboxGuard` (adapt-verified, re-stamps a generated file);
+`lib/admin-credential.js#canCreateGate` also accepts the pre-guard generated form. Docs: `deploy/INGRESS.md`,
+`docs/caddy-drift-check.md`, `docs/configuration-reference.md`, FEATURES, CHANGELOG `### Security`.
+`.prawduct/artifacts/security-model.md` descoped (gitignored; canonical copy is the live install's).
+
+**Review.** Critic `rev-20260913T174551Z-f11519c7` — 0 blocking, 8 warnings; fixed in `9f86bfc8` (R-2/R-4
+scope to TangleClaw's upstream, R-5, R-10, R-3, R-11, R-12, R-1/6/9 descope); R-7 accepted. verify-resolutions
+raised one blocking (untested port refusal), fixed in `3d6ee4aa`; final pass 0 findings. Every new guard
+mutation-checked red. Live Caddyfile reads `already-guarded` (read-only check).
 
 ## 2026-09-12 — #918: a sender can see why a peer has not picked up its mail
 

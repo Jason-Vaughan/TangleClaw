@@ -61,7 +61,7 @@ of a readable baseline, or of a PortHub lease produces the third — never `hold
 list carries divergences only, so a caller deciding whether to reassure the operator must read
 `measured`, not the emptiness of the list.
 
-## The five properties
+## The six properties
 
 | # | Key | Property | `not-measured` when |
 |---|---|---|---|
@@ -70,6 +70,7 @@ list carries divergences only, so a caller deciding whether to reassure the oper
 | P3 | `knownUpstreams` | No site dials an upstream the generated config does not dial | adapt unavailable |
 | P4 | `leaseReach` | No site fronts a port whose PortHub lease declares a narrower `reach` | adapt unavailable, PortHub unreachable, the port has no lease, or the lease has no readable reach |
 | P5 | `forwardedFor` | Nothing in the live file lets a client decide `X-Forwarded-For` | adapt unavailable |
+| P6 | `offboxRefused` | Every site that proxies to TangleClaw with no gate refuses every peer but this machine — or TangleClaw's own login guards the door | adapt unavailable |
 
 **The gate state is an input** (`checkCaddyDrift({ gateState })`, resolved at boot by
 `lib/auth-gate.js#resolveGateState`). Caddy's `basic_auth` is emitted by state (#1420): once
@@ -95,6 +96,24 @@ Placement is done on text, but `lib/caddy-drift.js#planHttpsListenerPin` writes 
 `caddy adapt` reads the result as the original with only the listener's `protocols` changed, so
 the retrofit is decided by Caddy's parser just as the finding was. A listener set to other
 protocols on purpose is diverged too, but its finding names no tool: the pin tool refuses it.
+
+**P6 is absolute, not a diff — and it ignores site names on purpose.** Caddy listens on every
+interface and chooses a site by the Host header and SNI the client sends, so a `localhost` site with
+no gate serves any machine that asks for `localhost`. The generator never writes a proxying site with
+neither a gate nor a peer guard, so no baseline could make such a site intended. Like P1, it holds
+outright when TangleClaw's login guards the door: those sites carry no `basic_auth` and no guard on
+purpose, because the login is what admits other machines — and `planOffboxGuard` refuses on such an
+install rather than lock the operator out. The property reads
+the guard strictly out of the adapted JSON (`lib/caddy-drift.js#isOffboxGuardRoute`): one `not`
+matcher over one `remote_ip` whose ranges are all loopback, handled only by an aborting
+`static_response`, and ahead of every route that proxies (`#refusesOffboxBeforeProxy`). A guard
+inside a matched route covers only that route, and every route merged into a site must refuse. A
+gated site is P1's to judge, and a site that forwards only to something other than TangleClaw (an
+upstream the baseline does not dial) is P3's and P4's: it may front a service meant to be reachable,
+which PortHub's declared reach answers, so a peer guard there could cut off a deliberate exposure.
+The finding names `scripts/guard-ungated-sites.js`, which adds the guard
+in place and writes nothing unless `caddy adapt` reads the guard routes as the only change
+(`#planOffboxGuard`) — the same standard as P2's remedy.
 
 **P1 asks its question per SITE, and a site is `(listen address, host)`.** `summarizeConfig` merges
 every route under one site, so a gate anywhere in that site satisfies P1 for all of it. An ungated

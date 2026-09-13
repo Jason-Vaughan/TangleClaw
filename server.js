@@ -393,7 +393,7 @@ let _gateIngressCache = null;
  * A MISSING file answers "no ungated remote site" — Caddy has nothing to serve.
  * Any OTHER failure throws, which the gate answers with `unreadable`.
  *
- * @returns {{ ungatedRemoteSite: boolean }}
+ * @returns {{ ungatedRemoteSite: boolean, unguardedLocalSite: boolean }}
  * @throws {Error} If the Caddyfile exists but cannot be read
  */
 function _gateIngress() {
@@ -402,7 +402,7 @@ function _gateIngress() {
   try {
     st = fs.statSync(file);
   } catch (err) {
-    if (err.code === 'ENOENT') return { ungatedRemoteSite: false };
+    if (err.code === 'ENOENT') return { ungatedRemoteSite: false, unguardedLocalSite: false };
     throw err;
   }
   const key = `${file}:${st.mtimeMs}:${st.size}`;
@@ -413,6 +413,12 @@ function _gateIngress() {
     log.warn('The Caddyfile serves a remote site with no basic_auth, so authEnabled: false does NOT open '
       + 'TangleClaw\'s login in caddy mode. Re-run the cutover with only a localhost site, or turn '
       + 'authEnabled back on.', { caddyfile: file });
+  } else if (value.unguardedLocalSite) {
+    // Same once-per-change cadence. Whether it closes the opt-out depends on
+    // whether accounts exist, which the gate decides per request.
+    log.warn('The Caddyfile has a localhost site with no basic_auth and no peer guard, so other machines '
+      + 'asking for localhost reach it. On an install with accounts, authEnabled: false does NOT open '
+      + 'TangleClaw\'s login. Run node scripts/guard-ungated-sites.js.', { caddyfile: file });
   }
   _gateIngressCache = { key, value };
   return value;

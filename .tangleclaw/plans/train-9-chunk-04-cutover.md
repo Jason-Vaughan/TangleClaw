@@ -282,6 +282,21 @@ under A-04b's heading below, for the record).
 - `.prawduct/artifacts/security-model.md` Direction was amended in the A-04a worktree copy only
   (gitignored); the primary checkout's copy needs the same paragraph.
 
+### Security hotfix fold-in (2026-09-13) — before A.04b
+
+Found during A.04b discovery: a Caddy `localhost` site with no gate answers other machines (Caddy
+picks a site by Host, not by peer). Operator rulings, in the Builder pane: private advisory
+GHSA-fhgg-4h57-q2f9; the peer-guard fix merged to `main` as PR #1451 with **no release** (it ships with
+the sprint release); and the #1420 side lands here, on a sync branch that merges `main` into
+`train-9/cutover`. Recorded in ADR 0016 "Recorded during #1420 — the peer guard". Decisions:
+- The generator guards a site only when it has no gate of either kind (not in `armed`/`locked`).
+- `describeIngressDoor` reports `unguardedLocalSite`; `resolveGateState` counts it against
+  `authEnabled: false` only when accounts exist (ruled: no account stays open).
+- The drift property for the guard is P6 here (P5 is `forwardedFor`), gate-aware; the fix script
+  refuses when the login guards the door.
+- **Carried to A.04b:** the fallback's "door observably present" check must require a gate on every
+  site that proxies to TangleClaw, or the peer guard — never a site name.
+
 ### Chunk A.04b (A-04b) — the fallback, reset-admin, recovery doc, drill
 
 The original A-04 list; the recovery-code and ADR 0009 bullets are A-04a's.

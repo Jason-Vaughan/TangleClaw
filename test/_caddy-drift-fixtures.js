@@ -57,9 +57,11 @@ function fixtureConfig(overrides = {}) {
  * @param {object} [configOverrides] - Passed to `fixtureConfig`.
  * @param {string|null} [gateState] - TangleClaw's gate state, passed to the
  *   generator exactly as the cutover and the drift baseline pass it.
+ * @param {object} [generatorOverrides] - Generator options with no config field,
+ *   e.g. `{ offboxGuard: false }` for a file written before the peer guard.
  * @returns {string} Caddyfile text.
  */
-function generatedCaddyfile(configOverrides = {}, gateState = null) {
+function generatedCaddyfile(configOverrides = {}, gateState = null, generatorOverrides = {}) {
   const config = fixtureConfig(configOverrides);
   return caddy.buildCaddyfileContent({
     serverPort: config.serverPort,
@@ -73,7 +75,8 @@ function generatedCaddyfile(configOverrides = {}, gateState = null) {
     gateState,
     remoteHttpCatchAll: config.caddyRemoteHttp === true,
     tailnetHost: config.caddyTailnetHost,
-    accessLogPath: config.caddyAccessLogPath
+    accessLogPath: config.caddyAccessLogPath,
+    ...generatorOverrides
   });
 }
 
@@ -110,7 +113,8 @@ const FIXTURE_CADDYFILES = {
 
   // A config with no credential: the generator emits ungated sites, which is a
   // real product state (direct-mode installs, pre-cutover boxes) and must read
-  // as "no gate property to diverge from", not as drift.
+  // as "no gate property to diverge from", not as drift. Each ungated site
+  // carries the peer guard, so it refuses other machines.
   ungated: generatedCaddyfile({ authEnabled: false, caddyTailnetHost: null }),
 
   // What TangleClaw generates once its own gate is armed: the same sites, no
@@ -128,6 +132,12 @@ const FIXTURE_CADDYFILES = {
     }
     return text.replace(pin, pin + FORWARDED_FOR_TRUST).replace(proxy, `${FORWARDED_FOR_REWRITE}\n`);
   })(),
+
+  // The same ungated config as an earlier release wrote it, before the peer
+  // guard: a `localhost` site that serves any machine naming `localhost`.
+  'ungated-unguarded': generatedCaddyfile(
+    { authEnabled: false, caddyTailnetHost: null }, null, { offboxGuard: false }
+  ),
 
   // The generated file with the `protocols h1` pin stripped from the HTTPS
   // listener — the h2/h3 regression that breaks terminal WebSockets in Chrome.

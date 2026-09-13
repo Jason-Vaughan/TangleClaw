@@ -717,6 +717,21 @@ describe('caddy', () => {
         assert.equal(door('127.0.0.1:8443 {\n\treverse_proxy 127.0.0.1:3102\n}\n[::1] {\n}\nhttps://localhost:9443 {\n}\n'), false);
       });
 
+      it('reports a localhost site without the peer guard as unguarded, and one with it as not', () => {
+        const local = (content) => caddy.describeIngressDoor(content).unguardedLocalSite;
+        assert.equal(local(caddy.buildCaddyfileContent(opts)), false, 'the generator guards it');
+        assert.equal(local(caddy.buildCaddyfileContent({ ...opts, offboxGuard: false })), true, 'a pre-guard file');
+        assert.equal(local('localhost {\n\t@offbox not remote_ip 127.0.0.1/8 ::1\n\treverse_proxy 127.0.0.1:3102\n}\n'), true,
+          'half a guard is no guard');
+        assert.equal(local('localhost {\n\thandle {\n\t\t@offbox not remote_ip 127.0.0.1/8 ::1\n\t\tabort @offbox\n\t}\n\treverse_proxy 127.0.0.1:3102\n}\n'), true,
+          'a guard nested in handle does not cover the site');
+        const both = 'localhost {\n\treverse_proxy 127.0.0.1:3102\n}\n127.0.0.1:9443 {\n\t@offbox not remote_ip 127.0.0.1/8 ::1\n\tabort @offbox\n\treverse_proxy 127.0.0.1:3102\n}\n';
+        assert.equal(local(both), true, 'one unguarded local site is enough');
+        assert.equal(local(caddy.buildCaddyfileContent({ ...opts, ...AUTH, offboxGuard: false })), false,
+          'a file with basic_auth is gated, whatever else');
+        assert.equal(local(null), false);
+      });
+
       it('counts a bare port, a scheme-only catch-all and one remote name in a list', () => {
         assert.equal(door(':8080 {\n\treverse_proxy 127.0.0.1:3102\n}\n'), true);
         assert.equal(door('http:// {\n\treverse_proxy 127.0.0.1:3102\n}\n'), true);
