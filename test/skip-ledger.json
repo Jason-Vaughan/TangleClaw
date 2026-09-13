@@ -71,6 +71,12 @@
       "runsWhere": "any developer or operator machine with caddy installed — where `caddy-drift — against real caddy` also re-derives test/fixtures/caddy-adapt-ungated*.json, the JSON this suite's decision layer reads."
     },
     {
+      "id": "caddy-adapt-absent-gate-fallback",
+      "match": "^the fallback marker, end to end \\(#1420\\) > against real caddy$",
+      "why": "Writes real Caddyfiles into the store home and lets the REAL request handler run `caddy adapt` over them to decide whether the fallback marker is honoured: the generated gated file and the live install's gated shape honour it, the armed file and the shape with an ungated /openclaw-direct/* handle refuse it. The runner has no caddy binary. The decision layer (`test/gate-fallback.test.js`, over the committed adapt fixtures) and the rest of this file's wiring cases (direct mode, the listener, the refusals, the upgrade gate) need no caddy and DO run here.",
+      "runsWhere": "any developer or operator machine with caddy installed — where `caddy-drift — against real caddy` also re-derives test/fixtures/caddy-adapt-live-shape-*.json, the JSON the decision layer reads."
+    },
+    {
       "id": "caddy-adapt-absent-redaction",
       "match": "^caddy-drift \u2014 credentials never reach a report > redacts the bcrypt hash out of an adapt failure$",
       "why": "Needs a real `caddy adapt` PARSE FAILURE to produce the stderr that quotes the offending Caddyfile line \u2014 that line can be `basic_auth <user> <hash>`, which is the only way a credential enters text nobody wrote by hand (#821). A stub cannot generate it, so there is nothing to redact without the binary. The sibling case in the same describe (`redacts findings on the way out`) needs no caddy and runs here.",
