@@ -1,7 +1,7 @@
 # Train 9 · Chunk 04 — the Tier 1 cutover (#1420), A-series build plan
 
 **Issue:** #1420 (closes #1055). **Sprint:** v5.24, Lane A.
-**Design of record:** ADR 0016, "Addendum (proposed 2026-09-13, Checkpoint 1)". Read it first.
+**Design of record:** ADR 0016, "Addendum (2026-09-13, Checkpoint 1)" and its "The ruling" section. Read both first.
 **Integration branch:** `train-9/cutover`, cut from `origin/main` at or after `e471cae9`. Each A-chunk
 is a feature branch merged INTO `train-9/cutover`, never into `main`. Only the final cumulative merge
 reaches `main`, and only at Checkpoint 2.
@@ -9,12 +9,10 @@ reaches `main`, and only at Checkpoint 2.
 
 ## Gates
 
-- **Checkpoint 1 (after A-01):** the operator picks the kill-switch reach (ADR 0016 addendum,
-  Options 1–3). **Nothing below A-01 is built until that ruling is recorded** on #1420 and in the ADR.
-  A-02 does not depend on which option is picked, but it is still held: a ruling can reshape the
-  state machine (Option 2 adds a pre-gate route), and the sprint plan says nothing past A-01.
-- **Checkpoint 2 (after A-04):** cumulative Critic clean, elkaholic VRF PASS, kill-switch drill PASS
-  **from the operator's phone**, and the operator says "merge". A relayed or inferred go is not one.
+- **Checkpoint 1 (after A-01): RULED 2026-09-13, "1 + 2"** — terminal recovery stays; one-time
+  recovery codes reset the password; ADR 0009 rule 5 amended. Recorded in ADR 0016 and on #1420.
+- **Checkpoint 2 (after A-04):** cumulative Critic clean, elkaholic VRF PASS, both recovery drills PASS
+  **from the operator's phone** (code reset + broken gate over SSH), and the operator says "merge". A relayed or inferred go is not one.
 
 ## Chunks
 
@@ -55,8 +53,13 @@ reaches `main`, and only at Checkpoint 2.
 - The fallback command (name decided in A-04): restore/regenerate the Caddyfile with the retained
   credential → validate → reload → probe 401 → only then write the `gate-fallback` marker; `--undo`
   in reverse order. TangleClaw honours the marker only while the fallback door is observably present.
-- The reach, per the Checkpoint 1 ruling (Option 1: documentation and a phone drill; Option 2: the
-  pre-gate route plus code issue/re-issue; Option 3: the probation timer).
+- Recovery codes (the ruling): generate a small set of long random codes, show once, store hashed,
+  single-use; a pre-gate redemption route + page that sets a new password under
+  `caddy.validateAdminPassword` and signs in; rate-limited, and identical answers for a wrong code and
+  an exhausted one; each redemption logged + a dashboard notice. Issued on the `migration-required`
+  set-password screen; a "regenerate recovery codes" action invalidates the old set. Wizard issuance
+  for fresh installs is #803 (chunk 05).
+- ADR 0009 rule 5: amend its text to match the ruling (off-box password reset by code holders only).
 - `scripts/reset-admin.js`: aligned with the state machine (it recovers a forgotten password in
   `armed`; it must not silently leave `migration-required`).
 - An in-repo recovery doc (the parts of `~/.tangleclaw/EMERGENCY-RECOVERY.md` that describe the new
@@ -69,7 +72,8 @@ reaches `main`, and only at Checkpoint 2.
 - elkaholic VRF per `reference_live_verification_traps` (the launchd `WorkingDirectory` and the
   service PATH), on a caddy-mode install carrying a bcrypt credential: migration, login, `basic_auth`
   drop, the `/openclaw-direct/*` iframe, the terminal socket, `tc` CLI + PortHub still working.
-- The kill-switch drill, from the phone.
+- The drills, both from the phone: a password recovered with a code, and a deliberately broken gate
+  recovered over SSH.
 - **Live-install cutover procedure** written for Checkpoint 2: merge → release → pull + restart →
   set password through the double gate → log in → operator-run `basic_auth` drop on the hand-edited
   Caddyfile (backup first) → verify → the memory `project_caddy_ingress_live_state` cleanup check.
@@ -80,8 +84,8 @@ reaches `main`, and only at Checkpoint 2.
 
 ## Status
 - [x] A-01 — ADR 0016 addendum + this plan
-- [ ] Checkpoint 1 — kill-switch reach ruled
+- [x] Checkpoint 1 — ruled 2026-09-13: 1 + 2
 - [ ] A-02 — state machine, set-password, carve-out, OQ2
 - [ ] A-03 — state-driven `basic_auth`, bypass ownership, drift, bind policy, #1055
-- [ ] A-04 — fallback command, reach, reset-admin, recovery doc, drill
+- [ ] A-04 — fallback command, recovery codes, ADR 0009 rule 5 text, reset-admin, recovery doc, drills
 - [ ] A-VRF — cumulative Critic, elkaholic VRF, phone drill → Checkpoint 2

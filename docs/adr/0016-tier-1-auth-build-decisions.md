@@ -238,12 +238,13 @@ canonical path, so it can never exempt anything Caddy's list does not. The WebSo
 
 ---
 
-## Addendum (proposed 2026-09-13, Checkpoint 1): the cutover's kill-switch, migration state, and the machine carve-out
+## Addendum (2026-09-13, Checkpoint 1): the cutover's kill-switch, migration state, and the machine carve-out
 
-**Status: PROPOSED — awaiting the operator's ruling at Checkpoint 1.** Nothing past #1420's design
-chunk is built until the operator picks a kill-switch shape below. Recorded during A-01 (#1420
-discovery). Everything under "Builder decisions" is the Builder's call and vetoable; only the
-kill-switch is put to the operator, because any off-box recovery path is itself a way past the gate.
+**Status: ACCEPTED 2026-09-13 — the operator ruled "1 + 2" at Checkpoint 1, directly in the Builder
+session.** See "The ruling" at the end of this addendum; where it differs from the option table, the
+ruling governs. Recorded during A-01 (#1420 discovery). Everything under "Builder decisions" is the
+Builder's call and vetoable; only the recovery reach was put to the operator, because any off-box
+recovery path is itself a way past the gate.
 
 ### What discovery found that changes the cutover's shape
 
@@ -346,3 +347,39 @@ tunnels remote traffic without adding the header (an `ssh -L` forward) is treate
 correct only because holding that tunnel already means holding a shell. The rejected alternative, a
 separate listener for Caddy's upstream, is structurally stronger but rewrites every live Caddyfile's
 upstream line.
+
+### The ruling (operator, 2026-09-13)
+
+**"1 + 2: terminal recovery stays; one-time recovery codes that reset the password; ADR 0009 rule 5
+amended."**
+
+The operator has SSH from their phone, so Option 1 works for this install. They chose to add Option 2
+anyway, because TangleClaw now has non-technical outside installers for whom "SSH in and run a script"
+is no recovery path at all. That reason reshaped Option 2 before it was ratified:
+
+- **A recovery code recovers the ACCOUNT, not the gate.** As first proposed, Option 2 only fell back
+  to Caddy's old `basic_auth` gate. That exists only for an upgrading install: a fresh install after
+  the cutover never had a bcrypt credential to fall back to. And what a non-technical user actually
+  hits is a forgotten password, not a broken gate. So a code works like a 2FA backup code: a small set
+  of long random codes, shown once, each single-use and stored hashed; redeeming one lets the holder
+  set a new password (policy: `caddy.validateAdminPassword`) and signs them in. Every redemption is
+  logged and raises a dashboard notice afterwards. The route is rate-limited, and it answers
+  identically for a wrong code and an exhausted one.
+- **The terminal path stays, unchanged.** `scripts/reset-admin.js` for a forgotten password, plus the
+  fail-closed fallback command described in "What the switch does" for a gate that is actually broken.
+  A code handled by TangleClaw cannot recover TangleClaw's own request path, and that is the failure
+  #1420 was filed about.
+- **ADR 0009 rule 5 is amended.** Recovery no longer requires being on the machine in every case: a
+  holder of an unused recovery code may reset an account's password from off-box. Everything else in
+  rule 5 stands — no recovery feature behind the gate, the terminal tool remains, and breaking a gate
+  is still recovered from a shell. The cost is accepted as stated: a second way past the password,
+  bounded by the code's entropy, so the real risk is theft. Since codes are typically kept beside the
+  password, a compromised password manager exposes both anyway. The genuinely new risk is the pre-gate
+  route's code, which gets its own tests and Critic review.
+- **Scope.** Build the redemption route and page, code issuance on the `migration-required`
+  set-password screen, and a "regenerate recovery codes" action (it invalidates the old set) in #1420
+  (A-04). Issuing codes in the first-run wizard for a fresh install belongs with #803 (chunk 05).
+- **A user who loses their codes** falls back to the terminal path, exactly as today.
+- **The Checkpoint 2 drill covers both paths:** recover a password with a code from the phone, and
+  recover a deliberately broken gate over SSH from the phone.
+
