@@ -43,4 +43,4 @@ can reach Caddy's port and names that host is served. TangleClaw's served-Host c
   and the `fallback` door check. Both land on `train-9/cutover`.
 
 ## Status
-- [ ] Hotfix — generator guard, drift property, in-place script, docs, review
+- [x] Hotfix — generator guard, drift property, in-place script, docs, review (Critic `rev-20260913T174551Z-f11519c7` + two verify-resolutions, 0 open blocking; R-7 accepted)
