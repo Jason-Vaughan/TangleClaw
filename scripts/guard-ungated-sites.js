@@ -68,7 +68,7 @@ function parseArgs(argv) {
  *
  * @param {object} opts
  * @param {string} opts.caddyfilePath - The Caddyfile to guard.
- * @param {number} opts.serverPort - TangleClaw's port (`config.serverPort`).
+ * @param {number} opts.serverPort - The installed service's port (`https-setup#installedServerPort`).
  * @param {string|null} [opts.gateState] - TangleClaw's gate state
  *   (`lib/auth-gate.js#resolveGateState`). When its own login guards the door
  *   the plan refuses: those sites answer other machines on purpose.
@@ -181,7 +181,9 @@ function main() {
 
   const code = run({
     caddyfilePath,
-    serverPort: config.serverPort,
+    // The installed service's port, not config's (3101 while the plist binds
+    // 3102): a site proxying to the real port must read as TangleClaw's.
+    serverPort: require(path.join(REPO_DIR, 'lib', 'https-setup')).installedServerPort(undefined, config),
     gateState,
     dryRun: args.dryRun,
     uid: process.getuid(),

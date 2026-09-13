@@ -392,7 +392,9 @@ code and a new password, and you are signed in.
   safe and apart from the device you sign in on — a password manager or printed paper.
 - **Each code works once.** Using one signs out every other browser on that account, and the
   dashboard then shows a notice saying a code was used, when, and from where. Choose **That was me**
-  to clear it. If it was not you, change your password and generate new codes straight away.
+  to clear it. If it was not you, whoever used the code chose your password: set one only you know
+  with another code, or with `node scripts/reset-admin.js --store --user <name>` on the machine, and
+  generate new codes straight away.
 - **Settings → Recovery codes** shows how many you have left and generates a new set. Generating asks
   for your current password, and the old set stops working at once.
 - Accounts created at a terminal or by the setup wizard start with no codes — generate them in

@@ -78,6 +78,8 @@ function getWithCredential(target, user, password, timeoutMs = 3000) {
     const options = {
       host: '127.0.0.1', port: target.port, path: '/', method: 'GET', rejectUnauthorized: false,
       timeout: timeoutMs,
+      // A fresh connection per sign-in: see `gate-fallback#queryGateState`.
+      agent: false,
       headers: { Host: host, Authorization: `Basic ${Buffer.from(`${user}:${password}`).toString('base64')}` }
     };
     if (target.tls && target.host && net.isIP(target.host) === 0) options.servername = target.host;
@@ -256,15 +258,18 @@ async function main() {
   const lanHost = httpsSetup.mdnsHostFor(require('node:os').hostname());
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const caddyfilePath = caddy.getCaddyfilePath();
+  // The installed service's port, not config's: see `https-setup#installedServerPort`.
+  const serverPort = httpsSetup.installedServerPort(undefined, config);
   const result = await drill({
     snapshotPath: path.join(path.dirname(caddyfilePath), `drill-gate-fallback-${stamp}.Caddyfile`),
     user: args.user,
     password,
-    port: config.serverPort,
+    port: serverPort,
     fallbackOpts: {
       caddyfilePath,
       markerFile: gateFallback.markerPath(),
       config,
+      serverPort,
       intendedGateState,
       lanHosts: lanHost ? [null, lanHost] : [null],
       restore: args.restore,

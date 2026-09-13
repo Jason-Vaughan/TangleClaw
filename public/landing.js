@@ -672,8 +672,10 @@ function renderRecoveryNotice(notice) {
   const count = uses.length === 1 ? 'A recovery code was used' : `${uses.length} recovery codes were used`;
   textEl.innerHTML = `⚠ <strong>${esc(count)} to reset your password</strong>`
     + ` — most recently ${esc(when)} from ${esc(latest.from || 'an unknown address')}.`
-    + ` ${esc(String(notice.remaining))} left. If this was not you, change your password and`
-    + ' generate new codes in Settings now.';
+    + ` ${esc(String(notice.remaining))} left. If this was not you, whoever used it chose the password:`
+    + ' set one only you know with another recovery code, or with'
+    + ' <code>node scripts/reset-admin.js --store --user &lt;name&gt;</code> on the machine, then generate'
+    + ' new codes in Settings → Recovery codes.';
   banner.classList.remove('hidden');
   if (ackBtn && !ackBtn.dataset.wired) {
     ackBtn.dataset.wired = '1';

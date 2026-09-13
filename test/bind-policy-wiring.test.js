@@ -86,8 +86,10 @@ describe('server.js binds through the policy, not around it', () => {
       'a malformed opt-in must be surfaced, not silently read as false');
   });
 
-  it('publishes the narrowing notice to the browser-facing endpoint', () => {
-    assert.match(SERVER_SRC, /serverInfo\.setBindNotice\(bindNotice\)/);
+  it('publishes the bound config to the browser-facing endpoint, which asks with the request\'s gate state', () => {
+    assert.match(SERVER_SRC, /serverInfo\.setBindConfig\(config\)/);
+    assert.match(SERVER_SRC, /serverInfo\.getServerInfo\(\{ gateState: _req\.tcGateState \}\)/,
+      'the notice must agree with the authStatus the same response carries');
   });
 
   it('seeds the default config before deciding whether to show the notice', () => {
@@ -408,14 +410,44 @@ describe('a refused ttyd re-pin reaches the dashboard, not only the log', () => 
 });
 
 describe('/api/server-info carries the notice', () => {
-  it('round-trips a notice set at listen time', () => {
-    const notice = { message: 'test notice', setting: 'bindAllInterfaces' };
-    serverInfo.setBindNotice(notice);
-    assert.deepEqual(serverInfo.getServerInfo().bindNotice, notice);
+  const GRACE = { ingressMode: 'direct', bindAllInterfaces: null };
+
+  after(() => serverInfo.setBindConfig(null));
+
+  it('warns for a wide grace bind that no login guards', () => {
+    serverInfo.setBindConfig(GRACE);
+    const notice = serverInfo.getServerInfo({ gateState: 'account-required' }).bindNotice;
+    assert.equal(notice && notice.setting, 'bindAllInterfaces');
   });
 
-  it('reports null when nothing narrowed', () => {
-    serverInfo.setBindNotice(null);
-    assert.equal(serverInfo.getServerInfo().bindNotice, null);
+  it('clears once the login is armed, with no restart — the boot-time answer is not frozen', () => {
+    serverInfo.setBindConfig(GRACE);
+    assert.ok(serverInfo.getServerInfo({ gateState: 'account-required' }).bindNotice);
+    assert.equal(serverInfo.getServerInfo({ gateState: 'armed' }).bindNotice, null);
+  });
+
+  it('raises again when the login is opened after boot', () => {
+    serverInfo.setBindConfig(GRACE);
+    assert.equal(serverInfo.getServerInfo({ gateState: 'armed' }).bindNotice, null);
+    assert.ok(serverInfo.getServerInfo({ gateState: 'open' }).bindNotice);
+  });
+
+  it('a caller that passes no gate state keeps the warning', () => {
+    serverInfo.setBindConfig(GRACE);
+    assert.ok(serverInfo.getServerInfo().bindNotice);
+  });
+
+  it('keeps the bind recorded at listen time, not a later edit to the same object', () => {
+    const cfg = { ...GRACE };
+    serverInfo.setBindConfig(cfg);
+    cfg.bindAllInterfaces = false;
+    assert.ok(serverInfo.getServerInfo({ gateState: 'open' }).bindNotice);
+  });
+
+  it('reports null when the bind was not wide, or nothing was recorded', () => {
+    serverInfo.setBindConfig({ ingressMode: 'direct', bindAllInterfaces: false });
+    assert.equal(serverInfo.getServerInfo({ gateState: 'open' }).bindNotice, null);
+    serverInfo.setBindConfig(null);
+    assert.equal(serverInfo.getServerInfo({ gateState: 'open' }).bindNotice, null);
   });
 });

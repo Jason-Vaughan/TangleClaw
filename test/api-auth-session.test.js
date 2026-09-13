@@ -44,6 +44,9 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
     for (const u of store.users.list()) {
       store.getDb().prepare('DELETE FROM users WHERE id = ?').run(u.id);
     }
+    // An empty users table models an install that never had an account only
+    // when the marker an account insert writes is gone too.
+    fs.rmSync(path.join(tempDir, 'accounts-established'), { force: true });
     setAuthEnabled(false);
   });
 
@@ -413,6 +416,61 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
       const res = await send('POST', '/api/auth/set-password',
         { body: GOOD, headers: { 'x-forwarded-for': '100.64.0.7' } });
       assert.equal(res.statusCode, 200);
+    });
+
+    describe('an install that has had an account, and whose account store has none', () => {
+      /** Model a lost store: an account existed (so the marker was written), then its row is gone. */
+      function loseTheStore() {
+        const u = store.users.create('former', 'a-long-enough-password');
+        store.getDb().prepare('DELETE FROM users WHERE id = ?').run(u.id);
+        assert.equal(store.users.accountsEstablished(), true);
+      }
+
+      it('refuses a claim through the proxy, and creates nothing', async () => {
+        loseTheStore();
+        const res = await send('POST', '/api/auth/set-password',
+          { body: GOOD, headers: { 'x-forwarded-for': '100.64.0.7' } });
+        assert.equal(res.statusCode, 403, res.body);
+        assert.match(res.body, /ACCOUNT_STORE_LOST/);
+        assert.match(res.body, /reset-admin\.js --store/, 'names the recovery that works');
+        assert.equal(store.users.list().length, 0);
+        assert.equal(res.headers['set-cookie'], undefined, 'nobody is signed in');
+      });
+
+      it('refuses a claim from another machine on a wide listener, with no proxy', async () => {
+        loseTheStore();
+        const res = await send('POST', '/api/auth/set-password', { body: GOOD, remoteAddress: '10.0.0.5' });
+        assert.equal(res.statusCode, 403, res.body);
+        assert.equal(store.users.list().length, 0);
+      });
+
+      it('refuses a loopback claim that carries X-Forwarded-For, whatever its value', async () => {
+        loseTheStore();
+        const res = await send('POST', '/api/auth/set-password',
+          { body: GOOD, headers: { 'x-forwarded-for': '127.0.0.1' } });
+        assert.equal(res.statusCode, 403, res.body);
+      });
+
+      it('takes the claim from this machine, directly on the loopback listener', async () => {
+        loseTheStore();
+        const res = await send('POST', '/api/auth/set-password', { body: GOOD });
+        assert.equal(res.statusCode, 200, res.body);
+        assert.equal(store.users.list().length, 1);
+      });
+
+      it('answers 503, never a claim, when the marker cannot be checked', async () => {
+        const orig = store.users.accountsEstablished;
+        store.users.accountsEstablished = () => { throw new Error('EACCES: permission denied'); };
+        try {
+          const res = await send('POST', '/api/auth/set-password',
+            { body: GOOD, headers: { 'x-forwarded-for': '100.64.0.7' } });
+          assert.equal(res.statusCode, 503, res.body);
+          assert.match(res.body, /GATE_UNREADABLE/);
+        } finally {
+          store.users.accountsEstablished = orig;
+        }
+        assert.equal(store.users.list().length, 0);
+      });
     });
   });
 

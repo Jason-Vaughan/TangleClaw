@@ -163,7 +163,9 @@ function probeBasicChallenge(target, timeoutMs = 3000) {
       method: 'GET',
       headers: { Host: host },
       rejectUnauthorized: false,
-      timeout: timeoutMs
+      timeout: timeoutMs,
+      // A fresh connection per probe: see `queryGateState`.
+      agent: false
     };
     if (target.tls && target.host && net.isIP(target.host) === 0) options.servername = target.host;
     let req;
@@ -196,7 +198,11 @@ async function queryGateState(port, timeoutMs = 3000) {
   const attempt = (client) => new Promise((resolve) => {
     let req;
     try {
-      req = client.get({ host: '127.0.0.1', port, path: '/api/auth/me', rejectUnauthorized: false, timeout: timeoutMs },
+      // `agent: false`: a fresh connection per question. The fallback and its undo
+      // block on caddy validate and a launchctl restart for longer than the
+      // server's keep-alive, so a pooled socket was already closed when the next
+      // question went out on it — ECONNRESET, read as "TangleClaw did not answer".
+      req = client.get({ host: '127.0.0.1', port, path: '/api/auth/me', rejectUnauthorized: false, timeout: timeoutMs, agent: false },
         (res) => {
           let body = '';
           res.setEncoding('utf8');
@@ -253,6 +259,7 @@ async function retry(fn, done, tries, sleep, delayMs) {
  * @param {object} opts.config - Loaded TangleClaw config.
  * @param {string} opts.intendedGateState - `authGate.resolveIntendedGateState`.
  * @param {Array<string|null>} opts.lanHosts - LAN names a generated file may carry.
+ * @param {number} [opts.serverPort] - The installed service's port; `config.serverPort` when omitted.
  * @param {boolean} [opts.undo=false]
  * @param {boolean} [opts.dryRun=false]
  * @param {string|null} [opts.restore=null] - A saved Caddyfile to use.
@@ -283,7 +290,10 @@ async function run(opts) {
     now: () => new Date(),
     ...deps
   };
-  const port = config.serverPort;
+  // The INSTALLED service's port (main passes `https-setup#installedServerPort`):
+  // config's `serverPort` stays 3101 while the launchd plist binds 3102, and a
+  // wrong port makes every route to TangleClaw read as someone else's.
+  const port = Number.isInteger(opts.serverPort) ? opts.serverPort : config.serverPort;
   const say = (text) => stdout.write(`${text}\n`);
   const fail = (text) => stderr.write(`${caddy.redactHashes(text)}\n`);
 
@@ -575,6 +585,7 @@ async function main() {
     caddyfilePath,
     markerFile,
     config,
+    serverPort: httpsSetup.installedServerPort(undefined, config),
     intendedGateState,
     lanHosts: lanHost ? [null, lanHost] : [null],
     undo: args.undo,
