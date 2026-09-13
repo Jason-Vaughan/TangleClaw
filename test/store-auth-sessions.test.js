@@ -206,30 +206,82 @@ describe('store.authSessions — the browser session (#1418, ADR 0016)', () => {
     });
   });
 
-  describe('anyLoginableUser — the predicate the gate activates on', () => {
-    it('is false with no accounts at all', () => {
-      assert.equal(store.authSessions.anyLoginableUser(), false);
+  describe('accountPresence — the two facts the gate state is built from (#1420)', () => {
+    it('reports neither with no accounts at all', () => {
+      assert.deepEqual(store.authSessions.accountPresence(), { exists: false, loginable: false });
     });
 
-    it('is true with one enabled account', () => {
+    it('reports both with one enabled account', () => {
       mkUser();
-      assert.equal(store.authSessions.anyLoginableUser(), true);
+      assert.deepEqual(store.authSessions.accountPresence(), { exists: true, loginable: true });
     });
 
-    it('is FALSE when the only account is disabled', () => {
-      // An install whose only account is disabled has no key to its own door,
-      // so treating it as gated would lock the operator out with no route back
-      // that does not need a shell on the machine.
+    it('reports an account that EXISTS but is not loginable when the only one is disabled', () => {
+      // The two facts diverge here, and they must: `locked`, not
+      // `account-required` — a disabled account is still an account.
       mkUser();
       store.users.disable('rosie');
-      assert.equal(store.authSessions.anyLoginableUser(), false);
+      assert.deepEqual(store.authSessions.accountPresence(), { exists: true, loginable: false });
     });
 
-    it('is true again once a disabled account is re-enabled', () => {
+    it('is loginable again once a disabled account is re-enabled', () => {
       mkUser();
       store.users.disable('rosie');
       store.users.enable('rosie');
-      assert.equal(store.authSessions.anyLoginableUser(), true);
+      assert.deepEqual(store.authSessions.accountPresence(), { exists: true, loginable: true });
+    });
+
+    it('is loginable when ANY account is enabled, not only the first', () => {
+      mkUser('rosie');
+      mkUser('sam');
+      store.users.disable('rosie');
+      assert.deepEqual(store.authSessions.accountPresence(), { exists: true, loginable: true });
+    });
+
+    it('answers booleans, never 0/1 — the gate refuses anything else as malformed', () => {
+      const p = store.authSessions.accountPresence();
+      assert.equal(typeof p.exists, 'boolean');
+      assert.equal(typeof p.loginable, 'boolean');
+    });
+  });
+
+  describe('users.createFirst — the only writer of an install\'s first account (#1420)', () => {
+    it('creates the account when none exists, with a verifiable password', () => {
+      const u = store.users.createFirst('rosie', 'correct-horse-battery');
+      assert.equal(u.username, 'rosie');
+      assert.ok(store.users.verify('rosie', 'correct-horse-battery'));
+    });
+
+    it('refuses with ACCOUNT_EXISTS when ANY account exists, enabled or not', () => {
+      mkUser('sam');
+      store.users.disable('sam');
+      assert.throws(() => store.users.createFirst('rosie', 'correct-horse-battery'),
+        (err) => err.code === 'ACCOUNT_EXISTS');
+      assert.equal(store.users.getByName('rosie'), null);
+    });
+
+    it('releases the write lock after a refusal — the next write is not stuck', () => {
+      mkUser('sam');
+      assert.throws(() => store.users.createFirst('rosie', 'correct-horse-battery'));
+      // A transaction left open would make this throw "cannot start a
+      // transaction within a transaction" or leave the insert uncommitted.
+      store.getDb().prepare('DELETE FROM users').run();
+      store.users.createFirst('rosie', 'correct-horse-battery');
+      assert.ok(store.users.getByName('rosie'));
+    });
+
+    it('refuses an empty username or password without opening a transaction', () => {
+      assert.throws(() => store.users.createFirst('  ', 'correct-horse-battery'), /username is required/);
+      assert.throws(() => store.users.createFirst('rosie', ''), /password is required/);
+      assert.equal(store.users.list().length, 0);
+      store.users.createFirst('rosie', 'correct-horse-battery');
+    });
+
+    it('makes the second of two first-account submissions fail, whichever name it carries', () => {
+      store.users.createFirst('rosie', 'correct-horse-battery');
+      assert.throws(() => store.users.createFirst('sam', 'correct-horse-battery'),
+        (err) => err.code === 'ACCOUNT_EXISTS');
+      assert.equal(store.users.list().length, 1);
     });
   });
 

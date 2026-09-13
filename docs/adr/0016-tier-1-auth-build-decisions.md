@@ -383,3 +383,33 @@ is no recovery path at all. That reason reshaped Option 2 before it was ratified
 - **The Checkpoint 2 drill covers both paths:** recover a password with a code from the phone, and
   recover a deliberately broken gate over SSH from the phone.
 
+
+### Recorded during #1420 A-02a (2026-09-13) — the state classifier as built
+
+Three places where the build departed from, or sharpened, the addendum above. Where they differ,
+this section governs.
+
+- **`credential-migration-required` is built as `account-required`, without the hash condition.**
+  The trigger is `authEnabled` plus no user row, whether or not a `basicAuthHash` exists. An install
+  with `authEnabled` and no hash has no key either, and leaving it dormant would be an open door once
+  Caddy's gate is gone. The full set of states is `open`, `account-required`, `armed`, `locked`
+  (accounts exist, none enabled: closed, with no account page, because creating an account there
+  would be a way around the existing ones) and `unreadable` (a store or config read failed:
+  enforces). `lib/auth-gate.js#resolveGateState` is the single owner.
+- **Reach authorises the first account, with no extra condition** — the addendum's argument, and it
+  holds structurally: no code path deletes a user row, so `account-required` exists only before an
+  install's first account. Anyone who can reach the page then could already reach the install
+  ungated, or had already passed Caddy's gate. That includes a direct-mode install with a wide bind,
+  so restricting the route by socket or proxy would have bought nothing and locked that install out
+  remotely. **A delete verb added to the store re-opens `account-required` on an armed install**, and
+  must settle this first. The first account is written by `store.users#createFirst`, which checks and
+  inserts under one `BEGIN IMMEDIATE`, so a racing submission or `scripts/reset-admin.js` cannot
+  produce two.
+- **Read failures now fail closed in every state.** The dormant predicate failed open until the gate
+  had been armed in the process (`_everArmed`). That was safe only while Caddy's gate stood in front,
+  so it is gone: an unreadable store or config answers `unreadable`, which enforces. The fleet
+  carve-out still applies there, so `bin/tc` survives a store fault.
+- **The machine carve-out's `X-Forwarded-For` condition is verified, not recalled.** Caddy v2.11.4
+  set the header on every forwarded request and replaced a client-forged value, on a plain
+  `reverse_proxy` and on one carrying `header_up`. `isMachineClient` requires `proxied` to be exactly
+  `false`, so a caller that omits the fact is not read as local.

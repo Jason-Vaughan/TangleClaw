@@ -1,7 +1,11 @@
 'use strict';
 
-const { describe, it } = require('node:test');
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const store = require('../lib/store');
 const {
   matchRoute, route, parseQuery, reqUrl, handleUpgrade, handleRequest,
   _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed
@@ -9,6 +13,26 @@ const {
 const authSession = require('../lib/auth-session');
 
 describe('server', () => {
+  // A throwaway store. These cases drive `handleRequest` and `handleUpgrade`,
+  // and both read config and the account table on every request to decide the
+  // gate's state. Without this they read whatever `~/.tangleclaw` holds — the
+  // developer's own install, or nothing at all on CI — so whether a case met a
+  // login challenge depended on the machine it ran on.
+  let prevBase;
+  let tempDir;
+  before(() => {
+    prevBase = store._getBasePath();
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-server-test-'));
+    store.close();
+    store._setBasePath(tempDir);
+    store.init();
+  });
+  after(() => {
+    store.close();
+    store._setBasePath(prevBase);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
   describe('reqUrl', () => {
     it('parses the request URL with the Host header', () => {
       const u = reqUrl({ url: '/api/ports?host=example-host', headers: { host: 'box:3102' } });

@@ -117,11 +117,11 @@ describe('reset-admin --store (#1418)', () => {
     });
 
     it('arms the gate — the predicate flips from false to true', async () => {
-      // This command IS how TangleClaw's door gets closed for the first time:
-      // the gate is dormant until an enabled account exists.
-      assert.equal(store.authSessions.anyLoginableUser(), false);
+      // Creating the first account from a terminal is one of the two ways an
+      // `account-required` install gets its key (the other is the account page).
+      assert.equal(store.authSessions.accountPresence().loginable, false);
       await runWithPassword(PASSWORD, { user: 'rosie' });
-      assert.equal(store.authSessions.anyLoginableUser(), true);
+      assert.equal(store.authSessions.accountPresence().loginable, true);
     });
 
     it('ANSWERS whether a login is now enforced, rather than stating the condition', async () => {
