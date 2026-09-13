@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.23.0] - 2026-09-12
+
 ### Added
 - **TangleClaw has its own login (#1418).** Until now the only gate was Caddy's `basic_auth`, which
   exists in caddy ingress mode only — a direct-mode install had no login at all, and `lib/store.js`
