@@ -178,7 +178,9 @@ describe('lib/gate-fallback — the door TangleClaw may stand down behind (#1420
       const ungated = (handler) => site([hostRoute('a.example', [{ handle: [handler] }])]);
       const dialing = (...dials) => ({ handler: 'reverse_proxy', upstreams: dials.map((dial) => ({ dial })) });
       for (const dial of [`:${PORT}`, `0.0.0.0:${PORT}`, `[::]:${PORT}`, `127.0.0.2:${PORT}`, `localhost:${PORT}`,
-        `{env.UPSTREAM}:${PORT}`, 'unix//tmp/tc.sock', `tcp/127.0.0.1:${PORT}`, `tc.internal:${PORT}`, '127.0.0.1:{env.P}']) {
+        `{env.UPSTREAM}:${PORT}`, 'unix//tmp/tc.sock', `tcp/127.0.0.1:${PORT}`, `tc.internal:${PORT}`, '127.0.0.1:{env.P}',
+        `[::ffff:7f00:1]:${PORT}`, `[0:0:0:0:0:0:0:1]:${PORT}`, `[::ffff:0.0.0.0]:${PORT}`, `[0:0:0:0:0:0:0:0]:${PORT}`,
+        `[::ffff:127.0.0.1]:${PORT}`, `[::1]:${PORT}`]) {
         assert.equal(gf.checkFallbackDoor(ungated(dialing(dial)), PORT).ok, false, dial);
       }
       assert.equal(gf.checkFallbackDoor(ungated({ handler: 'reverse_proxy', dynamic_upstreams: { source: 'srv' } }), PORT).ok,
@@ -222,6 +224,8 @@ describe('lib/gate-fallback — the door TangleClaw may stand down behind (#1420
       assert.deepEqual(decide({}), { honoured: true, reason: null });
       assert.equal(decide({ listenerAddress: '::1' }).honoured, true);
       assert.equal(decide({ listenerAddress: '::ffff:127.0.0.1' }).honoured, true);
+      assert.equal(decide({ listenerAddress: '0:0:0:0:0:0:0:1' }).honoured, true);
+      assert.equal(decide({ listenerAddress: '127.9.9.9' }).honoured, true);
     });
 
     it('has nothing to say without a marker', () => {
@@ -232,7 +236,8 @@ describe('lib/gate-fallback — the door TangleClaw may stand down behind (#1420
     });
 
     it('refuses a listener other machines can reach', () => {
-      for (const listenerAddress of ['0.0.0.0', '::', '192.168.1.5', null, undefined, '127.0.0.1.evil']) {
+      for (const listenerAddress of ['0.0.0.0', '::', '192.168.1.5', null, undefined, '127.0.0.1.evil', '::ffff:0.0.0.0',
+        '0:0:0:0:0:0:0:0', '::ffff:192.168.1.5']) {
         const d = decide({ listenerAddress });
         assert.equal(d.honoured, false, String(listenerAddress));
         assert.match(d.reason, /not loopback/);
