@@ -1,7 +1,7 @@
 # Sprint v5.24 — finish Trains 9, 15 and 16, mostly unattended
 
-**Status:** DRAFT, awaiting the operator's approval. Once approved, this file is the standing
-authorization for every car it names (see "Authority").
+**Status:** **APPROVED by the operator 2026-09-12.** This file is the standing authorization for
+every car it names (see "Authority"). Checkpoint 0 is answered (#846 = option b).
 **Base:** `main` at `b6968c64` = v5.23.0 (released 2026-09-12, live install restarted onto it).
 **Builder:** the TangleClaw-Builder session (Claude Code). **Coordinator:** the TangleClaw-Coordinator
 session (board owner, roster verifier, resume trigger). **Operator:** wraps and `/clear`s, plus the
@@ -16,7 +16,7 @@ three checkpoints named below — nothing else.
 | **B** | #918 — a pane at an interactive dialog is a distinct non-delivery mechanism | 15 · Chunk 02 | `lib/medusa-*`, `lib/sessions.js` (wake) | Yes |
 | **C** | #1361 — Dependabot integration + zero-trust audit policy | 16 | `.github/` | Yes (CI change: never `--auto`) |
 | **D** | #848 — detect/remediate an already-deployed unpinned HTTPS listener | 16 | `lib/caddy.js`, `lib/caddy-drift.js` | Yes, but must MERGE before Lane A touches `lib/caddy.js` |
-| **D′** | #846 — the remaining half (default access logging ON for remote-reachable sites?) | 16 | `lib/caddy.js` | Needs **Checkpoint 0** |
+| ~~D′~~ | #846 — **dropped by Checkpoint 0 (b):** closed as shipped-narrow (PR #1396); no default-on access log | 16 | — | — |
 | **A** | #1420 — the Tier 1 cutover (closes #1055) | 9 · Chunk 04 | `lib/caddy.js`, `lib/auth-gate.js`, `lib/auth-identity.js`, `lib/bind-policy.js`, `lib/store.js`, `server.js`, `scripts/reset-admin.js`, `public/login.html` | **No** — strictly serial, Builder itself, never a subagent |
 | **A2** | #804, #803 | 9 · Chunk 05 | the three "credential mandatory" call sites, setup wizard | After A merges |
 
@@ -37,6 +37,7 @@ own, or a change that can lock the operator out of their own install from a phon
   #846 as shipped-narrow and record the ruling on the issue. The Builder recommends (b) unless there
   is an audit need, because PR #1396 already preserves a hand-built log and a default-on log is new
   retained data. **If unanswered, Lane D′ is skipped, not guessed.**
+  **RULED 2026-09-12: (b).** #846 closed with the ruling recorded on the issue; Lane D′ removed.
 - **Checkpoint 1 — the kill-switch design** (end of A-01, before any cutover code). #1420 requires an
   off-box way to re-open the door that needs no shell on this machine. Any such mechanism is itself a
   way past the gate, so its shape is the operator's to ratify: recorded as an ADR 0016 addendum with
@@ -59,7 +60,7 @@ wraps) between sessions; see "Resuming".
 **Session 1 — Wave 1 (parallel).**
 1. Coordinator roster check (yes/no).
 2. Builder fans out **B, C, D** as worktree-isolated subagents (`isolation: "worktree"`), briefed from
-   the "Car brief" below. D′ only if Checkpoint 0 is answered.
+   the "Car brief" below.
 3. As each car reports green: the Builder runs that car's Critic **from that car's worktree, one at a
    time**, fixes findings, opens the PR through `/prawduct:pr`, merges on green CI, and reports the
    car to the Coordinator. Merge order: **D first** (it frees `lib/caddy.js` for Lane A), then B, C.
@@ -177,8 +178,8 @@ If the Coordinator's resume message does not arrive, the operator can paste:
 
 ## Status
 
-- [ ] Checkpoint 0 answered (#846)
-- [ ] Session 1 — Wave 1: D (#848) · B (#918) · C (#1361) · D′ (#846, if ruled)
+- [x] Checkpoint 0 answered (#846 = b, closed 2026-09-12)
+- [ ] Session 1 — Wave 1: D (#848) · B (#918) · C (#1361)
 - [ ] Session 2 — A-01 discovery + kill-switch/migration ADR addendum → Checkpoint 1
 - [ ] Sessions 3–5 — A-02 · A-03 · A-04 on `train-9/cutover`
 - [ ] A-VRF — cumulative review, elkaholic VRF, kill-switch drill → Checkpoint 2 → merge
