@@ -698,3 +698,31 @@ The addendum's "What the switch does", built. Builder decisions, vetoable.
 - **`recovery-codes#clientKey` returns `{ key, address, proxied }`** and asks
   `auth-identity#cameThroughProxy` whether the request came through the proxy, so there is one
   spelling of that check and the server no longer decodes a string prefix. The keys are unchanged.
+
+### Recorded during #1420 A-VRF (2026-09-13) — a lost account store, and what the cutover defers
+
+- **Reach authorises the first account only while the install has never had one.** A-02a's premise —
+  `account-required` exists only before an install's first account, because no code path deletes a
+  user row — does not hold outside the code: a corrupt `tangleclaw.db` deleted and recreated empty, or
+  a database restored from before the first account. By then the cutover has written a Caddyfile with
+  no `basic_auth` (TangleClaw was the gate), so the first-account page is the install's only key and
+  any machine that reaches it can take it. Verified on the macOS VRF guest before the fix: with the
+  database moved aside, a request from another machine created the only account.
+  - Every account insert writes `~/.tangleclaw/accounts-established` (0600), and startup backfills it
+    for accounts that predate it. A file beside the database, not a row or a config key, because what
+    it must survive is losing the database.
+  - While it exists, `POST /api/auth/set-password` takes the claim only from a direct loopback caller
+    with no `X-Forwarded-For`; anyone else gets `403 ACCOUNT_STORE_LOST` naming
+    `reset-admin.js --store`. A marker that cannot be checked answers `503`, never a claim.
+  - Chosen over the Critic's alternative (refuse remote claims whenever the Caddyfile has an ungated
+    site): the live install's hand-maintained Caddyfile has an ungated `/openclaw-direct/*` handle, so
+    that rule would have refused the operator's own first account through Caddy's password at the
+    cutover. The marker separates the two populations exactly: an upgrade has never had an account.
+  - Not covered, accepted: a whole `~/.tangleclaw` replaced (or `TANGLECLAW_HOME` pointed at a fresh
+    home) takes the marker with it. A fresh home also has a fresh config that has not finished setup.
+- **The dashboard's bind notice is derived per request** from the bind recorded at listen time and
+  the request's gate state, so it agrees with `authStatus` in the same response.
+- **Deferred, with issues:** changing an account's password from Settings with the current password
+  (#1457) — ADR 0015 lists it as enabled by Tier 1; the cutover ships without it and the docs say so —
+  and a command to disable an account (#1458): `store.users.disable` has no caller, so `locked` is
+  reachable today only by editing the database.

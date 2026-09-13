@@ -127,7 +127,10 @@ fails any auto-stub section older than 14 days.
   Routes: `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me` (reports `gateState`),
   `POST /api/auth/set-password` (the first account; `store.users#createFirstAsync`, async scrypt inside
   the login concurrency cap — `POST /api/setup/complete` uses `#createFirst` to create the same
-  account from the wizard's credential and sign the wizard in); pages:
+  account from the wizard's credential and sign the wizard in; once `store.users#accountsEstablished`
+  — a marker file every account insert writes, which survives losing the database — says the install
+  has had an account, the route takes a claim only from a direct loopback caller, `403
+  ACCOUNT_STORE_LOST` otherwise); pages:
   `public/login.html` and `public/account-setup.html`, each one self-contained document because
   every path that must answer before anyone is logged in is a hole in the gate. Break-glass:
   `node scripts/reset-admin.js --store --user <name>` (`scripts/reset-admin.js#runStoreMode`),

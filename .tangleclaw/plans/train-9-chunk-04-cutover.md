@@ -452,9 +452,22 @@ Delivers the A.04d bullet of the split above.
   set password through the double gate → log in → operator-run `basic_auth` drop on the hand-edited
   Caddyfile (backup first) → verify → the memory `project_caddy_ingress_live_state` cleanup check.
 
+**A-VRF progress (2026-09-13).**
+- Docs sweep merged (PR #1456).
+- Cumulative Critic `rev-20260913T221551Z-6e419eca`: 0 blocking, 6 warnings. R-1 (a lost account store
+  lets any caller claim the install) reproduced on the macOS VRF guest, then fixed with the
+  `accounts-established` marker (ADR 0016 A-VRF); R-5 (bind notice frozen at boot), R-2 (recovery
+  notice named a Settings form that does not exist), R-6/R-7 (disable and sign-out overclaimed) fixed;
+  R-11 filed as #1457, and the disable command as #1458.
+- VRF venue: the macOS/tart guest on habitat (a clone of `tc-vrf-v5`, `tc-vrf-a04`), not elkaholic —
+  elkaholic is the operator's workstation and its key is refused today. Same shape as the live install:
+  launchd services, Caddy 2.11.4 on the service PATH, a caddy-mode install with a bcrypt credential,
+  upgraded v5.0.0 → v5.23.0 → `train-9/cutover`.
+
 ## Out of this chunk
 - #804, #803 (chunk 05). Retiring the fallback bcrypt credential (chunk 05 or later, operator's call).
 - Tier 2 (ADR 0015 OQ5).
+- Changing an account's password from Settings (#1457); a command to disable an account (#1458).
 
 ## Status
 - [x] A-01 — ADR 0016 addendum + this plan

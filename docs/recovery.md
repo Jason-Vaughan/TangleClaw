@@ -71,8 +71,9 @@ everywhere: at least 12 characters, not a common password, not containing the us
 ## Every account is disabled
 
 The login is `locked`: accounts exist, none can sign in, and a recovery code cannot turn one back on,
-because disabling an account is how one person's access is revoked. Re-enable an account at the
-terminal by resetting it:
+because a disabled account is meant to stay off until someone at the machine turns it back on.
+TangleClaw has no command to disable an account yet (#1458), so an install reaches this state only
+through an edit to its database. Re-enable an account at the terminal by resetting it:
 
 ```sh
 node scripts/reset-admin.js --store --user <name>
@@ -107,6 +108,13 @@ node scripts/reset-admin.js --store --user <name>
 
 Then generate recovery codes in **Settings → Recovery codes** (an account created at the terminal has
 none).
+
+**If the page answers that this install has had an account** (`ACCOUNT_STORE_LOST`), its account
+store was lost — a database deleted, recreated or restored from before the first account — and the
+Caddyfile may no longer carry a password of its own. The first account can then only be created from
+the machine itself, so nobody else who reaches the page can claim the install: run the
+`reset-admin.js --store` command above over SSH. The record that an account existed is the file
+`~/.tangleclaw/accounts-established`; leave it in place.
 
 ## The login itself is broken
 

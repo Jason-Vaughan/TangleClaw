@@ -95,6 +95,15 @@ describe('the recovery-code notice banner (#1420)', () => {
     assert.match(html, /If this was not you/);
   });
 
+  it('names the routes that actually replace an account password — not a Settings form that does not exist', () => {
+    const html = render({ redemptions: [{ usedAt: 1, from: 'a' }], remaining: 3 }).els.recoveryNoticeBannerText.innerHTML;
+    assert.match(html, /another recovery code/);
+    assert.match(html, /reset-admin\.js --store/);
+    assert.match(html, /Settings → Recovery codes/);
+    assert.doesNotMatch(html, /change your password/i,
+      'Settings has no account-password form; its only password section is Caddy\'s');
+  });
+
   it('counts several uses', () => {
     const { els } = render({ redemptions: [{ usedAt: 2, from: 'a' }, { usedAt: 1, from: 'b' }], remaining: 6 });
     assert.match(els.recoveryNoticeBannerText.innerHTML, /2 recovery codes were used/);

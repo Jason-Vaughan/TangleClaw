@@ -1288,7 +1288,7 @@ route('GET', '/api/version', (_req, res) => {
 // (or fetches on page load) to surface a banner when the running process
 // is older than the on-disk code. See `lib/server-info.js` docstring.
 route('GET', '/api/server-info', (_req, res) => {
-  const info = serverInfo.getServerInfo();
+  const info = serverInfo.getServerInfo({ gateState: _req.tcGateState });
   const cfg = store.config.load();
   // "Logged in as <user>": the session's username, or null. The session is the
   // only source of identity (ADR 0016 OQ2) — an inbound `X-Auth-User` was
@@ -2227,6 +2227,34 @@ route('POST', '/api/auth/set-password', async (req, res, _params, body) => {
     }
     return errorResponse(res, 409,
       'An account already exists on this install. Sign in instead.', 'ACCOUNT_EXISTS');
+  }
+  // Reach authorises the first account only while no account has ever existed.
+  // An install that had one and now has none lost its account store outside the
+  // code (a deleted or restored database), and by then the Caddyfile may carry
+  // no password of its own — the login it relied on is the one that was lost.
+  // So the claim is taken only from this machine, on the loopback listener and
+  // not through a proxy, which is also where `reset-admin.js --store` runs.
+  const directLocal = adminCredential.isLoopbackRemote(req.socket && req.socket.remoteAddress)
+    && !authIdentity.cameThroughProxy(req.headers);
+  if (!directLocal) {
+    let established;
+    try {
+      established = store.users.accountsEstablished();
+    } catch (err) {
+      log.error('Refused a first-account submission: could not check whether this install has had an account',
+        { error: err.message });
+      return errorResponse(res, 503,
+        'TangleClaw cannot tell whether this install has had an account, so it cannot create one from here. '
+        + 'Check the server log.', 'GATE_UNREADABLE');
+    }
+    if (established) {
+      log.warn('Refused a first-account submission from off this machine: this install has had an account '
+        + 'and its account store has none', { proxied: authIdentity.cameThroughProxy(req.headers) });
+      return errorResponse(res, 403,
+        'This install has had an account, and its account store no longer has one, so the first account '
+        + 'can only be created on the machine itself: node scripts/reset-admin.js --store --user <name>. '
+        + 'See docs/recovery.md.', 'ACCOUNT_STORE_LOST');
+    }
   }
   const payload = body || {};
   const username = typeof payload.username === 'string' ? payload.username.trim() : '';
@@ -9194,15 +9222,17 @@ if (require.main === module) {
   // the operator resolves it. Unlike the terminal listener, which is pinned
   // immediately because nothing external addresses it.
   // The gate state decides only whether that wide bind is guarded — an install
-  // whose own login is armed is not "reachable with no password". Read once, at
-  // boot, like the binding it describes.
+  // whose own login is armed is not "reachable with no password". The log line
+  // reads it once, at boot; the dashboard's copy is re-derived per request from
+  // the recorded bind and that request's gate state (`serverInfo.getServerInfo`),
+  // because the login can change without a restart and the bind cannot.
   const bindNotice = bindPolicy.describeNarrowing(
     config, authGate.resolveGateState(() => config, store.authSessions, _gateIngress)
   );
   if (bindNotice) {
     log.warn(bindNotice.message, { setting: bindNotice.setting, severity: bindNotice.severity });
   }
-  serverInfo.setBindNotice(bindNotice);
+  serverInfo.setBindConfig(config);
 
   // #1394 — compare the live Caddyfile against the one the generator would
   // write, and report the security properties it does not hold.
