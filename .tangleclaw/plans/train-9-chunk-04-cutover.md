@@ -316,15 +316,29 @@ The original A-04 list; the recovery-code and ADR 0009 bullets are A-04a's.
 **Split 2026-09-13 into A.04b and A.04c, one review each** — the list below plus the carries above
 is wider than one reviewable diff, and the two halves share no code path:
 - **A.04b — the fallback.** The `fallback` state + marker + fallback command (with `--undo`) + the
-  drill script; the #472 decision (R-1); reading the Caddyfile door through `caddy adapt` with a
-  text reader that fails closed (R-3/R-14); the hotfix carry that the fallback's door check requires
+  drill script; the #472 decision (R-1); the hotfix carry that the fallback's door check requires
   a gate on every site proxying to TangleClaw, never a site name.
+  **Moved to A.04c during the build:** R-3/R-14 (reading `describeIngressDoor` through `caddy adapt`).
+  The fallback's door check is its own adapt-based reader and does not touch the `authEnabled: false`
+  path; migrating that consumer is a separate behaviour change with its own review.
 - **A.04c — reset-admin and the words.** `scripts/reset-admin.js` + `lib/admin-credential.js` aligned
   with the state machine (R-6, R-8; recovery codes deleted on disable or enable); login-page copy for
   `locked`/`unreadable`/`fallback` + the recovery link only where `/recover` works; the in-repo
   recovery doc + `SECURITY.md` login section + README link; the hotfix-review carries R-4 (one
   scrypt-cap helper), R-8 (the cap's warn line), R-6 (`clientKey` via `cameThroughProxy`) and the two
-  JSDoc fixes.
+  JSDoc fixes. Plus R-3/R-14, moved from A.04b.
+
+**A.04b decisions (2026-09-13)** — recorded in full in ADR 0016 "Recorded during #1420 A-04b":
+- `fallback` is a sixth gate state, weighed last, over any enforcing state (never `open`);
+  `authGate.standsDown` = `open` or `fallback`. Writers never resolve it.
+- Marker honoured only while the socket's own listener is loopback AND `caddy adapt` shows every
+  route to TangleClaw gated in evaluation order (stricter than P1), or no Caddyfile in direct mode.
+- #472 decided: no Caddy-only `/openclaw-direct/*` exemption in a fallback door; the prompt loop
+  returns during a fallback. **Live install: today's hand-maintained Caddyfile carries that handle,
+  so the command refuses it** — Checkpoint 2 prep must keep a gated copy to `--restore`.
+- The command rebuilds only a generated file it can reproduce byte for byte; never a hand-maintained one.
+- The drill rehearses on a working install and does not break the login (descoped from "break the
+  gate on purpose", reason in the ADR; operator may veto).
 
 **Fallback design going in (A.04b):**
 - Marker = a file under the TangleClaw home, `stat`ed per request; the door check runs only while it
@@ -375,5 +389,5 @@ is wider than one reviewable diff, and the two halves share no code path:
 - [x] Chunk A.03 (A-03) — state-driven `basic_auth`, bypass ownership, drift, bind policy, #1055 (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [x] Chunk A.04a (A-04a) — recovery codes end to end, ADR 0009 rule 5 + security-model Direction amendment (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [ ] Chunk A.04b (A-04b) — fallback state + marker + command, drill, #472 decision, door read through `caddy adapt`
-- [ ] Chunk A.04c (A-04c) — reset-admin aligned with the state machine, login copy, recovery doc, R-4/R-6/R-8 carries
+- [ ] Chunk A.04c (A-04c) — reset-admin aligned with the state machine, login copy, recovery doc, R-4/R-6/R-8 + R-3/R-14 carries
 - [ ] A-VRF — cumulative Critic, elkaholic VRF, phone drill → Checkpoint 2
