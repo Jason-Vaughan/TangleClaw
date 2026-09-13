@@ -294,20 +294,38 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
       // occupy more of the threadpool than the login route may. Three at once:
       // two are admitted, the third is turned away busy, and of the two admitted
       // exactly one creates the account.
+      //
+      // The async hash is HELD until all three have been handled, so the outcome
+      // does not depend on whether a real scrypt finishes before the third
+      // request arrives — a race a slow CI runner could lose.
       const passwordLib = require('../lib/password');
       const realSync = passwordLib.hashPassword;
+      const realAsync = passwordLib.hashPasswordAsync;
       let syncCalls = 0;
+      let asyncCalls = 0;
+      let release;
+      const held = new Promise((r) => { release = r; });
       passwordLib.hashPassword = function (...args) { syncCalls++; return realSync.apply(this, args); };
+      passwordLib.hashPasswordAsync = function (...args) {
+        asyncCalls++;
+        return held.then(() => realAsync.apply(this, args));
+      };
       try {
-        const results = await Promise.all([1, 2, 3].map((n) =>
+        const pending = [1, 2, 3].map((n) =>
           send('POST', '/api/auth/set-password',
-            { body: { username: `user${n}`, password: 'a-long-enough-password' } })));
-        const statuses = results.map((r) => r.statusCode).sort();
+            { body: { username: `user${n}`, password: 'a-long-enough-password' } }));
+        // Wait (bounded, by counting — never by time) until two hashes are
+        // parked at the cap; the third has then already been refused.
+        for (let i = 0; i < 1000 && asyncCalls < 2; i++) await new Promise((r) => setImmediate(r));
+        assert.equal(asyncCalls, 2, 'precondition: two submissions admitted and holding the cap');
+        release();
+        const statuses = (await Promise.all(pending)).map((r) => r.statusCode).sort();
         assert.deepEqual(statuses, [200, 409, 503], `got ${JSON.stringify(statuses)}`);
         assert.equal(syncCalls, 0, 'no synchronous hash on the unauthenticated route');
         assert.equal(store.users.list().length, 1);
       } finally {
         passwordLib.hashPassword = realSync;
+        passwordLib.hashPasswordAsync = realAsync;
       }
     });
 
