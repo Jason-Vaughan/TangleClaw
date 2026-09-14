@@ -34,6 +34,45 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-14 — Session range & ownership: launch baseline, first-parent range, explicit staging, worktree target (#1309, #1406, #1469)
+
+<!-- prawduct: type=feature | scope=train-18-chunk-02 -->
+
+Train 18 Chunk 02. Plan: `.tangleclaw/plans/train-18-chunk-02.md`. Operator GO in the Builder pane;
+operator ruled "target the worktree" for #1469.
+
+**Why.** A wrap did not know where its session started or where it worked. Steps that measure "this
+session" started at whichever wrap stamped last, so other sessions' merges were attributed to it
+(#1309) and a first wrap judged a coordinator's commits (#1450's range half). The commit step ran
+`git add -A`, sweeping the operator's and co-resident sessions' uncommitted work into a "Session
+wrap" commit (#1406). And a session whose pane moved into a git worktree had every gate reading the
+registered checkout, which the AI could not write, so the wrap looped (#1469).
+
+**What.**
+- Launch baseline (`lib/launch-baseline.js`, schema v39): HEAD, toplevel, and dirty paths, captured
+  before the launch writes anything; read through `store.sessions.getLaunchBaseline`.
+- `lib/wrap-scope.js` resolves once per run: work tree (the pane's worktree of the same repo, else the
+  checkout), config root (always the checkout), baseline, trunk position. Steps get a project whose
+  `path` is the work tree; config reads go through `_config-root#configRootOf`, pinned by a guard.
+- `_git-range`: the range opens at the later of the launch sha and `lastWrapSha`; a first-parent walk
+  marks trunk syncs (HEAD off-trunk and the merge's second parent already on a trunk ref). Coverage,
+  features-toc and continuity-write use it; continuity's store stays in the config root.
+- `_file-ownership` + new `session-files` step (after preflight, blocker): foreign uncommitted files
+  (dirty at launch, or older than the session with no snapshot) need Include / Leave; the commit
+  stages and commits only `owned ∪ wrap-written ∪ included` via a `:(top,literal)` pathspec file.
+  The drawer renders the per-file choice and accumulates it across retries. Coverage judges only what
+  will be committed. `/wrap/complete`'s `git add -A` auto-commit (and `lib/git.js#commit`) removed.
+- Prompts: `{sessionScope}` replaces the `HEAD~10` guess with the range the checks use.
+
+**Limits recorded.** A co-resident session's edit made after launch counts as this session's; on a
+trunk checkout another session's PR merge after launch counts; gitignored files the AI writes in a
+worktree wrap land in the worktree; the first-parent walk needs git 2.31+.
+
+**Tests.** `test/launch-baseline.test.js`, `test/wrap-session-scope.test.js`,
+`test/wrap-file-ownership.test.js` (real repos and worktrees; #1309, #1406, #1450, #1469 repros),
+drawer helpers and session wiring. Mutation-checked: capture after config generation, trunk-sync
+classification off, staging back to `git add -A`.
+
 ## 2026-09-14 — Wrap-run controller, POST → 202, one stream vocabulary (#1312, #1228)
 
 <!-- prawduct: type=feature | scope=train-18-chunk-01 -->

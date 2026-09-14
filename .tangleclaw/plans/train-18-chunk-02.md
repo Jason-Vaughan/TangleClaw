@@ -86,7 +86,7 @@ commit on that chain:
 Known limit, written into the docs: on a trunk checkout, another session's PR merge that landed after
 launch still counts. Nothing local tells the two apart, and the launch bound is what keeps that small.
 
-**D5 — ownership.** `lib/wrap-steps/_session-ownership.js#classify(scope, dirtyNow)` sorts each dirty
+**D5 — ownership.** `lib/wrap-steps/_file-ownership.js#classify(scope, dirtyNow)` (named apart from the unrelated `lib/session-ownership.js`) sorts each dirty
 path into owned or foreign.
 - Baseline present for the same toplevel and not truncated:
   - A path in the launch dirty set is **foreign** (`dirty-at-launch`).
@@ -104,8 +104,9 @@ drawer copy says "changed since this session launched", not "yours".
 `blocker: true`) runs right after `preflight`. It blocks when any foreign path lacks a decision in
 `options.pathDecisions` (`{[path]: 'include'|'leave'}`). The server honors decisions only for paths in
 its own foreign set and ignores the rest. The commit step re-classifies, then stages
-`owned ∪ wrap-written ∪ included` with `git add -A --pathspec-from-file` (NUL-separated, over stdin),
-never a bare `-A`. If a foreign path has appeared that nobody decided on, the commit blocks too
+`owned ∪ wrap-written ∪ included` with `git add -A --pathspec-from-file=<tmpfile> --pathspec-file-nul`,
+each entry `:(top,literal)`, and commits with the same pathspec so anything already staged stays out.
+Never a bare `-A`. If a foreign path has appeared that nobody decided on, the commit blocks too
 (defense in depth). "Anything to commit?" counts only stageable paths. `changelog-coverage`'s
 uncommitted-work check judges only paths that will be committed.
 
@@ -119,15 +120,18 @@ uncommitted-work check judges only paths that will be committed.
 
 Steps get `context.project` with `path: workTree` and `configPath: configRoot`. All eleven
 `store.projectConfig.load/save` sites in the wrap steps and pipeline read `configPath`. A source guard
-fails when a wrap step reads config from `project.path`. The drawer's run-start shows "Wrapping
-worktree `<path>`" whenever the target differs.
+fails when a wrap step reads config from `project.path`. The `session-files` row (the first step after
+preflight) says "Wrapping worktree `<path>`" whenever the target differs; built there rather than on
+`run-start`, which the drawer renders no line for. The continuity store is TangleClaw's machine state,
+so it stays in the config root too; `priming-roll` reads `activePlan` from the config root.
 
 Known limit, in the docs: gitignored local state the AI writes during the wrap (memory files) lands in
 the worktree.
 
-**D8 — the prompts.** `_interpolatePrompt` gains `{sessionRange}` and `{sessionLogCommand}`. The
-default `changelog-update` and `memory-update` prompts drop the `HEAD~10..HEAD` / `lastWrapSha` advice
-and use them. A fallback scope says so in the prompt ("no launch baseline; this is the branch range").
+**D8 — the prompts.** `_interpolatePrompt` gains `{sessionScope}`: one sentence naming
+`git log --oneline --first-parent <range>` over the range the checks resolve, plus `git status --short`.
+The default `changelog-update` and `memory-update` prompts drop the `HEAD~10..HEAD` / `lastWrapSha`
+advice and use it. A branch-fallback range says it may include earlier sessions; no range at all says so.
 
 **D9 — the finalize path's sweep.** `completeWrap`'s `_autoCommitIfDirty` runs `git.commit`, which is
 `git add -A`. It existed for the retired NL-prompt wrap ("the AI exited before its commit step"). It is

@@ -283,6 +283,42 @@ describe('wrap-scope picks the tree the session\'s pane is in (#1469)', () => {
   });
 });
 
+describe('the AI prompts name the range the wrap\'s checks judge', () => {
+  const aiContent = require('../lib/wrap-steps/ai-content');
+  const defaultPipeline = require('../lib/wrap-default-pipeline');
+
+  it('no shipped prompt guesses HEAD~10 or says the wrap commits everything', () => {
+    for (const step of defaultPipeline.steps()) {
+      if (typeof step.prompt !== 'string') continue;
+      assert.doesNotMatch(step.prompt, /HEAD~10/, `${step.id} still guesses a range`);
+      assert.doesNotMatch(step.prompt, /git add -A/, `${step.id} still describes the sweep`);
+    }
+    const scoped = defaultPipeline.steps().filter((s) => typeof s.prompt === 'string' && s.prompt.includes('{sessionScope}')).map((s) => s.id);
+    assert.deepEqual(scoped.sort(), ['changelog-update', 'memory-update']);
+  });
+
+  it('hands the AI the launch-based first-parent range', () => {
+    const repo = makeRepo();
+    const launch = commitFile(repo, 'a.js', 'before');
+    commitFile(repo, 'b.js', 'mine');
+    const text = aiContent._interpolatePrompt('Scope: {sessionScope}', [], { path: repo }, { lastWrapSha: null, baseline: { sha: launch } });
+    assert.match(text, new RegExp(`git log --oneline --first-parent ${launch}\\.\\.HEAD`));
+    assert.doesNotMatch(text, /no launch record/);
+  });
+
+  it('says so when the range is only the branch, and when there is none at all', () => {
+    const repo = makeRepo();
+    git(repo, 'checkout', '-q', '-b', 'feat');
+    commitFile(repo, 'x.js', 'x');
+    const branch = aiContent._interpolatePrompt('{sessionScope}', [], { path: repo }, { lastWrapSha: null, baseline: null });
+    assert.match(branch, /main\.\.HEAD/);
+    assert.match(branch, /no launch record/);
+    const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-scope-plain-'));
+    dirs.push(plain);
+    assert.match(aiContent._interpolatePrompt('{sessionScope}', [], { path: plain }, null), /No session range could be established/);
+  });
+});
+
 describe('wrap steps read project config from the registered checkout', () => {
   // A worktree carries no `.tangleclaw/project.json`, so a step that reads config
   // from `project.path` on a worktree wrap loads the defaults and silently changes
