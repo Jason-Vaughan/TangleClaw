@@ -778,6 +778,22 @@ describe('setup provisions a login by default', () => {
       assert.equal(store.config.load().authEnabled, false, 'refusing must not claim protection');
     });
 
+    it('refuses the choice of no login in caddy mode when the Caddyfile still carries logins', async () => {
+      // Several logins: nothing is adopted, so no login is supplied — but Caddy still
+      // asks for a password, so "finish without a login" would be a false record.
+      // The reason is asserted, not only the refusal: an unreadable door refuses too,
+      // and would hide a check that stopped reading the Caddyfile's logins.
+      writeLive(handEdited([`jason ${BCRYPT_A}`, `alex ${BCRYPT_B}`]));
+      const c = store.config.load();
+      c.ingressMode = 'caddy';
+      store.config.save(c);
+      const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir, noLogin: true });
+      assert.equal(res.status, 400);
+      assert.equal(res.data.code, 'OPT_OUT_REFUSED');
+      assert.match(res.data.error, /already in front of TangleClaw/);
+      assert.equal(store.config.load().loginOptOutAt, null);
+    });
+
     it('reports network exposure from the bind classification, not from a guess', async () => {
       // "Ungated but loopback-only" and "ungated and reachable" are different
       // situations, and the second is the one an operator must be told about. A

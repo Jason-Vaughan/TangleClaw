@@ -42,8 +42,13 @@ three call sites still ask "can Caddy be provisioned here?" (`plan.action === 'p
   gate enforces (`authEnabled` on, or an adopted Caddy login) **or** the operator made the recorded
   opt-out **and** the opt-out is permitted here. It no longer depends on Caddy being provisionable.
   One pure derivation (`lib/setup-credential.js#decideCredential`, facts in → `{ required,
-  optOutAllowed, optOutRefusal }` out); both server routes consult it, and
-  `GET /api/setup/ingress-state` ships its answer so `public/setup.js` reads it and derives nothing.
+  optOutAllowed, optOutRefusal }` out); both server routes consult it through one fact-gatherer
+  (`server.js#_decideSetupCredential`), and `GET /api/setup/ingress-state` ships its answer so
+  `public/setup.js` reads it and derives nothing. **As built (A2a review):** the facts are named —
+  `loginInHand`, `adoptionSupplies`, `caddyLoginInForce` — rather than read off `plan.action`, which
+  meant two things. The one fact the routes legitimately differ on is `adoptionSupplies` (Finish
+  adopts a working Caddy login; Skip adopts nothing), so the probe ships Skip's answer as its own
+  `skipAllowed` and the uniformity test pins where the two differ.
 - **D2 — Behaviour change, stated:** a fresh install with **no Caddy** now gets the login step by
   default (direct mode, loopback, TangleClaw account). This is ADR 0009's default reaching the
   population the Caddy coupling excluded; the opt-out below is its way out.
@@ -53,11 +58,18 @@ three call sites still ask "can Caddy be provisioned here?" (`plan.action === 'p
   `config.loginOptOutAt` (ISO timestamp, `null` default). Header **Skip** does not opt out: while a
   credential is required it routes to the login step (existing `_recoverToAdminStep`), and the PATCH
   guard refuses as today.
-- **D4 — Never ungated AND wide.** The opt-out is refused (`OPT_OUT_REFUSED`, reason named) when
-  `bindPolicy.describeBindState(config).wide` is true, or in caddy mode when the Caddyfile has an
-  ungated remote site (`describeIngressDoor`). The step then offers only the login.
-- **D5 — The account needs no Caddy.** The bcrypt hash is written **when Caddy is available** (the
-  fallback break-glass rebuild still needs it) and skipped otherwise; the account is always created.
+- **D4 — Never ungated AND wide, never a false choice.** The opt-out is refused (`OPT_OUT_REFUSED`,
+  reason named) when a login is already in hand or a caddy-mode Caddyfile carries one
+  (`LOGIN_IN_FORCE`); on a wide bind (`WIDE_BIND`); and in caddy mode when the Caddyfile has an
+  ungated remote site, a `localhost` site with neither a gate nor the peer guard, or cannot be read by
+  Caddy's parser (`UNGATED_REMOTE_SITE`, `UNGUARDED_LOCAL_SITE`, `DOOR_UNREAD`). **Stricter than the
+  request gate on purpose:** the gate keeps `authEnabled: false` open over an unguarded `localhost` site
+  on a no-account install (the 2026-09-13 ruling, for installs already in that state), but setup is
+  where the operator makes a NEW choice on TangleClaw's word that it is safe, so it is not offered there.
+  The step then offers only the login.
+- **D5 — The account needs no Caddy.** The bcrypt hash is written whenever `caddy hash-password`
+  answers (the fallback break-glass rebuild still needs it); a hashing failure is still refused where
+  Caddy was detected, and skipped where it was not. The account is always created.
   "Has a credential" everywhere in setup reads the gate state / accounts, never the triple.
 - **D6 — Recovery codes from the wizard.** After the wizard creates the account, mint a set
   (`store.recoveryCodes.replaceForUser`, degrade to `null` on failure like `set-password`), return
@@ -84,7 +96,7 @@ three call sites still ask "can Caddy be provisioned here?" (`plan.action === 'p
 
 ## Chunks
 
-### A2a — the predicate and the server (#804, server half of #803)
+### Chunk A2a — the predicate and the server (#804, server half of #803)
 - `lib/setup-credential.js` (pure) + unit table.
 - `server.js`: PATCH Skip guard, `POST /api/setup/complete` (D1, D3 record, D4 refusal, D5, D6 mint),
   `GET /api/setup/ingress-state` ships `credential`.
@@ -93,10 +105,13 @@ three call sites still ask "can Caddy be provisioned here?" (`plan.action === 'p
 - Stale server copy (D8, server side).
 - **Done when:** suite green, mutation-checked guards, chunk Critic clean.
 
-### A2b — the wizard, settings, docs (#803 client half)
+### Chunk A2b — the wizard, settings, docs (#803 client half)
 - `public/setup.js`: login step reads `credential`; opt-out choice + consequence + refusal display;
   codes shown once; summary/unprotected/provisioning copy (D8).
-- Settings "Add a login" (D7) — route + UI.
+- Settings "Add a login" (D7) — route + UI. **Every path that turns a login on clears
+  `loginOptOutAt`** (A2a review R-7): the D7 route, `scripts/reset-admin.js --store`, and
+  `POST /api/auth/credential` if it can reach an opted-out install.
+- Render `ingress.user` only as the server names it — null when setup kept an existing account.
 - Docs: ADR 0009 amendment (opt-out mechanism; the stale "only in caddy mode" line), ADR 0016 note,
   ADR 0015 status → Built, `docs/setup-guide.md`, `docs/user-guide.md`, `README.md`, `FEATURES.md`,
   `docs/auth-status-surfacing.md`, CHANGELOG.

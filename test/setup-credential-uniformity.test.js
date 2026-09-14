@@ -7,7 +7,9 @@
 // the other and Skip became a way past the login.
 //
 // Two checks. The scenario table asks all three the same question on the same
-// machine and requires the same answer. The swap check replaces the one
+// machine and requires the same answer — except for the one fact the routes
+// legitimately differ on, which the probe ships as its own answer: Finish adopts
+// a working Caddy login and Skip does not (`credential.skipAllowed`). The swap check replaces the one
 // derivation and requires all three to follow it — which a route still carrying
 // its own copy of the rule would not.
 
@@ -83,7 +85,7 @@ describe('the credential rule has one owner (#804)', () => {
    * A fresh, unfinished install with the given overrides.
    * @param {object} overrides
    */
-  function freshInstall(overrides) {
+  function freshInstall(overrides, caddyfile) {
     const c = store.config.load();
     Object.assign(c, {
       setupComplete: false, ingressMode: 'direct', authEnabled: false,
@@ -95,25 +97,30 @@ describe('the credential rule has one owner (#804)', () => {
     store.getDb().prepare('DELETE FROM users').run();
     const p = require('../lib/caddy').getCaddyfilePath();
     if (fs.existsSync(p)) fs.rmSync(p);
+    if (caddyfile) {
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.writeFileSync(p, caddyfile);
+    }
   }
 
   /**
    * Ask all three consumers, each on its own fresh install, and return their answers.
    * @param {object} overrides - Config for the scenario.
+   * @param {string} [caddyfile] - A live Caddyfile for the scenario.
    * @returns {Promise<{ probe: object, completeRequired: boolean, skipRequired: boolean,
    *   optOutHonoured: boolean }>}
    */
-  async function askAll(overrides) {
-    freshInstall(overrides);
+  async function askAll(overrides, caddyfile) {
+    freshInstall(overrides, caddyfile);
     const probe = (await request(server, 'GET', '/api/setup/ingress-state')).data.credential;
 
-    freshInstall(overrides);
+    freshInstall(overrides, caddyfile);
     const complete = await request(server, 'POST', '/api/setup/complete', {});
 
-    freshInstall(overrides);
+    freshInstall(overrides, caddyfile);
     const skip = await request(server, 'PATCH', '/api/config', { setupComplete: true });
 
-    freshInstall(overrides);
+    freshInstall(overrides, caddyfile);
     const optOut = await request(server, 'POST', '/api/setup/complete', { noLogin: true });
 
     return {
@@ -128,15 +135,31 @@ describe('the credential rule has one owner (#804)', () => {
     { name: 'direct mode, Caddy present, loopback', overrides: {} },
     { name: 'direct mode, wide bind', overrides: { bindAllInterfaces: true } },
     { name: 'caddy mode, no Caddyfile yet', overrides: { ingressMode: 'caddy' } },
-    { name: 'a login already in hand', overrides: { authEnabled: true } }
+    { name: 'a login already in hand', overrides: { authEnabled: true } },
+    {
+      // Finish adopts this login and Skip cannot, so here — and only here — the two
+      // routes' answers differ, and the probe must say so rather than offer a Skip
+      // the server refuses.
+      name: 'caddy mode, a hand-rolled Caddy login to adopt',
+      overrides: { ingressMode: 'caddy' },
+      caddyfile: [
+        '# maintained by hand', 'localhost {', '\tbasic_auth {',
+        '\t\tjason $2a$14$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0', '\t}',
+        '\treverse_proxy 127.0.0.1:3102', '}', ''
+      ].join('\n'),
+      adopts: true
+    }
   ];
 
   for (const scenario of SCENARIOS) {
     it(`agrees across the probe, Finish and Skip: ${scenario.name}`, async () => {
-      const a = await askAll(scenario.overrides);
+      const a = await askAll(scenario.overrides, scenario.caddyfile);
       assert.equal(typeof a.probe.required, 'boolean', 'the probe ships the answer');
+      assert.equal(typeof a.probe.skipAllowed, 'boolean', 'and Skip\'s answer');
       assert.equal(a.completeRequired, a.probe.required, 'Finish enforces what the probe showed');
-      assert.equal(a.skipRequired, a.probe.required, 'Skip enforces what the probe showed');
+      assert.equal(a.skipRequired, !a.probe.skipAllowed, 'Skip enforces what the probe showed');
+      assert.equal(a.probe.skipAllowed === !a.probe.required, !scenario.adopts,
+        'the two answers differ exactly where Finish adopts a login Skip cannot');
       // A satisfied install finishes either way; otherwise the choice of none is
       // honoured exactly when the probe offered it.
       if (a.probe.required) {
@@ -150,6 +173,7 @@ describe('the credential rule has one owner (#804)', () => {
     assert.equal(a.probe.required, true, 'the login needs no Caddy');
     assert.equal(a.completeRequired, true);
     assert.equal(a.skipRequired, true);
+    assert.equal(a.probe.skipAllowed, false);
     assert.equal(a.optOutHonoured, a.probe.optOutAllowed);
   });
 
@@ -169,6 +193,7 @@ describe('the credential rule has one owner (#804)', () => {
       setupCredential.decideCredential = real;
     }
     assert.equal(a.probe.required, false);
+    assert.equal(a.probe.skipAllowed, true);
     assert.equal(a.probe.optOutRefusal.code, 'SWAPPED');
     assert.equal(a.completeRequired, false, 'Finish asks the derivation');
     assert.equal(a.skipRequired, false, 'Skip asks the derivation');

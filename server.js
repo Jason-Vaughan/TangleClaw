@@ -466,35 +466,45 @@ function _gateIngress() {
  *
  * The single place the three consumers — `GET /api/setup/ingress-state`,
  * `POST /api/setup/complete` and the Skip path of `PATCH /api/config` — turn a
- * config into those facts, so a fact added later reaches all three.
+ * config into those facts, so a fact added later reaches all three. The one
+ * input that differs between them is passed, named: whether the calling route
+ * supplies a login by adopting a Caddy config.
  *
  * The Caddyfile is described only in caddy mode, where Caddy is the front door.
- * A description that throws answers `null`, which the decision reads as "a door
- * this cannot see" and refuses the choice of no login for.
+ * A description that throws is passed as `null`, which the decision reads as a
+ * door it cannot see and refuses the choice of no login for.
  *
  * @param {object} config - Config as it will be saved, with any credential this
  *   request supplies already applied.
- * @param {string|null} planAction - `decideProvisioning`'s `action`.
- * @param {boolean} optOut - Whether the request carries the choice of no login.
+ * @param {{ adoptionSupplies: boolean, optOut: boolean }} route - What the
+ *   calling route contributes: whether it adopts a Caddy login, and whether the
+ *   request carries the choice of no login.
  * @returns {ReturnType<typeof setupCredential.decideCredential>}
  */
-function _decideSetupCredential(config, planAction, optOut) {
-  let ungatedRemoteSite = null;
-  if (config.ingressMode === 'caddy') {
+function _decideSetupCredential(config, route) {
+  const inCaddyMode = config.ingressMode === 'caddy';
+  let door = null;
+  let caddyLoginInForce = false;
+  if (inCaddyMode) {
     try {
-      ungatedRemoteSite = _gateIngress().ungatedRemoteSite;
+      door = _gateIngress();
     } catch (err) {
       log.warn('Setup could not read the Caddyfile, so the choice of no login is not offered',
         { error: err.message });
     }
+    const classified = caddy.classifyIngressState();
+    // A Caddyfile that cannot be classified may well carry a login; not knowing
+    // is read as one, which only ever withholds the choice of no login.
+    caddyLoginInForce = classified.state === 'unreadable' || classified.users.length > 0;
   }
   return setupCredential.decideCredential({
-    authEnabled: config.authEnabled === true,
-    planAction,
+    loginInHand: config.authEnabled === true,
+    adoptionSupplies: route.adoptionSupplies === true,
+    caddyLoginInForce,
     bindWide: bindPolicy.describeBindState(config).wide,
     ingressMode: config.ingressMode || null,
-    ungatedRemoteSite: typeof ungatedRemoteSite === 'boolean' ? ungatedRemoteSite : null,
-    optOut: optOut === true
+    door,
+    optOut: route.optOut === true
   });
 }
 
@@ -1897,19 +1907,10 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
   // made on the login step and submitted to /api/setup/complete, so here the
   // only way through is a login already in hand.
   if (body.setupComplete === true && wasSetupOpen) {
-    const skipState = caddy.classifyIngressState();
-    const skipPlan = ingressProvision.decideProvisioning({
-      state: skipState.state,
-      safeToWrite: skipState.safeToWrite,
-      caddyAvailable: caddy.detectCaddy().available,
-      ingressMode: config.ingressMode,
-      user: skipState.user
-    });
-    // An `adopt` plan is satisfied by the adoption `/api/setup/complete` runs, and
-    // this route runs none — so here it supplies no login, and Skip is refused
-    // into the step that finishes through the route that does adopt.
-    const skipAction = skipPlan.action === 'adopt' ? null : skipPlan.action;
-    if (_decideSetupCredential(config, skipAction, false).required) {
+    // Skip adopts nothing, so an `adopt` plan supplies no login here — the
+    // probe ships this route's answer separately (`skipAllowed`) so the wizard
+    // never offers a Skip that this refuses.
+    if (_decideSetupCredential(config, { adoptionSupplies: false, optOut: false }).required) {
       return errorResponse(res, 400,
         'Cannot finish setup without a login — TangleClaw puts one in front of itself by default. '
         + 'Set one on the login step, or choose to finish without one there.',
@@ -2982,10 +2983,10 @@ route('GET', '/api/setup/https-check', (_req, res) => {
 // collecting a credential nothing enforces. The wizard branches on
 // `plan.action` alone.
 // `credential` is the same kind of decision, for the login step itself: whether
-// setup may finish without a login, and whether the choice of none may be
-// offered. Asked of `lib/setup-credential.js` through the same fact-gatherer the
-// two routes that finish setup use, so the step the wizard shows and the rule
-// the server enforces cannot disagree.
+// Finish needs a login, whether the choice of none may be offered, and whether
+// Skip — which adopts nothing — may finish. Asked of `lib/setup-credential.js`
+// through the same fact-gatherer the two routes that finish setup use, so the
+// step the wizard shows and the rule each route enforces cannot disagree.
 route('GET', '/api/setup/ingress-state', (_req, res) => {
   const config = store.config.load();
   const duringSetup = config.setupComplete === false;
@@ -2998,7 +2999,8 @@ route('GET', '/api/setup/ingress-state', (_req, res) => {
     ingressMode: config.ingressMode,
     user: duringSetup ? state.user : null
   });
-  const credential = _decideSetupCredential(config, plan.action, false);
+  const credential = _decideSetupCredential(config, { adoptionSupplies: plan.action === 'adopt', optOut: false });
+  const skip = _decideSetupCredential(config, { adoptionSupplies: false, optOut: false });
   jsonResponse(res, 200, {
     state: state.state,
     safeToWrite: state.safeToWrite,
@@ -3017,7 +3019,8 @@ route('GET', '/api/setup/ingress-state', (_req, res) => {
     credential: {
       required: credential.required,
       optOutAllowed: credential.optOutAllowed,
-      optOutRefusal: credential.optOutRefusal
+      optOutRefusal: credential.optOutRefusal,
+      skipAllowed: !skip.required
     }
   });
 });
@@ -3343,12 +3346,11 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
     return errorResponse(res, 400, 'Both httpsCertPath and httpsKeyPath are required when HTTPS is enabled with cert paths', 'BAD_REQUEST');
   }
 
-  // AUTH-2 — forced first-run admin in caddy ingress mode. The login gate lives at
-  // Caddy (basic_auth), so completing setup behind Caddy with NO credential would
-  // leave the box reachable AND unauthenticated. Require an admin: either supplied
-  // now (adminUser + adminPassword, hashed here via `caddy hash-password`) or
-  // already configured. The wizard only sends these in caddy mode, but the gate is
-  // enforced server-side so it can't be bypassed.
+  // The login. A first run supplies one (adminUser + adminPassword, which become
+  // TangleClaw's own account below), already has one, adopts a Caddy one, or
+  // carries the operator's explicit choice of none. Which of those lets setup
+  // finish is `lib/setup-credential.js`'s decision, enforced here server-side so
+  // no client can bypass it.
   const adminProvided = body.adminUser !== undefined || body.adminPassword !== undefined;
   // The operator's explicit choice of no login, made on the wizard's login step.
   // A boolean or absent — anything else is a malformed request rather than a
@@ -3429,16 +3431,15 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
   // login in hand satisfies it; so does the operator's choice of none, where
   // that choice cannot leave the dashboard ungated and reachable.
   //
-  // An `adopt` plan counts as a login only when the adoption above actually
-  // adopted one — a declined adoption supplies nothing, and must not finish
-  // setup as if it had. (A successful one has already set `authEnabled`.)
+  // The adoption above supplies a login only when it actually adopted one — a
+  // declined adoption supplies nothing, and must not finish setup as if it had.
   //
   // First run only, like the engine requirement: the demand stops a first run
   // finishing unprotected, and applied to a completed install's re-POST it would
   // make an unrelated field update impossible instead.
-  const credentialAction = ingressPlan.action === 'adopt' && !(adoption && adoption.adopted)
-    ? null : ingressPlan.action;
-  const credential = _decideSetupCredential(config, credentialAction, noLogin);
+  const credential = _decideSetupCredential(config, {
+    adoptionSupplies: !!(adoption && adoption.adopted), optOut: noLogin
+  });
   if (noLogin && !credential.optOutAllowed) {
     return errorResponse(res, 400, credential.optOutRefusal.reason, 'OPT_OUT_REFUSED');
   }
@@ -3451,10 +3452,11 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
   // Recorded, so "the operator chose no login" is never confused with "nobody
   // asked": `authEnabled: false` is also what a config that predates setup says.
   // A login set here clears an earlier choice rather than leaving both on file.
-  const optedOut = noLogin && !credential.satisfied;
+  // The refusal above covers a login already in hand, so reaching here with
+  // `noLogin` means the choice is honoured.
+  const optedOut = noLogin;
   if (optedOut) {
     config.loginOptOutAt = new Date().toISOString();
-    log.warn('Setup finished without a login, as the operator chose', { ingressMode: config.ingressMode });
   } else if (adminProvided) {
     config.loginOptOutAt = null;
   }
@@ -3521,6 +3523,9 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
   // Mark setup as complete
   config.setupComplete = true;
   store.config.save(config);
+  if (optedOut) {
+    log.warn('Setup finished without a login, as the operator chose', { ingressMode: config.ingressMode });
+  }
 
   // Attach selected projects
   const attached = [];
@@ -3678,8 +3683,8 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
     const after = config;
     if (adminProvided) {
       // The operator typed a credential on a machine whose plan was to ADOPT one.
-      // Reachable: the Skip route refuses in caddy mode without a configured
-      // credential, and the wizard then forces the admin step. Adoption ran first,
+      // Reachable from any client that sends one on an adopt plan (the wizard's own
+      // step is not shown there, but the route authenticates nobody). Adoption ran first,
       // then the typed credential overwrote it in config — so config now holds what
       // they typed while the untouched hand-maintained Caddyfile still enforces what
       // was adopted. Their new password will not work and the old one will.
@@ -3721,10 +3726,11 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
         + `${adoption && adoption.reason ? ` (${adoption.reason})` : ''}, so TangleClaw cannot confirm a login is in force.`;
       ingress.remedy = 'Set the credential explicitly with `node scripts/reset-admin.js`.';
       // Unreachable by construction, kept as the honest fallback if that ever changes.
-      // An `adopt` plan only exists in caddy mode, and the caddy-mode credential gate
-      // above refuses the request before this block runs whenever no complete credential
-      // is configured — which is exactly this branch's condition. Pinned by
-      // "refuses outright when adoption declines and no credential is configured".
+      // A declined adoption supplies no login, so the credential decision above refuses
+      // the request before this block runs unless one is already in hand — and the
+      // choice of no login is refused too, because the Caddyfile being adopted carries
+      // one. Pinned by "refuses outright when adoption declines and no credential is
+      // configured".
       log.warn('Setup could not adopt the existing Caddy login', {
         reason: (adoption && adoption.reason) || null
       });
@@ -3780,7 +3786,7 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
   // so an unrecognised sixth value matched none of them and fell through to the path
   // that DISMISSES the warning — a new state would silently stop telling the operator
   // nothing is enforcing a login, which is the precise false-reassurance the v5 Secure
-  // Baseline exists to eliminate. Naming the one state that means "confirmed" instead
+  // Baseline exists to eliminate. Naming the states that mean "confirmed" instead
   // makes an unknown value fail safe: not confirmed, so the operator is told.
   //
   // Which states produce which SCREEN is unchanged, deliberately: this change is a
@@ -3799,7 +3805,9 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
   // wording already says so.
   if (!ingress.provisioning && ingressPlan.action !== 'adopt' && authGate.guardsTheDoor(setupGateState)) {
     ingress.protection = 'account';
-    ingress.user = account.username || config.basicAuthUser || null;
+    // The account that signs in. When setup kept an existing account, the name
+    // typed here may not be its name, so none is claimed.
+    ingress.user = account.username || (adminProvided ? null : config.basicAuthUser) || null;
     // A refusing plan's reason is about Caddy ("cannot put a login in front of
     // itself yet"), which stops being true of the install once its own login
     // guards the door. A failed cutover's reason is kept: it names what failed.

@@ -1,10 +1,10 @@
 'use strict';
 
-// AUTH-2 slice 2b — forced first-run admin in caddy ingress mode. Exercises the
-// server-side gate end to end: /api/setup/complete and the PATCH /api/config
-// "Skip" path both refuse to finish setup behind the Caddy ingress without an
-// admin credential, and a valid credential is validated, bcrypt-hashed (via a
-// stubbed `caddy hash-password`), and persisted.
+// The first-run login, server side, end to end: /api/setup/complete and the
+// PATCH /api/config "Skip" path both refuse to finish setup with neither a login
+// nor the operator's explicit choice of none (#804, #803); a valid credential is
+// validated, becomes TangleClaw's account, and gets a bcrypt Caddy copy where
+// `caddy hash-password` answers.
 
 const { describe, it, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
@@ -61,9 +61,9 @@ describe('forced first-run admin credential', () => {
     const stubDir = path.join(tmpDir, 'bin');
     fs.mkdirSync(stubDir, { recursive: true });
     // answersVersion:false ON PURPOSE — most of this suite runs as "caddy not
-    // installed", which is what makes its no-credential cases legitimate rather
-    // than a hole. The shared helper defaults to TRUE, so this must stay explicit:
-    // dropping it silently flips the suite to caddy-present and guts it.
+    // installed", the population the old Caddy-keyed rule let finish with no login.
+    // The shared helper defaults to TRUE, so this must stay explicit: dropping it
+    // silently flips the suite to caddy-present and stops testing that population.
     writeCaddyStub(stubDir, { answersVersion: false });
     origPath = process.env.PATH;
     process.env.PATH = stubDir + path.delimiter + (origPath || '');
@@ -99,6 +99,7 @@ describe('forced first-run admin credential', () => {
     store.config.save(config);
     // An account from an earlier case would change which state the gate is in.
     store.getDb().prepare('DELETE FROM auth_sessions').run();
+    store.getDb().prepare('DELETE FROM recovery_codes').run();
     store.getDb().prepare('DELETE FROM users').run();
   }
 
@@ -223,6 +224,10 @@ describe('forced first-run admin credential', () => {
       assert.equal(status, 200);
       assert.deepEqual(data.account, { created: false, required: false, username: null, recoveryCodes: null });
       assert.equal(store.users.getByName('admin'), null);
+      // The account that signs in is rosie's, not the name just typed — so the
+      // verdict names no one rather than a user the gate does not know.
+      assert.equal(data.ingress.protection, 'account');
+      assert.equal(data.ingress.user, null);
     });
 
     it('reports account.required when setup ends with the gate on and no account', async () => {
@@ -343,6 +348,21 @@ describe('forced first-run admin credential', () => {
       const after = store.config.load();
       assert.equal(after.setupComplete, false, 'nothing is saved');
       assert.equal(after.loginOptOutAt, null, 'no choice is recorded');
+    });
+
+    it('refuses the choice of no login where a login is already in hand, rather than ignoring it', async () => {
+      // An install that already has its login (reset-admin --store before setup, say)
+      // cannot truthfully finish "without a login". Finishing protected while the
+      // response says nothing about the dropped choice would be a quiet false report.
+      const config = store.config.load();
+      config.authEnabled = true;
+      store.config.save(config);
+      const { status, data } = await request(server, 'POST', '/api/setup/complete', { noLogin: true });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'OPT_OUT_REFUSED');
+      assert.match(data.error, /already in front of TangleClaw/);
+      assert.equal(store.config.load().setupComplete, false);
+      assert.equal(store.config.load().loginOptOutAt, null);
     });
 
     it('rejects a non-boolean noLogin rather than guessing', async () => {
