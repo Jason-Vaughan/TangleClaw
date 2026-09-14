@@ -106,26 +106,45 @@ function refusingApi(reason) {
 }
 
 /**
- * The wrap flow's api(): the wrap POST is refused with `reason`, but the
- * `/wrap/status` probe that `watchWrapRun` makes afterwards SUCCEEDS — and a
- * successful api() call clears `lastError`, exactly as the shared helper does.
- * A handler that reads `lastError` after the probe reads null.
+ * The wrap flow's stubs: the wrap POST is refused with `reason`, and the
+ * `/wrap/status` probe that follows SUCCEEDS and clears `lastError` — the
+ * worst case for a handler that reads the reason too late. A handler that reads
+ * `lastError` after the probe reads null.
  * @param {string|null} reason - The wrap POST's server message.
- * @returns {{api: Function, apiMutate: Function, watchWrapRun: Function}} The stubs.
+ * @returns {{api: Function, apiMutate: Function, probe: Function}} The stubs.
  */
 function wrapApi(reason) {
-  const api = async (url) => {
-    if (/\/wrap\/status/.test(url)) { api.lastError = null; api.lastErrorCode = null; return { state: 'idle' }; }
-    api.lastError = reason;
-    return null;
-  };
+  const api = async () => { api.lastError = reason; return null; };
   api.lastError = null;
   api.lastErrorCode = null;
   const apiMutate = async (url) => api(url);
-  // The real watchWrapRun's first act is `await api(statusUrl)`; it returns
-  // false when there is no run to reattach to.
-  const watchWrapRun = async () => { await api('/api/sessions/demo/wrap/status'); return false; };
-  return { api, apiMutate, watchWrapRun };
+  const probe = async () => { api.lastError = null; api.lastErrorCode = null; return { runId: null, running: false, result: null }; };
+  return { api, apiMutate, probe };
+}
+
+/**
+ * Globals for lifting `confirmWrap` + `postWrap`: the real wrap-run controller
+ * reducer, with no effects (this suite's subject is the reason on screen).
+ * @param {{api: Function, apiMutate: Function, probe: Function}} stubs
+ * @param {object} document - Fake document
+ * @returns {object} Sandbox globals
+ */
+function wrapGlobals(stubs, document) {
+  const controller = require('../public/wrap-run-controller');
+  let state = controller.initialWrapRun();
+  return {
+    api: stubs.api, apiMutate: stubs.apiMutate, _probeWrapStatus: stubs.probe, document,
+    wrapRunState: () => state,
+    dispatchWrapRun: (signal) => { state = controller.reduceWrapRun(state, signal); return state; },
+    wrapStatusUrl: () => '/api/sessions/demo/wrap/status',
+    wrapSkippedAiSteps: {}, wrapBumpLevel: '', currentWrapPassword: '',
+    window: {
+      tcWrapDrawerHelpers: { collectOptionsFromAccessors: () => ({}) },
+      tcWrapRunController: controller
+    },
+    sessionState: {}, projectName: 'demo',
+    closeWrapModal() {}
+  };
 }
 
 /**
@@ -154,40 +173,18 @@ const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</
 describe('#83 — form handlers render the server reason, not a guess', () => {
   describe('session.js', () => {
     it('confirmWrap shows the POST\'s reason even though the status probe that follows succeeds', async () => {
-      const { api, apiMutate, watchWrapRun } = wrapApi('Invalid password');
+      const stubs = wrapApi('Invalid password');
       const { document, el } = fakeDocument({ wrapPassword: 'pw' });
-      const ctx = lift(SRC.session, ['async function confirmWrap('], {
-        api, apiMutate, document, watchWrapRun,
-        // #185 fires the progress stream beside the POST without awaiting it.
-        // A no-op here keeps this suite on its own subject — the reason the
-        // POST's refusal puts on screen — rather than the stream's behaviour.
-        attachWrapStream: async () => {},
-        wrapInFlight: false, wrapSkippedAiSteps: {}, wrapBumpLevel: '',
-        window: { tcWrapDrawerHelpers: { collectOptionsFromAccessors: () => ({}) } },
-        sessionState: {}, projectName: 'demo',
-        showWrappingState() {}, clearWrappingState() {}, closeWrapModal() {},
-        openWrapDrawer() {}, startPolling() {}
-      });
+      const ctx = lift(SRC.session, ['async function confirmWrap(', 'async function postWrap('], wrapGlobals(stubs, document));
       await ctx.confirmWrap();
-      assert.equal(api.lastError, null, 'the probe cleared lastError — the handler must have captured it first');
+      assert.equal(stubs.api.lastError, null, 'the probe cleared lastError — the handler must have captured it first');
       assert.equal(el('wrapError').textContent, 'Invalid password');
     });
 
     it('confirmWrap falls back to a plain "Wrap failed." when no reason came back', async () => {
-      const { api, apiMutate, watchWrapRun } = wrapApi(null);
+      const stubs = wrapApi(null);
       const { document, el } = fakeDocument({});
-      const ctx = lift(SRC.session, ['async function confirmWrap('], {
-        api, apiMutate, document, watchWrapRun,
-        // #185 fires the progress stream beside the POST without awaiting it.
-        // A no-op here keeps this suite on its own subject — the reason the
-        // POST's refusal puts on screen — rather than the stream's behaviour.
-        attachWrapStream: async () => {},
-        wrapInFlight: false, wrapSkippedAiSteps: {}, wrapBumpLevel: '',
-        window: { tcWrapDrawerHelpers: { collectOptionsFromAccessors: () => ({}) } },
-        sessionState: {}, projectName: 'demo',
-        showWrappingState() {}, clearWrappingState() {}, closeWrapModal() {},
-        openWrapDrawer() {}, startPolling() {}
-      });
+      const ctx = lift(SRC.session, ['async function confirmWrap(', 'async function postWrap('], wrapGlobals(stubs, document));
       await ctx.confirmWrap();
       assert.equal(el('wrapError').textContent, 'Wrap failed.');
       assert.doesNotMatch(el('wrapError').textContent, /password/i, 'the password guess must not return');

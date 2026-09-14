@@ -3047,9 +3047,15 @@ describe('sessions', () => {
       wrapDefaultPipelineMod.wrapShape = () => { throw new Error('reporting exploded'); };
 
       try {
-        await assert.rejects(() => sessions.triggerWrap('prime-test'), /reporting exploded/);
+        // The run is detached from any request now (the wrap POST answers 202),
+        // so a throw has no caller to reject to: `triggerWrap` resolves with the
+        // outcome the registry recorded, and the two must agree.
+        const outcome = await sessions.triggerWrap('prime-test');
+        assert.equal(outcome.ok, false);
+        assert.match(outcome.error, /reporting threw/);
 
         const status = sessions.getWrapRunStatus('prime-test');
+        assert.equal(status.result.error, outcome.error, 'the caller and the registry report the same outcome');
         assert.equal(status.running, false, 'the slot must not outlive the run');
         assert.ok(status.result && /reporting threw/.test(status.result.error),
           'and the recorded outcome names the reporting failure, not a wrap failure');
@@ -3069,6 +3075,90 @@ describe('sessions', () => {
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
         wrapDefaultPipelineMod.wrapShape = realShape;
+        wrapRunRegistry._resetForTests();
+      }
+    });
+
+    it('startWrap returns the claimed run before the pipeline finishes, and done carries its outcome', async () => {
+      // The wrap POST answers 202 from this call. If it awaited the pipeline the
+      // browser would again learn the run's id only when the run was over — the
+      // frozen-drawer-on-Retry shape.
+      const project = store.projects.getByName('prime-test');
+      store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'start-wrap-detached' });
+      const wrapPipelineMod = require('../lib/wrap-pipeline');
+      const wrapRunRegistry = require('../lib/wrap-run-registry');
+      wrapRunRegistry._resetForTests();
+      const realRun = wrapPipelineMod.runWrapPipeline;
+      let release;
+      const gate = new Promise((resolve) => { release = resolve; });
+      wrapPipelineMod.runWrapPipeline = async () => {
+        await gate;
+        return { ok: false, blockedAt: 'test', results: [], commitSha: null, summary: null, error: null };
+      };
+      try {
+        const started = sessions.startWrap('prime-test');
+        assert.equal(started.ok, true);
+        assert.match(started.runId, /^[0-9a-f]{32}$/);
+        const live = sessions.getWrapRunStatus('prime-test');
+        assert.equal(live.running, true, 'the run is claimed and still running when startWrap returns');
+        assert.equal(live.runId, started.runId);
+
+        const second = sessions.startWrap('prime-test');
+        assert.equal(second.ok, false);
+        assert.equal(second.code, 'WRAP_IN_PROGRESS');
+        assert.equal(second.done, undefined, 'a refusal claims nothing, so it has nothing to wait on');
+
+        release();
+        const outcome = await started.done;
+        assert.equal(outcome.runId, started.runId);
+        assert.equal(outcome.pipelineResult.blockedAt, 'test');
+        assert.equal(sessions.getWrapRunStatus('prime-test').running, false);
+      } finally {
+        release();
+        wrapPipelineMod.runWrapPipeline = realRun;
+        wrapRunRegistry._resetForTests();
+      }
+    });
+
+    it('startWrap refuses without claiming when there is no project or no active session', () => {
+      const wrapRunRegistry = require('../lib/wrap-run-registry');
+      wrapRunRegistry._resetForTests();
+      const noProject = sessions.startWrap('no-such-project-start-wrap');
+      assert.equal(noProject.ok, false);
+      assert.match(noProject.error, /not found/);
+      assert.equal(wrapRunRegistry.get('no-such-project-start-wrap').runId, null);
+    });
+
+    it('a throw BEFORE the pipeline runs still settles the run, and says nothing was committed', async () => {
+      // The version record and the resume decision run after the claim. While
+      // the POST awaited the pipeline, a throw there surfaced as a 500; with the
+      // run detached it would strand the slot and reject with nobody listening.
+      const project = store.projects.getByName('prime-test');
+      store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: 'start-wrap-prepipeline-throw' });
+      const wrapPipelineMod = require('../lib/wrap-pipeline');
+      const wrapRunRegistry = require('../lib/wrap-run-registry');
+      wrapRunRegistry._resetForTests();
+      const realResume = wrapPipelineMod.resumableContentResults;
+      const realRun = wrapPipelineMod.runWrapPipeline;
+      let pipelineCalls = 0;
+      wrapPipelineMod.resumableContentResults = () => { throw new Error('resume exploded'); };
+      wrapPipelineMod.runWrapPipeline = async () => {
+        pipelineCalls += 1;
+        return { ok: true, blockedAt: null, results: [], commitSha: null, summary: null, error: null };
+      };
+      try {
+        const started = sessions.startWrap('prime-test');
+        assert.equal(started.ok, true);
+        const outcome = await started.done;
+        assert.equal(outcome.ok, false);
+        assert.match(outcome.error, /before its pipeline ran/);
+        assert.equal(pipelineCalls, 0);
+        const status = sessions.getWrapRunStatus('prime-test');
+        assert.equal(status.running, false, 'the slot is released');
+        assert.equal(status.result.error, outcome.error);
+      } finally {
+        wrapPipelineMod.resumableContentResults = realResume;
+        wrapPipelineMod.runWrapPipeline = realRun;
         wrapRunRegistry._resetForTests();
       }
     });
@@ -3508,7 +3598,7 @@ describe('sessions', () => {
 
         try {
           const result = await sessions.triggerWrap('prime-test');
-          // The runner returned ok:true so _triggerWrapPipeline also returns
+          // The runner returned ok:true so _runClaimedWrap also returns
           // ok:true — the wrap-update throw is swallowed inside the
           // teardown helper and surfaces only via log.warn.
           assert.equal(result.ok, true);

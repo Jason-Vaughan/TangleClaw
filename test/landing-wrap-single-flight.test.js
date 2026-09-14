@@ -81,3 +81,59 @@ describe('UI-3B8N dashboard wrap trigger is single-flight', () => {
       'confirmWrap must not use timers (no timer-driven UI lifecycle)');
   });
 });
+
+describe('dashboard wrap waits for the run it started and names a failure (POST answers 202)', () => {
+  const vm = require('node:vm');
+  const landing = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
+  const decl = 'async function awaitDashboardWrapFailure(name, runId)';
+  const fnSrc = `${decl} ${functionBody(landing, decl)}`;
+
+  /**
+   * Run the real function against scripted status payloads, one per poll.
+   * @param {Array<object|null>} statuses - `null` is a poll that could not run
+   * @returns {Promise<{answer: string|null, polls: number}>}
+   */
+  async function drive(statuses) {
+    let polls = 0;
+    const ctx = vm.createContext({
+      DASHBOARD_WRAP_POLL_MS: 0,
+      setTimeout: (fn) => fn(),
+      encodeURIComponent,
+      tcFetch: async () => {
+        const s = statuses[Math.min(polls, statuses.length - 1)];
+        polls += 1;
+        if (s === null) throw new Error('offline');
+        return { ok: true, json: async () => s };
+      }
+    });
+    vm.runInContext(`${fnSrc}\nthis.f = awaitDashboardWrapFailure;`, ctx);
+    const answer = await ctx.f('demo', 'r1');
+    return { answer, polls };
+  }
+
+  it('the confirm handler waits on the run the 202 names before closing', () => {
+    const body = functionBody(landing, 'async function confirmWrap()');
+    assert.ok(body.indexOf('awaitDashboardWrapFailure(') < body.indexOf('closeWrapModal(true)'));
+  });
+
+  it('polls through a running run and a failed poll, and closes on a report', async () => {
+    const out = await drive([
+      { runId: 'r1', running: true },
+      null,
+      { runId: 'r1', running: false, result: { ok: false, pipelineResult: { blockedAt: 'test' } } }
+    ]);
+    assert.equal(out.answer, null, 'a blocked report lives on the session page; the modal closes');
+    assert.equal(out.polls, 3);
+  });
+
+  it('names the error of a run that failed without a report', async () => {
+    const out = await drive([{ runId: 'r1', running: false, result: { ok: false, error: 'wrap pipeline threw: boom' } }]);
+    assert.equal(out.answer, 'wrap pipeline threw: boom');
+  });
+
+  it('a stalled run is unknown, not dead; a run the server no longer holds is a restart', async () => {
+    assert.match((await drive([{ runId: 'r1', running: false, stale: true, result: null }])).answer, /stopped reporting/);
+    assert.match((await drive([{ runId: null, running: false, result: null }])).answer, /server restart/);
+    assert.match((await drive([{ runId: 'other', running: true, result: null }])).answer, /server restart/);
+  });
+});

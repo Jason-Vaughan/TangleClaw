@@ -85,6 +85,13 @@ const NETWORK_FIRST_PATHS = new Set([
   // throws on a missing helper (e.g. shouldStartEndedCountdown, #268). Keep
   // the two in lockstep by making both network-first.
   '/wrap-drawer.js',
+  // The rest of that lockstep family. session.js subscribes to the wrap stream by
+  // the names wrap-stream-events.js declares, and drives the drawer through
+  // wrap-run-controller.js's reducer: a cached old copy of either against a fresh
+  // session.js misses an event name or a phase, and the drawer silently stops
+  // following the wrap.
+  '/wrap-stream-events.js',
+  '/wrap-run-controller.js',
   // openclaw-tunnel-state.js is the pure-helper sibling of openclaw-view.js,
   // the same lockstep pair as session.js/wrap-drawer.js above. The view calls
   // its helpers at module top level, so a cached old helper against a fresh

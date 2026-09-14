@@ -34,6 +34,46 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-14 — Wrap-run controller, POST → 202, one stream vocabulary (#1312, #1228)
+
+<!-- prawduct: type=feature | scope=train-18-chunk-01 -->
+
+Train 18 Chunk 01. Plan: `.tangleclaw/plans/train-18-chunk-01.md`. Operator GO in the Builder pane.
+
+**Why.** The wrap POST blocked for the whole pipeline, so a page learned a run's id only by probing
+`/wrap/status` beside it — and `retryWrap` never probed, so after Retry the drawer sat on the old red
+report until the retry POST returned (#1312's frozen drawer).
+
+**What.**
+- `lib/sessions.js#startWrap` claims and starts the run without awaiting it; `triggerWrap` is now
+  start + await. Everything after `begin` (version record, resume decision included) is inside the
+  try/finally that guarantees `finish`, and the detached promise never rejects — it resolves with the
+  outcome the registry recorded. The route answers `202 {runId, statusUrl, streamUrl}`; 409 names the
+  running `runId`.
+- `public/wrap-run-controller.js#reduceWrapRun`: one pure state machine (idle / starting / following /
+  settled / stalled / lost / refused). `public/session.js#dispatchWrapRun` + `#syncWrapRunEffects`
+  reconcile stream, status poll, wrapping chrome, per-tab memory and the drawer. Deleted:
+  `attachWrapStream` and its discovery probe, `watchWrapRun`, `wrap-drawer.js#wrapWatchDecision`
+  (replaced by `statusForRun`, keyed on `runId` instead of a cross-device clock).
+- `public/wrap-stream-events.js` declares the event names once; runner, registry, stream frame
+  builder, drawer fold table and page subscription all use it (#1228).
+
+**Test contract changes (the HTTP contract changed; no assertion was relaxed).**
+`api-sessions`, `api-wrap-status`, `api-wrap-stream`: the POST's 200-with-result became 202 + the run's
+result from `/wrap/status`, the thrown-pipeline 500 became a result with `error`, and each still pins
+the same property. `sessions.test.js` "a throw AFTER the pipeline": `triggerWrap` resolves instead of
+rejecting, and now also asserts the caller and the registry report the same outcome.
+`wrap-run-reattach` / `wrap-stream-client` / `session-wrapper` source pins over the deleted functions
+were removed, with their properties re-asserted by EXECUTING the real functions in
+`test/wrap-run-session-wiring.test.js`; `wrapWatchDecision`'s cases moved to
+`test/wrap-run-controller.test.js#statusForRun` (the stale-result pin is now "another run's payload is
+never this run's outcome"). `error-string-parity` lifts `confirmWrap` + `postWrap` and keeps its #83
+teeth. `wrap-confirm-calls-defined` scans the whole wrap path. New: `test/wrap-run-controller.test.js`,
+`test/wrap-run-session-wiring.test.js`, `test/wrap-stream-event-vocabulary.test.js`.
+
+**Not taken.** #1321 (optional for this chunk): unrelated to the controller. The rest of #1312
+(collapsible/smaller drawer) is Chunk 04.
+
 ## 2026-09-14 — project-map wrap step keeps wrapped Structure descriptions (#1363)
 
 <!-- prawduct: type=bugfix | scope=wrap-1363 -->

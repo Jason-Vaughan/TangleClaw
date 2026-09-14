@@ -1734,12 +1734,23 @@ async function confirmWrap() {
   confirmBtn.textContent = 'Wrapping…';
 
   try {
-    const data = await apiMutate(`/api/sessions/${encodeURIComponent(wrapTarget)}/wrap`, 'POST', body);
+    const target = wrapTarget;
+    const data = await apiMutate(`/api/sessions/${encodeURIComponent(target)}/wrap`, 'POST', body);
     if (!data) {
       // Failure — surface the server's reason inline and let `finally`
       // re-enable so the operator can fix and retry without reopening.
       document.getElementById('wrapError').textContent = api.lastError || 'Wrap failed.';
       document.getElementById('wrapError').classList.remove('hidden');
+      return;
+    }
+    // The POST answers 202 as soon as the run starts. The modal stays on
+    // "Wrapping…" until the run settles, as it did while the POST waited, so a
+    // wrap that failed outright still shows its reason here.
+    const failure = typeof data.runId === 'string' ? await awaitDashboardWrapFailure(target, data.runId) : null;
+    if (failure) {
+      document.getElementById('wrapError').textContent = failure;
+      document.getElementById('wrapError').classList.remove('hidden');
+      await loadProjects();
       return;
     }
     closeWrapModal(true); // force-close past the in-flight guard on success
@@ -1749,6 +1760,53 @@ async function confirmWrap() {
     confirmBtn.disabled = false;
     cancelBtn.disabled = false;
     confirmBtn.textContent = priorLabel;
+  }
+}
+
+/**
+ * How often the dashboard asks a started wrap for its outcome.
+ * @type {number}
+ */
+const DASHBOARD_WRAP_POLL_MS = 4000;
+
+/**
+ * Wait for a wrap started from the dashboard to settle, and say what the
+ * modal should show. The dashboard has no wrap drawer, so a blocked run is not
+ * an error here: the session page holds its report. What the modal names is a
+ * run that failed without a report (the pipeline threw), or one that stopped
+ * reporting or vanished, because those used to arrive as the POST's error.
+ *
+ * A failed poll is a connection blip, not an answer — the run outlives it.
+ *
+ * @param {string} name - Project name
+ * @param {string} runId - The run the POST started
+ * @returns {Promise<string|null>} A reason to show, or null to close the modal
+ */
+async function awaitDashboardWrapFailure(name, runId) {
+  const url = `/api/sessions/${encodeURIComponent(name)}/wrap/status`;
+  for (;;) {
+    let status = null;
+    try {
+      const res = await tcFetch(url);
+      status = res.ok ? await res.json() : null;
+    } catch { // a poll that could not run is no answer yet
+      status = null;
+    }
+    if (status && status.runId === runId && status.running !== true) {
+      const result = status.result;
+      if (result && result.pipelineResult) return null;
+      if (result) return result.error || 'Wrap failed.';
+      if (status.stale === true) {
+        return 'This wrap stopped reporting progress. Whether it is still running, or committed anything, is unknown — check the server log before wrapping again.';
+      }
+      return 'The wrap did not survive a server restart. Nothing was committed; it is safe to wrap again.';
+    }
+    // The run was registered before the 202 was sent, so a status naming another
+    // run — or none — means the server no longer holds it.
+    if (status && status.runId !== runId) {
+      return 'The wrap did not survive a server restart. Nothing was committed; it is safe to wrap again.';
+    }
+    await new Promise((resolve) => setTimeout(resolve, DASHBOARD_WRAP_POLL_MS));
   }
 }
 

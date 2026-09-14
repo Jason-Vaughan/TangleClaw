@@ -131,7 +131,7 @@ describe('api wrap-run status + single-flight (#583)', () => {
       });
     });
 
-    it('reports a running run with progress, then the finished result in POST payload shape', async () => {
+    it('reports a running run with progress, then the finished result in the stream\'s run-done shape', async () => {
       store.sessions.start({ projectId, engineId: 'claude', tmuxSession: 'wrap-run-live' });
       let releaseGate;
       const gate = new Promise((resolve) => { releaseGate = resolve; });
@@ -143,31 +143,36 @@ describe('api wrap-run status + single-flight (#583)', () => {
         return { ...EMPTY_PIPELINE_RESULT };
       };
 
-      const postPromise = request(server, 'POST', '/api/sessions/wrap-run-test/wrap', {});
-      // Poll until the pipeline has claimed the slot (bounded spin).
+      const post = await request(server, 'POST', '/api/sessions/wrap-run-test/wrap', {});
+      assert.equal(post.status, 202, 'the POST answers once the run is claimed, before the pipeline finishes');
+      // Poll until the pipeline has reported its first step (bounded spin).
       let status;
       for (let i = 0; i < 50; i++) {
         status = await request(server, 'GET', '/api/sessions/wrap-run-test/wrap/status');
-        if (status.body.running) break;
+        if (status.body.running && status.body.currentStepId) break;
         await new Promise((resolve) => setImmediate(resolve));
       }
       assert.equal(status.body.running, true, 'status reports the in-flight run');
+      assert.equal(status.body.runId, post.body.runId, 'the 202 and the status name the same run');
       assert.equal(status.body.currentStepId, 'memory-update', 'status carries pipeline progress');
       assert.equal(typeof status.body.startedAt, 'number');
       assert.match(status.body.runId, /^[0-9a-f]{32}$/, '#185 — status hands out the stream handle while running');
       assert.equal(status.body.result, null, 'no result while running');
 
       releaseGate();
-      const post = await postPromise;
-      assert.equal(post.status, 200);
-
-      const after = await request(server, 'GET', '/api/sessions/wrap-run-test/wrap/status');
+      let after;
+      for (let i = 0; i < 500; i++) {
+        after = await request(server, 'GET', '/api/sessions/wrap-run-test/wrap/status');
+        if (!after.body.running) break;
+        await new Promise((resolve) => setTimeout(resolve, 2));
+      }
       assert.equal(after.body.running, false);
       assert.equal(typeof after.body.finishedAt, 'number');
-      // The retained result must be byte-shaped like the POST's own payload —
-      // the reattach path renders exactly what the dead connection missed.
-      assert.deepEqual(after.body.result, post.body,
-        'status result matches the POST payload shape exactly');
+      // The retained result is the payload a reloaded page renders.
+      assert.deepEqual(Object.keys(after.body.result).sort(),
+        ['captureFields', 'ok', 'pipelineResult', 'project', 'runId', 'sessionId', 'status', 'wrapCommand', 'wrapSteps'],
+        'status result carries the full run payload');
+      assert.equal(after.body.result.runId, post.body.runId);
     });
   });
 
@@ -183,7 +188,8 @@ describe('api wrap-run status + single-flight (#583)', () => {
         return { ...EMPTY_PIPELINE_RESULT };
       };
 
-      const first = request(server, 'POST', '/api/sessions/wrap-run-test/wrap', {});
+      const first = await request(server, 'POST', '/api/sessions/wrap-run-test/wrap', {});
+      assert.equal(first.status, 202);
       let status;
       for (let i = 0; i < 50; i++) {
         status = await request(server, 'GET', '/api/sessions/wrap-run-test/wrap/status');
@@ -197,10 +203,17 @@ describe('api wrap-run status + single-flight (#583)', () => {
       assert.equal(second.body.code, 'WRAP_IN_PROGRESS');
       assert.match(second.body.error, /already running/);
       assert.equal(pipelineCalls, 1, 'THE PIN: no second pipeline started');
+      assert.equal(second.body.runId, first.body.runId,
+        'the refusal names the running run, so a client can follow it instead of re-wrapping');
 
       releaseGate();
-      const firstRes = await first;
-      assert.equal(firstRes.status, 200, 'the original wrap completes untouched');
+      let after;
+      for (let i = 0; i < 500; i++) {
+        after = await request(server, 'GET', '/api/sessions/wrap-run-test/wrap/status');
+        if (!after.body.running) break;
+        await new Promise((resolve) => setTimeout(resolve, 2));
+      }
+      assert.equal(after.body.result.ok, true, 'the original wrap completes untouched');
     });
   });
 

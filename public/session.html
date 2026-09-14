@@ -479,9 +479,9 @@
     </div>
   </div>
 
-  <!-- Wrap Pipeline Drawer — opens after the wrap POST returns a
-       pipelineResult; renders per-step status + decision widgets for
-       any blocking step. -->
+  <!-- Wrap Pipeline Drawer — opens when a wrap run is followed; renders
+       live per-step progress, then the run's result with decision widgets
+       for any blocking step. -->
   <div class="drawer-backdrop" id="wrapDrawerBackdrop"></div>
   <aside class="wrap-drawer" id="wrapDrawer" role="dialog" aria-label="Wrap pipeline" aria-modal="true">
     <div class="drawer-handle" aria-hidden="true"></div>
@@ -504,7 +504,9 @@
   <script src="/api-helper.js"></script>
   <script src="/reconnect-policy.js"></script>
   <script src="/update-beacon.js"></script>
+  <script src="/wrap-stream-events.js"></script>
   <script src="/wrap-drawer.js"></script>
+  <script src="/wrap-run-controller.js"></script>
   <script src="/session.js"></script>
 </body>
 </html>

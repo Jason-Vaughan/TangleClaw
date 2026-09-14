@@ -298,6 +298,7 @@ const ttydWatcher = require('./lib/ttyd-watcher');
 const ttydAttach = require('./lib/ttyd-attach');
 const ttydBind = require('./lib/ttyd-bind');
 const wrapSentinel = require('./lib/wrap-sentinel');
+const { WRAP_STREAM_EVENTS } = require('./public/wrap-stream-events');
 const medusaWake = require('./lib/medusa-wake');
 const authIdentity = require('./lib/auth-identity');
 const authSession = require('./lib/auth-session');
@@ -6085,9 +6086,17 @@ route('POST', '/api/sessions/:project/command', (_req, res, params, body) => {
   });
 });
 
-// POST /api/sessions/:project/wrap — Trigger wrap skill
+// POST /api/sessions/:project/wrap — Start the wrap pipeline
 // Body: { password?, options? } — `options` carries the per-wrap user choices
 // the drawer collected on retry after a blocked step (`{skipTests, prHandling}`).
+//
+// Answers 202 the moment the run is claimed, with its `runId`; the pipeline runs
+// on and its outcome is read from the stream (`run-done`) or `GET /wrap/status`.
+// It used to hold the request open for the whole pipeline, which left a browser
+// with no handle on the run it had just started: a Retry could not attach to the
+// new run's progress, and the drawer sat on the previous run's red report until
+// the retry's response finally came back. Every refusal below is still
+// synchronous and claims nothing.
 route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => {
   // Operator kill switch (incident 2026-07-16: wrap content steps re-fired
   // repeatedly into the session). Checked before anything else — while set,
@@ -6105,36 +6114,42 @@ route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => 
   }
 
   const options = body && typeof body.options === 'object' && body.options !== null ? body.options : undefined;
-  const result = await sessions.triggerWrap(params.project, options);
-  // #583 — server-side single-flight: a wrap pipeline is already running
-  // for this project. 409 (not 500) so the frontend can switch to watching
-  // the running run via GET /wrap/status instead of re-triggering it.
-  if (!result.ok && result.code === 'WRAP_IN_PROGRESS') {
-    return errorResponse(res, 409, result.error, 'WRAP_IN_PROGRESS');
-  }
-  // The pipeline may return ok:false (a blocked step). That's not a
-  // server error — it's an expected pipeline outcome the drawer renders.
-  // Surface it with HTTP 200 + `pipelineResult` so the frontend can paint
-  // per-step status and collect retry inputs.
-  if (!result.ok && !result.pipelineResult) {
-    if (result.error && (result.error.includes('not found') || result.error.includes('No active'))) {
-      return errorResponse(res, 404, result.error, 'NOT_FOUND');
+  const started = sessions.startWrap(params.project, options);
+  if (!started.ok) {
+    // #583 — server-side single-flight: a wrap pipeline is already running
+    // for this project. 409 (not 500) so the frontend follows the running run
+    // instead of re-triggering it; its `runId` rides along so it can.
+    if (started.code === 'WRAP_IN_PROGRESS') {
+      return errorResponse(res, 409, started.error, 'WRAP_IN_PROGRESS',
+        started.wrapRun && typeof started.wrapRun.runId === 'string' ? { runId: started.wrapRun.runId } : undefined);
     }
-    return errorResponse(res, 500, result.error || 'Wrap failed', 'INTERNAL_ERROR');
+    return errorResponse(res, 404, started.error, 'NOT_FOUND');
   }
 
-  jsonResponse(res, 200, _wrapResultPayload(params.project, result));
+  const project = encodeURIComponent(params.project);
+  jsonResponse(res, 202, {
+    ok: true,
+    runId: started.runId,
+    sessionId: started.sessionId,
+    project: params.project,
+    // Names the pipeline this call just started, sourced from
+    // `lib/wrap-run-registry.js` — NOT the `sessions.status` column, which has
+    // no such value (#1034).
+    status: 'wrapping',
+    statusUrl: `/api/sessions/${project}/wrap/status`,
+    streamUrl: `/api/sessions/${project}/wrap/stream/${encodeURIComponent(started.runId)}`
+  });
 });
 
 /**
- * Shape a `sessions.triggerWrap` result into the wrap POST's response
- * payload. Shared by `POST /wrap` and `GET /wrap/status` (#583) so the
- * reattach path renders the exact payload the original POST would have
- * delivered had its connection survived — the two can't drift.
+ * Shape a finished run's outcome (a `sessions.triggerWrap`-shaped result) into
+ * the payload a client renders. Shared by the stream's `run-done` frame and
+ * `GET /wrap/status`, so a page following the stream and a page that reloaded
+ * and asked for the status render the same report — the two can't drift.
  *
  * @param {string} projectName - Route-level project name
- * @param {object} result - `sessions.triggerWrap` return value
- * @returns {object} Response payload
+ * @param {object} result - The run's recorded outcome
+ * @returns {object} Result payload
  */
 function _wrapResultPayload(projectName, result) {
   const payload = {
@@ -6174,25 +6189,25 @@ function _wrapResultPayload(projectName, result) {
  */
 function _wrapStreamFrame(projectName, event) {
   const { seq, type, ...rest } = event;
-  const data = type === 'run-done'
+  const data = type === WRAP_STREAM_EVENTS.RUN_DONE
     ? { ...rest, result: rest.result ? _wrapResultPayload(projectName, rest.result) : null }
     : rest;
   return `id: ${seq}\nevent: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
 
-// GET /api/sessions/:project/wrap/status — Wrap-run state (#583). Lets a
-// client whose wrap POST connection died (proxy 502, page reload, phone
-// lock) reattach: `running` + `currentStepId` while the pipeline runs,
-// then the finished run's `result` in the same shape the POST would have
-// returned. Registry is process-local: after a server restart this
-// honestly reports no run (nothing survived the restart).
+// GET /api/sessions/:project/wrap/status — Wrap-run state (#583). Lets any
+// client (a reloaded page, another device, a page whose stream dropped)
+// follow a run: `running` + `currentStepId` while the pipeline runs, then the
+// finished run's `result` — the same payload the stream's `run-done` carries.
+// Registry is process-local: after a server restart this honestly reports no
+// run (nothing survived the restart).
 route('GET', '/api/sessions/:project/wrap/status', (_req, res, params) => {
   const status = sessions.getWrapRunStatus(params.project);
   jsonResponse(res, 200, {
     project: params.project,
-    // #185 — the running (or last) run's stream handle, so a client that
-    // wants live progress before its own POST returns can open the stream.
+    // #185 — the running (or last) run's stream handle, so a client that did
+    // not start the run (or lost the 202) can open its stream.
     runId: status.runId,
     running: status.running,
     // #1314 — a run claimed and never settled reports `running: false` with
@@ -6215,7 +6230,7 @@ route('GET', '/api/sessions/:project/wrap/status', (_req, res, params) => {
 // finished is replayed in full and closed at once. `Last-Event-ID` (what an
 // `EventSource` sends when it reconnects) resumes after that seq, so a blip
 // mid-wrap does not repaint from scratch. An unknown or foreign `runId` is a
-// 404, not an empty stream — the client falls back to the blocking render.
+// 404, not an empty stream — the client falls back to polling /wrap/status.
 //
 // Same read-only surface as /wrap/status: it exposes nothing the status
 // route does not (that route hands out the runId), and it starts nothing,
@@ -6226,12 +6241,12 @@ route('GET', '/api/sessions/:project/wrap/status', (_req, res, params) => {
 route('GET', '/api/sessions/:project/wrap/stream/:runId', (req, res, params) => {
   const lastEventId = Number.parseInt(req.headers['last-event-id'], 10);
   let open = false;
-  // Every path through this route logs, because the feature is a spectator by
-  // design: the POST stays authoritative, so a stream that never runs looks
-  // exactly like the pre-#185 experience and leaves a maintainer nothing to
-  // bisect from "live progress never appears". These lines are the only way
-  // to tell "it worked" from "it never ran" — nothing else covers the route
-  // (only unmatched paths hit the generic log, and only at debug).
+  // Every path through this route logs, because a stream that never runs is
+  // quiet on the page: the client falls back to polling /wrap/status, which
+  // still delivers the report, and a maintainer is left nothing to bisect from
+  // "live progress never appears". These lines are the only way to tell "it
+  // worked" from "it never ran" — nothing else covers the route (only
+  // unmatched paths hit the generic log, and only at debug).
   const safeWrite = (text) => {
     if (!open) return;
     try {

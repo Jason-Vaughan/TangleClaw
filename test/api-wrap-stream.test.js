@@ -234,6 +234,25 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
     assert.fail('the wrap never claimed a run');
   }
 
+  /**
+   * POST a wrap, which answers 202 as soon as the run is claimed, then wait for
+   * the run to settle and read its outcome from /wrap/status — the same payload
+   * the stream's terminal frame carries.
+   * @returns {Promise<{accepted: {status: number, body: object}, result: object}>}
+   */
+  async function wrapAndSettle() {
+    const accepted = await request(server, 'POST', '/api/sessions/wrap-stream-test/wrap', {});
+    assert.equal(accepted.status, 202, 'the POST answers once the run is claimed');
+    for (let i = 0; i < 500; i++) {
+      const status = await request(server, 'GET', '/api/sessions/wrap-stream-test/wrap/status');
+      if (status.body.runId === accepted.body.runId && !status.body.running && status.body.result) {
+        return { accepted, result: status.body.result };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+    return assert.fail('the wrap never settled');
+  }
+
   it('404s a run the server does not hold, as JSON — never an empty stream', async () => {
     const res = await request(server, 'GET', STREAM('0123456789abcdef0123456789abcdef'));
     assert.equal(res.status, 404);
@@ -241,7 +260,7 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
     assert.match(res.headers['content-type'], /application\/json/);
   });
 
-  it('replays the frames a late subscriber missed, streams live ones, and closes on run-done in the POST payload shape', async () => {
+  it('replays the frames a late subscriber missed, streams live ones, and closes on run-done in the /wrap/status result shape', async () => {
     store.sessions.start({ projectId, engineId: 'claude', tmuxSession: 'wrap-stream-live' });
     let releaseFirst;
     let releaseSecond;
@@ -269,7 +288,7 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
       return blockedResult;
     };
 
-    const postPromise = request(server, 'POST', '/api/sessions/wrap-stream-test/wrap', {});
+    const postPromise = wrapAndSettle();
     const runId = await awaitRunId();
 
     // Subscribe AFTER three events have already been emitted.
@@ -294,16 +313,16 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
 
     releaseSecond();
     const post = await postPromise;
-    assert.equal(post.status, 200);
+    assert.equal(post.accepted.body.runId, runId, 'the 202 hands out the same handle the stream was opened with');
     await stream.until((s) => s.ended, 'the terminal run-done');
     assert.deepEqual(stream.frames.map((f) => f.event),
       ['run-start', 'step-start', 'step-done', 'step-start', 'step-blocked', 'run-done']);
     assert.equal(stream.frames[4].data.halted, true);
-    // THE PIN: the terminal frame IS the wrap POST's payload, so the drawer
-    // renders the stream's end exactly as it renders the POST's return.
-    assert.deepEqual(stream.frames[5].data.result, post.body);
-    assert.equal(post.body.runId, runId, 'the POST reports the same handle the stream was opened with');
-    assert.equal(post.body.status, 'blocked');
+    // THE PIN: the terminal frame IS the /wrap/status result, so a page that
+    // followed the stream and a page that reloaded render the same report.
+    assert.deepEqual(stream.frames[5].data.result, post.result);
+    assert.equal(post.result.runId, runId);
+    assert.equal(post.result.status, 'blocked');
 
     // A finished run replays in full and closes at once.
     const replay = await openStream(server, STREAM(runId));
@@ -323,10 +342,9 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
       options.onStepEvent({ type: 'run-start', steps: [] });
       throw new Error('handler exploded');
     };
-    const post = await request(server, 'POST', '/api/sessions/wrap-stream-test/wrap', {});
-    assert.equal(post.status, 500, 'precondition: a thrown pipeline is the POST\'s 500 path');
-    const status = await request(server, 'GET', '/api/sessions/wrap-stream-test/wrap/status');
-    const stream = await openStream(server, STREAM(status.body.runId));
+    const post = await wrapAndSettle();
+    assert.equal(post.result.ok, false, 'precondition: a thrown pipeline settles as a failed run, not an HTTP status');
+    const stream = await openStream(server, STREAM(post.accepted.body.runId));
     await stream.until((s) => s.ended, 'the terminal run-done');
     assert.deepEqual(stream.frames.map((f) => f.event), ['run-start', 'run-done']);
     assert.equal(stream.frames[1].data.result.ok, false);
@@ -380,7 +398,7 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
       options.onStepEvent({ type: 'step-start', stepId: 'commit', kind: 'commit' });
       return { ok: true, blockedAt: null, results: [], commitSha: null, summary: null, error: null };
     };
-    const postPromise = request(server, 'POST', '/api/sessions/wrap-stream-test/wrap', {});
+    const postPromise = wrapAndSettle();
     const runId = await awaitRunId();
     const addr = server.address();
     // A raw socket we can slam shut from the client side.
@@ -389,12 +407,11 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
     req.destroy();
     release();
     const post = await postPromise;
-    assert.equal(post.status, 200, 'the pipeline never waits on, or fails for, a gone subscriber');
-    assert.equal(post.body.ok, true);
+    assert.equal(post.result.ok, true, 'the pipeline never waits on, or fails for, a gone subscriber');
   });
 
-  // The stream is a spectator: the POST stays authoritative, so every failure
-  // degrades silently to the pre-#185 experience. The remedy for that is log
+  // A failed stream degrades quietly: the page falls back to polling
+  // /wrap/status, which still delivers the report. The remedy for that is log
   // lines and console warns — which makes the remedy itself invisible to a
   // suite that never reads them. This suite ran green with the whole of it
   // stripped out until these assertions existed.
@@ -443,7 +460,7 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
       };
 
       const logged = await captureLogs(async () => {
-        const postPromise = request(server, 'POST', '/api/sessions/wrap-stream-test/wrap', {});
+        const postPromise = wrapAndSettle();
         const runId = await awaitRunId();
         // Subscribing AFTER two events have been emitted, so the replay depth
         // is a number the line has to have actually computed.
@@ -474,7 +491,7 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
       };
 
       const logged = await captureLogs(async () => {
-        const postPromise = request(server, 'POST', '/api/sessions/wrap-stream-test/wrap', {});
+        const postPromise = wrapAndSettle();
         const runId = await awaitRunId();
         const addr = server.address();
         const req = http.get({ hostname: '127.0.0.1', port: addr.port, path: STREAM(runId) });
@@ -509,7 +526,7 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
       return { ok: true, blockedAt: null, results: [], commitSha: null, summary: null, error: null };
     };
 
-    const postPromise = request(server, 'POST', '/api/sessions/wrap-stream-test/wrap', {});
+    const postPromise = wrapAndSettle();
     const runId = await awaitRunId();
     // Subscribing after the emits, so all three arrive through REPLAY.
     const stream = await openStream(server, STREAM(runId));
@@ -517,7 +534,7 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
     release();
     const post = await postPromise;
 
-    assert.equal(post.status, 200, 'the wrap itself is untouched by a frame it could not render');
+    assert.equal(post.result.ok, true, 'the wrap itself is untouched by a frame it could not render');
     const events = stream.frames.map((f) => f.event);
     assert.ok(!events.includes('step-done'), 'the unserializable frame is dropped');
     assert.ok(events.includes('step-start'),
