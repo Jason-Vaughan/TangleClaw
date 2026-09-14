@@ -331,6 +331,58 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
     it('emits the no-dirs placeholder when currentDirs is empty', () => {
       assert.equal(projects._mergeStructureBody(seeded, []), '<!-- no top-level directories detected -->');
     });
+
+    describe('a description that wraps onto more lines (#1363)', () => {
+      // The shape that lost its continuation lines on TangleBrain twice: a
+      // bullet whose description continues on lines indented two spaces.
+      const wrappedPkg = '- `pkg/` — the package. Routing core at the top level (`router.py`, `selector.py`,\n'
+        + '  `classifier.py`, `roster.py`), entry points beside it (`cli.py`, `mcp_server.py`), and one\n'
+        + '  subpackage per surface: `adapters/` (backend drivers).';
+      const wrappedDocs = '- `docs/` — only `design/`: nine public design documents (architecture, api-contract,\n'
+        + '  data-model, and six more).';
+      const doc = `# Project Map\n\n## Structure\n\n${wrappedDocs}\n${wrappedPkg}\n- \`tests/\` — the suite\n\n## Shared directories / doc groups\n\n<!-- x -->\n`;
+
+      it('keeps every continuation line of a surviving directory, verbatim', () => {
+        assert.equal(projects._mergeStructureBody(doc, ['docs', 'pkg', 'tests']), `${wrappedDocs}\n${wrappedPkg}\n- \`tests/\` — the suite`);
+      });
+
+      it('drops a removed directory together with its continuation lines', () => {
+        const body = projects._mergeStructureBody(doc, ['pkg', 'tests']);
+        assert.equal(body, `${wrappedPkg}\n- \`tests/\` — the suite`);
+        assert.ok(!body.includes('data-model'), 'no orphaned continuation line left behind');
+      });
+
+      it('carries continuation lines when the directory order changes', () => {
+        assert.equal(projects._mergeStructureBody(doc, ['pkg', 'docs']), `${wrappedPkg}\n${wrappedDocs}`);
+      });
+
+      it('keeps a nested list and a second indented paragraph, but not prose after the item', () => {
+        const item = '- `lib/` — the library:\n  - `core/` — routing\n  - `io/` — drivers\n\n  A second paragraph about lib.';
+        const content = `# P\n\n## Structure\n\n${item}\n\nNot part of the lib item.\n- \`x/\` — x\n\n## Shared directories / doc groups\n`;
+        assert.equal(projects._mergeStructureBody(content, ['lib', 'x']), `${item}\n- \`x/\` — x`);
+      });
+
+      it('keeps a description wrapped without indentation, up to the next bullet', () => {
+        const unindented = '- `lib/` — the library, whose description was\nwrapped with no indentation at all.';
+        const content = `# P\n\n## Structure\n\n${unindented}\n- \`x/\` — x\n\n## Shared directories / doc groups\n`;
+        assert.equal(projects._mergeStructureBody(content, ['lib', 'x']), `${unindented}\n- \`x/\` — x`);
+      });
+
+      it('does not pull the blank line that closes the section into the last item', () => {
+        const body = projects._mergeStructureBody(doc, ['tests']);
+        assert.equal(body, '- `tests/` — the suite');
+      });
+
+      it('refreshes wrapped content byte-for-byte unchanged when nothing drifted', () => {
+        const fresh = projects._refreshProjectMapContent(doc, ['docs', 'pkg', 'tests'], []);
+        assert.equal(projects._refreshProjectMapContent(fresh, ['docs', 'pkg', 'tests'], []), fresh);
+        assert.ok(fresh.includes(wrappedPkg) && fresh.includes(wrappedDocs), 'both wrapped descriptions survive the refresh');
+      });
+
+      it('still reports the directories, not the continuation lines, as the structure', () => {
+        assert.deepEqual(projects._parseStructureDirs(doc), ['docs', 'pkg', 'tests']);
+      });
+    });
   });
 
   describe('_replaceSectionBody', () => {
