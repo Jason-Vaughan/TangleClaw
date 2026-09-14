@@ -133,9 +133,9 @@ unresolved blocking findings; PR opened; the Coordinator pinged with the PR link
 
 ## Status
 
-- [ ] 01a vocabulary
-- [ ] 01b 202 contract
-- [ ] 01c controller reducer
-- [ ] 01d session.js wiring
-- [ ] 01e docs
-- [ ] 01f live check
+- [x] 01a vocabulary
+- [x] 01b 202 contract
+- [x] 01c controller reducer
+- [x] 01d session.js wiring
+- [x] 01e docs
+- [x] 01f live check
