@@ -34,6 +34,31 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-14 — A2: a login on every install asked once (#804); the recorded opt-out and Add a login (#803)
+
+<!-- prawduct: type=feature | scope=train-9-chunk-05-a2 -->
+
+Train 9 Chunk 05, A2a + A2b (one PR). Into `main`.
+
+**Why.** After the cutover TangleClaw's login is its own and needs no Caddy, but setup still asked "can
+Caddy be provisioned here?" at three call sites (#804): a no-Caddy install finished with no login and
+nothing recorded, and Skip finished it the same way. The 2026-09-10 ruling let setup finish ungated only
+as an explicit, recorded choice, with a login addable later from settings (#803).
+
+**What.** A2a: `lib/setup-credential.js#decideCredential` over named facts, gathered once by
+`server.js#_decideSetupCredential` for Finish, Skip and `GET /api/setup/ingress-state` (`credential`);
+`noLogin` → `config.loginOptOutAt`, refused (`OPT_OUT_REFUSED`) where false or reachable; the account
+needs no Caddy; setup mints recovery codes. A2b: the wizard reads `credential` for the step, Skip and
+"Finish without a login"; codes shown before any later screen; copy from `account.loginInForce`;
+settings "Add a login" (`POST /api/auth/add-login`, turns `authEnabled` on, browser → `/login`);
+`store.config.save` never writes `loginOptOutAt` beside `authEnabled: true`. Docs: ADR 0009 amendment,
+ADR 0015/0016, setup/user guides, recovery, README, FEATURES, CHANGELOG.
+
+**Reviews.** A2a chunk `rev-20260914T020356Z-b91025fc` (fixed `b3fb6f62`), verify clean. Whole-branch
+`rev-20260914T030233Z-e6e1d8aa` (R-4 opt-out record surviving `--create-gate`/adoption, fixed by
+construction; R-2/R-5 fixed in `2199fdcf`; notes accepted), verify-resolutions clean. Live browser
+check on scratch homes: login, opt-out, add later, refusal when wide.
+
 ## 2026-09-14 — A.05b: sign out, sign out everywhere, change password
 
 <!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->
