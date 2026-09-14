@@ -33,7 +33,7 @@ describe('_git-range — session range resolution', () => {
     // `stopped` names any probe our own timeout killed rather than let answer, so
     // a caller can tell a fallback taken on an UNKNOWN answer from one taken on a
     // negative one. Asserted exhaustively here because it is part of the shape.
-    assert.deepEqual(out, { range: 'c1f94ac..HEAD', kind: 'session', baseBranch: null, stopped: [] });
+    assert.deepEqual(out, { range: 'c1f94ac..HEAD', kind: 'session', baseBranch: null, base: 'c1f94ac', stopped: [] });
   });
 
   it('emits three-dot for the diff caller and two-dot for the log caller', () => {
