@@ -105,7 +105,7 @@ function loadPills(modelStatus) {
   vm.runInContext([
     liftFunction(SESSION_SRC, 'function esc(str)'),
     liftFunction(SESSION_SRC, 'function closeBannerPopovers(keep)'),
-    liftFunction(SESSION_SRC, 'function syncBannerUserExpanded()'),
+    liftFunction(SESSION_SRC, 'function syncBannerExpanded()'),
     liftFunction(SESSION_SRC, 'function setPillDetail(pill, detail)'),
     liftFunction(SESSION_SRC, 'function renderPillDetail(pill, pop)'),
     liftFunction(SESSION_SRC, 'function togglePillDetail(pill)'),

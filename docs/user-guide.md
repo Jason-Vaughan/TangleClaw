@@ -306,7 +306,7 @@ The top banner shows:
 - **Project name** and **version**
 - **Status dot** — green (connected), red (disconnected), with a breathing animation
 - **Engine badge** — which engine is running; its colour follows the engine's published status (green operational, amber degraded, red outage)
-- **Group pills** — the project groups this project belongs to
+- **Group pill** — the project group this project belongs to; in two or more groups, one pill counts them ("3 groups") and its popover lists each group with its members
 - **Your name** — who is signed in to TangleClaw; click it for **Sign out**. On a phone the pill is the 👤 icon alone. Not shown on an install with no login
 
 Every pill follows one contract: **hover** shows what kind of thing it is (*Project version*, *Session status*, *AI engine*, *Project group*, *Signed in to TangleClaw*), and **click** shows what it currently says — the engine's status message, the session's connection state, a group's member projects, or who is signed in with a Sign out button. On a phone there is no hover; the click popover repeats the label, so nothing is lost.
@@ -317,7 +317,7 @@ The terminal fills the main area, showing the ttyd-powered terminal where your A
 
 #### Command Bar
 
-Below the terminal, the command bar lets you inject commands without touching the terminal:
+Open it from the banner's **⋯** menu → **Command bar** (the ⋯ button stays highlighted while the bar is open). The command bar lets you inject commands without touching the terminal:
 
 - Type a command and tap **Send** (or press Enter)
 - **Quick command pills** appear below the input — tap to inject common commands
@@ -326,7 +326,7 @@ Below the terminal, the command bar lets you inject commands without touching th
 
 #### Peek
 
-Tap **Peek** to open a bottom drawer showing the last few lines of terminal output. This lets you check on progress without scrolling through the terminal. Tap refresh to update. The drawer's **Copy** button puts the whole peek text on your device's clipboard — on a phone, where the terminal itself can't be selected, this is the way to grab output (#438).
+Tap **⋯** → **Peek** in the session banner (on the dashboard, the eye icon on a project card) to open a bottom drawer showing the last few lines of terminal output. This lets you check on progress without scrolling through the terminal. Tap refresh to update. The drawer's **Copy** button puts the whole peek text on your device's clipboard — on a phone, where the terminal itself can't be selected, this is the way to grab output (#438).
 
 #### Copy
 

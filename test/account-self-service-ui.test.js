@@ -265,7 +265,7 @@ describe('the session banner: signed-in user pill with Sign out (#1471)', () => 
         return !!res;
       }
     });
-    const fns = ['closeBannerPopovers', 'syncBannerUserExpanded', 'loadBannerUser', 'toggleBannerUser',
+    const fns = ['closeBannerPopovers', 'syncBannerExpanded', 'loadBannerUser', 'toggleBannerUser',
       'signOutFromBanner', 'signOutWith'];
     vm.runInContext(`${fns.map((f) => extract(SESSION_SRC, f)).join('\n')}\n`
       + fns.map((f) => `this.${f} = ${f};`).join('\n'), ctx);

@@ -395,6 +395,41 @@ body {
   color: var(--text);
 }
 
+/* The ⋯ menu (#1474, #1475): the command bar and Peek buttons stacked in a
+   popover under one banner button. It sits among the right-hand actions, so
+   it grows leftwards from the button's right edge. */
+.banner-more-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.banner-more-menu {
+  left: auto;
+  right: 0;
+  min-width: 0;
+  padding: 6px;
+}
+.banner-more-menu.open {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.banner-more-menu .banner-btn {
+  width: 100%;
+  white-space: nowrap;
+  justify-content: flex-start;
+}
+/* Two or more groups share one pill; its popover stacks each group's section. */
+.groups-popover {
+  max-width: min(280px, calc(100vw - 20px));
+  max-height: 60vh;
+  overflow-y: auto;
+  white-space: normal;
+}
+.groups-popover-sep {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin: 6px 0;
+}
+
 /* Signed-in user pill (#1471): the popover is the pill's sibling inside the
    wrapper, so the wrapper is the positioned anchor. Muted, like the dashboard's
    chip, so it reads as context rather than as the session's own status. The

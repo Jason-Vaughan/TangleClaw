@@ -34,6 +34,25 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-14 — Session header cleanup (#1472, #1474, #1475, #1476)
+
+<!-- prawduct: type=feature | scope=ui-1472 -->
+
+Fast-follow to v5.24.0, operator requests filed by the Coordinator. Into `main`.
+
+**Why.** Several group pills wrapped the banner onto extra rows; Cmd and Peek took banner width; the
+settings gear drew far smaller than the brain beside it.
+
+**What.** `public/session.js#renderBannerGroups` renders one counted pill for two or more groups;
+`#toggleGroupsPopover` fetches each group and renders it through `#groupPopoverHtml`, shared with the
+single-group popover, naming a group that failed to load. The issues asked to remove Cmd and Peek; the
+operator ruled option B instead — both move into a ⋯ menu (`#toggleMoreMenu`, `#onMoreMenuClick`)
+because the command bar carries engine/quick/history commands and Peek carries search and copy-to-device.
+The buttons keep their ids, so every disable/aria path is untouched; `#syncBannerExpanded` (renamed
+from the user-pill-only helper) now covers the menu. The gear is U+2699 + U+FE0F on both pages — the
+issue called it an SVG; it was a text glyph. Tests: `test/session-header-cleanup.test.js`. Docs: user
+guide, CHANGELOG.
+
 ## 2026-09-14 — Session banner user pill with Sign out (#1471)
 
 <!-- prawduct: type=feature | scope=ui-1471 -->
