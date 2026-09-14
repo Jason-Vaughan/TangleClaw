@@ -120,5 +120,5 @@ three call sites still ask "can Caddy be provisioned here?" (`plan.action === 'p
 
 ## Status
 
-- [ ] Chunk A2a — predicate + server routes
+- [x] Chunk A2a — predicate + server routes (reviewed 2026-09-14: chunk review's 1 blocking + 2 warnings fixed in `b3fb6f62`, verify-resolutions clean)
 - [ ] Chunk A2b — wizard, settings "Add a login", docs
