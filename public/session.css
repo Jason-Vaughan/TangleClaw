@@ -600,6 +600,12 @@ body {
   gap: 4px;
   flex-wrap: wrap;
 }
+/* Wrap + Kill: one flex item, so a wrap moves them together (#1478). */
+.banner-end-actions {
+  display: inline-flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
 
 /* #139 Chunk 11b — project action buttons (e.g. "Run Critic"). Slight accent
    so users can tell them apart from the always-visible Wrap / Kill / Cmd /
@@ -736,10 +742,15 @@ body {
 
 /* Mobile banner: smaller buttons */
 @media (max-width: 600px) {
+  /* Tighter padding and gaps so a phone's actions fit one row (#1478). The
+     30px minimum touch target from shared-controls.css is untouched: only
+     the space around each label shrinks. */
   .banner-btn {
     font-size: 10px;
-    padding: 2px 6px;
+    padding: 2px 4px;
   }
+  .banner-actions,
+  .banner-end-actions { gap: 3px; }
   .banner-name { max-width: 100px; }
 }
 
