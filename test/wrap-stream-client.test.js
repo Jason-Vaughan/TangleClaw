@@ -7,13 +7,9 @@
  * `public/wrap-drawer.js` (`applyWrapStreamEvent`, `summarizeLiveStatus`,
  * `liveWrapAsPipelineResult`, `wrapStreamUrl`) load into a vm sandbox and are
  * driven directly, the way test/wrap-drawer.test.js drives their siblings.
- * The wiring in `public/session.js` is browser DOM code that cannot be
- * require()d, so — per the test/wrap-run-reattach.test.js convention — those
- * are source-level pins over function bodies: the stream is attached beside
- * the POST rather than after it, every event type is subscribed, a CLOSED
- * source is the fallback and a CONNECTING one is left to reconnect, the final
- * render always closes the stream, and the blocking render the POST delivers
- * is untouched.
+ * The wiring in `public/session.js` that follows a run — the POST, the stream,
+ * the status fallback — is executed in test/wrap-run-session-wiring.test.js;
+ * the few source pins left here cover the live drawer's render primitive.
  */
 
 const { describe, it, before } = require('node:test');
@@ -198,6 +194,15 @@ describe('wrap-drawer helpers — live banner + report (#185)', () => {
     assert.equal(halted.tone, 'running');
   });
 
+  it('a Retry\'s run says Retrying at every stage, so it is not mistaken for the report it replaced', () => {
+    assert.equal(H.summarizeLiveStatus(null, { retry: true }).label, 'Retrying — starting…');
+    let live = H.applyWrapStreamEvent(null, RUN_START);
+    live = H.applyWrapStreamEvent(live, { type: 'step-start', stepId: 'changelog-update', kind: 'ai-content' });
+    assert.equal(H.summarizeLiveStatus(live, { retry: true }).label, 'Retrying — step 2 of 3');
+    assert.equal(H.summarizeLiveStatus(live, { retry: true }).tone, 'running');
+    assert.equal(H.summarizeLiveStatus(live).label, 'Wrapping — step 2 of 3', 'and a first wrap still says Wrapping');
+  });
+
   it('the unavailable banner keeps the running tone and says the report still arrives', () => {
     const s = H.streamUnavailableStatus();
     assert.equal(s.tone, 'running');
@@ -234,128 +239,6 @@ describe('session.js wiring (#185)', () => {
     assert.ok(!src.includes('startWrapSse'), 'the undefined call must not return');
     assert.ok(!src.includes('no client was ever written'));
     assert.ok(!src.includes('removed in the #990 review'), 'the comment describing the removed server half is stale now that both halves exist');
-  });
-
-  it('confirmWrap attaches the stream beside the POST — not after it — and still renders the POST\'s result', () => {
-    const body = functionBody(src, 'async function confirmWrap()');
-    const attachAt = body.indexOf('attachWrapStream(');
-    const awaitAt = body.indexOf('await postPromise');
-    assert.ok(attachAt !== -1 && awaitAt !== -1);
-    assert.ok(attachAt < awaitAt, 'attaching after the POST resolves would watch a run that has already ended');
-    // The freshness gate is the prior run id, snapshotted BEFORE the POST fires.
-    assert.ok(body.indexOf('priorRunId') < body.indexOf('apiMutate('));
-    // Fallback: the blocking render is untouched.
-    const resultBranch = body.slice(body.indexOf('if (data.pipelineResult)'));
-    assert.ok(resultBranch.includes('openWrapDrawer(data.pipelineResult'), 'the POST return still opens the drawer');
-  });
-
-  it('attachWrapStream is bounded, stops once the POST settled, and ignores a run that predates the POST', () => {
-    const body = functionBody(src, 'async function attachWrapStream(');
-    assert.ok(body.includes('WRAP_STREAM_DISCOVERY_ATTEMPTS'), 'a refused POST never claims a run — the probe must give up');
-    assert.ok(body.includes('&& wrapInFlight'), 'no point probing after the POST returned');
-    assert.ok(body.includes('status.runId !== priorRunId'), 'a wrap already running before this POST is the 409 path, not this wrap');
-  });
-
-  it('startWrapStream subscribes to every event type the server emits and folds each through the helper', () => {
-    const body = functionBody(src, 'function startWrapStream(');
-    for (const type of ['run-start', 'step-start', 'step-done', 'step-blocked', 'run-done']) {
-      assert.ok(body.includes(`'${type}'`), `event type ${type} must be subscribed — EventSource delivers named events only to named listeners`);
-    }
-    assert.ok(body.includes('applyWrapStreamEvent('));
-    assert.ok(body.includes('renderLiveWrapDrawer('));
-    assert.ok(body.includes('new EventSource('));
-  });
-
-  it('run-done renders the stream\'s result exactly as a POST return, and a CLOSED source is the fallback', () => {
-    const body = functionBody(src, 'function startWrapStream(');
-    const doneBranch = body.slice(body.indexOf("type === 'run-done'"));
-    assert.ok(doneBranch.includes('openWrapDrawer(result.pipelineResult'));
-    const onError = body.slice(body.indexOf('es.onerror'));
-    assert.ok(onError.includes('EventSource.CLOSED'), 'only a CLOSED source is terminal — CONNECTING reconnects with Last-Event-ID');
-    assert.ok(onError.includes('streamUnavailableStatus()'), 'the fallback says so instead of freezing a stale step count');
-    assert.ok(onError.includes('stopWrapStream()'));
-  });
-
-  it('every final render and the drawer close stop the stream; the reattach watch starts one', () => {
-    assert.ok(functionBody(src, 'function openWrapDrawer(').includes('stopWrapStream()'),
-      'the final render supersedes the live feed');
-    assert.ok(functionBody(src, 'function closeWrapDrawer()').includes('stopWrapStream()'));
-    // The third terminal render, and the one the family pin kept missing:
-    // `watchWrapRun`'s pipeline-threw / did-not-survive-a-restart banners. No
-    // misrender is reachable through it today, which is exactly why nothing
-    // noticed it was not a member.
-    assert.ok(functionBody(src, 'function openWrapDrawerNotice(').includes('stopWrapStream()'),
-      'the notice is a final render too — a live stream must not repaint over it');
-    const watch = functionBody(src, 'async function watchWrapRun(');
-    assert.ok(watch.includes('startWrapStream(status.runId'), 'a reattached page gets live rows too');
-    assert.ok(watch.indexOf('startWrapStream(') > watch.indexOf('closeWrapDrawer()'),
-      'the watch closes any prior drawer (and stream) before subscribing');
-  });
-
-  // The client half of the stream failed silently at three sites, and the
-  // dominant failure — a stream that dies before its first frame — left no
-  // trace anywhere, on either side. These pin that each site says something;
-  // the server half is driven for real in api-wrap-stream.test.js.
-  it('each silent failure path now says so, so "live progress never appeared" is bisectable', () => {
-    const discovery = functionBody(src, 'async function attachWrapStream(');
-    assert.match(discovery, /console\.warn/,
-      'giving up on discovery is invisible to the operator by design — it must not also be invisible to a maintainer');
-    assert.match(discovery, /no run found to watch/);
-
-    const body = functionBody(src, 'function startWrapStream(');
-    const parseCatch = body.slice(body.indexOf('JSON.parse'), body.indexOf('applyWrapStreamEvent'));
-    assert.match(parseCatch, /console\.warn/, 'a discarded frame is reported, not just returned from');
-
-    const onError = body.slice(body.indexOf('es.onerror'));
-    assert.match(onError, /console\.warn/,
-      'the terminal CLOSED case repaints only when a live drawer is already up — the common failure repaints nothing');
-    // The warn must precede the repaint guard, or the case it exists for
-    // (a stream dead before its first frame, so no live drawer) skips it.
-    assert.ok(onError.indexOf('console.warn') < onError.indexOf('sessionState.wrapDrawerOpen'),
-      'the warn fires before the repaint condition that the dominant failure fails');
-  });
-
-  it('the discovery probe never writes api()\'s shared error channel', () => {
-    // The probe runs concurrently with the wrap POST. `api()` reports failures
-    // through ONE set of function properties every caller overwrites, and
-    // `confirmWrap` reads `api.lastError` several microtask hops after its own
-    // POST resolves — so a probe continuation queued in the same drain nulls it
-    // in between and the operator reads "Wrap failed." instead of the server's
-    // reason. That is the defect #83 exists to prevent, reintroduced by a
-    // spectator.
-    const body = functionBody(src, 'async function attachWrapStream(');
-    assert.doesNotMatch(body, /\bawait api\(/,
-      'the probe must not go through the shared api() helper');
-    assert.match(body, /_probeWrapStatus\(/, 'it uses its own reader');
-
-    const probe = functionBody(src, 'async function _probeWrapStatus(');
-    assert.doesNotMatch(probe, /api\.lastError|api\.lastErrorCode|setConnected/,
-      'and that reader writes no part of the shared side channel');
-    // The reader itself must not reach for `api()` either — forbidding it only
-    // in the caller closes the site this happened to take, not the class.
-    assert.doesNotMatch(probe, /\bapi\s*\(/,
-      'the probe reads with its own request, not by delegating back to the shared helper');
-    // Its own request is `tcFetch`, which writes no shared state and still sends
-    // the page to /login when the session ended mid-wrap.
-    assert.match(probe, /\btcFetch\(/, 'the probe reads through tcFetch');
-    assert.doesNotMatch(probe, /(^|[^\w.$])fetch\(/, 'and never through a plain fetch');
-    assert.match(probe, /X-TC-Cache-Fallback/,
-      'while still refusing a service-worker cache stand-in as a server answer (#709)');
-  });
-
-  it('a probe that resolves after the wrap ended does not open a stream over the final report', () => {
-    // The loop condition samples `wrapInFlight` BEFORE the await; the decision
-    // to subscribe happens after it. A probe issued at the last step, whose
-    // body was captured server-side while the run was still going, otherwise
-    // starts a stream on a finished run and replays "Wrapping — step N of M"
-    // over the report already on screen — and on the outcomes whose `run-done`
-    // carries no `pipelineResult` nothing repaints it back.
-    const body = functionBody(src, 'async function attachWrapStream(');
-    const afterAwait = body.slice(body.indexOf('_probeWrapStatus('));
-    assert.match(afterAwait, /if \(!wrapInFlight\) break;/,
-      'the flag is re-read after the await, not only in the loop condition');
-    assert.ok(afterAwait.indexOf('if (!wrapInFlight) break;') < afterAwait.indexOf('startWrapStream('),
-      'and before anything subscribes');
   });
 
   it('the live drawer offers no decision: Retry and Done stay hidden until the run is over', () => {

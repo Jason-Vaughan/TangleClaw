@@ -883,54 +883,6 @@
   }
 
   /**
-   * #583 — Decide how to reattach to a server-side wrap run after a wrap
-   * POST failed (connection died, page reloaded, or 409 WRAP_IN_PROGRESS).
-   * Pure decision over the `GET /wrap/status` payload:
-   *
-   *   - `'watch'`  — a pipeline is running; poll it to completion.
-   *   - `'render'` — a run finished at/after the caller's POST went out;
-   *     its retained result IS this wrap's outcome — render the drawer.
-   *   - `'stalled'` — the run was claimed and never settled: the registry
-   *     stopped calling it live, but it was not observed to end and no
-   *     result was retained. Distinct from `'error'` because the outcome is
-   *     UNKNOWN rather than absent — see below.
-   *   - `'error'`  — nothing to reattach to (no run, or only a STALE
-   *     result from some previous wrap — which must never render as this
-   *     one's). Caller falls back to its own error UI.
-   *
-   * The `'stalled'` branch exists because the alternative is a false claim.
-   * Folded into `'error'`, a wedged run reaches the caller's restart notice —
-   * "its commit step never ran, so nothing was committed. It is safe to start
-   * a new wrap" — and not one of those statements is established here. The
-   * registry's threshold is a generous multiple of the worst observed pipeline
-   * wall-time, not a proof of death, so the reachable case is a genuinely slow
-   * wrap watched past it: the pipeline may be mid-`commit` while the operator
-   * is being invited to start a second one (#1314).
-   *
-   * @param {object|null} status - `GET /wrap/status` body
-   *   (`{running, stale, finishedAt, result, …}`), or null on a failed fetch.
-   * @param {number} postStartedAtMs - Epoch ms when the caller's wrap POST
-   *   went out — the freshness gate for a finished result.
-   * @returns {'watch'|'render'|'stalled'|'error'}
-   */
-  function wrapWatchDecision(status, postStartedAtMs) {
-    if (!status || typeof status !== 'object') return 'error';
-    if (status.running === true) return 'watch';
-    if (
-      status.result
-      && typeof status.finishedAt === 'number'
-      && typeof postStartedAtMs === 'number'
-      && status.finishedAt >= postStartedAtMs
-    ) {
-      return 'render';
-    }
-    // Checked AFTER the fresh-result gate: a run that went stale and then
-    // settled for real has an outcome, and the outcome is the better answer.
-    if (status.stale === true) return 'stalled';
-    return 'error';
-  }
-
-  /**
    * Whether `handleSessionEnded`'s auto-redirect countdown should start.
    * When the wrap drawer is open it is showing the operator's blocked /
    * warning report — the report is the primary source of truth for why a
@@ -1001,48 +953,67 @@
     const prev = live && typeof live === 'object' && Array.isArray(live.results) ? live : emptyWrapLive();
     const next = { ...prev, results: prev.results.map((r) => ({ ...r })) };
     if (!event || typeof event.type !== 'string') return next;
-    switch (event.type) {
-      case 'run-start': {
-        const steps = Array.isArray(event.steps) ? event.steps : [];
-        next.results = steps
-          .filter((s) => s && typeof s.stepId === 'string')
-          .map((s) => ({ stepId: s.stepId, kind: typeof s.kind === 'string' ? s.kind : '', status: 'pending', output: null, blockers: [] }));
-        next.started = true;
-        next.blockedAt = null;
-        next.currentStepId = null;
-        return next;
-      }
-      case 'step-start': {
-        if (typeof event.stepId !== 'string') return next;
-        const row = upsertLiveRow(next.results, event);
-        row.status = 'running';
-        next.currentStepId = event.stepId;
-        next.started = true;
-        return next;
-      }
-      case 'step-done':
-      case 'step-blocked': {
-        if (typeof event.stepId !== 'string') return next;
-        const row = upsertLiveRow(next.results, event);
-        row.status = typeof event.status === 'string' && event.status
-          ? event.status
-          : (event.type === 'step-blocked' ? 'blocked' : 'done');
-        row.output = event.output === undefined ? null : event.output;
-        row.blockers = Array.isArray(event.blockers) ? event.blockers : [];
-        if (event.halted === true) next.blockedAt = event.stepId;
-        if (next.currentStepId === event.stepId) next.currentStepId = null;
-        next.started = true;
-        return next;
-      }
-      case 'run-done':
-        next.done = true;
-        next.result = event.result && typeof event.result === 'object' ? event.result : null;
-        next.currentStepId = null;
-        return next;
-      default:
-        return next;
-    }
+    if (!Object.prototype.hasOwnProperty.call(WRAP_STREAM_FOLDS, event.type)) return next;
+    WRAP_STREAM_FOLDS[event.type](next, event);
+    return next;
   }
+
+  /**
+   * Settle one step's live row from a `step-done` / `step-blocked` event.
+   * Mutates `next`, which `applyWrapStreamEvent` has already copied.
+   * @param {object} next - The live state being built
+   * @param {object} event - The step's settling event
+   * @param {string} fallbackStatus - Status when the event carries none
+   * @returns {void}
+   */
+  function settleLiveRow(next, event, fallbackStatus) {
+    if (typeof event.stepId !== 'string') return;
+    const row = upsertLiveRow(next.results, event);
+    row.status = typeof event.status === 'string' && event.status ? event.status : fallbackStatus;
+    row.output = event.output === undefined ? null : event.output;
+    row.blockers = Array.isArray(event.blockers) ? event.blockers : [];
+    if (event.halted === true) next.blockedAt = event.stepId;
+    if (next.currentStepId === event.stepId) next.currentStepId = null;
+    next.started = true;
+  }
+
+  /**
+   * How each wrap-stream event folds into the live view, keyed by event name.
+   *
+   * A table rather than a switch so its KEYS can be checked against the
+   * producer's declaration (`public/wrap-stream-events.js`):
+   * `test/wrap-stream-event-vocabulary.test.js` fails when the server can emit a
+   * type this table does not handle, which a `default:` branch would otherwise
+   * absorb in silence. `session.js` subscribes by the same declared list.
+   *
+   * Each fold mutates the copy `applyWrapStreamEvent` hands it.
+   * @type {Record<string, (next: object, event: object) => void>}
+   */
+  const WRAP_STREAM_FOLDS = {
+    'run-start': (next, event) => {
+      const steps = Array.isArray(event.steps) ? event.steps : [];
+      next.results = steps
+        .filter((s) => s && typeof s.stepId === 'string')
+        .map((s) => ({ stepId: s.stepId, kind: typeof s.kind === 'string' ? s.kind : '', status: 'pending', output: null, blockers: [] }));
+      next.started = true;
+      next.blockedAt = null;
+      next.currentStepId = null;
+    },
+    'step-start': (next, event) => {
+      if (typeof event.stepId !== 'string') return;
+      const row = upsertLiveRow(next.results, event);
+      row.status = 'running';
+      next.currentStepId = event.stepId;
+      next.started = true;
+    },
+    'step-done': (next, event) => settleLiveRow(next, event, 'done'),
+    'step-blocked': (next, event) => settleLiveRow(next, event, 'blocked'),
+    'run-done': (next, event) => {
+      next.done = true;
+      next.result = event.result && typeof event.result === 'object' ? event.result : null;
+      next.currentStepId = null;
+    }
+  };
 
   /**
    * #185 — the live view as a `pipelineResult`, so the rows render through
@@ -1074,41 +1045,46 @@
    * seen mid-stream is named, but still as "wrapping": the final report is
    * the runner's to deliver.
    *
+   * A Retry's run says "Retrying" throughout, so the operator can tell the new
+   * pipeline walking its steps from the one whose report was just on screen.
+   *
    * @param {object|null} live - Live state from `applyWrapStreamEvent`
+   * @param {{retry?: boolean}} [opts]
    * @returns {{label: string, tone: 'running', detail: string|null}}
    */
-  function summarizeLiveStatus(live) {
+  function summarizeLiveStatus(live, opts) {
     const state = live && typeof live === 'object' && Array.isArray(live.results) ? live : emptyWrapLive();
-    if (!state.started) return { label: 'Wrapping — starting…', tone: 'running', detail: null };
+    const verb = opts && opts.retry === true ? 'Retrying' : 'Wrapping';
+    if (!state.started) return { label: `${verb} — starting…`, tone: 'running', detail: null };
     const total = state.results.length;
     const current = state.currentStepId ? state.results.find((r) => r.stepId === state.currentStepId) : null;
     if (current) {
       const ordinal = state.results.indexOf(current) + 1;
       return {
-        label: `Wrapping — step ${ordinal} of ${total}`,
+        label: `${verb} — step ${ordinal} of ${total}`,
         tone: 'running',
         detail: `${KIND_LABELS[current.kind] || current.kind || 'step'} (${current.stepId})`
       };
     }
     if (state.blockedAt) {
-      return { label: `Wrapping — stopped at "${state.blockedAt}"`, tone: 'running', detail: 'waiting for the final report' };
+      return { label: `${verb} — stopped at "${state.blockedAt}"`, tone: 'running', detail: 'waiting for the final report' };
     }
     const settled = state.results.filter((r) => r.status !== 'pending' && r.status !== 'running').length;
-    return { label: `Wrapping — ${settled} of ${total} steps settled`, tone: 'running', detail: null };
+    return { label: `${verb} — ${settled} of ${total} steps settled`, tone: 'running', detail: null };
   }
 
   /**
    * #185 — the banner when the stream failed for good mid-wrap. The wrap is
-   * unaffected (the pipeline never waits on a spectator) and the blocking
-   * POST still delivers the report; the drawer says so rather than leaving
-   * a frozen "step 4 of 14" that reads as a hung wrap.
+   * unaffected (the pipeline never waits on a spectator); the page falls back
+   * to polling the run's status, and the drawer says so rather than leaving a
+   * frozen "step 4 of 14" that reads as a hung wrap.
    * @returns {{label: string, tone: 'running', detail: string}}
    */
   function streamUnavailableStatus() {
     return {
       label: 'Wrapping — live progress unavailable',
       tone: 'running',
-      detail: 'the wrap is still running; the report opens when it finishes'
+      detail: 'the wrap is still running; checking its status — the report opens when it finishes'
     };
   }
 
@@ -1142,10 +1118,10 @@
     collectOptionsFromAccessors,
     accumulateAiContentSkips,
     buildReportText,
-    wrapWatchDecision,
     shouldStartEndedCountdown,
     isStrandedWrap,
     applyWrapStreamEvent,
+    WRAP_STREAM_FOLDS,
     liveWrapAsPipelineResult,
     summarizeLiveStatus,
     streamUnavailableStatus,

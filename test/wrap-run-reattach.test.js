@@ -1,13 +1,11 @@
 'use strict';
 
 /*
- * #583 — structural pins for the wrap-run reattach wiring in the browser
- * globals (`public/session.js`, `public/landing.js`). The decision logic
- * itself is pure and behaviorally tested (`wrapWatchDecision` in
- * test/wrap-drawer.test.js); these pins assert the call sites route
- * through it — the same source-probe approach as
- * test/landing-wrap-single-flight.test.js, because these files touch
- * `window` at load and cannot be require()d.
+ * #583 — the wrap-run reattach guards that remain source-level. How a page
+ * follows a run (409, dropped POST, reload, lost stream) is executed in
+ * test/wrap-run-session-wiring.test.js over the real functions, and the
+ * decisions are unit-tested in test/wrap-run-controller.test.js; what is
+ * pinned here is the countdown rule, the init call, and the restart guard.
  */
 
 const { describe, it, before } = require('node:test');
@@ -49,49 +47,6 @@ describe('wrap-run reattach wiring (#583)', () => {
   });
 
   describe('session.js', () => {
-    it('confirmWrap probes/reattaches on a failed POST before showing an error', () => {
-      const body = functionBody(sessionSrc, 'async function confirmWrap()');
-      const failBranch = body.slice(body.indexOf('if (!data)'));
-      assert.ok(failBranch.includes('watchWrapRun('),
-        'the !data branch must attempt reattach — a failed POST does not mean no wrap is running');
-      assert.ok(body.indexOf('watchWrapRun(') < body.indexOf("wrapError').textContent"),
-        'reattach is attempted BEFORE the error is rendered');
-    });
-
-    it('retryWrap reattaches on a failed retry POST and captures the password before the drawer can close', () => {
-      const body = functionBody(sessionSrc, 'async function retryWrap()');
-      assert.ok(body.includes('watchWrapRun('), 'retry failure path must attempt reattach');
-      const pwCapture = body.indexOf('const retryPassword = currentWrapPassword');
-      assert.ok(pwCapture !== -1, 'password captured into a local before any close can clear it');
-      assert.ok(pwCapture < body.indexOf('apiMutate'),
-        'password capture precedes the POST (closeWrapDrawer clears currentWrapPassword)');
-    });
-
-    it('watchWrapRun routes through the tested pure decision and polls the status endpoint', () => {
-      const body = functionBody(sessionSrc, 'async function watchWrapRun(');
-      assert.ok(body.includes('wrapWatchDecision('),
-        'the watch loop must use the pure, unit-tested decision — no ad-hoc freshness logic');
-      assert.ok(body.includes('/wrap/status'), 'watches the wrap-run status endpoint');
-      assert.ok(body.includes('clearWrappingState()'),
-        'a blocked (still-active-session) outcome restores the action buttons');
-      assert.ok(body.indexOf('wrapWatchInFlight = true') < body.indexOf('await api('),
-        'the single-flight flag is claimed synchronously BEFORE the first awaited call — two near-simultaneous callers must not both pass the guard (Critic note, chunk 583)');
-    });
-
-    it('a fresh thrown-pipeline result renders ITS error, never the restart notice (Critic warning, chunk 583)', () => {
-      const body = functionBody(sessionSrc, 'async function watchWrapRun(');
-      // Three distinct outcomes, in precedence order: pipelineResult drawer,
-      // fresh-result-without-pipelineResult (pipeline threw — show its
-      // error), vanished run (restart notice).
-      const pipelineBranch = body.indexOf('status.result.pipelineResult');
-      const thrownBranch = body.indexOf('status.result.error');
-      const restartNotice = body.indexOf('did not survive a server restart');
-      assert.ok(pipelineBranch !== -1 && thrownBranch !== -1 && restartNotice !== -1,
-        'all three render outcomes exist');
-      assert.ok(pipelineBranch < thrownBranch && thrownBranch < restartNotice,
-        'a fresh result without pipelineResult surfaces the run\'s real error BEFORE falling to the vanished-run restart diagnosis');
-    });
-
     it('opening the drawer cancels a ticking ended-countdown (#268 rule holds on the reattach race)', () => {
       // On the reattach path the drawer can open AFTER handleSessionEnded
       // started its 10s auto-redirect — the countdown must die, not navigate
@@ -107,13 +62,10 @@ describe('wrap-run reattach wiring (#583)', () => {
         'cancel clears the interval, not just the label');
     });
 
-    it('initSession reattaches only to a RUNNING run (a finished one is a previous page-load\'s business)', () => {
+    it('initSession restores the wrap run on load without blocking init on it', () => {
       const body = functionBody(sessionSrc, 'async function initSession()');
-      const probe = body.slice(body.indexOf('/wrap/status'));
-      assert.ok(probe.length > 12, 'init probes the wrap-run status');
-      assert.ok(probe.includes('running === true'),
-        'init-time reattach gates on running === true, never on a retained result');
-      assert.ok(probe.includes('watchWrapRun('), 'a running run is watched from init');
+      assert.ok(body.includes('restoreWrapRunOnLoad()'), 'init picks up a running or remembered run');
+      assert.ok(!body.includes('await restoreWrapRunOnLoad()'), 'and does not wait on a multi-minute wrap');
     });
   });
 

@@ -1,0 +1,54 @@
+/* ── TangleClaw — wrap-run stream event vocabulary ── */
+
+/**
+ * The names of the events a wrap run emits, declared once for both ends of the
+ * stream.
+ *
+ * The server writes each as an SSE `event:` name, and a browser `EventSource`
+ * delivers a named event ONLY to a listener registered for that exact name. So a
+ * type the producer emits and the client never subscribed to is not an error
+ * anywhere: no handler runs, no malformed-frame warning fires, and the drawer
+ * simply never shows that step. Spelling the list out separately in the runner,
+ * the registry, the subscription loop and the folding switch made that failure
+ * one forgotten edit away, with every suite still green.
+ *
+ * Loaded by the browser as a plain script (sets `window.tcWrapStreamEvents`) and
+ * required by the server (`lib/wrap-pipeline.js`, `lib/wrap-run-registry.js`).
+ * `test/wrap-stream-event-vocabulary.test.js` fails when a declared type has no
+ * client handler or a producer spells a type as a literal.
+ */
+(function (global) {
+  'use strict';
+
+  /**
+   * Event names keyed by role.
+   * @type {Readonly<{RUN_START: string, STEP_START: string, STEP_DONE: string, STEP_BLOCKED: string, RUN_DONE: string}>}
+   */
+  const WRAP_STREAM_EVENTS = Object.freeze({
+    // The run's shape: every step id and kind, before the first step moves.
+    RUN_START: 'run-start',
+    // One step began.
+    STEP_START: 'step-start',
+    // One step settled with `ok: true` (or was disabled by project config).
+    STEP_DONE: 'step-done',
+    // One step settled with `ok: false`; `halted` says whether the run stopped there.
+    STEP_BLOCKED: 'step-blocked',
+    // Terminal: carries the run's result. Appended by the registry, never the runner.
+    RUN_DONE: 'run-done'
+  });
+
+  /**
+   * Every event name, in the order a run emits them.
+   * @type {ReadonlyArray<string>}
+   */
+  const WRAP_STREAM_EVENT_TYPES = Object.freeze(Object.values(WRAP_STREAM_EVENTS));
+
+  const vocabulary = { WRAP_STREAM_EVENTS, WRAP_STREAM_EVENT_TYPES };
+
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = vocabulary;
+  }
+  if (global) {
+    global.tcWrapStreamEvents = vocabulary;
+  }
+})(typeof window !== 'undefined' ? window : null);

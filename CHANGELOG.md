@@ -4,6 +4,18 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **`POST /api/sessions/:project/wrap` answers `202` as soon as the wrap starts, instead of after the whole pipeline.** The response carries the run's `runId`, `statusUrl` and `streamUrl`. The wrap's report — the payload the POST used to return, `pipelineResult` included — now comes from the run itself: the live stream's final `run-done` frame, or `GET /api/sessions/:project/wrap/status`. A blocked or failed pipeline is part of that report (`ok: false`, with `blockedAt` or an `error`), not an HTTP error on the POST, because the run was already accepted. Refusals are unchanged and still immediate: `503 WRAP_DISABLED`, `403 FORBIDDEN`, `404 NOT_FOUND`, and `409 WRAP_IN_PROGRESS`, whose body now names the running wrap's `runId`. **A script that called this endpoint and read `pipelineResult` from the response must now follow the run.** The session page and the dashboard's Wrap button already do.
+
+### Fixed
+
+- **After Retry, the wrap drawer resets and shows the new run's progress, instead of freezing on the old "Blocked" report (#1312).** A Retry used to leave the red banner and the previous run's step rows on screen, unchanged, until the whole retried pipeline had finished minutes later. The retry had worked; the drawer just could not see it. Now, once the server accepts the retry, the banner reads **Retrying — starting…**, every step goes back to Pending, and the rows move step by step as the new run streams. The same change affects every wrap the page follows. Closing the drawer while a wrap runs no longer stops the page watching it: the report re-opens the drawer when it arrives. Reloading the tab mid-wrap, or while a blocked report is open, brings that run back. If the live stream drops for good, the page checks the wrap's status every few seconds and still shows the report. The collapsible, smaller drawer the issue also asks for is separate work.
+
+### Internal
+
+- **The wrap stream's event names are declared once (#1228).** `run-start`, `step-start`, `step-done`, `step-blocked` and `run-done` were written out separately in the runner, the registry, the drawer's event folding and the page's subscription, and nothing failed if one was missed. They now live in `public/wrap-stream-events.js`, which the server requires and the page loads. `test/wrap-stream-event-vocabulary.test.js` fails when a declared event has no drawer handler, or when a producer writes a name out instead of using the declaration. The page follows a wrap through one pure state machine, `public/wrap-run-controller.js`, whose transitions and wiring are tested by running them, where the old code was checked only by reading its source.
+
 ## [5.25.1] - 2026-09-14
 
 ### Fixed

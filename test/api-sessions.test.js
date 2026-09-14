@@ -229,6 +229,26 @@ describe('api-sessions', () => {
     });
   });
 
+  /**
+   * The wrap POST answers 202 once the run is claimed. Wait for that run to
+   * settle and return its outcome from /wrap/status — the payload the drawer
+   * renders.
+   * @param {object} srv - The test server
+   * @param {{status: number, body: object}} accepted - The POST's response
+   * @returns {Promise<object>} The run's result payload
+   */
+  async function settledWrapResult(srv, accepted) {
+    assert.equal(accepted.status, 202, 'the POST answers once the run is claimed');
+    for (let i = 0; i < 500; i++) {
+      const status = await request(srv, 'GET', '/api/sessions/api-sess-test/wrap/status');
+      if (status.body.runId === accepted.body.runId && !status.body.running && status.body.result) {
+        return status.body.result;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+    return assert.fail('the wrap never settled');
+  }
+
   describe('POST /api/sessions/:project/wrap response (#139 Chunk 10)', () => {
     it('threads options from body to runWrapPipeline and surfaces pipelineResult', async () => {
       const project = store.projects.getByName('api-sess-test');
@@ -258,8 +278,13 @@ describe('api-sessions', () => {
         const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {
           options: { skipTests: true, prHandling: { 42: 'defer' } }
         });
-        assert.equal(res.status, 200);
+        const result = await settledWrapResult(server, res);
         assert.equal(res.body.ok, true);
+        assert.equal(res.body.status, 'wrapping');
+        assert.match(res.body.runId, /^[0-9a-f]{32}$/);
+        assert.equal(res.body.streamUrl, `/api/sessions/api-sess-test/wrap/stream/${res.body.runId}`);
+        assert.equal(res.body.statusUrl, '/api/sessions/api-sess-test/wrap/status');
+        assert.equal(res.body.pipelineResult, undefined, 'the 202 carries a handle, never a result');
         // #583's threading contract: body options pass through unchanged,
         // plus the wrap-run registry's progress hook rides along — named
         // here rather than swept into `userOptions`, which would let a
@@ -269,9 +294,9 @@ describe('api-sessions', () => {
         assert.deepEqual(userOptions, { skipTests: true, prHandling: { 42: 'defer' } });
         assert.equal(typeof onStepEvent, 'function', '#583/#185 progress hook threaded to the runner');
         assert.equal(resumeFrom, null, '#1404 resume record is server-set; no blocked predecessor here');
-        assert.ok(res.body.pipelineResult, 'response must surface pipelineResult');
-        assert.equal(res.body.pipelineResult.commitSha, 'deadbeef');
-        assert.equal(res.body.status, 'wrapping');
+        assert.ok(result.pipelineResult, 'the run\'s result must surface pipelineResult');
+        assert.equal(result.pipelineResult.commitSha, 'deadbeef');
+        assert.equal(result.status, 'wrapping');
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
         // Clean up the active session.
@@ -280,7 +305,7 @@ describe('api-sessions', () => {
       }
     });
 
-    it('returns 200 with status:"blocked" when pipeline halts (not 500)', async () => {
+    it('records status:"blocked" as the run\'s result when the pipeline halts (not a server error)', async () => {
       const project = store.projects.getByName('api-sess-test');
       store.sessions.start({
         projectId: project.id,
@@ -303,12 +328,12 @@ describe('api-sessions', () => {
       try {
         const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {});
         // A blocked pipeline is NOT a server error — drawer needs the
-        // structured result to render decision widgets. HTTP 200.
-        assert.equal(res.status, 200);
-        assert.equal(res.body.ok, false);
-        assert.equal(res.body.status, 'blocked');
-        assert.equal(res.body.pipelineResult.blockedAt, 'test');
-        assert.equal(res.body.pipelineResult.results[0].status, 'blocked');
+        // structured result to render decision widgets.
+        const result = await settledWrapResult(server, res);
+        assert.equal(result.ok, false);
+        assert.equal(result.status, 'blocked');
+        assert.equal(result.pipelineResult.blockedAt, 'test');
+        assert.equal(result.pipelineResult.results[0].status, 'blocked');
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
         const active = store.sessions.getActive(project.id);
@@ -316,7 +341,7 @@ describe('api-sessions', () => {
       }
     });
 
-    it('returns 500 when pipeline throws (pipelineResult absent)', async () => {
+    it('records the pipeline\'s error as the run\'s result when it throws (pipelineResult absent)', async () => {
       const project = store.projects.getByName('api-sess-test');
       store.sessions.start({
         projectId: project.id,
@@ -329,8 +354,12 @@ describe('api-sessions', () => {
 
       try {
         const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {});
-        assert.equal(res.status, 500);
-        assert.match(res.body.error || '', /synthetic/);
+        // The run was claimed before it threw, so the POST accepted it; the
+        // failure is the run's outcome.
+        const result = await settledWrapResult(server, res);
+        assert.equal(result.ok, false);
+        assert.match(result.error || '', /synthetic/);
+        assert.equal(result.pipelineResult, undefined);
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
         const active = store.sessions.getActive(project.id);
@@ -357,7 +386,7 @@ describe('api-sessions', () => {
         const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {
           options: { prHandling: { '42': 'merge', '43': 'defer' } }
         });
-        assert.equal(res.status, 200);
+        await settledWrapResult(server, res);
         // #583: user options unchanged + the registry progress hook, and
         // #1404's server-set resume record.
         const { onStepEvent, resumeFrom, ...userOptions } = receivedOptions;
@@ -395,7 +424,7 @@ describe('api-sessions', () => {
         const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {
           options: 'not-an-object'
         });
-        assert.equal(res.status, 200);
+        await settledWrapResult(server, res);
         // #583: a discarded options body still reaches the runner carrying
         // ONLY server-owned keys — the registry progress hook (onStepEvent)
         // and #1404's resume record — and no user keys invented from the
@@ -412,7 +441,7 @@ describe('api-sessions', () => {
   });
 
   describe('POST /api/sessions/:project/wrap response', () => {
-    it('includes wrapSteps and captureFields in response', async () => {
+    it('includes wrapSteps and captureFields in the run\'s result', async () => {
       // Create an active session to wrap
       const project = store.projects.getByName('api-sess-test');
       const session = store.sessions.start({
@@ -432,11 +461,11 @@ describe('api-sessions', () => {
 
       try {
         const res = await request(server, 'POST', '/api/sessions/api-sess-test/wrap', {});
-        assert.equal(res.status, 200);
-        assert.equal(res.body.ok, true);
-        assert.equal(res.body.status, 'wrapping');
-        assert.ok(Array.isArray(res.body.wrapSteps));
-        assert.ok(Array.isArray(res.body.captureFields));
+        const result = await settledWrapResult(server, res);
+        assert.equal(result.ok, true);
+        assert.equal(result.status, 'wrapping');
+        assert.ok(Array.isArray(result.wrapSteps));
+        assert.ok(Array.isArray(result.captureFields));
       } finally {
         wrapPipelineMod.runWrapPipeline = realRun;
         // Cleanup
