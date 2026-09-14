@@ -107,8 +107,11 @@ drawer copy says "changed since this session launched", not "yours".
 
 *Amended after the cumulative review (R-1).* A path in the launch dirty set stays foreign even when a
 wrap step writes it (version-bump on `CHANGELOG.md`, features-toc on `FEATURES.md`). An explicit Leave
-wins: the file and the wrap's change to it stay uncommitted, and the drawer copy says so. Wrap-written
-paths count as owned only where no snapshot applies, because there the file time is the wrap's own.
+wins: the file and the wrap's change to it stay uncommitted, and the drawer copy says so. Where no
+snapshot applies (every worktree wrap, pre-v39 sessions, truncated sets), a wrap-written path is owned
+because its file time is the wrap's own, UNLESS the operator already answered for it: `session-files`
+asked because it predated the session, and that answer holds through the rewrite (verify-resolutions
+R-1 of `rev-20260914T222033Z-c844ac15`).
 AI-edited watched outputs need no special case: they are owned by the snapshot or file-time rule unless
 they were dirty at launch, and then the same Leave/Include decision covers them. An unreadable file
 time gets its own reason (`unreadable-time`) instead of "predates launch" (R-15).

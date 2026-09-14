@@ -180,6 +180,29 @@ describe('the #1406 repro: work already uncommitted at launch is not swept into 
     assert.match(porcelain(repo), /^\?\? CHANGELOG\.md$/m, 'still uncommitted, with the wrap\'s rewrite on disk');
   });
 
+  it('in a worktree (no snapshot), Leave on a pre-session CHANGELOG.md holds through a version-bump rewrite', async () => {
+    const repo = makeRepo();
+    const wt = `${repo}-wt`;
+    dirs.push(wt);
+    git(repo, 'worktree', 'add', '-q', '-b', 'feat/leave-wt', wt);
+    fs.writeFileSync(path.join(wt, 'CHANGELOG.md'), '# Changelog\n\noperator draft\n');
+    const old = new Date('2000-01-01T00:00:00Z');
+    fs.utimesSync(path.join(wt, 'CHANGELOG.md'), old, old);
+    const scope = await wrapScope.resolve({ name: 'own', path: repo }, { id: 1, tmuxSession: 'own', startedAt: '2020-01-01 00:00:00' }, {
+      exec: asyncExec, paneCurrentPath: () => wt, getLaunchBaseline: () => launchBaseline.capture(repo)
+    });
+    assert.equal(scope.snapshotApplies, false, 'fixture precondition: the launch snapshot describes the checkout, not the worktree');
+    fs.writeFileSync(path.join(wt, 'feature.js'), 'session work\n');
+    const project = wrapScope.stepProject({ id: 1, name: 'own', path: repo }, scope);
+    const options = { pathDecisions: { 'CHANGELOG.md': 'leave' } };
+    const r = await commitStep.run({
+      project, session: null, step: { id: 'commit' }, previousResults: [], options, scope,
+      staged: { 'version-bump:changelog': { primingPath: path.join(wt, 'CHANGELOG.md'), newContent: '# Changelog\n\n## [1.0.0]\noperator draft\n', changed: true } }
+    });
+    assert.equal(r.status, 'done');
+    assert.deepEqual(git(wt, 'show', '--name-only', '--format=', 'HEAD').split('\n'), ['feature.js']);
+  });
+
   it('a wrap during an unfinished merge stops with a merge-specific reason and commits nothing', async () => {
     const repo = makeRepo();
     git(repo, 'checkout', '-q', 'main');
@@ -267,6 +290,19 @@ describe('classify', () => {
     });
     assert.deepEqual(left.stageable, []);
     assert.deepEqual(left.left, ['old.js']);
+  });
+
+  it('with no snapshot, a Leave already given still wins after a wrap step rewrites the file', () => {
+    const noSnap = scope({ snapshotApplies: false });
+    // Before the wrap wrote it, the file predated the session, so the operator was asked.
+    const asked = ownership.classify(noSnap, [{ path: 'CHANGELOG.md', deleted: false }], { mtimeMs: () => 1 });
+    assert.equal(asked.undecided[0].reason, 'predates-launch');
+    // After version-bump's rewrite, its file time is the wrap's; the answer must still hold.
+    const after = ownership.classify(noSnap, [{ path: 'CHANGELOG.md', deleted: false }], {
+      wrapWritten: ['CHANGELOG.md'], decisions: { 'CHANGELOG.md': 'leave' }, mtimeMs: () => 5000
+    });
+    assert.deepEqual(after.stageable, []);
+    assert.deepEqual(after.left, ['CHANGELOG.md']);
   });
 
   it('with no snapshot, a file the wrap wrote is its own, and an unreadable time is named as such', () => {
