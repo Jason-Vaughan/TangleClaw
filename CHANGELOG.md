@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.25.1] - 2026-09-14
+
 ### Fixed
 
 - **A wrap no longer deletes the rest of a `PROJECT-MAP.md` description that runs onto more than one line (#1363).** The `project-map` wrap step refreshes the `## Structure` list of top-level directories while keeping each directory's hand-written description, but it read that description one line at a time. Only the bullet's first line survived; every continuation line was deleted, leaving a sentence cut mid-clause while the step reported success. It had already happened twice on TangleBrain. The step now reads each bullet as a whole markdown list item: continuation lines (indented or not), a nested list, and a further indented paragraph all stay with their directory. They are dropped only when that directory is gone. An unchanged file with wrapped descriptions refreshes byte-for-byte, so the step reports no drift instead of rewriting it.
