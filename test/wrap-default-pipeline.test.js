@@ -98,7 +98,7 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
   it('every declared verifySatisfiedBy names a predicate the gate implements', () => {
     // An unrecognized name degrades to the mutation check rather than throwing, so
     // a typo here would be silent at runtime — this is the only thing that catches it.
-    const IMPLEMENTED = new Set(['changelog-coverage']);
+    const IMPLEMENTED = new Set(Object.keys(aiContent.SATISFACTION_PREDICATES));
     for (const step of defaultPipeline.steps()) {
       if (!step.verifySatisfiedBy) continue;
       assert.ok(IMPLEMENTED.has(step.verifySatisfiedBy),
