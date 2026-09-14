@@ -123,15 +123,21 @@ describe('account self-service, end to end (#1457, #1463)', () => {
   const change = (s, body) => send('POST', '/api/auth/password', { cookie: s.cookie, csrf: s.csrf, body });
 
   describe('POST /api/auth/password', () => {
-    it('changes the password, keeps this session, and ends the account\'s other sessions', async () => {
+    it('changes the password, keeps this browser signed in on a NEW session, and ends every other session', async () => {
       arm();
       const here = await login();
       const phone = await login();
       const res = await change(here, { currentPassword: PASSWORD, newPassword: NEW_PASSWORD });
       assert.equal(res.statusCode, 200, res.body);
       assert.equal(json(res).otherSessionsEnded, 1);
-      assert.equal(await stillSignedIn(here), true, 'the browser that made the change stays signed in');
+      const renewed = { cookie: cookieOf(res), csrf: json(res).csrfToken };
+      assert.match(renewed.cookie, /tc_session=[^;]+/, 'the response sets the replacement session');
+      assert.equal(await stillSignedIn(renewed), true, 'the browser that made the change stays signed in');
+      assert.equal(await stillSignedIn(here), false,
+        'a copy of this browser\'s OLD cookie does not survive the change');
       assert.equal(await stillSignedIn(phone), false, 'every other session is ended');
+      const csrfCookie = (res.headers['set-cookie'] || []).find((c) => c.startsWith('tc_csrf='));
+      assert.ok(csrfCookie && csrfCookie.includes(renewed.csrf), 'the page\'s CSRF cookie follows the new session');
       assert.equal((await login('rosie', PASSWORD)).cookie, null, 'the old password no longer signs in');
       assert.ok((await login('rosie', NEW_PASSWORD)).cookie, 'the new one does');
     });
@@ -223,32 +229,79 @@ describe('account self-service, end to end (#1457, #1463)', () => {
       assert.equal(store.recoveryCodes.status(user.id).remaining, codes.length);
     });
 
-    it('verifies and hashes inside the shared login concurrency cap', () => {
+    it('two sessions changing the password at once: one wins, the other is told nothing changed', async () => {
+      arm();
+      const a = await login();
+      const b = await login();
+      const [ra, rb] = await Promise.all([
+        change(a, { currentPassword: PASSWORD, newPassword: NEW_PASSWORD }),
+        change(b, { currentPassword: PASSWORD, newPassword: 'another-long-new-password' })
+      ]);
+      const statuses = [ra.statusCode, rb.statusCode].sort();
+      // Both verified the same old password before either wrote; the second
+      // write must not overwrite the first. Here the winner's commit also ends
+      // the loser's session, so the session re-check is what refuses it; the
+      // stored-hash re-check is pinned on its own in the store tests below.
+      assert.deepEqual(statuses, [200, 409], `${ra.body} / ${rb.body}`);
+      const winner = ra.statusCode === 200 ? NEW_PASSWORD : 'another-long-new-password';
+      const loser = json(ra.statusCode === 409 ? ra : rb);
+      assert.equal(loser.code, 'PASSWORD_CHANGE_STALE');
+      assert.ok((await login('rosie', winner)).cookie, 'the password the winner was told they set is the one stored');
+    });
+
+    it('verifies and hashes inside the shared login concurrency cap, after the policy check', () => {
       // One slot for both derivations: the route must not take two.
       const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
       const start = src.indexOf("route('POST', '/api/auth/password'");
       const body = src.slice(start, src.indexOf('\n});', start));
       assert.equal(body.split('_withHashSlot(').length - 1, 1, 'exactly one hash slot');
-      const slot = body.slice(body.indexOf('_withHashSlot('));
-      assert.ok(slot.indexOf('verifyAsync(') !== -1 && slot.indexOf('hashPasswordAsync(') !== -1,
-        'both derivations run inside it');
+      assert.match(body.slice(body.indexOf('_withHashSlot(')), /^_withHashSlot\([^)]*\n?\s*\(\) => store\.users\.changePasswordFromSession\(/,
+        'the store call that verifies and hashes runs inside it');
       assert.ok(body.indexOf('validateAdminPassword(') < body.indexOf('_withHashSlot('),
         'the policy is checked before any hashing');
     });
   });
 
-  describe('store.users.replacePasswordKeepingSession', () => {
-    it('refuses a disabled account and writes nothing', async () => {
-      const user = arm();
-      store.users.create('sam', PASSWORD);
+  describe('store.users.changePasswordFromSession — the re-checks under the lock', () => {
+    /** The live session row behind a signed-in browser. */
+    const sessionOf = (s) => store.authSessions.resolve(decodeURIComponent(s.cookie.match(/tc_session=([^;]+)/)[1]));
+
+    it('writes nothing when the session was ended between the check and the write', async () => {
+      arm();
       const s = await login();
-      const row = store.authSessions.resolve(decodeURIComponent(s.cookie.match(/tc_session=([^;]+)/)[1]));
-      assert.ok(row, 'precondition: the session resolves');
-      store.users.disable('rosie');
-      const hash = require('../lib/password').hashPassword(NEW_PASSWORD);
-      assert.equal(store.users.replacePasswordKeepingSession(user.id, hash, row.id), null);
-      store.users.enable('rosie');
+      const row = sessionOf(s);
+      store.authSessions.destroyForUser('rosie');
+      assert.deepEqual({ ...await store.users.changePasswordFromSession(row, PASSWORD, NEW_PASSWORD) }, { status: 'stale' });
       assert.ok(store.users.verify('rosie', PASSWORD), 'the old password still stands');
+    });
+
+    it('writes nothing for a disabled account', async () => {
+      arm();
+      const s = await login();
+      const row = sessionOf(s);
+      store.users.disable('rosie');
+      assert.equal((await store.users.changePasswordFromSession(row, PASSWORD, NEW_PASSWORD)).status, 'stale');
+      store.users.enable('rosie');
+      assert.ok(store.users.verify('rosie', PASSWORD));
+    });
+
+    it('writes nothing when the stored password changed after it was read', async () => {
+      arm();
+      const s = await login();
+      const row = sessionOf(s);
+      const pending = store.users.changePasswordFromSession(row, PASSWORD, NEW_PASSWORD);
+      // Lands while the derivations above are off the event loop.
+      store.getDb().prepare('UPDATE users SET password_hash = ? WHERE username = ?')
+        .run(require('../lib/password').hashPassword('set-by-someone-else-x'), 'rosie');
+      assert.equal((await pending).status, 'stale');
+      assert.ok(store.users.verify('rosie', 'set-by-someone-else-x'), 'the other change stands');
+    });
+
+    it('answers bad-password without writing', async () => {
+      arm();
+      const s = await login();
+      assert.equal((await store.users.changePasswordFromSession(sessionOf(s), 'wrong', NEW_PASSWORD)).status, 'bad-password');
+      assert.equal(await stillSignedIn(s), true);
     });
   });
 

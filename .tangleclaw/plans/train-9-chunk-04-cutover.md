@@ -514,9 +514,10 @@ mechanism is the issue's reading of Chrome's behaviour, and only a real browser 
   CHANGELOG `### Fixed`.
 
 #### Chunk A.05b (A-05b) — sign out, sign out everywhere, change password
-- **#1463 Sign out:** a control next to the "Logged in as" chip in the dashboard header and in the
-  session page's banner. It posts `/api/auth/logout` through `api()` and lands on `/login`. The chip's
-  stale `title` ("Authenticated via the Caddy login gate") is corrected.
+- **#1463 Sign out:** a control next to the "Logged in as" chip in the dashboard header, and in the
+  session page's settings modal (Account group) — not its banner, which is already full on a phone. It
+  posts `/api/auth/logout` through `api()` (shared `tcSignOut`) and lands on `/login`. The chip's stale
+  `title` ("Authenticated via the Caddy login gate") is corrected.
 - **Sign out everywhere:** `POST /api/auth/logout-everywhere` — NOT on the gate's exemption list, so it
   needs a session and the CSRF token like any write. Ends every session the account holds
   (`store.authSessions.destroyForUser`), clears this browser's cookies, logs at warn. No password: the
@@ -525,11 +526,14 @@ mechanism is the issue's reading of Chrome's behaviour, and only a real browser 
 - **#1457 Change password:** `POST /api/auth/password` `{ currentPassword, newPassword }`. Order: a
   session (the recovery-code routes' refusal helper, generalised) → both fields → policy on the new one
   (`caddy.validateAdminPassword`, same rules as every surface) → verify the current one AND hash the
-  new one inside ONE `_withHashSlot` → `store.users.changePassword` updates the hash and deletes the
-  account's OTHER sessions in one transaction, keeping this one → warn log. Wrong current password:
-  403 `REAUTH_FAILED`, as minting codes answers. Recovery codes untouched. Settings gains the form.
-- **Docs:** user guide "Changing your login", setup guide and `docs/recovery.md` stop saying no form
-  exists; `docs/api` / API contract for the two routes; FEATURES.md.
+  new one inside ONE `_withHashSlot` (`store.users.changePasswordFromSession`) → under the write lock,
+  only if the stored hash and this session are unchanged (else `409 PASSWORD_CHANGE_STALE`): set the
+  hash, end every session the account holds, and issue this browser a replacement session (cookies
+  set by the route) → warn log. Wrong current password: 403 `REAUTH_FAILED`, as minting codes answers,
+  logged under its own message. Recovery codes untouched. Settings gains the form (Your account).
+  (A-05b cumulative review: the re-checks and the rotation were added there.)
+- **Docs:** user guide "Changing your login", setup guide stops saying no form exists; SECURITY.md;
+  FEATURES.md. (`docs/recovery.md` never said it; the API contract does not list the auth routes.)
 - **Done when:** suite green (route tests through `handleRequest` with `store._setBasePath`); chunk
   Critic clean; CHANGELOG `### Added`.
 

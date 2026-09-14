@@ -2542,15 +2542,20 @@ route('POST', '/api/auth/recovery-codes/acknowledge', (req, res) => {
 //   3. Policy on the NEW password, before any hashing, so a stream of rejected
 //      submissions costs no scrypt. The same rules as every surface that sets
 //      one (`caddy.validateAdminPassword`).
-//   4. Verify the CURRENT password and hash the new one inside ONE hash slot.
+//   4. `users.changePasswordFromSession`, inside ONE hash slot: verify the
+//      CURRENT password and hash the new one, then, under the write lock and
+//      only if neither the stored hash nor this session changed meanwhile, set
+//      the password, end the account's other sessions and replace this one.
 //      A session alone must not be able to change the password: a stolen
 //      cookie that could would lock the owner out of their own account.
-//   5. Replace the hash and end the account's OTHER sessions in one
-//      transaction, keeping this one (`users.replacePasswordKeepingSession`).
+//   5. Set the replacement session's cookies, so this browser stays signed in
+//      and a copy of its old cookie does not.
 //
 // A wrong current password answers 403 `REAUTH_FAILED`, as minting recovery
 // codes does — not 401, which the dashboard reads as "your session is gone"
-// and leaves the page for.
+// and leaves the page for. It is logged at warn under its own message: a run of
+// them is someone with a session guessing at the password, which a generic
+// verify-failed line would hide among ordinary mistyped sign-ins.
 route('POST', '/api/auth/password', async (req, res, _params, body) => {
   const session = _accountSession(req, res, {
     notRequired: 'This install does not require a login, so there is no password to change.',
@@ -2566,21 +2571,29 @@ route('POST', '/api/auth/password', async (req, res, _params, body) => {
   const policy = caddy.validateAdminPassword(next, session.username);
   if (!policy.ok) return errorResponse(res, 400, policy.error, 'WEAK_PASSWORD');
 
-  const derived = await _withHashSlot(res, 'a password change', async () => {
-    const verified = await store.users.verifyAsync(session.username, current);
-    if (!verified) return null;
-    return { user: verified, hash: await passwordHashing.hashPasswordAsync(next) };
-  });
-  if (derived.refused) return;
-  if (!derived.value) {
+  const attempt = await _withHashSlot(res, 'a password change',
+    () => store.users.changePasswordFromSession(session, current, next));
+  if (attempt.refused) return;
+  const outcome = attempt.value;
+  if (outcome.status === 'bad-password') {
+    log.warn('Refused a password change: the current password did not match', { username: session.username });
     return errorResponse(res, 403, 'That current password did not match.', 'REAUTH_FAILED');
   }
-  const changed = store.users.replacePasswordKeepingSession(derived.value.user.id, derived.value.hash, session.id);
-  if (!changed) {
-    // Disabled between the verification and the write.
-    return errorResponse(res, 409, 'This account cannot change its password.', 'NO_SUCH_ACCOUNT');
+  if (outcome.status === 'stale') {
+    log.warn('Refused a password change: the password or this session changed while it was being checked',
+      { username: session.username });
+    return errorResponse(res, 409,
+      'Your password or your session changed while this was being checked, so nothing was changed. '
+      + 'Reload and try again.', 'PASSWORD_CHANGE_STALE');
   }
-  jsonResponse(res, 200, { ok: true, otherSessionsEnded: changed.sessionsEnded });
+  const secure = authSession.isSecureRequest(req);
+  res.setHeader('Set-Cookie', [
+    authSession.serializeCookie(outcome.session.token, { secure }),
+    authSession.serializeCsrfCookie(outcome.session.csrfToken, { secure })
+  ]);
+  jsonResponse(res, 200, {
+    ok: true, otherSessionsEnded: outcome.sessionsEnded, csrfToken: outcome.session.csrfToken
+  });
 });
 
 // POST /api/auth/logout-everywhere — end every session the signed-in account

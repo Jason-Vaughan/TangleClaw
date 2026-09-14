@@ -132,8 +132,9 @@ fails any auto-stub section older than 14 days.
   has had an account, the route takes a claim only from a direct loopback caller, `403
   ACCOUNT_STORE_LOST` otherwise); account self-service (#1457, #1463): `POST /api/auth/password`
   (current + new password; policy first, then verify-and-hash inside one hash slot, then
-  `store.users#replacePasswordKeepingSession` ends the account's OTHER sessions atomically; wrong
-  current password `403 REAUTH_FAILED`; recovery codes untouched) and `POST /api/auth/logout-everywhere`
+  `store.users#changePasswordFromSession` re-checks the stored hash and this session under the write
+  lock (`409 PASSWORD_CHANGE_STALE` otherwise), ends every session the account holds and re-issues this
+  browser a replacement; wrong current password `403 REAUTH_FAILED`; recovery codes untouched) and `POST /api/auth/logout-everywhere`
   (not gate-exempt, so session + CSRF; `#destroyForUser`), both refused through `server.js#_accountSession`
   on an open install (`409 LOGIN_NOT_REQUIRED`) or during a fallback; UI: Sign out beside the header chip
   (`public/landing.js#renderAuthUser`) and in a session page's settings (`public/session.js#renderAccountGroup`),
