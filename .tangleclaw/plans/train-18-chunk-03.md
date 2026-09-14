@@ -147,6 +147,38 @@ description and names the `learnings-entry` predicate. The #826 no-op sentinel l
     marker.
   - (2) A `learnings.md` entry written before the wrap passes learnings-capture with no new edit.
 
+## Amendment after the live check (D2)
+
+In live check (1), Claude wrote `learnings.md` and printed its marker about 2s later. Under D2 as first
+written, a reply taking longer than `STABILITY_MS` (4s) after the write would have let file-settle
+end the wait mid-reply, which is #1450 again. So a settled file now waits `MARKER_GRACE_MS` (15s) for
+the marker before it ends the step. The marker still wins inside that window, and an engine that
+never prints it pays 15s per file-producing step. This is within the ruling's "marker first"
+intent. It adds one test, which was checked to go red with the grace at 0.
+
+Also found in 03a: `test/chime-at-prompt.test.js` pinned `ai-content.js` to `detectIdle` as #1180's
+statement that it left that caller alone. #1450 moves that caller deliberately. The guard now asserts
+that `invoke-critic.js` still uses the heuristic and that `ai-content.js` does not, and the
+`detectIdle` docstring says why.
+
+Considered and not taken: `sessions.detectAtPrompt` (engine wake profiles, #1180) as the quiet
+fallback. It is stronger where a profile exists, but it is a second engine-profiled mechanism in the
+wrap for a path the marker already covers on the profiled engine.
+
+## Live check evidence (03d, 2026-09-14)
+
+A real Claude Code pane (v2.1.271, `--permission-mode acceptEdits`) in tmux, scratch git repo, driven by
+the real `ai-content.run` over real `tmux.sendKeys` / `capturePane`, using the default pipeline's
+`learnings-capture` spec. No server was involved, because the drawer belongs to Chunk 4.
+1. `learnings.md` last modified before the session, with no entry from it. Claude appended the no-op
+   line (two writes, 3.6s and 7.7s) and printed `TCWRAP-DONE 941b4fc5`. The step finished at 9.8s,
+   `completedVia: marker`. The pane showed the rendered prompt and its instruction (the token occurs
+   twice in scrollback), and the echoed prompt did not match.
+2. A dated entry appended before the step. Claude replied "Already captured … didn't add another"
+   plus the marker, and the step finished at 3.7s: `done`, `completedVia: marker`. The file was
+   unchanged during the run, and the log read "satisfied by an entry already in the file" with
+   `entryDate=2026-09-14`.
+
 ## Done when
 
 Suite green; the 03d check observed; `/prawduct:critic cumulative` with no unresolved blocking findings;
@@ -154,7 +186,7 @@ PR opened (`Fixes #1450`, `Fixes #843`, `Fixes #1405`); the Coordinator pinged w
 
 ## Status
 
-- [ ] 03a completion marker + honest fallback
+- [ ] 03a completion marker + honest fallback (built; tick after review)
 - [ ] 03b learnings-entry predicate
 - [ ] 03c docs
 - [ ] 03d live check

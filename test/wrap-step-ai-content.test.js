@@ -1461,6 +1461,25 @@ describe('wrap-step ai-content — #1450 completion marker', () => {
     assert.ok(clock < aic.QUIET_FALLBACK_MS);
   });
 
+  it('a settled file does not end the wait while the marker is still inside its grace window', async () => {
+    // Live-observed shape: Claude writes the file, then composes its reply for a
+    // few seconds. Ending the step at the write would send the next prompt into
+    // that reply.
+    let clock = 0;
+    aic._internal.sendKeys = () => {};
+    aic._internal.sleep = async (ms) => { clock += ms; };
+    aic._internal.now = () => clock;
+    aic._internal.newNonce = () => 'n0nce';
+    aic._internal.readForVerify = () => (clock < 6000 ? 'old' : 'new entry');
+    aic._internal.readPaneTail = () => (clock < 6000 + aic.STABILITY_MS + 8000 ? `composing ${clock}` : 'TCWRAP-DONE n0nce');
+    aic._internal.capturePane = () => ({ lines: REPLY });
+
+    const res = await aic.run(ctx({ ...plainStep, verifyChanged: ['CHANGELOG.md'] }));
+    assert.equal(res.status, 'done');
+    assert.equal(res.output.completedVia, 'marker', 'the settled file ended the wait before the AI finished its reply');
+    assert.ok(aic.MARKER_GRACE_MS > 8000);
+  });
+
   it('stamps completedVia on a blocked result too, so the row says what ended the wait', async () => {
     aic._internal.sendKeys = () => {};
     aic._internal.sleep = async () => {};
