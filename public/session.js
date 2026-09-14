@@ -657,21 +657,81 @@ function renderActionFallback(actionLabel, reason) {
   document.body.appendChild(panel);
 }
 
+/** Group id → name for the banner's groups, so a group whose details fail to load is still named. */
+let bannerGroupNames = {};
+
 /**
- * Render group pills in the banner row. Clicking shows a popover with member projects.
+ * Render the project's groups in the banner row. One group is one pill named
+ * for it; two or more are ONE pill counting them (#1472), because a pill per
+ * group wrapped the banner onto extra rows. Either way, clicking shows who is
+ * in the group — for the counted pill, every group in turn.
  * @param {object[]} groups - Array of { id, name, sharedDocCount }
  */
 function renderBannerGroups(groups) {
   const container = document.getElementById('bannerGroups');
+  bannerGroupNames = Object.fromEntries(groups.map(g => [g.id, g.name]));
   if (!groups.length) {
     container.innerHTML = '';
     return;
   }
 
-  container.innerHTML = groups.map(g =>
-    `<span class="group-pill" data-group-id="${g.id}" data-tooltip="Project group" onclick="toggleGroupPopover(this, '${g.id}')">${esc(g.name)}` +
-    `<span class="group-popover" id="groupPop-${g.id}"></span></span>`
-  ).join('');
+  if (groups.length === 1) {
+    const g = groups[0];
+    container.innerHTML =
+      `<span class="group-pill" data-group-id="${esc(g.id)}" data-tooltip="Project group" onclick="toggleGroupPopover(this, '${esc(g.id)}')">${esc(g.name)}` +
+      `<span class="group-popover" id="groupPop-${esc(g.id)}"></span></span>`;
+    return;
+  }
+
+  container.innerHTML =
+    `<span class="group-pill" data-group-ids="${groups.map(g => esc(g.id)).join(',')}" data-tooltip="Project groups" onclick="toggleGroupsPopover(this)">${groups.length} groups` +
+    '<span class="group-popover groups-popover" id="groupsPop"></span></span>';
+}
+
+/**
+ * One group's section of a group popover: its name, description, members
+ * (this project marked) and shared-doc count.
+ * @param {object} data - A `/api/groups/:id` answer
+ * @returns {string} HTML, every value escaped
+ */
+function groupPopoverHtml(data) {
+  const members = data.members || [];
+  const docsCount = (data.docs || []).length;
+  return `<div class="group-popover-title">${esc(data.name)}</div>` +
+    (data.description ? `<div style="color:var(--text-muted);font-size:11px;margin-bottom:6px">${esc(data.description)}</div>` : '') +
+    members.map(m =>
+      `<div class="group-popover-member${m.name === projectName ? ' current' : ''}">${esc(m.name || 'unknown')}</div>`
+    ).join('') +
+    (docsCount > 0 ? `<div style="margin-top:6px;font-size:10px;color:var(--text-muted)">${docsCount} shared doc${docsCount !== 1 ? 's' : ''}</div>` : '');
+}
+
+/**
+ * Toggle the counted groups pill's popover: every group the project is in,
+ * each with its members, asked of the server when it opens. A group whose
+ * details could not be loaded is still named, and says so, rather than
+ * silently missing from the list.
+ * @param {HTMLElement} pill - The counted groups pill, carrying `data-group-ids`
+ * @returns {Promise<void>}
+ */
+async function toggleGroupsPopover(pill) {
+  const pop = document.getElementById('groupsPop');
+  if (!pop) return;
+
+  closeBannerPopovers(pop);
+
+  if (pop.classList.contains('open')) {
+    pop.classList.remove('open');
+    return;
+  }
+
+  const ids = (pill.getAttribute('data-group-ids') || '').split(',').filter(Boolean);
+  const answers = await Promise.all(ids.map(id => api(`/api/groups/${encodeURIComponent(id)}`)));
+  pop.innerHTML = answers.map((data, i) => (data
+    ? groupPopoverHtml(data)
+    : `<div class="group-popover-title">${esc(bannerGroupNames[ids[i]] || 'Group')}</div><div class="pill-detail-text">Could not load this group.</div>`)
+  ).join('<div class="groups-popover-sep"></div>');
+
+  pop.classList.add('open');
 }
 
 /**
@@ -694,16 +754,7 @@ async function toggleGroupPopover(pill, groupId) {
   const data = await api(`/api/groups/${groupId}`);
   if (!data) return;
 
-  const members = data.members || [];
-  const docsCount = (data.docs || []).length;
-
-  pop.innerHTML = `<div class="group-popover-title">${esc(data.name)}</div>` +
-    (data.description ? `<div style="color:var(--text-muted);font-size:11px;margin-bottom:6px">${esc(data.description)}</div>` : '') +
-    members.map(m =>
-      `<div class="group-popover-member${m.name === projectName ? ' current' : ''}">${esc(m.name || 'unknown')}</div>`
-    ).join('') +
-    (docsCount > 0 ? `<div style="margin-top:6px;font-size:10px;color:var(--text-muted)">${docsCount} shared doc${docsCount !== 1 ? 's' : ''}</div>` : '');
-
+  pop.innerHTML = groupPopoverHtml(data);
   pop.classList.add('open');
 }
 
@@ -715,19 +766,47 @@ function closeBannerPopovers(keep) {
   document.querySelectorAll('.group-popover.open').forEach(el => {
     if (el !== keep) el.classList.remove('open');
   });
-  syncBannerUserExpanded();
+  syncBannerExpanded();
 }
 
 /**
- * Keep the user pill's `aria-expanded` saying whether its popover is open.
- * Every path that closes banner popovers runs through `closeBannerPopovers`,
- * so the attribute is re-read from the popover rather than tracked beside it.
+ * Keep each banner button that owns a popover — the user pill and the ⋯ menu —
+ * saying in `aria-expanded` whether that popover is open. Every path that
+ * closes banner popovers runs through `closeBannerPopovers`, so the attribute
+ * is re-read from the popover rather than tracked beside it.
  */
-function syncBannerUserExpanded() {
-  const pill = document.getElementById('bannerUser');
-  const pop = document.getElementById('bannerUserPop');
-  if (!pill || !pop) return;
-  pill.setAttribute('aria-expanded', pop.classList.contains('open') ? 'true' : 'false');
+function syncBannerExpanded() {
+  [['bannerUser', 'bannerUserPop'], ['moreBtn', 'moreMenu']].forEach(([btnId, popId]) => {
+    const btn = document.getElementById(btnId);
+    const pop = document.getElementById(popId);
+    if (!btn || !pop) return;
+    btn.setAttribute('aria-expanded', pop.classList.contains('open') ? 'true' : 'false');
+  });
+}
+
+/**
+ * Open or close the ⋯ menu holding the command bar and Peek buttons.
+ */
+function toggleMoreMenu() {
+  const pop = document.getElementById('moreMenu');
+  if (pop.classList.contains('open')) {
+    pop.classList.remove('open');
+  } else {
+    closeBannerPopovers();
+    pop.classList.add('open');
+  }
+  syncBannerExpanded();
+}
+
+/**
+ * Close the ⋯ menu once one of its buttons has been used — the command bar or
+ * the Peek drawer is what the operator asked for, and the menu would sit over it.
+ * @param {Event} e - A click inside the menu.
+ */
+function onMoreMenuClick(e) {
+  if (!clickHitsSelector(e, 'button')) return;
+  document.getElementById('moreMenu').classList.remove('open');
+  syncBannerExpanded();
 }
 
 /**
@@ -752,7 +831,7 @@ async function loadBannerUser() {
   document.getElementById('bannerUserPopName').textContent = name;
   if (!signedIn) {
     document.getElementById('bannerUserPop').classList.remove('open');
-    syncBannerUserExpanded();
+    syncBannerExpanded();
   }
 }
 
@@ -771,7 +850,7 @@ function toggleBannerUser() {
     pop.classList.add('open');
     loadBannerUser();
   }
-  syncBannerUserExpanded();
+  syncBannerExpanded();
 }
 
 /**
@@ -837,7 +916,7 @@ function togglePillDetail(pill) {
  * @param {Event} e - The document click.
  */
 function onBannerOutsideClick(e) {
-  if (!clickHitsSelector(e, '.group-pill, .status-pill, .banner-engine, .banner-user-wrap')) {
+  if (!clickHitsSelector(e, '.group-pill, .status-pill, .banner-engine, .banner-user-wrap, .banner-more-wrap')) {
     closeBannerPopovers();
   }
 }
@@ -2269,6 +2348,10 @@ function toggleCommandBar() {
   bar.classList.toggle('hidden', !sessionState.commandBarOpen);
   btn.classList.toggle('active', sessionState.commandBarOpen);
   btn.setAttribute('aria-expanded', sessionState.commandBarOpen);
+  // The command bar's button lives in the ⋯ menu, closed most of the time, so
+  // the ⋯ button carries the "open" mark too.
+  const more = document.getElementById('moreBtn');
+  if (more) more.classList.toggle('active', sessionState.commandBarOpen);
   if (sessionState.commandBarOpen) {
     document.getElementById('commandInput').focus();
   }
@@ -5473,6 +5556,8 @@ function bindEvents() {
   });
   $('uploadBtn').addEventListener('click', openUploadModal);
   $('cmdBtn').addEventListener('click', toggleCommandBar);
+  $('moreBtn').addEventListener('click', toggleMoreMenu);
+  $('moreMenu').addEventListener('click', onMoreMenuClick);
   $('peekBtn').addEventListener('click', openPeek);
   $('masterBtn').addEventListener('click', openMasterDrawer);
   $('masterCloseBtn').addEventListener('click', closeMasterDrawer);

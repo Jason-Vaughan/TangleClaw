@@ -121,8 +121,21 @@
            desktop keeps Cmd-V and a clean banner. -->
       <button class="banner-btn" id="pasteBtn" aria-label="Paste clipboard text into the terminal" hidden>Paste</button>
       <button class="banner-btn" id="uploadBtn" aria-label="Upload file to project">Upload</button>
-      <button class="banner-btn" id="cmdBtn" aria-label="Toggle command bar"
-              aria-expanded="false" aria-controls="commandBar">Cmd</button>
+      <!-- The command bar and Peek, behind one ⋯ button (#1474, #1475): the
+           banner needs the room, but neither is redundant — the command bar
+           holds the engine commands, quick commands and recent history, and is
+           a phone's autocorrect-free input; Peek has search and copies long
+           output to this device. The buttons keep their ids, so every place
+           that disables them or tracks the command bar still finds them. -->
+      <span class="banner-more-wrap" id="bannerMoreWrap">
+        <button class="banner-btn" id="moreBtn" type="button" aria-label="More session tools"
+                aria-haspopup="true" aria-expanded="false" aria-controls="moreMenu">&#8943;</button>
+        <span class="group-popover banner-more-menu" id="moreMenu">
+          <button class="banner-btn" id="cmdBtn" aria-label="Toggle command bar"
+                  aria-expanded="false" aria-controls="commandBar">Command bar</button>
+          <button class="banner-btn" id="peekBtn" aria-label="Peek at terminal output">Peek</button>
+        </span>
+      </span>
       <!-- #1181: the per-session chime, promoted out of the settings modal.
            Arming it before stepping away is the common case and was three
            interactions deep. Painted by `tcCreateChimeControl`; the label and
@@ -130,11 +143,12 @@
       <button class="banner-btn" id="chimeBtn" type="button" aria-pressed="false"
               aria-label="Chime when this session goes idle: off. Activate to turn it on."
               title="Chime on idle: off">&#128276;</button>
-      <button class="banner-btn" id="peekBtn" aria-label="Peek at terminal output">Peek</button>
       <button class="banner-btn" id="masterBtn" aria-label="Open Project Master" aria-expanded="false"
               aria-controls="masterDrawer"
               title="Project Master — the global assistant above all projects; what it may write is the access level on its control bar">&#129504;</button>
-      <button class="banner-btn" id="settingsBtn" aria-label="Session settings">&#9881;</button>
+      <!-- U+FE0F asks for the emoji gear: the bare U+2699 is a text glyph and
+           drew far smaller than the emoji brain beside it (#1476). -->
+      <button class="banner-btn" id="settingsBtn" aria-label="Session settings">&#9881;&#65039;</button>
       <button class="banner-btn btn-wrap" id="wrapBtn" aria-label="Wrap session">Wrap</button>
       <button class="banner-btn btn-kill" id="killBtn" aria-label="Kill session">Kill</button>
     </div>
