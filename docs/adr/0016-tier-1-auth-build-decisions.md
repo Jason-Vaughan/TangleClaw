@@ -756,4 +756,4 @@ OQ3's sentence ships, and the three call sites #804 names ask one question. The 
   `loginOptOutAt` and hands the browser to `/login`. It also serves an install whose account was made at
   a terminal while the login was off — the state `reset-admin.js --store` used to answer with "turn it
   on in Settings", a control that did not exist. `POST /api/auth/credential` changes a Caddy credential
-  and never turns a login on, so it has no opt-out record to clear.
+  and never turns a login on. The record is cleared by construction rather than per route: `store.config.save` never writes `loginOptOutAt` beside `authEnabled: true`. A hand-listed set of call sites missed `reset-admin.js --create-gate` and Caddyfile adoption, both of which turn a login on.

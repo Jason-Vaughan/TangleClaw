@@ -121,7 +121,9 @@ three call sites still ask "can Caddy be provisioned here?" (`plan.action === 'p
   `POST /api/auth/credential` if it can reach an opted-out install. *As built:* `--store` clears it
   only when the gate then guards the door (an account made with the login off turns nothing on);
   `POST /api/auth/credential` changes a Caddy credential and never turns a login on, so it has no
-  record to clear.
+  record to clear. *After review:* the list missed `reset-admin.js --create-gate` and Caddyfile adoption, so the clear
+  moved into `store.config.save` (never written beside `authEnabled: true`) — by construction, not by
+  call site.
 - Render `ingress.user` only as the server names it — null when setup kept an existing account.
 - Docs: ADR 0009 amendment (opt-out mechanism; the stale "only in caddy mode" line), ADR 0016 note,
   ADR 0015 status → Built, `docs/setup-guide.md`, `docs/user-guide.md`, `README.md`, `FEATURES.md`,

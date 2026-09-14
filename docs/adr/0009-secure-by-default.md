@@ -243,7 +243,7 @@ Caddy at all. Three consequences, as built:
   open install already has its shell. It is refused where the next page could not let the person in —
   an install that has lost its account store, from off the machine, or one whose every account is
   disabled. Rule 4 is unaffected: turning a login **off** from settings remains impossible; recovery
-  stays at the terminal. Every path that turns a login on clears `loginOptOutAt`.
+  stays at the terminal. No path that turns a login on leaves `loginOptOutAt` behind: the config save clears it whenever `authEnabled` is on, so the rule does not depend on each writer remembering it.
 
 **Why this ADR exists at all.** The superseded posture was written down — in a project artifact under
 `.prawduct/`, which is gitignored. It was therefore invisible to a fresh clone, to contributors, and

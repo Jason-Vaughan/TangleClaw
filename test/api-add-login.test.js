@@ -71,11 +71,13 @@ describe('Adding a login from settings (#803)', () => {
    * @param {string} [opts.cookie]
    * @param {string} [opts.csrf]
    * @param {string} [opts.remoteAddress]
+   * @param {boolean} [opts.machine] - Send no browser markers (a local tool)
    * @returns {Promise<object>} The mock response
    */
   async function send(method, url, opts = {}) {
     const raw = opts.body === undefined ? null : JSON.stringify(opts.body);
-    const headers = Object.assign({ host: 'localhost:3102', 'sec-fetch-site': 'same-origin' }, opts.headers);
+    const browser = opts.machine ? {} : { 'sec-fetch-site': 'same-origin' };
+    const headers = Object.assign({ host: 'localhost:3102' }, browser, opts.headers);
     if (raw !== null) {
       headers['content-type'] = 'application/json';
       headers['content-length'] = String(Buffer.byteLength(raw));
@@ -214,6 +216,24 @@ describe('Adding a login from settings (#803)', () => {
       const res = await addLogin({ cookie, csrf });
       assert.equal(res.statusCode, 409, res.body);
       assert.match(res.body, /LOGIN_ALREADY_ON/);
+    });
+
+    it('answers 503 GATE_UNREADABLE, never "already on", when the gate cannot read its state', async () => {
+      // Reachable by a local tool through the machine carve-out: the gate enforces
+      // in `unreadable`, so a browser is challenged before the route.
+      const cfg = store.config.load();
+      cfg.authEnabled = true;
+      store.config.save(cfg);
+      const orig = store.authSessions.accountPresence;
+      store.authSessions.accountPresence = () => { throw new Error('database is locked'); };
+      try {
+        const res = await addLogin({ machine: true });
+        assert.equal(res.statusCode, 503, res.body);
+        assert.match(res.body, /GATE_UNREADABLE/);
+        assert.doesNotMatch(res.body, /already on/);
+      } finally {
+        store.authSessions.accountPresence = orig;
+      }
     });
 
     it('is not reachable signed out once the login is on — the gate answers first', async () => {

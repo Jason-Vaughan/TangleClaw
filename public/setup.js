@@ -1328,7 +1328,8 @@ function _noLoginChoiceHtml() {
         <button class="btn" id="setupNoLoginBtn" onclick="wizardChooseNoLogin()">Finish without a login</button>
       </div>`;
   }
-  if (c.optOutRefusal && c.optOutRefusal.reason) {
+  // Once: a refusal the wizard routed back here with is already on the step.
+  if (c.optOutRefusal && c.optOutRefusal.reason && c.optOutRefusal.reason !== wizard.adminStepNotice) {
     return `<p class="setup-text-muted">Finishing without a login is not available here. ${esc(c.optOutRefusal.reason)}</p>`;
   }
   return '';

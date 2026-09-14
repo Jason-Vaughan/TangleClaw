@@ -1336,7 +1336,7 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       ctx.wizardChooseNoLogin();
       ctx.fetch = async () => ({ ok: true, json: async () => ({ plan: REFUSE_PLAN, credential: LOGIN_NEEDED_WIDE }) });
       ctx.renderConfirm(ctx.document.getElementById('setupBody'));
-      ctx.api.lastError = 'TangleClaw is listening on every network interface, so without a login anyone could run commands as you.';
+      ctx.api.lastError = LOGIN_NEEDED_WIDE.optOutRefusal.reason;   // the server sends the same sentence both ways
       ctx.api.lastErrorCode = 'OPT_OUT_REFUSED';
       await ctx.wizardComplete();
       await settle();
@@ -1344,7 +1344,8 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       assert.equal(ctx.wizard.noLogin, false, 'the refused choice is withdrawn');
       const html = ctx.document.getElementById('setupBody').innerHTML;
       assert.match(html, /Admin Login/);
-      assert.match(html, /anyone could run commands as you/, 'the reason is on the step that resolves it');
+      const reason = LOGIN_NEEDED_WIDE.optOutRefusal.reason;
+      assert.equal(html.split(reason).length - 1, 1, 'the reason is on the step that resolves it, once');
       assert.doesNotMatch(html, /id="setupNoLoginBtn"/, 'and the choice is not offered again');
     });
   });

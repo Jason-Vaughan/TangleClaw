@@ -493,9 +493,15 @@ function _decideSetupCredential(config, route) {
         { error: err.message });
     }
     const classified = caddy.classifyIngressState();
-    // A Caddyfile that cannot be classified may well carry a login; not knowing
-    // is read as one, which only ever withholds the choice of no login.
-    caddyLoginInForce = classified.state === 'unreadable' || classified.users.length > 0;
+    if (classified.state === 'unreadable') {
+      // Not knowing is its own answer, not "a login is in force": that would tell
+      // the operator a login already asks, beside the form asking them for one.
+      // A door that cannot be read withholds the choice of no login just the same
+      // (`DOOR_UNREAD`), and says why truthfully.
+      door = null;
+    } else {
+      caddyLoginInForce = classified.users.length > 0;
+    }
   }
   return setupCredential.decideCredential({
     loginInHand: config.authEnabled === true,
@@ -2377,8 +2383,8 @@ route('POST', '/api/auth/set-password', async (req, res, _params, body) => {
 // an install that has had an account and lost it, from off this machine, where
 // the first-account page refuses with ACCOUNT_STORE_LOST.
 //
-// Clears `loginOptOutAt`: once a login is on, "the operator chose no login" is
-// no longer true of the install.
+// The saved config loses `loginOptOutAt`: once a login is on, "the operator chose
+// no login" is no longer true of the install, and `store.config.save` clears it.
 route('POST', '/api/auth/add-login', (req, res) => {
   if (!authGate.isOpen(req.tcGateState)) {
     if (req.tcGateState === authGate.GATE_STATES.FALLBACK) {
@@ -2423,8 +2429,8 @@ route('POST', '/api/auth/add-login', (req, res) => {
       + 'Run node scripts/reset-admin.js --store --user <name> on the machine to re-enable one first.',
       'NO_LOGINABLE_ACCOUNT');
   }
+  // Saving with the login on clears `loginOptOutAt` (`store.config.save`).
   config.authEnabled = true;
-  config.loginOptOutAt = null;
   store.config.save(config);
   log.warn('TangleClaw\'s login was turned on from settings', {
     accountExists: presence.exists, proxied: authIdentity.cameThroughProxy(req.headers)
@@ -3528,14 +3534,12 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
   }
   // Recorded, so "the operator chose no login" is never confused with "nobody
   // asked": `authEnabled: false` is also what a config that predates setup says.
-  // A login set here clears an earlier choice rather than leaving both on file.
-  // The refusal above covers a login already in hand, so reaching here with
-  // `noLogin` means the choice is honoured.
+  // A login set here clears an earlier choice: `store.config.save` never writes
+  // the record beside `authEnabled: true`. The refusal above covers a login
+  // already in hand, so reaching here with `noLogin` means the choice is honoured.
   const optedOut = noLogin;
   if (optedOut) {
     config.loginOptOutAt = new Date().toISOString();
-  } else if (adminProvided) {
-    config.loginOptOutAt = null;
   }
   const adminConfigured = !!(config.authEnabled && config.basicAuthUser && config.basicAuthHash);
 

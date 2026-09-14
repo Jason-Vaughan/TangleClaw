@@ -794,6 +794,30 @@ describe('setup provisions a login by default', () => {
       assert.equal(store.config.load().loginOptOutAt, null);
     });
 
+    it('refuses the choice of no login behind a Caddyfile it cannot read, saying it could not read it', async () => {
+      // Not knowing is not "a login is in force": that reason would sit beside the
+      // form asking the operator to create one. A directory where the Caddyfile
+      // should be is a read failure on every platform, root included.
+      const p = caddy.getCaddyfilePath();
+      fs.mkdirSync(p, { recursive: true });
+      try {
+        const c = store.config.load();
+        c.ingressMode = 'caddy';
+        store.config.save(c);
+        const probe = await request(server, 'GET', '/api/setup/ingress-state');
+        assert.equal(probe.data.state, 'unreadable', 'precondition: the Caddyfile cannot be read');
+        assert.equal(probe.data.credential.optOutAllowed, false);
+        assert.equal(probe.data.credential.optOutRefusal.code, 'DOOR_UNREAD');
+        const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir, noLogin: true });
+        assert.equal(res.status, 400);
+        assert.equal(res.data.code, 'OPT_OUT_REFUSED');
+        assert.match(res.data.error, /could not read the Caddy config/);
+        assert.doesNotMatch(res.data.error, /already in front of TangleClaw/);
+      } finally {
+        fs.rmSync(p, { recursive: true, force: true });
+      }
+    });
+
     it('reports network exposure from the bind classification, not from a guess', async () => {
       // "Ungated but loopback-only" and "ungated and reachable" are different
       // situations, and the second is the one an operator must be told about. A
