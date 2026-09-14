@@ -45,9 +45,16 @@ describe('#1478 Wrap and Kill wrap together on a phone', () => {
     assert.ok(m, 'the wrapper exists');
     const ids = [...m[1].matchAll(/id="([^"]+)"/g)].map((x) => x[1]);
     assert.deepEqual(ids, ['wrapBtn', 'killBtn']);
-    const actions = SESSION_HTML.slice(SESSION_HTML.indexOf('<div class="banner-actions">'));
-    const afterWrapper = actions.slice(actions.indexOf('</span>', actions.indexOf('banner-end-actions')) + 7, actions.indexOf('</div>'));
-    assert.doesNotMatch(afterWrapper, /<button/, 'nothing follows the pair inside the banner actions');
+    // From the pair's closing tag to the end of the banner actions. Both
+    // searches start at the wrapper, so an earlier `</div>` (the Medusa panel)
+    // cannot end the slice before it starts.
+    const wrapperAt = SESSION_HTML.indexOf('<span class="banner-end-actions">');
+    const pairEnd = SESSION_HTML.indexOf('</span>', wrapperAt) + '</span>'.length;
+    const actionsEnd = SESSION_HTML.indexOf('</div>', pairEnd);
+    const headerEnd = SESSION_HTML.indexOf('</header>', wrapperAt);
+    assert.ok(wrapperAt > SESSION_HTML.indexOf('<div class="banner-actions">'), 'the pair is inside the banner actions');
+    assert.ok(pairEnd < actionsEnd && actionsEnd < headerEnd, 'the slice is non-empty and ends at the banner actions');
+    assert.doesNotMatch(SESSION_HTML.slice(pairEnd, actionsEnd), /<button/, 'nothing follows the pair inside the banner actions');
   });
 
   it('css: the pair is one flex item that does not shrink or split', () => {
