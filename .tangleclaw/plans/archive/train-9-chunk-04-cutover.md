@@ -558,7 +558,7 @@ A-05 on the live install in the operator's Chrome — including a signed-out tab
 - [x] Chunk A.04b (A-04b) — fallback state + marker + command, drill, #472 decision (reviewed 2026-09-13, PR into `train-9/cutover`; R-3/R-14 moved to A.04c)
 - [x] Chunk A.04c (A-04c) — reset-admin + credential predicates aligned with the state machine, login copy, recovery doc (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [x] Chunk A.04d (A-04d) — gate machinery carries: scrypt-cap helper, recovery warn line, `clientKey`, JSDoc fixes, the Caddyfile door through `caddy adapt` (reviewed 2026-09-13, PR into `train-9/cutover`; unread file = door)
-- [ ] A-VRF — cumulative Critic, elkaholic VRF, phone drill → Checkpoint 2 (merged PR #1460; drill 8.1 PASSED; 8.2 + step 9 in the combined VRF)
+- [x] A-VRF — cumulative Critic, elkaholic VRF, phone drill → Checkpoint 2 (merged PR #1460; drill 8.1 PASSED; 8.2 PASSED in the combined VRF)
 - [x] Chunk A.05a (A-05a) — every browser request through `tcFetch` (#1462 + five siblings + the wrap probe), ended session → `/login` (#1461 trigger) (reviewed 2026-09-14: cumulative 0 blocking, verify-resolutions clean; PR into `main`)
 - [x] Chunk A.05b (A-05b) — sign out + sign out everywhere (#1463), change password (#1457) (reviewed 2026-09-14: cumulative 0 blocking, 4 warnings fixed, verify-resolutions clean; PR into `main`)
-- [ ] Combined A-VRF — A-05 in a real browser, drill 8.2, regenerate codes, step 9
+- [x] Combined A-VRF — A-05 in a real browser, drill 8.2, regenerate codes, step 9 (PASSED 2026-09-14 on the live install: Launch/Kill, Sign out, Change password, Sign out everywhere, recovery code + 8 new codes by the operator in Chrome; #1461 in a real headless Chrome against scratch Caddy basic_auth, old build 16 prompts/60 s → new build 1, closed; drill 8.2 `drill-gate-fallback.js` PASSED, Caddyfile byte-for-byte; step 9 memo updated, #1420 closed; GHSA-fhgg-4h57-q2f9 publishes with v5.24.0)
