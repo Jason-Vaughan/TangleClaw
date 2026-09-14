@@ -190,8 +190,8 @@ If the Coordinator's resume message does not arrive, the operator can paste:
 - [x] Checkpoint 0 answered (#846 = b, closed 2026-09-12)
 - [x] Session 1 — Wave 1: D (#848, PR #1439) · B (#918, PR — this merge) · C (#1361, PR #1440) — 2026-09-12
 - [x] Session 2 — A-01 discovery + kill-switch/migration ADR addendum → Checkpoint 1 ruled 2026-09-13: "1 + 2" (terminal recovery + one-time recovery codes; ADR 0009 rule 5 amended)
-- [ ] Sessions 3–5 — A-02 · A-03 · A-04 on `train-9/cutover`
-- [ ] A-VRF — cumulative review, elkaholic VRF, kill-switch drill → Checkpoint 2 → merge (merged PR #1460; drill 8.1 passed; 8.2 + step 9 held for the combined A-VRF)
-- [ ] A-05 — account self-service: #1463 · #1457 · #1462 · 401 → /login · #1461 → combined A-VRF
+- [x] Sessions 3–5 — A-02 · A-03 · A-04 on `train-9/cutover`
+- [x] A-VRF — cumulative review, elkaholic VRF, kill-switch drill → Checkpoint 2 → merge (merged PR #1460; drills 8.1 + 8.2 passed; #1420 closed 2026-09-14)
+- [x] A-05 — account self-service: #1463 · #1457 · #1462 · 401 → /login · #1461 → combined A-VRF (PRs #1464, #1465; combined A-VRF PASSED live 2026-09-14)
 - [ ] Session 6 — A2: #804, #803
 - [ ] Session 7 — release v5.24.0, live install updated
