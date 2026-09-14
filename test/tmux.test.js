@@ -1010,8 +1010,11 @@ describe('tmux', () => {
       // inline suggestion from text the operator actually typed. Bumping this
       // number is the acknowledgement the tripwire asks for — it fired
       // correctly, and the `_target` loop below already confirmed both new sites
-      // are wrapped.
-      assert.equal(targets.length, 24, `expected 24 -t sites in lib/tmux.js, found ${targets.length}`);
+      // are wrapped. 25 since `paneCurrentPath` (#1469) added a `display-message`
+      // reading `pane_current_path`, so a wrap can tell which worktree the
+      // session's pane is in; it is wrapped, and it checks the session exists
+      // first because `display-message` falls back to the attached client.
+      assert.equal(targets.length, 25, `expected 25 -t sites in lib/tmux.js, found ${targets.length}`);
       for (const expr of targets) {
         assert.match(
           expr,

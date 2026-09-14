@@ -623,7 +623,7 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       featuresToc._internal.execSync = (cmd) => { calls.push(cmd); return Buffer.from(''); };
       try {
         const r = featuresToc._resolveSessionRange('/repo', SHA);
-        assert.deepEqual(r, { range: `${SHA}..HEAD`, kind: 'session', baseBranch: null, stopped: [] });
+        assert.deepEqual(r, { range: `${SHA}..HEAD`, kind: 'session', baseBranch: null, base: SHA, stopped: [] });
         // It verified the SHA peels to a commit; no base-branch resolution needed.
         assert.ok(calls.some((c) => c.includes(`${SHA}^{commit}`)));
         assert.ok(!calls.some((c) => c.includes('rev-parse --verify --quiet main')));
@@ -640,7 +640,7 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       };
       try {
         const r = featuresToc._resolveSessionRange('/repo', null);
-        assert.deepEqual(r, { range: 'main...HEAD', kind: 'branch', baseBranch: 'main', stopped: [] });
+        assert.deepEqual(r, { range: 'main...HEAD', kind: 'branch', baseBranch: 'main', base: null, stopped: [] });
       } finally {
         featuresToc._internal.execSync = orig;
       }
@@ -732,6 +732,9 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
         if (cmd.includes('merge-base --is-ancestor')) return Buffer.from(''); // SHA is on HEAD's history (#664)
         // The OLD (branch) range is empty — this is the wrap-on-main bug condition.
         if (cmd.includes('main...HEAD')) return Buffer.from('');
+        // No merge on the first-parent line, so the step answers from the plain
+        // diff rather than walking commits (#1309).
+        if (cmd.startsWith('git rev-list --first-parent --merges')) return Buffer.from('');
         // The NEW (session) range captures everything merged since the last wrap.
         if (cmd.includes(`${SHA}..HEAD`)) {
           sawSessionDiff = true;

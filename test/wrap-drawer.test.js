@@ -758,6 +758,51 @@ describe('wrap-drawer helpers — collectOptionsFromAccessors', () => {
   });
 });
 
+describe('wrap-drawer helpers — Include / Leave for uncommitted files (#1406)', () => {
+  const H = loadHelpers();
+  const blockedRow = (kind) => ({ id: kind, kind, isBlocker: true, status: 'blocked' });
+
+  it('describes the per-file list for a blocked session-files or commit step, and nothing else', () => {
+    const output = { foreignPaths: [{ path: 'shared.js', why: 'already uncommitted when this session launched', deleted: false }, { path: '' }] };
+    for (const kind of ['session-files', 'commit']) {
+      assert.deepEqual(plain(H.pathDecisionWidget(blockedRow(kind), output)), {
+        kind: 'path-decisions',
+        optionsKey: 'pathDecisions',
+        paths: [{ path: 'shared.js', why: 'already uncommitted when this session launched', deleted: false }]
+      });
+    }
+    assert.equal(H.pathDecisionWidget(blockedRow('test'), output), null);
+    assert.equal(H.pathDecisionWidget(blockedRow('session-files'), { foreignPaths: [] }), null);
+    assert.equal(H.pathDecisionWidget(blockedRow('session-files'), null), null);
+  });
+
+  it('collects only the two decisions the server honors', () => {
+    const opts = H.collectOptionsFromAccessors({
+      pathDecisions: () => ({ 'a.js': 'include', 'b.js': 'leave', 'c.js': 'commit-it-anyway' })
+    });
+    assert.deepEqual(plain(opts), { pathDecisions: { 'a.js': 'include', 'b.js': 'leave' } });
+    assert.deepEqual(plain(H.collectOptionsFromAccessors({ pathDecisions: () => null })), {});
+  });
+
+  it('keeps an earlier answer on a later retry that asks about other files', () => {
+    const acc = {};
+    const first = { pathDecisions: { 'a.js': 'leave' } };
+    H.accumulatePathDecisions(acc, first);
+    const second = { pathDecisions: { 'b.js': 'include' } };
+    H.accumulatePathDecisions(acc, second);
+    assert.deepEqual(plain(second.pathDecisions), { 'a.js': 'leave', 'b.js': 'include' });
+    const third = {};
+    H.accumulatePathDecisions(acc, third);
+    assert.deepEqual(plain(third.pathDecisions), { 'a.js': 'leave', 'b.js': 'include' });
+  });
+
+  it('a done session-files row shows the handler\'s line, and a blocked one shows none', () => {
+    assert.equal(H.deriveDetail({ kind: 'session-files', status: 'done', output: { detail: 'Wrapping worktree /w · 2 changed since launch' } }),
+      'Wrapping worktree /w · 2 changed since launch');
+    assert.equal(H.deriveDetail({ kind: 'session-files', status: 'blocked', output: { detail: 'x', foreignPaths: [] } }), null);
+  });
+});
+
 describe('wrap-drawer helpers — accumulateAiContentSkips (#328)', () => {
   const H = loadHelpers();
 

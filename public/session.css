@@ -2155,6 +2155,40 @@ body {
   border-radius: 4px;
   padding: 4px 8px;
 }
+/* #1406 Include / Leave per uncommitted file the session did not change */
+.wrap-decision-pathlist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.wrap-decision-pathrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin: 0;
+  padding: 8px;
+  background: var(--card-bg);
+  border: 0;
+  border-radius: 4px;
+  min-width: 0;
+}
+.wrap-decision-pathname {
+  flex: 1 1 100%;
+  padding: 0;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+.wrap-decision-pathwhy {
+  color: var(--text-secondary);
+}
+.wrap-decision-pathchoice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  font-size: 0.9rem;
+}
 .wrap-decision-note {
   margin: 8px 0 0;
   font-size: 0.8rem;

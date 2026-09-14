@@ -24,6 +24,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { initRepo } = require('./_temp-repo');
+const { cleanLaunchScope } = require('./_wrap-scope-fixture');
 const { setLevel, getLevel, setConsoleStream } = require('../lib/logger');
 
 setLevel('error');
@@ -540,7 +541,9 @@ describe('commit → continuity-write — the two steps agree on the boundary (#
      */
     async function wrap(sid) {
       const commitRes = await commitStep.run({
-        project, session: { id: sid, engineId: 'claude' }, step: {}, staged: {}, options: {}
+        project, session: { id: sid, engineId: 'claude' }, step: {}, staged: {}, options: {},
+        // Each session launches on the tree the previous wrap left clean.
+        scope: cleanLaunchScope(repo)
       });
       await step.run({
         project,

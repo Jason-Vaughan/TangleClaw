@@ -3606,6 +3606,7 @@ async function confirmWrap() {
   // Fresh wrap — drop any ai-content skips accumulated by a prior wrap's
   // retries (#328) so they don't leak into this run.
   wrapSkippedAiSteps = {};
+  wrapPathDecisions = {};
   const pw = document.getElementById('wrapPassword').value;
   // #540 ask-mode — capture the operator's bump-level choice up front, before
   // version-bump runs. Empty string keeps the CHANGELOG heuristic. Threaded as
@@ -3723,6 +3724,15 @@ let currentWrapPipelineResult = null;
  * @type {Object<string, true>}
  */
 let wrapSkippedAiSteps = {};
+
+/**
+ * Accumulated Include / Leave choices for uncommitted files the session did not
+ * change (#1406), keyed by repo-relative path. Same reason as the skip map above:
+ * every retry re-runs the pipeline from its first step. Reset when a fresh wrap
+ * starts (`confirmWrap`).
+ * @type {Object<string, string>}
+ */
+let wrapPathDecisions = {};
 
 /**
  * #540 ask-mode — the operator's chosen version-bump level (`patch`/`minor`/
@@ -4004,6 +4014,14 @@ function renderWrapDrawer(pipelineResult) {
       const widget = H.decisionWidgetForBlockedStep(row);
       if (widget) {
         decisionEl.appendChild(renderDecisionWidget(widget));
+        widgetRendered = true;
+      }
+      // #1406: a blocked session-files (or commit) step is waiting on Include /
+      // Leave for uncommitted files the session did not change — the only way
+      // past it, so the list renders here.
+      const pathWidget = H.pathDecisionWidget(row, raw.output);
+      if (pathWidget) {
+        decisionEl.appendChild(renderPathDecisionWidget(pathWidget));
         widgetRendered = true;
       }
       // A blocked pr-check IS the unresolved-PR gate — its recovery
@@ -4318,6 +4336,68 @@ function renderDecisionWidget(widget) {
   const fallback = document.createElement('p');
   fallback.textContent = widget.label;
   wrap.appendChild(fallback);
+  return wrap;
+}
+
+/**
+ * Build the Include / Leave list (#1406) — one row per uncommitted file the
+ * session did not change, with the reason and a two-choice radio group. Neither
+ * choice is preselected: committing someone else's work, or leaving it out, is
+ * the operator's call, and a default would make it for them.
+ *
+ * @param {object} widget - From `pathDecisionWidget`.
+ * @returns {HTMLDivElement}
+ */
+function renderPathDecisionWidget(widget) {
+  const wrap = document.createElement('div');
+  wrap.className = 'wrap-decision wrap-decision--paths';
+  wrap.dataset.optionsKey = widget.optionsKey;
+  wrap.dataset.kind = widget.kind;
+
+  const groupLabelId = 'wrapPathDecisionGroupLabel';
+  const label = document.createElement('div');
+  label.className = 'wrap-decision-label';
+  label.id = groupLabelId;
+  const n = widget.paths.length;
+  label.textContent = `${n} uncommitted file${n === 1 ? '' : 's'} ${n === 1 ? 'was' : 'were'} not changed by this session. Include in the wrap commit, or leave uncommitted? Leave never discards anything.`;
+  wrap.appendChild(label);
+
+  const list = document.createElement('div');
+  list.className = 'wrap-decision-pathlist';
+  list.setAttribute('role', 'group');
+  list.setAttribute('aria-labelledby', groupLabelId);
+  widget.paths.forEach((f, i) => {
+    const row = document.createElement('fieldset');
+    row.className = 'wrap-decision-pathrow';
+    const legend = document.createElement('legend');
+    legend.className = 'wrap-decision-pathname';
+    const code = document.createElement('code');
+    code.textContent = f.path;
+    legend.appendChild(code);
+    if (f.why) {
+      const why = document.createElement('span');
+      why.className = 'wrap-decision-pathwhy';
+      why.textContent = ` — ${f.why}${f.deleted ? ' (deleted)' : ''}`;
+      legend.appendChild(why);
+    }
+    row.appendChild(legend);
+    for (const choice of [{ v: 'include', label: 'Include' }, { v: 'leave', label: 'Leave' }]) {
+      const opt = document.createElement('label');
+      opt.className = 'wrap-decision-pathchoice';
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = `wrapPathDecision-${i}`;
+      input.value = choice.v;
+      input.dataset.path = f.path;
+      opt.appendChild(input);
+      const text = document.createElement('span');
+      text.textContent = choice.label;
+      opt.appendChild(text);
+      row.appendChild(opt);
+    }
+    list.appendChild(row);
+  });
+  wrap.appendChild(list);
   return wrap;
 }
 
@@ -4737,11 +4817,23 @@ async function retryWrap() {
       if (!el || el.checked !== true) return null;
       return el.dataset.stepId || null;
     },
+    // #1406 — the Include / Leave choice per listed uncommitted file.
+    pathDecisions: () => {
+      const checked = decisionEl.querySelectorAll('.wrap-decision-pathlist input[type="radio"]:checked');
+      if (checked.length === 0) return null;
+      const out = {};
+      for (const input of checked) out[input.dataset.path] = input.value;
+      return out;
+    },
     // #540 ask-mode — replay the modal's bump choice on each retry.
     bumpLevel: () => wrapBumpLevel
   };
 
   const options = H.collectOptionsFromAccessors(accessors);
+
+  // #1406: the pipeline re-runs from its first step, so a file already answered
+  // must keep its answer or the wrap would ask about it again.
+  H.accumulatePathDecisions(wrapPathDecisions, options);
 
   // #328: accumulate ai-content skips across retries. The pipeline re-runs
   // from step 0 each retry, so an earlier content step's skip must persist or

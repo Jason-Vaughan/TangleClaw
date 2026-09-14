@@ -25,6 +25,12 @@ const commitStep = require('../lib/wrap-steps/commit');
 const prMergeStep = require('../lib/wrap-steps/pr-merge');
 const prCheckStep = require('../lib/wrap-steps/pr-check');
 const continuityStep = require('../lib/wrap-steps/continuity-write');
+const { cleanLaunchScope } = require('./_wrap-scope-fixture');
+
+// The commit step's "what is uncommitted?" read, spelled as the scripted runners
+// below see it. `cleanLaunchScope` makes every listed file the session's own, so
+// these cases reach the commands they are about.
+const STATUS_CMD = `git ${require('../lib/wrap-steps/_file-ownership').statusArgs().join(' ')}`;
 const { setLevel, getLevel, setConsoleStream } = require('../lib/logger');
 
 /** Short enough to keep the suite fast, long enough not to race the spawn. */
@@ -173,14 +179,15 @@ describe('what the operator is told when a wrap command is killed (#897)', () =>
       commitStep._internal.exec = async (file, args) => {
         const cmd = `${file} ${args.join(' ')}`;
         if (cmd.startsWith('git commit')) return realKill;
-        if (cmd === 'git status --porcelain') return ok('M lib/thing.js\n');
+        if (cmd === STATUS_CMD) return ok(' M lib/thing.js\0');
         if (cmd === 'git rev-parse --abbrev-ref HEAD') return ok('fix/some-branch\n');
-        if (cmd === 'git add -A') return ok();
+        if (cmd.startsWith('git add -A')) return ok();
         return ok();
       };
 
       const result = await commitStep.run({
         project: { name: 'p', path: os.tmpdir() },
+        scope: cleanLaunchScope(os.tmpdir()),
         step: { id: 'commit' },
         staged: {},
         options: {}
@@ -210,13 +217,14 @@ describe('what the operator is told when a wrap command is killed (#897)', () =>
         if (cmd.startsWith('git commit')) {
           return { exitCode: 1, stdout: '', stderr: 'husky: lint failed', error: null, timedOut: false };
         }
-        if (cmd === 'git status --porcelain') return ok('M lib/thing.js\n');
+        if (cmd === STATUS_CMD) return ok(' M lib/thing.js\0');
         if (cmd === 'git rev-parse --abbrev-ref HEAD') return ok('fix/some-branch\n');
         return ok();
       };
 
       const result = await commitStep.run({
         project: { name: 'p', path: os.tmpdir() },
+        scope: cleanLaunchScope(os.tmpdir()),
         step: { id: 'commit' },
         staged: {},
         options: {}
@@ -321,12 +329,13 @@ describe('every operator-facing timeout branch in the swept steps (#897)', () =>
         const cmd = `${file} ${args.join(' ')}`;
         const scripted = script(cmd);
         if (scripted) return scripted;
-        if (cmd === 'git status --porcelain') return ok('M lib/thing.js\n');
+        if (cmd === STATUS_CMD) return ok(' M lib/thing.js\0');
         if (cmd === 'git rev-parse --abbrev-ref HEAD') return ok('fix/some-branch\n');
         return ok('deadbee\n');
       };
       return await commitStep.run({
         project: { name: 'p', path: os.tmpdir() },
+        scope: cleanLaunchScope(os.tmpdir()),
         step: { id: 'commit' },
         staged: {},
         options
@@ -338,7 +347,7 @@ describe('every operator-facing timeout branch in the swept steps (#897)', () =>
 
   describe('commit — the blockers before anything is committed', () => {
     it('a killed `git status` does not claim the working tree is untouched', async () => {
-      const r = await runCommit((cmd) => (cmd === 'git status --porcelain' ? argvKill : undefined));
+      const r = await runCommit((cmd) => (cmd === STATUS_CMD ? argvKill : undefined));
 
       assert.equal(r.status, 'blocked');
       assert.match(r.blockers[0], /was stopped/);
@@ -351,7 +360,7 @@ describe('every operator-facing timeout branch in the swept steps (#897)', () =>
     });
 
     it('a killed `git add -A` says the index may be partly staged', async () => {
-      const r = await runCommit((cmd) => (cmd === 'git add -A' ? argvKill : undefined));
+      const r = await runCommit((cmd) => (cmd.startsWith('git add -A') ? argvKill : undefined));
 
       assert.equal(r.status, 'blocked');
       assert.match(r.blockers[0], /was stopped/);
@@ -414,12 +423,13 @@ describe('every operator-facing timeout branch in the swept steps (#897)', () =>
         commitStep._internal.exec = async (file, args) => {
           const cmd = `${file} ${args.join(' ')}`;
           issued.push(cmd);
-          if (cmd === 'git status --porcelain') return ok('M lib/thing.js\n');
+          if (cmd === STATUS_CMD) return ok(' M lib/thing.js\0');
           if (cmd === 'git rev-parse --abbrev-ref HEAD') return argvKill;
           return ok();
         };
         await commitStep.run({
           project: { name: 'p', path: os.tmpdir() },
+        scope: cleanLaunchScope(os.tmpdir()),
           step: { id: 'commit' },
           staged: {},
           options: {}
@@ -430,7 +440,7 @@ describe('every operator-facing timeout branch in the swept steps (#897)', () =>
 
       assert.ok(!issued.some((c) => c.startsWith('git commit')),
         'nothing may be committed when we cannot tell which branch we are on');
-      assert.ok(!issued.some((c) => c === 'git add -A'),
+      assert.ok(!issued.some((c) => c.startsWith('git add -A')),
         'and nothing may be staged either');
     });
 
@@ -736,7 +746,7 @@ describe('the resolution pass must not introduce its own false report (#897)', (
     try {
       commitStep._internal.exec = async (file, args) => {
         const cmd = `${file} ${args.join(' ')}`;
-        if (cmd === 'git status --porcelain') return ok('M lib/thing.js\n');
+        if (cmd === STATUS_CMD) return ok(' M lib/thing.js\0');
         if (cmd === 'git rev-parse --abbrev-ref HEAD') return ok('main\n');
         if (cmd.startsWith('gh pr create')) return ok('https://github.com/o/r/pull/7\n');
         // The courtesy checkout — and ONLY it — is killed.
@@ -746,6 +756,7 @@ describe('the resolution pass must not introduce its own false report (#897)', (
 
       const result = await commitStep.run({
         project: { name: 'p', path: os.tmpdir() },
+        scope: cleanLaunchScope(os.tmpdir()),
         step: { id: 'commit' },
         staged: {},
         options: {}
