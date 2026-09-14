@@ -6196,18 +6196,18 @@ function _wrapStreamFrame(projectName, event) {
 }
 
 
-// GET /api/sessions/:project/wrap/status — Wrap-run state (#583). Lets a
-// client whose wrap POST connection died (proxy 502, page reload, phone
-// lock) reattach: `running` + `currentStepId` while the pipeline runs,
-// then the finished run's `result` in the same shape the POST would have
-// returned. Registry is process-local: after a server restart this
-// honestly reports no run (nothing survived the restart).
+// GET /api/sessions/:project/wrap/status — Wrap-run state (#583). Lets any
+// client (a reloaded page, another device, a page whose stream dropped)
+// follow a run: `running` + `currentStepId` while the pipeline runs, then the
+// finished run's `result` — the same payload the stream's `run-done` carries.
+// Registry is process-local: after a server restart this honestly reports no
+// run (nothing survived the restart).
 route('GET', '/api/sessions/:project/wrap/status', (_req, res, params) => {
   const status = sessions.getWrapRunStatus(params.project);
   jsonResponse(res, 200, {
     project: params.project,
-    // #185 — the running (or last) run's stream handle, so a client that
-    // wants live progress before its own POST returns can open the stream.
+    // #185 — the running (or last) run's stream handle, so a client that did
+    // not start the run (or lost the 202) can open its stream.
     runId: status.runId,
     running: status.running,
     // #1314 — a run claimed and never settled reports `running: false` with
@@ -6230,7 +6230,7 @@ route('GET', '/api/sessions/:project/wrap/status', (_req, res, params) => {
 // finished is replayed in full and closed at once. `Last-Event-ID` (what an
 // `EventSource` sends when it reconnects) resumes after that seq, so a blip
 // mid-wrap does not repaint from scratch. An unknown or foreign `runId` is a
-// 404, not an empty stream — the client falls back to the blocking render.
+// 404, not an empty stream — the client falls back to polling /wrap/status.
 //
 // Same read-only surface as /wrap/status: it exposes nothing the status
 // route does not (that route hands out the runId), and it starts nothing,

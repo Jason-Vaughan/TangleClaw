@@ -839,7 +839,7 @@
    * the same helper `renderSkipRoll` paints from, so copy and render can't
    * diverge.
    *
-   * @param {object} pipelineResult - Runner return (`POST /wrap` body).
+   * @param {object} pipelineResult - Runner return (a run result's `pipelineResult`).
    * @param {{label: string, detail: (string|null)}} [displayedStatus] - The banner
    *   currently shown in the drawer. When present it heads the report instead of
    *   the pipeline's own verdict, so a report copied after the release resolves
@@ -939,8 +939,8 @@
    *     halted}` — the row settles to the runner's own status with the same
    *     output and blockers the final result will carry; `halted:true` marks
    *     the pipeline as stopped there, so the row renders as THE blocker;
-   *   - `run-done` `{result}` — the run is over; `result` is the wrap POST's
-   *     payload, which the caller renders exactly as a POST return.
+   *   - `run-done` `{result}` — the run is over; `result` is the run's result
+   *     payload, the same one `GET /wrap/status` reports.
    *
    * Unknown types and malformed events leave the state unchanged: the final
    * result is the truth, and a spectator's confusion must not corrupt it.

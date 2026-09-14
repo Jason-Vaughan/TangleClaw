@@ -58,8 +58,9 @@ payload — `_wrapResultPayload`, unchanged — arrives on the stream's `run-don
 `GET /wrap/status`. A pipeline that throws or blocks is no longer an HTTP status on the POST; it is
 the run's recorded result (`error` / `pipelineResult.blockedAt`). This is an HTTP contract change for
 any external caller that relied on the POST returning the report; `api-contract.md` and
-`configuration-reference.md` are updated in the same commit. `public/landing.js` only checks for a
-truthy body and is correct as-is.
+`configuration-reference.md` are updated in the same commit. `public/landing.js` treated any
+truthy body as success, which would have lost the reason a failed wrap used to show there as the
+POST's 500; its modal now waits on the run (`awaitDashboardWrapFailure`) — found by the Critic.
 
 **D2 — split start from wait.** `sessions.startWrap(projectName, options)` validates, claims, fires
 the pipeline and returns `{ok, runId, sessionId, done}` without awaiting. `triggerWrap` stays as the
@@ -73,14 +74,15 @@ that `lib/plan-docs.js` already requires) declares the event names once. Produce
 (`lib/wrap-pipeline.js`, `lib/wrap-run-registry.js`) use the constants; the drawer folds events
 through a handler map keyed by type; `session.js` subscribes by iterating the declared list. The
 vocabulary test asserts the handler map's keys equal the declared set and that no producer source
-spells an event type as a literal. The file is precached and network-first in `sw.js`, lockstep with
+spells an event type as a literal. The file is network-first in `sw.js` (no `CACHE_NAME` bump), lockstep with
 `wrap-drawer.js`.
 
 **D4 — the controller.** `public/wrap-run-controller.js` exports a pure
 `reduceWrapRun(state, signal)`. Phases: `idle`, `starting` (POST in flight), `following` (a run with
 a live view; `transport: 'stream'|'poll'`), `settled` (a final result), `stalled`, `lost` (ran, then
 vanished — restart), `refused` (POST refused, with its error). Signals: `start`, `accepted`,
-`refused`, `in-progress`, `event`, `stream-lost`, `status`, `hide`, `dismiss`. `session.js` holds one
+`refused`, `follow`, `event`, `stream-lost`, `status`, `hide` (built: `in-progress` became `follow`,
+and `dismiss` folded into `hide`). `session.js` holds one
 state and one `dispatchWrapRun(signal)` that diffs old → new and runs the effects (open/close the
 stream, start/stop the poll, paint the drawer). `attachWrapStream` and its discovery probe are
 deleted — the POST now hands over the `runId`.
@@ -100,7 +102,8 @@ following; the final report re-opens it. Before, the blocking POST provided that
 controller must.
 
 **D8 — fallback transport.** A stream that ends without `run-done` (CLOSED) switches the controller
-to polling `/wrap/status` every 4 s through the existing `wrapWatchDecision` until it renders, stalls
+to polling `/wrap/status` every 4 s through `wrap-run-controller.js#statusForRun` (which replaced `wrapWatchDecision`, keyed on `runId`
+instead of clocks) until it renders, stalls
 or reports lost. Required now: the POST no longer delivers a report behind a failed stream.
 
 ---

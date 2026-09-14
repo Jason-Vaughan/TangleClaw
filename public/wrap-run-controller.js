@@ -179,8 +179,10 @@
           live: null,
           error: typeof signal.error === 'string' && signal.error ? signal.error : 'Wrap failed.',
           // A refused first wrap has nothing to show in the drawer (its error
-          // belongs in the wrap modal); a refused retry shows it on the report.
-          visible: s.retry && s.result !== null
+          // belongs in the wrap modal); a refused retry shows it on the report —
+          // unless the operator closed the drawer while the POST was out, whose
+          // report was cleared with it and must not be re-opened empty.
+          visible: s.visible && s.retry && s.result !== null
         };
 
       case 'follow':
@@ -218,8 +220,10 @@
       case 'hide':
         if (!s.visible) return s;
         // Hiding a live run keeps following it — its report re-opens the drawer
-        // when it lands. Hiding a finished one is the same as dismissing it.
-        return s.phase === 'following' ? { ...s, visible: false } : initialWrapRun();
+        // when it lands. So does hiding a Retry whose POST is still out: dropping
+        // to idle there would ignore the `accepted` that follows, and the run the
+        // server just started would go unwatched. Hiding a finished run lets it go.
+        return isBusy(s) ? { ...s, visible: false } : initialWrapRun();
 
       default:
         return s;

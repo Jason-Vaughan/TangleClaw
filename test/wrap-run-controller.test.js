@@ -207,6 +207,18 @@ describe('wrap-run controller — closing the drawer', () => {
     assert.equal(s.transport, 'stream');
   });
 
+  it('closing the drawer while a Retry POST is out still follows the run it starts', () => {
+    const starting = C.reduceWrapRun(settledBlocked(), { type: 'start', retry: true });
+    const hidden = C.reduceWrapRun(starting, { type: 'hide' });
+    assert.equal(hidden.phase, 'starting', 'the POST is still out; nothing is let go');
+    assert.equal(hidden.visible, false);
+    const followed = C.reduceWrapRun(hidden, { type: 'accepted', runId: NEXT });
+    assert.equal(followed.phase, 'following');
+    assert.equal(followed.runId, NEXT);
+    const refused = C.reduceWrapRun(hidden, { type: 'refused', error: 'nope' });
+    assert.equal(refused.visible, false, 'a refusal does not re-open a drawer the operator closed');
+  });
+
   it('the report of a hidden live run re-opens the drawer', () => {
     let s = C.reduceWrapRun(run([{ type: 'follow', runId: RUN }]), { type: 'hide' });
     s = C.reduceWrapRun(s, { type: 'event', runId: RUN, event: { type: 'run-done', result: BLOCKED } });

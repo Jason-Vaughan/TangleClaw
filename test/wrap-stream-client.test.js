@@ -142,7 +142,7 @@ describe('wrap-drawer helpers — applyWrapStreamEvent (#185)', () => {
     assert.equal(H.buildStepRow(live.results[0], { blockedAt: live.blockedAt }).isBlocker, false);
   });
 
-  it('run-done marks the run over and keeps the payload the caller renders as a POST return', () => {
+  it('run-done marks the run over and keeps the result payload the caller renders', () => {
     let live = H.applyWrapStreamEvent(null, RUN_START);
     const result = { ok: true, status: 'wrapping', pipelineResult: { ok: true, results: [] } };
     live = H.applyWrapStreamEvent(live, { type: 'run-done', result });
