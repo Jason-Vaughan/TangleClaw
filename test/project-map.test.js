@@ -368,6 +368,12 @@ describe('project-map (PIDX #360, #356, slice 1)', () => {
         assert.equal(projects._mergeStructureBody(content, ['lib', 'x']), `${unindented}\n- \`x/\` — x`);
       });
 
+      it('keeps a wrapped line that starts with an issue reference, and stops at a real heading or a rule', () => {
+        const withRef = '- `lib/` — refreshed by the wrap step since\n#1363 made it read whole list items.';
+        const content = `# P\n\n## Structure\n\n${withRef}\n---\n- \`x/\` — x\n### Not part of x\n\n## Shared directories / doc groups\n`;
+        assert.equal(projects._mergeStructureBody(content, ['lib', 'x']), `${withRef}\n- \`x/\` — x`);
+      });
+
       it('does not pull the blank line that closes the section into the last item', () => {
         const body = projects._mergeStructureBody(doc, ['tests']);
         assert.equal(body, '- `tests/` — the suite');
