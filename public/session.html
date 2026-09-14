@@ -47,6 +47,21 @@
       </span>
       <span class="banner-engine" id="bannerEngine" data-tooltip="AI engine" role="button" tabindex="0"></span>
       <span id="bannerGroups" class="banner-groups"></span>
+      <!-- Who is signed in, and Sign out behind it (#1471). One pill so a phone
+           banner gains one element, not two; the detail opens on click like the
+           other banner pills. Shown only while someone is signed in. The pill
+           is a real button and the popover its sibling, so the Sign out button
+           is never nested inside another control. -->
+      <span class="banner-user-wrap" id="bannerUserWrap" data-tooltip="Signed in to TangleClaw" hidden>
+        <button type="button" class="banner-user" id="bannerUser"
+                aria-haspopup="true" aria-expanded="false" aria-controls="bannerUserPop">&#128100; <span class="banner-user-name" id="bannerUserName"></span></button>
+        <span class="group-popover pill-detail user-popover" id="bannerUserPop">
+          <span class="group-popover-title">Signed in as</span>
+          <span class="pill-detail-text" id="bannerUserPopName"></span>
+          <button type="button" class="btn user-popover-signout" id="bannerSignOutBtn">Sign out</button>
+          <span class="form-hint" id="bannerSignOutHint" aria-live="polite"></span>
+        </span>
+      </span>
     </div>
     <div class="banner-actions">
       <!-- Project action buttons (#139 Chunk 11b) render here. Populated by

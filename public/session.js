@@ -715,6 +715,59 @@ function closeBannerPopovers(keep) {
   document.querySelectorAll('.group-popover.open').forEach(el => {
     if (el !== keep) el.classList.remove('open');
   });
+  syncBannerUserExpanded();
+}
+
+/**
+ * Keep the user pill's `aria-expanded` saying whether its popover is open.
+ * Every path that closes banner popovers runs through `closeBannerPopovers`,
+ * so the attribute is re-read from the popover rather than tracked beside it.
+ */
+function syncBannerUserExpanded() {
+  const pill = document.getElementById('bannerUser');
+  const pop = document.getElementById('bannerUserPop');
+  if (!pill || !pop) return;
+  pill.setAttribute('aria-expanded', pop.classList.contains('open') ? 'true' : 'false');
+}
+
+/**
+ * Show who is signed in as a banner pill (#1471). Asked of `/api/auth/me`, the
+ * same question the settings Account group asks; with no session — an install
+ * with no login, or a question that failed — the pill stays hidden, because
+ * there is nothing to sign out of. The name is set as text, never markup.
+ * @returns {Promise<void>}
+ */
+async function loadBannerUser() {
+  const wrap = document.getElementById('bannerUserWrap');
+  if (!wrap) return;
+  const me = await api('/api/auth/me');
+  const signedIn = !!(me && me.authenticated && me.username);
+  wrap.hidden = !signedIn;
+  const name = signedIn ? me.username : '';
+  document.getElementById('bannerUserName').textContent = name;
+  document.getElementById('bannerUserPopName').textContent = name;
+  if (!signedIn) {
+    document.getElementById('bannerUserPop').classList.remove('open');
+    syncBannerUserExpanded();
+  }
+}
+
+/**
+ * Open or close the user pill's popover. Opening asks who is signed in again,
+ * so a page left open across a sign-in elsewhere shows the truth, and clears
+ * any earlier sign-out failure.
+ */
+function toggleBannerUser() {
+  const pop = document.getElementById('bannerUserPop');
+  if (pop.classList.contains('open')) {
+    pop.classList.remove('open');
+  } else {
+    closeBannerPopovers();
+    document.getElementById('bannerSignOutHint').textContent = '';
+    pop.classList.add('open');
+    loadBannerUser();
+  }
+  syncBannerUserExpanded();
 }
 
 /**
@@ -780,7 +833,7 @@ function togglePillDetail(pill) {
  * @param {Event} e - The document click.
  */
 function onBannerOutsideClick(e) {
-  if (!clickHitsSelector(e, '.group-pill, .status-pill, .banner-engine')) {
+  if (!clickHitsSelector(e, '.group-pill, .status-pill, .banner-engine, .banner-user-wrap')) {
     closeBannerPopovers();
   }
 }
@@ -2780,11 +2833,31 @@ async function renderAccountGroup() {
  * @returns {Promise<void>}
  */
 async function signOutFromSession() {
-  const btn = document.getElementById('signOutBtn');
+  await signOutWith(document.getElementById('signOutBtn'), document.getElementById('signOutHint'));
+}
+
+/**
+ * Sign out from the banner's user popover (#1471) — the same sign-out as the
+ * settings modal's, reporting into the popover.
+ * @returns {Promise<void>}
+ */
+async function signOutFromBanner() {
+  await signOutWith(document.getElementById('bannerSignOutBtn'), document.getElementById('bannerSignOutHint'));
+}
+
+/**
+ * Sign out through the shared helper, holding the button while the server
+ * answers. On success the helper leaves for the sign-in page; on failure the
+ * button comes back and the hint says why.
+ * @param {HTMLButtonElement} btn - The control that asked.
+ * @param {HTMLElement} hint - Where a failure is reported.
+ * @returns {Promise<void>}
+ */
+async function signOutWith(btn, hint) {
   btn.disabled = true;
   if (await tcSignOut(api)) return;
   btn.disabled = false;
-  document.getElementById('signOutHint').textContent = `Could not sign out: ${api.lastError || 'unknown error'}`;
+  hint.textContent = `Could not sign out: ${api.lastError || 'unknown error'}`;
 }
 
 /**
@@ -5505,6 +5578,8 @@ function bindEvents() {
   // Settings modal
   $('settingsCloseBtn').addEventListener('click', closeSettings);
   $('signOutBtn').addEventListener('click', signOutFromSession);
+  $('bannerUser').addEventListener('click', toggleBannerUser);
+  $('bannerSignOutBtn').addEventListener('click', signOutFromBanner);
   $('settingsModal').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) closeSettings();
   });
@@ -5556,6 +5631,8 @@ async function initSession() {
   }
 
   bindEvents();
+  // Not awaited: who is signed in has nothing to do with loading the session.
+  loadBannerUser();
 
   // Parallel data loading (loadVersion runs after loadProject since it reads project data)
   await Promise.all([loadProject(), loadConfig(), loadEngines(),

@@ -137,7 +137,8 @@ fails any auto-stub section older than 14 days.
   browser a replacement; wrong current password `403 REAUTH_FAILED`; recovery codes untouched) and `POST /api/auth/logout-everywhere`
   (not gate-exempt, so session + CSRF; `#destroyForUser`), both refused through `server.js#_accountSession`
   on an open install (`409 LOGIN_NOT_REQUIRED`) or during a fallback; UI: Sign out beside the header chip
-  (`public/landing.js#renderAuthUser`) and in a session page's settings (`public/session.js#renderAccountGroup`),
+  (`public/landing.js#renderAuthUser`), behind a session banner's user pill (#1471,
+  `public/session.js#loadBannerUser`/`#toggleBannerUser`) and in a session page's settings (`public/session.js#renderAccountGroup`),
   global settings → Your account (`public/ui.js#_loadAccountSection`), one shared
   `public/api-helper.js#tcSignOut`. Every dashboard and session request goes through
   `public/api-helper.js#tcFetch` (CSRF token + an ended session leaves for `/login`, #1462/#1461); pages:
