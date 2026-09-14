@@ -689,20 +689,40 @@ function renderRecoveryNotice(notice) {
 }
 
 /**
- * Show or hide the "Logged in as <user>" chip in the dashboard bar (AUTH-3).
- * Hidden whenever there is no authenticated user (direct mode / gate off).
+ * Show or hide the "Logged in as <user>" chip in the dashboard bar, and the
+ * Sign out button beside it (#1463). Both are hidden whenever there is no
+ * signed-in user: an install with no login required has nothing to sign out of.
  * The username is escaped before it reaches innerHTML.
  * @param {string|null|undefined} user
  */
 function renderAuthUser(user) {
   const el = document.getElementById('authUser');
-  if (!el) return;
-  if (typeof user === 'string' && user.length > 0) {
-    el.innerHTML = `&#128100; ${esc(user)}`;  // 👤 logged-in user
-    el.classList.remove('hidden');
-  } else {
-    el.textContent = '';
-    el.classList.add('hidden');
+  const btn = document.getElementById('signOutBtn');
+  const signedIn = typeof user === 'string' && user.length > 0;
+  if (el) {
+    if (signedIn) {
+      el.innerHTML = `&#128100; ${esc(user)}`;  // 👤 logged-in user
+      el.classList.remove('hidden');
+    } else {
+      el.textContent = '';
+      el.classList.add('hidden');
+    }
+  }
+  if (btn) {
+    btn.classList.toggle('hidden', !signedIn);
+    if (!btn.dataset.wired) {
+      btn.dataset.wired = '1';
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        if (await tcSignOut(api)) return;
+        btn.disabled = false;
+        const toast = document.getElementById('toast');
+        if (toast) {
+          toast.textContent = `Could not sign out: ${api.lastError || 'unknown error'}`;
+          toast.className = 'toast toast-warn visible';
+        }
+      });
+    }
   }
 }
 
@@ -1156,8 +1176,8 @@ async function readSwCacheName() {
  * can never claim a boot that did not happen. `tcFetch`, not `api()`: the
  * reply is an empty 204 (no JSON to parse) and a failed beacon must not touch
  * the connection state or the toast — it is a log line, not a dependency. Not a
- * bare `fetch` either: that sends no CSRF token, and on a signed-in install the
- * gate refused every beacon.
+ * bare `fetch` either: that sends no CSRF token, which a signed-in install
+ * refuses.
  *
  * @returns {Promise<void>} Resolves whether or not the beacon reached the server.
  */

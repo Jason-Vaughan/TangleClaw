@@ -2440,24 +2440,45 @@ route('POST', '/api/auth/recover', async (req, res, _params, body) => {
 });
 
 /**
- * The signed-in session a recovery-code management route acts for, or null
- * after sending the refusal. An `open` install resolves no session at all, so
- * the answer there says a login is not in use.
+ * The signed-in session an account-management route acts for, or null after
+ * sending the refusal. An `open` install resolves no session at all, so the
+ * answer there says a login is not in use.
+ *
+ * Shared by every route that manages the signed-in account — recovery codes,
+ * the password, signing out everywhere — so the three refusals read the same
+ * wherever they are met, and a local tool that reaches one of these routes past
+ * the gate with no session is refused by the route rather than by luck.
+ *
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res
+ * @param {object} words
+ * @param {string} words.notRequired - The 409's message on an open install
+ * @param {string} words.action - What was asked, e.g. `manage recovery codes`
+ * @returns {object|null}
+ */
+function _accountSession(req, res, words) {
+  if (req.tcSession) return req.tcSession;
+  if (authGate.isOpen(req.tcGateState)) {
+    errorResponse(res, 409, words.notRequired, 'LOGIN_NOT_REQUIRED');
+  } else if (req.tcGateState === authGate.GATE_STATES.FALLBACK) {
+    _refuseDuringFallback(res, words.action);
+  } else {
+    errorResponse(res, 401, `Sign in to ${words.action}.`, 'UNAUTHENTICATED');
+  }
+  return null;
+}
+
+/**
+ * {@link _accountSession} with the recovery-code routes' words.
  * @param {http.IncomingMessage} req
  * @param {http.ServerResponse} res
  * @returns {object|null}
  */
 function _recoveryCodesSession(req, res) {
-  if (req.tcSession) return req.tcSession;
-  if (authGate.isOpen(req.tcGateState)) {
-    errorResponse(res, 409, 'Recovery codes belong to a login, and this install does not require one.',
-      'LOGIN_NOT_REQUIRED');
-  } else if (req.tcGateState === authGate.GATE_STATES.FALLBACK) {
-    _refuseDuringFallback(res, 'manage recovery codes');
-  } else {
-    errorResponse(res, 401, 'Sign in to manage recovery codes.', 'UNAUTHENTICATED');
-  }
-  return null;
+  return _accountSession(req, res, {
+    notRequired: 'Recovery codes belong to a login, and this install does not require one.',
+    action: 'manage recovery codes'
+  });
 }
 
 // GET /api/auth/recovery-codes — how many unused codes the signed-in account
@@ -2508,6 +2529,82 @@ route('POST', '/api/auth/recovery-codes/acknowledge', (req, res) => {
   const session = _recoveryCodesSession(req, res);
   if (!session) return;
   jsonResponse(res, 200, { cleared: store.recoveryCodes.clearNotice(session.userId) });
+});
+
+// ── Account self-service (#1457, #1463) ──
+
+// POST /api/auth/password — change the signed-in account's password.
+//
+// Order is argued:
+//   1. A session (`_accountSession`). The route is not on the gate's exemption
+//      list, so the gate has already required the session and its CSRF token.
+//   2. Both fields present — a 400 that costs no hashing.
+//   3. Policy on the NEW password, before any hashing, so a stream of rejected
+//      submissions costs no scrypt. The same rules as every surface that sets
+//      one (`caddy.validateAdminPassword`).
+//   4. Verify the CURRENT password and hash the new one inside ONE hash slot.
+//      A session alone must not be able to change the password: a stolen
+//      cookie that could would lock the owner out of their own account.
+//   5. Replace the hash and end the account's OTHER sessions in one
+//      transaction, keeping this one (`users.replacePasswordKeepingSession`).
+//
+// A wrong current password answers 403 `REAUTH_FAILED`, as minting recovery
+// codes does — not 401, which the dashboard reads as "your session is gone"
+// and leaves the page for.
+route('POST', '/api/auth/password', async (req, res, _params, body) => {
+  const session = _accountSession(req, res, {
+    notRequired: 'This install does not require a login, so there is no password to change.',
+    action: 'change your password'
+  });
+  if (!session) return;
+  const payload = body || {};
+  const current = typeof payload.currentPassword === 'string' ? payload.currentPassword : '';
+  const next = typeof payload.newPassword === 'string' ? payload.newPassword : '';
+  if (!current || !next) {
+    return errorResponse(res, 400, 'Enter your current password and a new one.', 'BAD_REQUEST');
+  }
+  const policy = caddy.validateAdminPassword(next, session.username);
+  if (!policy.ok) return errorResponse(res, 400, policy.error, 'WEAK_PASSWORD');
+
+  const derived = await _withHashSlot(res, 'a password change', async () => {
+    const verified = await store.users.verifyAsync(session.username, current);
+    if (!verified) return null;
+    return { user: verified, hash: await passwordHashing.hashPasswordAsync(next) };
+  });
+  if (derived.refused) return;
+  if (!derived.value) {
+    return errorResponse(res, 403, 'That current password did not match.', 'REAUTH_FAILED');
+  }
+  const changed = store.users.replacePasswordKeepingSession(derived.value.user.id, derived.value.hash, session.id);
+  if (!changed) {
+    // Disabled between the verification and the write.
+    return errorResponse(res, 409, 'This account cannot change its password.', 'NO_SUCH_ACCOUNT');
+  }
+  jsonResponse(res, 200, { ok: true, otherSessionsEnded: changed.sessionsEnded });
+});
+
+// POST /api/auth/logout-everywhere — end every session the signed-in account
+// holds, this one included, and clear this browser's cookies.
+//
+// Unlike `POST /api/auth/logout` this is NOT on the gate's exemption list: it
+// acts on sessions other than the one presenting it, so it needs a live session
+// and the CSRF token like any other write. No password: the worst a stolen
+// cookie does with it is sign the owner out, and the owner — on a lost or
+// borrowed device's behalf — needs it to be one click.
+route('POST', '/api/auth/logout-everywhere', (req, res) => {
+  const session = _accountSession(req, res, {
+    notRequired: 'This install does not require a login, so there is no session to end.',
+    action: 'sign out everywhere'
+  });
+  if (!session) return;
+  const ended = store.authSessions.destroyForUser(session.username);
+  log.warn('Signed out everywhere', { username: session.username, sessionsEnded: ended });
+  const secure = authSession.isSecureRequest(req);
+  res.setHeader('Set-Cookie', [
+    authSession.clearCookie({ secure }),
+    authSession.clearCsrfCookie({ secure })
+  ]);
+  jsonResponse(res, 200, { ok: true, sessionsEnded: ended });
 });
 
 // GET /api/auth/me — who this request is, and whether a login is required.
