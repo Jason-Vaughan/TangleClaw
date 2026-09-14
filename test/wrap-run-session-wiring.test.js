@@ -101,6 +101,7 @@ function harness() {
     projectName: 'demo',
     sessionState: { wrapDrawerOpen: false },
     wrapSkippedAiSteps: {},
+    wrapPathDecisions: {},
     wrapBumpLevel: '',
     currentWrapPassword: '',
     sessionStorage: {
@@ -285,6 +286,28 @@ describe('wrap-run wiring in session.js — executed', () => {
     await h.w.retryWrap();
     assert.equal(h.w.wrapRunState().phase, 'following');
     assert.equal(h.last('renderLiveWrapDrawer')[1].retry, true);
+  });
+
+  it('#1406 — Retry sends the Include / Leave choices and keeps an earlier answer the list no longer shows', async () => {
+    await wrapToBlocked(h);
+    // An answer from a previous retry, for a file the drawer is no longer asking about.
+    h.sandbox.wrapPathDecisions['earlier.js'] = 'include';
+    const radios = [
+      { dataset: { path: 'shared.js' }, value: 'leave' },
+      { dataset: { path: 'notes.md' }, value: 'include' }
+    ];
+    h.sandbox.document.getElementById = () => ({
+      disabled: false,
+      classList: { add() {}, remove() {} },
+      querySelector: () => null,
+      querySelectorAll: (sel) => (sel.includes('wrap-decision-pathlist') ? radios : [])
+    });
+    h.net.post = { ok: true, runId: RETRY_RUN, status: 'wrapping' };
+    await h.w.retryWrap();
+    // Through JSON: the object was built inside the vm context, so its prototype
+    // is that realm's and a strict deep-equal against this realm's literal fails.
+    assert.deepEqual(JSON.parse(JSON.stringify(h.last('apiMutate')[2].options.pathDecisions)),
+      { 'earlier.js': 'include', 'shared.js': 'leave', 'notes.md': 'include' });
   });
 
   it('a 409 follows the run already in progress instead of reporting a failure', async () => {

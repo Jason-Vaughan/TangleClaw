@@ -1969,10 +1969,15 @@ describe('sessions', () => {
       }
     });
 
-    it('completeWrap finalizes — the row wrapped, the repository committed (#910)', () => {
+    it('completeWrap finalizes — the row wrapped — and commits nothing (#910, #1406)', () => {
       // Moving finalization out of the read is only correct if an action still
       // performs it, in full. A fix that just stopped auto-completing would
       // strand every finished wrap.
+      //
+      // It used to commit too: `git add -A` on the whole working tree, which
+      // put the operator's and co-resident sessions' uncommitted work into a
+      // "Session wrap" commit (#1406). The pipeline's commit step is now the only
+      // wrap commit, and it commits only the session's own files.
       const session = startWrapping('tc-wedge-wrap-finalize');
       const realCommit = git.commit;
       const realIsRepo = git.isGitRepo;
@@ -1983,7 +1988,7 @@ describe('sessions', () => {
         const result = sessions.completeWrap('wedge-wrap');
         assert.equal(result.error, null);
         assert.equal(store.sessions.get(session.id).status, 'wrapped');
-        assert.equal(committed, 1, 'the auto-commit moved with the finalizing, it did not vanish');
+        assert.equal(committed, 0, 'finalizing never sweeps the working tree into a commit');
       } finally {
         git.commit = realCommit;
         git.isGitRepo = realIsRepo;

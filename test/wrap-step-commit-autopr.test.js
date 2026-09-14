@@ -27,6 +27,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { execSync } = require('node:child_process');
 const { initRepo } = require('./_temp-repo');
+const { cleanLaunchScope } = require('./_wrap-scope-fixture');
 const { setLevel, setConsoleStream } = require('../lib/logger');
 
 setLevel('error');
@@ -117,7 +118,10 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
     fs.writeFileSync(path.join(projectPath, 'work.txt'), 'work\n');
   });
 
-  /** Build a minimal context for the commit handler. */
+  /**
+   * Build a minimal context for the commit handler. The scope records a launch on
+   * a clean tree, so `work.txt` is the session's own change.
+   */
   function buildContext() {
     return {
       project: { name: 'sandbox', path: projectPath, id: projectId },
@@ -125,7 +129,8 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
       step: { id: 'commit', kind: 'commit', blocker: true },
       previousResults: [],
       staged: {},
-      options: {}
+      options: {},
+      scope: cleanLaunchScope(projectPath)
     };
   }
 

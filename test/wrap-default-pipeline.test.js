@@ -23,7 +23,7 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
     // update deliberately, never casually.
     assert.deepStrictEqual(
       defaultPipeline.steps().map((s) => s.id),
-      ['preflight', 'open-pr-check', 'changelog-update', 'version-bump', 'learnings-capture', 'learnings-db-write', 'rule-proposal', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write', 'apply-pr-resolutions']
+      ['preflight', 'session-files', 'open-pr-check', 'changelog-update', 'version-bump', 'learnings-capture', 'learnings-db-write', 'rule-proposal', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write', 'apply-pr-resolutions']
     );
   });
 
@@ -49,7 +49,8 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
     first.push({ id: 'extra', kind: 'commit' });
     const second = defaultPipeline.steps();
     assert.equal(second[0].id, 'preflight');
-    assert.equal(second.length, 15);
+    assert.equal(second.length, 16);
+    assert.ok(!second.some((s) => s.id === 'extra'), 'the pushed step did not leak into the shared list');
   });
 
   it('every ai-content step carries a non-empty prompt (a sane full-featured default, not minimal\'s self-skip shape)', () => {

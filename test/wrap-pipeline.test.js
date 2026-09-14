@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { initRepo } = require('./_temp-repo');
+const { cleanLaunchScope } = require('./_wrap-scope-fixture');
 const { setLevel, getLevel, setConsoleStream } = require('../lib/logger');
 
 setLevel('error');
@@ -86,7 +87,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
   describe('STEP_DISPATCH', () => {
     it('covers every step kind referenced by the contract (ADR 0002 dispatch table)', () => {
       const expected = [
-        'preflight', 'pr-check', 'pr-merge', 'lint', 'test',
+        'preflight', 'session-files', 'pr-check', 'pr-merge', 'lint', 'test',
         'ai-content', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit'
       ];
       for (const kind of expected) {
@@ -202,7 +203,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       // Patch every kind the pipeline actually uses (incl. `continuity-write`, CC-1, and
       // `project-map`, PIDX slice 3) so the inertness check captures all ten
       // steps rather than letting a real handler run mid-test.
-      const wrapKinds = ['preflight', 'pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
+      const wrapKinds = ['preflight', 'session-files', 'pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
       const originals = {};
       for (const kind of wrapKinds) {
         originals[kind] = wrapPipeline.STEP_DISPATCH[kind];
@@ -237,7 +238,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
   // #185 — `options.onStepEvent` is the richer feed behind the live wrap
   // drawer: the run's shape first, then each step's start and settle.
   describe('runWrapPipeline — onStepEvent (#185)', () => {
-    const wrapKinds = ['preflight', 'pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
+    const wrapKinds = ['preflight', 'session-files', 'pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
 
     /**
      * Stub every dispatch handler with `decide(stepId)` and run the pipeline
@@ -317,6 +318,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       assert.deepStrictEqual(types, [
         ['run-start', null],
         ['step-start', 'preflight'], ['step-done', 'preflight'],
+        ['step-start', 'session-files'], ['step-done', 'session-files'],
         ['step-start', 'open-pr-check'], ['step-done', 'open-pr-check'],
         ['step-start', 'changelog-update'], ['step-blocked', 'changelog-update']
       ]);
@@ -2561,7 +2563,11 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
       { cwd: projectPath, shell: '/bin/sh' });
   });
 
-  /** Build a minimal context for the commit handler. */
+  /**
+   * Build a minimal context for the commit handler. The scope records a launch on
+   * a clean tree, so every uncommitted file is the session's own; ownership is
+   * exercised in `test/wrap-file-ownership.test.js`.
+   */
   function buildContext(staged, projectOverride) {
     return {
       project: projectOverride || { name: 'sandbox', path: projectPath, id: 1 },
@@ -2569,7 +2575,8 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
       step: { id: 'commit', kind: 'commit', blocker: true },
       previousResults: [],
       staged: staged || {},
-      options: {}
+      options: {},
+      scope: cleanLaunchScope(projectPath)
     };
   }
 
@@ -2920,7 +2927,7 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
     }
   });
 
-  it('blocks when git add -A exits non-zero', async () => {
+  it('blocks when git add exits non-zero', async () => {
     // Critic MINOR: only `git status` and `git commit` failure paths
     // were tested. Cover `git add` failure too — completes the three-
     // path matrix.
@@ -2938,7 +2945,7 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
       const result = await commitStep.run(ctx);
       assert.equal(result.ok, false);
       assert.equal(result.status, 'blocked');
-      assert.match(result.blockers[0], /git add -A failed/);
+      assert.match(result.blockers[0], /git add failed/);
       assert.match(result.blockers[0], /git add mock failure/);
       // No new commit landed.
       const log = execSync('git log --oneline', { cwd: projectPath }).toString();

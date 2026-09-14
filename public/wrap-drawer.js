@@ -15,6 +15,7 @@
    */
   const KIND_LABELS = {
     'preflight': 'Preflight',
+    'session-files': 'Uncommitted files',
     'pr-check': 'Check open PRs',
     'pr-merge': 'Apply PR decisions',
     'lint': 'Lint',
@@ -36,6 +37,7 @@
    */
   const KIND_DESCRIPTIONS = {
     'preflight': 'Asks prawduct for its session-end verdict before the wrap writes to any file: in a prawduct-governed project it runs the Stop hook and shows the block text if a gate (Critic review, reflection) is unmet. Advisory by default — the wrap continues; a project can make it blocking in its wrap step settings. Skips in projects without .prawduct/.',
+    'session-files': 'Finds uncommitted files this session did not change (already uncommitted when it launched) and asks whether to include each in the wrap commit or leave it uncommitted. The wrap commits only files changed since the session launched, files the wrap writes, and files you include. Blocks until every listed file has a choice.',
     'pr-check': 'Checks for open GitHub PRs on this branch and asks you to resolve each one (merge, defer, or ignore). Blocks the wrap until you decide; skips silently when GitHub can\u2019t be reached.',
     'pr-merge': 'Applies the PR decisions you made earlier \u2014 each PR you marked \u201cmerge\u201d gets GitHub auto-merge enabled, so it lands once its checks pass. Runs after the wrap commit. Never blocks.',
     'lint': 'Runs the project’s linter over the working tree.',
@@ -222,6 +224,11 @@
     }
     if (!output) return null;
     switch (stepResult.kind) {
+      case 'session-files':
+        // #1406 / #1469 — the handler composes the line (what is the session's,
+        // what was included or left, and which worktree is being wrapped). A
+        // blocked row needs none: its blocker and the per-file choices say it.
+        return stepResult.status === 'done' ? (output.detail || null) : null;
       case 'preflight':
         // #854 — a clear probe names itself; an advisory block says the wrap
         // went on, so the blocked badge on a completed wrap is not read as
@@ -703,6 +710,46 @@
   }
 
   /**
+   * Descriptor for the per-file Include / Leave list (#1406): uncommitted files
+   * the session did not change, which the wrap will not commit without the
+   * operator's say. Rendered for the blocked `session-files` step, and for a
+   * blocked `commit` step, which re-checks the same rule and names any file that
+   * turned up after the first question.
+   *
+   * @param {object} stepRow - View-model from `buildStepRow`.
+   * @param {object} rawOutput - Raw `step.output` from the runner.
+   * @returns {{kind: 'path-decisions', optionsKey: 'pathDecisions', paths: Array<{path: string, why: string, deleted: boolean}>}|null}
+   */
+  function pathDecisionWidget(stepRow, rawOutput) {
+    if (!stepRow || (stepRow.kind !== 'session-files' && stepRow.kind !== 'commit')) return null;
+    if (!rawOutput || typeof rawOutput !== 'object' || !Array.isArray(rawOutput.foreignPaths)) return null;
+    const paths = rawOutput.foreignPaths
+      .filter((f) => f && typeof f.path === 'string' && f.path)
+      .map((f) => ({ path: f.path, why: typeof f.why === 'string' ? f.why : '', deleted: f.deleted === true }));
+    if (paths.length === 0) return null;
+    return { kind: 'path-decisions', optionsKey: 'pathDecisions', paths };
+  }
+
+  /**
+   * Merge this retry's Include / Leave choices into the session-level record and
+   * write the full set back onto `options` (#1406). The pipeline re-runs from its
+   * first step on every retry, and a later block lists only files still without
+   * a choice, so an earlier choice must persist or the same file would be asked
+   * about again. Mutates both arguments; no DOM.
+   *
+   * @param {Object<string, string>} accumulated - Session-level `{[path]: 'include'|'leave'}`.
+   * @param {object} options - Freshly collected retry options.
+   * @returns {Object<string, string>} The (mutated) `accumulated` map.
+   */
+  function accumulatePathDecisions(accumulated, options) {
+    if (options && options.pathDecisions) Object.assign(accumulated, options.pathDecisions);
+    if (options && Object.keys(accumulated).length > 0) {
+      options.pathDecisions = { ...accumulated };
+    }
+    return accumulated;
+  }
+
+  /**
    * Descriptor for the inline plan-picker (#428): when priming-roll blocks
    * on multiple in-progress plans it can't auto-pick, surface the candidate
    * filenames so the drawer can render a dropdown. Unlike pr-check, this is a
@@ -763,7 +810,8 @@
    * @param {object} accessors - Bag of `{checked, value, prSelections}`
    *   getter functions, each returning the corresponding raw value.
    *   `prSelections` returns `{[prNumber]: 'merge'|'defer'|'ignore'}` or
-   *   `null` if pr-check widget isn't present.
+   *   `null` if pr-check widget isn't present. `pathDecisions` returns
+   *   `{[path]: 'include'|'leave'}` or `null` without the file list.
    * @returns {object} options payload (only keys with concrete user input)
    */
   function collectOptionsFromAccessors(accessors) {
@@ -790,6 +838,19 @@
       const stepId = accessors.skipAiContent();
       if (typeof stepId === 'string' && stepId.length > 0) {
         options.skipAiContent = { [stepId]: true };
+      }
+    }
+    // #1406 — Include / Leave per uncommitted file the session did not change.
+    // Only the two decisions the server honors are sent; an unanswered file is
+    // simply absent, and the wrap asks about it again.
+    if (accessors.pathDecisions) {
+      const v = accessors.pathDecisions();
+      if (v && typeof v === 'object') {
+        const keys = Object.keys(v).filter((k) => v[k] === 'include' || v[k] === 'leave');
+        if (keys.length > 0) {
+          options.pathDecisions = {};
+          for (const k of keys) options.pathDecisions[k] = v[k];
+        }
       }
     }
     // #540 ask-mode — the operator's version-bump choice, captured in the wrap
@@ -1113,6 +1174,8 @@
     summarizeSkips,
     decisionWidgetForBlockedStep,
     prCheckResolutionWidget,
+    pathDecisionWidget,
+    accumulatePathDecisions,
     planPickerWidget,
     ruleProposalWidget,
     collectOptionsFromAccessors,
