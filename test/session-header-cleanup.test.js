@@ -69,7 +69,7 @@ function node() {
  */
 function load(answers = {}) {
   const ids = ['moreBtn', 'moreMenu', 'bannerUser', 'bannerUserPop', 'bannerGroups', 'groupsPop',
-    'otherPop', 'commandBar', 'cmdBtn', 'commandInput'];
+    'otherPop', 'commandBar', 'cmdBtn', 'commandInput', 'groupPop-g1', 'peekBtn', 'copyBtn', 'selectBtn', 'uploadBtn'];
   const els = Object.fromEntries(ids.map((id) => [id, node()]));
   const calls = [];
   const ctx = vm.createContext({
@@ -86,7 +86,8 @@ function load(answers = {}) {
     }
   });
   const fns = ['esc', 'closeBannerPopovers', 'syncBannerExpanded', 'toggleMoreMenu', 'onMoreMenuClick',
-    'clickHitsSelector', 'renderBannerGroups', 'groupPopoverHtml', 'toggleGroupsPopover', 'toggleCommandBar'];
+    'clickHitsSelector', 'renderBannerGroups', 'groupPopoverHtml', 'toggleGroupsPopover', 'toggleCommandBar',
+    'toggleGroupPopover', 'onGroupPillKey', 'applyWebuiMode'];
   vm.runInContext(`let bannerGroupNames = {};\n${fns.map((f) => extract(SESSION_SRC, f)).join('\n')}\n`
     + fns.map((f) => `this.${f} = ${f};`).join('\n'), ctx);
   return { els, ctx, calls };
@@ -152,6 +153,19 @@ describe('the ⋯ menu holds the command bar and Peek (#1474, #1475)', () => {
     assert.equal(els.moreBtn.getAttribute('aria-expanded'), 'false');
   });
 
+  it('is disabled in a Web UI session, where everything it holds is, and the command bar is closed with every mark of it', () => {
+    const { els, ctx } = load();
+    ctx.toggleCommandBar();
+    ctx.applyWebuiMode();
+    for (const id of ['moreBtn', 'cmdBtn', 'peekBtn']) assert.equal(els[id].disabled, true, id);
+    assert.match(els.moreBtn.title, /not available for Web UI sessions/);
+    assert.equal(ctx.sessionState.commandBarOpen, false);
+    assert.equal(els.commandBar.classList.contains('hidden'), true);
+    assert.equal(els.moreBtn.classList.contains('active'), false);
+    assert.equal(els.cmdBtn.classList.contains('active'), false);
+    assert.equal(els.cmdBtn.getAttribute('aria-expanded'), 'false');
+  });
+
   it('marks ⋯ while the command bar is open, since the bar\'s own button is out of sight', () => {
     const { els, ctx } = load();
     ctx.toggleCommandBar();
@@ -182,7 +196,7 @@ describe('two or more groups share one pill (#1472)', () => {
     ctx.renderBannerGroups([]);
     assert.equal(els.bannerGroups.innerHTML, '');
     ctx.renderBannerGroups([groups[0]]);
-    assert.match(els.bannerGroups.innerHTML, /class="group-pill"[^>]*data-tooltip="Project group"[^>]*toggleGroupPopover\(this, 'g1'\)">Backend/);
+    assert.match(els.bannerGroups.innerHTML, /class="group-pill"[^>]*data-tooltip="Project group"[^>]*onclick="toggleGroupPopover\(this, 'g1'\)"[^>]*>Backend</);
     assert.equal((els.bannerGroups.innerHTML.match(/class="group-pill"/g) || []).length, 1);
   });
 
@@ -231,6 +245,34 @@ describe('two or more groups share one pill (#1472)', () => {
     assert.equal(els.otherPop.classList.contains('open'), false);
     await ctx.toggleGroupsPopover(pill);
     assert.equal(els.groupsPop.classList.contains('open'), false);
+  });
+
+  it('both group pills open from the keyboard: focusable buttons answering Enter and Space', () => {
+    const { els, ctx } = load();
+    ctx.renderBannerGroups(groups);
+    assert.match(els.bannerGroups.innerHTML, /role="button" tabindex="0" onclick="toggleGroupsPopover\(this\)" onkeydown="onGroupPillKey\(event\)"/);
+    ctx.renderBannerGroups([groups[0]]);
+    assert.match(els.bannerGroups.innerHTML, /role="button" tabindex="0" onclick="toggleGroupPopover\(this, 'g1'\)" onkeydown="onGroupPillKey\(event\)"/);
+
+    const press = (key, fromInside = false) => {
+      let opened = 0;
+      let prevented = false;
+      const pill = { click: () => { opened += 1; } };
+      ctx.onGroupPillKey({ key, target: fromInside ? {} : pill, currentTarget: pill, preventDefault: () => { prevented = true; } });
+      return { opened, prevented };
+    };
+    assert.deepEqual(press('Enter'), { opened: 1, prevented: true });
+    assert.deepEqual(press(' '), { opened: 1, prevented: true });
+    assert.deepEqual(press('Tab'), { opened: 0, prevented: false }, 'other keys pass through');
+    assert.deepEqual(press('Enter', true), { opened: 0, prevented: false }, 'a key from inside the popover is not the pill\'s');
+  });
+
+  it('a single group that fails to load says so instead of a click with no answer', async () => {
+    const { els, ctx } = load({});
+    ctx.renderBannerGroups([groups[0]]);
+    await ctx.toggleGroupPopover({}, 'g1');
+    assert.equal(els['groupPop-g1'].classList.contains('open'), true);
+    assert.match(els['groupPop-g1'].innerHTML, /Backend<\/div><div class="pill-detail-text">Could not load this group\./);
   });
 
   it('the single-group popover and the counted one render a group the same way', () => {

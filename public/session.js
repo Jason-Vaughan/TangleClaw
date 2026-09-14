@@ -678,14 +678,28 @@ function renderBannerGroups(groups) {
   if (groups.length === 1) {
     const g = groups[0];
     container.innerHTML =
-      `<span class="group-pill" data-group-id="${esc(g.id)}" data-tooltip="Project group" onclick="toggleGroupPopover(this, '${esc(g.id)}')">${esc(g.name)}` +
+      `<span class="group-pill" data-group-id="${esc(g.id)}" data-tooltip="Project group" role="button" tabindex="0" onclick="toggleGroupPopover(this, '${esc(g.id)}')" onkeydown="onGroupPillKey(event)">${esc(g.name)}` +
       `<span class="group-popover" id="groupPop-${esc(g.id)}"></span></span>`;
     return;
   }
 
   container.innerHTML =
-    `<span class="group-pill" data-group-ids="${groups.map(g => esc(g.id)).join(',')}" data-tooltip="Project groups" onclick="toggleGroupsPopover(this)">${groups.length} groups` +
+    `<span class="group-pill" data-group-ids="${groups.map(g => esc(g.id)).join(',')}" data-tooltip="Project groups" role="button" tabindex="0" onclick="toggleGroupsPopover(this)" onkeydown="onGroupPillKey(event)">${groups.length} groups` +
     '<span class="group-popover groups-popover" id="groupsPop"></span></span>';
+}
+
+/**
+ * Open a group pill from the keyboard. With several groups their names live
+ * only in the popover, so a pill that answered only a pointer would hide them
+ * from anyone on a keyboard.
+ * Enter and Space click the pill, so the keyboard and a pointer run one path.
+ * @param {KeyboardEvent} e - The keydown on the pill.
+ */
+function onGroupPillKey(e) {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  if (e.target !== e.currentTarget) return;
+  e.preventDefault();
+  e.currentTarget.click();
 }
 
 /**
@@ -750,11 +764,12 @@ async function toggleGroupPopover(pill, groupId) {
     return;
   }
 
-  // Fetch group details
+  // Fetch group details. A failure says so, the way the counted pill does,
+  // rather than leaving the click with no visible answer.
   const data = await api(`/api/groups/${groupId}`);
-  if (!data) return;
-
-  pop.innerHTML = groupPopoverHtml(data);
+  pop.innerHTML = data
+    ? groupPopoverHtml(data)
+    : `<div class="group-popover-title">${esc(bannerGroupNames[groupId] || 'Group')}</div><div class="pill-detail-text">Could not load this group.</div>`;
   pop.classList.add('open');
 }
 
@@ -2326,9 +2341,20 @@ function applyWebuiMode() {
   disable('cmdBtn', 'Command bar not available for Web UI sessions');
   disable('selectBtn', 'Select not available for Web UI sessions');
   disable('uploadBtn', 'Upload not available for Web UI sessions');
+  // Everything the ⋯ menu holds is disabled above, and a phone never sees a
+  // hover title — so the menu itself is disabled rather than opening onto
+  // buttons that do nothing.
+  disable('moreBtn', 'Command bar and Peek are not available for Web UI sessions');
 
-  // Hide command bar if open
+  // Close the command bar if open, and every mark that says it is.
+  sessionState.commandBarOpen = false;
   document.getElementById('commandBar').classList.add('hidden');
+  ['cmdBtn', 'moreBtn'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('active');
+  });
+  const cmd = document.getElementById('cmdBtn');
+  if (cmd) cmd.setAttribute('aria-expanded', 'false');
 }
 
 // ── Command Bar ──
