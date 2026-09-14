@@ -34,6 +34,23 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-14 — project-map wrap step keeps wrapped Structure descriptions (#1363)
+
+<!-- prawduct: type=bugfix | scope=wrap-1363 -->
+
+Operator request (pulled out of Train 18 as a standalone data-loss fix). Into `main`.
+
+**Root cause (verified).** `lib/projects.js#_mergeStructureBody` mapped each dir to the single line
+matching `PROJECT_MAP_DIR_LINE_RE`, then `_replaceSectionBody` rewrote the whole Structure body from
+that map — so every continuation line of a wrapped bullet was dropped. TangleBrain's lost
+descriptions (#91→#93, #155→#159) were 2-space-indented continuations.
+
+**What.** New `_bulletItemEnd` reads a list item to its end: any non-blank line that does not open a
+column-0 list item or heading continues it (indented text, nested lists, unindented wrapping), and a
+blank line continues it only when an indented line follows. The merge keeps the whole item per dir.
+`features-toc` checked and unaffected: it drops only exact one-line auto-stub lines. Regression tests
+in `test/project-map.test.js` and `test/wrap-step-project-map.test.js`, every scan rule mutation-checked.
+
 ## 2026-09-14 — Phone banner: Kill no longer wraps alone (#1478)
 
 <!-- prawduct: type=bugfix | scope=ui-1478 -->

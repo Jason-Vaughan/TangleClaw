@@ -120,6 +120,32 @@ describe('wrap-step project-map (PIDX slice 3, #360, #356)', () => {
         'on-disk file is untouched until the commit flush');
     });
 
+    it('keeps a wrapped description whole when a wrap adds a directory (#1363)', async () => {
+      enableToggle();
+      const wrapped = '- `lib/` — the core library: routing at the top level, one subpackage per\n'
+        + '  surface, and the backend drivers under `adapters/`.';
+      fs.writeFileSync(path.join(projectPath, MAP), `# Project Map\n\n## Structure\n\n${wrapped}\n\n## Shared directories / doc groups\n\n<!-- This project is not a member of any shared-doc group. -->\n`);
+      fs.mkdirSync(path.join(projectPath, 'data'), { recursive: true });
+
+      const staged = {};
+      const r = await projectMap.run({ project, staged });
+      assert.equal(r.status, 'done');
+      const out = staged['project-map:refresh'].newContent;
+      assert.ok(out.includes(`- \`data/\` — <!-- describe -->\n${wrapped}\n`), 'the wrapped description survives whole, after the new dir');
+    });
+
+    it('reports no drift for a wrapped description when nothing changed (#1363)', async () => {
+      enableToggle();
+      const wrapped = '- `lib/` — the core library: routing at the top level, one subpackage per\n'
+        + '  surface, and the backend drivers under `adapters/`.';
+      fs.writeFileSync(path.join(projectPath, MAP), `# Project Map\n\n## Structure\n\n${wrapped}\n\n## Shared directories / doc groups\n\n<!-- This project is not a member of any shared-doc group. -->\n`);
+      const staged = {};
+      const r = await projectMap.run({ project, staged });
+      assert.equal(r.status, 'skipped');
+      assert.match(r.output.reason, /no drift/i);
+      assert.deepEqual(staged, {});
+    });
+
     it('preserves a curated description while refreshing', async () => {
       enableToggle();
       const curated = '# Project Map\n\n## Structure\n\n- `lib/` — the core library\n\n## Shared directories / doc groups\n\n<!-- This project is not a member of any shared-doc group. -->\n';
