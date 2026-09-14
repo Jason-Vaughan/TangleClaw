@@ -277,6 +277,34 @@ describe('wrap-scope picks the tree the session\'s pane is in (#1469)', () => {
     assert.equal(truncated.snapshotApplies, false, 'a partial list is never trusted as complete');
   });
 
+  it('a git that refuses is reported as git refusing, not as "not a git repo", and the wrap says so instead of skipping', async () => {
+    const repo = makeRepo();
+    const refusing = async (file, args) => (args.includes('--path-format=absolute')
+      ? { exitCode: 129, stdout: '', stderr: "error: unknown option `path-format=absolute'\nusage: git rev-parse", error: null, timedOut: false }
+      : asyncExec(file, args, { cwd: repo }));
+    const scope = await wrapScope.resolve({ name: 'p', path: repo }, { id: 1, tmuxSession: 'p' }, {
+      exec: refusing, paneCurrentPath: () => repo, getLaunchBaseline: () => null
+    });
+    assert.equal(scope.workToplevel, null);
+    assert.match(scope.workTreeProblem, /git refused to read the repository.*unknown option/);
+    assert.match(scope.workTreeReason, /git refused/);
+    const sessionFiles = require('../lib/wrap-steps/session-files');
+    const r = await sessionFiles.run({ project: { name: 'p', path: repo }, scope, options: {} });
+    assert.equal(r.status, 'blocked');
+    assert.match(r.blockers[0], /git could not be read/);
+    const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-scope-norepo-'));
+    dirs.push(plain);
+    const none = await wrapScope.resolve({ name: 'p', path: plain }, null, { exec: asyncExec, paneCurrentPath: () => null, getLaunchBaseline: () => null });
+    assert.equal(none.workTreeProblem, null, 'a directory that is simply not a repo is an answer, not a problem');
+  });
+
+  it('the session-files row names why a session with a pane is wrapping the checkout rather than a worktree', () => {
+    const sessionFiles = require('../lib/wrap-steps/session-files');
+    assert.match(sessionFiles._detail({ workTree: null, checkoutReason: 'pane directory could not be read', ownedCount: 1, included: [], left: [] }),
+      /^Wrapping the registered checkout \(pane directory could not be read\)/);
+    assert.doesNotMatch(sessionFiles._detail({ workTree: null, checkoutReason: null, ownedCount: 1, included: [], left: [] }), /Wrapping/);
+  });
+
   it('reads the session start as UTC', () => {
     assert.equal(wrapScope._startedAtMs('2026-09-14 10:00:00'), Date.UTC(2026, 8, 14, 10, 0, 0));
     assert.equal(wrapScope._startedAtMs(null), null);

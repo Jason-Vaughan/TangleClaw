@@ -64,8 +64,13 @@ this session". Rows from before the migration have a null baseline and use the D
 
 **D2 — one scope per run.** `lib/wrap-scope.js#resolve(project, session)` is computed once at the top
 of `runWrapPipeline` and handed to every step as `context.scope`. It returns
-`{workTree, configRoot, base: {sha, kind, stopped}, trunk, baseline, startedAtMs}`. Steps stop
-resolving ranges themselves. `changelog-coverage`, `features-toc` and `continuity-write` take the
+`{workTree, configRoot, base: {sha, kind, stopped}, trunk, baseline, startedAtMs}`. *As built:* the
+scope carries the range's inputs (launch baseline, recorded boundary read once from the config root,
+trunk position), and each range consumer still calls the one shared resolver with them. That keeps
+each step's existing killed-probe reporting (#897) and its tip (continuity-write measures to the wrap
+commit). Recorded as an accepted review finding (R-6). A git that refuses rather than answers "not a
+repository" is carried as `workTreeProblem` and blocks `session-files` and `commit` with git's reason
+(R-11). A merge, cherry-pick or revert in progress blocks the commit with its own remediation (R-3). `changelog-coverage`, `features-toc` and `continuity-write` take the
 base from the scope. The shared `_git-range` keeps its sync/async twin structure: argv declared
 once, and the policy is pure.
 
@@ -99,6 +104,14 @@ path into owned or foreign.
 
 Known limit: a co-resident session's edit made *after* launch looks like this session's work. The
 drawer copy says "changed since this session launched", not "yours".
+
+*Amended after the cumulative review (R-1).* A path in the launch dirty set stays foreign even when a
+wrap step writes it (version-bump on `CHANGELOG.md`, features-toc on `FEATURES.md`). An explicit Leave
+wins: the file and the wrap's change to it stay uncommitted, and the drawer copy says so. Wrap-written
+paths count as owned only where no snapshot applies, because there the file time is the wrap's own.
+AI-edited watched outputs need no special case: they are owned by the snapshot or file-time rule unless
+they were dirty at launch, and then the same Leave/Include decision covers them. An unreadable file
+time gets its own reason (`unreadable-time`) instead of "predates launch" (R-15).
 
 **D6 — the decision step and explicit staging.** A new step `session-files` (kind `session-files`,
 `blocker: true`) runs right after `preflight`. It blocks when any foreign path lacks a decision in
@@ -176,11 +189,26 @@ Suite green; the 02f check observed; `/prawduct:critic cumulative` with no unres
 findings; PR opened (`Fixes #1309`, `Fixes #1406`, `Fixes #1469`, refs #1450); the Coordinator pinged
 with the PR link.
 
+## Live check evidence (02f, 2026-09-14)
+
+Scratch TangleClaw (own `TANGLECLAW_HOME`, tailnet IP, port 5318 leased and released) running the real
+pipeline, AI content steps disabled by `wrapStepOverrides`, driven from Chrome:
+1. `c2checkout`: launched with uncommitted `lib/wip.js`. The drawer blocked at **Uncommitted files**
+   listing only `lib/wip.js` ("already uncommitted when this session launched"). Leave → Retry → "Wrap
+   committed 6790c3b8a257": the commit held `lib/mine2.js` + `FEATURES.md`; `lib/wip.js` still `??`.
+2. Same repo: after launch the session committed `lib/mine.js`, then merged `main` (carrying another
+   session's `lib/theirs.js`). The Feature Index stub named `lib/mine.js` only.
+3. `c2worktree`: pane in a worktree on `feat/c2-in-worktree`; the checkout had uncommitted `CLAUDE.md`.
+   Row: "Wrapping worktree …/c2worktree-wt · 1 changed since launch". Commit `75db38c` on the worktree
+   branch held `lib/feature.js`. The checkout stayed on `main` with `CLAUDE.md` untouched, and
+   `lastWrapSha` and the continuity store were written in the checkout. (The modal's Wrap button did
+   not fire from an accessibility-ref click in this run, so the wrap was started with `confirmWrap()`.)
+
 ## Status
 
-- [ ] 02a launch baseline
-- [ ] 02b scope + range + worktree target
-- [ ] 02c ownership + explicit staging
-- [ ] 02d drawer approval list
-- [ ] 02e prompts + docs
-- [ ] 02f live check
+- [x] 02a launch baseline
+- [x] 02b scope + range + worktree target
+- [x] 02c ownership + explicit staging
+- [x] 02d drawer approval list
+- [x] 02e prompts + docs
+- [x] 02f live check

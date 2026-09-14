@@ -159,6 +159,45 @@ describe('the #1406 repro: work already uncommitted at launch is not swept into 
     assert.equal(porcelain(repo), '', 'nothing of the session\'s or the operator\'s is left uncommitted');
   });
 
+  it('Leave on a dirty-at-launch CHANGELOG.md holds even when a wrap step flushes a rewrite of it', async () => {
+    const repo = makeRepo();
+    fs.writeFileSync(path.join(repo, 'CHANGELOG.md'), '# Changelog\n\noperator draft entry\n');
+    const scope = await scopeFor(repo, launchBaseline.capture(repo));
+    fs.writeFileSync(path.join(repo, 'mine.js'), 'session work\n');
+    const r = await commitStep.run({
+      project: wrapScope.stepProject({ id: 1, name: 'own', path: repo }, scope),
+      session: null,
+      step: { id: 'commit' },
+      previousResults: [],
+      // A whole-file rewrite staged the way version-bump stages its promotion.
+      staged: { 'version-bump:changelog': { primingPath: path.join(repo, 'CHANGELOG.md'), newContent: '# Changelog\n\n## [1.0.0]\noperator draft entry\n', changed: true } },
+      options: { pathDecisions: { 'CHANGELOG.md': 'leave' } },
+      scope
+    });
+    assert.equal(r.status, 'done');
+    assert.deepEqual(git(repo, 'show', '--name-only', '--format=', 'HEAD').split('\n'), ['mine.js'],
+      'the operator\'s draft is not committed under the wrap\'s rewrite');
+    assert.match(porcelain(repo), /^\?\? CHANGELOG\.md$/m, 'still uncommitted, with the wrap\'s rewrite on disk');
+  });
+
+  it('a wrap during an unfinished merge stops with a merge-specific reason and commits nothing', async () => {
+    const repo = makeRepo();
+    git(repo, 'checkout', '-q', 'main');
+    fs.writeFileSync(path.join(repo, 'shared.js'), 'main side\n');
+    git(repo, 'commit', '-q', '-am', 'main change');
+    git(repo, 'checkout', '-q', 'feat/session');
+    fs.writeFileSync(path.join(repo, 'shared.js'), 'branch side\n');
+    git(repo, 'commit', '-q', '-am', 'branch change');
+    const scope = await scopeFor(repo, launchBaseline.capture(repo));
+    try { git(repo, 'merge', 'main'); } catch { /* conflict expected */ }
+    const head = git(repo, 'rev-parse', 'HEAD');
+    const r = await runStep(commitStep, repo, scope, { pathDecisions: { 'shared.js': 'include' } });
+    assert.equal(r.status, 'blocked');
+    assert.match(r.blockers[0], /merge is in progress/);
+    assert.match(r.output.remediation, /git merge --abort/);
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+  });
+
   it('a file the operator had already staged stays staged and out of the commit', async () => {
     const repo = makeRepo();
     fs.writeFileSync(path.join(repo, 'staged-by-operator.js'), 'x\n');
@@ -220,10 +259,24 @@ describe('classify', () => {
     assert.deepEqual(c.left, []);
   });
 
-  it('a file the wrap wrote is its own even when it was dirty at launch', () => {
-    const c = ownership.classify(scope(), [{ path: 'old.js', deleted: false }], { wrapWritten: ['old.js'] });
-    assert.deepEqual(c.owned, ['old.js']);
-    assert.deepEqual(c.undecided, []);
+  it('a file dirty at launch stays the operator\'s call even after the wrap rewrites it, and Leave keeps it out', () => {
+    const asked = ownership.classify(scope(), [{ path: 'old.js', deleted: false }], { wrapWritten: ['old.js'] });
+    assert.deepEqual(asked.undecided.map((f) => f.path), ['old.js']);
+    const left = ownership.classify(scope(), [{ path: 'old.js', deleted: false }], {
+      wrapWritten: ['old.js'], decisions: { 'old.js': 'leave' }
+    });
+    assert.deepEqual(left.stageable, []);
+    assert.deepEqual(left.left, ['old.js']);
+  });
+
+  it('with no snapshot, a file the wrap wrote is its own, and an unreadable time is named as such', () => {
+    const noSnap = scope({ snapshotApplies: false });
+    const mtimeMs = () => null;
+    const c = ownership.classify(noSnap, [{ path: 'written.js', deleted: false }, { path: 'vanished.js', deleted: false }], {
+      wrapWritten: ['written.js'], mtimeMs
+    });
+    assert.deepEqual(c.owned, ['written.js']);
+    assert.deepEqual(c.undecided.map((f) => [f.path, f.reason]), [['vanished.js', 'unreadable-time']]);
   });
 
   it('with no usable snapshot, file time decides, and a deletion or unknown start is asked about', () => {
