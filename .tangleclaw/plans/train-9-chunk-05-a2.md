@@ -134,4 +134,4 @@ three call sites still ask "can Caddy be provisioned here?" (`plan.action === 'p
 ## Status
 
 - [x] Chunk A2a — predicate + server routes (reviewed 2026-09-14: chunk review's 1 blocking + 2 warnings fixed in `b3fb6f62`, verify-resolutions clean)
-- [ ] Chunk A2b — wizard, settings "Add a login", docs
+- [x] Chunk A2b — wizard, settings "Add a login", docs (reviewed 2026-09-14: whole-branch review's 1 blocking + 4 warnings fixed in `2199fdcf`, verify-resolutions clean; cumulative gate satisfied; live browser check passed on scratch homes — login, opt-out, add later, refusal when wide)
