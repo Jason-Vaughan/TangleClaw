@@ -212,4 +212,211 @@ describe('frontend CSRF plumbing (#1418)', () => {
       });
     });
   });
+
+  describe('tcFetch — the raw-Response path carries the token too (#1462)', () => {
+    it('attaches the header to a write and hands back the response unread', async () => {
+      const sandbox = loadWithCookie('tc_csrf=tok');
+      const calls = [];
+      const response = { ok: true, status: 204, headers: { get: () => null } };
+      sandbox.fetch = async (url, opts) => { calls.push({ url, opts }); return response; };
+      const res = await sandbox.tcFetch('/api/dashboard/boot', { method: 'POST', body: '{}' });
+      assert.equal(calls[0].opts.headers['X-CSRF-Token'], 'tok');
+      assert.equal(calls[0].url, '/api/dashboard/boot',
+        'the URL reaches fetch untouched — a relative launch URL is what lets the server read the operator\'s Host');
+      assert.equal(res, response, 'the caller gets the very response fetch produced');
+    });
+
+    it('rejects exactly as fetch does, so a caller\'s network-failure branch still runs', async () => {
+      const sandbox = loadWithCookie('tc_csrf=tok');
+      sandbox.fetch = async () => { throw new TypeError('Failed to fetch'); };
+      await assert.rejects(sandbox.tcFetch('/api/x', { method: 'DELETE' }), TypeError);
+    });
+  });
+
+  describe('a page whose session ended leaves for /login on the first 401', () => {
+    /**
+     * A sandbox with a recording `location` and a fetch that answers `reply`.
+     * @param {object} reply
+     * @param {number} reply.status
+     * @param {string|null} [reply.type] - content-type, null for none
+     * @param {*} [reply.body] - What `json()` resolves to; a function throws
+     * @param {string} [pathname] - The page the request is made from
+     * @returns {{ sandbox: object, visits: string[], reads: object }}
+     */
+    function pageAnswering(reply, pathname = '/') {
+      const sandbox = loadWithCookie('tc_csrf=tok');
+      const visits = [];
+      const reads = { original: 0, clone: 0 };
+      sandbox.location = { pathname, replace: (to) => visits.push(to) };
+      const json = async () => {
+        if (typeof reply.body === 'function') return reply.body();
+        return reply.body;
+      };
+      sandbox.fetch = async () => ({
+        ok: reply.status < 400,
+        status: reply.status,
+        headers: { get: (h) => (h.toLowerCase() === 'content-type' ? (reply.type === undefined ? 'application/json' : reply.type) : null) },
+        json: async () => { reads.original += 1; return json(); },
+        clone: () => ({ json: async () => { reads.clone += 1; return json(); } })
+      });
+      return { sandbox, visits, reads };
+    }
+
+    for (const code of ['UNAUTHENTICATED', 'ACCOUNT_REQUIRED']) {
+      it(`goes to /login on a 401 ${code}`, async () => {
+        const { sandbox, visits } = pageAnswering({ status: 401, body: { error: 'Sign in', code } });
+        await sandbox.tcFetch('/api/uploads', { method: 'POST' });
+        assert.deepEqual(visits, ['/login']);
+      });
+    }
+
+    it('the codes are the ones the gate actually sends for a missing session', () => {
+      // Read from the server, so renaming a code there cannot leave the page
+      // listening for a word nobody says.
+      const serverSrc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'server.js'), 'utf8');
+      for (const code of ['UNAUTHENTICATED', 'ACCOUNT_REQUIRED']) {
+        assert.ok(new RegExp(`errorResponse\\(res, 401,[\\s\\S]{0,120}'${code}'`).test(serverSrc),
+          `server.js no longer answers 401 ${code}; the redirect listens for it`);
+      }
+    });
+
+    for (const code of ['INVALID_CREDENTIALS', 'INVALID_RECOVERY_CODE', 'UNAUTHORIZED']) {
+      it(`stays put on a 401 ${code} — a wrong credential is not an ended session`, async () => {
+        const { sandbox, visits } = pageAnswering({ status: 401, body: { error: 'no', code } });
+        await sandbox.tcFetch('/api/auth/recovery-codes', { method: 'POST' });
+        assert.deepEqual(visits, []);
+      });
+    }
+
+    it('stays put on a non-JSON 401 — that is Caddy\'s challenge, the browser\'s to answer', async () => {
+      // The body would name a session code if it were read: only the type check
+      // can be what keeps the page in place.
+      const { sandbox, visits } = pageAnswering({ status: 401, type: 'text/html', body: { code: 'UNAUTHENTICATED' } });
+      await sandbox.tcFetch('/api/projects');
+      assert.deepEqual(visits, []);
+    });
+
+    it('stays put on a JSON body that will not parse', async () => {
+      const { sandbox, visits } = pageAnswering({ status: 401, body: () => { throw new SyntaxError('bad'); } });
+      await sandbox.tcFetch('/api/projects');
+      assert.deepEqual(visits, []);
+    });
+
+    it('stays put on a 403 UNAUTHENTICATED-looking body — only a 401 is a missing session', async () => {
+      const { sandbox, visits } = pageAnswering({ status: 403, body: { code: 'UNAUTHENTICATED' } });
+      await sandbox.tcFetch('/api/projects');
+      assert.deepEqual(visits, []);
+    });
+
+    it('does not navigate from /login itself', async () => {
+      const { sandbox, visits } = pageAnswering({ status: 401, body: { code: 'UNAUTHENTICATED' } }, '/login');
+      await sandbox.tcFetch('/api/auth/me');
+      assert.deepEqual(visits, []);
+    });
+
+    it('navigates ONCE however many requests come back refused', async () => {
+      const { sandbox, visits } = pageAnswering({ status: 401, body: { code: 'UNAUTHENTICATED' } });
+      await Promise.all([sandbox.tcFetch('/api/a'), sandbox.tcFetch('/api/b'), sandbox.tcFetch('/api/c')]);
+      await sandbox.tcFetch('/api/d');
+      assert.deepEqual(visits, ['/login']);
+    });
+
+    it('reads the code from a clone, leaving the caller\'s body unread', async () => {
+      const { sandbox, reads } = pageAnswering({ status: 401, body: { code: 'UNAUTHENTICATED' } });
+      await sandbox.tcFetch('/api/a', { method: 'DELETE' });
+      assert.equal(reads.original, 0, 'the caller must still be able to read the response');
+      assert.equal(reads.clone, 1);
+    });
+
+    it('api() polls leave too — the path every dashboard poll takes', async () => {
+      const { sandbox, visits } = pageAnswering({ status: 401, body: { error: 'Sign in to continue.', code: 'UNAUTHENTICATED' } });
+      const api = sandbox.tcCreateApi();
+      assert.equal(await api('/api/projects'), null, 'api() keeps its null-on-refusal contract');
+      assert.equal(api.lastErrorCode, 'UNAUTHENTICATED');
+      assert.deepEqual(visits, ['/login']);
+    });
+  });
+
+  describe('every browser write in public/ goes through tcFetch or api() — the family, not #1462', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const authGate = require('../lib/auth-gate');
+    const PUBLIC = path.join(__dirname, '..', 'public');
+
+    // Pages that post before any session exists, so there is no token to send
+    // and nothing to leave for: the sign-in form, the recovery-code form and the
+    // first-account form. A 401 on them is the form's own answer.
+    const PRE_SESSION_PAGES = new Set(['login.html', 'recover.html', 'account-setup.html']);
+
+    /**
+     * Every bare `fetch(...)` call in a source text, with its argument text.
+     * `tcFetch(` does not match (capital F), nor does a `.fetch(` method.
+     * @param {string} src
+     * @returns {Array<{ line: number, args: string }>}
+     */
+    function bareFetchCalls(src) {
+      const out = [];
+      const re = /(^|[^\w.$])fetch\(/g;
+      let m;
+      while ((m = re.exec(src))) {
+        const start = m.index + m[0].length;
+        let depth = 1;
+        let i = start;
+        for (; i < src.length && depth > 0; i++) {
+          if (src[i] === '(') depth += 1;
+          else if (src[i] === ')') depth -= 1;
+        }
+        out.push({ line: src.slice(0, m.index).split('\n').length, args: src.slice(start, i - 1) });
+      }
+      return out;
+    }
+
+    /**
+     * Whether a call's options name a method the gate CSRF-checks. A method the
+     * scan cannot read as a literal counts as unsafe: it may be one.
+     * @param {string} args
+     * @returns {boolean}
+     */
+    function writes(args) {
+      const named = args.match(/method\s*:\s*(['"`])(\w+)\1/);
+      if (named) return authGate.UNSAFE_METHODS.has(named[2].toUpperCase());
+      return /\bmethod\s*[:,}]/.test(args);
+    }
+
+    it('the browser\'s unsafe-method list is the gate\'s', () => {
+      const src = fs.readFileSync(path.join(PUBLIC, 'api-helper.js'), 'utf8');
+      const listed = JSON.parse(src.match(/const TC_UNSAFE_METHODS = (\[[^\]]*\])/)[1].replace(/'/g, '"'));
+      assert.deepEqual([...listed].sort(), [...authGate.UNSAFE_METHODS].sort());
+    });
+
+    it('the scan sees a bare write — it would fail on one', () => {
+      const found = bareFetchCalls("x(); await fetch('/api/a', {\n method: 'DELETE' }); tcFetch('/b', { method: 'POST' });");
+      assert.equal(found.length, 1, 'tcFetch( is not a bare fetch');
+      assert.equal(writes(found[0].args), true);
+      assert.equal(writes(bareFetchCalls("fetch('/api/a', { cache: 'no-store' })")[0].args), false);
+      assert.equal(writes(bareFetchCalls('fetch(u, { method })')[0].args), true, 'an unreadable method is unsafe');
+    });
+
+    it('and the pre-session pages really do post bare — the exemption is live, not a leftover', () => {
+      for (const page of PRE_SESSION_PAGES) {
+        const src = fs.readFileSync(path.join(PUBLIC, page), 'utf8');
+        assert.ok(bareFetchCalls(src).some((c) => writes(c.args)),
+          `${page} no longer posts with a bare fetch; drop it from PRE_SESSION_PAGES`);
+      }
+    });
+
+    it('no other page sends a write with a bare fetch', () => {
+      const offenders = [];
+      for (const name of fs.readdirSync(PUBLIC)) {
+        if (!/\.(js|html)$/.test(name) || PRE_SESSION_PAGES.has(name)) continue;
+        const src = fs.readFileSync(path.join(PUBLIC, name), 'utf8');
+        for (const call of bareFetchCalls(src)) {
+          if (writes(call.args)) offenders.push(`public/${name}:${call.line}`);
+        }
+      }
+      assert.deepEqual(offenders, [],
+        'a bare fetch with an unsafe method carries no CSRF token and the gate refuses it on every '
+        + 'signed-in install; use tcFetch (raw Response) or api()');
+    });
+  });
 });

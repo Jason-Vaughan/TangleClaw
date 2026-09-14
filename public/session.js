@@ -401,7 +401,7 @@ async function invokeProjectAction(action) {
   // long-running on the server side — invoke-critic's real-invocation
   // path can run up to 5 minutes while the Critic skill executes. The
   // shared `apiMutate` helper doesn't expose `signal`, so for this
-  // single call we use raw `fetch` with an AbortController bounded to
+  // single call we use `tcFetch` (raw `fetch` plus the CSRF token) with an AbortController bounded to
   // ACTION_TIMEOUT_MS (matches the server-side MAX_WAIT_MS). On VPN /
   // flaky-connection scenarios, this prevents an indefinitely hung
   // POST from wedging the UI; the operator sees a clear "timed out"
@@ -413,7 +413,7 @@ async function invokeProjectAction(action) {
   try {
     let result;
     try {
-      const response = await fetch(
+      const response = await tcFetch(
         `/api/projects/${encodeURIComponent(projectName)}/actions/${encodeURIComponent(action.command)}`,
         {
           method: 'POST',
@@ -3289,7 +3289,7 @@ async function confirmKill() {
   const body = { reason: 'Manual kill from UI' };
   if (pw) body.password = pw;
 
-  const res = await fetch(`/api/sessions/${encodeURIComponent(projectName)}`, {
+  const res = await tcFetch(`/api/sessions/${encodeURIComponent(projectName)}`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)

@@ -112,12 +112,91 @@
     return out;
   }
 
+  // The refusal codes that mean THIS BROWSER'S SESSION is gone, as opposed to a
+  // credential that was typed wrong. The gate answers `UNAUTHENTICATED` to a
+  // request with no live session (signed out elsewhere, ended by a recovery
+  // code, expired) and `ACCOUNT_REQUIRED` once no account exists at all; both
+  // are fixed by the page `/login` serves. `INVALID_CREDENTIALS` and
+  // `INVALID_RECOVERY_CODE` are 401s too, and are NOT here: they are answers to
+  // the sign-in pages' own forms, which must show them in place.
+  const TC_SIGNED_OUT_CODES = ['UNAUTHENTICATED', 'ACCOUNT_REQUIRED'];
+
+  // Set once a page has started leaving for `/login`, so the several requests
+  // a dashboard has in flight at that moment navigate once rather than racing.
+  let tcLeavingForLogin = false;
+
+  /**
+   * Send the page to `/login` when a 401 says its session has ended.
+   *
+   * Without this a page whose session ended kept failing in place — an upload
+   * reported an error and the dashboard polled on — and behind a live Caddy
+   * `basic_auth` the polling was worse than useless: every TangleClaw 401 on a
+   * request Chrome had sent Caddy's cached credential with made Chrome evict
+   * that credential, so the next request met Caddy's password prompt again, in
+   * a loop that never reached the sign-in page (#1461). Leaving on the FIRST
+   * such 401 stops the polling that fed the loop.
+   *
+   * Only a JSON refusal carrying one of `TC_SIGNED_OUT_CODES` counts. A 401
+   * without a JSON body is Caddy's own challenge, which the browser answers
+   * with its password prompt and must be left to. The body is read from a
+   * clone, so the caller can still read the response it was handed.
+   *
+   * @param {Response} res - A response with status 401
+   * @returns {Promise<boolean>} true when the page is leaving for `/login`
+   */
+  async function tcLeaveIfSignedOut(res) {
+    if (tcLeavingForLogin) return true;
+    var type = (res.headers && res.headers.get && res.headers.get('content-type')) || '';
+    if (type.indexOf('json') === -1 || typeof res.clone !== 'function') return false;
+    var data = null;
+    try {
+      data = await res.clone().json();
+    } catch (e) {
+      // A body that claims JSON and is not cannot name a session code.
+      return false;
+    }
+    if (!data || TC_SIGNED_OUT_CODES.indexOf(data.code) === -1) return false;
+    var loc = global.location;
+    if (!loc || typeof loc.replace !== 'function') return false;
+    // The sign-in pages post before a session exists; a 401 there is theirs to
+    // show, and navigating to the page already open would only reload it.
+    if (loc.pathname === '/login') return false;
+    // Asked again after the await above: requests refused together all passed
+    // the first check before any of them had read its body.
+    if (tcLeavingForLogin) return true;
+    tcLeavingForLogin = true;
+    loc.replace('/login');
+    return true;
+  }
+
+  /**
+   * `fetch`, for a page of TangleClaw's own: adds the CSRF token to a
+   * state-changing request and leaves for `/login` when the session has ended.
+   *
+   * The ONE way a dashboard page reaches the server. `api()` is built on it,
+   * and a call site that needs the raw `Response` (its own `res.ok` handling,
+   * a status it branches on) calls this instead of `fetch`. A bare `fetch` with
+   * an unsafe method carries no token, and the gate refuses it on every
+   * signed-in install — which is how the dashboard's Launch, both Kill buttons,
+   * project actions and the boot beacon all came to fail once TangleClaw's own
+   * login went live. `test/frontend-csrf.test.js` holds `public/` to it.
+   *
+   * @param {string} url
+   * @param {object} [fetchOpts] - The caller's fetch options
+   * @returns {Promise<Response>} The response, unread; rejects as `fetch` does
+   */
+  async function tcFetch(url, fetchOpts) {
+    var res = await fetch(url, tcWithCsrf(fetchOpts));
+    if (res && res.status === 401) await tcLeaveIfSignedOut(res);
+    return res;
+  }
+
   function tcCreateApi(opts) {
     const setConnected = (opts && opts.setConnected) || function () {};
 
     async function api(url, fetchOpts) {
       try {
-        const res = await fetch(url, tcWithCsrf(fetchOpts));
+        const res = await tcFetch(url, fetchOpts);
         // On a service-worker-controlled page a dead server never rejects this
         // fetch (#709): sw.js resolves it as either a cache-served stand-in
         // (marked with this header) or a synthetic 503. Both mean THE SERVER
@@ -1233,6 +1312,7 @@
   // rather than re-deriving the cookie read.
   global.tcCsrfToken = tcCsrfToken;
   global.tcWithCsrf = tcWithCsrf;
+  global.tcFetch = tcFetch;
   global.tcCreateRestartFlow = tcCreateRestartFlow;
   global.tcCopyToClipboard = tcCopyToClipboard;
   global.tcCopyOutcome = tcCopyOutcome;

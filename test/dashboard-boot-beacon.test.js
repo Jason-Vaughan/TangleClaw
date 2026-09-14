@@ -29,6 +29,7 @@ const http = require('node:http');
 const vm = require('node:vm');
 
 const logger = require('../lib/logger');
+const loadApiHelperGlobals = require('./_api-helper-globals');
 
 logger.setLevel('error');
 
@@ -264,6 +265,13 @@ describe('the dashboard sends the beacon after the shell boots, not before (#817
       if (url === '/api/awareness') return { projects: [] };
       return null;
     };
+    // The page loads api-helper.js first, and the beacon sends through its REAL
+    // `tcFetch`, which reaches the recording `fetch` above with a session's
+    // CSRF cookie in the jar.
+    const helper = loadApiHelperGlobals();
+    helper.fetch = (url, init) => sandbox.fetch(url, init);
+    helper.document = { cookie: 'tc_csrf=beacon-tok' };
+    sandbox.tcFetch = helper.tcFetch;
     if (opts.cacheKeys) sandbox.caches = { keys: async () => opts.cacheKeys };
     sandbox.navigator = { serviceWorker: { controller: opts.controlled ? {} : null } };
     sandbox.window = sandbox;
@@ -309,6 +317,8 @@ describe('the dashboard sends the beacon after the shell boots, not before (#817
     assert.equal(init.method, 'POST');
     assert.equal(init.headers['Content-Type'], 'application/json',
       'the /api/ form-body rule refuses anything else');
+    assert.equal(init.headers['X-CSRF-Token'], 'beacon-tok',
+      'a signed-in install refuses a session write without the token (#1462)');
     assert.deepEqual(JSON.parse(init.body), { cacheName: 'tangleclaw-v3-60', controlled: true },
       'only the TangleClaw generation is reported; the other cache is not ours');
 

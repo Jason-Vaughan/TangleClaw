@@ -1153,9 +1153,11 @@ async function readSwCacheName() {
 /**
  * Tell the server the dashboard shell booted. Fires at most once per page
  * load; its only caller invokes it after the projects list has rendered, so it
- * can never claim a boot that did not happen. A bare `fetch`, not `api()`: the
+ * can never claim a boot that did not happen. `tcFetch`, not `api()`: the
  * reply is an empty 204 (no JSON to parse) and a failed beacon must not touch
- * the connection state or the toast — it is a log line, not a dependency.
+ * the connection state or the toast — it is a log line, not a dependency. Not a
+ * bare `fetch` either: that sends no CSRF token, and on a signed-in install the
+ * gate refused every beacon.
  *
  * @returns {Promise<void>} Resolves whether or not the beacon reached the server.
  */
@@ -1166,7 +1168,7 @@ async function sendBootBeacon() {
   const controlled = typeof navigator !== 'undefined'
     && !!(navigator.serviceWorker && navigator.serviceWorker.controller);
   try {
-    const res = await fetch('/api/dashboard/boot', {
+    const res = await tcFetch('/api/dashboard/boot', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cacheName, controlled })
@@ -1515,7 +1517,7 @@ async function doLaunchProject(name, launchMode, continuityMode) {
   if (continuityMode) body.continuityMode = continuityMode;
 
   try {
-    const res = await fetch(`/api/sessions/${encodeURIComponent(name)}`, {
+    const res = await tcFetch(`/api/sessions/${encodeURIComponent(name)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)

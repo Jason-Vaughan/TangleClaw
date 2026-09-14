@@ -102,7 +102,9 @@ node scripts/reset-admin.js --create-gate --user <your-name>
 Step 3 puts Caddy's password in front and turns TangleClaw's login on. Then, from a
 browser: sign in with that password, and create your TangleClaw account on the page that
 follows (it also shows your recovery codes, once). Finally take Caddy's password out —
-TangleClaw's login now guards the door — by running the cutover again:
+TangleClaw's login now guards the door — by running the cutover again. Do the browser part
+in ONE tab: while both logins stand in front, a second TangleClaw tab that is not signed in
+can make the browser ask for Caddy's password over and over.
 
 ```sh
 node scripts/ingress-cutover.js --to caddy --dry-run   # its preview names which gate the file carries

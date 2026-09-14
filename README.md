@@ -287,8 +287,8 @@ and the proxied gateway, on every ingress mode. Local tools on this machine that
 the `tc` CLI, PortHub, the switchboard — are outside it; the optional service-token gate covers them.
 Caddy's `basic_auth` password pop-up appears only while TangleClaw's login cannot guard the door by
 itself: before an install's first account exists, or during a terminal fallback. **Upgrading an install
-that has only Caddy's password?** Sign in with it as before, create your account on the page that
-follows, then run `node scripts/ingress-cutover.js --to caddy` to take Caddy's password out of a
+that has only Caddy's password?** Close every other TangleClaw tab first, sign in with it as before,
+create your account on the page that follows, then run `node scripts/ingress-cutover.js --to caddy` to take Caddy's password out of a
 Caddyfile TangleClaw generated (a hand-maintained one is yours to edit). Locked out, or the login
 itself broke? [Getting back into TangleClaw](docs/recovery.md) covers every case.
 
