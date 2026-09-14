@@ -2368,9 +2368,14 @@ async function _loadAccountSection() {
     // A page open without a session is either an install with no login, or a
     // fallback, where Caddy's password stands in and TangleClaw's login is
     // stood down — the account cannot be managed until it comes back.
-    box.innerHTML = me.gateState === 'fallback'
-      ? '<div class="form-hint">TangleClaw\'s login is stood down behind Caddy\'s password (fallback), so your account cannot be managed here until the login is restored.</div>'
-      : '<div class="form-hint">No one is signed in, because this install does not require a login.</div>';
+    if (me.gateState === 'fallback') {
+      box.innerHTML = '<div class="form-hint">TangleClaw\'s login is stood down behind Caddy\'s password (fallback), so your account cannot be managed here until the login is restored.</div>';
+      return;
+    }
+    box.innerHTML = '<div class="form-hint">No one is signed in, because this install does not require a login.</div>';
+    // Only where the gate is `open` — the one state POST /api/auth/add-login
+    // accepts. Any other signed-out state says nothing more than the line above.
+    if (me.gateState === 'open') _renderAddLogin(box);
     return;
   }
   box.innerHTML = `
@@ -2417,6 +2422,47 @@ async function _loadAccountSection() {
     everywhereBtn.disabled = false;
     document.getElementById('gsSignOutEverywhereHint').textContent =
       `Could not sign out everywhere: ${api.lastError || 'unknown error'}`;
+  });
+}
+
+/**
+ * Offer "Add a login" on an install whose login is off (#803): the way back from
+ * finishing setup without one.
+ *
+ * Two presses, because the second one changes who can reach the dashboard: the
+ * first says what happens next, the second turns the login on. The server does
+ * only that; the browser then goes to `/login`, which creates the first account
+ * (and shows its recovery codes) or, where one was made at a terminal, asks for
+ * it. The server's refusal, when there is one, is shown as it was sent — it names
+ * the terminal command for the cases a browser cannot fix.
+ * @param {HTMLElement} box - The account section, already holding its status line.
+ */
+function _renderAddLogin(box) {
+  box.innerHTML += `
+    <div class="form-hint">Anyone who can reach this address can use TangleClaw, including its terminals.
+      Add a login to put a password in front of every page.</div>
+    <button type="button" class="btn" id="gsAddLoginBtn">Add a login</button>
+    <div class="form-hint" id="gsAddLoginHint" aria-live="polite"></div>`;
+  const btn = document.getElementById('gsAddLoginBtn');
+  const hint = document.getElementById('gsAddLoginHint');
+  let confirming = false;
+  btn.addEventListener('click', async () => {
+    if (!confirming) {
+      confirming = true;
+      btn.textContent = 'Turn the login on';
+      hint.textContent = 'Every page will then ask for a password. You go straight to the sign-in page: create '
+        + 'your account there, or sign in with the one made at a terminal if there is one.';
+      return;
+    }
+    btn.disabled = true;
+    const res = await apiMutate('/api/auth/add-login', 'POST', {});
+    if (!res) {
+      btn.disabled = false;
+      hint.innerHTML = `<strong>The login was not turned on.</strong> ${esc(api.lastError || 'Unknown error')}`;
+      return;
+    }
+    // A fixed path, never one read off a response or the URL.
+    window.location.replace('/login');
   });
 }
 

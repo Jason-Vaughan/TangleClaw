@@ -336,6 +336,25 @@ describe('store', () => {
     });
 
     describe('save', () => {
+      it('never writes the "chose no login" record beside a login that is on (#803)', () => {
+        // Every writer that turns a login on goes through here, so none can leave
+        // the two disagreeing by forgetting to clear the record.
+        const config = store.config.load();
+        config.authEnabled = true;
+        config.loginOptOutAt = '2026-09-10T12:00:00.000Z';
+        store.config.save(config);
+        assert.equal(store.config.load().loginOptOutAt, null);
+        assert.equal(config.loginOptOutAt, null, 'the caller holds what was written');
+      });
+
+      it('keeps the record while the login is off', () => {
+        const config = store.config.load();
+        config.authEnabled = false;
+        config.loginOptOutAt = '2026-09-10T12:00:00.000Z';
+        store.config.save(config);
+        assert.equal(store.config.load().loginOptOutAt, '2026-09-10T12:00:00.000Z');
+      });
+
       it('should persist config to disk', () => {
         const config = store.config.load();
         config.theme = 'light';

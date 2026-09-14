@@ -194,7 +194,14 @@ describe('setup provisions a login by default', () => {
     config.basicAuthHash = null;
     config.caddyHttpsPort = 8443;
     config.bindAllInterfaces = false;
+    config.loginOptOutAt = null;
     store.config.save(config);
+    // Setup creates a TangleClaw account from a typed credential, and an account
+    // left by an earlier case arms the gate for the next — which changes what
+    // setup reports about protection.
+    store.getDb().prepare('DELETE FROM auth_sessions').run();
+    store.getDb().prepare('DELETE FROM recovery_codes').run();
+    store.getDb().prepare('DELETE FROM users').run();
   });
 
   /** Write a Caddyfile at the live path. */
@@ -216,14 +223,30 @@ describe('setup provisions a login by default', () => {
       assert.equal(store.config.load().setupComplete, false, 'a refused setup must not mark itself done');
     });
 
-    it('does NOT demand a credential when no gate can be put up', async () => {
-      // Refusing here would strand the operator: there is nothing to protect
-      // them with, so demanding a password would block setup for no benefit.
+    it('demands a credential even where Caddy cannot be provisioned — the login is TangleClaw\'s own', async () => {
+      // This case used to finish ungated: a Caddy gate could not be put up, so a
+      // password had "nothing to protect them with". TangleClaw's own login needs
+      // no Caddy (#804), so the demand stands; the operator's explicit choice of no
+      // login is the way to finish without one (#803).
       writeLive('# my own proxy\nlocalhost {\n\treverse_proxy 127.0.0.1:3102\n}\n');
-      const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir });
-      assert.equal(res.status, 200);
-      assert.equal(res.data.ingress.action, 'refuse');
+      const refused = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir });
+      assert.equal(refused.status, 400);
+      assert.equal(refused.data.code, 'ADMIN_REQUIRED');
+      const chosen = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir, noLogin: true });
+      assert.equal(chosen.status, 200);
+      assert.equal(chosen.data.ingress.action, 'refuse');
       assert.equal(cutovers.length, 0);
+    });
+
+    it('does not cut over to Caddy when the operator chooses no login on a machine that could run one', async () => {
+      // A cutover would put Caddy in front to carry a gate that was declined.
+      const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir, noLogin: true });
+      assert.equal(res.status, 200);
+      assert.equal(res.data.ingress.action, 'provision', 'precondition: Caddy could have been provisioned');
+      assert.equal(res.data.ingress.provisioning, false);
+      assert.equal(cutovers.length, 0, 'a declined login must not start a cutover');
+      assert.equal(res.data.ingress.protection, 'none');
+      assert.match(res.data.ingress.reason, /as you chose/);
     });
   });
 
@@ -490,23 +513,27 @@ describe('setup provisions a login by default', () => {
       assert.equal(res.status, 200);
       assert.equal(res.data.ingress.provisioning, false,
         'the interlock refused a real cutover, which is the module speaking');
-      assert.match(res.data.ingress.reason, /nothing is enforcing it/);
+      assert.match(res.data.ingress.reason, /could not start the ingress cutover/);
     });
 
-    it('says plainly that nothing is enforcing the login when the cutover cannot start', async () => {
-      // The failure this whole path exists to make unmistakable.
+    it('says plainly that Caddy was not put in front when the cutover cannot start', async () => {
+      // The failure this path exists to make unmistakable — and, since the login is
+      // TangleClaw's own account, told apart from "no login": the account setup
+      // created guards the door without Caddy, so claiming nothing enforces it
+      // would be the false statement this time.
       _setCutoverSpawner(() => ({ ok: false, pid: null, error: 'EPERM' }));
       const res = await request(server, 'POST', '/api/setup/complete', {
         projectsDir: tmpDir, adminUser: 'jason', adminPassword: 'correct-horse-battery'
       });
       assert.equal(res.status, 200);
       assert.equal(res.data.ingress.provisioning, false);
-      assert.equal(res.data.ingress.protection, 'none');
-      assert.match(res.data.ingress.reason, /nothing is enforcing it/);
+      assert.equal(res.data.ingress.protection, 'account');
+      assert.equal(res.data.ingress.confirmedProtection, true);
+      assert.match(res.data.ingress.reason, /could not start the ingress cutover: EPERM/);
       assert.ok(res.data.ingress.remedy, 'the operator needs the command that fixes it');
       assert.ok(
-        res.data.warnings.some((w) => /nothing is enforcing it/.test(w)),
-        'a client that only reads warnings must still learn it is ungated'
+        res.data.warnings.some((w) => /Caddy was not put in front/.test(w)),
+        'a client that only reads warnings must still learn the cutover failed'
       );
     });
   });
@@ -583,8 +610,8 @@ describe('setup provisions a login by default', () => {
       logger.setConsoleStream({ write: (s2) => captured.push(s2) });
       let res;
       try {
-        // No caddy at all: the plainest ungated outcome there is.
-        res = await withoutCaddy(() => request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir }));
+        // No caddy and no login, by choice: the plainest ungated outcome there is.
+        res = await withoutCaddy(() => request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir, noLogin: true }));
       } finally {
         logger.setConsoleStream(null);
         logger.setLevel(prevLevel);
@@ -623,7 +650,7 @@ describe('setup provisions a login by default', () => {
       // Caddyfile with Caddy unloaded and ingressMode back to direct. Adopting
       // there would set authEnabled on an install with nothing in front of it.
       writeLive(handEdited([`jason ${BCRYPT_A}`]));
-      const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir });
+      const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir, noLogin: true });
       assert.equal(res.data.ingress.action, 'refuse');
       assert.equal(res.data.ingress.protection, 'none');
       assert.equal(store.config.load().authEnabled, false);
@@ -739,9 +766,9 @@ describe('setup provisions a login by default', () => {
   });
 
   describe('refuse — nothing may be written', () => {
-    it('finishes ungated, and says so, for a config with several logins', async () => {
+    it('finishes ungated when chosen, and says so, for a config with several logins', async () => {
       writeLive(handEdited([`jason ${BCRYPT_A}`, `alex ${BCRYPT_B}`]));
-      const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir });
+      const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir, noLogin: true });
       assert.equal(res.status, 200);
       assert.equal(res.data.ingress.action, 'refuse');
       assert.equal(res.data.ingress.protection, 'none');
@@ -751,41 +778,98 @@ describe('setup provisions a login by default', () => {
       assert.equal(store.config.load().authEnabled, false, 'refusing must not claim protection');
     });
 
+    it('refuses the choice of no login in caddy mode when the Caddyfile still carries logins', async () => {
+      // Several logins: nothing is adopted, so no login is supplied — but Caddy still
+      // asks for a password, so "finish without a login" would be a false record.
+      // The reason is asserted, not only the refusal: an unreadable door refuses too,
+      // and would hide a check that stopped reading the Caddyfile's logins.
+      writeLive(handEdited([`jason ${BCRYPT_A}`, `alex ${BCRYPT_B}`]));
+      const c = store.config.load();
+      c.ingressMode = 'caddy';
+      store.config.save(c);
+      const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir, noLogin: true });
+      assert.equal(res.status, 400);
+      assert.equal(res.data.code, 'OPT_OUT_REFUSED');
+      assert.match(res.data.error, /already in front of TangleClaw/);
+      assert.equal(store.config.load().loginOptOutAt, null);
+    });
+
+    it('refuses the choice of no login behind a Caddyfile it cannot read, saying it could not read it', async () => {
+      // Not knowing is not "a login is in force": that reason would sit beside the
+      // form asking the operator to create one. A directory where the Caddyfile
+      // should be is a read failure on every platform, root included.
+      const p = caddy.getCaddyfilePath();
+      fs.mkdirSync(p, { recursive: true });
+      try {
+        const c = store.config.load();
+        c.ingressMode = 'caddy';
+        store.config.save(c);
+        const probe = await request(server, 'GET', '/api/setup/ingress-state');
+        assert.equal(probe.data.state, 'unreadable', 'precondition: the Caddyfile cannot be read');
+        assert.equal(probe.data.credential.optOutAllowed, false);
+        assert.equal(probe.data.credential.optOutRefusal.code, 'DOOR_UNREAD');
+        const res = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir, noLogin: true });
+        assert.equal(res.status, 400);
+        assert.equal(res.data.code, 'OPT_OUT_REFUSED');
+        assert.match(res.data.error, /could not read the Caddy config/);
+        assert.doesNotMatch(res.data.error, /already in front of TangleClaw/);
+      } finally {
+        fs.rmSync(p, { recursive: true, force: true });
+      }
+    });
+
     it('reports network exposure from the bind classification, not from a guess', async () => {
       // "Ungated but loopback-only" and "ungated and reachable" are different
       // situations, and the second is the one an operator must be told about. A
       // legacy install is held on a wide binding on purpose (lib/bind-policy.js),
       // so the wizard cannot assume loopback.
+      // A wide install cannot finish without a login any more (ADR 0009 rule 3), so
+      // the wide case is asked with a login and the narrow one with the choice of none.
       writeLive(handEdited([`jason ${BCRYPT_A}`, `alex ${BCRYPT_B}`]));
       const config = store.config.load();
       config.bindAllInterfaces = true;
       store.config.save(config);
-      const wide = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir });
+      const wide = await request(server, 'POST', '/api/setup/complete',
+        { projectsDir: tmpDir, adminUser: 'jason', adminPassword: 'correct-horse-battery' });
       assert.equal(wide.data.ingress.networkExposed, true);
 
       const c2 = store.config.load();
       c2.bindAllInterfaces = false;
       c2.setupComplete = false;
+      c2.authEnabled = false;
       store.config.save(c2);
-      const narrow = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir });
+      store.getDb().prepare('DELETE FROM auth_sessions').run();
+      store.getDb().prepare('DELETE FROM recovery_codes').run();
+      store.getDb().prepare('DELETE FROM users').run();
+      const narrow = await request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir, noLogin: true });
       assert.equal(narrow.data.ingress.networkExposed, false);
     });
 
-    it('finishes ungated when caddy is not installed, and names the fix', async () => {
+    it('finishes ungated when caddy is not installed and no login is chosen, and names the way back', async () => {
       const res = await withoutCaddy(() =>
-        request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir }));
+        request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir, noLogin: true }));
       assert.equal(res.status, 200);
       assert.equal(res.data.ingress.action, 'refuse');
       assert.equal(res.data.ingress.protection, 'none');
-      assert.match(res.data.ingress.reason, /not installed/);
-      assert.match(res.data.ingress.remedy, /install/i);
+      assert.match(res.data.ingress.reason, /as you chose/);
+      assert.match(res.data.ingress.remedy, /Add a login later/);
       assert.equal(cutovers.length, 0);
-      // The case that reaches NO arm of the ingress answer: `reason` comes from the
-      // plan and nothing below sets it. Pushing per-arm left the plainest ungated
-      // install of all — no Caddy, no credential anywhere — telling a client that
-      // reads only `warnings` nothing at all. The single post-chain push covers it.
-      assert.ok(res.data.warnings.some((w) => /not installed/.test(w)),
+      // The single post-chain push covers an outcome no arm composes: a client that
+      // reads only `warnings` must still learn the install has no login.
+      assert.ok(res.data.warnings.some((w) => /as you chose/.test(w)),
         'a warnings-only client must learn an install with no gate at all is ungated');
+    });
+
+    it('gives a no-Caddy install its login without Caddy', async () => {
+      const res = await withoutCaddy(() => request(server, 'POST', '/api/setup/complete',
+        { projectsDir: tmpDir, adminUser: 'jason', adminPassword: 'correct-horse-battery' }));
+      assert.equal(res.status, 200, JSON.stringify(res.data));
+      assert.equal(res.data.ingress.action, 'refuse');
+      assert.equal(res.data.ingress.protection, 'account');
+      assert.equal(res.data.ingress.confirmedProtection, true);
+      assert.ok(!res.data.warnings.some((w) => /not installed/.test(w)),
+        'the plan\'s Caddy sentence is not a warning about an install whose login is armed');
+      assert.equal(cutovers.length, 0);
     });
 
     it('does not adopt a credential from a config nothing is running', async () => {
@@ -793,7 +877,7 @@ describe('setup provisions a login by default', () => {
       // authEnabled on an install with no gate in front of it.
       writeLive(handEdited([`jason ${BCRYPT_A}`]));
       const res = await withoutCaddy(() =>
-        request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir }));
+        request(server, 'POST', '/api/setup/complete', { projectsDir: tmpDir, noLogin: true }));
       assert.equal(res.data.ingress.action, 'refuse');
       assert.equal(store.config.load().authEnabled, false);
     });

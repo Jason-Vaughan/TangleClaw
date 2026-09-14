@@ -23,7 +23,7 @@ mapped onto it (a rename map is where a newly added state gets labelled wrongly)
 
 | `authStatus` (= gate state) | Meaning | Dashboard chip |
 |---|---|---|
-| `open` | `authEnabled` is not on — no login required (ADR 0009's opt-out) | none |
+| `open` | `authEnabled` is not on — no login required (ADR 0009's opt-out; `loginOptOutAt` records when setup made that choice). Settings offers **Add a login** in this state only | none |
 | `armed` | TangleClaw enforces its login, on any ingress mode | none |
 | `account-required` | login on, no account yet — closed | ⚠ open a new tab to create the account |
 | `locked` | accounts exist, none enabled — closed | ⚠ run `reset-admin.js --store` at a terminal |

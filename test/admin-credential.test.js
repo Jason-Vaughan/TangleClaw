@@ -744,6 +744,22 @@ describe('createGate — an install that completed setup with no login', () => {
     assert.deepEqual(calls[0].argv, ['kickstart', '-k', 'gui/501/com.tangleclaw.caddy']);
   });
 
+  it('clears the record that setup finished without a login when it puts a gate on (#803)', () => {
+    // The install --create-gate exists for is often exactly the one whose operator
+    // chose no login in setup; a gate on it makes that record false.
+    const config = store.config.load();
+    config.loginOptOutAt = '2026-09-10T12:00:00.000Z';
+    store.config.save(config);
+    const r = cred.createGate({
+      caddyfilePath, user: 'jason', hash: HASH_NEW, uid: 501, stamp: 'STAMP', gateState: 'open',
+      execFn: () => {}, validateFn: () => ({ ok: true })
+    });
+    assert.equal(r.ok, true, r.error || '');
+    const after = store.config.load();
+    assert.equal(after.authEnabled, true);
+    assert.equal(after.loginOptOutAt, null);
+  });
+
   it('still gates a file written before sites without a password gained the peer guard', () => {
     // The install most likely to need this tool: no login, and a Caddyfile from
     // an earlier release. Its bytes no longer match what the generator writes

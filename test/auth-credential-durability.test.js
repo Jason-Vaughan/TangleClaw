@@ -320,6 +320,20 @@ describe('auth credential durability (#397 / 2026-07-03 lockout)', () => {
         'a successful adoption must not swallow the refusal riding alongside it');
     });
 
+    it('clears the record that setup finished without a login when it adopts a Caddy login (#803)', () => {
+      // An operator who chose no login and later hand-adds basic_auth: boot adoption
+      // turns the login on, so the record of choosing none must not survive it.
+      setConfig({ ingressMode: 'caddy', loginOptOutAt: '2026-09-10T12:00:00.000Z' });
+      fs.writeFileSync(caddy.getCaddyfilePath(),
+        `${TAILNET_HOST} {\n\ttls /c/c.pem /c/k.pem\n\tbasic_auth {\n\t\tjason ${HASH_A}\n\t}\n`
+        + '\treverse_proxy 127.0.0.1:3102\n}\n');
+      const r = caddy.adoptCredentialIntoConfig();
+      assert.equal(r.adopted, true, 'precondition: the login was adopted');
+      const after = store.config.load();
+      assert.equal(after.authEnabled, true);
+      assert.equal(after.loginOptOutAt, null);
+    });
+
     it('stays SILENT at boot when the file simply has no log', () => {
       // Without this, the assertion above would also pass on an emitter that
       // warned unconditionally — which would train the operator to ignore it.

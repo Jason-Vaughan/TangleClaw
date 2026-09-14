@@ -30,18 +30,26 @@ computer only". Other machines on your network cannot reach it, even if they kno
 your IP address. This is the default and it needs no decision from you.
 
 During setup the wizard asks you to create a **login** — a username and a password.
-There is no default password to change later; you either set one or setup does not
-finish. It then puts that login in front of everything TangleClaw serves.
+There is no default password to change later. The login is TangleClaw's own, so it
+works whether or not Caddy is installed, and it is put in front of everything
+TangleClaw serves.
 
 That is the finished, intended state: reachable from this computer, and from
 elsewhere only with a password.
 
-Two things setup does not do for you yet. It does not hand you **recovery codes** —
-generate them in **Settings → Recovery codes** once you are signed in, and keep them
-off the device you sign in on; one resets a forgotten password from the sign-in page.
+Right after you finish, the wizard shows your **recovery codes** once. Save them off the
+device you sign in on; any one of them resets a forgotten password from the sign-in page.
 To change a password you still know, use **Settings → Your account**; a forgotten one
 is reset with a recovery code or at a terminal (see
 [Getting back into TangleClaw](recovery.md)).
+
+**Finishing without a login.** The login step also offers **Finish without a login**, with
+what it means: anyone who can reach the address is in, including the terminals. It is a
+choice you make and TangleClaw records, never something skipping does for you, and it is
+offered only while TangleClaw is not reachable from other machines — on a wide binding, or
+behind a Caddy config that serves it beyond this machine, the step says why it is not
+available. Changed your mind? **Global settings → Your account → Add a login** puts one in
+front at any time.
 
 ---
 
@@ -81,11 +89,14 @@ Setup skips the Caddy step in two situations, and says so rather than pretending
   not overwrite a file you or another tool maintains. This is deliberate: silently
   replacing it could take down something else you are running.
 
-In both cases the install finishes **with no login**, and TangleClaw tells you so on
-the dashboard rather than implying you are protected. Loopback-only is still in force,
-so it is not exposed — it just cannot be reached remotely yet.
+Your login is still in force in both cases — it is TangleClaw's own and needs no Caddy.
+What you do not have yet is Caddy in front, so the install is reachable from this
+computer only.
 
-To set it up afterwards, run **all three** commands, in this order:
+On an install that finished setup **without a login** (an older version, or the choice
+above), add one from **Global settings → Your account → Add a login** first. To put Caddy
+in front of a login-less install from a terminal instead, run **all three** commands, in
+this order:
 
 ```sh
 # 1. Install Caddy.

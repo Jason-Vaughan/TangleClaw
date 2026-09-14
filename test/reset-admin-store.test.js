@@ -50,6 +50,7 @@ describe('reset-admin --store (#1418)', () => {
       store.getDb().prepare('DELETE FROM users WHERE id = ?').run(u.id);
     }
     setAuthEnabled(false);
+    setOptOut(null);
     out = '';
     err = '';
     process.stdout.write = (s) => { out += s; return true; };
@@ -63,6 +64,16 @@ describe('reset-admin --store (#1418)', () => {
   function setAuthEnabled(on) {
     const cfg = store.config.load();
     cfg.authEnabled = on;
+    store.config.save(cfg);
+  }
+
+  /**
+   * Write `loginOptOutAt`, the record that setup finished without a login.
+   * @param {string|null} at
+   */
+  function setOptOut(at) {
+    const cfg = store.config.load();
+    cfg.loginOptOutAt = at;
     store.config.save(cfg);
   }
 
@@ -145,6 +156,20 @@ describe('reset-admin --store (#1418)', () => {
       assert.match(out, /authEnabled is OFF/);
       assert.match(out, /NO login is enforced/);
       assert.doesNotMatch(out, /now LIVE/);
+    });
+
+    it('names the settings control that turns the login on, which exists', async () => {
+      setAuthEnabled(false);
+      await runWithPassword(PASSWORD, { user: 'rosie' });
+      assert.match(out, /"Add a login" in global settings/);
+    });
+
+    it('keeps that record when the account it makes turns nothing on', async () => {
+      setAuthEnabled(false);
+      setOptOut('2026-09-10T12:00:00.000Z');
+      await runWithPassword(PASSWORD, { user: 'rosie' });
+      assert.equal(store.config.load().loginOptOutAt, '2026-09-10T12:00:00.000Z');
+      assert.doesNotMatch(out, /was cleared/);
     });
 
     it('still reports the account was created when the status read fails', async () => {
@@ -265,6 +290,19 @@ describe('reset-admin --store (#1418)', () => {
       assert.match(out, /login gate is now LIVE/);
       assert.match(out, /accounts decide anyway/);
       assert.doesNotMatch(out, /NO login is enforced/);
+    });
+
+    it('clears the record that setup finished without a login when its account arms a door authEnabled does not show', async () => {
+      // A login that asks is incompatible with a record saying the operator chose
+      // none (#803). `authEnabled` stays off here, so the config save does not
+      // clear it; the account arming the gate is what makes the record false.
+      setConfig({ ingressMode: 'caddy', authEnabled: false, loginOptOutAt: '2026-09-10T12:00:00.000Z' });
+      fs.writeFileSync(caddy.getCaddyfilePath(), FIXTURE_CADDYFILES.armed);
+      await runWithPassword(PASSWORD, { user: 'rosie' });
+      assert.match(out, /login gate is now LIVE/, 'precondition: the account arms the gate');
+      assert.equal(store.config.load().loginOptOutAt, null);
+      assert.match(out, /setup finished without a login was cleared/);
+      setConfig({ loginOptOutAt: null });
     });
 
     it('drops the old "until the cutover" line, and names Caddy\'s password only when the file carries one', async () => {

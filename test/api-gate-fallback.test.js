@@ -174,6 +174,15 @@ describe('the fallback marker, end to end (#1420)', () => {
       assert.equal(json(codes).code, 'GATE_FALLBACK');
     });
 
+    it('refuses turning the login on with GATE_FALLBACK, not "already on"', async () => {
+      arm();
+      patchConfig({ setupComplete: true });
+      setMarker();
+      const res = await send('POST', '/api/auth/add-login', { body: {} });
+      assert.equal(res.statusCode, 409);
+      assert.equal(json(res).code, 'GATE_FALLBACK');
+    });
+
     it('refuses first-account creation with GATE_FALLBACK', async () => {
       patchConfig({ authEnabled: true });
       setMarker();

@@ -9,8 +9,11 @@
  * never asked — the operator who knows they have no login behaves accordingly,
  * the one who believes they have one does not. So:
  *
- *   - the step appears exactly when the SERVER said a gate can be provisioned,
- *     never on the browser's own reading of config;
+ *   - the step appears exactly when the SERVER said Finish needs a login
+ *     (`credential.required`, #804), never on the browser's own reading of
+ *     config — and TangleClaw's own account enforces it, Caddy or not;
+ *   - finishing without one is a choice the server offered, stated with its
+ *     consequence, and submitted as that choice (#803);
  *   - the credential is sent under the same predicate that collected it;
  *   - every terminal screen states whether a login is actually in force, and
  *     "cannot confirm" is one of the answers rather than being rounded to
@@ -40,6 +43,29 @@ const REFUSE_PLAN = {
   remedy: 'Install Caddy (e.g. `brew install caddy`), then run `node scripts/ingress-cutover.js --to caddy`.'
 };
 
+// What the probe answers as `credential`, in the shapes the server produces.
+const LOGIN_NEEDED = { required: true, optOutAllowed: true, optOutRefusal: null, skipAllowed: false };
+const LOGIN_NEEDED_WIDE = {
+  required: true, optOutAllowed: false, skipAllowed: false,
+  optOutRefusal: { code: 'WIDE_BIND', reason: 'TangleClaw is listening on every network interface.' }
+};
+const ADOPT_CREDENTIAL = {
+  required: false, optOutAllowed: false, skipAllowed: false,
+  optOutRefusal: { code: 'LOGIN_IN_FORCE', reason: 'A login is already in front of TangleClaw here.' }
+};
+const LOGIN_IN_HAND = Object.assign({}, ADOPT_CREDENTIAL, { skipAllowed: true });
+
+/**
+ * The `credential` the server answers alongside a plan, for fixtures that name
+ * only the plan: an adopt plan's Finish supplies the login, every other fresh
+ * install needs one.
+ * @param {object|null} plan
+ * @returns {object}
+ */
+function credentialFor(plan) {
+  return plan && plan.action === 'adopt' ? ADOPT_CREDENTIAL : LOGIN_NEEDED;
+}
+
 /** Minimal element stub covering what these steps touch. */
 function makeElement(id) {
   const classSet = new Set();
@@ -68,6 +94,8 @@ function makeElement(id) {
  * @param {object} [opts]
  * @param {object|null} [opts.plan] - `plan` the ingress-state probe returns; null
  *   makes the probe fail.
+ * @param {object} [opts.credential] - `credential` the probe returns; defaults to
+ *   what the server answers for `plan` (see `credentialFor`).
  * @param {object} [opts.config] - Partial global config.
  * @param {Function} [opts.apiMutate] - Stub for POST /api/setup/complete.
  * @param {Function} [opts.statusFetch] - Stub answering /api/setup/provision-status.
@@ -104,7 +132,8 @@ function loadSetup(opts = {}) {
       fetches.push(url);
       if (String(url).includes('/api/setup/ingress-state')) {
         if (!opts.plan) throw new Error('probe unreachable');
-        return { ok: true, json: async () => ({ plan: opts.plan }) };
+        const credential = opts.credential || credentialFor(opts.plan);
+        return { ok: true, json: async () => ({ plan: opts.plan, credential }) };
       }
       if (String(url).includes('/api/setup/provision-status')) {
         if (!opts.statusFetch) throw new Error('unreachable');
@@ -163,45 +192,63 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       assert.ok(!ctx.wizardStepKeys().includes('admin'));
     });
 
-    it('skips the step when no gate can be put up', async () => {
+    it('shows the step with no Caddy to put in front, because the login needs none (#804)', async () => {
+      // The Caddy-keyed rule skipped the step here, and a fresh install with no
+      // Caddy finished with no login and nothing recorded. TangleClaw's own
+      // account enforces on every install, so the step follows the server's
+      // `credential.required`, not whether a gate can be provisioned.
       const ctx = loadSetup({ plan: REFUSE_PLAN });
       ctx.showWizard();
       await settle();
-      assert.ok(!ctx.wizardStepKeys().includes('admin'));
+      assert.ok(ctx.wizardStepKeys().includes('admin'));
     });
 
-    it('does not show the step in caddy mode when the server says it must not', async () => {
-      // The old predicate was `ingressMode === 'caddy'`. An install already in
-      // caddy mode whose Caddyfile must not be touched has to skip, so the
-      // config value cannot be the deciding fact any more.
-      const ctx = loadSetup({ plan: REFUSE_PLAN, config: { ingressMode: 'caddy' } });
+    it('does not show the step where a login is already in hand, whatever the config says', async () => {
+      // The old predicate was `ingressMode === 'caddy'`; the config value is not
+      // the deciding fact in either direction.
+      const ctx = loadSetup({ plan: REFUSE_PLAN, credential: LOGIN_IN_HAND, config: { ingressMode: 'caddy' } });
       ctx.showWizard();
       await settle();
       assert.ok(!ctx.wizardStepKeys().includes('admin'));
     });
 
-    it('does not collect a credential while the plan is unknown', async () => {
-      // A failed probe must not fail OPEN into asking for a password nothing
-      // may enforce.
+    it('asks for a login while the answer is unknown, and offers no way past it', async () => {
+      // A login typed here is TangleClaw's own account, which enforces with or
+      // without Caddy, so asking is never collecting a password nothing enforces.
+      // Not asking would finish an install with no login on a failed probe.
       const ctx = loadSetup({ plan: null });
       ctx.showWizard();
       await settle();
-      assert.equal(ctx.wizard.ingressPlan, null);
+      assert.equal(ctx.wizard.credential, null);
       assert.ok(ctx.wizard.ingressPlanError, 'the failure is recorded, not swallowed');
-      assert.ok(!ctx.wizardStepKeys().includes('admin'));
+      assert.ok(ctx.wizardStepKeys().includes('admin'));
+      const body = ctx.document.getElementById('setupBody');
+      ctx.renderAdminSetup(body);
+      assert.doesNotMatch(body.innerHTML, /Finish without a login/,
+        'a choice the server has not offered is not shown');
+      assert.equal(ctx.document.getElementById('setupSkipBtn').style.display, 'none');
     });
 
-    it('hides Skip when a credential is mandatory, and offers it otherwise', async () => {
+    it('hides Skip unless the server says Skip may finish, and offers it then', async () => {
       const gated = loadSetup({ plan: PROVISION_PLAN });
       gated.showWizard();
       await settle();
       assert.equal(gated.document.getElementById('setupSkipBtn').style.display, 'none',
         'Skip must not offer a way past the login gate');
 
-      const open = loadSetup({ plan: REFUSE_PLAN });
+      const open = loadSetup({ plan: REFUSE_PLAN, credential: LOGIN_IN_HAND });
       open.showWizard();
       await settle();
       assert.equal(open.document.getElementById('setupSkipBtn').style.display, '');
+    });
+
+    it('hides Skip where Finish adopts a Caddy login, though the step is absent — Skip adopts nothing', async () => {
+      const ctx = loadSetup({ plan: ADOPT_PLAN });
+      ctx.showWizard();
+      await settle();
+      assert.ok(!ctx.wizardStepKeys().includes('admin'), 'no step: Finish supplies the login');
+      assert.equal(ctx.document.getElementById('setupSkipBtn').style.display, 'none',
+        'the server would refuse this Skip');
     });
   });
 
@@ -221,13 +268,15 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       assert.match(ctx._loginSummaryLabel(), /Existing login kept/);
     });
 
-    it('says "None — not protected" rather than staying silent', async () => {
+    it('says "None — not protected" when the operator chose no login, rather than staying silent', async () => {
       // The row used to render only in caddy mode, so the summary of an
       // unprotected install simply omitted the subject.
       const ctx = loadSetup({ plan: REFUSE_PLAN });
       ctx.showWizard();
       await settle();
+      ctx.wizardChooseNoLogin();
       assert.match(ctx._loginSummaryLabel(), /None/);
+      assert.match(ctx._loginSummaryLabel(), /you chose/);
       const body = ctx.document.getElementById('setupBody');
       ctx.renderConfirm(body);
       assert.match(body.innerHTML, /Login/);
@@ -946,11 +995,13 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       // nothing was asking for a password and the second that it was not exposed:
       // the false reassurance the screen exists to prevent, produced by the screen.
       let dismissed = false;
-      const ctx = loadSetup({ plan: ADOPT_PLAN, apiMutate: async () => null });
+      const ctx = loadSetup({ plan: PROVISION_PLAN, credential: LOGIN_IN_HAND, apiMutate: async () => null });
       ctx.showWizard();
       await settle();
       ctx.dismissWizard = () => { dismissed = true; };
-      ctx.api.lastError = 'Cannot finish setup without an admin credential.';
+      // The answer went stale: by the time Skip is pressed, a login is needed.
+      ctx.fetch = async () => ({ ok: true, json: async () => ({ plan: PROVISION_PLAN, credential: LOGIN_NEEDED }) });
+      ctx.api.lastError = 'Skip cannot finish setup here.';
       ctx.api.lastErrorCode = 'ADMIN_REQUIRED';
       await ctx.wizardSkip();
       await settle();
@@ -964,6 +1015,23 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
         'must not assert an exposure state it did not measure');
       assert.equal(ctx.document.getElementById('setupSkipBtn').style.display, 'none',
         'Skip must stop offering the way past the gate the server just refused');
+    });
+
+    it('routes a refused Skip to the last step where Finish supplies the login itself', async () => {
+      // An adopt install: Finish takes the existing Caddy login, Skip cannot. The
+      // login step would save a second login beside the one Caddy still enforces.
+      const ctx = loadSetup({ plan: ADOPT_PLAN, apiMutate: async () => null });
+      ctx.showWizard();
+      await settle();
+      ctx.api.lastError = 'Skip cannot finish setup here, because it puts no login in front of TangleClaw.';
+      ctx.api.lastErrorCode = 'ADMIN_REQUIRED';
+      await ctx.wizardSkip();
+      await settle();
+      assert.equal(ctx.wizardStepKeys()[ctx.wizard.step], 'confirm');
+      assert.equal(ctx.wizard.adminStepForcedByServer, false, 'no login is collected');
+      assert.match(ctx.document.getElementById('setupBody').innerHTML, /Ready to Go/);
+      assert.match(ctx.document.getElementById('setupOverlayError').textContent, /Skip cannot finish/,
+        'the operator is told why Skip did nothing');
     });
 
     it('surfaces an unrelated failure without inventing a verdict about the gate', async () => {
@@ -1008,7 +1076,7 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
 
     it('still dismisses when the server accepts', async () => {
       let dismissed = false;
-      const ctx = loadSetup({ plan: REFUSE_PLAN, apiMutate: async () => ({ ok: true }) });
+      const ctx = loadSetup({ plan: REFUSE_PLAN, credential: LOGIN_IN_HAND, apiMutate: async () => ({ ok: true }) });
       ctx.showWizard();
       await settle();
       ctx.dismissWizard = () => { dismissed = true; };
@@ -1020,14 +1088,18 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
   });
 
   describe('a server-forced credential does not overwrite the server\'s own plan', () => {
-    /** Drive a refusal that forces the admin step even though the probe said adopt. */
+    /**
+     * Drive a completion refusal that forces the admin step even though the probe
+     * said adopt — the adoption the server meant to make, and could not.
+     */
     async function forced() {
       const ctx = loadSetup({ plan: ADOPT_PLAN, apiMutate: async () => null });
       ctx.showWizard();
       await settle();
-      ctx.api.lastError = 'Cannot finish setup without an admin credential.';
+      ctx.renderConfirm(ctx.document.getElementById('setupBody'));
+      ctx.api.lastError = 'A username and password are required to finish setup.';
       ctx.api.lastErrorCode = 'ADMIN_REQUIRED';
-      await ctx.wizardSkip();
+      await ctx.wizardComplete();
       await settle();
       return ctx;
     }
@@ -1180,6 +1252,213 @@ describe('Setup wizard — the login gate is the default (#710)', () => {
       await ctx.wizardComplete();
       await settle();
       assert.equal(ctx.wizard.provision, null, 'nothing to poll — the gate already exists');
+    });
+  });
+
+  describe('finishing without a login is a choice the server offered (#803)', () => {
+
+    /** The login step as rendered for a given answer. */
+    async function loginStep(credential) {
+      const ctx = loadSetup({ plan: REFUSE_PLAN, credential });
+      ctx.showWizard();
+      await settle();
+      const body = ctx.document.getElementById('setupBody');
+      ctx.renderAdminSetup(body);
+      return { ctx, html: body.innerHTML };
+    }
+
+    /** Complete from a context and return the body the server was sent. */
+    async function sentBy(ctx) {
+      let sent = null;
+      ctx.apiMutate = async (_url, _method, body) => {
+        sent = body;
+        return { ok: true, setupComplete: true, attached: [], warnings: [], restart: false,
+          account: { created: false, required: false, loginInForce: false, username: null, recoveryCodes: null },
+          ingress: { action: 'refuse', provisioning: false, protection: 'none', reason: 'as you chose' } };
+      };
+      ctx.renderConfirm(ctx.document.getElementById('setupBody'));
+      await ctx.wizardComplete();
+      await settle();
+      return sent;
+    }
+
+    it('offers the choice with its consequence stated, where the server allows it', async () => {
+      const { html } = await loginStep(LOGIN_NEEDED);
+      assert.match(html, /Finish without a login/);
+      assert.match(html, /Anyone who can reach this address is in/);
+      assert.match(html, /added later from global settings/);
+    });
+
+    it('does not offer it where the server refuses it, and says why', async () => {
+      const { html } = await loginStep(LOGIN_NEEDED_WIDE);
+      assert.doesNotMatch(html, /id="setupNoLoginBtn"/);
+      assert.match(html, /not available here/);
+      assert.match(html, /every network interface/);
+    });
+
+    it('submits the choice as noLogin, and never a login beside it', async () => {
+      const { ctx } = await loginStep(LOGIN_NEEDED);
+      ctx.wizard.adminUser = 'jason';
+      ctx.wizard.adminPassword = 'correct-horse-battery';
+      ctx.wizardChooseNoLogin();
+      const sent = await sentBy(ctx);
+      assert.equal(sent.noLogin, true);
+      assert.equal(sent.adminUser, undefined, 'a login typed before choosing none is not sent');
+      assert.equal(sent.adminPassword, undefined);
+    });
+
+    it('sends a login, not the choice, once the operator goes on with one', async () => {
+      const { ctx } = await loginStep(LOGIN_NEEDED);
+      ctx.wizardChooseNoLogin();
+      // Next reads the fields themselves, as a browser that fired no input event leaves them.
+      ctx.document.getElementById('setupAdminUser').value = 'jason';
+      ctx.document.getElementById('setupAdminPassword').value = 'correct-horse-battery';
+      ctx.document.getElementById('setupAdminPasswordConfirm').value = 'correct-horse-battery';
+      ctx.wizardAdminNext();
+      const sent = await sentBy(ctx);
+      assert.equal(sent.noLogin, undefined);
+      assert.equal(sent.adminUser, 'jason');
+    });
+
+    it('does not send a choice the server has since withdrawn', async () => {
+      const { ctx } = await loginStep(LOGIN_NEEDED);
+      ctx.wizardChooseNoLogin();
+      ctx.wizard.credential = LOGIN_NEEDED_WIDE;   // as a re-probe after a bind change leaves it
+      const sent = await sentBy(ctx);
+      assert.equal(sent.noLogin, undefined);
+      assert.doesNotMatch(ctx._loginSummaryLabel(), /you chose/);
+    });
+
+    it('routes a refused choice back to the login step with the server\'s reason on it', async () => {
+      const ctx = loadSetup({ plan: REFUSE_PLAN, apiMutate: async () => null });
+      ctx.showWizard();
+      await settle();
+      ctx.wizardChooseNoLogin();
+      ctx.fetch = async () => ({ ok: true, json: async () => ({ plan: REFUSE_PLAN, credential: LOGIN_NEEDED_WIDE }) });
+      ctx.renderConfirm(ctx.document.getElementById('setupBody'));
+      ctx.api.lastError = LOGIN_NEEDED_WIDE.optOutRefusal.reason;   // the server sends the same sentence both ways
+      ctx.api.lastErrorCode = 'OPT_OUT_REFUSED';
+      await ctx.wizardComplete();
+      await settle();
+      assert.equal(ctx.wizardStepKeys()[ctx.wizard.step], 'admin');
+      assert.equal(ctx.wizard.noLogin, false, 'the refused choice is withdrawn');
+      const html = ctx.document.getElementById('setupBody').innerHTML;
+      assert.match(html, /Admin Login/);
+      const reason = LOGIN_NEEDED_WIDE.optOutRefusal.reason;
+      assert.equal(html.split(reason).length - 1, 1, 'the reason is on the step that resolves it, once');
+      assert.doesNotMatch(html, /id="setupNoLoginBtn"/, 'and the choice is not offered again');
+    });
+  });
+
+  describe('the recovery codes come first, and the screens after them read the gate', () => {
+    const CODES = ['AAAA-BBBB-CCCC', 'DDDD-EEEE-FFFF'];
+
+    /**
+     * Complete setup with a given account and ingress block.
+     * @returns {Promise<object>} the context, after the completion settled
+     */
+    async function completeWith({ account, ingress, warnings, status }) {
+      const ctx = loadSetup({
+        plan: PROVISION_PLAN,
+        statusFetch: () => {
+          if (!status) throw new Error('ECONNREFUSED');
+          return { ok: true, json: async () => status };
+        },
+        apiMutate: async () => ({
+          ok: true, setupComplete: true, attached: [], warnings: warnings || [], restart: false, account, ingress
+        })
+      });
+      ctx.showWizard();
+      await settle();
+      ctx.dismissWizard = () => { ctx.__dismissed = true; };
+      ctx.renderConfirm(ctx.document.getElementById('setupBody'));
+      await ctx.wizardComplete();
+      await settle(2000);
+      return ctx;
+    }
+
+    const CREATED = { created: true, required: false, loginInForce: true, username: 'jason', recoveryCodes: CODES };
+    const PROVISIONING = { action: 'provision', provisioning: true, protection: 'pending',
+      url: 'https://host:8443', user: 'jason', logLocation: '~/.tangleclaw/logs/ingress-cutover.log' };
+
+    it('shows the codes before a cutover screen, and starts nothing until the operator says so', async () => {
+      const ctx = await completeWith({ account: CREATED, ingress: PROVISIONING,
+        status: { state: 'done', ok: true, code: 'ok' } });
+      assert.equal(ctx.wizard.view, 'codes');
+      const html = ctx.document.getElementById('setupBody').innerHTML;
+      assert.match(html, /Save your recovery codes/);
+      for (const code of CODES) assert.match(html, new RegExp(code));
+      assert.match(html, /will not be shown again/);
+      assert.equal(ctx.__fetches.filter((f) => String(f).includes('provision-status')).length, 0,
+        'the outcome is not polled while the codes are on screen');
+
+      await ctx._continueAfterCodes();
+      await settle(2000);
+      assert.equal(ctx.wizard.provision.phase, 'gated');
+      assert.match(ctx.document.getElementById('setupBody').innerHTML, /Your login is in force/);
+    });
+
+    it('does not let an async re-render paint over the codes', async () => {
+      const ctx = await completeWith({ account: CREATED, ingress: PROVISIONING });
+      const before = ctx.document.getElementById('setupBody').innerHTML;
+      await ctx.loadIngressPlan();
+      await settle();
+      assert.equal(ctx.document.getElementById('setupBody').innerHTML, before);
+    });
+
+    it('says where to make codes when they could not be generated, and still waits for a click', async () => {
+      const ctx = await completeWith({
+        account: Object.assign({}, CREATED, { recoveryCodes: null }),
+        ingress: { action: 'refuse', provisioning: false, protection: 'account', confirmedProtection: true, user: 'jason' }
+      });
+      const html = ctx.document.getElementById('setupBody').innerHTML;
+      assert.match(html, /could not generate its recovery codes/);
+      assert.match(html, /Recovery codes/);
+      assert.equal(ctx.__dismissed, undefined, 'nothing moves on by itself');
+    });
+
+    it('goes straight to how setup ended when no account was created', async () => {
+      const ctx = await completeWith({
+        account: { created: false, required: false, loginInForce: false, username: null, recoveryCodes: null },
+        ingress: { action: 'refuse', provisioning: false, protection: 'none', reason: 'Setup finished without a login, as you chose.' }
+      });
+      assert.equal(ctx.wizard.view, 'unprotected');
+    });
+
+    it('does not say nothing is asking for a password when the cutover failed over an armed login', async () => {
+      const ctx = await completeWith({ account: CREATED, ingress: PROVISIONING,
+        status: { state: 'done', ok: false, code: 'caddy-reload-failed' } });
+      await ctx._continueAfterCodes();
+      await settle(2000);
+      assert.equal(ctx.wizard.provision.phase, 'failed');
+      const html = ctx.document.getElementById('setupBody').innerHTML;
+      assert.doesNotMatch(html, /Nothing is asking for a password/);
+      assert.doesNotMatch(html, /No login is in force/);
+      assert.match(html, /Caddy was not put in front/);
+      assert.match(html, /your login.*is in force/);
+      assert.match(html, /caddy-reload-failed/);
+      assert.match(html, /role="alert"/);
+    });
+
+    it('still says so plainly when the failed cutover left no login in force', async () => {
+      const ctx = await completeWith({
+        account: { created: false, required: false, loginInForce: false, username: null, recoveryCodes: null },
+        ingress: PROVISIONING, status: { state: 'done', ok: false, code: 'failed' }
+      });
+      assert.match(ctx.document.getElementById('setupBody').innerHTML, /Nothing is asking for a password/);
+    });
+
+    it('does not call a login setup just put on "your existing login … did not change it"', async () => {
+      const ctx = await completeWith({ account: CREATED,
+        ingress: { action: 'refuse', provisioning: false, protection: 'account', confirmedProtection: true, user: 'jason' },
+        warnings: ['Skipped "old-project": path does not exist'] });
+      await ctx._continueAfterCodes();
+      await settle();
+      assert.equal(ctx.wizard.view, 'adopted');
+      const html = ctx.document.getElementById('setupBody').innerHTML;
+      assert.match(html, /Your login for <strong>jason<\/strong> is in force/);
+      assert.doesNotMatch(html, /did not change it/);
+      assert.match(html, /old-project/);
     });
   });
 });
