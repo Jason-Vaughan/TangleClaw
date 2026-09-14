@@ -34,6 +34,29 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-14 — A.05a: every browser request through tcFetch; an ended session goes to /login
+
+<!-- prawduct: type=bugfix | scope=train-9-chunk-04-cutover -->
+
+Train 9 Chunk 04, A.05a (A-05, account self-service). Into `main`: the cutover is merged (PR #1460).
+
+**Why.** On the live install after the cutover, the boot beacon logged a CSRF refusal on every
+dashboard load (#1462). Discovery found it was one of six bare `fetch` writes carrying no
+`X-CSRF-Token` — Launch, both Kill buttons, project actions, kill tunnel, the beacon — all refused on a
+signed-in install. Separately a page whose session ended failed in place (an upload after drill 8.1),
+and behind a live `basic_auth` its polling 401s made Chrome evict Caddy's credential in a loop (#1461).
+
+**What.** `public/api-helper.js#tcFetch`: `fetch` + `tcWithCsrf` + `tcLeaveIfSignedOut`, which on a JSON
+401 `UNAUTHENTICATED`/`ACCOUNT_REQUIRED` (read from a clone) replaces the page with `/login` once.
+`api()` is built on it. The six writes and the wrap-status probe moved onto it. The gate's 401 is
+unchanged (decision in the Lane A plan). Guards in `test/frontend-csrf.test.js`: no bare unsafe-method
+fetch in `public/` outside the three pre-session pages, and no bare fetch of any method outside named
+exemptions. README / setup guide / recovery.md: use one tab while both logins stand in front.
+
+**Reviews.** Cumulative `rev-20260914T000624Z-3132532f` (0 blocking; R-5 guard gap, R-2 probe fixed;
+notes accepted), verify `rev-20260914T001125Z-f252cfe5` (1 blocking: probe unpinned → fixed), verify
+`rev-20260914T001455Z-4f3afbb5` clean. #1461 stays open for the real-Chrome check in the combined A-VRF.
+
 ## 2026-09-13 — #1420 A.04d: the gate machinery carries
 
 <!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->
