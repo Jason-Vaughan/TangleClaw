@@ -165,6 +165,8 @@ describe('forced first-run admin credential', () => {
       assert.equal(status, 200);
       assert.equal(data.account.created, true);
       assert.equal(data.account.required, false);
+      assert.equal(data.account.loginInForce, true,
+        'the wizard says a password is asked from this, not from how a cutover ended');
       assert.equal(data.account.username, 'admin');
       assert.ok(store.users.verify('admin', 'a-strong-passphrase-42'),
         'the password the wizard set is the one that signs in');
@@ -222,7 +224,8 @@ describe('forced first-run admin credential', () => {
       const { status, data } = await request(server, 'POST', '/api/setup/complete',
         { adminUser: 'admin', adminPassword: 'a-strong-passphrase-42' });
       assert.equal(status, 200);
-      assert.deepEqual(data.account, { created: false, required: false, username: null, recoveryCodes: null });
+      assert.deepEqual(data.account,
+        { created: false, required: false, loginInForce: true, username: null, recoveryCodes: null });
       assert.equal(store.users.getByName('admin'), null);
       // The account that signs in is rosie's, not the name just typed — so the
       // verdict names no one rather than a user the gate does not know.
@@ -241,7 +244,8 @@ describe('forced first-run admin credential', () => {
       store.config.save(config);
       const { status, data } = await request(server, 'POST', '/api/setup/complete', {});
       assert.equal(status, 200);
-      assert.deepEqual(data.account, { created: false, required: true, username: null, recoveryCodes: null });
+      assert.deepEqual(data.account,
+        { created: false, required: true, loginInForce: false, username: null, recoveryCodes: null });
     });
 
     it('refuses to finish, without saving, when the gate cannot read its account store (#1420)', async () => {
@@ -331,6 +335,7 @@ describe('forced first-run admin credential', () => {
       assert.ok(Date.parse(config.loginOptOutAt) >= before - 1000, 'the choice is recorded with its time');
       assert.equal(data.ingress.protection, 'none');
       assert.equal(data.ingress.confirmedProtection, false);
+      assert.equal(data.account.loginInForce, false);
       assert.match(data.ingress.reason, /as you chose/);
       assert.ok(data.warnings.some((w) => /as you chose/.test(w)),
         'a warnings-only client still learns the install has no login');

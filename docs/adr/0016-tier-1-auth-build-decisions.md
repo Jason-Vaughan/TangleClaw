@@ -730,3 +730,30 @@ The addendum's "What the switch does", built. Builder decisions, vetoable.
   (#1457) — ADR 0015 lists it as enabled by Tier 1; the cutover ships without it and the docs say so —
   and a command to disable an account (#1458): `store.users.disable` has no caller, so `locked` is
   reachable today only by editing the database.
+
+### Recorded during #804 / #803 (2026-09-14) — the wizard's honest sentence, as built
+
+OQ3's sentence ships, and the three call sites #804 names ask one question. The policy is ADR 0009
+"Amendment 2026-09-14"; what the build settled beyond it:
+
+- **Named facts, not a reused plan action.** The derivation takes `loginInHand`, `adoptionSupplies`
+  and `caddyLoginInForce`. `plan.action === 'adopt'` had meant both "Finish will adopt a login" and "a
+  Caddy login is in force", and Skip adopts nothing, so the probe ships Skip's answer separately
+  (`credential.skipAllowed`) and the wizard shows Skip from it rather than from "the step is absent".
+- **An unknown answer shows the login step.** Before, a failed probe hid it, because a password
+  collected with nothing to enforce it was the worst outcome. The account now enforces on every
+  install, so hiding it would finish an install with no login on a network blip. The choice of none is
+  not shown until the server has offered it.
+- **The wizard issues recovery codes** (A-04a deferred this here). Setup mints a set with the account
+  and returns them once; the wizard shows them before any provisioning or restart screen, because a
+  cutover started by the same response restarts the server.
+- **Screens after setup read the gate state, not the cutover.** `account.loginInForce` on the
+  completion response is `guardsTheDoor` of the state setup saved. A cutover that fails leaves the
+  account armed, so its screen says Caddy was not put in front while the login still asks, rather
+  than "nothing is asking for a password".
+- **"Add a login" turns the switch on and creates nothing.** The first-account page already creates
+  the account, signs the person in and shows codes, so the settings route does only `authEnabled` and
+  `loginOptOutAt` and hands the browser to `/login`. It also serves an install whose account was made at
+  a terminal while the login was off — the state `reset-admin.js --store` used to answer with "turn it
+  on in Settings", a control that did not exist. `POST /api/auth/credential` changes a Caddy credential
+  and never turns a login on, so it has no opt-out record to clear.

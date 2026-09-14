@@ -39,6 +39,23 @@ const wizard = {
   // from the server's and collect a credential nothing will enforce.
   ingressPlan: null,
   ingressPlanError: null,
+  // Server's answer to "does setup need a login here" (the same probe →
+  // `credential`): whether Finish needs one, whether the choice of none may be
+  // offered (and why not), and whether Skip may finish. Null until the probe
+  // returns. Asked of the one derivation both finishing routes enforce, so the
+  // step shown and the rule applied cannot disagree.
+  credential: null,
+  // The operator pressed "Finish without a login" on the login step. Sent only
+  // while the server still offers that choice — see `_noLoginChosen`.
+  noLogin: false,
+  // A server refusal to show on the login step when the wizard routes back to it.
+  adminStepNotice: null,
+  // Whether TangleClaw's own login asks for a password once setup has saved, from
+  // the completion response. The screens after it read this, not the cutover.
+  loginInForce: false,
+  // The completion response, held while the recovery-codes screen waits for the
+  // operator, then routed as if it had just arrived.
+  completeResult: null,
   // Set when the SERVER refused to finish setup without a credential on a machine
   // whose probe said none was needed. Kept separate from `ingressPlan` so the
   // server's answer is never overwritten by a client inference — the summary and
@@ -56,26 +73,39 @@ const wizard = {
 };
 
 /**
- * Whether the wizard must collect an admin credential on this machine — true
- * exactly when the server said it can provision a login gate.
+ * Whether the wizard shows the login step — true exactly when the server said
+ * Finish needs a login here (`credential.required`).
  *
- * Null plan (probe not back, or failed) deliberately reads as "no" rather than
- * "yes": collecting a password before knowing anything can enforce it is the one
- * outcome worse than not collecting one. If the server then refuses completion,
- * `wizardComplete` re-probes and routes back here rather than dead-ending.
+ * The login is TangleClaw's own account, which is enforced with or without
+ * Caddy, so a login typed here is never one nothing enforces. An unknown answer
+ * (probe not back, or failed) therefore reads as "show the step": the default
+ * outcome of setup is a login, and the step is how the operator gets one. The
+ * places a login is NOT asked for — one already in hand, or a Caddy login Finish
+ * adopts — are known only from the server's answer.
  * @returns {boolean}
  */
 function _adminStepRequired() {
   if (wizard.adminStepForcedByServer) return true;
-  return !!(wizard.ingressPlan && wizard.ingressPlan.action === 'provision');
+  const c = wizard.credential;
+  if (!c || typeof c.required !== 'boolean') return true;
+  return c.required;
 }
 
 /**
- * The ordered list of active wizard step keys. The admin-login step is present
- * when this machine can run a login gate — TangleClaw asks for one by default
- * and only skips the step when it would be collecting a credential it cannot
- * put into force (an existing hand-rolled login it will adopt instead, a config
- * it must not overwrite, or no Caddy to run one).
+ * Whether the operator's choice of no login is what the wizard will submit: they
+ * chose it on the login step, the step is shown, and the server still offers it.
+ * A choice made before a re-probe withdrew the offer is not sent.
+ * @returns {boolean}
+ */
+function _noLoginChosen() {
+  return wizard.noLogin === true && _adminStepRequired()
+    && !!(wizard.credential && wizard.credential.optOutAllowed === true);
+}
+
+/**
+ * The ordered list of active wizard step keys. The login step is present unless
+ * the server said Finish needs no login here — one is already in hand, or an
+ * existing Caddy login will be adopted instead.
  * @returns {string[]}
  */
 function wizardStepKeys() {
@@ -98,29 +128,17 @@ async function loadIngressPlan() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     wizard.ingressPlan = (data && data.plan) || null;
+    wizard.credential = (data && data.credential && typeof data.credential === 'object') ? data.credential : null;
     wizard.ingressPlanError = null;
   } catch (err) {
     wizard.ingressPlan = null;
+    wizard.credential = null;
     wizard.ingressPlanError = (err && err.message) || 'probe failed';
   }
   _syncSkipButton();
   renderWizardStep();
 }
 
-/**
- * Show Skip only once the server has said a credential is NOT mandatory here.
- *
- * Fail closed on an unknown plan, which is not the same as "not required": the
- * probe is unawaited, so there is a window at startup where nothing is known yet,
- * and a failed probe leaves it unknown forever. Offering Skip in that window
- * offers a way past the login gate on exactly the machines where the answer has
- * not arrived. A refusal now routes the operator to the step that resolves it, so
- * the button is not a dead end — but offering a way past the gate before knowing
- * whether there is a gate is the wrong default, and on a machine that CAN raise one
- * the PATCH refuses. (It does not always refuse: with no Caddy present the same
- * PATCH legitimately succeeds, which is why this hides on unknown rather than
- * relying on the server to say no.)
- */
 /**
  * Clear the overlay's persistent error banner.
  *
@@ -138,11 +156,24 @@ function _clearOverlayError() {
   err.classList.add('hidden');
 }
 
+/**
+ * Show Skip only once the server has said Skip may finish setup here
+ * (`credential.skipAllowed`).
+ *
+ * Its own answer, not "the login step is not shown": Skip adopts nothing, so on
+ * an install whose Caddy login Finish would adopt, the step is absent and Skip is
+ * still refused. Fail closed on an unknown answer, which is not the same as
+ * "allowed": the probe is unawaited, so there is a window at startup where
+ * nothing is known yet, and a failed probe leaves it unknown forever. Offering
+ * Skip in that window offers a way past the login on exactly the machines where
+ * the answer has not arrived.
+ */
 function _syncSkipButton() {
   const skipBtn = document.getElementById('setupSkipBtn');
   if (!skipBtn) return;
-  const known = !!wizard.ingressPlan;
-  skipBtn.style.display = (known && !_adminStepRequired()) ? '' : 'none';
+  const allowed = !!(wizard.credential && wizard.credential.skipAllowed === true)
+    && !wizard.adminStepForcedByServer;
+  skipBtn.style.display = allowed ? '' : 'none';
 }
 
 // ── Wizard Lifecycle ──
@@ -178,6 +209,9 @@ function showWizard() {
   wizard.provision = null;
   wizard.view = 'steps';
   wizard.adminStepForcedByServer = false;
+  wizard.noLogin = false;
+  wizard.adminStepNotice = null;
+  wizard.loginInForce = false;
   _clearOverlayError();
 
   _syncSkipButton();
@@ -280,28 +314,23 @@ function wizardBack() {
 
 async function wizardSkip() {
   // `apiMutate` returns null on a non-2xx rather than throwing, and this path can
-  // now be REFUSED: finishing setup requires a credential wherever a gate can be
-  // enforced, and the button is reachable in cases where the plan does not demand
-  // one but the server still does (an install already in caddy mode whose
-  // credential would have come from adopting its Caddyfile — adoption happens on
-  // the complete route, not this one). Ignoring the null set `setupComplete` in
-  // local state and dismissed, landing the operator on a dashboard as though setup
-  // had finished while the server still says it had not.
+  // be REFUSED: Skip finishes setup only where a login is already in hand, and the
+  // button can be on screen with a stale answer. Ignoring the null set
+  // `setupComplete` in local state and dismissed, landing the operator on a
+  // dashboard as though setup had finished while the server still says it had not.
   const ok = await apiMutate('/api/config', 'PATCH', { setupComplete: true });
   if (!ok) {
     // Refused. Do NOT render an unprotected screen from an invented ingress block:
-    // Skip is only visible when the plan does not demand a credential, so the only
-    // refusals that reach here come from an install already in caddy mode — where a
-    // gate may well be live (adopt, ambiguous) and where an ungated Caddyfile is
-    // network-reachable. A hardcoded `protection: 'none'` would tell the first group
-    // that nothing is asking for a password, and an absent `networkExposed` would
-    // tell the second it is not exposed — the false reassurance this whole slice
-    // exists to prevent, produced by the screen meant to prevent it.
+    // a refused Skip says only that a login is needed, and where one may already
+    // be live (a Caddy login Finish would adopt) or the install is reachable, a
+    // hardcoded `protection: 'none'` or an absent `networkExposed` would be the
+    // false reassurance this whole slice exists to prevent, produced by the screen
+    // meant to prevent it.
     //
-    // The honest response to "a credential is required" is the step that collects
-    // one, not a verdict about a state we did not measure.
+    // The honest response is the step that resolves it: the login step where
+    // Finish needs a login, and the last step where Finish supplies one itself.
     if (api.lastErrorCode === 'ADMIN_REQUIRED') {
-      await _recoverToAdminStep();
+      await _recoverToAdminStep({ from: 'skip', message: api.lastError });
       return;
     }
     // #setupOverlayError, not #setupCompleteError: Skip is in the overlay header
@@ -1282,11 +1311,36 @@ function _adminCanAdvance() {
   return _adminRuleHint(wizard.adminUser, wizard.adminPassword, wizard.adminPasswordConfirm) === null;
 }
 
+/**
+ * The part of the login step about finishing WITHOUT one: the choice and its
+ * consequence where the server offers it, or the server's reason where it does
+ * not. Nothing when the answer is unknown — a choice the server has not offered
+ * is not shown, and there is no reason to state.
+ * @returns {string} HTML
+ */
+function _noLoginChoiceHtml() {
+  const c = wizard.credential;
+  if (!c) return '';
+  if (c.optOutAllowed === true) {
+    return `
+      <div class="setup-optout">
+        <p class="setup-text-muted">Or finish without a login. <strong>Anyone who can reach this address is in</strong> — they can use TangleClaw, including its terminals, as you. TangleClaw offers this only while it is not reachable from other machines, and a login can be added later from global settings.</p>
+        <button class="btn" id="setupNoLoginBtn" onclick="wizardChooseNoLogin()">Finish without a login</button>
+      </div>`;
+  }
+  if (c.optOutRefusal && c.optOutRefusal.reason) {
+    return `<p class="setup-text-muted">Finishing without a login is not available here. ${esc(c.optOutRefusal.reason)}</p>`;
+  }
+  return '';
+}
+
 function renderAdminSetup(body) {
+  const notice = wizard.adminStepNotice;
   body.innerHTML = `
     <div class="setup-step">
       <h2 class="setup-heading">Admin Login</h2>
       <p class="setup-text-muted">TangleClaw will put this login in front of every page, so nothing reaches your sessions or terminals without it. Create the credential you'll use to sign in — there is no default login, and TangleClaw never invents one.</p>
+      ${notice ? `<div class="form-error" role="alert">${esc(notice)}</div>` : ''}
       <div class="form-group">
         <label class="form-label" for="setupAdminUser">Username</label>
         <input type="text" class="form-input" id="setupAdminUser"
@@ -1312,6 +1366,7 @@ function renderAdminSetup(body) {
         <button class="btn" onclick="wizardBack()">Back</button>
         <button class="btn btn-primary" id="setupAdminNextBtn" ${_adminCanAdvance() ? '' : 'disabled'} onclick="wizardAdminNext()">Next</button>
       </div>
+      ${_noLoginChoiceHtml()}
     </div>`;
 
   const u = document.getElementById('setupAdminUser');
@@ -1375,6 +1430,19 @@ function wizardAdminNext() {
     return;
   }
   if (err) { err.classList.add('hidden'); err.textContent = ''; }
+  wizard.noLogin = false;
+  wizard.adminStepNotice = null;
+  wizardNext();
+}
+
+/**
+ * The login step's "Finish without a login": record the choice and move to the
+ * summary, which states it. Only the button the server offered calls this, and
+ * the payload re-checks the offer (`_noLoginChosen`) — the server re-checks it too.
+ */
+function wizardChooseNoLogin() {
+  wizard.noLogin = true;
+  wizard.adminStepNotice = null;
   wizardNext();
 }
 
@@ -1387,21 +1455,27 @@ function wizardAdminNext() {
  */
 function _loginSummaryLabel() {
   const plan = wizard.ingressPlan;
-  if (wizard.adminStepForcedByServer && !(plan && plan.action === 'provision')) {
-    // The server insists on a credential while the probe says a gate cannot be
-    // provisioned here. Both are true: it will be stored, and TangleClaw cannot say
-    // it will be enforced. Claiming "will be created" would be the more comforting
-    // and less accurate of the two.
+  const c = wizard.credential;
+  if (_noLoginChosen()) return 'None — you chose to finish without a login (not protected)';
+  if (wizard.adminStepForcedByServer && !(c && c.required === true)) {
+    // The server refused to finish while its probe said Finish needs no login —
+    // a Caddy login it meant to adopt, and could not. A login typed now is saved
+    // beside a Caddy config that may enforce a different one, so TangleClaw cannot
+    // say it will be enforced. Claiming "will be created" would be the more
+    // comforting and less accurate of the two.
     return wizard.adminUser
       ? `Will be saved for ${wizard.adminUser} — not confirmed as enforced`
       : 'Required, not set';
   }
-  if (plan && plan.action === 'provision') {
+  if (!c) {
+    if (!wizard.adminUser) return 'Unknown — could not check';
+    return `Will be created for ${wizard.adminUser} — TangleClaw could not check this machine first`;
+  }
+  if (c.required === true) {
     return wizard.adminUser ? `Will be created for ${wizard.adminUser}` : 'Not set';
   }
   if (plan && plan.action === 'adopt') return 'Existing login kept';
-  if (plan && plan.action === 'refuse') return 'None — not protected';
-  return 'Unknown — could not check';
+  return 'Already on — kept';
 }
 
 function renderConfirm(body) {
@@ -1476,10 +1550,13 @@ async function wizardComplete() {
     setupBody.deletePassword = wizard.deletePassword;
   }
 
-  // Send the credential exactly when the step that collects it was shown — the
-  // same predicate, so the wizard can't collect one and then decline to send it.
-  // The server validates + hashes it, and re-checks that it was required.
-  if (_adminStepRequired() && wizard.adminUser) {
+  // Send the operator's choice from the step that collects it — the same
+  // predicates, so the wizard can't collect a login and then decline to send it.
+  // The choice of none and a login are never both sent. The server validates
+  // either, and re-checks that it may finish.
+  if (_noLoginChosen()) {
+    setupBody.noLogin = true;
+  } else if (_adminStepRequired() && wizard.adminUser) {
     setupBody.adminUser = wizard.adminUser;
     setupBody.adminPassword = wizard.adminPassword;
   }
@@ -1493,14 +1570,18 @@ async function wizardComplete() {
     err.classList.remove('hidden');
     btn.disabled = false;
     btn.textContent = 'Complete Setup';
-    // The server refuses to finish without a credential on a machine that can
-    // run a gate. Reaching that means the wizard's own plan was stale or missing
-    // (a failed probe reads as "no admin step"), so re-ask and route back to the
-    // step rather than leaving the operator on an error they cannot act on.
-    // The stable code, not the message: the server sends ADMIN_REQUIRED on both
-    // refusals, and matching prose both breaks on any rewording and over-matches
-    // (a bad adminUser and a hashing failure also say "admin").
-    if (api.lastErrorCode === 'ADMIN_REQUIRED') await _recoverToAdminStep();
+    // A refusal about the login means the wizard's answer was stale or missing,
+    // so re-ask and route back to the step rather than leaving the operator on an
+    // error they cannot act on. The stable codes, not the message: matching prose
+    // both breaks on any rewording and over-matches (a bad adminUser and a hashing
+    // failure also say "admin").
+    //   ADMIN_REQUIRED  — Finish needs a login it was not sent.
+    //   OPT_OUT_REFUSED — the choice of none was refused; the reason says why.
+    if (api.lastErrorCode === 'ADMIN_REQUIRED') {
+      await _recoverToAdminStep({ from: 'complete', message: api.lastError });
+    } else if (api.lastErrorCode === 'OPT_OUT_REFUSED') {
+      await _recoverToAdminStep({ from: 'opt-out', message: api.lastError });
+    }
     return;
   }
 
@@ -1518,7 +1599,87 @@ async function wizardComplete() {
   }
 
   wizard.accountRequired = !!(result.account && result.account.required);
+  wizard.loginInForce = !!(result.account && result.account.loginInForce === true);
 
+  // The new account's recovery codes come first, before any screen that can move
+  // on. This response is the only place they exist in the clear, and a cutover it
+  // started restarts the server, so nothing could fetch them afterwards.
+  if (result.account && result.account.created === true) {
+    _showRecoveryCodesScreen(result);
+    return;
+  }
+  await _routeAfterComplete(result);
+}
+
+/**
+ * Show the account's recovery codes once, and wait for the operator to say they
+ * have saved them before routing to what setup ended in. When minting them
+ * failed the account still exists, so the screen says where to make a set.
+ * @param {object} result - The POST /api/setup/complete response.
+ */
+function _showRecoveryCodesScreen(result) {
+  _clearOverlayError();
+  wizard.view = 'codes';
+  wizard.completeResult = result;
+  const body = document.getElementById('setupBody');
+  if (!body) return;
+  const codes = Array.isArray(result.account.recoveryCodes) ? result.account.recoveryCodes : [];
+  if (codes.length === 0) {
+    body.innerHTML = `
+      <div class="setup-step" role="alert">
+        <h2 class="setup-heading">Your account was created</h2>
+        <p class="setup-text">TangleClaw could not generate its recovery codes. Once you are signed in, make a set in global settings under <strong>Recovery codes</strong> — without one, a forgotten password can only be reset at a terminal on this machine.</p>
+        <button class="btn btn-primary setup-btn" onclick="_continueAfterCodes()">Continue</button>
+      </div>`;
+    return;
+  }
+  body.innerHTML = `
+    <div class="setup-step" role="status" aria-live="polite">
+      <h2 class="setup-heading">Save your recovery codes</h2>
+      <p class="setup-text">If you forget your password, any one of these sets a new one from the sign-in page. Each works once. Keep them somewhere safe, apart from this device — a password manager or printed paper. <strong>They will not be shown again.</strong></p>
+      <ol class="setup-recovery-codes">${codes.map((code) => `<li><code>${esc(code)}</code></li>`).join('')}</ol>
+      <button class="btn" onclick="_copyRecoveryCodes()">Copy codes</button>
+      <p class="setup-text-muted" id="setupCodesCopied" aria-live="polite"></p>
+      <button class="btn btn-primary setup-btn" onclick="_continueAfterCodes()">I have saved these codes</button>
+    </div>`;
+}
+
+/**
+ * Copy the codes on screen to the clipboard, or say to copy them by hand where
+ * the browser will not allow it (a page served over plain HTTP to another
+ * machine, for one).
+ * @returns {Promise<void>}
+ */
+async function _copyRecoveryCodes() {
+  const note = document.getElementById('setupCodesCopied');
+  const result = wizard.completeResult;
+  const codes = result && result.account && Array.isArray(result.account.recoveryCodes)
+    ? result.account.recoveryCodes : [];
+  try {
+    await navigator.clipboard.writeText(codes.join('\n'));
+    if (note) note.textContent = 'Copied. Paste them somewhere safe now.';
+  } catch (err) { // prawduct:allow prawduct/broad-except -- any clipboard failure has the same answer: copy by hand, which the note says
+    if (note) note.textContent = 'Copying is not available here — select the codes and copy them by hand.';
+  }
+}
+
+/**
+ * Leave the recovery-codes screen for what setup ended in. Only ever called from
+ * its button, so the codes stay up until the operator says they have them.
+ * @returns {Promise<void>}
+ */
+async function _continueAfterCodes() {
+  const result = wizard.completeResult;
+  wizard.completeResult = null;
+  await _routeAfterComplete(result);
+}
+
+/**
+ * Route a successful completion to the screen that says how setup ended.
+ * @param {object} result - The POST /api/setup/complete response.
+ * @returns {Promise<void>}
+ */
+async function _routeAfterComplete(result) {
   // What happened to the login, before anything else — it is the one outcome the
   // operator must not be left guessing about.
   const ingress = result.ingress || null;
@@ -1567,12 +1728,17 @@ async function wizardComplete() {
 }
 
 /**
- * Terminal screen for a setup that finished without needing to provision anything
- * and DID have something to report — today that is the successful-adopt path.
- * Keyed on there being warnings, not on the protection state: its reason for
- * existing is that the render which surfaces warnings must not also be the render
- * that closes the overlay carrying them. With nothing to report the caller
- * dismisses instead, so this never adds a click for an uneventful setup.
+ * Terminal screen for a confirmed-protected setup that provisioned nothing and
+ * DID have something to report — an adopted Caddy login, or TangleClaw's own
+ * login with no Caddy in front. Keyed on there being warnings, not on the
+ * protection state: its reason for existing is that the render which surfaces
+ * warnings must not also be the render that closes the overlay carrying them.
+ * With nothing to report the caller dismisses instead, so this never adds a click
+ * for an uneventful setup.
+ *
+ * Which sentence it says reads `wizard.loginInForce`, the server's gate state:
+ * "your existing login … TangleClaw did not change it" is false of a login this
+ * setup just put on.
  * @param {object|null} ingress - `ingress` block from POST /api/setup/complete.
  * @param {string[]} warnings - Server warnings to restate here.
  */
@@ -1582,36 +1748,64 @@ function _showAdoptedScreen(ingress, warnings) {
   const body = document.getElementById('setupBody');
   if (!body) return;
   const user = ingress && ingress.user ? ingress.user : null;
+  const forWhom = user ? ` for <strong>${esc(user)}</strong>` : '';
+  const lead = wizard.loginInForce
+    ? `Your login${forWhom} is in force — TangleClaw asks for it on every page.`
+    : `Your existing login${forWhom} is in place — TangleClaw did not change it.`;
   body.innerHTML = `
     <div class="setup-step" role="status" aria-live="polite">
       <h2 class="setup-heading">Setup finished</h2>
-      <p class="setup-text">Your existing login${user ? ` for <strong>${esc(user)}</strong>` : ''} is in place — TangleClaw did not change it.</p>
+      <p class="setup-text">${lead}</p>
       ${_warningsBlock(warnings)}
       <button class="btn btn-primary setup-btn" onclick="_finishAfterProvisioning()">Continue</button>
     </div>`;
 }
 
 /**
- * Re-ask the server for the login plan and, if it now says a credential is
- * required, jump to the admin step. Recovery path for a completion the server
- * refused because the wizard's plan was missing or stale.
+ * Re-ask the server about the login and route to the step that resolves a
+ * refusal. Recovery path for a Skip or a completion the server refused because
+ * the wizard's answer was missing or stale.
+ *
+ * The choice of no login is withdrawn either way: it was refused, or the login
+ * step is where the operator decides again with the fresh answer on screen.
+ * @param {object} [opts]
+ * @param {'skip'|'complete'|'opt-out'} [opts.from] - Which refusal this is.
+ * @param {string|null} [opts.message] - The server's message, shown on the step.
  * @returns {Promise<void>}
  */
-async function _recoverToAdminStep() {
+async function _recoverToAdminStep(opts = {}) {
   await loadIngressPlan();
+  wizard.noLogin = false;
+  if (opts.from === 'skip' && !_adminStepRequired()) {
+    // Skip was refused, and Finish needs no login it has not got — it adopts a
+    // Caddy login Skip cannot. The last step finishes setup; collecting a login
+    // here would save one beside the Caddy login that still enforces.
+    _syncSkipButton();
+    const keys = wizardStepKeys();
+    wizard.view = 'steps';
+    wizard.step = keys.indexOf('confirm');
+    renderWizardStep();
+    const err = document.getElementById('setupOverlayError');
+    if (err && opts.message) {
+      err.textContent = opts.message;
+      err.classList.remove('hidden');
+    }
+    return;
+  }
   if (!_adminStepRequired()) {
-    // The server demanded a credential and the probe disagrees — an install already
-    // behind Caddy whose credential would have come from adopting its Caddyfile is
-    // the reachable case. The server is authoritative about what it will accept, so
-    // show the step rather than leaving the operator with no way forward.
+    // The completion demanded a login and the probe disagrees — a Caddy login the
+    // server meant to adopt and could not. The server is authoritative about what it
+    // will accept, so show the step rather than leaving the operator with no way
+    // forward.
     //
-    // Carried as its OWN signal, never by overwriting `ingressPlan`: that field is
-    // the server's answer and the one thing this file documents as never
-    // client-derived. Synthesizing `action: 'provision'` into it made the confirm
-    // summary read "Login: Will be created for <user>" on a machine where the
-    // server will instead store the credential and report the ingress unchanged.
+    // Carried as its OWN signal, never by overwriting the server's answers: those
+    // are the one thing this file documents as never client-derived. Synthesizing
+    // one made the confirm summary read "Login: Will be created for <user>" on a
+    // machine where the server will instead store the credential beside a Caddy
+    // login it cannot confirm.
     wizard.adminStepForcedByServer = true;
   }
+  wizard.adminStepNotice = opts.message || null;
   _syncSkipButton();
   const keys = wizardStepKeys();
   const idx = keys.indexOf('admin');
@@ -1719,6 +1913,11 @@ function _showProvisioningScreen(ingress, warnings) {
     healthOk: null,
     reachable: true,
     networkExposed: ingress.networkExposed === true,
+    // TangleClaw's own login, armed by the account setup just created, asks for a
+    // password whether or not Caddy ends up in front — so a cutover that fails
+    // does not leave "nothing asking for a password". From the completion
+    // response, the one place the server stated its gate state.
+    loginInForce: wizard.loginInForce === true,
     warnings: Array.isArray(warnings) ? warnings : []
   };
   _renderProvisionScreen();
@@ -1817,6 +2016,19 @@ function _renderProvisionScreen() {
         ${url ? `<p class="setup-text-muted">TangleClaw has moved to <code>${esc(url)}</code>. This address will not work any more. You will sign in there once, with the password you just set — this page's sign-in does not carry across to a new address.</p>` : ''}
         ${_warningsBlock(p.warnings)}
         ${signIn}
+      </div>`;
+    return;
+  }
+
+  if (p.phase === 'failed' && p.loginInForce) {
+    body.innerHTML = `
+      <div class="setup-step" role="alert">
+        <h2 class="setup-heading">Caddy was not put in front of TangleClaw</h2>
+        <p class="setup-text">Setup finished and your login${p.user ? ` for <strong>${esc(p.user)}</strong>` : ''} is in force — TangleClaw asks for it on every page. Putting Caddy in front of TangleClaw did not work${p.code ? ` (<code>${esc(p.code)}</code>)` : ''}, so TangleClaw is still at this address.</p>
+        ${p.hasError && p.logLocation ? `<p class="setup-text-muted">It reported a reason, which is in <code>${esc(p.logLocation)}</code> and in TangleClaw's log.</p>` : ''}
+        <p class="setup-text-muted">To put Caddy in front, run <code>node scripts/ingress-cutover.js --to caddy</code> at a terminal.</p>
+        ${_warningsBlock(p.warnings)}
+        <button class="btn btn-primary setup-btn" onclick="_finishAfterProvisioning()">Continue</button>
       </div>`;
     return;
   }

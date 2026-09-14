@@ -108,7 +108,9 @@ a notice. Three rules:
    consulted there. The implementable equivalent is `ingressMode === 'caddy'`, and it is not a
    weaker proxy: the credential gate exists *only* in caddy mode, so caddy mode is the necessary
    condition for a gate to be in front of anything, and caddy mode already pins loopback for its own
-   reasons. An install that never had remote reach (no prior wide bind) narrows immediately, because
+   reasons. *(No longer true of the gate since #1420: TangleClaw's own login enforces on every ingress
+   mode — see "Amendment 2026-09-14" below. What this rule decides, the listener's binding, is
+   unchanged.)* An install that never had remote reach (no prior wide bind) narrows immediately, because
    nothing is taken away.
 
    What this concedes, stated plainly: an install in caddy mode with `authEnabled: false` narrows
@@ -213,6 +215,35 @@ what they actually hit is a forgotten password rather than a broken gate. So:
 - **The cost, accepted as stated:** a second way past the password, bounded by the code's entropy, so
   the practical risk is theft of the codes. Codes are usually kept beside the password, so a
   compromised password manager exposes both anyway; the genuinely new surface is the pre-gate route.
+
+**Amendment 2026-09-14 — a login needs no Caddy, and the opt-out is an explicit, recorded choice
+(#804, #803; operator ruling 2026-09-10, recorded in ADR 0016 OQ3).** Rule 1 chose the ingress as the
+one login path. ADR 0015 moved that login into TangleClaw (a scrypt account behind its own gate), so
+it now exists on every install, and the Decision's first sentence can be true of an install with no
+Caddy at all. Three consequences, as built:
+
+- **Setup asks for a login wherever none is in hand, Caddy or not.** "May setup finish without a
+  login" is one derivation (`lib/setup-credential.js`), which both finishing routes and the wizard's
+  step list read. It no longer asks whether Caddy can be provisioned; a fresh install with no Caddy
+  binary, which used to finish with no login and nothing recorded, now gets the login step.
+- **The opt-out is a choice on that step, stated with its consequence, and recorded.** "Finish without
+  a login" sits under the login form with the sentence *anyone who can reach this address is in*. It is
+  submitted as that choice (`noLogin`) and saved as `loginOptOutAt`, so "the operator chose no login" is
+  never confused with "nobody asked" — `authEnabled: false` is also what a config that predates setup
+  says. Skip never makes the choice. The choice is **refused** wherever it would be false or would
+  leave the dashboard ungated and reachable: a login already in hand or carried by the Caddyfile; a
+  wide bind; or, in caddy mode, a Caddyfile with an ungated remote site, a `localhost` site with
+  neither a gate nor the peer guard, or one Caddy's parser cannot read. That is stricter than the
+  request gate, which keeps an unguarded-`localhost` install with no account open: setup is where the
+  operator makes a NEW choice on TangleClaw's word that it is safe, so the word must hold.
+- **A login can be added later, from global settings — the way back from the opt-out.** "Add a login"
+  is offered only while the gate is `open`, and turns `authEnabled` on and nothing else; the browser
+  goes to the sign-in page, which creates the first account (with its recovery codes) or asks for one
+  made at a terminal. Reach authorises it, as it authorises the first-account page: whoever reaches an
+  open install already has its shell. It is refused where the next page could not let the person in —
+  an install that has lost its account store, from off the machine, or one whose every account is
+  disabled. Rule 4 is unaffected: turning a login **off** from settings remains impossible; recovery
+  stays at the terminal. Every path that turns a login on clears `loginOptOutAt`.
 
 **Why this ADR exists at all.** The superseded posture was written down — in a project artifact under
 `.prawduct/`, which is gitignored. It was therefore invisible to a fresh clone, to contributors, and

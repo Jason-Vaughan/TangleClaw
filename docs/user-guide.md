@@ -63,35 +63,45 @@ through initial configuration:
    would lock you out of your own setup.
 5. **Preferences** — delete protection password, idle chime toggle
 6. **HTTPS** — generate or select a certificate, or keep local HTTP
-7. **Admin Login** — the username and password you will sign in with (see below; this step is not always shown)
+7. **Admin Login** — the username and password you will sign in with, or the choice to finish without one (see below; this step is not always shown)
 8. **Confirm** — summary of all selections, then "Complete Setup"
 
 The wizard only appears once; subsequent launches go straight to the landing page.
 
 #### The login step, and when it appears
 
-TangleClaw puts a login in front of itself by default. There is **no default credential** — you set
-one during setup, or setup does not finish. The gate is enforced by Caddy, which TangleClaw
-configures for you at the end of setup.
+TangleClaw puts a login in front of itself by default. There is **no default credential**. The login
+is TangleClaw's own account, enforced by TangleClaw on every page, terminal and API, so it works with
+or without Caddy; where it can, setup also puts Caddy in front for remote access.
 
-The **Admin Login** step appears whenever this machine can actually run that gate. It is skipped —
-deliberately, not as a convenience — in the cases where a password would be collected with nothing
-to enforce it:
+The **Admin Login** step appears whenever setup needs a login — which is almost always:
 
 | Situation | What the wizard does |
 |---|---|
-| No Caddy config yet, or one TangleClaw generated | Asks for a login, then configures Caddy and puts it in force |
-| A Caddy config you maintain, with exactly one login, and Caddy is the active ingress | Keeps your login. Asks for nothing |
-| A Caddy config you maintain that TangleClaw must not touch (several logins, no login, or unreadable) | Asks for nothing, and finishes saying no login is in force |
-| Caddy is not installed | Asks for nothing, and tells you the two commands that fix it |
+| No Caddy config yet, or one TangleClaw generated | Asks for a login, then configures Caddy in front |
+| Caddy is not installed | Asks for a login; it is in force, and the install stays reachable from this machine only |
+| A Caddy config you maintain that TangleClaw must not touch (several logins, no login, or unreadable) | Asks for a login, and leaves that config alone |
+| A Caddy config you maintain, with exactly one login, and Caddy is the active ingress | Keeps that login. Asks for nothing |
+| A login is already set up (an account created at a terminal beforehand) | Asks for nothing |
 
-When the login step is shown, **Skip is not offered** — skipping it would be a way past the gate.
-Skip is available in the cases above where no credential is being collected.
+**Finish without a login.** Under the login form, the step offers to finish with no login, and says
+what that means: **anyone who can reach this address is in**, including the terminals. TangleClaw
+records the choice. It is offered only while TangleClaw cannot be reached from other machines; where it
+could be (listening on every interface, or a Caddy config that serves it beyond this machine), the
+step says so instead of offering it. You can add a login later from global settings (see *Adding a
+login later*, below).
+
+**Skip** finishes setup only where a login is already in place; everywhere else it is hidden, and
+choosing no login is done on the login step, not by skipping it.
 
 #### What you see at the end
 
-After *Complete Setup*, if TangleClaw is configuring the gate it restarts itself, so the wizard
-waits and then tells you one of five things:
+After *Complete Setup*, if setup created your account, the wizard first shows its **recovery codes**
+— once, with a *Copy codes* button. Save them somewhere apart from this device, then press *I have
+saved these codes*. Nothing moves on until you do.
+
+If TangleClaw is then configuring the gate it restarts itself, so the wizard waits and then tells you
+one of six things:
 
 - **Your login is in force** — with the address to open and sign in at. Note this is **not** the
   address you started on: the gate answers on `https://<your-host>:8443` by default, and TangleClaw
@@ -106,9 +116,12 @@ waits and then tells you one of five things:
   then could not reach the gated address to check that it answers. Different from the one above:
   the setup *did* report back. Same check settles it — open the address it names and see whether
   it asks.
+- **Caddy was not put in front of TangleClaw** — the Caddy step failed, but your login is in force:
+  TangleClaw still asks for it on every page, at the address you are on. It names the command that
+  puts Caddy in front.
 - **No login is in force** — said plainly, with what to run. TangleClaw is reachable from this
   machine only unless you have opted into a wider binding (see *Network Exposure* in Global
-  Settings).
+  Settings). This is also what you see after choosing to finish without a login.
 
 If nothing loads at all after a cutover, `node scripts/ingress-cutover.js --rollback` puts
 TangleClaw back the way it was.
@@ -365,6 +378,19 @@ browser signed in to your account is signed out. Your recovery codes keep workin
 Forgotten the current password? Set a new one with a recovery code from the sign-in page, or at a
 terminal on the machine with `node scripts/reset-admin.js --store --user <name>` (see
 [Getting back into TangleClaw](recovery.md)). Either one signs out every browser on the account.
+
+#### Adding a login later
+
+On an install with no login — you chose to finish setup without one, or it predates the login —
+global settings → **Your account** says no one is signed in and offers **Add a login**. The first press
+explains what happens; the second turns the login on and takes you to the sign-in page, where you
+create your account (and are shown its recovery codes) or, if an account was already made at a
+terminal, sign in with it. From then on every page asks for a password. Turning the login back off is
+not offered from settings.
+
+It is refused where the sign-in page could not let you in: every account on the install is disabled,
+or the install once had an account that is now missing and you are not on the machine itself. Each
+refusal names the terminal command that fixes it.
 
 #### Signing out
 

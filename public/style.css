@@ -2802,6 +2802,24 @@ body.setup-active { overflow: hidden; }
   flex: 1;
   min-height: 44px;
 }
+/* The login step's "finish without a login", set apart from the login form. */
+.setup-optout {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border, #333);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.setup-optout .btn {
+  min-height: 44px;
+}
+/* Recovery codes, shown once after setup creates the account. */
+.setup-recovery-codes {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.8;
+  user-select: all;
+}
 
 /* Wizard project list */
 .setup-project-list {

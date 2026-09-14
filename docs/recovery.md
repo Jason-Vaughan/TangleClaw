@@ -63,7 +63,8 @@ It asks for the new password twice. It also:
 - re-enables the account if it was disabled;
 - prints what the login does afterwards. If it says `authEnabled is OFF` and `NO login is enforced`,
   nothing asks for a password; if it names Caddy's password as the only login, that pop-up is what
-  protects the install until `authEnabled` is turned on.
+  protects the install. Either way, **global settings → Your account → Add a login** turns the login
+  on, and you sign in with this account.
 
 Add `--dry-run` to see what it would do without changing anything. The password rules are the same
 everywhere: at least 12 characters, not a common password, not containing the username.

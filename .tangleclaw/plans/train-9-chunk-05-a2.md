@@ -79,6 +79,14 @@ three call sites still ask "can Caddy be provisioned here?" (`plan.action === 'p
   with no accounts: sets `authEnabled` and creates the first account (+ codes) in one route, allowed
   only in that state. Reach authorises it for the same reason it authorises the first-account screen
   (ADR 0016 A-02a): whoever can reach an `open` install already has the shell. Clears `loginOptOutAt`.
+  **As built (A2b) — narrower mechanism, one wider state:** the route (`POST /api/auth/add-login`)
+  turns `authEnabled` on and creates NOTHING; the browser goes to `/login`, whose first-account page
+  already creates the account, signs in and shows codes (no second account-creation surface). It is
+  also allowed on an `open` install that HAS an account (made by `reset-admin.js --store` while the
+  login was off), because `reset-admin.js` told that operator "turn it on in Settings" — a control
+  that did not exist; `/login` then asks for that account. Refused where the next page could not let
+  the person in: off-machine on a lost account store (`ACCOUNT_STORE_LOST`, same rule as the
+  first-account page) and when every account is disabled (`NO_LOGINABLE_ACCOUNT`). Vetoable.
 - **D8 — Honest copy.** Every screen/response that says whether a password is asked reads the gate
   state the server computed, not the cutover outcome. `ingress.protection` gains `account` (TangleClaw's
   own login guards the door), classified as confirmed by `deriveProtectionFlags`.
@@ -110,7 +118,10 @@ three call sites still ask "can Caddy be provisioned here?" (`plan.action === 'p
   codes shown once; summary/unprotected/provisioning copy (D8).
 - Settings "Add a login" (D7) — route + UI. **Every path that turns a login on clears
   `loginOptOutAt`** (A2a review R-7): the D7 route, `scripts/reset-admin.js --store`, and
-  `POST /api/auth/credential` if it can reach an opted-out install.
+  `POST /api/auth/credential` if it can reach an opted-out install. *As built:* `--store` clears it
+  only when the gate then guards the door (an account made with the login off turns nothing on);
+  `POST /api/auth/credential` changes a Caddy credential and never turns a login on, so it has no
+  record to clear.
 - Render `ingress.user` only as the server names it — null when setup kept an existing account.
 - Docs: ADR 0009 amendment (opt-out mechanism; the stale "only in caddy mode" line), ADR 0016 note,
   ADR 0015 status → Built, `docs/setup-guide.md`, `docs/user-guide.md`, `README.md`, `FEATURES.md`,

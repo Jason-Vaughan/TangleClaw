@@ -281,12 +281,12 @@ function describeGateLines(live, preview) {
     // password is its login. "NO login is enforced" would be false.
     lines.push(`  ⚠ authEnabled is OFF — TangleClaw's login ${preview ? 'would enforce' : 'enforces'} nothing here.`,
       '    Caddy\'s password (basic_auth) is the only login in front of this install.',
-      '    Turn authEnabled on in Settings for the account to be the login.');
+      '    Use "Add a login" in global settings for the account to be the login.');
   } else if (live.gateState === authGate.GATE_STATES.OPEN) {
     lines.push(preview
       ? '  ⚠ authEnabled is OFF — the account would exist but enforce nothing'
       : '  ⚠ authEnabled is OFF — this account exists but NO login is enforced.\n'
-        + '    Turn it on in Settings, or the account does nothing.');
+        + '    Use "Add a login" in global settings to turn it on, or the account does nothing.');
   } else if (live.gateState === authGate.GATE_STATES.UNREADABLE) {
     lines.push('  ⚠ TangleClaw could not read its login state, so it refuses every sign-in.',
       '    Its log names the read error.');
@@ -412,8 +412,41 @@ async function runStoreMode({ store, user, dryRun, passwordStdin }) {
     process.stdout.write(`  ✓ Its ${codesDeleted} recovery code(s) no longer work — generate a new set in Settings.\n`);
   }
   process.stdout.write(`  Store: ${store._getBasePath()}\n`);
-  process.stdout.write(`${describeGateLines(describeLiveGate(store), false)}\n`);
+  const live = describeLiveGate(store);
+  if (clearOptOutIfGuarded(store, live)) {
+    process.stdout.write('  ✓ The record that setup finished without a login was cleared — a login now asks.\n');
+  }
+  process.stdout.write(`${describeGateLines(live, false)}\n`);
   return 0;
+}
+
+/**
+ * Clear `loginOptOutAt` when this run left TangleClaw's login guarding the door.
+ *
+ * The field records that the operator chose no login in setup. Once an account
+ * this tool made or reset is what a request meets, that record is false, and a
+ * later reader would take it for the install's state. Cleared only where the
+ * gate actually guards the door: an account made while the login is off turns
+ * nothing on, and the choice stands.
+ *
+ * @param {object} store - The initialised store module
+ * @param {ReturnType<typeof describeLiveGate>} live - The state after the run
+ * @returns {boolean} Whether a record was cleared
+ */
+function clearOptOutIfGuarded(store, live) {
+  if (live.error || !authGate.guardsTheDoor(live.gateState) || !live.config.loginOptOutAt) return false;
+  try {
+    const config = store.config.load();
+    config.loginOptOutAt = null;
+    store.config.save(config);
+    live.config.loginOptOutAt = null;
+    return true;
+  } catch (err) {
+    // The account change already happened and is what the operator came for; a
+    // stale record is reported, never turned into a failed run.
+    process.stderr.write(`  (could not clear the record that setup finished without a login: ${err.message})\n`);
+    return false;
+  }
 }
 
 async function main() {

@@ -221,13 +221,15 @@ describe('the session page: Account group in settings (#1463)', () => {
 describe('global settings → Your account (#1457, #1463)', () => {
   function load(answers) {
     const ids = ['gsAccountSection', 'gsPasswordCurrent', 'gsPasswordNew', 'gsPasswordChangeBtn',
-      'gsPasswordHint', 'gsSignOutEverywhereBtn', 'gsSignOutEverywhereHint'];
+      'gsPasswordHint', 'gsSignOutEverywhereBtn', 'gsSignOutEverywhereHint', 'gsAddLoginBtn', 'gsAddLoginHint'];
     const els = Object.fromEntries(ids.map((id) => [id, el()]));
     const api = fakeApi(answers);
     const mutations = [];
     const signOuts = [];
+    const visits = [];
     const ctx = vm.createContext({
       document: { getElementById: (id) => els[id] || null },
+      window: { location: { replace: (to) => visits.push(to) } },
       esc: escHtml,
       api,
       apiMutate: async (url, method, body) => {
@@ -236,8 +238,9 @@ describe('global settings → Your account (#1457, #1463)', () => {
       },
       tcSignOut: async (a, opts) => { signOuts.push(opts); return true; }
     });
-    vm.runInContext(`${extract(UI_SRC, '_loadAccountSection')}\nthis.load = _loadAccountSection;`, ctx);
-    return { els, ctx, api, mutations, signOuts };
+    vm.runInContext(`${extract(UI_SRC, '_loadAccountSection')}\n${extract(UI_SRC, '_renderAddLogin')}\n`
+      + 'this.load = _loadAccountSection;', ctx);
+    return { els, ctx, api, mutations, signOuts, visits };
   }
 
   it('offers the forms to a signed-in account, naming it escaped', async () => {
@@ -255,6 +258,56 @@ describe('global settings → Your account (#1457, #1463)', () => {
     await ctx.load();
     assert.match(els.gsAccountSection.innerHTML, /does not require a login/);
     assert.doesNotMatch(els.gsAccountSection.innerHTML, /gsPasswordCurrent/);
+  });
+
+  describe('"Add a login" on an install with none (#803)', () => {
+    it('is offered on an open install, with what no login means', async () => {
+      const { els, ctx } = load({ '/api/auth/me': { authenticated: false, gateState: 'open' } });
+      await ctx.load();
+      const html = els.gsAccountSection.innerHTML;
+      assert.match(html, /id="gsAddLoginBtn"/);
+      assert.match(html, /Anyone who can reach this address can use TangleClaw/);
+    });
+
+    it('is not offered in any other signed-out state', async () => {
+      for (const gateState of ['fallback', 'unreadable', undefined]) {
+        const { els, ctx } = load({ '/api/auth/me': { authenticated: false, gateState } });
+        await ctx.load();
+        assert.doesNotMatch(els.gsAccountSection.innerHTML, /gsAddLoginBtn/, String(gateState));
+      }
+    });
+
+    it('is not offered to a signed-in account', async () => {
+      const { els, ctx } = load({ '/api/auth/me': { authenticated: true, username: 'rosie', gateState: 'armed' } });
+      await ctx.load();
+      assert.doesNotMatch(els.gsAccountSection.innerHTML, /gsAddLoginBtn/);
+    });
+
+    it('says what happens on the first press, and changes nothing until the second', async () => {
+      const { els, ctx, mutations, visits } = load({
+        '/api/auth/me': { authenticated: false, gateState: 'open' },
+        '/api/auth/add-login': { loginEnabled: true, next: '/login' }
+      });
+      await ctx.load();
+      await els.gsAddLoginBtn.click();
+      assert.equal(mutations.length, 0, 'the first press only explains');
+      assert.match(els.gsAddLoginHint.textContent, /sign-in page/);
+      await els.gsAddLoginBtn.click();
+      assert.deepEqual(JSON.parse(JSON.stringify(mutations)),
+        [{ url: '/api/auth/add-login', method: 'POST', body: {} }]);
+      assert.deepEqual(visits, ['/login'], 'the browser goes where the account is made or signed in');
+    });
+
+    it('shows the server\'s refusal and stays put', async () => {
+      const { els, ctx, visits } = load({ '/api/auth/me': { authenticated: false, gateState: 'open' } });
+      await ctx.load();
+      await els.gsAddLoginBtn.click();
+      await els.gsAddLoginBtn.click();
+      assert.match(els.gsAddLoginHint.innerHTML, /The login was not turned on/);
+      assert.match(els.gsAddLoginHint.innerHTML, /Connection lost/);
+      assert.equal(els.gsAddLoginBtn.disabled, false);
+      assert.deepEqual(visits, []);
+    });
   });
 
   it('says the login is stood down during a fallback, not that none is required', async () => {

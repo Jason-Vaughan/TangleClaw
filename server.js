@@ -1911,9 +1911,12 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     // probe ships this route's answer separately (`skipAllowed`) so the wizard
     // never offers a Skip that this refuses.
     if (_decideSetupCredential(config, { adoptionSupplies: false, optOut: false }).required) {
+      // Names no choice this install may not have: the wizard's login step is not
+      // shown where Finish adopts an existing Caddy login, and the choice of none
+      // is not offered where it is refused.
       return errorResponse(res, 400,
-        'Cannot finish setup without a login — TangleClaw puts one in front of itself by default. '
-        + 'Set one on the login step, or choose to finish without one there.',
+        'Skip cannot finish setup here, because it puts no login in front of TangleClaw and one is '
+        + 'needed. Finish setup from the wizard\'s last step instead.',
         'ADMIN_REQUIRED');
     }
   }
@@ -2353,6 +2356,80 @@ route('POST', '/api/auth/set-password', async (req, res, _params, body) => {
 
   const session = _signIn(req, res, user);
   jsonResponse(res, 200, { username: user.username, csrfToken: session.csrfToken, recoveryCodes: codes });
+});
+
+// POST /api/auth/add-login — turn TangleClaw's login on for an install that has none.
+//
+// The way back from the choice of no login made during setup (ADR 0009's
+// opt-out, ruled 2026-09-10: a login is addable later from global settings),
+// and from an install whose account was made at a terminal while the login was
+// off. It turns `authEnabled` on and nothing else. The account is not created
+// here: with none, the gate becomes `account-required` and `/login` serves the
+// first-account page, which already creates it, signs the person in and shows
+// the recovery codes once. With one, `/login` asks for it. So the settings page
+// sends the browser to `/login` and this route never touches a password.
+//
+// Allowed only while the gate is `open`, because that is the state in which it
+// authorises itself: whoever can reach an open install already has its shell,
+// the reason the first-account screen is reachable signed out (ADR 0016).
+// Turning a login ON opens nothing. What it can do wrong is strand the person
+// who pressed it, so it is refused where the next page could not let them in:
+// an install that has had an account and lost it, from off this machine, where
+// the first-account page refuses with ACCOUNT_STORE_LOST.
+//
+// Clears `loginOptOutAt`: once a login is on, "the operator chose no login" is
+// no longer true of the install.
+route('POST', '/api/auth/add-login', (req, res) => {
+  if (!authGate.isOpen(req.tcGateState)) {
+    if (req.tcGateState === authGate.GATE_STATES.FALLBACK) {
+      return _refuseDuringFallback(res, 'turn the login on');
+    }
+    if (req.tcGateState === authGate.GATE_STATES.UNREADABLE) {
+      return errorResponse(res, 503,
+        'TangleClaw cannot read its login state right now, so it cannot turn the login on. '
+        + 'Check the server log.', 'GATE_UNREADABLE');
+    }
+    return errorResponse(res, 409,
+      'TangleClaw\'s login is already on for this install.', 'LOGIN_ALREADY_ON');
+  }
+  const config = store.config.load();
+  if (config.setupComplete !== true) {
+    return errorResponse(res, 409,
+      'Setup is not finished. Choose the login in the setup wizard.', 'SETUP_NOT_COMPLETE');
+  }
+  let presence;
+  let established;
+  try {
+    presence = store.authSessions.accountPresence();
+    established = store.users.accountsEstablished();
+  } catch (err) {
+    log.error('Refused to turn the login on: could not read the account store', { error: err.message });
+    return errorResponse(res, 503,
+      'TangleClaw cannot read its account store, so it cannot tell whether you could sign in afterwards. '
+      + 'Check the server log.', 'GATE_UNREADABLE');
+  }
+  const directLocal = adminCredential.isLoopbackRemote(req.socket && req.socket.remoteAddress)
+    && !authIdentity.cameThroughProxy(req.headers);
+  if (!presence.exists && established && !directLocal) {
+    return errorResponse(res, 403,
+      'This install has had an account, and its account store no longer has one, so turning the login on '
+      + 'from here would leave a sign-in page that cannot create one. Run '
+      + 'node scripts/reset-admin.js --store --user <name> on the machine itself. See docs/recovery.md.',
+      'ACCOUNT_STORE_LOST');
+  }
+  if (presence.exists && !presence.loginable) {
+    return errorResponse(res, 409,
+      'Every account on this install is disabled, so turning the login on would leave no one able to sign in. '
+      + 'Run node scripts/reset-admin.js --store --user <name> on the machine to re-enable one first.',
+      'NO_LOGINABLE_ACCOUNT');
+  }
+  config.authEnabled = true;
+  config.loginOptOutAt = null;
+  store.config.save(config);
+  log.warn('TangleClaw\'s login was turned on from settings', {
+    accountExists: presence.exists, proxied: authIdentity.cameThroughProxy(req.headers)
+  });
+  jsonResponse(res, 200, { loginEnabled: true, accountExists: presence.exists, next: '/login' });
 });
 
 // ── Recovery codes (#1420, ADR 0016 "The ruling") ──
@@ -3480,7 +3557,7 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
   // A failure to mint must not undo the account (it is created and signed in, and
   // codes can be generated in Settings), so it is logged and reported as
   // `recoveryCodes: null`, as the account-setup page does.
-  const account = { created: false, required: false, username: null, recoveryCodes: null };
+  const account = { created: false, required: false, loginInForce: false, username: null, recoveryCodes: null };
   if (adminProvided && config.authEnabled === true) {
     const adminUser = body.adminUser.trim();
     try {
@@ -3519,6 +3596,11 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
       'GATE_UNREADABLE');
   }
   account.required = setupGateState === authGate.GATE_STATES.ACCOUNT_REQUIRED;
+  // Whether TangleClaw's own login asks for a password once this saves, with or
+  // without Caddy in front. The wizard's screens say whether a password is asked
+  // from this, not from how a cutover ended: a cutover that fails leaves the
+  // account armed, and "nothing is asking for a password" would then be false.
+  account.loginInForce = authGate.guardsTheDoor(setupGateState);
 
   // Mark setup as complete
   config.setupComplete = true;

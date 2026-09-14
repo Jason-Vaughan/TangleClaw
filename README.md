@@ -139,7 +139,7 @@ What started as session persistence grew into a full orchestration platform — 
 ### Security & Remote Access
 - **Caddy ingress** — the default on a fresh install (and reversible) reverse-proxy mode, provisioned by the setup wizard and driveable by hand with `scripts/ingress-cutover.js`, that fronts the dashboard, terminals, and APIs with TLS — including an auto-provisioned HTTPS site on your Tailscale tailnet. Fail-closed cutover with validation and health checks; full guide in [deploy/INGRESS.md](deploy/INGRESS.md)
 - **TangleClaw's own login** — accounts with hashed passwords and a server-side session, enforced by TangleClaw on the dashboard, terminals, APIs, and the proxied gateway, on every ingress mode. Signing out ends that browser's session; resetting the password (with a recovery code or at the terminal) ends every session the account holds
-- **Forced first account** — the first-run wizard creates your account on any machine that can enforce a login, which is the default; there is no default credential and no way to skip past it
+- **A login by default** — the first-run wizard creates your account on every install, with or without Caddy, and shows its recovery codes once; there is no default credential and Skip is no way past it. Finishing without a login is an explicit choice on that step, stated with its consequence, recorded, and refused where the dashboard would be reachable from other machines; **Add a login** in global settings undoes it
 - **Recovery without a lockout** — one-time recovery codes reset a forgotten password from the sign-in page, from any device; at a terminal, `scripts/reset-admin.js --store` resets or re-enables an account and `scripts/gate-fallback.js` puts Caddy's password back in front if the login itself breaks ([docs/recovery.md](docs/recovery.md))
 - **Caddy's password, only while it is needed** — Caddy's `basic_auth` stands in front of TangleClaw only until the first account exists (an install upgraded from the older Caddy-only gate) or during a fallback; while it does, global settings → **Caddy password** can change it
 - **Service tokens** — machine-to-machine tokens gate the PortHub and shared-docs APIs so other projects' scripts keep working after you lock the ingress down ([ADR 0005](docs/adr/0005-service-tokens.md))
@@ -212,9 +212,9 @@ work to do first:
 - **ttyd** — browser-based terminal access
 - **tmux** — session multiplexer
 - **mkcert** — generates the local TLS certificate
-- **Caddy** — serves the password-gated TLS ingress that setup provisions by default (see
-  [deploy/INGRESS.md](deploy/INGRESS.md)). If it is somehow absent, setup finishes with **no login**
-  and says so
+- **Caddy** — serves the TLS ingress that setup provisions by default for remote access (see
+  [deploy/INGRESS.md](deploy/INGRESS.md)). If it is somehow absent, your login still works and setup
+  says the install is reachable from this machine only
 
 **You also need at least one AI CLI engine**, which TangleClaw does not install — it drives whichever
 you already use, with your own account: [Claude Code](https://docs.anthropic.com/en/docs/claude-code),
@@ -275,12 +275,12 @@ TangleClaw runs a local server with browser-based terminal access, so reaching t
 
 **A fresh install sets a login during setup.** The wizard asks for a username and password and
 creates your TangleClaw account from them, so the login is the **default outcome of installing**, not
-something you go and turn on afterwards. There is no default credential — you set one, or setup does
-not finish. TangleClaw skips the step only where setup cannot put Caddy in front (Caddy not installed,
-or a Caddy config it must not overwrite), and then says plainly that no login is in force rather than
-implying one. Once you are in, generate one-time **recovery codes** in **Settings → Recovery codes**
-and keep them apart from the device you sign in on: one resets a forgotten password from the sign-in
-page. (The wizard does not issue codes yet; an account created on the first-account page gets them.)
+something you go and turn on afterwards — with or without Caddy. There is no default credential. The
+wizard then shows the account's one-time **recovery codes**, once; keep them apart from the device you
+sign in on: one resets a forgotten password from the sign-in page. The login step also lets you
+**finish without a login**, saying plainly that anyone who can reach the address is then in; TangleClaw
+records that choice, offers it only while the dashboard is not reachable from other machines, and
+**global settings → Your account → Add a login** reverses it at any time.
 
 **The login is TangleClaw's own**, enforced by the server on the dashboard, the terminals, the APIs
 and the proxied gateway, on every ingress mode. Local tools on this machine that are not browsers —
