@@ -294,7 +294,10 @@ describe('#1420 — schema v37→v38 on a REAL old DB', () => {
       store.init();
       assert.equal(store.getDb().prepare('SELECT MAX(version) v FROM schema_version').get().v,
         store.CURRENT_SCHEMA_VERSION);
-      assert.equal(store.CURRENT_SCHEMA_VERSION, 38);
+      // The v37→38 step is what this test owns; later migrations raise the current
+      // version, so pin the floor rather than the number (the line above already
+      // asserts the run reached current).
+      assert.ok(store.CURRENT_SCHEMA_VERSION >= 38);
       assert.equal(store.getDb().prepare('SELECT content FROM fixture_untouched').get().content,
         'a pre-migration row');
       assert.equal(store.getDb().prepare('SELECT COUNT(*) n FROM recovery_codes').get().n, 0);
