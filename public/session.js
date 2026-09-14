@@ -732,15 +732,19 @@ function syncBannerUserExpanded() {
 
 /**
  * Show who is signed in as a banner pill (#1471). Asked of `/api/auth/me`, the
- * same question the settings Account group asks; with no session — an install
- * with no login, or a question that failed — the pill stays hidden, because
- * there is nothing to sign out of. The name is set as text, never markup.
+ * same question the settings Account group asks. Only an answer changes the
+ * pill: with no session — an install with no login, or a session that ended —
+ * it hides, because there is nothing to sign out of. A question that failed
+ * leaves it as it was: a hidden pill cannot be opened to ask again, so hiding
+ * on a network blip would take Sign out off the banner until a reload. The
+ * name is set as text, never markup.
  * @returns {Promise<void>}
  */
 async function loadBannerUser() {
   const wrap = document.getElementById('bannerUserWrap');
   if (!wrap) return;
   const me = await api('/api/auth/me');
+  if (!me) return;
   const signedIn = !!(me && me.authenticated && me.username);
   wrap.hidden = !signedIn;
   const name = signedIn ? me.username : '';

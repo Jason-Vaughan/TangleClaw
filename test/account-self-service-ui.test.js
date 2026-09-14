@@ -289,6 +289,18 @@ describe('the session banner: signed-in user pill with Sign out (#1471)', () => 
     }
   });
 
+  it('keeps a shown pill when a later question fails — a blip must not take Sign out off the banner', async () => {
+    const answers = { '/api/auth/me': { authenticated: true, username: 'rosie' } };
+    const { els, ctx } = load(answers);
+    await ctx.loadBannerUser();
+    answers['/api/auth/me'] = null;
+    ctx.toggleBannerUser();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(els.bannerUserWrap.hidden, false);
+    assert.equal(els.bannerUserName.textContent, 'rosie');
+    assert.equal(els.bannerUserPop.classList.contains('open'), true);
+  });
+
   it('opens and closes on the pill, keeping aria-expanded true to the popover', async () => {
     const { els, ctx } = load({ '/api/auth/me': { authenticated: true, username: 'rosie' } });
     await ctx.loadBannerUser();
@@ -350,6 +362,16 @@ describe('the session banner: signed-in user pill with Sign out (#1471)', () => 
     assert.match(SESSION_SRC, /\$\('bannerUser'\)\.addEventListener\('click', toggleBannerUser\)/);
     assert.match(SESSION_SRC, /\$\('bannerSignOutBtn'\)\.addEventListener\('click', signOutFromBanner\)/);
     assert.match(extract(SESSION_SRC, 'onBannerOutsideClick'), /\.banner-user-wrap/);
+  });
+
+  it('on a phone the pill is the icon alone, the name visually hidden rather than removed from the accessible name', () => {
+    const css = fs.readFileSync(path.join(PUBLIC, 'session.css'), 'utf8');
+    const phoneBlocks = [...css.matchAll(/@media \(max-width: 600px\) \{([\s\S]*?)\n\}/g)].map((m) => m[1]);
+    const rule = phoneBlocks.map((b) => b.match(/\.banner-user-name \{([^}]*)\}/)).find(Boolean);
+    assert.ok(rule, 'a phone rule for the pill\'s name exists');
+    assert.match(rule[1], /clip: rect\(0 0 0 0\)/);
+    assert.match(rule[1], /position: absolute/);
+    assert.doesNotMatch(rule[1], /display: none|visibility: hidden/, 'display:none would drop the name for screen readers');
   });
 
   it('markup: a real button pill, hidden until someone is signed in, with Sign out beside it rather than inside it', () => {

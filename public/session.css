@@ -438,8 +438,20 @@ body {
   display: inline-flex;
   margin-top: 8px;
 }
+/* On a phone the pill is the icon alone: with a project name, version, dot
+   and engine pill already on the row, a username beside the icon squeezed the
+   project name to a letter. The name stays in the button's accessible name
+   (visually hidden, not removed) and is shown in the popover. */
 @media (max-width: 600px) {
-  .banner-user-name { max-width: 70px; }
+  .banner-user-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
 }
 /* .group-popover*, .medusa-heads, .medusa-msg*, .medusa-panel-head/-close moved to
    shared-controls.css (#996): the Master control bar renders the same inbox

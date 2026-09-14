@@ -307,7 +307,7 @@ The top banner shows:
 - **Status dot** — green (connected), red (disconnected), with a breathing animation
 - **Engine badge** — which engine is running; its colour follows the engine's published status (green operational, amber degraded, red outage)
 - **Group pills** — the project groups this project belongs to
-- **Your name** — who is signed in to TangleClaw; click it for **Sign out**. Not shown on an install with no login
+- **Your name** — who is signed in to TangleClaw; click it for **Sign out**. On a phone the pill is the 👤 icon alone. Not shown on an install with no login
 
 Every pill follows one contract: **hover** shows what kind of thing it is (*Project version*, *Session status*, *AI engine*, *Project group*, *Signed in to TangleClaw*), and **click** shows what it currently says — the engine's status message, the session's connection state, a group's member projects, or who is signed in with a Sign out button. On a phone there is no hover; the click popover repeats the label, so nothing is lost.
 
