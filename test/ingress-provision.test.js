@@ -176,8 +176,11 @@ describe('decideProvisioning', () => {
 describe('deriveProtectionFlags (#861)', () => {
   const derive = provision.deriveProtectionFlags;
 
-  it('confirms protection ONLY for the state where a gate was actually observed', () => {
+  it('confirms protection ONLY for the states where a gate is known to be in force', () => {
     assert.equal(derive('existing').confirmedProtection, true);
+    // TangleClaw's own login guards the door — the server sets this only when the
+    // gate state says so, and it needs no Caddy to be true.
+    assert.equal(derive('account').confirmedProtection, true);
     for (const state of ['none', 'pending', 'unchanged', 'existing-unverified']) {
       assert.equal(derive(state).confirmedProtection, false,
         `${state} means no gate was observed, so it must never read as confirmed`);
@@ -207,6 +210,7 @@ describe('deriveProtectionFlags (#861)', () => {
     assert.equal(derive('existing-unverified').credentialStored, true);
     assert.equal(derive('existing').credentialStored, true,
       'a gate that was observed obviously has a credential behind it');
+    assert.equal(derive('account').credentialStored, true, 'an armed account is a stored credential');
     assert.equal(derive('none').credentialStored, false);
     assert.equal(derive('pending').credentialStored, false);
   });

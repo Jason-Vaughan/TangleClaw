@@ -241,6 +241,21 @@ describe('HTTPS Setup API', () => {
   });
 
   describe('POST /api/setup/complete — HTTPS fields', () => {
+    /**
+     * POST /api/setup/complete as a first run that chooses no login.
+     *
+     * These cases are about the HTTPS restart and redirect, not the login step.
+     * Setup demands a login or the operator's explicit choice of none on a first
+     * run, so a first-run request carries that choice; a later re-POST (setup
+     * already complete) must not, because the choice is only made once.
+     * @param {object} body
+     * @returns {Promise<{ status: number, data: any }>}
+     */
+    function completeSetup(body) {
+      const firstRun = store.config.load().setupComplete === false;
+      return request(server, 'POST', '/api/setup/complete', firstRun ? { ...body, noLogin: true } : body);
+    }
+
     it('accepts valid cert paths, saves them, and schedules a restart', async (t) => {
       if (!hasOpenssl) return t.skip('openssl not available');
 
@@ -252,7 +267,7 @@ describe('HTTPS Setup API', () => {
       });
       restartCalls = 0;
 
-      const { status, data } = await request(server, 'POST', '/api/setup/complete', {
+      const { status, data } = await completeSetup({
         httpsEnabled: true,
         httpsCertPath: fixture.certPath,
         httpsKeyPath: fixture.keyPath
@@ -287,7 +302,7 @@ describe('HTTPS Setup API', () => {
       const prev = process.env.TANGLECLAW_PORT;
       try {
         process.env.TANGLECLAW_PORT = '3102';
-        const { status, data } = await request(server, 'POST', '/api/setup/complete', {
+        const { status, data } = await completeSetup({
           httpsEnabled: true,
           httpsCertPath: fixture.certPath,
           httpsKeyPath: fixture.keyPath
@@ -363,7 +378,7 @@ describe('HTTPS Setup API', () => {
       fs.writeFileSync(badCert, 'not a cert');
       fs.writeFileSync(badKey, 'not a key');
 
-      const { status, data } = await request(server, 'POST', '/api/setup/complete', {
+      const { status, data } = await completeSetup({
         httpsEnabled: true,
         httpsCertPath: badCert,
         httpsKeyPath: badKey
@@ -382,7 +397,7 @@ describe('HTTPS Setup API', () => {
         httpsKeyPath: ''
       });
 
-      const { status, data } = await request(server, 'POST', '/api/setup/complete', {
+      const { status, data } = await completeSetup({
         httpsEnabled: true,
         httpsCertPath: '/tmp/nope-cert.pem'
         // keyPath intentionally omitted
@@ -402,7 +417,7 @@ describe('HTTPS Setup API', () => {
       });
       restartCalls = 0;
 
-      const { status, data } = await request(server, 'POST', '/api/setup/complete', {
+      const { status, data } = await completeSetup({
         httpsEnabled: true,
         httpsCertPath: fixture.certPath,
         httpsKeyPath: fixture.keyPath
@@ -423,7 +438,7 @@ describe('HTTPS Setup API', () => {
       });
       restartCalls = 0;
 
-      const { status, data } = await request(server, 'POST', '/api/setup/complete', {
+      const { status, data } = await completeSetup({
         httpsEnabled: false
       });
       assert.equal(status, 200);

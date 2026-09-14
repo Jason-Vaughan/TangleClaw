@@ -94,6 +94,8 @@ describe('forced first-run admin credential', () => {
     config.authEnabled = false;
     config.basicAuthUser = null;
     config.basicAuthHash = null;
+    config.loginOptOutAt = null;
+    config.bindAllInterfaces = false;
     store.config.save(config);
     // An account from an earlier case would change which state the gate is in.
     store.getDb().prepare('DELETE FROM auth_sessions').run();
@@ -136,22 +138,15 @@ describe('forced first-run admin credential', () => {
         { adminUser: 'admin', adminPassword: 'a-strong-passphrase-42' });
       assert.equal(status, 200);
       assert.equal(data.setupComplete, true);
-      // The warning tells the operator the live config was not changed; the command
-      // that changes it comes from `ingress.remedy`, which is state-specific. A fixed
-      // command in the warning was the bare `--to caddy` form — the one the cutover
-      // refuses on the hand-edited Caddyfile every path to this state has.
-      assert.ok(data.warnings.some((w) => /cannot confirm anything is enforcing/.test(w)),
-        'the operator must still learn nothing is known to be enforcing the login');
-      assert.ok(!data.warnings.some((w) => /ingress-cutover/.test(w)),
-        'the warning must not name a command the cutover would refuse');
-      // This suite's caddy stub deliberately fails `version`, so this assertion runs on
-      // a machine with NO Caddy — where claiming the Caddyfile governs protection would
-      // be a false reassurance about a file nothing is serving.
-      assert.ok(!data.warnings.some((w) => /that file already makes it/.test(w)),
-        'the warning must not name the Caddyfile as what determines protection');
-      // Every path that reaches this warning must still leave one actionable step.
-      assert.ok(data.ingress.remedy && data.ingress.remedy.trim().length > 0,
-        'a screen carrying this warning must offer a next step');
+      // The account setup creates is TangleClaw's own login, and it guards the door
+      // whether or not the Caddy config was touched. Reported as in force — the old
+      // "cannot confirm anything is enforcing this login" warning described Caddy,
+      // and is false of an install whose own login is armed.
+      assert.equal(data.ingress.protection, 'account');
+      assert.equal(data.ingress.confirmedProtection, true);
+      assert.equal(data.ingress.user, 'admin');
+      assert.ok(!data.warnings.some((w) => /cannot confirm anything is enforcing/.test(w)),
+        'an armed login must not be reported as unenforced');
 
       const config = store.config.load();
       assert.equal(config.authEnabled, true);
@@ -167,7 +162,9 @@ describe('forced first-run admin credential', () => {
       const { status, data, headers } = await request(server, 'POST', '/api/setup/complete',
         { adminUser: 'admin', adminPassword: 'a-strong-passphrase-42' });
       assert.equal(status, 200);
-      assert.deepEqual(data.account, { created: true, required: false });
+      assert.equal(data.account.created, true);
+      assert.equal(data.account.required, false);
+      assert.equal(data.account.username, 'admin');
       assert.ok(store.users.verify('admin', 'a-strong-passphrase-42'),
         'the password the wizard set is the one that signs in');
       const cookies = headers['set-cookie'] || [];
@@ -187,12 +184,44 @@ describe('forced first-run admin credential', () => {
       assert.notEqual(follow, 401, 'the wizard\'s poll must not meet the login gate');
     });
 
+    it('returns the new account\'s recovery codes once, and they redeem', async () => {
+      // The wizard shows these before anything else: a cutover started by the same
+      // response restarts the server, so nothing can be fetched afterwards.
+      const { status, data } = await request(server, 'POST', '/api/setup/complete',
+        { adminUser: 'admin', adminPassword: 'a-strong-passphrase-42' });
+      assert.equal(status, 200);
+      const codes = data.account.recoveryCodes;
+      assert.ok(Array.isArray(codes) && codes.length === 8, 'a full set is returned');
+      assert.equal(new Set(codes).size, codes.length, 'codes are distinct');
+      const user = store.users.getByName('admin');
+      assert.equal(store.recoveryCodes.status(user.id).remaining, 8, 'the set is stored for the account');
+      // The codes returned are the ones stored — each names this account.
+      for (const code of codes) {
+        assert.equal(store.recoveryCodes.peek(code).username, 'admin');
+      }
+    });
+
+    it('still finishes, with no codes, when minting them fails', async () => {
+      const real = store.recoveryCodes.replaceForUser;
+      store.recoveryCodes.replaceForUser = () => { throw new Error('disk full'); };
+      let res;
+      try {
+        res = await request(server, 'POST', '/api/setup/complete',
+          { adminUser: 'admin', adminPassword: 'a-strong-passphrase-42' });
+      } finally {
+        store.recoveryCodes.replaceForUser = real;
+      }
+      assert.equal(res.status, 200);
+      assert.equal(res.data.account.created, true, 'the account is not undone');
+      assert.equal(res.data.account.recoveryCodes, null);
+    });
+
     it('keeps an existing TangleClaw account rather than creating a second one', async () => {
       store.users.create('rosie', 'rosies-long-passphrase');
       const { status, data } = await request(server, 'POST', '/api/setup/complete',
         { adminUser: 'admin', adminPassword: 'a-strong-passphrase-42' });
       assert.equal(status, 200);
-      assert.deepEqual(data.account, { created: false, required: false });
+      assert.deepEqual(data.account, { created: false, required: false, username: null, recoveryCodes: null });
       assert.equal(store.users.getByName('admin'), null);
     });
 
@@ -207,7 +236,7 @@ describe('forced first-run admin credential', () => {
       store.config.save(config);
       const { status, data } = await request(server, 'POST', '/api/setup/complete', {});
       assert.equal(status, 200);
-      assert.deepEqual(data.account, { created: false, required: true });
+      assert.deepEqual(data.account, { created: false, required: true, username: null, recoveryCodes: null });
     });
 
     it('refuses to finish, without saving, when the gate cannot read its account store (#1420)', async () => {
@@ -246,30 +275,110 @@ describe('forced first-run admin credential', () => {
     });
   });
 
-  describe('POST /api/setup/complete — direct mode, with no Caddy to run a gate', () => {
+  describe('POST /api/setup/complete — direct mode, with no Caddy installed', () => {
     beforeEach(() => resetConfig('direct'));
 
-    // Direct mode is NO LONGER what makes a credential optional (#710): setup now
-    // demands one whenever the machine can actually run a login gate, in either
-    // ingress mode. What makes it optional here is this suite's caddy stub, which
-    // answers `hash-password` and nothing else — so `caddy version` fails and
-    // detection reports the binary as absent. Demanding a password with nothing
-    // to enforce it would strand the operator, so completion is allowed and the
-    // install finishes honestly ungated.
-    //
-    // The other half of that rule — direct mode WITH caddy present must refuse —
-    // is in test/setup-provisioning.test.js, which does not shadow the binary.
-    // Read this case as "no enforcer, no demand", never as "direct mode is exempt".
-    it('completes without an admin, because no gate could be put up at all', async () => {
+    // TangleClaw's login is its own account and needs no Caddy, so a machine with
+    // no Caddy is no longer a reason to finish ungated (#804). This suite's caddy
+    // stub fails `version`, so detection reports Caddy absent — which is exactly
+    // the case the old rule exempted. A login is still demanded; the only way to
+    // finish without one is the operator's recorded choice (#803).
+    it('refuses to finish with neither a login nor the choice of none', async () => {
       const { status, data } = await request(server, 'POST', '/api/setup/complete', {});
-      assert.equal(status, 200);
-      assert.equal(data.setupComplete, true);
-      assert.equal(store.config.load().authEnabled, false);
-      // Pin the REASON, so this case cannot start passing because the demand was
-      // dropped rather than because there is nothing to enforce it.
-      assert.equal(data.ingress.action, 'refuse');
-      assert.match(data.ingress.reason, /not installed/);
+      assert.equal(status, 400);
+      assert.equal(data.code, 'ADMIN_REQUIRED');
+      assert.equal(store.config.load().setupComplete, false);
+    });
+
+    it('creates the account and arms the login with no Caddy copy when Caddy cannot hash', async () => {
+      // A stub that answers nothing: no `version` (Caddy absent) and no
+      // `hash-password`. The account must not depend on either.
+      const deadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-caddy-dead-'));
+      fs.writeFileSync(path.join(deadDir, 'caddy'), '#!/bin/bash\nexit 1\n', { mode: 0o755 });
+      const origPath = process.env.PATH;
+      process.env.PATH = deadDir + path.delimiter + (origPath || '');
+      let res;
+      try {
+        assert.equal(caddy.detectCaddy().available, false, 'the stub must read as no caddy');
+        res = await request(server, 'POST', '/api/setup/complete',
+          { adminUser: 'admin', adminPassword: 'a-strong-passphrase-42' });
+      } finally {
+        process.env.PATH = origPath;
+        fs.rmSync(deadDir, { recursive: true, force: true });
+      }
+      assert.equal(res.status, 200, JSON.stringify(res.data));
+      const config = store.config.load();
+      assert.equal(config.authEnabled, true);
+      assert.equal(config.basicAuthHash, null, 'no Caddy copy could be made');
+      assert.equal(config.basicAuthUser, null, 'the pair is written together or not at all');
+      assert.ok(store.users.verify('admin', 'a-strong-passphrase-42'), 'the account signs in');
+      assert.equal(res.data.ingress.protection, 'account', 'and it is reported as in force');
+      assert.equal(res.data.ingress.reason, null, 'the refusing plan\'s Caddy sentence is not the install\'s story');
+    });
+
+    it('finishes without a login when the operator chooses it, and records the choice', async () => {
+      const before = Date.now();
+      const { status, data } = await request(server, 'POST', '/api/setup/complete', { noLogin: true });
+      assert.equal(status, 200, JSON.stringify(data));
+      const config = store.config.load();
+      assert.equal(config.setupComplete, true);
+      assert.equal(config.authEnabled, false);
+      assert.ok(Date.parse(config.loginOptOutAt) >= before - 1000, 'the choice is recorded with its time');
       assert.equal(data.ingress.protection, 'none');
+      assert.equal(data.ingress.confirmedProtection, false);
+      assert.match(data.ingress.reason, /as you chose/);
+      assert.ok(data.warnings.some((w) => /as you chose/.test(w)),
+        'a warnings-only client still learns the install has no login');
+      assert.equal(store.users.getByName('admin'), null);
+    });
+
+    it('refuses the choice of no login on a wide bind — never ungated AND reachable', async () => {
+      const config = store.config.load();
+      config.bindAllInterfaces = true;
+      store.config.save(config);
+      const { status, data } = await request(server, 'POST', '/api/setup/complete', { noLogin: true });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'OPT_OUT_REFUSED');
+      assert.match(data.error, /every network interface/);
+      const after = store.config.load();
+      assert.equal(after.setupComplete, false, 'nothing is saved');
+      assert.equal(after.loginOptOutAt, null, 'no choice is recorded');
+    });
+
+    it('rejects a non-boolean noLogin rather than guessing', async () => {
+      const { status, data } = await request(server, 'POST', '/api/setup/complete', { noLogin: 'yes' });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+      assert.equal(store.config.load().setupComplete, false);
+    });
+
+    it('rejects a login and the choice of none sent together', async () => {
+      const { status, data } = await request(server, 'POST', '/api/setup/complete',
+        { noLogin: true, adminUser: 'admin', adminPassword: 'a-strong-passphrase-42' });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'BAD_REQUEST');
+      assert.equal(store.config.load().setupComplete, false);
+      assert.equal(store.users.getByName('admin'), null, 'no account is created from a contradictory request');
+    });
+
+    it('refuses the choice of no login on a completed install', async () => {
+      const config = store.config.load();
+      config.setupComplete = true;
+      store.config.save(config);
+      const { status, data } = await request(server, 'POST', '/api/setup/complete', { noLogin: true });
+      assert.equal(status, 409);
+      assert.equal(data.code, 'SETUP_ALREADY_COMPLETE');
+      assert.equal(store.config.load().loginOptOutAt, null);
+    });
+
+    it('clears an earlier recorded choice when a login is set', async () => {
+      const config = store.config.load();
+      config.loginOptOutAt = '2026-01-01T00:00:00.000Z';
+      store.config.save(config);
+      const { status } = await request(server, 'POST', '/api/setup/complete',
+        { adminUser: 'admin', adminPassword: 'a-strong-passphrase-42' });
+      assert.equal(status, 200);
+      assert.equal(store.config.load().loginOptOutAt, null);
     });
   });
 
@@ -282,18 +391,36 @@ describe('forced first-run admin credential', () => {
       assert.equal(store.config.load().setupComplete, false);
     });
 
-    it('allows setupComplete=true only because no gate can be put up here', async () => {
-      // Direct mode is NOT what makes Skip permissible (#710). This suite's caddy
-      // stub answers `hash-password` and nothing else, so `caddy version` fails and
-      // detection reports the binary absent — there is nothing to enforce a
-      // credential with, so finishing is allowed and the install is honestly
-      // ungated.
-      //
-      // The previous version of this case was titled "allows setupComplete=true in
-      // direct mode" and stood as evidence for exactly the hole #710 closed: on a
-      // real fresh install (direct mode, caddy PRESENT) Skip finished setup with no
-      // login. The companion case below covers that.
+    it('refuses Skip with no Caddy installed too — the login does not need Caddy', async () => {
+      // This case used to ALLOW Skip here, because no Caddy meant nothing could
+      // enforce a login. TangleClaw's own login needs no Caddy, so the exemption is
+      // gone; Skip never carries the choice of no login, so it is refused into the
+      // login step, where that choice is made.
       resetConfig('direct');
+      assert.equal(caddy.detectCaddy().available, false, 'this suite\'s stub reads as no caddy');
+      const { status, data } = await request(server, 'PATCH', '/api/config', { setupComplete: true });
+      assert.equal(status, 400);
+      assert.equal(data.code, 'ADMIN_REQUIRED');
+      assert.equal(store.config.load().setupComplete, false);
+    });
+
+    it('does not refuse a finished install re-sending setupComplete', async () => {
+      // An install that finished without a login, by choice, and saves settings
+      // with the flag it already has must not be told it needs a login to do so.
+      resetConfig('direct');
+      const config = store.config.load();
+      config.setupComplete = true;
+      config.loginOptOutAt = '2026-09-14T00:00:00.000Z';
+      store.config.save(config);
+      const { status } = await request(server, 'PATCH', '/api/config', { setupComplete: true });
+      assert.equal(status, 200);
+    });
+
+    it('lets Skip finish once a login is in hand', async () => {
+      resetConfig('direct');
+      const config = store.config.load();
+      config.authEnabled = true;
+      store.config.save(config);
       const { status } = await request(server, 'PATCH', '/api/config', { setupComplete: true });
       assert.equal(status, 200);
       assert.equal(store.config.load().setupComplete, true);

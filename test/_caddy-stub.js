@@ -130,9 +130,9 @@ function installCaddyStub(opts = {}) {
 /**
  * Run `fn` with an empty PATH, so `caddy` (and everything else) is absent.
  *
- * The absent case is a real product state — setup must finish honestly ungated
- * on a machine with no Caddy — so it needs to be reachable deliberately rather
- * than by accident of the host.
+ * The absent case is a real product state — setup must still give a machine with
+ * no Caddy its login, or finish without one only by the operator's choice — so it
+ * needs to be reachable deliberately rather than by accident of the host.
  *
  * @param {Function} fn - Called with no arguments; may be async.
  * @returns {Promise<*>} Whatever `fn` returns.

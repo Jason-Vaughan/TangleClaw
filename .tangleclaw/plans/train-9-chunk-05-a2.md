@@ -2,7 +2,10 @@
 
 **Issues:** #804, #803. **Sprint:** v5.24, Session 6 (plan of record:
 `/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder/.tangleclaw/plans/sprint-v5.24.md`).
-**Branch:** feature branches off `main` (post-cutover; normal chunk flow, no integration branch).
+**Branch:** `feat/804-803-credential-required-and-opt-out` off `main`, **one PR for both chunks** —
+`main` is the live install, and A2a alone would leave the wizard routing a no-Caddy install through
+the server-forced login step with a summary that calls it unconfirmed. Reviewed per chunk; cumulative
+before the PR.
 **Design of record:** ADR 0009 rules 2–4; ADR 0016 OQ3 ("the wizard finally gets an honest sentence"),
 "Recorded during #1420 A-02a" (what #803/#804 still own), A-04a (wizard code issuance is #803).
 **Ruling that governs #803:** 2026-09-10 — the wizard MAY finish ungated; a login is addable later from
@@ -65,7 +68,13 @@ three call sites still ask "can Caddy be provisioned here?" (`plan.action === 'p
   only in that state. Reach authorises it for the same reason it authorises the first-account screen
   (ADR 0016 A-02a): whoever can reach an `open` install already has the shell. Clears `loginOptOutAt`.
 - **D8 — Honest copy.** Every screen/response that says whether a password is asked reads the gate
-  state the server computed, not the cutover outcome.
+  state the server computed, not the cutover outcome. `ingress.protection` gains `account` (TangleClaw's
+  own login guards the door), classified as confirmed by `deriveProtectionFlags`.
+- **D9 — The Skip guard is first-run only** (`wasSetupOpen`), like the engine guard beside it. Once a
+  no-Caddy install can be refused, a completed opted-out install re-sending `setupComplete: true` must
+  not be.
+- **Norm amendment, not drift:** `security-model.md` § Direction ("setup forces the credential") is
+  amended to carry the 2026-09-10 ruling and D3/D4 — recorded as a ruling, in A2b.
 
 ## Out of scope
 

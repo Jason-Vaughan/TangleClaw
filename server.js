@@ -292,6 +292,7 @@ const httpsSetup = require('./lib/https-setup');
 const caddy = require('./lib/caddy');
 const caddyDrift = require('./lib/caddy-drift');
 const ingressProvision = require('./lib/ingress-provision');
+const setupCredential = require('./lib/setup-credential');
 const adminCredential = require('./lib/admin-credential');
 const ttydWatcher = require('./lib/ttyd-watcher');
 const ttydAttach = require('./lib/ttyd-attach');
@@ -458,6 +459,43 @@ function _gateIngress() {
       + 'TangleClaw\'s login. Run node scripts/guard-ungated-sites.js.', { caddyfile: file });
   }
   return value;
+}
+
+/**
+ * Gather the facts `lib/setup-credential.js` decides from, for one config.
+ *
+ * The single place the three consumers — `GET /api/setup/ingress-state`,
+ * `POST /api/setup/complete` and the Skip path of `PATCH /api/config` — turn a
+ * config into those facts, so a fact added later reaches all three.
+ *
+ * The Caddyfile is described only in caddy mode, where Caddy is the front door.
+ * A description that throws answers `null`, which the decision reads as "a door
+ * this cannot see" and refuses the choice of no login for.
+ *
+ * @param {object} config - Config as it will be saved, with any credential this
+ *   request supplies already applied.
+ * @param {string|null} planAction - `decideProvisioning`'s `action`.
+ * @param {boolean} optOut - Whether the request carries the choice of no login.
+ * @returns {ReturnType<typeof setupCredential.decideCredential>}
+ */
+function _decideSetupCredential(config, planAction, optOut) {
+  let ungatedRemoteSite = null;
+  if (config.ingressMode === 'caddy') {
+    try {
+      ungatedRemoteSite = _gateIngress().ungatedRemoteSite;
+    } catch (err) {
+      log.warn('Setup could not read the Caddyfile, so the choice of no login is not offered',
+        { error: err.message });
+    }
+  }
+  return setupCredential.decideCredential({
+    authEnabled: config.authEnabled === true,
+    planAction,
+    bindWide: bindPolicy.describeBindState(config).wide,
+    ingressMode: config.ingressMode || null,
+    ungatedRemoteSite: typeof ungatedRemoteSite === 'boolean' ? ungatedRemoteSite : null,
+    optOut: optOut === true
+  });
 }
 
 let _gateFallbackCache = null;
@@ -1853,10 +1891,12 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
     }
   }
 
-  // Only the explicit complete-setup transition is guarded, so unrelated PATCHes
-  // are never blocked.
-  if (body.setupComplete === true
-      && !(config.authEnabled && config.basicAuthUser && config.basicAuthHash)) {
+  // Only the explicit complete-setup transition on an unfinished install is
+  // guarded, so unrelated PATCHes — and a finished install re-sending the flag —
+  // are never blocked. Skip never carries the choice of no login: that choice is
+  // made on the login step and submitted to /api/setup/complete, so here the
+  // only way through is a login already in hand.
+  if (body.setupComplete === true && wasSetupOpen) {
     const skipState = caddy.classifyIngressState();
     const skipPlan = ingressProvision.decideProvisioning({
       state: skipState.state,
@@ -1865,10 +1905,14 @@ route('PATCH', '/api/config', async (_req, res, _params, body) => {
       ingressMode: config.ingressMode,
       user: skipState.user
     });
-    if (config.ingressMode === 'caddy' || skipPlan.action === 'provision') {
+    // An `adopt` plan is satisfied by the adoption `/api/setup/complete` runs, and
+    // this route runs none — so here it supplies no login, and Skip is refused
+    // into the step that finishes through the route that does adopt.
+    const skipAction = skipPlan.action === 'adopt' ? null : skipPlan.action;
+    if (_decideSetupCredential(config, skipAction, false).required) {
       return errorResponse(res, 400,
-        'Cannot finish setup without an admin credential — TangleClaw puts a login in front of itself '
-        + 'by default, and this machine can run one.',
+        'Cannot finish setup without a login — TangleClaw puts one in front of itself by default. '
+        + 'Set one on the login step, or choose to finish without one there.',
         'ADMIN_REQUIRED');
     }
   }
@@ -2937,6 +2981,11 @@ route('GET', '/api/setup/https-check', (_req, res) => {
 // of the six-state table in public/setup.js could drift from this one and start
 // collecting a credential nothing enforces. The wizard branches on
 // `plan.action` alone.
+// `credential` is the same kind of decision, for the login step itself: whether
+// setup may finish without a login, and whether the choice of none may be
+// offered. Asked of `lib/setup-credential.js` through the same fact-gatherer the
+// two routes that finish setup use, so the step the wizard shows and the rule
+// the server enforces cannot disagree.
 route('GET', '/api/setup/ingress-state', (_req, res) => {
   const config = store.config.load();
   const duringSetup = config.setupComplete === false;
@@ -2949,6 +2998,7 @@ route('GET', '/api/setup/ingress-state', (_req, res) => {
     ingressMode: config.ingressMode,
     user: duringSetup ? state.user : null
   });
+  const credential = _decideSetupCredential(config, plan.action, false);
   jsonResponse(res, 200, {
     state: state.state,
     safeToWrite: state.safeToWrite,
@@ -2963,6 +3013,11 @@ route('GET', '/api/setup/ingress-state', (_req, res) => {
       action: plan.action,
       reason: plan.reason,
       remedy: plan.remedy
+    },
+    credential: {
+      required: credential.required,
+      optOutAllowed: credential.optOutAllowed,
+      optOutRefusal: credential.optOutRefusal
     }
   });
 });
@@ -3294,8 +3349,23 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
   // now (adminUser + adminPassword, hashed here via `caddy hash-password`) or
   // already configured. The wizard only sends these in caddy mode, but the gate is
   // enforced server-side so it can't be bypassed.
-  const inCaddyMode = config.ingressMode === 'caddy';
   const adminProvided = body.adminUser !== undefined || body.adminPassword !== undefined;
+  // The operator's explicit choice of no login, made on the wizard's login step.
+  // A boolean or absent — anything else is a malformed request rather than a
+  // choice, and guessing either way on a security decision is the wrong answer.
+  if (body.noLogin !== undefined && typeof body.noLogin !== 'boolean') {
+    return errorResponse(res, 400, 'noLogin must be a boolean', 'BAD_REQUEST');
+  }
+  const noLogin = body.noLogin === true;
+  if (noLogin && adminProvided) {
+    return errorResponse(res, 400,
+      'A login and the choice of no login were both sent. Send one or the other.', 'BAD_REQUEST');
+  }
+  if (noLogin && !firstRun) {
+    return errorResponse(res, 409,
+      'Setup is already complete, so the choice of no login is not made here.',
+      'SETUP_ALREADY_COMPLETE');
+  }
   // The credential write is first-run only, for the same reason the cutover spawn
   // above is: this route authenticates nobody. Without this, an unauthenticated
   // caller could POST a credential of their choosing onto an ALREADY-COMPLETED
@@ -3309,15 +3379,8 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
     // authenticating the caller, and the script, which requires local shell
     // access. Either bar is the right one for a route that authenticates nobody.
     //
-    // It covers the case this refusal actually meets: an install that HAS a
-    // credential and wants a different one. It does NOT cover a completed,
-    // caddy-mode install with no credential at all — `resolveTargetUser` exits 1
-    // there, because it resets a gate rather than creating one. That state has no
-    // in-product way out (refused here for carrying a credential, refused below
-    // with ADMIN_REQUIRED for not carrying one) and is tracked as #806. It is not
-    // reachable from a first run on this code — setup will not complete in caddy
-    // mode without a credential — only from a legacy install that got there
-    // before the credential became mandatory.
+    // A completed install with no login at all is not this route's either: a first
+    // run is the only time this route sets one.
     return errorResponse(res, 409,
       'Setup is already complete. Change the admin login from global settings, or run '
       + '`node scripts/reset-admin.js` at a terminal.',
@@ -3333,39 +3396,69 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
     if (!pwCheck.ok) {
       return errorResponse(res, 400, pwCheck.error, 'BAD_REQUEST');
     }
-    let hash;
+    // The login itself is the TangleClaw account created below, which needs no
+    // Caddy. The Caddy (bcrypt) copy is what a Caddy gate would enforce, and what
+    // the fallback rebuild puts back if TangleClaw's own login ever breaks, so it
+    // is made whenever `caddy hash-password` answers. A hashing failure on a
+    // machine where Caddy was detected is still refused: there a Caddy gate may
+    // need the copy, and a silent gap is worse than a retry. Where Caddy was NOT
+    // detected there is no Caddy gate to hold it, and refusing the account for
+    // want of it would leave the install with no login at all.
+    let hash = null;
     try {
       hash = caddy.hashPassword(adminPassword);
     } catch (err) {
       // Never log the plaintext; the message is the caddy failure, not the secret.
-      log.error('Admin credential hashing failed during setup', { error: err.message });
-      return errorResponse(res, 500, `Could not hash admin password: ${err.message}`, 'HASH_FAILED');
+      if (ingressDetection.available) {
+        log.error('Admin credential hashing failed during setup', { error: err.message });
+        return errorResponse(res, 500, `Could not hash admin password: ${err.message}`, 'HASH_FAILED');
+      }
+      log.info('No Caddy copy of the login was made, because Caddy is not installed', { error: err.message });
     }
-    // Persist the credential. The live Caddyfile gate is (re)applied by the ingress
-    // cutover, which reads authEnabled — so a warning is surfaced below when the
-    // running ingress isn't yet gated.
+    if (hash) {
+      config.basicAuthUser = adminUser;
+      config.basicAuthHash = hash;
+    }
     config.authEnabled = true;
-    config.basicAuthUser = adminUser;
-    config.basicAuthHash = hash;
-    log.info('Admin credential set during setup (basic_auth gate)', { user: adminUser, ingressMode: config.ingressMode });
+    log.info('Login set during setup', {
+      user: adminUser, ingressMode: config.ingressMode, caddyCopy: hash !== null
+    });
   }
 
+  // The one decision (#804): whether setup may finish as things now stand. A
+  // login in hand satisfies it; so does the operator's choice of none, where
+  // that choice cannot leave the dashboard ungated and reachable.
+  //
+  // An `adopt` plan counts as a login only when the adoption above actually
+  // adopted one — a declined adoption supplies nothing, and must not finish
+  // setup as if it had. (A successful one has already set `authEnabled`.)
+  //
+  // First run only, like the engine requirement: the demand stops a first run
+  // finishing unprotected, and applied to a completed install's re-POST it would
+  // make an unrelated field update impossible instead.
+  const credentialAction = ingressPlan.action === 'adopt' && !(adoption && adoption.adopted)
+    ? null : ingressPlan.action;
+  const credential = _decideSetupCredential(config, credentialAction, noLogin);
+  if (noLogin && !credential.optOutAllowed) {
+    return errorResponse(res, 400, credential.optOutRefusal.reason, 'OPT_OUT_REFUSED');
+  }
+  if (firstRun && credential.required) {
+    return errorResponse(res, 400,
+      'A username and password are required to finish setup — TangleClaw puts a login in front of '
+      + 'itself by default. Set one, or choose to finish without one.',
+      'ADMIN_REQUIRED');
+  }
+  // Recorded, so "the operator chose no login" is never confused with "nobody
+  // asked": `authEnabled: false` is also what a config that predates setup says.
+  // A login set here clears an earlier choice rather than leaving both on file.
+  const optedOut = noLogin && !credential.satisfied;
+  if (optedOut) {
+    config.loginOptOutAt = new Date().toISOString();
+    log.warn('Setup finished without a login, as the operator chose', { ingressMode: config.ingressMode });
+  } else if (adminProvided) {
+    config.loginOptOutAt = null;
+  }
   const adminConfigured = !!(config.authEnabled && config.basicAuthUser && config.basicAuthHash);
-  if (inCaddyMode && !adminConfigured) {
-    return errorResponse(res, 400,
-      'An admin username and password are required to finish setup while running behind the Caddy ingress (basic_auth login gate).',
-      'ADMIN_REQUIRED');
-  }
-  // The flip: on a machine where a gate CAN be put up, finishing setup without a
-  // credential is refused even though this install is still in direct mode. The
-  // wizard shows the step in exactly this case, so reaching here without one means
-  // the step was bypassed rather than answered.
-  if (ingressPlan.action === 'provision' && !adminConfigured) {
-    return errorResponse(res, 400,
-      'An admin username and password are required to finish setup. TangleClaw puts a login in front of '
-      + 'itself by default, and this machine can run one.',
-      'ADMIN_REQUIRED');
-  }
 
   // The TangleClaw account, from the same username and password. Setting
   // `authEnabled` closes TangleClaw's own gate while no account exists
@@ -3378,12 +3471,28 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
   // Created BEFORE the config save, so a failure leaves setup unfinished and
   // retryable rather than finished with no account. An existing account (an
   // operator who ran `reset-admin.js --store` first) is kept, not replaced.
-  const account = { created: false, required: false };
+  //
+  // The account's first recovery codes are minted with it and returned once, on
+  // this response — the wizard shows them before anything else, because a
+  // cutover started below restarts the server and nothing can be fetched after.
+  // A failure to mint must not undo the account (it is created and signed in, and
+  // codes can be generated in Settings), so it is logged and reported as
+  // `recoveryCodes: null`, as the account-setup page does.
+  const account = { created: false, required: false, username: null, recoveryCodes: null };
   if (adminProvided && config.authEnabled === true) {
+    const adminUser = body.adminUser.trim();
     try {
-      const user = store.users.createFirst(config.basicAuthUser, body.adminPassword);
+      const user = store.users.createFirst(adminUser, body.adminPassword);
       _signIn(req, res, user);
       account.created = true;
+      account.username = user.username;
+      try {
+        account.recoveryCodes = store.recoveryCodes.replaceForUser(user.id).map(recoveryCodes.formatCode);
+      } catch (err) { // prawduct:allow prawduct/broad-except -- the account already exists; any failure is logged and reported as no codes
+        log.error('Could not generate recovery codes for the account setup created', {
+          username: user.username, error: err.message
+        });
+      }
     } catch (err) {
       if (err.code !== 'ACCOUNT_EXISTS') throw err;
       log.info('Setup kept the existing TangleClaw account rather than creating one');
@@ -3527,7 +3636,13 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
     networkExposed: bindPolicy.describeBindState(config).wide === true
   };
 
-  if (ingressPlan.action === 'provision') {
+  if (optedOut) {
+    // The operator chose no login. A cutover would put Caddy in front to carry a
+    // gate that was declined, so none is started; the install stays as it is.
+    ingress.reason = 'Setup finished without a login, as you chose. Anyone who can reach this address '
+      + 'can use TangleClaw, including its terminals.';
+    ingress.remedy = 'Add a login later from global settings.';
+  } else if (ingressPlan.action === 'provision') {
     // spawnCutover clears any previous outcome itself, so the poller cannot read
     // an earlier run's result as this one's.
     const started = _spawnCutover({ target: 'caddy' });
@@ -3548,11 +3663,14 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
       log.info('Setup started the ingress cutover',
         { pid: started.pid, host: requestHostname, operatorUrl: ingress.url });
     } else {
-      // The credential is stored and nothing enforces it. Say so — this is the
-      // one outcome this path exists to make impossible to mistake for success.
+      // Caddy was not put in front. Whether a password is asked anyway is the gate
+      // state's answer, read after this chain: the account created above is
+      // TangleClaw's own login and enforces without Caddy. The reason says only
+      // what failed, and reaches `warnings` whether or not the login is in force.
       ingress.reason = `TangleClaw could not start the ingress cutover: ${started.error}. `
-        + 'Your login has been saved but nothing is enforcing it yet.';
+        + 'Caddy was not put in front of TangleClaw.';
       ingress.remedy = 'Run `node scripts/ingress-cutover.js --to caddy` at a terminal.';
+      warnings.push(ingress.reason);
       log.error('Setup could not start the ingress cutover', { error: started.error });
     }
   } else if (ingressPlan.action === 'adopt') {
@@ -3611,7 +3729,7 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
         reason: (adoption && adoption.reason) || null
       });
     }
-  } else if (adminConfigured) {
+  } else if (adminConfigured && !authGate.guardsTheDoor(setupGateState)) {
     // Refused, but a credential IS configured (an install already in caddy mode,
     // or one the operator set earlier). It is stored, and the live Caddyfile will
     // not be regenerated from here — so nothing at this point can confirm the
@@ -3672,6 +3790,24 @@ route('POST', '/api/setup/complete', async (req, res, _params, body) => {
   // it includes the confirmed state, because the field is named for a fact and must
   // report it — but that value is unreachable by the only consumer, which reads it
   // solely inside the not-confirmed branch. Wider field, identical screens.
+  //
+  // TangleClaw's own login is in force whenever the gate guards the door, with
+  // or without Caddy — so a setup that did not (or could not) touch Caddy but left
+  // an armed account is protected, and saying "no login" there would be false.
+  // Not while a cutover is pending (its poll reports the outcome), and not over
+  // an adopt arm, whose Caddy login and a typed account may disagree and whose
+  // wording already says so.
+  if (!ingress.provisioning && ingressPlan.action !== 'adopt' && authGate.guardsTheDoor(setupGateState)) {
+    ingress.protection = 'account';
+    ingress.user = account.username || config.basicAuthUser || null;
+    // A refusing plan's reason is about Caddy ("cannot put a login in front of
+    // itself yet"), which stops being true of the install once its own login
+    // guards the door. A failed cutover's reason is kept: it names what failed.
+    if (ingressPlan.action === 'refuse') {
+      ingress.reason = null;
+      ingress.remedy = null;
+    }
+  }
   Object.assign(ingress, ingressProvision.deriveProtectionFlags(ingress.protection));
 
   // One place, after every branch, so the guarantee holds for outcomes that reach no
