@@ -180,9 +180,7 @@
    * and a call site that needs the raw `Response` (its own `res.ok` handling,
    * a status it branches on) calls this instead of `fetch`. A bare `fetch` with
    * an unsafe method carries no token, and the gate refuses it on every
-   * signed-in install — which is how the dashboard's Launch, both Kill buttons,
-   * project actions and the boot beacon all came to fail once TangleClaw's own
-   * login went live. `test/frontend-csrf.test.js` holds `public/` to it.
+   * signed-in install. `test/frontend-csrf.test.js` holds `public/` to it.
    *
    * @param {string} url
    * @param {object} [fetchOpts] - The caller's fetch options
@@ -192,6 +190,34 @@
     var res = await fetch(url, tcWithCsrf(fetchOpts));
     if (res && res.status === 401) await tcLeaveIfSignedOut(res);
     return res;
+  }
+
+  /**
+   * End this browser's session (`everywhere: false`) or every session the
+   * account holds (`everywhere: true`), then go to `/login`.
+   *
+   * One implementation for the dashboard header, the session page and Settings,
+   * so the three controls cannot drift into signing out differently. Sent through
+   * the page's `api()`, which carries the CSRF token: the logout route checks it
+   * whenever a session resolves, and signing out everywhere always needs one.
+   *
+   * Leaves only once the server has answered. A sign-out that did not reach the
+   * server must not look like one that did — the session would still be live
+   * behind a page that says it ended — so a failure resolves false and the page
+   * stays, with the reason in `api.lastError` for the caller to show.
+   *
+   * @param {Function} api - The page's `api()` from `tcCreateApi`
+   * @param {object} [opts]
+   * @param {boolean} [opts.everywhere] - End every session the account holds
+   * @returns {Promise<boolean>} true when the page is leaving for `/login`
+   */
+  async function tcSignOut(api, opts) {
+    var everywhere = !!(opts && opts.everywhere);
+    var res = await api(everywhere ? '/api/auth/logout-everywhere' : '/api/auth/logout', { method: 'POST' });
+    if (!res) return false;
+    var loc = global.location;
+    if (loc && typeof loc.replace === 'function') loc.replace('/login');
+    return true;
   }
 
   function tcCreateApi(opts) {
@@ -1316,6 +1342,7 @@
   global.tcCsrfToken = tcCsrfToken;
   global.tcWithCsrf = tcWithCsrf;
   global.tcFetch = tcFetch;
+  global.tcSignOut = tcSignOut;
   global.tcCreateRestartFlow = tcCreateRestartFlow;
   global.tcCopyToClipboard = tcCopyToClipboard;
   global.tcCopyOutcome = tcCopyOutcome;

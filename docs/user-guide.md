@@ -353,14 +353,25 @@ The settings modal lets you configure:
 - **Poll interval** — how often to check session status (2s–30s)
 - **Engine selector** — switch engine for next session
 - **Mouse mode** — toggle tmux mouse mode on/off
-- **Login** — change the password you sign in with (see below)
+- **Account** — who is signed in, and **Sign out** (see below)
 
 #### Changing your login
 
-**The password you sign in to TangleClaw with** belongs to your TangleClaw account. There is no
-change-password form in the dashboard yet; set a new one with a recovery code from the sign-in page, or
-at a terminal on the machine with `node scripts/reset-admin.js --store --user <name>` (see
-[Getting back into TangleClaw](recovery.md)). Either one signs out the account's other browsers.
+**The password you sign in to TangleClaw with** belongs to your TangleClaw account. Change it in
+global settings → **Your account**: enter the current password and a new one (at least 12 characters,
+not a common password, not containing your username). This browser stays signed in; every other
+browser signed in to your account is signed out. Your recovery codes keep working.
+
+Forgotten the current password? Set a new one with a recovery code from the sign-in page, or at a
+terminal on the machine with `node scripts/reset-admin.js --store --user <name>` (see
+[Getting back into TangleClaw](recovery.md)). Either one signs out every browser on the account.
+
+#### Signing out
+
+**Sign out**, beside your name in the dashboard header (and under **Account** in a session page's
+settings), ends this browser's session and goes to the sign-in page. Global settings → **Your account**
+→ **Sign out everywhere** ends every session your account holds, this one included — use it after
+losing a device or signing in on a machine you do not control.
 
 **Caddy's password** — the browser pop-up that asks before any page loads — exists only on an install
 where Caddy's `basic_auth` still stands in front of TangleClaw: before the first account exists, or

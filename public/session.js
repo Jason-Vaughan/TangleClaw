@@ -401,8 +401,9 @@ async function invokeProjectAction(action) {
   // long-running on the server side — invoke-critic's real-invocation
   // path can run up to 5 minutes while the Critic skill executes. The
   // shared `apiMutate` helper doesn't expose `signal`, so for this
-  // single call we use `tcFetch` (raw `fetch` plus the CSRF token) with an AbortController bounded to
-  // ACTION_TIMEOUT_MS (matches the server-side MAX_WAIT_MS). On VPN /
+  // single call we use `tcFetch` (raw `fetch` plus the CSRF token)
+  // with an AbortController bounded to ACTION_TIMEOUT_MS (matches the
+  // server-side MAX_WAIT_MS). On VPN /
   // flaky-connection scenarios, this prevents an indefinitely hung
   // POST from wedging the UI; the operator sees a clear "timed out"
   // error instead of a spinner-of-doom. Other callers continue to use
@@ -2751,6 +2752,39 @@ function openSettings() {
   document.getElementById('mouseToggle').checked = sessionState.mouseOn;
 
   document.getElementById('settingsModal').classList.add('open');
+  renderAccountGroup();
+}
+
+/**
+ * Show the settings modal's Account group — who is signed in, and Sign out —
+ * only while a TangleClaw session exists (#1463). Asked of `/api/auth/me` each
+ * time the modal opens rather than once at load, so a page left open across a
+ * sign-in elsewhere shows the truth. On an install with no login the group
+ * stays hidden: there is nothing to sign out of.
+ * @returns {Promise<void>}
+ */
+async function renderAccountGroup() {
+  const group = document.getElementById('accountGroup');
+  if (!group) return;
+  const me = await api('/api/auth/me');
+  const signedIn = !!(me && me.authenticated && me.username);
+  group.hidden = !signedIn;
+  if (!signedIn) return;
+  document.getElementById('accountSignedInAs').textContent = `Signed in as ${me.username}`;
+  document.getElementById('signOutHint').textContent = '';
+}
+
+/**
+ * Sign this browser out and go to the sign-in page. A failure stays on the page
+ * and says why, rather than closing the modal on a session that is still live.
+ * @returns {Promise<void>}
+ */
+async function signOutFromSession() {
+  const btn = document.getElementById('signOutBtn');
+  btn.disabled = true;
+  if (await tcSignOut(api)) return;
+  btn.disabled = false;
+  document.getElementById('signOutHint').textContent = `Could not sign out: ${api.lastError || 'unknown error'}`;
 }
 
 /**
@@ -5470,6 +5504,7 @@ function bindEvents() {
 
   // Settings modal
   $('settingsCloseBtn').addEventListener('click', closeSettings);
+  $('signOutBtn').addEventListener('click', signOutFromSession);
   $('settingsModal').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) closeSettings();
   });

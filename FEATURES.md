@@ -130,7 +130,17 @@ fails any auto-stub section older than 14 days.
   account from the wizard's credential and sign the wizard in; once `store.users#accountsEstablished`
   — a marker file every account insert writes, which survives losing the database — says the install
   has had an account, the route takes a claim only from a direct loopback caller, `403
-  ACCOUNT_STORE_LOST` otherwise); pages:
+  ACCOUNT_STORE_LOST` otherwise); account self-service (#1457, #1463): `POST /api/auth/password`
+  (current + new password; policy first, then verify-and-hash inside one hash slot, then
+  `store.users#changePasswordFromSession` re-checks the stored hash and this session under the write
+  lock (`409 PASSWORD_CHANGE_STALE` otherwise), ends every session the account holds and re-issues this
+  browser a replacement; wrong current password `403 REAUTH_FAILED`; recovery codes untouched) and `POST /api/auth/logout-everywhere`
+  (not gate-exempt, so session + CSRF; `#destroyForUser`), both refused through `server.js#_accountSession`
+  on an open install (`409 LOGIN_NOT_REQUIRED`) or during a fallback; UI: Sign out beside the header chip
+  (`public/landing.js#renderAuthUser`) and in a session page's settings (`public/session.js#renderAccountGroup`),
+  global settings → Your account (`public/ui.js#_loadAccountSection`), one shared
+  `public/api-helper.js#tcSignOut`. Every dashboard and session request goes through
+  `public/api-helper.js#tcFetch` (CSRF token + an ended session leaves for `/login`, #1462/#1461); pages:
   `public/login.html` and `public/account-setup.html`, each one self-contained document because
   every path that must answer before anyone is logged in is a hole in the gate. Break-glass:
   `node scripts/reset-admin.js --store --user <name>` (`scripts/reset-admin.js#runStoreMode`),

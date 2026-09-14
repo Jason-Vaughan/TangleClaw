@@ -2345,6 +2345,82 @@ async function confirmBypassHidden() {
 // ── Global Settings Modal ──
 
 /**
+ * Render the Your account section: change the signed-in account's password
+ * (#1457), and sign out of every device (#1463).
+ *
+ * Drawn from `/api/auth/me`, so an install with no login says so instead of
+ * offering forms that cannot work. The password change needs the current
+ * password, which the server verifies; it keeps this browser signed in and ends
+ * the account's other sessions, and the hint says so. Recovery codes are not
+ * affected, and the hint says that too, because a person rotating a password
+ * after a scare will wonder.
+ * @returns {Promise<void>}
+ */
+async function _loadAccountSection() {
+  const box = document.getElementById('gsAccountSection');
+  if (!box) return;
+  const me = await api('/api/auth/me');
+  if (!me) {
+    box.innerHTML = `<div class="form-hint">Could not check who is signed in: ${esc(api.lastError || 'unknown error')}</div>`;
+    return;
+  }
+  if (!me.authenticated) {
+    // A page open without a session is either an install with no login, or a
+    // fallback, where Caddy's password stands in and TangleClaw's login is
+    // stood down — the account cannot be managed until it comes back.
+    box.innerHTML = me.gateState === 'fallback'
+      ? '<div class="form-hint">TangleClaw\'s login is stood down behind Caddy\'s password (fallback), so your account cannot be managed here until the login is restored.</div>'
+      : '<div class="form-hint">No one is signed in, because this install does not require a login.</div>';
+    return;
+  }
+  box.innerHTML = `
+    <div class="form-hint">Signed in as <strong>${esc(me.username)}</strong>.</div>
+    <label class="form-label" for="gsPasswordCurrent">Current password</label>
+    <input type="password" class="form-input" id="gsPasswordCurrent" autocomplete="current-password">
+    <label class="form-label" for="gsPasswordNew">New password</label>
+    <input type="password" class="form-input" id="gsPasswordNew" autocomplete="new-password">
+    <div class="form-hint">At least 12 characters, not a common password, and not containing your username.</div>
+    <button type="button" class="btn" id="gsPasswordChangeBtn">Change password</button>
+    <div class="form-hint" id="gsPasswordHint" aria-live="polite"></div>
+    <div class="form-hint">
+      Lost a device, or signed in somewhere you should not stay signed in? This ends every session
+      your account holds, including this one.
+    </div>
+    <button type="button" class="btn" id="gsSignOutEverywhereBtn">Sign out everywhere</button>
+    <div class="form-hint" id="gsSignOutEverywhereHint" aria-live="polite"></div>`;
+
+  const changeBtn = document.getElementById('gsPasswordChangeBtn');
+  changeBtn.addEventListener('click', async () => {
+    const hint = document.getElementById('gsPasswordHint');
+    const current = document.getElementById('gsPasswordCurrent');
+    const next = document.getElementById('gsPasswordNew');
+    changeBtn.disabled = true;
+    const res = await apiMutate('/api/auth/password', 'POST', {
+      currentPassword: current.value, newPassword: next.value
+    });
+    changeBtn.disabled = false;
+    if (!res) {
+      hint.innerHTML = `<strong>Your password was not changed.</strong> ${esc(api.lastError || 'Unknown error')}`;
+      return;
+    }
+    current.value = '';
+    next.value = '';
+    const others = res.otherSessionsEnded === 1 ? '1 other session was' : `${res.otherSessionsEnded} other sessions were`;
+    hint.innerHTML = `<strong>Password changed.</strong> You are still signed in here; ${esc(others)} signed out. `
+      + 'Your recovery codes still work.';
+  });
+
+  const everywhereBtn = document.getElementById('gsSignOutEverywhereBtn');
+  everywhereBtn.addEventListener('click', async () => {
+    everywhereBtn.disabled = true;
+    if (await tcSignOut(api, { everywhere: true })) return;
+    everywhereBtn.disabled = false;
+    document.getElementById('gsSignOutEverywhereHint').textContent =
+      `Could not sign out everywhere: ${api.lastError || 'unknown error'}`;
+  });
+}
+
+/**
  * Render the Recovery codes section: how many unused codes the signed-in account
  * holds, and a form that replaces them (#1420).
  *
@@ -2698,6 +2774,11 @@ function openGlobalSettings() {
       <div class="form-hint">Checking what this install can change…</div>
     </div>
 
+    <div class="gs-section-label">Your account</div>
+    <div class="form-group" id="gsAccountSection">
+      <div class="form-hint">Checking who is signed in…</div>
+    </div>
+
     <div class="gs-section-label">Recovery codes</div>
     <div class="form-group" id="gsRecoveryCodesSection">
       <div class="form-hint">Checking your recovery codes…</div>
@@ -2762,6 +2843,7 @@ function openGlobalSettings() {
   // (tokenManageMarkup). Both render the raw token into #gsTokenDisplay via
   // textContent (XSS-safe, selectable for copy); rotate confirms first.
   _loadCredentialSection();
+  _loadAccountSection();
   _loadRecoveryCodesSection();
 
   const revealTokenBtn = document.getElementById('gsRevealTokenBtn');

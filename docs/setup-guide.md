@@ -39,8 +39,9 @@ elsewhere only with a password.
 Two things setup does not do for you yet. It does not hand you **recovery codes** —
 generate them in **Settings → Recovery codes** once you are signed in, and keep them
 off the device you sign in on; one resets a forgotten password from the sign-in page.
-And there is no change-password form: a new password is set with a recovery code or at
-a terminal (see [Getting back into TangleClaw](recovery.md)).
+To change a password you still know, use **Settings → Your account**; a forgotten one
+is reset with a recovery code or at a terminal (see
+[Getting back into TangleClaw](recovery.md)).
 
 ---
 

@@ -101,7 +101,7 @@ describe('the recovery-code notice banner (#1420)', () => {
     assert.match(html, /reset-admin\.js --store/);
     assert.match(html, /Settings → Recovery codes/);
     assert.doesNotMatch(html, /change your password/i,
-      'Settings has no account-password form; its only password section is Caddy\'s');
+      'after someone else used a code, the owner does not know the password, and Settings\' change form needs the current one');
   });
 
   it('counts several uses', () => {

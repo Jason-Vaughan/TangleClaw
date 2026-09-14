@@ -283,6 +283,14 @@
             <div class="settings-info">Loading...</div>
           </div>
         </div>
+        <!-- Sign out (#1463). Here rather than in the banner, which is already
+             full on a phone. Shown only while someone is signed in. -->
+        <div class="form-group" id="accountGroup" hidden>
+          <label class="form-label">Account</label>
+          <div class="settings-info" id="accountSignedInAs"></div>
+          <button type="button" class="btn" id="signOutBtn">Sign out</button>
+          <div class="form-hint" id="signOutHint" aria-live="polite"></div>
+        </div>
       </div>
       <div class="modal-actions">
         <button class="btn" id="settingsCloseBtn">Close</button>

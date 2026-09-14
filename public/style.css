@@ -154,7 +154,7 @@ body {
   font-weight: bold;
 }
 .dash-version.check-failed::after { content: " !"; }
-/* AUTH-3: "logged in as <user>" chip, shown only behind the Caddy login gate. */
+/* "Logged in as <user>" chip, shown only while someone is signed in. */
 .dash-auth-user {
   font-size: 10px;
   color: var(--text-muted);
@@ -165,6 +165,23 @@ body {
   white-space: nowrap;
 }
 .dash-auth-user.hidden { display: none; }
+/* Sign out, beside the chip and shown with it (#1463). A real button, sized to
+   the chip so the header row keeps its height. */
+.dash-auth-signout {
+  font-size: 10px;
+  font-family: monospace;
+  color: var(--text-muted);
+  background: transparent;
+  padding: 1px 6px;
+  border: 1px solid var(--border, #333);
+  border-radius: 10px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dash-auth-signout:hover,
+.dash-auth-signout:focus-visible { color: var(--text, #eee); }
+.dash-auth-signout:disabled { opacity: 0.6; cursor: default; }
+.dash-auth-signout.hidden { display: none; }
 /* Auth config-vs-live mismatch warning (AUTH-2K9D). Amber, matching the drift/
    secret warning palette for one visual language; text carries the meaning. */
 .dash-auth-warning {

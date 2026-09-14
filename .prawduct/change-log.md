@@ -34,6 +34,29 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-14 — A.05b: sign out, sign out everywhere, change password
+
+<!-- prawduct: type=feature | scope=train-9-chunk-04-cutover -->
+
+Train 9 Chunk 04, A.05b (A-05, account self-service). Into `main`.
+
+**Why.** The live cutover showed the login had a logout route nothing called (#1463) and no way for a
+signed-in account to change its password without a recovery code or a terminal (#1457). The operator
+reused the old Caddy password as the account password and needs the change path.
+
+**What.** `POST /api/auth/password` (policy → `store.users.changePasswordFromSession` in one hash
+slot: verify, hash, then under `BEGIN IMMEDIATE` commit only if the stored hash and this session are
+unchanged, end every session, issue a replacement whose cookies the route sets; `403 REAUTH_FAILED`,
+`409 PASSWORD_CHANGE_STALE`). `POST /api/auth/logout-everywhere` (not gate-exempt; session + CSRF).
+`server.js#_accountSession` generalised from the recovery-code routes' helper. UI: header Sign out
+(`landing.js#renderAuthUser`), session settings Account group (`session.js#renderAccountGroup`),
+global settings → Your account (`ui.js#_loadAccountSection`), shared `api-helper.js#tcSignOut`. Docs:
+user guide, setup guide, SECURITY.md, FEATURES.md.
+
+**Reviews.** Cumulative `rev-20260914T002700Z-b1304fb6` (0 blocking; R-1 racing changes / session ended
+mid-change, R-2 old token survived, R-3/R-7 setup guide — fixed in `8c5e418f`; notes accepted),
+verify-resolutions clean.
+
 ## 2026-09-14 — A.05a: every browser request through tcFetch; an ended session goes to /login
 
 <!-- prawduct: type=bugfix | scope=train-9-chunk-04-cutover -->
