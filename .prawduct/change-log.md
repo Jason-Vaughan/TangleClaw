@@ -76,6 +76,12 @@ finished", and the exact sent-prompt equality now includes the completion instru
 statement; #1450 moves that caller on purpose, so the guard now asserts `invoke-critic.js` still uses it
 and `ai-content.js` does not. No assertion was dropped.
 
+**Review.** `rev-20260914T232956Z-abe22ba3` (cumulative): 0 blocking, 1 warning, 6 notes. The warning
+said `completedVia` / `completionNote` were written but nothing showed or logged them, while CHANGELOG
+and FEATURES promised the row note. Fixed in `93558448`: the drawer's `ai-content` detail appends the
+note, and a log line records which signal ended the wait. The note that `invoke-critic.js` still judges
+`/critic` finished by `detectIdle` was filed as #1487. The rest were accepted as informational.
+
 **Live check.** A real Claude Code pane over tmux, driven by the real handler: (1) an entry-less file,
 Claude writes the no-op line, and the step finishes on the marker; (2) an entry already on disk, Claude
 declines to duplicate it, the step finishes on the marker, and the predicate credits the entry. The

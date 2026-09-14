@@ -79,7 +79,7 @@ rather than stalling to `MAX_WAIT_MS`. This is wrap Direction commitment 2 appli
 hint that makes capable engines exact, and its absence degrades visibly instead of blocking.
 
 The result's `output.completedVia` is `marker|files|quiet`. A `quiet` finish carries
-`output.completionNote`, "no completion marker seen — finished after 60s of an unchanged pane", so
+`output.completionNote`, "no completion marker seen — finished after 60s of an unchanged terminal", so
 the row says it. A pane read that throws blocks as the idle probe's failure did, naming the pane read.
 The timeout copy stops saying "no idle detected" and names what was waited for.
 
@@ -186,7 +186,7 @@ PR opened (`Fixes #1450`, `Fixes #843`, `Fixes #1405`); the Coordinator pinged w
 
 ## Status
 
-- [ ] 03a completion marker + honest fallback (built; tick after review)
-- [ ] 03b learnings-entry predicate
-- [ ] 03c docs
-- [ ] 03d live check
+- [x] 03a completion marker + honest fallback
+- [x] 03b learnings-entry predicate
+- [x] 03c docs
+- [x] 03d live check
