@@ -560,5 +560,5 @@ A-05 on the live install in the operator's Chrome — including a signed-out tab
 - [x] Chunk A.04d (A-04d) — gate machinery carries: scrypt-cap helper, recovery warn line, `clientKey`, JSDoc fixes, the Caddyfile door through `caddy adapt` (reviewed 2026-09-13, PR into `train-9/cutover`; unread file = door)
 - [ ] A-VRF — cumulative Critic, elkaholic VRF, phone drill → Checkpoint 2 (merged PR #1460; drill 8.1 PASSED; 8.2 + step 9 in the combined VRF)
 - [x] Chunk A.05a (A-05a) — every browser request through `tcFetch` (#1462 + five siblings + the wrap probe), ended session → `/login` (#1461 trigger) (reviewed 2026-09-14: cumulative 0 blocking, verify-resolutions clean; PR into `main`)
-- [ ] Chunk A.05b (A-05b) — sign out + sign out everywhere (#1463), change password (#1457)
+- [x] Chunk A.05b (A-05b) — sign out + sign out everywhere (#1463), change password (#1457) (reviewed 2026-09-14: cumulative 0 blocking, 4 warnings fixed, verify-resolutions clean; PR into `main`)
 - [ ] Combined A-VRF — A-05 in a real browser, drill 8.2, regenerate codes, step 9
