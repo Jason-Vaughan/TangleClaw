@@ -388,7 +388,9 @@ describe('#1178 the host is detected FROM THE BROWSER, which needs a same-origin
     // absolute origin and the server would read THAT host instead, and the
     // prime would name a host the operator is not using — silently, because
     // every other test here feeds headers directly.
-    const call = landing.match(/fetch\(`\/api\/sessions\/\$\{encodeURIComponent\(name\)\}`/);
+    // Sent through `tcFetch` (fetch plus the CSRF token), which passes the URL
+    // to `fetch` untouched, so a relative URL here is a relative request.
+    const call = landing.match(/\btcFetch\(`\/api\/sessions\/\$\{encodeURIComponent\(name\)\}`/);
     assert.ok(call, 'the launch fetch must stay same-origin and relative for host detection to work');
   });
 

@@ -469,10 +469,80 @@ Delivers the A.04d bullet of the split above.
   launchd services, Caddy 2.11.4 on the service PATH, a caddy-mode install with a bcrypt credential,
   upgraded v5.0.0 → v5.23.0 → `train-9/cutover`.
 
+**A-VRF paused 2026-09-13 (operator, in-pane).** The cutover merged to `main` (PR #1460, `dd2e2837`)
+and runs live; drill 8.1 (a code from the phone) PASSED. Drill 8.2 (broken gate over SSH) and
+procedure step 9 wait for A-05, then run as one combined VRF.
+
+### A-05 — account self-service (joins v5.24 before release; ruled in-pane 2026-09-13)
+
+The cutover made TangleClaw's login the gate on every ingress mode, and the live install showed what
+a login needs beyond signing in. Two chunks, each a PR **into `main`** (the cutover is merged, so the
+integration branch is done), reviewed on its own. A-05a goes first: it is a live breakage.
+
+**Requirements Confidence:** High for A-05a's CSRF half (the gate's rule is fixed; the call sites are
+enumerated below) and for A-05b (#1457/#1463 state the behaviour). Medium for #1461: the eviction
+mechanism is the issue's reading of Chrome's behaviour, and only a real browser behind a live
+`basic_auth` confirms the fix — curl cannot (it neither caches nor evicts).
+
+#### Chunk A.05a (A-05a) — every browser write carries the token; an ended session goes to `/login`
+- **Discovery (2026-09-13):** #1462 is one of SIX bare `fetch` calls with an unsafe method that
+  bypass `api()` and so carry no `X-CSRF-Token`. On a signed-in install the gate refuses every one:
+  `landing.js` boot beacon (#1462) and `doLaunchProject` (the dashboard's Launch), `ui.js` kill session
+  and kill tunnel, `session.js` kill session and project actions. The live log shows only the beacon
+  because nothing else has been clicked since the cutover. `login.html`, `recover.html` and
+  `account-setup.html` post before a session exists (or CSRF-exempt) and stay as they are.
+- **The write path:** one helper, `tcFetch(url, opts)` in `api-helper.js`, is `fetch` plus
+  `tcWithCsrf` plus the signed-out check below, returning the raw `Response` so each caller keeps its
+  own `res.ok` / `res.json()` handling. `api()` calls it too, so there is one choke point. The six
+  sites move onto it.
+- **Signed out (item 4, and the #1461 trigger):** a JSON 401 whose code says the SESSION is gone
+  (`UNAUTHENTICATED`, `ACCOUNT_REQUIRED`) navigates the page to `/login` once, with `location.replace`.
+  Credential 401s (`INVALID_CREDENTIALS`, `INVALID_RECOVERY_CODE`) and a non-JSON 401 (Caddy's own
+  challenge, which the browser must handle) do not. Read from a `clone()` so the caller's body is
+  untouched.
+- **#1461 decision:** fix the trigger client-side and do not change the gate's 401. A polling tab now
+  makes ONE 401 before leaving for `/login`, which costs at most one Caddy prompt instead of a loop.
+  Rejected: answering 403 or a redirect instead of 401 (it changes a tested contract that `tc` and the
+  gate tests read, to serve a transitional window); detecting `Authorization: Basic` (hides a real
+  refusal behind a proxy detail). Docs gain "close other TangleClaw tabs before signing in" on the
+  upgrade path. **Verified only in a real Chrome behind a live `basic_auth`**, in the combined VRF.
+- **Guard (the family, not the instance):** a test that finds every `fetch(` in `public/` whose options
+  name an unsafe method and fails unless it goes through `tcFetch`/`api()`, with the three pre-session
+  pages named as the only exemption. Plus run-tests on `tcFetch`: the header, the redirect codes, the
+  non-redirect codes, the untouched body, and redirect-once.
+- **Done when:** suite green; the guard fails on a reintroduced bare write; the chunk Critic is clean;
+  CHANGELOG `### Fixed`.
+
+#### Chunk A.05b (A-05b) — sign out, sign out everywhere, change password
+- **#1463 Sign out:** a control next to the "Logged in as" chip in the dashboard header and in the
+  session page's banner. It posts `/api/auth/logout` through `api()` and lands on `/login`. The chip's
+  stale `title` ("Authenticated via the Caddy login gate") is corrected.
+- **Sign out everywhere:** `POST /api/auth/logout-everywhere` — NOT on the gate's exemption list, so it
+  needs a session and the CSRF token like any write. Ends every session the account holds
+  (`store.authSessions.destroyForUser`), clears this browser's cookies, logs at warn. No password: the
+  worst a stolen cookie does with it is sign the owner out, which the owner wants to be one click.
+  Offered in Settings beside Recovery codes.
+- **#1457 Change password:** `POST /api/auth/password` `{ currentPassword, newPassword }`. Order: a
+  session (the recovery-code routes' refusal helper, generalised) → both fields → policy on the new one
+  (`caddy.validateAdminPassword`, same rules as every surface) → verify the current one AND hash the
+  new one inside ONE `_withHashSlot` → `store.users.changePassword` updates the hash and deletes the
+  account's OTHER sessions in one transaction, keeping this one → warn log. Wrong current password:
+  403 `REAUTH_FAILED`, as minting codes answers. Recovery codes untouched. Settings gains the form.
+- **Docs:** user guide "Changing your login", setup guide and `docs/recovery.md` stop saying no form
+  exists; `docs/api` / API contract for the two routes; FEATURES.md.
+- **Done when:** suite green (route tests through `handleRequest` with `store._setBasePath`); chunk
+  Critic clean; CHANGELOG `### Added`.
+
+#### Combined A-VRF (after A-05b)
+A-05 on the live install in the operator's Chrome — including a signed-out tab behind a live
+`basic_auth` on the VRF guest — then drill 8.2, regenerate the recovery codes, procedure step 9.
+
 ## Out of this chunk
 - #804, #803 (chunk 05). Retiring the fallback bcrypt credential (chunk 05 or later, operator's call).
 - Tier 2 (ADR 0015 OQ5).
-- Changing an account's password from Settings (#1457); a command to disable an account (#1458).
+- A command to disable an account (#1458).
+- Returning the person to the page they were on after `/login` (a `next=` parameter): not asked for,
+  and an open-redirect surface of its own.
 
 ## Status
 - [x] A-01 — ADR 0016 addendum + this plan
@@ -484,4 +554,7 @@ Delivers the A.04d bullet of the split above.
 - [x] Chunk A.04b (A-04b) — fallback state + marker + command, drill, #472 decision (reviewed 2026-09-13, PR into `train-9/cutover`; R-3/R-14 moved to A.04c)
 - [x] Chunk A.04c (A-04c) — reset-admin + credential predicates aligned with the state machine, login copy, recovery doc (reviewed 2026-09-13, PR into `train-9/cutover`)
 - [x] Chunk A.04d (A-04d) — gate machinery carries: scrypt-cap helper, recovery warn line, `clientKey`, JSDoc fixes, the Caddyfile door through `caddy adapt` (reviewed 2026-09-13, PR into `train-9/cutover`; unread file = door)
-- [ ] A-VRF — cumulative Critic, elkaholic VRF, phone drill → Checkpoint 2
+- [ ] A-VRF — cumulative Critic, elkaholic VRF, phone drill → Checkpoint 2 (merged PR #1460; drill 8.1 PASSED; 8.2 + step 9 in the combined VRF)
+- [x] Chunk A.05a (A-05a) — every browser request through `tcFetch` (#1462 + five siblings + the wrap probe), ended session → `/login` (#1461 trigger) (reviewed 2026-09-14: cumulative 0 blocking, verify-resolutions clean; PR into `main`)
+- [ ] Chunk A.05b (A-05b) — sign out + sign out everywhere (#1463), change password (#1457)
+- [ ] Combined A-VRF — A-05 in a real browser, drill 8.2, regenerate codes, step 9

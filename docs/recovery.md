@@ -106,6 +106,9 @@ the first one. Create it on the page, or at the terminal:
 node scripts/reset-admin.js --store --user <name>
 ```
 
+On the page, if Caddy's password also stands in front, use one browser tab and close the others: a
+TangleClaw tab that is not signed in can make the browser ask for Caddy's password over and over.
+
 Then generate recovery codes in **Settings → Recovery codes** (an account created at the terminal has
 none).
 

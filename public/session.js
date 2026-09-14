@@ -401,7 +401,7 @@ async function invokeProjectAction(action) {
   // long-running on the server side — invoke-critic's real-invocation
   // path can run up to 5 minutes while the Critic skill executes. The
   // shared `apiMutate` helper doesn't expose `signal`, so for this
-  // single call we use raw `fetch` with an AbortController bounded to
+  // single call we use `tcFetch` (raw `fetch` plus the CSRF token) with an AbortController bounded to
   // ACTION_TIMEOUT_MS (matches the server-side MAX_WAIT_MS). On VPN /
   // flaky-connection scenarios, this prevents an indefinitely hung
   // POST from wedging the UI; the operator sees a clear "timed out"
@@ -413,7 +413,7 @@ async function invokeProjectAction(action) {
   try {
     let result;
     try {
-      const response = await fetch(
+      const response = await tcFetch(
         `/api/projects/${encodeURIComponent(projectName)}/actions/${encodeURIComponent(action.command)}`,
         {
           method: 'POST',
@@ -3289,7 +3289,7 @@ async function confirmKill() {
   const body = { reason: 'Manual kill from UI' };
   if (pw) body.password = pw;
 
-  const res = await fetch(`/api/sessions/${encodeURIComponent(projectName)}`, {
+  const res = await tcFetch(`/api/sessions/${encodeURIComponent(projectName)}`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
@@ -4637,15 +4637,17 @@ const WRAP_STREAM_DISCOVERY_DELAY_MS = 400;
 
 /**
  * Read `/wrap/status` without touching `api()`'s shared error side channel.
- * Own `fetch` and own error handling: a failure here is a probe that did not
- * answer, never a claim about the wrap the operator is waiting on.
+ * Own request (`tcFetch`, which touches no shared state) and own error handling:
+ * a failure here is a probe that did not answer, never a claim about the wrap
+ * the operator is waiting on. A session that ended still sends the page to
+ * `/login`, as every other request does.
  *
  * @param {string} statusUrl - The status endpoint for this project.
  * @returns {Promise<object|null>} The parsed status, or null on any failure.
  */
 async function _probeWrapStatus(statusUrl) {
   try {
-    const res = await fetch(statusUrl);
+    const res = await tcFetch(statusUrl);
     if (!res.ok) return null;
     // A service-worker cache stand-in is not the server answering (#709).
     if (res.headers && res.headers.get && res.headers.get('X-TC-Cache-Fallback')) return null;

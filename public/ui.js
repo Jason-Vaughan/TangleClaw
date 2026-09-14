@@ -1163,7 +1163,7 @@ async function confirmKill() {
   const body = { reason: 'Killed from landing page' };
   if (pw) body.password = pw;
 
-  const res = await fetch(`/api/sessions/${encodeURIComponent(killTarget)}`, {
+  const res = await tcFetch(`/api/sessions/${encodeURIComponent(killTarget)}`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
@@ -3851,7 +3851,7 @@ async function killOpenclawTunnel(connId) {
     return;
   }
 
-  const res = await fetch(`/api/openclaw/connections/${encodeURIComponent(connId)}/tunnel`, {
+  const res = await tcFetch(`/api/openclaw/connections/${encodeURIComponent(connId)}/tunnel`, {
     method: 'DELETE'
   });
 

@@ -91,6 +91,15 @@ split, finalized in A-01:
   `reference_elkaholic_ssh_access` first: the launchd WorkingDirectory and the service PATH have both
   produced false verifications). Drill: break the gate deliberately, recover with the documented
   kill-switch from off-box. Evidence recorded in the plan → **Checkpoint 2**.
+- **A-05 — account self-service** (ruled in-pane 2026-09-13: joins v5.24 BEFORE release). Added after
+  Checkpoint 2 merged the cutover to `main` (PR #1460, `dd2e2837`) and drill 8.1 passed; the operator
+  paused the VRF so the login's gaps close first. Normal chunk flow, branches cut from `main`:
+  #1463 sign out + sign out everywhere in the header (the live UI has none); #1457 change password
+  with current-password verification; #1462 boot beacon posts without CSRF, plus a sweep of every bare
+  unsafe-method `fetch` in `public/`; a page whose session ended goes to `/login` on its first 401
+  instead of failing in place; #1461 the Chrome `basic_auth` prompt loop on a signed-out tab (every
+  upgrader passes through that window). Closes with the **combined A-VRF**: A-05 + drill 8.2 (broken
+  gate over SSH) + regenerate recovery codes + procedure step 9.
 
 **Session 6 — A2: #804, #803** (post-cutover, ADR 0015 OQ4 order), normal chunk flow onto `main`.
 
@@ -182,6 +191,7 @@ If the Coordinator's resume message does not arrive, the operator can paste:
 - [x] Session 1 — Wave 1: D (#848, PR #1439) · B (#918, PR — this merge) · C (#1361, PR #1440) — 2026-09-12
 - [x] Session 2 — A-01 discovery + kill-switch/migration ADR addendum → Checkpoint 1 ruled 2026-09-13: "1 + 2" (terminal recovery + one-time recovery codes; ADR 0009 rule 5 amended)
 - [ ] Sessions 3–5 — A-02 · A-03 · A-04 on `train-9/cutover`
-- [ ] A-VRF — cumulative review, elkaholic VRF, kill-switch drill → Checkpoint 2 → merge
+- [ ] A-VRF — cumulative review, elkaholic VRF, kill-switch drill → Checkpoint 2 → merge (merged PR #1460; drill 8.1 passed; 8.2 + step 9 held for the combined A-VRF)
+- [ ] A-05 — account self-service: #1463 · #1457 · #1462 · 401 → /login · #1461 → combined A-VRF
 - [ ] Session 6 — A2: #804, #803
 - [ ] Session 7 — release v5.24.0, live install updated
