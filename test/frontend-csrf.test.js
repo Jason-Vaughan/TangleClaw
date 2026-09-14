@@ -465,5 +465,32 @@ describe('frontend CSRF plumbing (#1418)', () => {
         'a bare fetch with an unsafe method carries no CSRF token and the gate refuses it on every '
         + 'signed-in install; use tcFetch (raw Response) or api()');
     });
+
+    it('and no dashboard or session request of ANY method calls fetch directly', () => {
+      // A GET needs no token, but it does need to leave for /login when the
+      // session is gone: a plain-fetch poll fails in place, and behind a live
+      // basic_auth it is what feeds the prompt loop. So the rule is every
+      // request, not every write. Named exemptions, each with its reason:
+      const EXEMPT = new Map([
+        // Posts and reads that run before a session exists.
+        ...[...PRE_SESSION_PAGES].map((p) => [p, 'pre-session page']),
+        // The first-run wizard's reads: no session exists yet, and it runs
+        // when no account may exist, where /login is not where it should go.
+        ['setup.js', 'first-run wizard'],
+        // The service worker forwards the page's own requests; it originates none.
+        ['sw.js', 'forwards requests']
+      ]);
+      const offenders = [];
+      for (const name of pageSources(PUBLIC)) {
+        if (EXEMPT.has(name)) continue;
+        const src = fs.readFileSync(path.join(PUBLIC, name), 'utf8');
+        for (const call of bareFetchCalls(src)) {
+          // `tcFetch`'s own call, the one place fetch is reached.
+          if (name === 'api-helper.js' && /^url, tcWithCsrf\(fetchOpts\)$/.test(call.args.trim())) continue;
+          offenders.push(`public/${name}:${call.line}`);
+        }
+      }
+      assert.deepEqual(offenders, [], 'use tcFetch (raw Response) or api()');
+    });
   });
 });

@@ -334,7 +334,11 @@ describe('session.js wiring (#185)', () => {
     // The reader itself must not reach for `api()` either — forbidding it only
     // in the caller closes the site this happened to take, not the class.
     assert.doesNotMatch(probe, /\bapi\s*\(/,
-      'the probe reads with its own fetch, not by delegating back to the shared helper');
+      'the probe reads with its own request, not by delegating back to the shared helper');
+    // Its own request is `tcFetch`, which writes no shared state and still sends
+    // the page to /login when the session ended mid-wrap.
+    assert.match(probe, /\btcFetch\(/, 'the probe reads through tcFetch');
+    assert.doesNotMatch(probe, /(^|[^\w.$])fetch\(/, 'and never through a plain fetch');
     assert.match(probe, /X-TC-Cache-Fallback/,
       'while still refusing a service-worker cache stand-in as a server answer (#709)');
   });
