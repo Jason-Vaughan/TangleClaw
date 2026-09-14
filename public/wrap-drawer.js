@@ -301,15 +301,18 @@
         // says so: an operator reading "captured" would assume it was just
         // written.
         const reused = output.resumed === true ? ' · reused from the blocked wrap, not re-asked' : '';
+        // #1450 — a step the AI never marked finished ended on a quiet terminal,
+        // which can be wrong about a model still thinking; the row says so.
+        const quiet = typeof output.completionNote === 'string' && output.completionNote ? ` · ${output.completionNote}` : '';
         const pf = output.parsedFields;
         if (pf && typeof pf === 'object') {
           const keys = Object.keys(pf);
-          if (keys.length > 0) return `captured ${keys.length} field${keys.length === 1 ? '' : 's'}${reused}`;
+          if (keys.length > 0) return `captured ${keys.length} field${keys.length === 1 ? '' : 's'}${reused}${quiet}`;
         }
         if (typeof output.capturedText === 'string' && output.capturedText.trim().length > 0) {
-          return `captured${reused}`;
+          return `captured${reused}${quiet}`;
         }
-        return null;
+        return quiet ? quiet.slice(3) : null;
       }
       case 'version-bump':
         // version-bump emits `{from, to, bumpLevel, detail}` on done. Skips
