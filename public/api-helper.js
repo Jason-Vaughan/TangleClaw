@@ -173,7 +173,10 @@
    * `fetch`, for a page of TangleClaw's own: adds the CSRF token to a
    * state-changing request and leaves for `/login` when the session has ended.
    *
-   * The ONE way a dashboard page reaches the server. `api()` is built on it,
+   * The ONE way the dashboard and session pages reach the server (the
+   * sign-in pages and the first-run wizard's reads keep a plain `fetch`: they
+   * run before a session exists, so there is no token and no session to lose,
+   * and a 401 there is the page's own answer). `api()` is built on it,
    * and a call site that needs the raw `Response` (its own `res.ok` handling,
    * a status it branches on) calls this instead of `fetch`. A bare `fetch` with
    * an unsafe method carries no token, and the gate refuses it on every

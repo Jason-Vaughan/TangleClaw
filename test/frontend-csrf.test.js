@@ -378,9 +378,52 @@ describe('frontend CSRF plumbing (#1418)', () => {
      * @returns {boolean}
      */
     function writes(args) {
+      // The token helper applied in place is the one bare fetch that is safe
+      // whatever its method: it is `tcFetch` itself.
+      if (/\btcWithCsrf\(/.test(args)) return false;
       const named = args.match(/method\s*:\s*(['"`])(\w+)\1/);
       if (named) return authGate.UNSAFE_METHODS.has(named[2].toUpperCase());
-      return /\bmethod\s*[:,}]/.test(args);
+      if (/\bmethod\b/.test(args)) return true;
+      // No method written in the call. An object literal (or nothing) as the
+      // options means GET; options built elsewhere may carry any method.
+      const options = secondArgument(args);
+      return options !== null && !/^\{/.test(options);
+    }
+
+    /**
+     * The text of a call's second top-level argument, or null when it has one.
+     * @param {string} args
+     * @returns {string|null}
+     */
+    function secondArgument(args) {
+      let depth = 0;
+      for (let i = 0; i < args.length; i++) {
+        const ch = args[i];
+        if ('([{'.includes(ch)) depth += 1;
+        else if (')]}'.includes(ch)) depth -= 1;
+        else if (ch === ',' && depth === 0) {
+          const rest = args.slice(i + 1).trim();
+          return rest ? rest : null;
+        }
+      }
+      return null;
+    }
+
+    /**
+     * Every .js and .html file under a directory, recursively.
+     * @param {string} dir
+     * @returns {string[]} Paths relative to `dir`
+     */
+    function pageSources(dir) {
+      const out = [];
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (entry.isDirectory()) {
+          for (const inner of pageSources(path.join(dir, entry.name))) out.push(path.join(entry.name, inner));
+        } else if (/\.(js|html)$/.test(entry.name)) {
+          out.push(entry.name);
+        }
+      }
+      return out;
     }
 
     it('the browser\'s unsafe-method list is the gate\'s', () => {
@@ -395,6 +438,10 @@ describe('frontend CSRF plumbing (#1418)', () => {
       assert.equal(writes(found[0].args), true);
       assert.equal(writes(bareFetchCalls("fetch('/api/a', { cache: 'no-store' })")[0].args), false);
       assert.equal(writes(bareFetchCalls('fetch(u, { method })')[0].args), true, 'an unreadable method is unsafe');
+      assert.equal(writes(bareFetchCalls('fetch(u, opts)')[0].args), true, 'options built elsewhere may be a write');
+      assert.equal(writes(bareFetchCalls('fetch(buildUrl(a, b))')[0].args), false, 'a comma inside the URL is not options');
+      assert.equal(writes(bareFetchCalls('fetch(event.request)')[0].args), false);
+      assert.equal(writes(bareFetchCalls('fetch(url, tcWithCsrf(fetchOpts))')[0].args), false, 'tcFetch itself');
     });
 
     it('and the pre-session pages really do post bare — the exemption is live, not a leftover', () => {
@@ -407,8 +454,8 @@ describe('frontend CSRF plumbing (#1418)', () => {
 
     it('no other page sends a write with a bare fetch', () => {
       const offenders = [];
-      for (const name of fs.readdirSync(PUBLIC)) {
-        if (!/\.(js|html)$/.test(name) || PRE_SESSION_PAGES.has(name)) continue;
+      for (const name of pageSources(PUBLIC)) {
+        if (PRE_SESSION_PAGES.has(name)) continue;
         const src = fs.readFileSync(path.join(PUBLIC, name), 'utf8');
         for (const call of bareFetchCalls(src)) {
           if (writes(call.args)) offenders.push(`public/${name}:${call.line}`);

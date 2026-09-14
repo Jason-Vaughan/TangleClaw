@@ -4637,15 +4637,17 @@ const WRAP_STREAM_DISCOVERY_DELAY_MS = 400;
 
 /**
  * Read `/wrap/status` without touching `api()`'s shared error side channel.
- * Own `fetch` and own error handling: a failure here is a probe that did not
- * answer, never a claim about the wrap the operator is waiting on.
+ * Own request (`tcFetch`, which touches no shared state) and own error handling:
+ * a failure here is a probe that did not answer, never a claim about the wrap
+ * the operator is waiting on. A session that ended still sends the page to
+ * `/login`, as every other request does.
  *
  * @param {string} statusUrl - The status endpoint for this project.
  * @returns {Promise<object|null>} The parsed status, or null on any failure.
  */
 async function _probeWrapStatus(statusUrl) {
   try {
-    const res = await fetch(statusUrl);
+    const res = await tcFetch(statusUrl);
     if (!res.ok) return null;
     // A service-worker cache stand-in is not the server answering (#709).
     if (res.headers && res.headers.get && res.headers.get('X-TC-Cache-Fallback')) return null;
