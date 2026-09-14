@@ -149,8 +149,12 @@
       <!-- U+FE0F asks for the emoji gear: the bare U+2699 is a text glyph and
            drew far smaller than the emoji brain beside it (#1476). -->
       <button class="banner-btn" id="settingsBtn" aria-label="Session settings">&#9881;&#65039;</button>
-      <button class="banner-btn btn-wrap" id="wrapBtn" aria-label="Wrap session">Wrap</button>
-      <button class="banner-btn btn-kill" id="killBtn" aria-label="Kill session">Kill</button>
+      <!-- Wrap and Kill wrap as one unit (#1478): when the actions do not fit a
+           phone's width, Kill must not be the button stranded on a line alone. -->
+      <span class="banner-end-actions">
+        <button class="banner-btn btn-wrap" id="wrapBtn" aria-label="Wrap session">Wrap</button>
+        <button class="banner-btn btn-kill" id="killBtn" aria-label="Kill session">Kill</button>
+      </span>
     </div>
   </header>
 

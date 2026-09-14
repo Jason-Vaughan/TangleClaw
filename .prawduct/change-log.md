@@ -34,6 +34,22 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-14 — Phone banner: Kill no longer wraps alone (#1478)
+
+<!-- prawduct: type=bugfix | scope=ui-1478 -->
+
+Operator request, filed from the #1477 live check. Into `main`.
+
+**Root cause.** The banner's actions are a wrapping flex row; at ≈390px their width (with a phone's
+Paste) exceeded the row by a few pixels, so the last flex item — Kill — wrapped alone.
+
+**What.** Wrap and Kill are one flex item (`.banner-end-actions`, inline-flex, no shrink), so any
+wrap moves the pair. The ≤600px rule narrows `.banner-btn` padding (6px → 4px) and action gaps
+(4px → 3px); the 30px min touch target in `shared-controls.css` is untouched. Measured in headless
+Chrome (frame of exact width, stripped copy of the real markup + CSS, Paste shown): main at 390px =
+2 rows, 107px, Kill alone; this branch at 390px = 1 row, 73px; at 375/360px 2 rows with the pair
+together. Tests: `test/session-banner-phone-actions.test.js`.
+
 ## 2026-09-14 — Session header cleanup (#1472, #1474, #1475, #1476)
 
 <!-- prawduct: type=feature | scope=ui-1472 -->

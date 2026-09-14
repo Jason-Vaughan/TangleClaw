@@ -12,6 +12,10 @@ All notable changes to TangleClaw are documented in this file.
 
 - **A tidier session banner: one pill for several groups, the command bar and Peek behind ⋯, and a settings gear you can see (#1472, #1474, #1475, #1476).** A project in several groups got a pill per group, which pushed the banner onto extra rows. Two or more groups now share one pill that counts them ("3 groups"). Click it, or focus it and press Enter or Space, for every group with its members, this project marked. A group whose details cannot be loaded is still named, and says so — and so does a single group's pill, which used to show nothing. A project in a single group keeps its one named pill. The **Cmd** and **Peek** buttons moved off the banner into a single **⋯** menu, as **Command bar** and **Peek**. Neither was removed: the command bar holds the engine commands, your quick commands and recent history, and is the typing box without autocorrect on a phone; Peek has search and copies long output to the device you are on. The ⋯ button stays highlighted while the command bar is open, the menu closes once you pick from it, and in a Web UI session, where neither is available, ⋯ is disabled rather than opening onto disabled buttons. The dashboard's Peek eye on each project card is unchanged. The settings gear on the session banner and the dashboard header now uses its emoji form, so it draws at the size of the 🧠 beside it instead of as a small text symbol.
 
+### Fixed
+
+- **On a phone, the session banner's Kill button no longer sits on a line of its own (#1478).** At about 390px the banner's actions did not fit one row, and the last button, Kill, wrapped alone onto a third banner line. A destructive button was the most isolated one there, and the terminal lost that height. On screens 600px or narrower the buttons now have less padding and smaller gaps, while keeping their 30px touch targets. At 390px the actions fit one row, and the banner went from 107px to 73px tall. Wrap and Kill are also one unit now: on a narrower phone (375px or 360px) the actions still take a second row, but the two move to it together.
+
 ## [5.24.0] - 2026-09-13
 
 ### Added
