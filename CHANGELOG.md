@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **A session page shows who is signed in, with Sign out one click away (#1471).** Until now a session tab offered both only inside ⚙ Session settings, while the dashboard showed them in its header. The session banner now ends with a 👤 pill carrying your username. Click it (or press Enter or Space) for a small popover that says who is signed in and has a **Sign out** button. As with every banner pill, a second click, a click elsewhere or Escape closes it. It is one pill rather than a pill and a button so a phone's banner gains a single element, and on a screen 600px or narrower the pill shows the icon alone so the project name keeps its room (screen readers still hear the username; the popover shows it). The pill appears only while someone is signed in, so an install with no login shows nothing. Opening the popover asks the server again, so a tab left open after its session ended does not offer a dead Sign out. A sign-out that does not reach the server stays on the page and says why. The settings modal's Account group is unchanged.
+
 ## [5.24.0] - 2026-09-13
 
 ### Added

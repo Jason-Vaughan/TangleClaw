@@ -214,7 +214,173 @@ describe('the session page: Account group in settings (#1463)', () => {
 
   it('wires the button to the session page\'s sign-out', () => {
     assert.match(SESSION_SRC, /\$\('signOutBtn'\)\.addEventListener\('click', signOutFromSession\)/);
-    assert.match(extract(SESSION_SRC, 'signOutFromSession'), /tcSignOut\(api\)/);
+    assert.match(extract(SESSION_SRC, 'signOutFromSession'),
+      /signOutWith\(document\.getElementById\('signOutBtn'\), document\.getElementById\('signOutHint'\)\)/);
+    assert.match(extract(SESSION_SRC, 'signOutWith'), /tcSignOut\(api\)/);
+  });
+});
+
+describe('the session banner: signed-in user pill with Sign out (#1471)', () => {
+  const SESSION_HTML = fs.readFileSync(path.join(PUBLIC, 'session.html'), 'utf8');
+
+  /**
+   * An element whose classList really tracks classes and whose attributes are
+   * readable, for the popover's open state and aria-expanded.
+   * @returns {object}
+   */
+  function node() {
+    const classes = new Set();
+    const attrs = {};
+    return {
+      textContent: '',
+      innerHTML: '',
+      disabled: false,
+      hidden: false,
+      classList: {
+        add: (c) => classes.add(c),
+        remove: (c) => classes.delete(c),
+        contains: (c) => classes.has(c)
+      },
+      setAttribute: (k, v) => { attrs[k] = String(v); },
+      getAttribute: (k) => (k in attrs ? attrs[k] : null)
+    };
+  }
+
+  function load(answers) {
+    const ids = ['bannerUserWrap', 'bannerUser', 'bannerUserName', 'bannerUserPop', 'bannerUserPopName',
+      'bannerSignOutBtn', 'bannerSignOutHint', 'otherPop'];
+    const els = Object.fromEntries(ids.map((id) => [id, node()]));
+    els.bannerUserWrap.hidden = true;
+    const visits = [];
+    const api = fakeApi(answers);
+    const ctx = vm.createContext({
+      document: {
+        getElementById: (id) => els[id] || null,
+        querySelectorAll: () => [els.bannerUserPop, els.otherPop].filter((p) => p.classList.contains('open'))
+      },
+      api,
+      tcSignOut: async (a) => {
+        const res = await a('/api/auth/logout', { method: 'POST' });
+        if (res) visits.push('/login');
+        return !!res;
+      }
+    });
+    const fns = ['closeBannerPopovers', 'syncBannerUserExpanded', 'loadBannerUser', 'toggleBannerUser',
+      'signOutFromBanner', 'signOutWith'];
+    vm.runInContext(`${fns.map((f) => extract(SESSION_SRC, f)).join('\n')}\n`
+      + fns.map((f) => `this.${f} = ${f};`).join('\n'), ctx);
+    return { els, ctx, api, visits };
+  }
+
+  it('shows who is signed in, as text in the pill and the popover', async () => {
+    const { els, ctx } = load({ '/api/auth/me': { authenticated: true, username: '<b>rosie</b>' } });
+    await ctx.loadBannerUser();
+    assert.equal(els.bannerUserWrap.hidden, false);
+    assert.equal(els.bannerUserName.textContent, '<b>rosie</b>');
+    assert.equal(els.bannerUserPopName.textContent, '<b>rosie</b>');
+    assert.equal(els.bannerUserName.innerHTML, '', 'never through innerHTML');
+  });
+
+  it('stays hidden with no session, and when the question fails', async () => {
+    for (const me of [{ authenticated: false, username: null }, { authenticated: true, username: '' }, null]) {
+      const { els, ctx } = load({ '/api/auth/me': me });
+      await ctx.loadBannerUser();
+      assert.equal(els.bannerUserWrap.hidden, true, JSON.stringify(me));
+    }
+  });
+
+  it('keeps a shown pill when a later question fails — a blip must not take Sign out off the banner', async () => {
+    const answers = { '/api/auth/me': { authenticated: true, username: 'rosie' } };
+    const { els, ctx } = load(answers);
+    await ctx.loadBannerUser();
+    answers['/api/auth/me'] = null;
+    ctx.toggleBannerUser();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(els.bannerUserWrap.hidden, false);
+    assert.equal(els.bannerUserName.textContent, 'rosie');
+    assert.equal(els.bannerUserPop.classList.contains('open'), true);
+  });
+
+  it('opens and closes on the pill, keeping aria-expanded true to the popover', async () => {
+    const { els, ctx } = load({ '/api/auth/me': { authenticated: true, username: 'rosie' } });
+    await ctx.loadBannerUser();
+    ctx.toggleBannerUser();
+    assert.equal(els.bannerUserPop.classList.contains('open'), true);
+    assert.equal(els.bannerUser.getAttribute('aria-expanded'), 'true');
+    ctx.toggleBannerUser();
+    assert.equal(els.bannerUserPop.classList.contains('open'), false);
+    assert.equal(els.bannerUser.getAttribute('aria-expanded'), 'false');
+  });
+
+  it('is one popover among the banner\'s: opening it closes another, and an outside close resets aria-expanded', async () => {
+    const { els, ctx } = load({ '/api/auth/me': { authenticated: true, username: 'rosie' } });
+    els.otherPop.classList.add('open');
+    ctx.toggleBannerUser();
+    assert.equal(els.otherPop.classList.contains('open'), false);
+    ctx.closeBannerPopovers();
+    assert.equal(els.bannerUserPop.classList.contains('open'), false);
+    assert.equal(els.bannerUser.getAttribute('aria-expanded'), 'false');
+  });
+
+  it('asks who is signed in again each time it opens, and hides if the session is gone', async () => {
+    const answers = { '/api/auth/me': { authenticated: true, username: 'rosie' } };
+    const { els, ctx, api } = load(answers);
+    await ctx.loadBannerUser();
+    answers['/api/auth/me'] = { authenticated: false, username: null };
+    ctx.toggleBannerUser();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(api.calls.filter((c) => c.url === '/api/auth/me').length, 2);
+    assert.equal(els.bannerUserWrap.hidden, true);
+    assert.equal(els.bannerUserPop.classList.contains('open'), false);
+    assert.equal(els.bannerUser.getAttribute('aria-expanded'), 'false');
+  });
+
+  it('signs out through the shared helper and leaves for /login', async () => {
+    const { ctx, api, visits } = load({ '/api/auth/logout': { ok: true } });
+    await ctx.signOutFromBanner();
+    assert.deepEqual(api.calls.map((c) => c.url), ['/api/auth/logout']);
+    assert.deepEqual(visits, ['/login']);
+  });
+
+  it('says why in the popover when the sign-out did not reach the server, and re-enables the button', async () => {
+    const { els, ctx, visits } = load({});
+    await ctx.signOutFromBanner();
+    assert.deepEqual(visits, []);
+    assert.equal(els.bannerSignOutBtn.disabled, false);
+    assert.equal(els.bannerSignOutHint.textContent, 'Could not sign out: Connection lost.');
+  });
+
+  it('clears an earlier failure when reopened', async () => {
+    const { els, ctx } = load({ '/api/auth/me': { authenticated: true, username: 'rosie' } });
+    els.bannerSignOutHint.textContent = 'Could not sign out: Connection lost.';
+    ctx.toggleBannerUser();
+    assert.equal(els.bannerSignOutHint.textContent, '');
+  });
+
+  it('is wired: loaded at startup, the pill toggles, the button signs out, and an inside click is not an outside one', () => {
+    assert.match(extract(SESSION_SRC, 'initSession'), /bindEvents\(\);\s*\n(?:\s*\/\/.*\n)*\s*loadBannerUser\(\);/);
+    assert.match(SESSION_SRC, /\$\('bannerUser'\)\.addEventListener\('click', toggleBannerUser\)/);
+    assert.match(SESSION_SRC, /\$\('bannerSignOutBtn'\)\.addEventListener\('click', signOutFromBanner\)/);
+    assert.match(extract(SESSION_SRC, 'onBannerOutsideClick'), /\.banner-user-wrap/);
+  });
+
+  it('on a phone the pill is the icon alone, the name visually hidden rather than removed from the accessible name', () => {
+    const css = fs.readFileSync(path.join(PUBLIC, 'session.css'), 'utf8');
+    const phoneBlocks = [...css.matchAll(/@media \(max-width: 600px\) \{([\s\S]*?)\n\}/g)].map((m) => m[1]);
+    const rule = phoneBlocks.map((b) => b.match(/\.banner-user-name \{([^}]*)\}/)).find(Boolean);
+    assert.ok(rule, 'a phone rule for the pill\'s name exists');
+    assert.match(rule[1], /clip: rect\(0 0 0 0\)/);
+    assert.match(rule[1], /position: absolute/);
+    assert.doesNotMatch(rule[1], /display: none|visibility: hidden/, 'display:none would drop the name for screen readers');
+  });
+
+  it('markup: a real button pill, hidden until someone is signed in, with Sign out beside it rather than inside it', () => {
+    const wrap = SESSION_HTML.match(/<span class="banner-user-wrap" id="bannerUserWrap"[^>]*>/);
+    assert.ok(wrap, 'the wrapper exists');
+    assert.match(wrap[0], /\shidden>/);
+    assert.match(SESSION_HTML, /<button type="button" class="banner-user" id="bannerUser"[^>]*aria-expanded="false"[^>]*aria-controls="bannerUserPop"/);
+    const pill = SESSION_HTML.slice(SESSION_HTML.indexOf('id="bannerUser"'));
+    assert.ok(pill.indexOf('</button>') < pill.indexOf('id="bannerSignOutBtn"'), 'Sign out is not nested in the pill');
   });
 });
 

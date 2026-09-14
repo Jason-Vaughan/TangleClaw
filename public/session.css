@@ -394,6 +394,65 @@ body {
 .pill-detail-text {
   color: var(--text);
 }
+
+/* Signed-in user pill (#1471): the popover is the pill's sibling inside the
+   wrapper, so the wrapper is the positioned anchor. Muted, like the dashboard's
+   chip, so it reads as context rather than as the session's own status. The
+   name truncates, and the popover grows leftwards from the pill's right edge —
+   the pill ends the row, where a phone has the least room to its right. */
+.banner-user-wrap {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.banner-user-wrap[hidden] { display: none; }
+.banner-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: transparent;
+  padding: 2px 8px;
+  border: 1px solid var(--text-muted);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.banner-user:hover,
+.banner-user:focus-visible,
+.banner-user[aria-expanded="true"] { color: var(--text); }
+.banner-user-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.user-popover {
+  left: auto;
+  right: 0;
+}
+.user-popover.open > * { display: block; }
+.user-popover .pill-detail-text { overflow-wrap: anywhere; }
+.user-popover .user-popover-signout {
+  display: inline-flex;
+  margin-top: 8px;
+}
+/* On a phone the pill is the icon alone: with a project name, version, dot
+   and engine pill already on the row, a username beside the icon squeezed the
+   project name to a letter. The name stays in the button's accessible name
+   (visually hidden, not removed) and is shown in the popover. */
+@media (max-width: 600px) {
+  .banner-user-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
 /* .group-popover*, .medusa-heads, .medusa-msg*, .medusa-panel-head/-close moved to
    shared-controls.css (#996): the Master control bar renders the same inbox
    panel on the dashboard, which does not load this sheet. */

@@ -34,6 +34,24 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-14 — Session banner user pill with Sign out (#1471)
+
+<!-- prawduct: type=feature | scope=ui-1471 -->
+
+Fast-follow to v5.24.0, operator request. Into `main`.
+
+**Why.** A session tab showed who is signed in and offered Sign out only inside ⚙ Session settings;
+the dashboard has both in its header. #1463 kept them out of the banner because it is full on a phone.
+
+**What.** Operator picked option C of three: one 👤 pill at the end of the banner row (a real
+`<button>`) with a sibling popover naming the user and holding Sign out, so the phone banner gains
+one element and no control nests inside another. `public/session.js#loadBannerUser` asks
+`/api/auth/me` at startup and again on each open; `#toggleBannerUser` joins the banner's
+one-open-popover rule, and `#closeBannerPopovers` now syncs the pill's `aria-expanded`; the
+settings sign-out and the banner's share `#signOutWith`. Tests extend
+`test/account-self-service-ui.test.js`; `test/pill-ux-contract.test.js` lifts the new helper
+`closeBannerPopovers` calls. Docs: user guide banner list, FEATURES, CHANGELOG.
+
 ## 2026-09-14 — A2: a login on every install asked once (#804); the recorded opt-out and Add a login (#803)
 
 <!-- prawduct: type=feature | scope=train-9-chunk-05-a2 -->
