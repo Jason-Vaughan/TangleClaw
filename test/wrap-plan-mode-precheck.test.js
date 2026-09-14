@@ -277,7 +277,8 @@ describe('#429 read-only pre-check — run()', () => {
     slept = 0;
     aic._internal.sendKeys = (session, prompt) => { sent.push({ session, prompt }); };
     aic._internal.sleep = async () => { slept += 1; };
-    aic._internal.detectIdle = () => ({ idle: true, lastOutputAge: 20000 });
+    aic._internal.newNonce = () => 'n0nce';
+    aic._internal.readPaneTail = () => 'TCWRAP-DONE n0nce'; // the AI printed its completion line
     aic._internal.listWrapRules = () => [];
     aic._internal.readForVerify = () => null;
   });
@@ -358,7 +359,8 @@ describe('#429 read-only pre-check — every tmux-path outcome carries the pre-c
     aic._internal.listWrapRules = () => [];
     aic._internal.readForVerify = () => null;
     aic._internal.sendKeys = () => {};
-    aic._internal.detectIdle = () => ({ idle: true, lastOutputAge: 20000 });
+    aic._internal.newNonce = () => 'n0nce';
+    aic._internal.readPaneTail = () => 'TCWRAP-DONE n0nce'; // the AI printed its completion line
   });
   afterEach(() => { Object.assign(aic._internal, saved); });
 
@@ -389,7 +391,7 @@ describe('#429 read-only pre-check — every tmux-path outcome carries the pre-c
         ? { lines: ['ok'] }
         : pane([], BYPASS_FOOTER);
     },
-    'capture failure after idle': () => {
+    'capture failure after the step finished': () => {
       let first = true;
       aic._internal.capturePane = (s, o) => {
         if (!o || !o.full) { first = false; return pane([], BYPASS_FOOTER); }
@@ -399,7 +401,7 @@ describe('#429 read-only pre-check — every tmux-path outcome carries the pre-c
     },
     'idle probe failure': () => {
       aic._internal.capturePane = () => pane([], BYPASS_FOOTER);
-      aic._internal.detectIdle = () => { throw new Error('idle probe died'); };
+      aic._internal.readPaneTail = () => { throw new Error('idle probe died'); };
     },
     'missing captureFile': () => {
       aic._internal.capturePane = (s, o) => (o && o.full)

@@ -66,7 +66,8 @@ describe('wrap-step ai-content — #287 captureFile parsing', () => {
       saved = { ...aic._internal };
       aic._internal.sendKeys = () => {};
       aic._internal.sleep = async () => {};
-      aic._internal.detectIdle = () => ({ idle: true, lastOutputAge: 20000 });
+      aic._internal.newNonce = () => 'n0nce';
+    aic._internal.readPaneTail = () => 'TCWRAP-DONE n0nce'; // the AI printed its completion line
       // Pane returns RENDERED text (no `##`) — i.e. the bug condition is live.
       aic._internal.capturePane = () => ({ lines: RENDERED_PANE.split('\n') });
     });
@@ -137,7 +138,7 @@ describe('wrap-step ai-content — #287 captureFile parsing', () => {
         aic._internal.removeCaptureFile = () => {};
         const res = await aic.run(baseCtx());
         assert.equal(res.status, 'blocked');
-        assert.match(res.blockers[0], /could not be read after the AI went idle — this is a read failure/, code);
+        assert.match(res.blockers[0], /could not be read after the step finished — this is a read failure/, code);
         assert.doesNotMatch(res.blockers[0], /not written/, code);
         assert.ok(res.blockers[0].endsWith(`(${code})`), code);
       }
@@ -251,7 +252,8 @@ describe('wrap-step ai-content — #627 self-identifying prompt header', () => {
       sentPrompt = null;
       aic._internal.sendKeys = (_sess, prompt) => { sentPrompt = prompt; };
       aic._internal.sleep = async () => {};
-      aic._internal.detectIdle = () => ({ idle: true, lastOutputAge: 20000 });
+      aic._internal.newNonce = () => 'n0nce';
+    aic._internal.readPaneTail = () => 'TCWRAP-DONE n0nce'; // the AI printed its completion line
       // ≥20 chars so the no-captureFields step clears the min-response gate.
       aic._internal.capturePane = () => ({ lines: ['the AI did the work and replied here'] });
       // No wrap rules — keep the header at the very front of the string.
@@ -333,7 +335,8 @@ describe('wrap-step ai-content — #328 blocker override + timeout message', () 
     it('does NOT skip when allowOverride is absent (override is opt-in per step)', async () => {
       aic._internal.sendKeys = () => {};
       aic._internal.sleep = async () => {};
-      aic._internal.detectIdle = () => ({ idle: true });
+      aic._internal.newNonce = () => 'n0nce';
+    aic._internal.readPaneTail = () => 'TCWRAP-DONE n0nce'; // the AI printed its completion line
       aic._internal.capturePane = () => ({ lines: ['plenty of words here to clear the min-chars gate'] });
 
       const ctx = ctxWith({
@@ -349,7 +352,8 @@ describe('wrap-step ai-content — #328 blocker override + timeout message', () 
     it('does NOT skip a different step than the one named in skipAiContent', async () => {
       aic._internal.sendKeys = () => {};
       aic._internal.sleep = async () => {};
-      aic._internal.detectIdle = () => ({ idle: true });
+      aic._internal.newNonce = () => 'n0nce';
+    aic._internal.readPaneTail = () => 'TCWRAP-DONE n0nce'; // the AI printed its completion line
       aic._internal.capturePane = () => ({ lines: ['plenty of words here to clear the min-chars gate'] });
 
       const ctx = ctxWith({ options: { skipAiContent: { 'changelog-update': true } } });
@@ -359,10 +363,10 @@ describe('wrap-step ai-content — #328 blocker override + timeout message', () 
   });
 
   describe('timeout message', () => {
-    it('names the step + "no idle", carries remediation, and never claims "wrap pipeline blocked"', async () => {
+    it('names the step + what it waited for, carries remediation, and never claims "wrap pipeline blocked"', async () => {
       aic._internal.sendKeys = () => {};
       aic._internal.sleep = async () => {};
-      aic._internal.detectIdle = () => ({ idle: false }); // never idles
+      aic._internal.readPaneTail = (() => { let n = 0; return () => `still working ${n++}`; })(); // a moving pane: no marker, never quiet
       // Fast-forward the clock: startedAt=0, first while-check=0 (enter),
       // second while-check past the cap (exit as timed-out).
       const ticks = [0, 0, 6 * 60 * 1000];
@@ -376,7 +380,7 @@ describe('wrap-step ai-content — #328 blocker override + timeout message', () 
       assert.equal(res.blockers.length, 1);
       assert.doesNotMatch(res.blockers[0], /wrap pipeline blocked/, 'must not assert the pipeline blocked');
       assert.match(res.blockers[0], /memory-update/, 'names the step id');
-      assert.match(res.blockers[0], /no idle detected/);
+      assert.match(res.blockers[0], /no completion line, and the terminal never went quiet/);
       assert.match(res.output.remediation, /Skip & note/);
     });
   });
@@ -798,7 +802,8 @@ describe('wrap-step ai-content — wrap-rules bridge', () => {
       let sentPrompt = null;
       aic._internal.sendKeys = (_sess, prompt) => { sentPrompt = prompt; };
       aic._internal.sleep = async () => {};
-      aic._internal.detectIdle = () => ({ idle: true });
+      aic._internal.newNonce = () => 'n0nce';
+    aic._internal.readPaneTail = () => 'TCWRAP-DONE n0nce'; // the AI printed its completion line
       aic._internal.capturePane = () => ({ lines: ['plenty of words here to clear the min-chars gate'] });
       aic._internal.listWrapRules = () => [{ content: 'Close every open loop' }];
 
@@ -917,7 +922,8 @@ describe('wrap-step ai-content — D6 verifyChanged file-edit gate', () => {
     saved = { ...aic._internal };
     aic._internal.sendKeys = () => {};
     aic._internal.sleep = async () => {};
-    aic._internal.detectIdle = () => ({ idle: true, lastOutputAge: 20000 });
+    aic._internal.newNonce = () => 'n0nce';
+    aic._internal.readPaneTail = () => 'TCWRAP-DONE n0nce'; // the AI printed its completion line
     aic._internal.capturePane = () => ({ lines: ['## Result', 'Added an entry for the session work.'] });
   });
   afterEach(() => { Object.assign(aic._internal, saved); });
@@ -1223,7 +1229,7 @@ describe('wrap-step ai-content — #672 file-settle completion (busy pane cannot
     aic._internal.sendKeys = () => {};
     aic._internal.sleep = async () => { clock += POLL; };
     aic._internal.now = () => clock;
-    aic._internal.detectIdle = () => ({ idle: false });
+    aic._internal.readPaneTail = (() => { let n = 0; return () => `still working ${n++}`; })(); // a moving pane: no marker, never quiet
     aic._internal.capturePane = () => ({ lines: ['operator chatter in the pane, unrelated to the wrap answer'] });
     aic._internal.readForVerify = () => (clock === 0 ? 'old learnings' : 'new learnings entry');
 
@@ -1237,13 +1243,13 @@ describe('wrap-step ai-content — #672 file-settle completion (busy pane cannot
     aic._internal.sendKeys = () => {};
     aic._internal.sleep = async () => { clock += 6 * 60 * 1000; }; // jump past MAX_WAIT
     aic._internal.now = () => clock;
-    aic._internal.detectIdle = () => ({ idle: false });
+    aic._internal.readPaneTail = (() => { let n = 0; return () => `still working ${n++}`; })(); // a moving pane: no marker, never quiet
     aic._internal.readForVerify = () => 'unchanged';
 
     const res = await aic.run(ctx(settleStep));
     assert.equal(res.ok, false);
     assert.equal(res.status, 'blocked');
-    assert.match(res.blockers[0], /no idle detected/);
+    assert.match(res.blockers[0], /no completion line, and the terminal never went quiet/);
   });
 
   it('does NOT settle while the file keeps changing (AI still writing) — only after it holds', async () => {
@@ -1251,7 +1257,7 @@ describe('wrap-step ai-content — #672 file-settle completion (busy pane cannot
     aic._internal.sendKeys = () => {};
     aic._internal.sleep = async () => { clock += 30000; };
     aic._internal.now = () => clock;
-    aic._internal.detectIdle = () => ({ idle: false });
+    aic._internal.readPaneTail = (() => { let n = 0; return () => `still working ${n++}`; })(); // a moving pane: no marker, never quiet
     // Content differs every poll (keyed on the ever-advancing clock) → the
     // stability window never elapses → the step times out instead of settling.
     aic._internal.readForVerify = () => (clock === 0 ? 'v0' : 'v' + clock);
@@ -1269,12 +1275,202 @@ describe('wrap-step ai-content — #672 file-settle completion (busy pane cannot
     aic._internal.sendKeys = () => {};
     aic._internal.sleep = async () => { clock += POLL; };
     aic._internal.now = () => clock;
-    aic._internal.detectIdle = () => ({ idle: false });
+    aic._internal.readPaneTail = (() => { let n = 0; return () => `still working ${n++}`; })(); // a moving pane: no marker, never quiet
     aic._internal.capturePane = () => ({ lines: ['ok'] }); // 2 chars, below MIN_RESPONSE_CHARS
     aic._internal.readForVerify = () => (clock === 0 ? 'old' : 'new entry written');
 
     const res = await aic.run(ctx(settleStep));
     assert.equal(res.status, 'done', 'a short pane must not re-block a file-settled step');
+  });
+});
+
+// #1450 — the next wrap step's prompt landed while the previous step was still
+// running. A step used to finish when the last 3 pane lines held still for 10s,
+// and a TUI's input box and footer hold still while the AI thinks. A step now
+// finishes when the AI prints a completion line carrying this send's nonce; a
+// changed-and-settled output file still finishes it; and an engine that never
+// prints the line finishes after a full minute of an unchanged recent pane,
+// with a note saying so.
+describe('wrap-step ai-content — #1450 completion marker', () => {
+  let saved;
+  beforeEach(() => {
+    saved = { ...aic._internal };
+    aic._internal.listWrapRules = () => [];
+  });
+  afterEach(() => { Object.assign(aic._internal, saved); });
+
+  const POLL = 2000;
+  const plainStep = { id: 'changelog-update', kind: 'ai-content', prompt: 'update the changelog' };
+  const ctx = (step) => ({
+    project: { name: 'proj', path: '/tmp/proj' },
+    session: { tmuxSession: 'sess' },
+    step, previousResults: [], staged: {}, options: {}
+  });
+  const REPLY = ['## Result', 'Added the entry under [Unreleased].'];
+
+  describe('_markerSeen', () => {
+    it('matches the completion line for this nonce', () => {
+      assert.equal(aic._markerSeen('some output\nTCWRAP-DONE a1b2c3d4\n> ', 'a1b2c3d4'), true);
+    });
+
+    it('never matches the prompt that asks for it (an echoed prompt is not a finished step)', () => {
+      const instruction = aic._completionInstruction('a1b2c3d4');
+      assert.equal(aic._markerSeen(instruction, 'a1b2c3d4'), false);
+      // Soft-wrapped at every column a pane could wrap it at.
+      for (let col = 10; col < instruction.length; col += 7) {
+        const wrapped = instruction.match(new RegExp(`.{1,${col}}`, 'g')).join('\n');
+        assert.equal(aic._markerSeen(wrapped, 'a1b2c3d4'), false, `wrapped at ${col}`);
+      }
+    });
+
+    it('tolerates a TUI or model restyling the line (backticks, bold, quotes) and a soft wrap', () => {
+      assert.equal(aic._markerSeen('TCWRAP-DONE `a1b2c3d4`', 'a1b2c3d4'), true);
+      assert.equal(aic._markerSeen('**TCWRAP-DONE a1b2c3d4**', 'a1b2c3d4'), true);
+      assert.equal(aic._markerSeen('TCWRAP-DONE "a1b2c3d4"', 'a1b2c3d4'), true);
+      assert.equal(aic._markerSeen('TCWRAP-DONE a1b2\nc3d4', 'a1b2c3d4'), true);
+    });
+
+    it('does not match another nonce', () => {
+      assert.equal(aic._markerSeen('TCWRAP-DONE 00000000', 'a1b2c3d4'), false);
+    });
+  });
+
+  it('draws a fresh hex nonce per send', () => {
+    const a = saved.newNonce();
+    const b = saved.newNonce();
+    assert.match(a, /^[0-9a-f]{8}$/);
+    assert.notEqual(a, b);
+  });
+
+  it('reads the recent pane, not its last 3 lines', () => {
+    let opts;
+    aic._internal.capturePane = (_s, o) => { opts = o; return { lines: ['a', 'b'] }; };
+    assert.equal(saved.readPaneTail.call(null, 'sess'), 'a\nb');
+    assert.deepEqual(opts, { lines: aic.PANE_TAIL_LINES });
+    assert.ok(aic.PANE_TAIL_LINES > 3);
+  });
+
+  it('ends the prompt with the completion instruction for the nonce it waits on', async () => {
+    let sent;
+    aic._internal.sendKeys = (_s, text) => { sent = text; };
+    aic._internal.sleep = async () => {};
+    aic._internal.newNonce = () => 'feedbeef';
+    aic._internal.readPaneTail = () => 'TCWRAP-DONE feedbeef';
+    aic._internal.capturePane = () => ({ lines: REPLY });
+    await aic.run(ctx(plainStep));
+    assert.ok(sent.endsWith(aic._completionInstruction('feedbeef')));
+  });
+
+  it('finishes on the poll where the marker appears, and records it', async () => {
+    let clock = 0;
+    let polls = 0;
+    let sends = 0;
+    aic._internal.sendKeys = () => { sends += 1; };
+    aic._internal.sleep = async (ms) => { clock += ms; };
+    aic._internal.now = () => clock;
+    aic._internal.newNonce = () => 'n0nce';
+    aic._internal.readPaneTail = () => { polls += 1; return polls < 4 ? `thinking ${polls}` : 'TCWRAP-DONE n0nce'; };
+    aic._internal.capturePane = () => ({ lines: REPLY });
+
+    const res = await aic.run(ctx(plainStep));
+    assert.equal(res.status, 'done');
+    assert.equal(res.output.completedVia, 'marker');
+    assert.equal(res.output.completionNote, undefined);
+    assert.equal(polls, 4, 'stops polling the moment the marker is on the pane');
+    assert.equal(sends, 1);
+  });
+
+  it('a static pane does NOT finish the step at 10s — the #1450 race', async () => {
+    // The pane's tail holds still (a TUI footer while the AI thinks silently).
+    // The marker arrives at 30s. The old 10s idle rule would have finished the
+    // step at ~12s and sent the next prompt into this turn.
+    let clock = 0;
+    aic._internal.sendKeys = () => {};
+    aic._internal.sleep = async (ms) => { clock += ms; };
+    aic._internal.now = () => clock;
+    aic._internal.newNonce = () => 'n0nce';
+    aic._internal.readPaneTail = () => (clock < 30000 ? '> \n? for shortcuts' : 'TCWRAP-DONE n0nce\n> \n? for shortcuts');
+    aic._internal.capturePane = () => ({ lines: REPLY });
+
+    const res = await aic.run(ctx(plainStep));
+    assert.equal(res.status, 'done');
+    assert.equal(res.output.completedVia, 'marker');
+    assert.ok(clock >= 30000, `finished at ${clock}ms, before the AI printed its line`);
+  });
+
+  it('an engine that never prints the marker finishes after the quiet fallback, with a note', async () => {
+    let clock = 0;
+    aic._internal.sendKeys = () => {};
+    aic._internal.sleep = async (ms) => { clock += ms; };
+    aic._internal.now = () => clock;
+    aic._internal.newNonce = () => 'n0nce';
+    aic._internal.readPaneTail = () => '> ';
+    aic._internal.capturePane = () => ({ lines: REPLY });
+
+    const res = await aic.run(ctx(plainStep));
+    assert.equal(res.status, 'done');
+    assert.equal(res.output.completedVia, 'quiet');
+    assert.match(res.output.completionNote, /no completion marker seen/);
+    assert.ok(clock >= aic.QUIET_FALLBACK_MS, `quiet finish at ${clock}ms is under the fallback window`);
+    assert.ok(aic.QUIET_FALLBACK_MS >= 60000);
+  });
+
+  it('any pane change restarts the quiet window', async () => {
+    let clock = 0;
+    aic._internal.sendKeys = () => {};
+    aic._internal.sleep = async (ms) => { clock += ms; };
+    aic._internal.now = () => clock;
+    aic._internal.newNonce = () => 'n0nce';
+    // A spinner line that changes until 50s, then holds.
+    aic._internal.readPaneTail = () => (clock < 50000 ? `✻ Thinking… (${clock}ms)` : '> ');
+    aic._internal.capturePane = () => ({ lines: REPLY });
+
+    const res = await aic.run(ctx(plainStep));
+    assert.equal(res.output.completedVia, 'quiet');
+    assert.ok(clock >= 50000 + aic.QUIET_FALLBACK_MS, `finished at ${clock}ms, inside a window the spinner had reset`);
+  });
+
+  it('a marker from an earlier attempt does not finish a Retry', async () => {
+    let clock = 0;
+    aic._internal.sendKeys = () => {};
+    aic._internal.sleep = async (ms) => { clock += ms; };
+    aic._internal.now = () => clock;
+    aic._internal.newNonce = () => 'second1';
+    let n = 0;
+    aic._internal.readPaneTail = () => `TCWRAP-DONE first111\nstill working ${n++}`;
+    aic._internal.capturePane = () => ({ lines: REPLY });
+
+    const res = await aic.run(ctx(plainStep));
+    assert.equal(res.status, 'blocked', 'the old marker was taken as this attempt finishing');
+    assert.match(res.blockers[0], /no completion line/);
+  });
+
+  it('a settled output file still finishes the step before the quiet fallback', async () => {
+    let clock = 0;
+    aic._internal.sendKeys = () => {};
+    aic._internal.sleep = async (ms) => { clock += ms; };
+    aic._internal.now = () => clock;
+    aic._internal.newNonce = () => 'n0nce';
+    aic._internal.readPaneTail = () => '> ';
+    aic._internal.capturePane = () => ({ lines: REPLY });
+    aic._internal.readForVerify = () => (clock < 8000 ? 'old' : 'new entry');
+
+    const res = await aic.run(ctx({ ...plainStep, verifyChanged: ['CHANGELOG.md'] }));
+    assert.equal(res.status, 'done');
+    assert.equal(res.output.completedVia, 'files');
+    assert.ok(clock < aic.QUIET_FALLBACK_MS);
+  });
+
+  it('stamps completedVia on a blocked result too, so the row says what ended the wait', async () => {
+    aic._internal.sendKeys = () => {};
+    aic._internal.sleep = async () => {};
+    aic._internal.newNonce = () => 'n0nce';
+    aic._internal.readPaneTail = () => 'TCWRAP-DONE n0nce';
+    aic._internal.capturePane = () => ({ lines: ['ok'] }); // under MIN_RESPONSE_CHARS
+
+    const res = await aic.run(ctx(plainStep));
+    assert.equal(res.status, 'blocked');
+    assert.equal(res.output.completedVia, 'marker');
   });
 });
 
@@ -1345,7 +1541,8 @@ describe('wrap-step ai-content — optionalCaptureFields (#1379)', () => {
       saved = { ...aic._internal };
       aic._internal.sendKeys = () => {};
       aic._internal.sleep = async () => {};
-      aic._internal.detectIdle = () => ({ idle: true, lastOutputAge: 20000 });
+      aic._internal.newNonce = () => 'n0nce';
+    aic._internal.readPaneTail = () => 'TCWRAP-DONE n0nce'; // the AI printed its completion line
       aic._internal.capturePane = () => ({ lines: ['rendered, no hashes'] });
       aic._internal.captureFileExists = () => false;
       aic._internal.removeCaptureFile = () => {};
@@ -1559,7 +1756,8 @@ describe('wrap-step ai-content — optionalCaptureFields (#1379)', () => {
       saved = { ...aic._internal };
       aic._internal.sendKeys = () => {};
       aic._internal.sleep = async () => {};
-      aic._internal.detectIdle = () => ({ idle: true, lastOutputAge: 20000 });
+      aic._internal.newNonce = () => 'n0nce';
+    aic._internal.readPaneTail = () => 'TCWRAP-DONE n0nce'; // the AI printed its completion line
       aic._internal.capturePane = () => ({ lines: ['rendered'] });
       aic._internal.captureFileExists = () => false;
       aic._internal.removeCaptureFile = () => {};
