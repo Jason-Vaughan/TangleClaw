@@ -64,12 +64,15 @@ Whether a wrap cuts at all is the project's `releaseMode` (`docs/configuration-r
   when the project's active Prawduct build plan (`active_build_plan:` in `.prawduct/project-state.yaml`,
   else `.prawduct/artifacts/build-plan.md`) has an unticked box under `## Status`. A plan with no
   `## Status` section isn't judged.
-  A signal that can't be read, such as a pointer to a missing plan, also holds, and the step's output
-  asks the operator to decide.
-- `ask` never cuts by itself.
+  A signal that can't be read, such as a pointer to a missing plan, stops the wrap at `version-bump`
+  and asks the operator to choose Cut or Hold.
+- `ask` never cuts by itself: every wrap with a release to cut stops at `version-bump` and asks.
 
-In `auto` and `ask`, picking a bump level in the wrap modal cuts regardless. A hold is reported as a
-skipped `version-bump` step whose reason names the signal responsible.
+In `auto` and `ask`, the wrap modal's **Release** control decides for that wrap: Cut cuts (optionally
+at a chosen level) and Hold doesn't, whatever readiness says. Auto follows the mode. A plain hold is
+reported as a skipped `version-bump` step whose reason names the signal responsible. A stop is a
+`needs-operator` row with the Cut / Hold choice under it; nothing is committed until you answer and
+press Retry.
 
 The wrap picks the bump level from what is in `[Unreleased]`:
 

@@ -460,9 +460,23 @@
         <label class="form-label" for="wrapPassword">Password</label>
         <input type="password" class="password-input" id="wrapPassword" autocomplete="off">
       </div>
-      <!-- #540 ask-mode — let the operator choose the version bump up front
-           (before version-bump runs). "Auto" keeps the CHANGELOG heuristic. -->
-      <div class="form-group" id="wrapBumpGroup">
+      <!-- #1492 — the operator's release decision, made before version-bump
+           runs. Auto sends nothing and follows the project's release mode;
+           Cut and Hold decide whatever the release checks say. Hidden when the
+           project's release mode is off, where the step reads no choice. -->
+      <div class="form-group" id="wrapReleaseGroup">
+        <label class="form-label" for="wrapRelease">Release</label>
+        <select class="form-select" id="wrapRelease">
+          <option value="">Auto (project setting)</option>
+          <option value="cut">Cut</option>
+          <option value="hold">Hold</option>
+        </select>
+        <div class="form-hint" id="wrapReleaseHint"></div>
+      </div>
+      <p class="form-hint hidden" id="wrapReleaseOff">Releases are off for this project, so this wrap won't cut one. Change Release mode in Settings.</p>
+      <!-- #540 ask-mode — the level to cut at, offered only with Cut. "Auto"
+           keeps the CHANGELOG heuristic. -->
+      <div class="form-group hidden" id="wrapBumpGroup">
         <label class="form-label" for="wrapBumpLevel">Version bump</label>
         <select class="form-select" id="wrapBumpLevel">
           <option value="">Auto (from CHANGELOG)</option>

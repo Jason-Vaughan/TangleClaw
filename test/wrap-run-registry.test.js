@@ -61,6 +61,23 @@ describe('wrap-run-registry (#583)', () => {
     assert.equal(status.result, null);
   });
 
+  it('#1492 — records a detached copy of the run\'s options, and null without any', () => {
+    const options = { release: 'hold', pathDecisions: { 'a.js': 'leave' } };
+    registry.begin('proj-a', 42, options);
+    options.release = 'cut';
+    options.onStepEvent = () => {};
+    const recorded = registry.get('proj-a').options;
+    assert.deepEqual(recorded, { release: 'hold', pathDecisions: { 'a.js': 'leave' } },
+      'what the operator chose, not what the pipeline later hangs on the object');
+    registry._resetForTests();
+    registry.begin('proj-a', 42);
+    assert.equal(registry.get('proj-a').options, null);
+    registry._resetForTests();
+    registry.begin('proj-a', 42, ['not', 'options']);
+    assert.equal(registry.get('proj-a').options, null);
+    assert.equal(registry.get('never-wrapped').options, null);
+  });
+
   it('a second begin while running is rejected with the running run info', () => {
     const first = registry.begin('proj-a', 42);
     emit('proj-a', { type: 'step-start', stepId: 'memory-update' });

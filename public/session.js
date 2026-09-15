@@ -3557,9 +3557,17 @@ function openWrapModal() {
   document.getElementById('wrapPassword').value = '';
   // #540 — reset the bump choice to Auto on every open. Without this a "Major"
   // picked and then cancelled silently re-arms on a later wrap in the same
-  // page session, bumping a major nobody asked for this time.
+  // page session, bumping a major nobody asked for this time. The release
+  // choice resets for the same reason: a cancelled Cut must not cut later.
   const bumpEl = document.getElementById('wrapBumpLevel');
   if (bumpEl) bumpEl.value = '';
+  const releaseEl = document.getElementById('wrapRelease');
+  if (releaseEl) releaseEl.value = '';
+  syncWrapReleaseControls();
+  // The mode read at page load may be stale: another tab can change it while
+  // this one stays open. Re-read it so the controls match what the server will
+  // do. confirmWrap checks again before sending.
+  refreshWrapReleaseMode();
   const pwGroup = document.getElementById('wrapPasswordGroup');
   if (sessionState.config && sessionState.config.deleteProtected) {
     pwGroup.classList.remove('hidden');
@@ -3567,6 +3575,63 @@ function openWrapModal() {
     pwGroup.classList.add('hidden');
   }
   document.getElementById('wrapModal').classList.add('open');
+}
+
+/**
+ * Show the wrap modal's release controls for this project's release mode
+ * (#1492). `off` hides them and says why, since version-bump reads no choice
+ * there. Otherwise the hint says what Auto will do, and the bump level is
+ * offered only while Release is Cut: it has no meaning with Auto or Hold.
+ */
+function syncWrapReleaseControls() {
+  const project = sessionState.project || {};
+  const mode = project.releaseMode;
+  const releaseGroup = document.getElementById('wrapReleaseGroup');
+  const offNote = document.getElementById('wrapReleaseOff');
+  const bumpGroup = document.getElementById('wrapBumpGroup');
+  const releaseEl = document.getElementById('wrapRelease');
+  const bumpEl = document.getElementById('wrapBumpLevel');
+  if (!releaseGroup || !releaseEl || !bumpGroup || !bumpEl) return;
+  const off = mode === 'off';
+  releaseGroup.classList.toggle('hidden', off);
+  if (offNote) offNote.classList.toggle('hidden', !off);
+  const cutting = !off && releaseEl.value === 'cut';
+  bumpGroup.classList.toggle('hidden', !cutting);
+  if (!cutting) bumpEl.value = '';
+  const hint = document.getElementById('wrapReleaseHint');
+  if (hint) {
+    hint.textContent = mode === 'ask'
+      ? 'Auto: this project asks, so a wrap with a release to cut stops at the version bump for you to choose Cut or Hold.'
+      : 'Auto: cuts when the release checks pass, holds when the plan is unfinished, and asks when they can’t tell.';
+  }
+}
+
+/**
+ * Re-read this project's release mode and re-sync the wrap modal when it changed
+ * (#1492). The session page loads the project once. A mode switched from `off` in
+ * another tab would otherwise leave the modal hiding Hold while the server,
+ * which reads the real mode, cuts a release.
+ *
+ * Uses `tcFetch`, not `api()`, so a failed probe can't overwrite `api.lastError`
+ * for a wrap POST in flight. A probe that doesn't answer changes nothing.
+ *
+ * @returns {Promise<boolean>} true when the mode changed and the controls moved
+ */
+async function refreshWrapReleaseMode() {
+  let fresh;
+  try {
+    const res = await tcFetch(`/api/projects/${encodeURIComponent(projectName)}`);
+    if (!res.ok) return false;
+    fresh = await res.json();
+  } catch { // a probe that could not run leaves the mode as the page last knew it
+    return false;
+  }
+  if (!fresh || typeof fresh.releaseMode !== 'string') return false;
+  if (!sessionState.project) sessionState.project = {};
+  if (sessionState.project.releaseMode === fresh.releaseMode) return false;
+  sessionState.project.releaseMode = fresh.releaseMode;
+  syncWrapReleaseControls();
+  return true;
 }
 
 /**
@@ -3605,6 +3670,16 @@ async function confirmWrap() {
 
   // Fresh wrap — drop any ai-content skips accumulated by a prior wrap's
   // retries (#328) so they don't leak into this run.
+  // #1492: the release control must show the mode the server will use. If it
+  // changed since the modal opened, stop here so the operator sees the right
+  // choices before anything is sent.
+  if (await refreshWrapReleaseMode()) {
+    const errEl = document.getElementById('wrapError');
+    errEl.textContent = `This project's release mode is now ${sessionState.project.releaseMode}. Check Release, then press Wrap again.`;
+    errEl.classList.remove('hidden');
+    return;
+  }
+
   wrapSkippedAiSteps = {};
   wrapPathDecisions = {};
   wrapSkipPreflight = false;
@@ -3612,15 +3687,21 @@ async function confirmWrap() {
   // #540 ask-mode — capture the operator's bump-level choice up front, before
   // version-bump runs. Empty string keeps the CHANGELOG heuristic. Threaded as
   // `options.bumpLevel`, which version-bump honors (or skips-loudly on invalid).
+  // #1492 — the Release choice rides with it. Both are read only while their
+  // controls are shown, so a hidden control can't send a stale value.
+  const releaseGroup = document.getElementById('wrapReleaseGroup');
+  const releaseEl = document.getElementById('wrapRelease');
+  wrapReleaseChoice = releaseEl && releaseGroup && !releaseGroup.classList.contains('hidden') ? releaseEl.value : '';
   const bumpEl = document.getElementById('wrapBumpLevel');
-  wrapBumpLevel = bumpEl ? bumpEl.value : '';
+  wrapBumpLevel = bumpEl && wrapReleaseChoice === 'cut' ? bumpEl.value : '';
   const body = {};
   if (pw) body.password = pw;
   // Assembled through the SAME pure helper the retry path uses, so the initial
   // wrap and every retry can't drift on how an option is shaped (notably: Auto
-  // must send no bumpLevel at all — version-bump treats an out-of-set value as
-  // a reason to skip rather than falling back to the heuristic).
+  // must send no bumpLevel or release at all — version-bump treats an
+  // out-of-set value as a reason to skip rather than following the mode).
   const initialOptions = window.tcWrapDrawerHelpers.collectOptionsFromAccessors({
+    release: () => wrapReleaseChoice,
     bumpLevel: () => wrapBumpLevel
   });
   if (Object.keys(initialOptions).length > 0) body.options = initialOptions;
@@ -3753,6 +3834,15 @@ let wrapSkipPreflight = false;
  * @type {string}
  */
 let wrapBumpLevel = '';
+
+/**
+ * #1492 — the operator's release decision for this wrap: `'cut'`, `'hold'`, or
+ * `''` for Auto. Set from the wrap modal at `confirmWrap`, replaced by a Cut or
+ * Hold answered in the drawer after version-bump halts, and replayed on every
+ * retry because the pipeline re-runs from step 0. Reset when a fresh wrap starts.
+ * @type {string}
+ */
+let wrapReleaseChoice = '';
 
 /**
  * The pipeline's own status banner for the currently-rendered wrap (#638).
@@ -4110,6 +4200,13 @@ function renderWrapDrawer(pipelineResult) {
       const pathWidget = H.pathDecisionWidget(row, raw.output);
       if (pathWidget) {
         decisionEl.appendChild(renderPathDecisionWidget(pathWidget));
+        widgetRendered = true;
+      }
+      // #1492: a version-bump halt is a release decision only the operator can
+      // make — Cut or Hold is the only way past it.
+      const releaseWidget = H.releaseDecisionWidget(row, raw.output);
+      if (releaseWidget) {
+        decisionEl.appendChild(renderReleaseDecisionWidget(releaseWidget));
         widgetRendered = true;
       }
       // A blocked pr-check IS the unresolved-PR gate — its recovery
@@ -4472,6 +4569,66 @@ function renderDecisionWidget(widget) {
   const fallback = document.createElement('p');
   fallback.textContent = widget.label;
   wrap.appendChild(fallback);
+  return wrap;
+}
+
+/**
+ * Build the Cut / Hold choice (#1492) for a version-bump halted on a release
+ * decision: what would be cut, what the release checks found, and two radios.
+ * Neither is preselected, because preselecting one would make the decision the
+ * halt exists to hand to the operator.
+ *
+ * @param {object} widget - From `releaseDecisionWidget`.
+ * @returns {HTMLDivElement}
+ */
+function renderReleaseDecisionWidget(widget) {
+  const wrap = document.createElement('div');
+  wrap.className = 'wrap-decision wrap-decision--release';
+  wrap.dataset.optionsKey = widget.optionsKey;
+  wrap.dataset.kind = widget.kind;
+
+  const labelId = 'wrapReleaseDecisionLabel';
+  const label = document.createElement('div');
+  label.className = 'wrap-decision-label';
+  label.id = labelId;
+  const level = widget.bumpLevel ? ` (${widget.bumpLevel})` : '';
+  label.textContent = `Cut a release in this wrap? It would be ${widget.from} → ${widget.to}${level}.`;
+  wrap.appendChild(label);
+
+  const checks = document.createElement('p');
+  checks.className = 'wrap-decision-note wrap-decision-release-checks';
+  const mode = widget.releaseMode ? `Release mode ${widget.releaseMode}. ` : '';
+  checks.textContent = `${mode}Release checks: ${widget.verdict}${widget.reason ? ` — ${widget.reason}` : ''}`;
+  wrap.appendChild(checks);
+
+  if (widget.signals.length > 0) {
+    const list = document.createElement('ul');
+    list.className = 'wrap-decision-release-signals';
+    for (const sig of widget.signals) {
+      const li = document.createElement('li');
+      li.textContent = `${sig.id}: ${sig.state}${sig.detail ? ` — ${sig.detail}` : ''}`;
+      list.appendChild(li);
+    }
+    wrap.appendChild(list);
+  }
+
+  const group = document.createElement('fieldset');
+  group.className = 'wrap-decision-pathrow wrap-decision-releaserow';
+  group.setAttribute('aria-labelledby', labelId);
+  for (const choice of [{ v: 'cut', label: `Cut ${widget.to}` }, { v: 'hold', label: 'Hold — no release this wrap' }]) {
+    const opt = document.createElement('label');
+    opt.className = 'wrap-decision-pathchoice';
+    const input = document.createElement('input');
+    input.type = 'radio';
+    input.name = 'wrapReleaseDecision';
+    input.value = choice.v;
+    opt.appendChild(input);
+    const text = document.createElement('span');
+    text.textContent = choice.label;
+    opt.appendChild(text);
+    group.appendChild(opt);
+  }
+  wrap.appendChild(group);
   return wrap;
 }
 
@@ -4965,11 +5122,21 @@ async function retryWrap() {
       for (const input of checked) out[input.dataset.path] = input.value;
       return out;
     },
+    // #1492 — a Cut or Hold answered under a version-bump halt, else the
+    // choice already held for this wrap.
+    release: () => {
+      const picked = decisionEl.querySelector('.wrap-decision--release input[type="radio"]:checked');
+      return picked ? picked.value : wrapReleaseChoice;
+    },
     // #540 ask-mode — replay the modal's bump choice on each retry.
     bumpLevel: () => wrapBumpLevel
   };
 
   const options = H.collectOptionsFromAccessors(accessors);
+
+  // #1492: an answer given in the drawer holds for the rest of this wrap, so a
+  // later halt on another step doesn't re-ask it.
+  if (options.release) wrapReleaseChoice = options.release;
 
   // #1406: the pipeline re-runs from its first step, so a file already answered
   // must keep its answer or the wrap would ask about it again.
@@ -5483,8 +5650,26 @@ async function restoreWrapRunOnLoad() {
     return;
   }
   if (status.running === true || status.runId === recallFollowedWrapRun()) {
+    adoptWrapRunChoices(status.options);
     dispatchWrapRun({ type: 'follow', runId: status.runId });
   }
+}
+
+/**
+ * Take back the choices a Retry replays from the run this page is following
+ * again after a reload (#1492). Retry keeps them in page memory, which a reload
+ * wipes. A forgotten Hold would otherwise let the next Retry cut the release
+ * the operator refused. The server recorded them when the run started.
+ *
+ * @param {*} options - `status.options` from `/wrap/status`.
+ */
+function adoptWrapRunChoices(options) {
+  const choices = window.tcWrapDrawerHelpers.replayChoicesFromOptions(options);
+  wrapReleaseChoice = choices.release;
+  wrapBumpLevel = choices.bumpLevel;
+  wrapSkipPreflight = choices.skipPreflight;
+  wrapPathDecisions = choices.pathDecisions;
+  wrapSkippedAiSteps = choices.skipAiContent;
 }
 
 /**
@@ -6200,6 +6385,7 @@ function bindEvents() {
   // Wrap modal
   $('wrapCancelBtn').addEventListener('click', closeWrapModal);
   $('wrapConfirmBtn').addEventListener('click', confirmWrap);
+  $('wrapRelease').addEventListener('change', syncWrapReleaseControls);
   $('wrapModal').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) closeWrapModal();
   });

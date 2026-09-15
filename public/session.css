@@ -2276,6 +2276,18 @@ body {
   min-height: 30px;
   font-size: 0.9rem;
 }
+/* #1492 Cut / Hold under a version-bump halt; the radios reuse the path-row look */
+.wrap-decision-note.wrap-decision-release-checks {
+  margin: 0 0 8px;
+  font-style: normal;
+}
+.wrap-decision-release-signals {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
 .wrap-decision-note {
   margin: 8px 0 0;
   font-size: 0.8rem;

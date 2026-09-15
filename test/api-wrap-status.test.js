@@ -129,6 +129,7 @@ describe('api wrap-run status + single-flight (#583)', () => {
         currentStepStartedAt: null,
         finishedAt: null,
         result: null,
+        options: null,
         handback: null
       });
     });
@@ -233,7 +234,7 @@ describe('api wrap-run status + single-flight (#583)', () => {
         wrapRunRegistry.begin('wrap-run-test', 1);
         const live = await request(server, 'GET', '/api/sessions/wrap-run-test/wrap/status');
         assert.deepEqual(Object.keys(live.body).sort(),
-          ['currentStepId', 'currentStepStartedAt', 'finishedAt', 'handback', 'project', 'result', 'runId', 'running', 'sessionId', 'stale', 'startedAt'],
+          ['currentStepId', 'currentStepStartedAt', 'finishedAt', 'handback', 'options', 'project', 'result', 'runId', 'running', 'sessionId', 'stale', 'startedAt'],
           'the route\'s key set is the contract docs/configuration-reference.md describes');
         assert.equal(live.body.running, true);
         assert.equal(live.body.stale, false);
