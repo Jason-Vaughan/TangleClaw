@@ -34,6 +34,19 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-15 — Switchboard and command messages reach 64 KB, and say why a longer one fails (#1514)
+
+<!-- prawduct: type=bugfix | scope=bugfix-sprint-chunk-04 -->
+
+Bugfix Sprint Chunk 04, built by a delegate and integrated by the coordinator.
+
+`MESSAGE_BODY_LIMIT_BYTES = 64 * 1024` now applies to `<prefix>/send`, `<prefix>/loop`, `<prefix>/loops/:loopId/continue` on both the project and Master prefixes, and to `POST /api/sessions/:project/command`. Every 413 carries `limitBytes` and `receivedBytes`, from the body parser, so the routes still on 10 KB report their own limit too. `receivedBytes` is exact when the request declares `Content-Length`; a chunked body reports the count at the point reading stopped and sets `receivedBytesIsLowerBound: true`, which clients render as "more than X KB".
+
+The limit has one source: the server. The switchboard `/status` response serves it as `messageLimitBytes`, and each 413 carries it back, so neither `public/` nor `tc message send` holds a copy. The loop task, done-criteria and feedback boxes show a live size count that turns amber at 80% of the limit and red above it, and a send over the limit is refused before it goes out. A 413 renders as "message is X KB, limit is 64 KB" on the loop, feedback, command-bar and update-prompt sends; the command bar previously showed nothing at all when a command was refused. `tc message send` prints the same and exits 2.
+
+Deliberately unchanged: the command route still refuses a `command` over 4096 characters with a 400, because the wrap drawer depends on that limit. The 64 KB body limit only matters there for multibyte text.
+
+
 ## 2026-09-15 — TangleClaw state leaves the files projects track (#1510, #1511, #1512)
 
 <!-- prawduct: type=bugfix | scope=bugfix-sprint-chunk-02 -->
