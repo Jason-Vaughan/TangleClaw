@@ -208,3 +208,6 @@ logs/
 # audit recipe in CONTRIBUTING.md (#844). Never a source file; on this clone an
 # untracked file at the root also blocks the self-updater.
 test-results.xml
+
+# Prawduct session files
+.prawduct/.delegate-brief.md

@@ -34,6 +34,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-15 — Ignore Prawduct's delegate brief
+
+<!-- prawduct: type=chore | scope=gitignore-delegate-brief -->
+
+This clears the session briefing's `gitignore-contract-drift-v1` advisory, on the operator's go. `prawduct-hook update-gitignore`
+added `.prawduct/.delegate-brief.md`, a scratch brief Prawduct writes when delegating, and a dry run confirmed it was the only
+change. Nothing tracked is hidden: `git ls-files` shows no such file. There is a CHANGELOG `### Internal` line.
+
 ## 2026-09-15 — Release readiness signals and `releaseMode` (#1492, L1 + L4)
 
 <!-- prawduct: type=feature | scope=train-19-chunk-02 -->
