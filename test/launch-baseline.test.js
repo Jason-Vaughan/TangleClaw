@@ -265,4 +265,52 @@ describe('launchSession stamps the baseline taken before the launch writes anyth
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('heals after the baseline: the migrated project.json is the session\'s change, and the prime says so (#1511)', () => {
+    const dir = makeRepo();
+    try {
+      fs.mkdirSync(path.join(dir, '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(path.join(dir, '.tangleclaw', 'project.json'), `${JSON.stringify({ engine: 'claude', silentPrime: false, lastWrapSha: 'abc1234' }, null, 2)}\n`);
+      git(dir, 'add', '-A');
+      git(dir, 'commit', '-q', '-m', 'track project.json with the retired key');
+      store.projects.create({ name: 'lbl-heal', path: dir, engine: 'claude' });
+      const result = sessions.launchSession('lbl-heal');
+      assert.ok(result.session, `launch must succeed: ${result.error}`);
+
+      const b = store.sessions.getLaunchBaseline(result.session.id);
+      assert.equal(b.dirty.paths.includes('.tangleclaw/project.json'), false,
+        'heal ran before the baseline, so its rewrite would read as dirty-before-launch and repeat every session');
+      const onDisk = JSON.parse(fs.readFileSync(path.join(dir, '.tangleclaw', 'project.json'), 'utf8'));
+      assert.equal(Object.prototype.hasOwnProperty.call(onDisk, 'lastWrapSha'), false, 'the launch migrated the key');
+      assert.equal(require('../lib/wrap-state').readLastWrapSha(dir).sha, 'abc1234');
+      assert.match(fs.readFileSync(path.join(dir, '.git', 'info', 'exclude'), 'utf8'), /BEGIN:tangleclaw-state/);
+      assert.match(result.primePrompt, /TangleClaw housekeeping: moved lastWrapSha out of project\.json/);
+      store.sessions.kill(result.session.id, 'test cleanup');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('the web UI launch path heals too, after its baseline', async () => {
+    const tunnel = require('../lib/tunnel');
+    const heal = require('../lib/project-heal');
+    const launchBaseline = require('../lib/launch-baseline');
+    const order = [];
+    const savedTunnel = { detectTunnel: tunnel.detectTunnel, ensureTunnel: tunnel.ensureTunnel };
+    const savedHeal = heal.healOnLaunch;
+    const savedCapture = launchBaseline.capture;
+    tunnel.detectTunnel = async () => ({ active: false });
+    tunnel.ensureTunnel = async () => ({ ok: false, error: 'no tunnel in tests' });
+    heal.healOnLaunch = (p) => { order.push(['heal', p]); return { report: null }; };
+    launchBaseline.capture = (p) => { order.push(['baseline', p]); return null; };
+    try {
+      const r = await sessions.launchWebuiSession('lbl-webui', { localPort: 1, host: 'h' }, 'openclaw:x', {}, { path: '/tmp/lbl-webui' });
+      assert.match(r.error, /Tunnel failed/, 'fixture: the launch stops at the stubbed tunnel');
+      assert.deepEqual(order, [['baseline', '/tmp/lbl-webui'], ['heal', '/tmp/lbl-webui']]);
+    } finally {
+      Object.assign(tunnel, savedTunnel);
+      heal.healOnLaunch = savedHeal;
+      launchBaseline.capture = savedCapture;
+    }
+  });
 });

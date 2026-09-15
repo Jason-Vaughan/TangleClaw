@@ -56,6 +56,10 @@ The Coordinator's 3-item list left out the item about **why TC's edits to tracke
 
 Depends on 01.
 
+> **Operator ruling 2026-09-15 (Chunk 02 start): only `lastWrapSha` moves.** The other machine-state files stay where they are, handled by the local exclude (#1511) and the one-time un-track offer (#1512). Moving `session-prime.md` would break engine hooks already installed in other projects, and a moved tracked file becomes a deletion nobody commits. Chunk plan (archived with its PR): `.tangleclaw/plans/archive/bugfix-sprint-chunk-02-state-out-of-tracked.md`. The bullet below that says the files move is superseded by this ruling.
+>
+> **Owed after merge: `VRF-1512-untrack-offer`.** From a remote browser, check the session-files Stop tracking / Keep tracking prompt: the exact paths shown, neither choice preselected, both themes, phone width. Check that Stop tracking removes the paths in the wrap commit and the files stay on disk. Check that Keep tracking isn't asked again. Check that a launch writes the `BEGIN:tangleclaw-state` exclude block and the `TangleClaw housekeeping:` prime line. #1512 closes on merge, so this line is what keeps the check visible until it is done.
+
 - **NEW `[bug] Move TangleClaw's frequently changing machine state out of files projects track`.**
   - `lastWrapSha` and the other volatile keys move from `.tangleclaw/project.json` to an untracked state file TC owns. Durable config stays in `project.json`.
   - `medusa/registry.json` and the other machine-state files move under the same untracked location.
@@ -92,6 +96,7 @@ Touches `public/`, so it's built in a worktree. Visual change: yes.
 
 - Chunks 01 → 02 are serial: 02 depends on 01's registry.
 - 03 and 04 are independent of both and of each other. They could be delegated in parallel in separate worktrees once 01 has merged. Decide at the start of 02.
+- **Decided at the start of 02 (operator, 2026-09-15): 03, 04 and 05 are delegated in parallel worktrees now**, and Builder integrates them. 02 merges first, and the others rebase onto it.
 
 ## Docs & bookkeeping (every chunk)
 

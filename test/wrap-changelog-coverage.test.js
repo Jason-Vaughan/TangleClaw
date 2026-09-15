@@ -175,7 +175,7 @@ describe('changelog-coverage — evaluate()', () => {
   let saved;
   beforeEach(() => {
     saved = { ...cov._internal };
-    cov._internal.loadProjectConfig = () => ({ lastWrapSha: 'c1f94ac' });
+    cov._internal.readLastWrapSha = () => ({ sha: 'c1f94ac', read: 'recorded' });
     cov._internal.execSync = () => '';
   });
   afterEach(() => { Object.assign(cov._internal, saved); });
@@ -297,7 +297,7 @@ describe('changelog-coverage — evaluate()', () => {
   });
 
   it('UNAVAILABLE when no range resolves', () => {
-    cov._internal.loadProjectConfig = () => ({ lastWrapSha: null });
+    cov._internal.readLastWrapSha = () => ({ sha: null, read: 'absent' });
     cov._internal.execSync = () => { throw new Error('not a git repo'); };
     const out = cov.evaluate('/p', PATHS);
     assert.equal(out.verdict, cov.VERDICTS.UNAVAILABLE);
@@ -417,7 +417,7 @@ describe('changelog-coverage — evaluate()', () => {
   });
 
   it('survives an unreadable project config by falling back to the trunk range', () => {
-    cov._internal.loadProjectConfig = () => { throw new Error('no config'); };
+    cov._internal.readLastWrapSha = () => { throw new Error('no config'); };
     cov._internal.execSync = (cmd) => {
       if (cmd.startsWith('git log')) return gitLog([{ sha: 'a1', subject: 'Fix (#5)', files: ['CHANGELOG.md'] }]);
       return '';
@@ -460,7 +460,7 @@ describe('changelog-coverage — coverage globs (nested changelogs)', () => {
   let saved;
   beforeEach(() => {
     saved = { ...cov._internal };
-    cov._internal.loadProjectConfig = () => ({ lastWrapSha: 'c1f94ac' });
+    cov._internal.readLastWrapSha = () => ({ sha: 'c1f94ac', read: 'recorded' });
     cov._internal.execSync = () => '';
   });
   afterEach(() => { Object.assign(cov._internal, saved); });

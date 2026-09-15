@@ -2288,6 +2288,13 @@ body {
   color: var(--text-secondary);
   overflow-wrap: anywhere;
 }
+/* #1512 Stop / Keep tracking TangleClaw state; radios reuse the path-row look */
+.wrap-decision-untrack-paths {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
 .wrap-decision-note {
   margin: 8px 0 0;
   font-size: 0.8rem;

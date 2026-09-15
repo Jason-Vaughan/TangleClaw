@@ -244,14 +244,36 @@ describe('project.json', () => {
   const json = (o) => `${JSON.stringify(o, null, 2)}\n`;
   const base = { engine: 'claude', lastWrapSha: 'aaa', activePlan: 'a.md' };
 
-  it('only the wrap boundary stamp changing is state', () => {
+  it('removing the retired wrap boundary key is maintenance', () => {
+    const { lastWrapSha: _gone, ...migrated } = base;
+    const { root, dirty } = repoWith({ [P]: json(base) }, { [P]: json(migrated) });
+    assert.equal(tcOwned.judge(root, dirty).get(P), 'maintenance');
+  });
+
+  it('only the retired wrap boundary stamp changing is state — an upgrade is not asked about', () => {
     const { root, dirty } = repoWith({ [P]: json(base) }, { [P]: json({ ...base, lastWrapSha: 'bbb' }) });
     assert.equal(tcOwned.judge(root, dirty).get(P), 'state');
   });
 
+  it('a boundary stamp changing alongside an operator setting is not TangleClaw\'s', () => {
+    const { root, dirty } = repoWith({ [P]: json(base) }, { [P]: json({ ...base, lastWrapSha: 'bbb', activePlan: 'z.md' }) });
+    assert.equal(tcOwned.judge(root, dirty).has(P), false);
+  });
+
+  it('adding the wrap boundary key is not TangleClaw\'s', () => {
+    const { lastWrapSha: _gone, ...migrated } = base;
+    const { root, dirty } = repoWith({ [P]: json(migrated) }, { [P]: json(base) });
+    assert.equal(tcOwned.judge(root, dirty).has(P), false);
+  });
+
   it('default keys filled in by a save are maintenance', () => {
-    const { root, dirty } = repoWith({ [P]: json(base) }, { [P]: json({ ...base, lastWrapSha: 'bbb', silentPrime: DEFAULT_PROJECT_CONFIG.silentPrime }) });
+    const { lastWrapSha: _gone, ...migrated } = base;
+    const { root, dirty } = repoWith({ [P]: json(base) }, { [P]: json({ ...migrated, silentPrime: DEFAULT_PROJECT_CONFIG.silentPrime }) });
     assert.equal(tcOwned.judge(root, dirty).get(P), 'maintenance');
+  });
+
+  it('the untracked wrap state file is TangleClaw state', () => {
+    assert.equal(tcOwned.isStatePath('.tangleclaw/state.json'), true);
   });
 
   it('the legacy engine id rename is maintenance', () => {

@@ -79,6 +79,14 @@ describe('sessions', () => {
       assert.ok(prompt.includes('Session Start'));
     });
 
+    it('carries the launch heal report when there is one, and nothing when there is not (#1511)', () => {
+      const project = store.projects.getByName('prime-test');
+      const engine = store.engines.get('claude');
+      const line = 'TangleClaw housekeeping: moved lastWrapSha out of project.json into the untracked .tangleclaw/state.json. Nothing was committed.';
+      assert.ok(sessions.generatePrimePrompt(project, engine, { healReport: line }).includes(line));
+      assert.doesNotMatch(sessions.generatePrimePrompt(project, engine, { healReport: null }), /TangleClaw housekeeping/);
+    });
+
     it('names every rule source in force, in the engine\'s own config filename — never a hard-coded CLAUDE.md (#796)', () => {
       const project = store.projects.getByName('prime-test');
       const claude = store.engines.get('claude');

@@ -773,6 +773,27 @@
   }
 
   /**
+   * Descriptor for the one-time Stop tracking / Keep tracking offer (#1512):
+   * `session-files` halted because TangleClaw state files are tracked by git.
+   * Carries the exact paths, so the operator approves a named list, never a
+   * category. Returns `null` unless the step is the active `needs-operator`
+   * session-files blocker with a non-empty `untrackOffer.paths`.
+   *
+   * @param {object} stepRow - View-model from `buildStepRow`.
+   * @param {object} rawOutput - Raw `step.output` from the runner.
+   * @returns {{kind: 'untrack-offer', optionsKey: 'untrackState', paths: string[]}|null}
+   */
+  function untrackOfferWidget(stepRow, rawOutput) {
+    if (!stepRow || stepRow.kind !== 'session-files' || !stepRow.isBlocker) return null;
+    if (stepRow.status !== 'needs-operator') return null;
+    const offer = rawOutput && typeof rawOutput === 'object' ? rawOutput.untrackOffer : null;
+    if (!offer || !Array.isArray(offer.paths)) return null;
+    const paths = offer.paths.filter((p) => typeof p === 'string' && p);
+    if (paths.length === 0) return null;
+    return { kind: 'untrack-offer', optionsKey: 'untrackState', paths };
+  }
+
+  /**
    * Descriptor for the Cut / Hold choice (#1492 L3): `version-bump` halted
    * because whether this wrap cuts a release is the operator's decision and it
    * hasn't been made. Carries what would be cut, why the gate couldn't decide,
@@ -962,6 +983,12 @@
         }
       }
     }
+    // #1512 — Stop tracking (approve) or Keep tracking (decline) TangleClaw state.
+    // Only the two answers the server honors are sent; no answer means ask.
+    if (accessors.untrackState) {
+      const v = accessors.untrackState();
+      if (v === 'approve' || v === 'decline') options.untrackState = v;
+    }
     // #1492 — Release: Cut or Hold, from the wrap modal or the drawer's choice
     // under a halt. Auto is the absence of both and must NOT be sent: an
     // out-of-set value makes version-bump skip rather than follow the mode.
@@ -998,7 +1025,7 @@
    * chosen, which is what the page held before the reload taught it anything.
    *
    * @param {*} options - `status.options` for the run being followed.
-   * @returns {{release: string, bumpLevel: string, skipPreflight: boolean, pathDecisions: Object<string, string>, skipAiContent: Object<string, true>}}
+   * @returns {{release: string, bumpLevel: string, skipPreflight: boolean, pathDecisions: Object<string, string>, skipAiContent: Object<string, true>, untrackState: string}}
    */
   function replayChoicesFromOptions(options) {
     const o = options && typeof options === 'object' ? options : {};
@@ -1016,7 +1043,8 @@
         if (v === true) skipAiContent[stepId] = true;
       }
     }
-    return { release, bumpLevel, skipPreflight: o.skipPreflight === true, pathDecisions, skipAiContent };
+    const untrackState = o.untrackState === 'approve' || o.untrackState === 'decline' ? o.untrackState : '';
+    return { release, bumpLevel, skipPreflight: o.skipPreflight === true, pathDecisions, skipAiContent, untrackState };
   }
 
   /**
@@ -1546,6 +1574,7 @@
     prCheckResolutionWidget,
     pathDecisionWidget,
     releaseDecisionWidget,
+    untrackOfferWidget,
     replayChoicesFromOptions,
     accumulatePathDecisions,
     planPickerWidget,

@@ -34,6 +34,19 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-15 — TangleClaw state leaves the files projects track (#1510, #1511, #1512)
+
+<!-- prawduct: type=bugfix | scope=bugfix-sprint-chunk-02 -->
+
+Bugfix Sprint Chunk 02. The operator narrowed the plan: only `lastWrapSha` moves out of a tracked file. The other state files stay where they are and stop churning through a local exclude plus a one-time un-track offer, because moving `session-prime.md` would break engine hooks already installed in other projects.
+
+- **#1510:** the wrap boundary lives in the untracked `.tangleclaw/state.json` behind `lib/wrap-state.js`. It keeps the `recorded`/`absent`/`unreadable` contract (#797) and falls back to a legacy `project.json` value until the checkout is migrated. Every `store.projectConfig.save` moves the key out, but only when the boundary is safe elsewhere; an unreadable state file is never overwritten by a stale value. `_tc-owned-paths` judges the key's removal as maintenance and a changed-but-present stamp as state, so upgraded projects are not asked about it.
+- **#1511:** `lib/project-heal.js` runs at both launch paths, after the launch baseline (tested in that order). It migrates the key, writes a `BEGIN/END:tangleclaw-state` block into `info/exclude` (the common one in a worktree), and reports tracked state in one prime line. Patterns come from the same registry entries as the state matchers. Git runs read-only in the C locale; it never commits.
+- **#1512:** `session-files` asks Stop / Keep tracking for tracked state paths once Include / Leave is settled. `commit` removes only the paths `session-files` showed. `git commit <pathspec>` re-adds a `git rm --cached` path still on disk, so an approved untrack commits from a temporary index built on HEAD and then brings the real index level; the operator's staged work stays out. A decline is remembered in `state.json`.
+
+Known limit: an older TangleClaw on another clone re-adds `lastWrapSha` to `project.json` until every clone is upgraded. Reviews: three chunk reviews (the 02b one blocking: heal-after-baseline was untested), a cumulative review with two warnings fixed, and a clean verify-resolutions pass. Full suite green.
+
+
 ## 2026-09-15 — The wrap stops asking about TangleClaw's own files (#1508, #1509)
 
 <!-- prawduct: type=bugfix | scope=bugfix-sprint-chunk-01 -->

@@ -109,6 +109,7 @@ function harness() {
     wrapSkipPreflight: false,
     wrapBumpLevel: '',
     wrapReleaseChoice: '',
+    wrapUntrackState: '',
     currentWrapPassword: '',
     sessionStorage: {
       getItem: (k) => (storage.has(k) ? storage.get(k) : null),
@@ -373,6 +374,30 @@ describe('wrap-run wiring in session.js — executed', () => {
     h.net.post = { ok: true, runId: 'c'.repeat(32), status: 'wrapping' };
     await h.w.retryWrap();
     assert.equal(h.last('apiMutate')[2].options.release, 'hold', 'a retry re-runs version-bump, so the answer must hold');
+  });
+
+  it('#1512 — Retry sends a Stop / Keep tracking answer, and a later retry keeps it', async () => {
+    await wrapToBlocked(h);
+    const keep = { value: 'decline', checked: true, dataset: {} };
+    h.sandbox.document.getElementById = () => ({
+      disabled: false,
+      classList: { add() {}, remove() {} },
+      querySelector: (sel) => (sel.includes('wrap-decision--untrack') ? keep : null),
+      querySelectorAll: () => []
+    });
+    h.net.post = { ok: true, runId: RETRY_RUN, status: 'wrapping' };
+    await h.w.retryWrap();
+    assert.equal(h.last('apiMutate')[2].options.untrackState, 'decline', 'the drawer answer reaches the server');
+
+    // The retried run halts at a later step; the offer is no longer on screen.
+    const es = h.streams().find((s) => s.url.endsWith(RETRY_RUN));
+    es.emit('run-done', { result: { ...BLOCKED_RESULT, runId: RETRY_RUN } });
+    h.sandbox.document.getElementById = () => ({
+      disabled: false, classList: { add() {}, remove() {} }, querySelector: () => null, querySelectorAll: () => []
+    });
+    h.net.post = { ok: true, runId: 'c'.repeat(32), status: 'wrapping' };
+    await h.w.retryWrap();
+    assert.equal(h.last('apiMutate')[2].options.untrackState, 'decline', 'a retry re-runs session-files, so the answer must hold');
   });
 
   it('a 409 follows the run already in progress instead of reporting a failure', async () => {
