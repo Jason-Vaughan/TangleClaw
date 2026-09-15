@@ -69,4 +69,4 @@ Done when:
 
 ## Status
 
-- [ ] Chunk 01 — hook + this repo's script
+- [x] Chunk 01 — hook + this repo's script (Critic final + verify-resolutions clean; 2 verify observations accepted: drawer lists all changed paths while the body lists committed ones; stale body line on an unlikely retry path)
