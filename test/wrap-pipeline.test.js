@@ -540,6 +540,67 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       }
     });
 
+    it('announces in run-start exactly the steps this Retry reuses, before any step moves (#1515)', async () => {
+      // The drawer paints run-start's shape as pending rows. Learning a step was
+      // reused only when it settles made every Retry look like a fresh wrap.
+      const restore = stubRealHandlers(wrapPipeline);
+      const events = [];
+      try {
+        const now = Date.now();
+        await wrapPipeline.runWrapPipeline('pipeline-test', {
+          onStepEvent: (ev) => events.push(ev),
+          skipAiContent: { 'learnings-capture': true },
+          resumeFrom: {
+            'memory-update': { output: { capturedText: 'm', parsedFields: null }, capturedAt: now },
+            'learnings-capture': { output: { capturedText: 'l', parsedFields: null }, capturedAt: now },
+            commit: { output: { capturedText: 'x' }, capturedAt: now }
+          }
+        });
+        const start = events[0];
+        assert.equal(start.type, 'run-start');
+        const reused = start.steps.filter((s) => s.reused === true).map((s) => s.stepId);
+        assert.equal(defaultPipeline.steps().find((s) => s.id === 'learnings-capture').allowOverride, true,
+          'this test needs a skippable content step; pick another if learnings-capture stops allowing a skip');
+        assert.deepStrictEqual(reused, ['memory-update'],
+          'the same predicate the loop reads: a skipped-and-noted step and a non-content step are not announced as reused');
+        const settled = events.find((e) => e.type === 'step-done' && e.stepId === 'memory-update');
+        assert.equal(settled.output.resumed, true, 'what run-start announced is what the step then did');
+        for (const s of start.steps) {
+          if (s.reused !== true) assert.ok(!('reused' in s), `${s.stepId} carries no reused key when it is not reused`);
+        }
+      } finally {
+        restore();
+      }
+    });
+
+    it('a run with nothing to reuse announces the plain shape (#1515)', async () => {
+      const restore = stubRealHandlers(wrapPipeline);
+      const events = [];
+      try {
+        await wrapPipeline.runWrapPipeline('pipeline-test', { onStepEvent: (ev) => events.push(ev) });
+        assert.ok(events[0].steps.every((s) => Object.keys(s).sort().join() === 'kind,stepId'));
+      } finally {
+        restore();
+      }
+    });
+
+    it('a step disabled by project config is not announced as reused, even with a capture to reuse (#1515)', async () => {
+      const restore = stubRealHandlers(wrapPipeline);
+      const load = store.projectConfig.load;
+      store.projectConfig.load = () => ({ wrapStepOverrides: { 'memory-update': { enabled: false } } });
+      const events = [];
+      try {
+        await wrapPipeline.runWrapPipeline('pipeline-test', {
+          onStepEvent: (ev) => events.push(ev),
+          resumeFrom: { 'memory-update': { output: { capturedText: 'm', parsedFields: null }, capturedAt: Date.now() } }
+        });
+        assert.equal(events[0].steps.find((s) => s.stepId === 'memory-update').reused, undefined);
+      } finally {
+        store.projectConfig.load = load;
+        restore();
+      }
+    });
+
     it('never reuses for a non-content step, whatever resumeFrom names', async () => {
       const restore = stubRealHandlers(wrapPipeline);
       let commitRan = false;

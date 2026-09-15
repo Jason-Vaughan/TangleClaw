@@ -4354,6 +4354,9 @@ function renderStepRow(row) {
   li.className = 'wrap-step-row';
   if (row.isBlocker) li.classList.add('wrap-step-row--blocker');
   else if (row.warning) li.classList.add('wrap-step-row--warning');
+  // #1515 — a step a Retry reuses from the halted attempt, so the Retry does not
+  // read as the whole wrap starting over.
+  if (row.reused) li.classList.add('wrap-step-row--reused');
   li.dataset.stepId = row.id;
   li.dataset.kind = row.kind;
 

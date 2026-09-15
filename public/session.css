@@ -2051,6 +2051,11 @@ body {
 .wrap-step-row--warning {
   background: rgba(245, 158, 11, 0.04);
 }
+/* #1515 — reused from the halted attempt: set apart from the rows this Retry
+   actually runs, without the tint the blocker and warning rows use. */
+.wrap-step-row--reused .wrap-step-label {
+  color: var(--text-secondary);
+}
 .wrap-step-main {
   display: flex;
   flex-direction: column;
@@ -2185,6 +2190,13 @@ body {
 .wrap-step-status--needs-operator {
   background: #78350f33;
   color: #fbbf24;
+}
+/* #1515 — "Reused" / "Will reuse": outlined rather than filled, so it reads as
+   carried over from the halted attempt rather than as work this Retry did. */
+.wrap-step-status--reused {
+  background: transparent;
+  color: #4ade80;
+  box-shadow: inset 0 0 0 1px #16653499;
 }
 .wrap-drawer-decision {
   /* Natural height, no inner scroll: .wrap-drawer-body scrolls it (#1491). */
