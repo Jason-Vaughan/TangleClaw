@@ -6,11 +6,11 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
-- **Switchboard and command messages up to 64 KB now go through, and a longer one says why it failed** (#1514). The switchboard send, loop and loop-feedback routes (for projects and the Project Master) and the session command route used the 10 KB default body limit. An ordinary long hand-off got a 413 that the page never showed, so the send just failed.
+- **Switchboard and command messages up to 64 KB now go through, and a longer one says why it failed** (#1514). The switchboard send, loop and loop-feedback routes (for projects and the Project Master), the session command route, and the wrap's "ask the session to fix this" and wrap-complete routes used the 10 KB default body limit. An ordinary long hand-off got a 413 that the page never showed, so the send just failed.
   - These routes now take up to 64 KB. The number lives in one place on the server, and the switchboard status serves it to the page.
   - A 413 now carries `limitBytes` and `receivedBytes`. `receivedBytes` is exact when the request declared its length, and is marked as a lower bound when it didn't.
   - The loop setup modal and the loop feedback box show a live size count, which turns amber near the limit and red over it. A send over the limit is stopped before it goes out.
-  - A refused loop, feedback or command send now reads "message is X KB, limit is 64 KB". The command bar used to show nothing at all when a command was refused; it now shows the server's reason.
+  - A refused loop, feedback, command or update-prompt send now reads "message is X KB, limit is 64 KB". The command bar used to show nothing at all when a command was refused; it now shows the server's reason.
   - `tc message send` reports the same sentence, with the `BODY_TOO_LARGE` code.
 
 - **The wrap no longer asks about TangleClaw's own files** (#1508, #1509). When TangleClaw rewrote a tracked file and that edit missed a commit (usually the guide block in the engine config file), the file counted as "already uncommitted at launch" in every later session, so every wrap stopped to ask Include or Leave about it. The wrap now sorts TangleClaw's files out before asking:

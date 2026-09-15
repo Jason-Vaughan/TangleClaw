@@ -507,7 +507,7 @@ TangleClaw's HTTP API lives under `/api/`; the tables below are the reference. A
 { "error": "Human-readable message", "code": "MACHINE_READABLE_CODE" }
 ```
 
-**Request body limits.** A request body is capped at 10 KB unless its route sets its own cap. Routes that carry a message someone wrote allow 64 KB: the switchboard `send`, `loop` and `loops/:loopId/continue` routes (under both `/api/sessions/:project/medusa` and `/api/master/medusa`) and `/api/sessions/:project/command`. The switchboard `status` response serves that limit as `messageLimitBytes`. An over-limit body gets **413** `BODY_TOO_LARGE` with two extra fields: `limitBytes` (the cap that route enforced) and `receivedBytes`. `receivedBytes` is exact when the request sent a `Content-Length`. Without one, reading stops at the limit and the full size is never known, so `receivedBytes` is the count at that point and `receivedBytesIsLowerBound: true` is added.
+**Request body limits.** A request body is capped at 10 KB unless its route sets its own cap. Every route that carries prose someone wrote into a session allows 64 KB: the switchboard `send`, `loop` and `loops/:loopId/continue` routes (under both `/api/sessions/:project/medusa` and `/api/master/medusa`), `/api/sessions/:project/command`, `/api/sessions/:project/wrap/handback` and `/api/sessions/:project/wrap/complete`. A route's own content cap still applies on top — `/command` refuses a `command` over 4096 characters with a **400**. An over-limit body is a **413** `BODY_TOO_LARGE` carrying `limitBytes` and `receivedBytes`, plus `receivedBytesIsLowerBound: true` when the request had no `Content-Length`, so the count is a floor rather than the total.
 
 ### Core
 
