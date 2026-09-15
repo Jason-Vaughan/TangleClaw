@@ -322,7 +322,7 @@ describe('the AI prompts name the range the wrap\'s checks judge', () => {
       assert.doesNotMatch(step.prompt, /git add -A/, `${step.id} still describes the sweep`);
     }
     const scoped = defaultPipeline.steps().filter((s) => typeof s.prompt === 'string' && s.prompt.includes('{sessionScope}')).map((s) => s.id);
-    assert.deepEqual(scoped.sort(), ['changelog-update', 'memory-update']);
+    assert.deepEqual(scoped.sort(), ['changelog-update', 'memory-update', 'release-recommendation']);
   });
 
   it('hands the AI the launch-based first-parent range', () => {

@@ -246,6 +246,24 @@ describe('continuity-write wrap step (CC-1)', () => {
     assert.match(raw, /## Where we are\nSplit the capture contract\./);
   });
 
+  it('records the release decision and the AI recommendation in Freshness (#1492)', async () => {
+    const res = await step.run(ctxWithSession(
+      { id: 79, engineId: 'claude' },
+      [
+        { stepId: 'version-bump', kind: 'version-bump', status: 'done', output: {
+          from: '1.2.3', to: '1.3.0', bumpLevel: 'minor', releaseMode: 'auto', decidedBy: 'readiness',
+          readiness: { verdict: 'ready', reason: 'all signals pass', signals: [] },
+          recommendation: { state: 'given', value: 'cut', operatorIntent: '"cut a release"', reason: 'done' }
+        } },
+        { stepId: 'memory-update', status: 'done', output: { parsedFields: { summary: 'Released.', nextSteps: '- next', learnings: 'none' } } }
+      ]
+    ));
+    assert.equal(res.output.wrapSummaryWritten, true);
+    const raw = fs.readFileSync(continuity.wrapSummaryPath(project.path, 79), 'utf8');
+    assert.match(raw, /## Freshness\n[\s\S]*- tier: [\w-]+\n- release: cut 1\.2\.3 → 1\.3\.0 \(minor\), decided by the release checks; AI recommended cut \(operator: "cut a release"\)\n/);
+    assert.match(raw, /## Decisions\n_⚠ not captured_/, 'the AI\'s own Decisions section keeps its honest flag');
+  });
+
   it('honors a project-configured wrapSections selection (CC-6, #381)', async () => {
     // Persist a per-project wrap-section override: only Where we are + Freshness
     // (Next action is forced in regardless). The step should read project.json
@@ -721,5 +739,37 @@ describe('continuity-write ← ai-content: judgment sections cross the step boun
     const flagged = [...doc.matchAll(/^## (.+)\n_⚠ not captured_$/gm)].map((m) => m[1]);
     assert.deepEqual(flagged.sort(), ['Decisions', 'Delta', 'Open threads', 'Pointers']);
     assert.match(doc, /## Where we are\nbody of Summary/, 'the captured sections still render');
+  });
+});
+
+describe('continuity-write _releaseFreshnessLine (#1492)', () => {
+  const bump = (status, output) => [{ stepId: 'version-bump', kind: 'version-bump', status, output: {
+    releaseMode: 'auto', readiness: { verdict: 'ready', reason: 'r', signals: [] }, ...output
+  } }];
+
+  it('has no line when version-bump never reached the release gate', () => {
+    assert.equal(step._releaseFreshnessLine([]), null);
+    assert.equal(step._releaseFreshnessLine(undefined), null);
+    assert.equal(step._releaseFreshnessLine([{ stepId: 'version-bump', status: 'skipped', output: { reason: 'releaseMode is off' } }]), null);
+  });
+
+  it('names a cut and who decided it', () => {
+    assert.equal(step._releaseFreshnessLine(bump('done', { from: '1.0.0', to: '1.0.1', bumpLevel: 'patch', decidedBy: 'operator' })),
+      '- release: cut 1.0.0 → 1.0.1 (patch), decided by the operator');
+  });
+
+  it('names a hold, what it would have cut, the recommendation and a disagreement', () => {
+    assert.equal(step._releaseFreshnessLine(bump('skipped', {
+      held: true, decidedBy: 'operator', disagreement: true,
+      wouldBump: { from: '1.0.0', to: '1.1.0', bumpLevel: 'minor' },
+      recommendation: { state: 'given', value: 'hold', operatorIntent: 'none stated', reason: '' }
+    })), '- release: held (would cut 1.0.0 → 1.1.0), decided by the operator; AI recommended hold; the release checks and the AI disagreed');
+  });
+
+  it('says so when the wrap went on past an unanswered release question, and why there was no recommendation', () => {
+    assert.equal(step._releaseFreshnessLine(bump('needs-operator', {
+      held: true, needsOperator: true, wouldBump: { from: '1.0.0', to: '1.1.0' },
+      recommendation: { state: 'absent', reason: 'the release-recommendation step did not finish (blocked)' }
+    })), '- release: undecided (would cut 1.0.0 → 1.1.0) — the wrap went on without an answer; no AI recommendation (the release-recommendation step did not finish (blocked))');
   });
 });

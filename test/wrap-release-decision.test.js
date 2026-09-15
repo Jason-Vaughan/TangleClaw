@@ -171,6 +171,27 @@ describe('releaseDecisionWidget', () => {
     assert.equal(H.releaseDecisionWidget(rowOf(noWould), noWould.output), null);
   });
 
+  it('carries the AI recommendation and a disagreement, or says why there is none', () => {
+    const raw = haltedBump();
+    raw.output.recommendation = { state: 'given', value: 'hold', operatorIntent: '"saving state"', reason: 'mid-feature' };
+    raw.output.disagreement = true;
+    const w = H.releaseDecisionWidget(rowOf(raw), raw.output);
+    assert.deepEqual({ ...w.recommendation }, { value: 'hold', operatorIntent: '"saving state"', reason: 'mid-feature' });
+    assert.equal(w.recommendationNote, '');
+    assert.equal(w.disagreement, true);
+
+    const absent = haltedBump();
+    absent.output.recommendation = { state: 'absent', reason: 'the release-recommendation step did not finish (blocked)' };
+    const a = H.releaseDecisionWidget(rowOf(absent), absent.output);
+    assert.equal(a.recommendation, null);
+    assert.equal(a.recommendationNote, 'the release-recommendation step did not finish (blocked)');
+    assert.equal(a.disagreement, false);
+
+    const legacy = H.releaseDecisionWidget(rowOf(haltedBump()), haltedBump().output);
+    assert.equal(legacy.recommendation, null, 'an output recorded before the recommendation existed still renders');
+    assert.equal(legacy.recommendationNote, '');
+  });
+
   it('is not handed to the session to fix: only the operator decides a release', () => {
     assert.equal(rowOf(haltedBump()).agentResolvable, false);
   });
@@ -180,6 +201,19 @@ describe('the version-bump row detail', () => {
   it('names what is at stake on a halt', () => {
     assert.equal(H.buildStepRow(haltedBump(), { blockedAt: 'version-bump' }).detail,
       'release decision needed: would cut 1.2.3 → 1.3.0');
+  });
+
+  it('says when the halt is a disagreement between the checks and the AI', () => {
+    const raw = haltedBump();
+    raw.output.disagreement = true;
+    assert.equal(H.buildStepRow(raw, { blockedAt: 'version-bump' }).detail,
+      'release decision needed: would cut 1.2.3 → 1.3.0 · the release checks and the AI disagree');
+  });
+
+  it('names the AI recommendation beside a cut', () => {
+    const cut = { stepId: 'version-bump', kind: 'version-bump', status: 'done', blockers: [],
+      output: { from: '1.2.3', to: '1.3.0', decidedBy: 'operator', recommendation: { state: 'given', value: 'hold' } } };
+    assert.equal(H.buildStepRow(cut, {}).detail, '1.2.3 → 1.3.0 (your call) · AI recommended hold');
   });
 
   it('marks a cut the operator decided, and leaves a gate-decided cut plain', () => {
@@ -334,12 +368,13 @@ describe('renderReleaseDecisionWidget (run)', () => {
    *
    * @returns {object} The widget's root element.
    */
-  function render() {
+  function render(adjust = () => {}) {
     const { doc } = makeDocument([]);
     const ctx = { document: doc };
     vm.createContext(ctx);
     vm.runInContext(liftFunction(SESSION_SRC, 'function renderReleaseDecisionWidget(widget)'), ctx);
     const raw = haltedBump();
+    adjust(raw.output);
     const widget = H.releaseDecisionWidget(H.buildStepRow(raw, { blockedAt: 'version-bump' }), raw.output);
     return ctx.renderReleaseDecisionWidget(widget);
   }
@@ -360,6 +395,22 @@ describe('renderReleaseDecisionWidget (run)', () => {
     assert.match(text, /It would be 1\.2\.3 → 1\.3\.0 \(minor\)/);
     assert.match(text, /Release mode ask\. Release checks: ready/);
     assert.match(text, /build-plan-status: n\/a — no active build plan/);
+  });
+
+  it('shows the AI recommendation with the operator\'s words, and flags a disagreement', () => {
+    const text = all(render((o) => {
+      o.recommendation = { state: 'given', value: 'hold', operatorIntent: '"saving state"', reason: 'Mid-feature save.' };
+      o.disagreement = true;
+    })).map((n) => n.textContent || '').join('\n');
+    assert.match(text, /The release checks and the AI disagree\. AI recommends hold\. You said "saving state"\. Mid-feature save\./);
+  });
+
+  it('says why there is no AI recommendation', () => {
+    const text = all(render((o) => {
+      o.recommendation = { state: 'absent', reason: 'releaseMode is ask' };
+    })).map((n) => n.textContent || '').join('\n');
+    assert.match(text, /No AI recommendation: releaseMode is ask/);
+    assert.match(all(render()).map((n) => n.textContent || '').join('\n'), /No AI recommendation\./);
   });
 
   it('offers Cut and Hold with neither preselected', () => {

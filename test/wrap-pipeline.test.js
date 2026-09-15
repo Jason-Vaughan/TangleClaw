@@ -508,6 +508,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
         await wrapPipeline.runWrapPipeline('pipeline-test', {
           resumeFrom: {
             'changelog-update': { output: { capturedText: 'a', parsedFields: null }, capturedAt: now },
+            'release-recommendation': { output: { capturedText: 'r', parsedFields: null }, capturedAt: now },
             'learnings-capture': { output: { capturedText: 'b', parsedFields: null }, capturedAt: now }
           }
         });
@@ -618,6 +619,67 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
         assert.equal(held.results.find((r) => r.stepId === 'version-bump').status, 'skipped');
         assert.equal(held.results.find((r) => r.stepId === 'commit').status, 'done');
       } finally {
+        restore();
+      }
+    });
+
+    it('an AI recommendation that disagrees with ready checks halts before commit, and a Hold Retry reuses it (#1492 L2)', async () => {
+      const releasePath = path.join(tmpDir, 'release-disagree');
+      fs.mkdirSync(path.join(releasePath, '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(path.join(releasePath, '.tangleclaw', 'project.json'), JSON.stringify({ releaseMode: 'auto' }));
+      fs.writeFileSync(path.join(releasePath, 'version.json'), JSON.stringify({ version: '1.0.0' }));
+      fs.writeFileSync(path.join(releasePath, 'CHANGELOG.md'),
+        '# Changelog\n\n## [Unreleased]\n\n### Fixed\n- a fix\n\n## [1.0.0] - 2026-09-01\n\n- first\n');
+      store.projects.create({ name: 'release-disagree', path: releasePath });
+
+      const restore = stubRealHandlers(wrapPipeline, ['version-bump', 'ai-content']);
+      const original = wrapPipeline.STEP_DISPATCH['ai-content'];
+      const prompted = [];
+      wrapPipeline.STEP_DISPATCH['ai-content'] = {
+        run: async (ctx) => {
+          prompted.push(ctx.step.id);
+          if (ctx.step.id !== 'release-recommendation') {
+            return { ok: true, status: 'done', output: { capturedText: 'x', parsedFields: null }, blockers: [] };
+          }
+          const verdict = require('../lib/wrap-steps/ai-content').preconditionVerdict(ctx.step, ctx.project, ctx.options);
+          if (!verdict.open) return { ok: true, status: 'skipped', output: { reason: verdict.reason }, blockers: [] };
+          return {
+            ok: true,
+            status: 'done',
+            output: {
+              capturedText: 'raw',
+              parsedFields: { releaseRecommendation: 'hold', operatorIntent: '"saving state before I leave"' },
+              capturedAt: Date.now()
+            },
+            blockers: []
+          };
+        }
+      };
+      try {
+        const halted = await wrapPipeline.runWrapPipeline('release-disagree');
+        assert.equal(halted.blockedAt, 'version-bump');
+        const bump = halted.results.find((r) => r.stepId === 'version-bump');
+        assert.equal(bump.status, 'needs-operator');
+        assert.equal(bump.output.readiness.verdict, 'ready');
+        assert.equal(bump.output.disagreement, true);
+        assert.match(bump.output.reason, /AI recommends holding: you said "saving state before I leave"/);
+        assert.equal(halted.results.find((r) => r.stepId === 'commit').status, 'pending');
+
+        const recResult = halted.results.find((r) => r.stepId === 'release-recommendation');
+        prompted.length = 0;
+        const held = await wrapPipeline.runWrapPipeline('release-disagree', {
+          release: 'hold',
+          resumeFrom: { 'release-recommendation': { output: recResult.output, capturedAt: recResult.output.capturedAt } }
+        });
+        assert.ok(!prompted.includes('release-recommendation'), 'the Retry reuses the recommendation instead of asking again');
+        assert.equal(held.blockedAt, null);
+        const heldBump = held.results.find((r) => r.stepId === 'version-bump');
+        assert.equal(heldBump.status, 'skipped');
+        assert.equal(heldBump.output.decidedBy, 'operator');
+        assert.equal(heldBump.output.recommendation.value, 'hold');
+        assert.equal(held.results.find((r) => r.stepId === 'commit').status, 'done');
+      } finally {
+        wrapPipeline.STEP_DISPATCH['ai-content'] = original;
         restore();
       }
     });
