@@ -444,6 +444,24 @@ describe('#1508/#1509: TangleClaw\'s own files dirty at launch are not asked abo
     assert.equal(git(repo, 'status', '--porcelain', '--', '.tangleclaw/session-prime.md'), 'M .tangleclaw/session-prime.md', 'state stays uncommitted');
   });
 
+  it('a project upgraded with an old boundary stamp dirty at launch is not asked about it (#1510)', async () => {
+    const repo = makeRepo();
+    fs.mkdirSync(path.join(repo, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(path.join(repo, '.tangleclaw', 'project.json'), config('aaa'));
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'tracked project.json');
+    // The last wrap before the upgrade stamped a new boundary into the tracked file.
+    fs.writeFileSync(path.join(repo, '.tangleclaw', 'project.json'), config('bbb'));
+    const baseline = launchBaseline.capture(repo);
+    fs.writeFileSync(path.join(repo, 'mine.js'), 'session work\n');
+    const scope = await scopeFor(repo, baseline);
+    assert.equal(scope.snapshotApplies, true, 'fixture precondition: project.json is dirty at launch per the snapshot');
+
+    const files = await runStep(sessionFiles, repo, scope);
+    assert.equal(files.status, 'done', files.blockers.join('; '));
+    assert.deepEqual(files.output.tangleclawState, ['.tangleclaw/project.json']);
+  });
+
   it('one operator line outside the managed block still asks, exactly as before', async () => {
     const { repo, scope } = await tangleclawWritesThenSession({ operatorLine: 'My own line.' });
     const files = await runStep(sessionFiles, repo, scope);

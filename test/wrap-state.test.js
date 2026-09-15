@@ -125,6 +125,13 @@ describe('stamping the boundary', () => {
     assert.equal(wrapState.readLastWrapSha(dir).sha, 'abc1234');
   });
 
+  it('removes its temp file when the write fails', () => {
+    const dir = project();
+    fs.mkdirSync(wrapState.statePath(dir), { recursive: true }); // a directory where the file goes: rename fails
+    assert.throws(() => wrapState.stampLastWrapSha(dir, 'abc1234', { now: NOW }));
+    assert.deepEqual(fs.readdirSync(path.join(dir, '.tangleclaw')), ['state.json']);
+  });
+
   it('leaves no temp file behind', () => {
     const dir = project();
     wrapState.stampLastWrapSha(dir, 'abc1234', { now: NOW });
@@ -167,6 +174,19 @@ describe('migrating project.json', () => {
     assert.equal(wrapState.readLastWrapSha(dir).read, 'absent');
   });
 
+  it('never overwrites an unreadable state file with the legacy value, and keeps the key', () => {
+    const dir = project({ engine: 'claude', lastWrapSha: 'legacy1' });
+    fs.mkdirSync(path.dirname(wrapState.statePath(dir)), { recursive: true });
+    fs.writeFileSync(wrapState.statePath(dir), '{ corrupt');
+    const configBefore = configBytes(dir);
+    const r = wrapState.migrateProjectConfig(dir, { now: NOW });
+    assert.equal(r.migrated, false);
+    assert.match(r.reason, /could not be read/);
+    assert.equal(fs.readFileSync(wrapState.statePath(dir), 'utf8'), '{ corrupt', 'the unreadable record is not replaced by a stale one');
+    assert.equal(configBytes(dir), configBefore, 'the legacy copy is the only one left, so it stays');
+    assert.equal(wrapState.readLastWrapSha(dir).read, 'unreadable');
+  });
+
   it('leaves an unparseable project.json untouched', () => {
     const dir = project('{ not json');
     const r = wrapState.migrateProjectConfig(dir, { now: NOW });
@@ -198,6 +218,15 @@ describe('store.projectConfig.save never writes the boundary back', () => {
     store.projectConfig.save(dir, cfg);
     assert.equal(Object.prototype.hasOwnProperty.call(JSON.parse(configBytes(dir)), 'lastWrapSha'), false);
     assert.equal(wrapState.readLastWrapSha(dir).sha, 'legacy1');
+  });
+
+  it('keeps the key when the state file is unreadable, and does not overwrite it', () => {
+    const dir = project({ engine: 'claude', lastWrapSha: 'legacy1' });
+    fs.mkdirSync(path.dirname(wrapState.statePath(dir)), { recursive: true });
+    fs.writeFileSync(wrapState.statePath(dir), JSON.stringify({ schema: 99 }));
+    store.projectConfig.save(dir, store.projectConfig.load(dir));
+    assert.equal(JSON.parse(configBytes(dir)).lastWrapSha, 'legacy1');
+    assert.equal(fs.readFileSync(wrapState.statePath(dir), 'utf8'), JSON.stringify({ schema: 99 }));
   });
 
   it('keeps the key when the state file cannot be written, so nothing is lost', () => {

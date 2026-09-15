@@ -250,8 +250,13 @@ describe('project.json', () => {
     assert.equal(tcOwned.judge(root, dirty).get(P), 'maintenance');
   });
 
-  it('a changed wrap boundary key is not TangleClaw\'s — no current writer puts it there', () => {
+  it('only the retired wrap boundary stamp changing is state — an upgrade is not asked about', () => {
     const { root, dirty } = repoWith({ [P]: json(base) }, { [P]: json({ ...base, lastWrapSha: 'bbb' }) });
+    assert.equal(tcOwned.judge(root, dirty).get(P), 'state');
+  });
+
+  it('a boundary stamp changing alongside an operator setting is not TangleClaw\'s', () => {
+    const { root, dirty } = repoWith({ [P]: json(base) }, { [P]: json({ ...base, lastWrapSha: 'bbb', activePlan: 'z.md' }) });
     assert.equal(tcOwned.judge(root, dirty).has(P), false);
   });
 
