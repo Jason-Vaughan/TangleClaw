@@ -4,6 +4,17 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Internal
+
+- **Plans for the next two pieces of work.** `.tangleclaw/plans/bugfix-sprint-wrap-noise.md` covers four chunks:
+  - Stop the wrap asking about TangleClaw's own files, and commit TangleClaw's edits to tracked files only when the diff is provably TangleClaw's.
+  - Move frequently changing state (such as `lastWrapSha`) out of tracked files, and repair projects on launch through `.git/info/exclude`.
+  - Check file contents for secrets in the wrap, reusing `lib/secret-scan.js`.
+  - Raise the 10 KB request limit on the switchboard and command routes to 64 KB, with a clear error when a message is too large.
+
+  The sprint rests on a read-only scan of every registered project: of 36 with uncommitted files, most of those files were TangleClaw's. `.tangleclaw/plans/train-20-stranded-wraps-chunking.md` splits Train 20 (surfacing stranded wraps, #868) into four chunks. Plans only; no code changed. A step-by-step `tc start` launch and grouped sessions were deferred to later work. Filed #1507: when switchboard delivery clears a pane's prompt, the log records the terminal's status footer instead of the operator's draft.
+- **Bugfix Sprint filed as issues, and the finished Train 9 plans archived.** The sprint plan now lists its issues: #1508–#1514 for chunks 01–04, plus a chunk 05 for two wrap problems found the same day. #1515: after a Retry, the wrap drawer shows every step as pending again even though the server reused the finished steps. #1516: when several plans are in progress, the wrap should drop any plan whose issues are all closed instead of asking which one to use. `train-9-tier1-auth-chunking.md` and `train-9-chunk-01.md` moved to `.tangleclaw/plans/archive/`: every issue they cite (#1416–#1420) is closed, and the first one was still showing up in the wrap's plan picker.
+
 ## [5.27.0] - 2026-09-14
 
 ### Added
