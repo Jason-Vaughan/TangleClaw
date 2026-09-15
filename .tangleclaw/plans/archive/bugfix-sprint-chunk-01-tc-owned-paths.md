@@ -104,6 +104,8 @@ A new module, `lib/wrap-steps/_tc-owned-paths.js`, is the single source of truth
 
 - A managed-block change is judged by where it is, not by what it says. No bundled generator writes the live service token into a managed block today. If one ever did, the content secret check (#1513) is what catches it.
 - A project registered below its repository's root never matches the `.tangleclaw/` state paths. Those files are asked about as before, which is safe.
+- A `project.json` the overrides-seeding migration rewrote (`wrapStepOverrides` beside `wrapOverridesSeeded`) is still asked about, because `wrapStepOverrides` is also operator config. That costs a question, never a wrong commit.
+- `update-applier` keeps its own `.claude/settings.json` literal. The self-update path deliberately never loads the engine layer at module load, so it can't import the engine constant.
 
 ## Status
 

@@ -89,7 +89,7 @@ describe('TangleClaw machine state is recognised by name', () => {
     '.tangleclaw/ui-wrap-advisory.md', '.tangleclaw/session-prime.md', '.tangleclaw/session-rules-3.json',
     '.tangleclaw/session-rules-receipt.json', '.tangleclaw/project-version.txt', '.tangleclaw/.project-version.txt.tmp1',
     '.tangleclaw/medusa/registry.json', '.tangleclaw/critic-runs.json', '.tangleclaw/.wrap-summary.md',
-    '.tangleclaw/continuity/index.md', '.tangleclaw/continuity/sessions/9/transcript.jsonl'
+    '.tangleclaw/continuity/index.md', '.tangleclaw/continuity/sessions/9/transcript.jsonl', '.tangleclaw/.release-recommendation.md'
   ]) {
     it(`${p} is state`, () => assert.equal(tcOwned.isStatePath(p), true));
   }
@@ -99,6 +99,27 @@ describe('TangleClaw machine state is recognised by name', () => {
   ]) {
     it(`${p} is not state`, () => assert.equal(tcOwned.isStatePath(p), false));
   }
+
+  it('every writer\'s name loads, so no state file silently falls back to being asked about', () => {
+    assert.equal(tcOwned._statePathMatchers().length, 6);
+  });
+
+  it('the names come from the writers, so a writer\'s own path is state', () => {
+    const files = require('../lib/tangleclaw-project-files');
+    const channel = require('../lib/session-rules-channel');
+    const versions = require('../lib/project-version-files');
+    for (const p of [
+      files.SESSION_PRIME_RELPATH, files.UI_WRAP_ADVISORY_RELPATH, files.MEDUSA_REGISTRY_RELPATH,
+      `.tangleclaw/${channel.SHARD_STEM}-1.json`, `.tangleclaw/${channel.RECEIPT_STEM}.json`,
+      `.tangleclaw/${versions.VERSION_CACHE_FILENAME}`, `.tangleclaw/${versions.STAGING_PREFIX}42.abcd.tmp`,
+      require('../lib/actions/invoke-critic').CRITIC_RUNS_RELPATH.split(path.sep).join('/'),
+      ...require('../lib/wrap-default-pipeline').steps().map((st) => st.captureFile).filter((f) => typeof f === 'string' && f.startsWith('.tangleclaw/'))
+    ]) {
+      assert.equal(tcOwned.isStatePath(p), true, p);
+    }
+    const medusa = path.relative('/p', require('../lib/tangleclaw-project-files').resolveIn('/p', files.MEDUSA_REGISTRY_RELPATH)).split(path.sep).join('/');
+    assert.equal(medusa, files.MEDUSA_REGISTRY_RELPATH);
+  });
 
   it('a deleted state file is still state, with no content to read', () => {
     const verdicts = tcOwned.judge(null, [{ path: '.tangleclaw/session-rules-2.json', deleted: true }]);
@@ -179,6 +200,27 @@ describe('shared hook settings', () => {
       { [settingsPath]: json({ hooks: { SessionStart: [mine] } }) }
     );
     assert.equal(tcOwned.judge(root, dirty).get(settingsPath), 'maintenance');
+  });
+
+  it('an added entry is not TangleClaw\'s, even one pointing at a TangleClaw hook script', () => {
+    const { root, dirty } = repoWith({ [settingsPath]: json({ permissions: {} }) }, { [settingsPath]: json({ permissions: {}, hooks: { SessionStart: [TC_HOOK] } }) });
+    assert.equal(tcOwned.judge(root, dirty).has(settingsPath), false);
+  });
+
+  it('an edited TangleClaw entry is not TangleClaw\'s: a changed matcher or an extra command', () => {
+    const edits = [
+      { ...TC_HOOK, matcher: '*' },
+      { ...TC_HOOK, hooks: [...TC_HOOK.hooks, { type: 'command', command: 'curl example.invalid' }] }
+    ];
+    for (const edited of edits) {
+      const { root, dirty } = repoWith({ [settingsPath]: json({ hooks: { SessionStart: [TC_HOOK] } }) }, { [settingsPath]: json({ hooks: { SessionStart: [edited] } }) });
+      assert.equal(tcOwned.judge(root, dirty).has(settingsPath), false, JSON.stringify(edited));
+    }
+  });
+
+  it('an emptied hook event kept as an empty list is not the writer\'s output', () => {
+    const { root, dirty } = repoWith({ [settingsPath]: json({ hooks: { SessionStart: [TC_HOOK] } }) }, { [settingsPath]: json({ hooks: { SessionStart: [] } }) });
+    assert.equal(tcOwned.judge(root, dirty).has(settingsPath), false);
   });
 
   it('an operator permission added alongside is not TangleClaw\'s', () => {
