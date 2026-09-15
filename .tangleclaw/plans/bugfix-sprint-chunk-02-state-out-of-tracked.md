@@ -184,5 +184,13 @@ In `session-files`, after `classify`:
     - R-2 (the prime promised the offer), which 02c builds;
     - R-4/R-6: an explicit `failed` flag on the migration, git run in the C locale, and problems logged by value.
   - R-7 is accepted as a known limit (below).
-- [ ] 02c — un-track offer (session-files, commit, drawer widget, option sanitizers), with tests; Critic chunk
+- [x] 02c — un-track offer (session-files, commit, drawer widget, option sanitizers), with tests; Critic chunk
+  - Built in `f2bd57a5`, with docs.
+  - Cumulative review `rev-20260915T215649Z-7ca483e1`: 0 blocking, 2 warnings, both fixed in `855ea560`.
+    - An approved untrack was dropped on a clean tree.
+    - A decline overwrote an unreadable `state.json`.
+  - The notes were also addressed: the commit removes only the paths it showed; heal reuses `resolve`; web UI heal logs at warn.
+  - verify-resolutions `rev-20260915T220406Z-26fb3a1f`: clean.
 - [ ] 02d — docs, CHANGELOG, FEATURES.md; full suite; cumulative Critic; operator verification of the drawer offer from a remote browser; PR
+  - Done: docs, CHANGELOG, FEATURES.md, the full suite, and the cumulative Critic + verify-resolutions (clean).
+  - Still to do: PR (PR creation = wait_for_user) and operator verification of the Stop/Keep tracking widget from a remote browser.
