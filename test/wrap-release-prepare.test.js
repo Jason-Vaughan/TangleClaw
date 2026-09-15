@@ -184,7 +184,32 @@ describe('releasePrepareCommand on a release cut (#1502)', () => {
     const r = await runCommit(repo, cutStaged(repo));
 
     assert.equal(r.status, 'done');
+    assert.deepEqual(r.output.releasePrepare, { status: 'skipped', reason: 'releasePrepareCommand is not a command string (got an array)' });
+  });
+
+  it('an unreadable project config is named as the reason, not reported as "not configured"', async () => {
+    const repo = makeRepo({});
+    fs.writeFileSync(path.join(repo, '.tangleclaw', 'project.json'), '{"releasePrepareCommand": "node x.js",');
+    git(repo, 'commit', '-q', '-am', 'break the config');
+    const r = await runCommit(repo, cutStaged(repo));
+
+    assert.equal(r.status, 'done');
     assert.equal(r.output.releasePrepare.status, 'skipped');
+    assert.match(r.output.releasePrepare.reason, /^\.tangleclaw\/project\.json could not be read \(.+\), so releasePrepareCommand was not run$/);
+  });
+
+  it('the auto-PR body names the release files, the same line the commit message carries', () => {
+    const staged = {
+      ...cutStaged('/r'),
+      'commit:release-prepare': { releaseCompanions: ['README.md', 'test/fixtures/x.lock.json'] }
+    };
+    const lines = commitStep._buildBodyLines(staged);
+    assert.ok(lines.includes('- Release files updated by releasePrepareCommand: README.md, test/fixtures/x.lock.json'), lines.join('\n'));
+    assert.equal(lines.filter((l) => l.startsWith('- Bumped')).length, 1);
+    assert.ok(!commitStep._buildBodyLines({ 'commit:release-prepare': { releaseCompanions: [] } }).length,
+      'an empty list writes no line');
+    assert.equal(commitStep._releaseCutOf({ x: { oldVersion: '1.0.0', newVersion: '1.1.0' } }), null,
+      'the release test is the same one the body uses: an entry without a bump level is not a cut');
   });
 
   it('a failing command commits nothing, puts the release files back, and shows its output', async () => {

@@ -58,6 +58,15 @@ Done when:
   immutability test computes, and pins match the version; idempotent.
 - Suite green; Critic final with zero blocking.
 
+## Review dispositions (Critic final)
+
+- Blocking (skipped command invisible; unreadable config misreported): fixed. The commit row shows the outcome and each skip cause has its own reason.
+- Warning (docs say this install sets the key; it didn't): fixed. The live `.tangleclaw/project.json` now sets it, and the CHANGELOG is reworded to "this install".
+- Warning (companion line missing from the auto-PR body): fixed. It is staged as a body-line entry, with one shared release-entry predicate.
+- Note (timed-out command's children survive): filed as #1503, since the fix belongs in the shared runner.
+- Note (commit.js size): accepted. The hook reads the step's own state (flush, scope, ownership), and moving it out would thread all of that through a new module for no behaviour change.
+- Note (#976): referenced, not closed. It was offered to a contributor as a good first issue, so closing it is the operator's call.
+
 ## Status
 
 - [ ] Chunk 01 — hook + this repo's script
