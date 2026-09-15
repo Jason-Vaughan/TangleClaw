@@ -329,15 +329,17 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
     });
 
     it('a non-halting failure is step-blocked with halted:false and the run carries on', async () => {
-      // version-bump is `blocker:false` in the shipped pipeline.
+      // preflight is `blocker:false` in the shipped pipeline.
+      assert.equal(defaultPipeline.steps().find((s) => s.id === 'preflight').blocker, false,
+        'this test needs a non-halting step; pick another if preflight becomes a blocker');
       const { events, result } = await runCollecting((id) => (
-        id === 'version-bump'
-          ? { ok: false, status: 'blocked', output: null, blockers: ['bump failed'] }
+        id === 'preflight'
+          ? { ok: false, status: 'blocked', output: null, blockers: ['gates unmet'] }
           : { ok: true, status: 'done', output: null, blockers: [] }
       ));
       assert.equal(result.blockedAt, null);
       const blocked = events.find((e) => e.type === 'step-blocked');
-      assert.equal(blocked.stepId, 'version-bump');
+      assert.equal(blocked.stepId, 'preflight');
       assert.equal(blocked.halted, false, 'the drawer must not paint a non-halting failure as the pipeline stopping');
       assert.ok(events.some((e) => e.type === 'step-start' && e.stepId === 'commit'), 'later steps still ran');
     });
@@ -589,6 +591,34 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
         }
       } finally {
         wrapPipeline.STEP_DISPATCH['ai-content'] = original;
+      }
+    });
+
+    it('an unanswered release decision halts at version-bump, before commit, and an answer lets it through (#1492)', async () => {
+      const releasePath = path.join(tmpDir, 'release-ask');
+      fs.mkdirSync(path.join(releasePath, '.tangleclaw'), { recursive: true });
+      fs.writeFileSync(path.join(releasePath, '.tangleclaw', 'project.json'), JSON.stringify({ releaseMode: 'ask' }));
+      fs.writeFileSync(path.join(releasePath, 'version.json'), JSON.stringify({ version: '1.0.0' }));
+      fs.writeFileSync(path.join(releasePath, 'CHANGELOG.md'),
+        '# Changelog\n\n## [Unreleased]\n\n### Fixed\n- a fix\n\n## [1.0.0] - 2026-09-01\n\n- first\n');
+      store.projects.create({ name: 'release-ask', path: releasePath });
+
+      const restore = stubRealHandlers(wrapPipeline, ['version-bump']);
+      try {
+        const halted = await wrapPipeline.runWrapPipeline('release-ask');
+        assert.equal(halted.ok, false);
+        assert.equal(halted.blockedAt, 'version-bump');
+        const bump = halted.results.find((r) => r.stepId === 'version-bump');
+        assert.equal(bump.status, 'needs-operator');
+        assert.equal(halted.results.find((r) => r.stepId === 'commit').status, 'pending',
+          'the wrap must not commit past a release question nobody answered');
+
+        const held = await wrapPipeline.runWrapPipeline('release-ask', { release: 'hold' });
+        assert.equal(held.blockedAt, null);
+        assert.equal(held.results.find((r) => r.stepId === 'version-bump').status, 'skipped');
+        assert.equal(held.results.find((r) => r.stepId === 'commit').status, 'done');
+      } finally {
+        restore();
       }
     });
 

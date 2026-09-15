@@ -34,6 +34,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-15 — The operator decides whether a wrap cuts: Release Auto / Cut / Hold, and a halt when it's theirs (#1492 L3)
+
+<!-- prawduct: type=feature | scope=train-19-chunk-03 -->
+
+Train 19 Chunk 03. The wrap modal's bump picker becomes Release: Auto / Cut / Hold (level only under Cut, hidden for `off`); `options.release` carries it; version-bump halts with `needs-operator` (now `blocker: true`) when `ask`, or `auto` on an `unknown` verdict, meets no decision; the drawer renders Cut / Hold under the halt and Retry keeps the answer; the settings modal sends `releaseMode` from an Off / Auto / Ask select. ADR 0002 amended.
+
+Tests changed by requirement, not weakened: the two release-gate cases that asserted `ask` and `auto`+`unknown` skip now assert the halt, which is the behaviour #1492 L3 asks for. The pipeline test that used version-bump as its example of a non-halting step now uses `preflight`, still `blocker: false`, with a guard that fails if that stops being true. The two-phase settings fixture tracks the modal's new `releaseMode` field in place of `versionBumpEnabled`.
+
 ## 2026-09-15 — Ignore Prawduct's delegate brief
 
 <!-- prawduct: type=chore | scope=gitignore-delegate-brief -->

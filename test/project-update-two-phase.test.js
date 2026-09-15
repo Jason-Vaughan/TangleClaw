@@ -225,7 +225,7 @@ const VALID_SETTINGS_PATCH = {
   evalAuditMode: { enabled: false },
   featureIndexEnabled: true,
   projectMapEnabled: true,
-  versionBumpEnabled: false,
+  releaseMode: 'off',
   versionFilePath: 'VERSION.json',
   medusaEnabled: true,
   medusaWake: true,

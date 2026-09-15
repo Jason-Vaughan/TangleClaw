@@ -108,6 +108,7 @@ function harness() {
     wrapPathDecisions: {},
     wrapSkipPreflight: false,
     wrapBumpLevel: '',
+    wrapReleaseChoice: '',
     currentWrapPassword: '',
     sessionStorage: {
       getItem: (k) => (storage.has(k) ? storage.get(k) : null),
@@ -348,6 +349,30 @@ describe('wrap-run wiring in session.js — executed', () => {
     h.net.post = { ok: true, runId: 'c'.repeat(32), status: 'wrapping' };
     await h.w.retryWrap();
     assert.equal(h.last('apiMutate')[2].options.skipPreflight, true, 'a retry re-runs preflight, so the choice must hold');
+  });
+
+  it('#1492 — Retry sends a Cut or Hold answered in the drawer, and a later retry keeps it', async () => {
+    await wrapToBlocked(h);
+    const hold = { value: 'hold', checked: true, dataset: {} };
+    h.sandbox.document.getElementById = () => ({
+      disabled: false,
+      classList: { add() {}, remove() {} },
+      querySelector: (sel) => (sel.includes('wrap-decision--release') ? hold : null),
+      querySelectorAll: () => []
+    });
+    h.net.post = { ok: true, runId: RETRY_RUN, status: 'wrapping' };
+    await h.w.retryWrap();
+    assert.equal(h.last('apiMutate')[2].options.release, 'hold', 'the drawer answer reaches the server');
+
+    // The retried run halts at a later step; the Cut / Hold choice is no longer on screen.
+    const es = h.streams().find((s) => s.url.endsWith(RETRY_RUN));
+    es.emit('run-done', { result: { ...BLOCKED_RESULT, runId: RETRY_RUN } });
+    h.sandbox.document.getElementById = () => ({
+      disabled: false, classList: { add() {}, remove() {} }, querySelector: () => null, querySelectorAll: () => []
+    });
+    h.net.post = { ok: true, runId: 'c'.repeat(32), status: 'wrapping' };
+    await h.w.retryWrap();
+    assert.equal(h.last('apiMutate')[2].options.release, 'hold', 'a retry re-runs version-bump, so the answer must hold');
   });
 
   it('a 409 follows the run already in progress instead of reporting a failure', async () => {

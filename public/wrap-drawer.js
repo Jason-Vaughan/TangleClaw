@@ -42,7 +42,7 @@
     'pr-merge': 'Applies the PR decisions you made earlier \u2014 each PR you marked \u201cmerge\u201d gets GitHub auto-merge enabled, so it lands once its checks pass. Runs after the wrap commit. Never blocks.',
     'lint': 'Runs the project’s linter over the working tree.',
     'test': 'Runs the full test suite. A failure here can block the wrap.',
-    'version-bump': 'Bumps version.json from the CHANGELOG’s [Unreleased] entries (Added/Changed → minor, Fixed-only → patch, BREAKING → major) and promotes them to a dated release. Skips when there is nothing to promote or the version is not semver.',
+    'version-bump': 'Bumps version.json from the CHANGELOG’s [Unreleased] entries (Added/Changed → minor, Fixed-only → patch, BREAKING → major) and promotes them to a dated release. Whether it cuts follows the project’s release mode and readiness, or your Release choice. Skips when there is nothing to promote or the version is not semver, and stops to ask you when the release decision is yours.',
     'ai-content': 'The AI captures a piece of wrap content — a changelog line, session learnings, or session memory — into the wrap. Skips when there is nothing to capture.',
     'learnings-db-write': 'Persists the session’s captured learnings to the project’s learnings store.',
     'rule-proposal': 'Proposes rules from recurring learnings. Proposals govern nothing until you approve them.',
@@ -93,7 +93,7 @@
     'needs-operator': {
       label: 'Needs you',
       tone: 'needs-operator',
-      tooltip: 'Step stopped because the session is in a state only you can change (e.g. plan mode is read-only and content steps must edit files). The row says what to do; then Retry.'
+      tooltip: 'Step stopped on something only you can do or decide (e.g. leave plan mode so content steps can edit files, or choose whether this wrap cuts a release). The row says what to do; then Retry.'
     }
   };
 
@@ -325,8 +325,15 @@
       case 'version-bump':
         // version-bump emits `{from, to, bumpLevel, detail}` on done. Skips
         // are handled by the status check above (#204).
-        if (output.from && output.to) return `${output.from} → ${output.to}`;
+        if (output.from && output.to) {
+          return `${output.from} → ${output.to}${output.decidedBy === 'operator' ? ' (your call)' : ''}`;
+        }
         if (output.to) return String(output.to);
+        // #1492 — a release question halts the wrap with nothing cut yet. The
+        // row names what is at stake; the choice renders below the steps.
+        if (stepResult.status === 'needs-operator' && output.wouldBump && output.wouldBump.to) {
+          return `release decision needed: would cut ${output.wouldBump.from} → ${output.wouldBump.to}`;
+        }
         return null;
       case 'rule-proposal': {
         // Without a case here the default drops this to null, and a wrap that
@@ -753,6 +760,46 @@
   }
 
   /**
+   * Descriptor for the Cut / Hold choice (#1492 L3): `version-bump` halted
+   * because whether this wrap cuts a release is the operator's decision and it
+   * hasn't been made. Carries what would be cut and why the gate couldn't
+   * decide, so the choice is made on the evidence. Returns `null` unless the
+   * step is the active `needs-operator` blocker with a `wouldBump`.
+   *
+   * @param {object} stepRow - View-model from `buildStepRow`.
+   * @param {object} rawOutput - Raw `step.output` from the runner.
+   * @returns {{kind: 'release-decision', optionsKey: 'release', from: string, to: string, bumpLevel: string, releaseMode: string, verdict: string, reason: string, signals: Array<{id: string, state: string, detail: string}>}|null}
+   */
+  function releaseDecisionWidget(stepRow, rawOutput) {
+    if (!stepRow || stepRow.kind !== 'version-bump' || !stepRow.isBlocker) return null;
+    if (stepRow.status !== 'needs-operator') return null;
+    if (!rawOutput || typeof rawOutput !== 'object') return null;
+    const would = rawOutput.wouldBump;
+    if (!would || typeof would.from !== 'string' || typeof would.to !== 'string') return null;
+    const readiness = rawOutput.readiness && typeof rawOutput.readiness === 'object' ? rawOutput.readiness : {};
+    const signals = Array.isArray(readiness.signals)
+      ? readiness.signals
+        .filter((sig) => sig && typeof sig.id === 'string')
+        .map((sig) => ({
+          id: sig.id,
+          state: typeof sig.state === 'string' ? sig.state : '',
+          detail: typeof sig.detail === 'string' ? sig.detail : ''
+        }))
+      : [];
+    return {
+      kind: 'release-decision',
+      optionsKey: 'release',
+      from: would.from,
+      to: would.to,
+      bumpLevel: typeof would.bumpLevel === 'string' ? would.bumpLevel : '',
+      releaseMode: typeof rawOutput.releaseMode === 'string' ? rawOutput.releaseMode : '',
+      verdict: typeof readiness.verdict === 'string' ? readiness.verdict : 'unknown',
+      reason: typeof readiness.reason === 'string' ? readiness.reason : '',
+      signals
+    };
+  }
+
+  /**
    * Merge this retry's Include / Leave choices into the session-level record and
    * write the full set back onto `options` (#1406). The pipeline re-runs from its
    * first step on every retry, and a later block lists only files still without
@@ -879,12 +926,23 @@
         }
       }
     }
-    // #540 ask-mode — the operator's version-bump choice, captured in the wrap
-    // modal and replayed on every retry (the pipeline re-runs from step 0, so
-    // version-bump needs it each attempt). Empty string = Auto (the CHANGELOG
-    // heuristic), which must NOT be sent: version-bump treats any out-of-set
-    // value as a reason to skip rather than falling back to the heuristic.
-    if (accessors.bumpLevel) {
+    // #1492 — Release: Cut or Hold, from the wrap modal or the drawer's choice
+    // under a halt. Auto is the absence of both and must NOT be sent: an
+    // out-of-set value makes version-bump skip rather than follow the mode.
+    let release = null;
+    if (accessors.release) {
+      const v = accessors.release();
+      if (v === 'cut' || v === 'hold') {
+        release = v;
+        options.release = v;
+      }
+    }
+    // #540 ask-mode — the operator's bump level, replayed on every retry (the
+    // pipeline re-runs from step 0, so version-bump needs it each attempt).
+    // Empty string = the CHANGELOG heuristic, which is not sent. A level rides
+    // only with a Cut: with a Hold it contradicts the decision, and version-bump
+    // would skip on the pair.
+    if (accessors.bumpLevel && release !== 'hold') {
       const level = accessors.bumpLevel();
       if (typeof level === 'string' && level.length > 0) {
         options.bumpLevel = level;
@@ -1419,6 +1477,7 @@
     decisionWidgetForBlockedStep,
     prCheckResolutionWidget,
     pathDecisionWidget,
+    releaseDecisionWidget,
     accumulatePathDecisions,
     planPickerWidget,
     ruleProposalWidget,
