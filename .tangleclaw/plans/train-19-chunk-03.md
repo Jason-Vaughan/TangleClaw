@@ -133,9 +133,9 @@ It now describes a decision only the operator can make, with plan mode as one ex
 
 ## Status
 
-- [ ] 03a step: release option, hold, halt
-- [ ] 03b pipeline blocker + halt test
-- [ ] 03c drawer helpers
-- [ ] 03d wrap modal + drawer widget
-- [ ] 03e settings Release mode select
-- [ ] 03f docs + ADR amendment + live check
+- [x] 03a step: release option, hold, halt
+- [x] 03b pipeline blocker + halt test
+- [x] 03c drawer helpers
+- [x] 03d wrap modal + drawer widget
+- [x] 03e settings Release mode select
+- [x] 03f docs + ADR amendment + live check
