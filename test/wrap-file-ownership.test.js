@@ -452,6 +452,15 @@ describe('#1508/#1509: TangleClaw\'s own files dirty at launch are not asked abo
     assert.equal(git(repo, 'rev-parse', 'HEAD'), head, 'nothing was committed');
   });
 
+  it('the changelog check does not demand an entry for TangleClaw maintenance', async () => {
+    const { repo, scope } = await tangleclawWritesThenSession({ sessionWork: false });
+    // The session made no commits, so the range from its launch SHA is empty and
+    // only the uncommitted tree is judged.
+    const judged = coverage.evaluate(repo, ['CHANGELOG.md'], [], scope);
+    assert.deepEqual(judged.uncommittedWork, [], 'a managed-block refresh is not the session\'s unlogged work');
+    assert.equal(judged.verdict, coverage.VERDICTS.COVERED);
+  });
+
   it('a tree dirty only with TangleClaw state skips the commit and says why', async () => {
     const repo = makeRepo();
     fs.mkdirSync(path.join(repo, '.tangleclaw', 'continuity'), { recursive: true });
