@@ -5145,7 +5145,9 @@ function syncWrapRunEffects(prev, next) {
  */
 function syncHandbackEffects(prev, next) {
   const hb = next.phase === 'settled' ? next.handback : null;
-  const watchId = hb && hb.state === 'working' ? hb.handbackId : null;
+  // A quiet handback is still being watched: the session may print its line once
+  // the operator answers it.
+  const watchId = hb && (hb.state === 'working' || hb.state === 'quiet') ? hb.handbackId : null;
   if (currentHandbackStreamId !== watchId) {
     stopHandbackStream();
     if (watchId) startHandbackStream(next.runId, watchId);
@@ -5198,9 +5200,9 @@ function startHandbackStream(runId, handbackId) {
     if (currentHandbackStream !== es) return;
     if (es.readyState !== EventSource.CLOSED) return;
     // The terminal frame closes a finished stream too; only a close while the
-    // handback still reads `working` needs the fallback.
+    // handback is still being watched needs the fallback.
     const s = wrapRunState();
-    if (!s.handback || s.handback.handbackId !== handbackId || s.handback.state !== 'working') return;
+    if (!s.handback || s.handback.handbackId !== handbackId || (s.handback.state !== 'working' && s.handback.state !== 'quiet')) return;
     console.warn('[wrap] handback stream closed; following it by status instead.', { handbackId });
     currentHandbackStream = null;
     scheduleHandbackStatusPoll(runId, handbackId, 0);
@@ -5232,11 +5234,17 @@ function scheduleHandbackStatusPoll(runId, handbackId, delayMs) {
     const status = await _probeWrapStatus(wrapStatusUrl());
     if (handbackStatusPollTimer !== timer) return;
     handbackStatusPollTimer = null;
-    if (status && status.runId === runId && status.handback) {
+    if (status && status.runId === runId && status.handback && status.handback.handbackId === handbackId) {
       dispatchWrapRun({ type: 'handback', runId, handback: status.handback });
+    } else if (status) {
+      // The server answered and no longer holds this handback: a restart ended
+      // the watch, or another tab replaced it. Stop showing "Fixing" for a watch
+      // nobody runs; the row offers to send the fix again.
+      dispatchWrapRun({ type: 'handback', runId, handback: null });
     }
     const s = wrapRunState();
-    if (currentHandbackStreamId === handbackId && s.handback && s.handback.handbackId === handbackId && s.handback.state === 'working') {
+    if (currentHandbackStreamId === handbackId && s.handback && s.handback.handbackId === handbackId
+      && (s.handback.state === 'working' || s.handback.state === 'quiet')) {
       scheduleHandbackStatusPoll(runId, handbackId, WRAP_STATUS_POLL_MS);
     }
   }, delayMs);
@@ -5320,9 +5328,9 @@ function paintHandback() {
   }
   const btn = listEl ? listEl.querySelector('.wrap-step-handback') : null;
   if (btn && !btn.dataset.sending) {
-    const working = Boolean(view && view.state === 'working');
-    btn.disabled = working;
-    btn.textContent = working ? 'Sent — the session is working on it' : (view ? 'Ask the session again' : btn.dataset.label);
+    btn.disabled = Boolean(view && !view.canResend);
+    btn.textContent = !view ? btn.dataset.label
+      : (view.canResend ? 'Ask the session again' : 'Sent — the session is working on it');
   }
   syncRetryLabel();
 }
@@ -5519,7 +5527,10 @@ function startWrapStream(runId) {
       console.warn('[wrap] live progress: discarded a malformed frame', { type });
       return;
     }
-    dispatchWrapRun({ type: 'event', runId, event: { ...data, type } });
+    // `receivedAt` against the frame's `sentAt` is how the page measures its clock
+    // against the server's, so a step's elapsed time is right on a phone whose
+    // clock is off (`tcWrapDrawerHelpers.foldSkew`).
+    dispatchWrapRun({ type: 'event', runId, event: { ...data, type, receivedAt: Date.now() } });
   };
   for (const type of window.tcWrapStreamEvents.WRAP_STREAM_EVENT_TYPES) {
     es.addEventListener(type, handle(type));

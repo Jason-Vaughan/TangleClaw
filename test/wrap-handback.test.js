@@ -54,8 +54,14 @@ function settleBlockedRun(blockedAt, status = 'blocked') {
  */
 async function runUntil(pred, limitMs = aiContent.MAX_WAIT_MS + 60_000) {
   const start = clock;
-  while (!pred() && clock - start <= limitMs) {
+  let stalled = 0;
+  let last = clock;
+  // Only a running watch advances the fake clock, so a watch that already ended
+  // would spin this forever; give up once the clock stops moving.
+  while (!pred() && clock - start <= limitMs && stalled < 1000) {
     await new Promise((resolve) => setImmediate(resolve));
+    stalled = clock === last ? stalled + 1 : 0;
+    last = clock;
   }
 }
 
@@ -125,15 +131,48 @@ describe('wrap handback watch (#1312)', () => {
     assert.equal(current().state, 'working');
   });
 
-  it('a static pane settles `quiet` after the quiet window, not before — never `ready` without the marker', async () => {
+  it('a static pane turns `quiet` after the quiet window, not before, and the watch keeps going', async () => {
     settleBlockedRun('changelog-update');
-    handback.start(PROJECT, { stepId: 'changelog-update', prompt: 'fix' });
+    const started = handback.start(PROJECT, { stepId: 'changelog-update', prompt: 'fix' });
+    const events = [];
+    let ended = false;
+    handback.subscribe(PROJECT, started.handbackId, { onEvent: (e) => events.push(e.state), onEnd: () => { ended = true; } });
     pane = 'a pane that never changes';
     await runUntil(() => current().state !== 'working');
     const hb = current();
     assert.equal(hb.state, 'quiet', 'a session that stopped to ask something is not done');
     assert.equal(hb.completedVia, 'quiet');
-    assert.ok(hb.finishedAt - hb.startedAt >= aiContent.QUIET_FALLBACK_MS, 'not before the quiet window');
+    assert.match(hb.completionNote, /no completion marker seen/);
+    assert.ok(clock - hb.startedAt >= aiContent.QUIET_FALLBACK_MS, 'not before the quiet window');
+    assert.equal(hb.finishedAt, null, 'quiet does not end the watch');
+    assert.equal(ended, false);
+    assert.deepEqual(events, ['quiet']);
+  });
+
+  it('a quiet session that is answered and then prints its line is seen as ready (#1312 live check)', async () => {
+    settleBlockedRun('changelog-update');
+    handback.start(PROJECT, { stepId: 'changelog-update', prompt: 'fix' });
+    pane = 'Which option do you want?';
+    await runUntil(() => current().state === 'quiet');
+    // Long after the content step's maximum wait, the operator answers; the pane moves.
+    const answerAt = clock + aiContent.MAX_WAIT_MS;
+    pane = () => (clock < answerAt ? 'Which option do you want?' : `answered, working ${clock}`);
+    await runUntil(() => current().state === 'working', aiContent.MAX_WAIT_MS * 2);
+    assert.equal(current().finishedAt, null, 'the answered session is watched again, not timed out');
+    const doneAt = clock + 10_000;
+    pane = () => (clock < doneAt ? `working ${clock}` : 'Created it.\nTCWRAP-DONE abcd1234');
+    await runUntil(() => current().state === 'ready');
+    assert.equal(current().completedVia, 'marker');
+  });
+
+  it('a question nobody answers ends the watch as `quiet` at the cap', async () => {
+    settleBlockedRun('changelog-update');
+    handback.start(PROJECT, { stepId: 'changelog-update', prompt: 'fix' });
+    pane = 'Which option do you want?';
+    await runUntil(() => current().finishedAt !== null, handback.QUIET_WATCH_CAP_MS + 60_000);
+    const hb = current();
+    assert.equal(hb.state, 'quiet');
+    assert.ok(hb.finishedAt - hb.startedAt >= handback.QUIET_WATCH_CAP_MS);
     assert.match(hb.completionNote, /no completion marker seen/);
   });
 
@@ -196,6 +235,18 @@ describe('wrap handback watch (#1312)', () => {
     assert.equal(refused.status, 409);
     assert.equal(refused.code, 'WRAP_STEP_NEEDS_OPERATOR');
     assert.equal(sent.length, 0, 'nothing was typed into the session');
+  });
+
+  it('refuses a structural block a prompt cannot fix', () => {
+    const claim = registry.begin(PROJECT, SESSION.id);
+    registry.finish(PROJECT, claim.runId, {
+      ok: false,
+      pipelineResult: { ok: false, blockedAt: 'test', results: [{ stepId: 'test', kind: 'test', status: 'blocked', blockers: ['failed'] }] }
+    });
+    const refused = handback.start(PROJECT, { stepId: 'test', prompt: 'fix the tests' });
+    assert.equal(refused.status, 409);
+    assert.equal(refused.code, 'WRAP_STEP_NOT_RESOLVABLE');
+    assert.equal(sent.length, 0);
   });
 
   it('refuses an empty, multi-line or oversized prompt with 400', () => {

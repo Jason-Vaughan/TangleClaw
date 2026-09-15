@@ -232,6 +232,25 @@ Also amended in 04a: no `unwatched` state (`injectCommand` refuses webui session
 never reaches a watch), and no password gate on the handback route (it replaces `/command` for the
 drawer, which has none).
 
+## Amendments from the cumulative review
+
+- **D3 as built.** Skew needs `receivedAt`, which the page now stamps on every run-stream frame; the
+  first build computed it only in fixtures, so every clock ran uncorrected (the review's blocking
+  finding). A test drives the real subscription.
+- **D4 as built.** Handback state lives in `lib/wrap-handback.js`'s own map keyed by project, tied to
+  the run by `runId` (`get(project, runId)` returns null for another run), not on the registry entry;
+  that kept the registry's `begin`/`finish` contract unchanged. `quiet` is not terminal: the watch
+  keeps looking (a `handback-update` event marks each change between `working` and `quiet`), the
+  maximum wait runs from when the session last started working, and a still-quiet watch ends at a
+  30-minute cap. The server refuses non-content, non-preflight blocks (`WRAP_STEP_NOT_RESOLVABLE`),
+  matching the page, and logs every refusal. A page whose status read shows the server no longer
+  holds its handback (restart, another tab) clears it rather than showing "Fixing" forever.
+- **Accepted, not changed:** the handback's poll loop is not shared with `ai-content`'s (their
+  completion rules differ — no file settle, quiet is not done — and a shared helper would couple a
+  pipeline step to a UI watch); the handback SSE route does not share the run stream's plumbing (a
+  simpler lifecycle, no `Last-Event-ID`); status-poll fallback shows `Wrapping…` without a clock (the
+  degraded path already says live progress is unavailable).
+
 ## Live check evidence (04e, 2026-09-14)
 
 Scratch server from the TC-a02 tree (`main()` not run, own `TANGLECLAW_HOME`, tailnet IP, leased

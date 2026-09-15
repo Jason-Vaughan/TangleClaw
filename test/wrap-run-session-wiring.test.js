@@ -511,6 +511,34 @@ describe('the Wrap popover — toggle, handback and clock (#1312)', () => {
     assert.equal(hbStream.closed, true);
   });
 
+  it('stream frames are stamped on arrival, so the live view measures the page clock against the server', async () => {
+    h.w.dispatchWrapRun({ type: 'follow', runId: RUN });
+    const es = h.streams()[0];
+    const sentAt = Date.now() - 5_000; // the page's clock runs 5s ahead of the server's
+    es.emit('run-start', { steps: [{ stepId: 'test', kind: 'test' }], at: sentAt, sentAt });
+    const skew = h.w.wrapRunState().live.skewMs;
+    assert.ok(Number.isFinite(skew), 'skew is estimated through the real subscription, not a fixture');
+    assert.ok(skew >= 5_000 && skew < 6_000, `skew ${skew}`);
+  });
+
+  it('a quiet handback keeps its stream open; the server forgetting it clears it', async () => {
+    h.net.status = { runId: RUN, running: false, result: BLOCKED_RESULT, handback: { handbackId: 'hb4', stepId: 'test', state: 'working', startedAt: 1 } };
+    await wrapToBlocked(h);
+    await h.tick();
+    const hbStream = h.streams().find((es) => es.url.endsWith('/hb4'));
+    hbStream.emit('handback-update', { handbackId: 'hb4', stepId: 'test', state: 'quiet', completedVia: 'quiet', startedAt: 1 });
+    assert.equal(h.w.wrapRunState().handback.state, 'quiet');
+    assert.equal(hbStream.closed, false, 'a quiet session may still print its line');
+
+    // A server restart: the stream dies, and the status route no longer holds the handback.
+    hbStream.fail();
+    h.net.status = { runId: RUN, running: false, result: BLOCKED_RESULT, handback: null };
+    await h.flushTimers();
+    assert.equal(h.w.wrapRunState().handback, null, 'no "Fixing" for a watch nobody runs');
+    await h.flushTimers();
+    assert.equal(h.timers.filter((t) => !t.cleared).length, 0, 'and no poll left running for the life of the tab');
+  });
+
   it('the clock runs only while a step or a fix is timed, and its tick only paints', async () => {
     h.w.dispatchWrapRun({ type: 'follow', runId: RUN });
     assert.equal(h.intervals.length, 0, 'no clock before a step has a start time');
