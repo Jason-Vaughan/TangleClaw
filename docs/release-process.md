@@ -82,6 +82,21 @@ The wrap picks the bump level from what is in `[Unreleased]`:
 | Any `### Added`, `### Changed`, `### Removed`, `### Deprecated` | minor |
 | Only `### Fixed`, `### Security`, `### Internal` | patch |
 
+## Files a release needs besides the version
+
+Two tests fail a release PR that carries only `version.json` and the promoted `CHANGELOG.md`:
+`test/readme-version-pins.test.js` (the README's `--branch vX.Y.Z` clone pins) and
+`test/changelog-released-immutable.test.js` (every released section must be in
+`test/fixtures/changelog-released-sections.lock.json`). The first wrap-cut release, 5.26.0, went red
+on both (#1501).
+
+The wrap covers them through the project's `releasePrepareCommand` (#1502). This install's
+`.tangleclaw/project.json` sets it to `node scripts/release-prepare.js`, which moves the pins and adds
+the new section to the lock. It only ever adds: a locked section that changed, or an older released
+section with no lock line, stops the script and the wrap's commit, because relocking is exactly what
+the lock exists to catch. `.tangleclaw/project.json` is not tracked, so a fresh clone cuts releases
+without it until the key is set. Run by hand, the script reads the version from `version.json`.
+
 ## If a release did not go out
 
 Check in this order:

@@ -296,3 +296,32 @@ leaves the verdict to decide alone, which is exactly the behaviour before this s
 closed `precondition` sends no prompt when `releaseMode` is `off`, when the operator has already
 chosen Cut, Hold or a level, or when `[Unreleased]` has no entries.
 
+
+## Extended 2026-09-15 — a project's release-prepare command (#1502)
+
+A release can need files the wrap knows nothing about. TangleClaw's own releases need the README
+clone pins and a lock of released CHANGELOG sections, and the first wrap-cut release failed CI
+without them (#1501). Teaching `version-bump` those files would make one repo's conventions every
+project's behaviour. Instead a project names a `releasePrepareCommand`, and the wrap runs it.
+
+**It runs in `commit`, not `version-bump`.** `version-bump` stages and never writes, and the command
+needs the promoted CHANGELOG on disk. So `commit` runs it right after `_flushStagedWrites`, and only
+when the staged entries carry a release (`oldVersion` / `newVersion`). The release reaches it as
+`TANGLECLAW_RELEASE_VERSION` and `TANGLECLAW_RELEASE_PREVIOUS`, never interpolated into the shell
+string.
+
+**What it changed is measured, not declared.** `git status` plus a content hash of every uncommitted
+path, before and after, gives the paths it touched, including a file that was already uncommitted
+(the flushed CHANGELOG). Those paths join the wrap-written set, so the #1406 ownership rules apply
+unchanged and an operator's Leave still holds.
+
+**A failure puts the release back.** This is an exception to the rule that a halted `commit` leaves
+flushed writes on disk. Without it a Retry would find `[Unreleased]` empty, `version-bump` would skip,
+and the commit would land the bump without the files the command was there to add, which is the red
+PR this exists to prevent. The pre-flush contents of every staged target are captured before the
+flush and restored on a non-zero exit or a timeout, and the result is `blocked` with the command's
+output. Files the command itself changed before failing are named in the remediation, not reverted:
+they were never snapshotted. A command that succeeds followed by a later `commit` failure is not
+rolled back either. The companions are then uncommitted session changes, and the Retry commits them.
+
+**Engine-agnostic.** A shell command and git: the same inputs produce the same commit on every engine.
