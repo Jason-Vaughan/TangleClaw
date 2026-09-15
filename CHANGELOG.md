@@ -4,6 +4,16 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Internal
+
+- **Plans for the next two pieces of work.** `.tangleclaw/plans/bugfix-sprint-wrap-noise.md` covers four chunks:
+  - Stop the wrap asking about TangleClaw's own files, and commit TangleClaw's edits to tracked files only when the diff is provably TangleClaw's.
+  - Move frequently changing state (such as `lastWrapSha`) out of tracked files, and repair projects on launch through `.git/info/exclude`.
+  - Check file contents for secrets in the wrap, reusing `lib/secret-scan.js`.
+  - Raise the 10 KB request limit on the switchboard and command routes to 64 KB, with a clear error when a message is too large.
+
+  The sprint rests on a read-only scan of every registered project: of 36 with uncommitted files, most of those files were TangleClaw's. `.tangleclaw/plans/train-20-stranded-wraps-chunking.md` splits Train 20 (surfacing stranded wraps, #868) into four chunks. Plans only; no code changed. A step-by-step `tc start` launch and grouped sessions were deferred to later work. Filed #1507: when switchboard delivery clears a pane's prompt, the log records the terminal's status footer instead of the operator's draft.
+
 ## [5.27.0] - 2026-09-14
 
 ### Added
