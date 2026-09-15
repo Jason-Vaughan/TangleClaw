@@ -5135,6 +5135,17 @@ function syncWrapRunEffects(prev, next) {
 }
 
 /**
+ * Whether the server is still watching a handback. Read from `finishedAt`, not
+ * from `state` alone: `quiet` is both a watched state and, at its cap, an ending.
+ *
+ * @param {object|null} hb - The controller's handback
+ * @returns {boolean}
+ */
+function handbackWatched(hb) {
+  return Boolean(hb && hb.finishedAt == null && (hb.state === 'working' || hb.state === 'quiet'));
+}
+
+/**
  * Keep the handback's transport in step with the controller: its stream open
  * only while the settled run's handback is `working`, and — when a blocked run
  * first settles on this page — one status read, so a fix sent before a reload
@@ -5145,9 +5156,9 @@ function syncWrapRunEffects(prev, next) {
  */
 function syncHandbackEffects(prev, next) {
   const hb = next.phase === 'settled' ? next.handback : null;
-  // A quiet handback is still being watched: the session may print its line once
-  // the operator answers it.
-  const watchId = hb && (hb.state === 'working' || hb.state === 'quiet') ? hb.handbackId : null;
+  // A quiet handback is still being watched until it ends: the session may print
+  // its line once the operator answers it.
+  const watchId = handbackWatched(hb) ? hb.handbackId : null;
   if (currentHandbackStreamId !== watchId) {
     stopHandbackStream();
     if (watchId) startHandbackStream(next.runId, watchId);
@@ -5202,7 +5213,7 @@ function startHandbackStream(runId, handbackId) {
     // The terminal frame closes a finished stream too; only a close while the
     // handback is still being watched needs the fallback.
     const s = wrapRunState();
-    if (!s.handback || s.handback.handbackId !== handbackId || (s.handback.state !== 'working' && s.handback.state !== 'quiet')) return;
+    if (!s.handback || s.handback.handbackId !== handbackId || !handbackWatched(s.handback)) return;
     console.warn('[wrap] handback stream closed; following it by status instead.', { handbackId });
     currentHandbackStream = null;
     scheduleHandbackStatusPoll(runId, handbackId, 0);
@@ -5244,7 +5255,7 @@ function scheduleHandbackStatusPoll(runId, handbackId, delayMs) {
     }
     const s = wrapRunState();
     if (currentHandbackStreamId === handbackId && s.handback && s.handback.handbackId === handbackId
-      && (s.handback.state === 'working' || s.handback.state === 'quiet')) {
+      && handbackWatched(s.handback)) {
       scheduleHandbackStatusPoll(runId, handbackId, WRAP_STATUS_POLL_MS);
     }
   }, delayMs);

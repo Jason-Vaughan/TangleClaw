@@ -54,7 +54,7 @@ const WIRING = [
   'followedWrapRunKey', 'rememberFollowedWrapRun', 'recallFollowedWrapRun', 'restoreWrapRunOnLoad',
   '_probeWrapStatus', 'startWrapStream', 'stopWrapStream', 'scheduleWrapStatusPoll', 'cancelWrapStatusPoll',
   'collapseWrapPopover', 'onWrapButtonClick', 'wrapButtonContext',
-  'syncHandbackEffects', 'startHandbackStream', 'stopHandbackStream', 'scheduleHandbackStatusPoll',
+  'handbackWatched', 'syncHandbackEffects', 'startHandbackStream', 'stopHandbackStream', 'scheduleHandbackStatusPoll',
   'syncWrapClock', 'wrapClockTick'
 ];
 
@@ -537,6 +537,18 @@ describe('the Wrap popover — toggle, handback and clock (#1312)', () => {
     assert.equal(h.w.wrapRunState().handback, null, 'no "Fixing" for a watch nobody runs');
     await h.flushTimers();
     assert.equal(h.timers.filter((t) => !t.cleared).length, 0, 'and no poll left running for the life of the tab');
+  });
+
+  it('a handback that ends `quiet` at its cap stops being followed', async () => {
+    h.net.status = { runId: RUN, running: false, result: BLOCKED_RESULT, handback: { handbackId: 'hb5', stepId: 'test', state: 'quiet', completedVia: 'quiet', startedAt: 1, finishedAt: null } };
+    await wrapToBlocked(h);
+    await h.tick();
+    const hbStream = h.streams().find((es) => es.url.endsWith('/hb5'));
+    assert.ok(hbStream && !hbStream.closed, 'a quiet, unfinished handback is followed');
+    hbStream.emit('handback-done', { handbackId: 'hb5', stepId: 'test', state: 'quiet', completedVia: 'quiet', startedAt: 1, finishedAt: 2 });
+    assert.equal(hbStream.closed, true, 'an ended quiet handback is not reconnected to');
+    hbStream.fail();
+    assert.equal(h.timers.filter((t) => !t.cleared).length, 0, 'and nothing polls for it');
   });
 
   it('the clock runs only while a step or a fix is timed, and its tick only paints', async () => {

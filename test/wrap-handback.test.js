@@ -172,7 +172,8 @@ describe('wrap handback watch (#1312)', () => {
     await runUntil(() => current().finishedAt !== null, handback.QUIET_WATCH_CAP_MS + 60_000);
     const hb = current();
     assert.equal(hb.state, 'quiet');
-    assert.ok(hb.finishedAt - hb.startedAt >= handback.QUIET_WATCH_CAP_MS);
+    assert.ok(hb.finishedAt - hb.startedAt >= aiContent.QUIET_FALLBACK_MS + handback.QUIET_WATCH_CAP_MS,
+      'the cap runs from going quiet, not from the send');
     assert.match(hb.completionNote, /no completion marker seen/);
   });
 
