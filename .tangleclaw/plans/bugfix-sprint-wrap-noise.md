@@ -1,6 +1,18 @@
 # Bugfix Sprint — Wrap Noise, Secrets, Message Size
 
-Status: PROPOSED 2026-09-15 by Builder, for the Coordinator to file as issues. Operator-approved scope, relayed by the Coordinator. It runs before Train 20. No code until the operator's clean wrap and restart.
+Status: APPROVED 2026-09-15 by the operator directly ("GO on all of it"). Issues filed by Builder the same day. It runs before Train 20. This is the program-level split; each chunk gets its own build plan when it starts.
+
+## Issues
+
+| Chunk | Issues |
+|---|---|
+| 01 — TangleClaw-owned path registry + wrap backstop | #1508, #1509 |
+| 02 — Move volatile state out of tracked files + heal on launch | #1510, #1511, #1512 |
+| 03 — Content-based secret check in the wrap | #1513 |
+| 04 — Messaging body limit + clear "too long" errors | #1514 |
+| 05 — Wrap friction found 2026-09-15 (added after approval) | #1515 (drawer repaints a Retry as a restart), #1516 (priming-roll drops plans whose issues are all closed) |
+
+Chunk 05 is independent of 01–04. #1515 touches `public/`, so it is built in a worktree. #1516 builds the GitHub issue-state lookup as a shared, cached module that Train 20 Chunk 03 reuses.
 
 ## Evidence this plan is built on (measured 2026-09-15, not recalled)
 
