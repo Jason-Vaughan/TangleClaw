@@ -34,6 +34,17 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-15 — A wrap Retry shows what it reused, and the plan picker drops shipped plans (#1515, #1516)
+
+<!-- prawduct: type=bugfix | scope=bugfix-sprint-chunk-05 -->
+
+Bugfix Sprint Chunk 05, built by a delegate and integrated by the coordinator.
+
+**#1515.** After a halt, a Retry reuses the content steps that already captured (#1404), but the drawer repainted every step as pending, so it looked like the whole wrap restarting. The `run-start` event now marks the steps the Retry will reuse, using the same check the pipeline loop uses to decide reuse, so the two cannot disagree; a disabled step is never marked and a run with nothing to reuse sends exactly what it sent before. Those rows read **Will reuse** while the Retry runs and **Reused** once the step finishes, with "reused from the halted attempt, not re-asked" on the row, and the copied report says `[Reused]`.
+
+**#1516.** `priming-roll` blocked with "Multiple in-progress plans" even when a candidate's work had shipped — on 2026-09-15 it had been rolling the pointer onto a plan whose issues were all closed. It now filters candidates by the state of the issues each plan cites: a plan whose cited issues are all closed is dropped and reported as an archive candidate (a warning; no file is moved), and if one candidate remains it is used without asking. When `gh` is missing, logged out or offline, today's picker shows with the reason stated, following the honest-`unknown` pattern in `lib/ci-status.js`. The lookup is a shared, cached, test-fakeable module (`lib/gh-issue-state.js`) that later GitHub features reuse. An `activePlan` pointing at a since-archived plan now falls through to normal selection instead of blocking the wrap, and the drawer's priming row reads the pointer the step actually writes, so "→ chunk N" shows again.
+
+
 ## 2026-09-15 — TangleClaw state leaves the files projects track (#1510, #1511, #1512)
 
 <!-- prawduct: type=bugfix | scope=bugfix-sprint-chunk-02 -->
