@@ -315,9 +315,11 @@
         if (typeof output.exitCode === 'number') return `exit ${output.exitCode}`;
         return null;
       case 'priming-roll': {
-        // The handler reports its pointer under `output.pointer` ({current: {id}});
-        // the flat `current`/`allDone` form is still read for older results.
-        const pointer = output.pointer && typeof output.pointer === 'object' ? output.pointer : output;
+        // The handler reports its pointer under `output.pointer` ({current: {id}}).
+        // Read only that shape: the flat `current`/`allDone` form was never emitted
+        // by any handler, and the fixture that carried it is what hid this row
+        // showing nothing for as long as it did (#1516).
+        const pointer = output.pointer && typeof output.pointer === 'object' ? output.pointer : {};
         const current = pointer.current && typeof pointer.current === 'object' ? pointer.current.id : pointer.current;
         let line = null;
         if (pointer.allDone) line = 'All chunks done';

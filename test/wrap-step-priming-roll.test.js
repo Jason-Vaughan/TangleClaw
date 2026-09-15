@@ -672,6 +672,40 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
       assert.equal(result.output.archiveCandidates.length, 2);
     });
 
+    it('ONE in-progress plan, shipped: dropped and skipped — the filter is not only for a picker', async () => {
+      // The fix first hung off the multi-candidate branch, so the one-live-plan
+      // route rolled a shipped plan with no note: #1516's own bug, surviving on
+      // the path the fix had not reached.
+      writePlan('shipped.md', '**Issues:** #1, #2\n### Chunk 1: A\n');
+      writePlan('finished.md', '### Chunk 1: Done ✅\n');
+      fakeLookup({ available: true, states: { 1: 'closed', 2: 'closed' } });
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.equal(result.ok, true);
+      assert.equal(result.status, 'skipped');
+      assert.deepEqual(result.output.archiveCandidates.map((a) => a.file), ['shipped.md']);
+      assert.match(result.output.reason, /every in-progress plan cites only closed issues/);
+      assert.ok(fs.existsSync(path.join(projectPath, '.claude', 'plans', 'shipped.md')), 'a warning only — nothing is moved');
+    });
+
+    it('ONE in-progress plan with an open issue is rolled exactly as before', async () => {
+      writePlan('live.md', '**Issues:** #1, #2\n### Chunk 1: A\n');
+      writePlan('finished.md', '### Chunk 1: Done ✅\n');
+      fakeLookup({ available: true, states: { 1: 'closed', 2: 'open' } });
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.equal(result.status, 'done');
+      assert.match(result.output.planPath, /live\.md$/);
+      assert.equal(result.output.archiveCandidates, undefined);
+    });
+
+    it('an operator pointer is rolled as named, never dropped underneath them', async () => {
+      writePlan('pinned.md', '**Issues:** #1\n### Chunk 1: A\n');
+      const calls = fakeLookup(() => { throw new Error('must not be called'); });
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime', planPath: '.claude/plans/pinned.md' }));
+      assert.equal(result.status, 'done');
+      assert.match(result.output.planPath, /pinned\.md$/);
+      assert.equal(calls.length, 0, 'a named plan is not second-guessed against GitHub');
+    });
+
     it('gh unavailable: the picker shows every candidate, with the stated reason', async () => {
       writePlan('one.md', '**Issue:** #1\n### Chunk 1: A\n');
       writePlan('two.md', '**Issue:** #2\n### Chunk 1: A\n');

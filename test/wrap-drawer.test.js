@@ -204,7 +204,10 @@ describe('wrap-drawer helpers — buildStepRow', () => {
     assert.equal(row.detail, '1 session PR');
   });
 
-  it('surfaces priming-roll target chunk in detail', () => {
+  it('reads nothing from a flat pointer shape, which no handler emits', () => {
+    // This fixture used to assert `→ chunk 10` from `output.current`, a shape
+    // the handler has never written. It hid the real row showing nothing at all
+    // for as long as it stood (#1516), so it now pins the opposite.
     const row = H.buildStepRow({
       stepId: 'priming',
       kind: 'priming-roll',
@@ -212,7 +215,7 @@ describe('wrap-drawer helpers — buildStepRow', () => {
       output: { current: '10', allDone: false },
       blockers: []
     }, {});
-    assert.equal(row.detail, '→ chunk 10');
+    assert.equal(row.detail, null);
   });
 
   it('surfaces the chunk from the pointer shape the priming-roll handler actually emits', () => {
