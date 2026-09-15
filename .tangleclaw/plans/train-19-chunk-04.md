@@ -110,6 +110,11 @@ recommendation.
 - Parsing is tolerant of markdown decoration: the first word of the field's first non-empty line,
   stripped of backticks, bold and quotes and lowercased, must be `cut`, `hold` or `unsure`. Anything
   else reads as `absent`, with the unparsed text in the reason. It is never guessed into a value.
+- *Accepted gap (cumulative Critic):* a Cut/Hold Retry that comes more than the 30-minute resume
+  window after a disagreement halt doesn't reuse the recommendation. The operator's choice closes the
+  precondition, so the record reads "no AI recommendation (you chose …)". The release outcome is
+  still the operator's decision. Carrying the recommendation in the Retry's options would let an HTTP
+  body supply the AI's words, which the resume design (#1404) refuses on purpose.
 
 **D6: the wrap summary records it in `Freshness`.** The eight summary sections are a contract
 (`continuity-contract.md`), and `Decisions` is the AI's judgment section: appending a mechanical line
