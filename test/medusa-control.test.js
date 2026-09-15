@@ -201,7 +201,10 @@ describe('Medusa control (MED-2K9P Chunk 02; shared component since #996)', () =
     it('renders the loop button + modal form elements', () => {
       assert.match(html, /id="medusaLoop"[^>]*aria-haspopup="dialog"/);
       assert.match(html, /id="medusaLoopModal"/);
-      for (const id of ['medusaLoopTarget', 'medusaLoopTask', 'medusaLoopDone', 'medusaLoopMode', 'medusaLoopMaxRounds', 'medusaLoopMaxMinutes', 'medusaLoopLaunchBtn', 'medusaLoopCancelBtn']) {
+      // `medusaLoopSize` is in the roster because the size counter's render guards
+      // on the element existing (#1514): a rename would silently drop the counter
+      // with every suite still green.
+      for (const id of ['medusaLoopTarget', 'medusaLoopTask', 'medusaLoopDone', 'medusaLoopMode', 'medusaLoopMaxRounds', 'medusaLoopMaxMinutes', 'medusaLoopLaunchBtn', 'medusaLoopCancelBtn', 'medusaLoopSize']) {
         assert.match(html, new RegExp(`id="${id}"`), `${id} missing from the modal`);
       }
       // Both judge modes are selectable from the start (operator-ratified §8).

@@ -618,3 +618,34 @@ describe('tc verb surface against a live server (ambient-awareness Chunk 03)', (
     });
   });
 });
+
+describe('renderBodyTooLarge — the 413 sentence tc prints (#1514)', () => {
+  const { renderBodyTooLarge } = require('../lib/tc-verbs');
+
+  it('renders "message is X KB, limit is Y KB" from the refusal\'s own numbers', () => {
+    assert.equal(
+      renderBodyTooLarge({ code: 'BODY_TOO_LARGE', limitBytes: 64 * 1024, receivedBytes: 70 * 1024 }),
+      'message is 70 KB, limit is 64 KB'
+    );
+  });
+
+  it('rounds up, so one byte over never reads as equal to the limit', () => {
+    assert.equal(
+      renderBodyTooLarge({ code: 'BODY_TOO_LARGE', limitBytes: 64 * 1024, receivedBytes: 64 * 1024 + 1 }),
+      'message is 64.1 KB, limit is 64 KB'
+    );
+  });
+
+  it('says "more than" when the server could only bound the size from below', () => {
+    assert.equal(
+      renderBodyTooLarge({ code: 'BODY_TOO_LARGE', limitBytes: 64 * 1024, receivedBytes: 65600, receivedBytesIsLowerBound: true }),
+      'message is more than 64.1 KB, limit is 64 KB'
+    );
+  });
+
+  it('is null for any other refusal, or a 413 without its numbers', () => {
+    assert.equal(renderBodyTooLarge(null), null);
+    assert.equal(renderBodyTooLarge({ code: 'EMPTY_MESSAGE', limitBytes: 1, receivedBytes: 2 }), null);
+    assert.equal(renderBodyTooLarge({ code: 'BODY_TOO_LARGE' }), null);
+  });
+});

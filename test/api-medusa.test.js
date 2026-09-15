@@ -653,10 +653,12 @@ describe('API — GET /api/sessions/:project/medusa/status', () => {
     // `outbound` joined it in #996 (the access-level verdict a control renders
     // a disabled send from — always allowed for a project session); `enabled`
     // joined it in #820 (the DURABLE per-project opt-in, which gates whether
-    // the control is shown at all — false here, since this project never set it).
+    // the control is shown at all — false here, since this project never set it);
+    // `messageLimitBytes` joined it in #1514 (the body cap a compose box counts
+    // against — served even when off, since it is a property of the routes).
     assert.deepEqual(data, {
       state: 'off', workspaceId: null, unread: 0, lastError: null, lastErrorCode: null, loops: [],
-      outbound: { allowed: true, reason: null }, enabled: false
+      outbound: { allowed: true, reason: null }, enabled: false, messageLimitBytes: 64 * 1024
     });
   });
 
@@ -1763,6 +1765,163 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
     const b = await req('/api/sessions/no-session-c03/medusa/loops/loop-1/closeout', 'POST');
     assert.equal(b.status, 409);
     assert.equal(b.data.code, 'NO_SESSION');
+  });
+
+  // ── #1514: message-carrying routes take a 64 KB body, and a 413 names sizes ──
+
+  describe('message body limit (#1514)', () => {
+    const { MESSAGE_BODY_LIMIT_BYTES, MAX_BODY_SIZE } = require('../server');
+
+    /**
+     * POST a raw body, either with a Content-Length (the browser / fetch shape)
+     * or chunked with none, so both `receivedBytes` paths are exercised.
+     * @param {string} urlPath - Path.
+     * @param {string} raw - The exact body bytes to send.
+     * @param {{chunked?: boolean}} [opts]
+     * @returns {Promise<{status: number, data: object}>}
+     */
+    function rawPost(urlPath, raw, opts = {}) {
+      return new Promise((resolve, reject) => {
+        const headers = { 'Content-Type': 'application/json' };
+        if (!opts.chunked) headers['Content-Length'] = Buffer.byteLength(raw);
+        const r = http.request({ hostname: '127.0.0.1', port, path: urlPath, method: 'POST', headers }, (res) => {
+          const chunks = [];
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => {
+            const text = Buffer.concat(chunks).toString('utf8');
+            let data;
+            try { data = JSON.parse(text); } catch { data = text; }
+            resolve({ status: res.statusCode, data });
+          });
+        });
+        r.on('error', reject);
+        if (opts.chunked) {
+          // Several writes, so the server sees the body arrive in pieces.
+          const buf = Buffer.from(raw);
+          for (let i = 0; i < buf.length; i += 16 * 1024) r.write(buf.subarray(i, i + 16 * 1024));
+        } else {
+          r.write(raw);
+        }
+        r.end();
+      });
+    }
+
+    /** A JSON body whose `message` pads it to exactly `bytes` bytes. */
+    function bodyOfSize(fields, bytes) {
+      const empty = JSON.stringify({ ...fields, message: '' });
+      const body = JSON.stringify({ ...fields, message: 'x'.repeat(bytes - Buffer.byteLength(empty)) });
+      assert.equal(Buffer.byteLength(body), bytes);
+      return body;
+    }
+
+    it('the limit is 64 KB and is served on the status the compose boxes already poll', async () => {
+      assert.equal(MESSAGE_BODY_LIMIT_BYTES, 64 * 1024);
+      assert.ok(MESSAGE_BODY_LIMIT_BYTES > MAX_BODY_SIZE, 'the message routes must not inherit the 10 KB default');
+      const { status, data } = await req('/api/sessions/sender/medusa/status', 'GET');
+      assert.equal(status, 200);
+      assert.equal(data.messageLimitBytes, MESSAGE_BODY_LIMIT_BYTES);
+    });
+
+    it('a 60 KB send is delivered', async () => {
+      const { status, data } = await rawPost('/api/sessions/sender/medusa/send', bodyOfSize({ to: 'live-ws' }, 60 * 1024));
+      assert.equal(status, 200);
+      assert.equal(data.status, 'received');
+      assert.equal(bridge.received.at(-1).message.length > 59 * 1024, true, 'the whole message reached the Bridge');
+    });
+
+    it('a body of exactly the limit is accepted; one byte more is refused', async () => {
+      const at = await rawPost('/api/sessions/sender/medusa/send', bodyOfSize({ to: 'live-ws' }, MESSAGE_BODY_LIMIT_BYTES));
+      assert.equal(at.status, 200);
+      const over = await rawPost('/api/sessions/sender/medusa/send', bodyOfSize({ to: 'live-ws' }, MESSAGE_BODY_LIMIT_BYTES + 1));
+      assert.equal(over.status, 413);
+      assert.equal(over.data.receivedBytes, MESSAGE_BODY_LIMIT_BYTES + 1);
+    });
+
+    it('a 70 KB send gets a 413 carrying limitBytes and the exact receivedBytes, and never reaches the Bridge', async () => {
+      const before = bridge.received.length;
+      const { status, data } = await rawPost('/api/sessions/sender/medusa/send', bodyOfSize({ to: 'live-ws' }, 70 * 1024));
+      assert.equal(status, 413);
+      assert.equal(data.code, 'BODY_TOO_LARGE');
+      assert.equal(data.limitBytes, MESSAGE_BODY_LIMIT_BYTES);
+      assert.equal(data.receivedBytes, 70 * 1024);
+      assert.equal(data.receivedBytesIsLowerBound, undefined, 'a declared Content-Length is an exact size');
+      assert.equal(bridge.received.length, before);
+    });
+
+    it('without a Content-Length the size is a lower bound, and says so', async () => {
+      const { status, data } = await rawPost('/api/sessions/sender/medusa/send', bodyOfSize({ to: 'live-ws' }, 70 * 1024), { chunked: true });
+      assert.equal(status, 413);
+      assert.equal(data.limitBytes, MESSAGE_BODY_LIMIT_BYTES);
+      assert.ok(data.receivedBytes > MESSAGE_BODY_LIMIT_BYTES, 'at least more than the limit');
+      assert.ok(data.receivedBytes <= 70 * 1024);
+      assert.equal(data.receivedBytesIsLowerBound, true);
+    });
+
+    it('loop and continue take a 60 KB body and refuse a 70 KB one with the sizes', async () => {
+      const task = 'y'.repeat(60 * 1024);
+      const open = await req('/api/sessions/sender/medusa/loop', 'POST', { target: 'live-ws', task, doneCriteria: 'd' });
+      assert.equal(open.status, 200);
+      const loopId = open.data.loop.id;
+      bridge.loopStore.get(loopId).state = 'responded';
+      const cont = await rawPost(`/api/sessions/sender/medusa/loops/${loopId}/continue`, bodyOfSize({}, 60 * 1024));
+      assert.equal(cont.status, 200);
+
+      for (const urlPath of ['/api/sessions/sender/medusa/loop', `/api/sessions/sender/medusa/loops/${loopId}/continue`]) {
+        const { status, data } = await rawPost(urlPath, bodyOfSize({ target: 'live-ws', doneCriteria: 'd' }, 70 * 1024));
+        assert.equal(status, 413, urlPath);
+        assert.equal(data.limitBytes, MESSAGE_BODY_LIMIT_BYTES, urlPath);
+        assert.equal(data.receivedBytes, 70 * 1024, urlPath);
+      }
+    });
+
+    it('the command route is in the family: a 12 KB body passes the body cap, a 70 KB one is refused with sizes', async () => {
+      // 4000 three-byte characters: inside the route's own 4096-character cap,
+      // over the old 10 KB body default. No tmux session → the route's 404, not a 413.
+      const fits = await rawPost('/api/sessions/no-session-c03/command', JSON.stringify({ command: '\u4e2d'.repeat(4000) }));
+      assert.notEqual(fits.status, 413);
+      assert.equal(fits.status, 404);
+      const { status, data } = await rawPost('/api/sessions/no-session-c03/command', bodyOfSize({}, 70 * 1024));
+      assert.equal(status, 413);
+      assert.equal(data.limitBytes, MESSAGE_BODY_LIMIT_BYTES);
+      assert.equal(data.receivedBytes, 70 * 1024);
+    });
+
+    it('the wrap routes that carry prose into a session are in the family too (handback, wrap/complete)', async () => {
+      // Every route that carries operator or agent prose into a session takes the
+      // same body cap — a hand-kept list of the ones somebody noticed is how the
+      // handback stayed on 10 KB while its own cap allows ~11 KB of multibyte text.
+      for (const urlPath of ['/api/sessions/no-session-c04/wrap/handback', '/api/sessions/no-session-c04/wrap/complete']) {
+        const fits = await rawPost(urlPath, bodyOfSize({}, 12 * 1024));
+        assert.notEqual(fits.status, 413, `${urlPath} must accept 12 KB`);
+        const { status, data } = await rawPost(urlPath, bodyOfSize({}, 70 * 1024));
+        assert.equal(status, 413, urlPath);
+        assert.equal(data.limitBytes, MESSAGE_BODY_LIMIT_BYTES, urlPath);
+      }
+    });
+
+    it('a route left on the default still 413s at 10 KB, now with its own limit named', async () => {
+      const { status, data } = await rawPost('/api/sessions/sender/medusa/read', bodyOfSize({}, 11 * 1024));
+      assert.equal(status, 413);
+      assert.equal(data.limitBytes, MAX_BODY_SIZE);
+    });
+
+    it('`tc message send` reports the too-long refusal as "message is X KB, limit is 64 KB"', async () => {
+      const { execFile } = require('node:child_process');
+      const run = (text) => new Promise((resolve) => {
+        execFile(path.join(__dirname, '..', 'bin', 'tc'), ['message', 'send', 'live-ws', text], {
+          env: { PATH: process.env.PATH, TANGLECLAW_API: `http://127.0.0.1:${port}`, TANGLECLAW_PROJECT_ID: String(project.id) },
+          encoding: 'utf8'
+        }, (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr }));
+      });
+      const big = await run('z'.repeat(70 * 1024));
+      assert.equal(big.code, 2);
+      assert.match(big.stderr, /\[BODY_TOO_LARGE\]/);
+      // The body is the message plus its JSON envelope, so a touch over 70 KB.
+      assert.match(big.stderr, /message is 70\.\d KB, limit is 64 KB/);
+      const ok = await run('z'.repeat(60 * 1024));
+      assert.equal(ok.code, 0, ok.stderr);
+      assert.match(ok.stdout, /received/);
+    });
   });
 });
 
