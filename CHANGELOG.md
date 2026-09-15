@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.26.0] - 2026-09-14
+
 ### Added
 
 - **"Ask the session to fix this" now tells you when the session is done (#1312).** Sending a blocked step's fix to the session used to leave the button reading "Sent — resolve it in the session, then Retry" with no way to know when to press Retry. The fix is now sent with the same completion line a wrap step asks for, and TangleClaw watches the terminal for it. The blocked row reads **Fixing in the session · 0:42** while it works; when the session prints the line, the row says it finished and Retry lights up as **Ready: Retry**. If the terminal goes quiet for a minute without the line, the row says the session may be waiting on you, since a session handed a fix often stops to ask something, and Retry is not lit; TangleClaw keeps watching, so once you answer and the session prints its line, Retry still lights up. If the session keeps working for five minutes without the line, the row says so and you can send the fix again. If the server restarts during a fix, the row stops showing it as in progress. Retry is never disabled by any of this. Reloading the page keeps the state. Scripts can use the new `POST /api/sessions/:project/wrap/handback` and its stream; `docs/configuration-reference.md` lists both.
