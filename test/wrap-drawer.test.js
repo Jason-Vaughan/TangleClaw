@@ -89,6 +89,26 @@ describe('wrap-drawer helpers — buildStepRow', () => {
       'autoPr:null (no auto-branch) keeps the bare SHA detail');
   });
 
+  it('#1502 — commit detail says whether releasePrepareCommand ran on a release cut', () => {
+    const mk = (releasePrepare, autoPr = null) => H.buildStepRow({
+      stepId: 'commit', kind: 'commit', status: 'done',
+      output: { commitSha: 'abc123def4567', autoPr, releasePrepare }, blockers: []
+    }, { blockedAt: null }).detail;
+
+    assert.equal(mk({ status: 'done', command: 'x', paths: ['README.md', 'a.lock'] }),
+      'abc123def456 · release files updated: README.md, a.lock');
+    assert.equal(mk({ status: 'done', command: 'x', paths: [] }),
+      'abc123def456 · releasePrepareCommand changed nothing');
+    assert.equal(mk({ status: 'skipped', reason: 'no releasePrepareCommand configured' }),
+      'abc123def456 · releasePrepareCommand not run: no releasePrepareCommand configured',
+      'a skipped command is visible on the row, not only in the API output');
+    assert.equal(
+      mk({ status: 'skipped', reason: 'r' }, { autoMergeArmed: true, prUrl: 'https://x/pull/1', error: null, skippedReason: null }),
+      'abc123def456 · wrap PR auto-merge armed · releasePrepareCommand not run: r',
+      'the release note rides after the auto-PR outcome');
+    assert.equal(mk(null), 'abc123def456', 'no release cut, no release note');
+  });
+
   it('flags the blocking step when stepId matches blockedAt', () => {
     const row = H.buildStepRow({
       stepId: 'test',

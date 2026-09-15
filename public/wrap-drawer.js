@@ -281,12 +281,23 @@
       case 'commit': {
         if (!output.commitSha) return null;
         const sha = output.commitSha.slice(0, 12);
+        // #1502 — on a release cut, whether releasePrepareCommand ran. A skip is
+        // shown rather than hidden: the release PR then lacks whatever the command adds.
+        const rp = output.releasePrepare;
+        let release = '';
+        if (rp && rp.status === 'done') {
+          release = Array.isArray(rp.paths) && rp.paths.length
+            ? ` · release files updated: ${rp.paths.join(', ')}`
+            : ' · releasePrepareCommand changed nothing';
+        } else if (rp && rp.status === 'skipped') {
+          release = ` · releasePrepareCommand not run: ${rp.reason || 'no reason given'}`;
+        }
         // #467 — auto-PR close-loop outcome for auto-branched commits.
         const ap = output.autoPr;
-        if (!ap) return sha;
-        if (ap.autoMergeArmed) return `${sha} · wrap PR auto-merge armed`;
-        if (ap.prUrl) return `${sha} · wrap PR opened (auto-merge NOT armed)`;
-        if (ap.error) return `${sha} · wrap PR failed — branch dangling`;
+        if (!ap) return sha + release;
+        if (ap.autoMergeArmed) return `${sha} · wrap PR auto-merge armed` + release;
+        if (ap.prUrl) return `${sha} · wrap PR opened (auto-merge NOT armed)` + release;
+        if (ap.error) return `${sha} · wrap PR failed — branch dangling` + release;
         // #867 — a pushed branch with no PR is stranded, not skipped. It used
         // to fall through to the neutral `skipped` line below and read exactly
         // like the deliberate `wrapAutoPrEnabled:false` opt-out, so the one
@@ -294,10 +305,10 @@
         // branch can still be rescued — called the failure benign. Mirrors
         // `_isStranded` in `lib/wrap-steps/commit.js`; a test pins them equal.
         if (isStrandedWrap(ap)) {
-          return `${sha} · wrap PR NOT opened — branch left on origin: ${ap.skippedReason || 'no PR was created'}`;
+          return `${sha} · wrap PR NOT opened — branch left on origin: ${ap.skippedReason || 'no PR was created'}` + release;
         }
-        if (ap.skippedReason) return `${sha} · wrap PR skipped: ${ap.skippedReason}`;
-        return sha;
+        if (ap.skippedReason) return `${sha} · wrap PR skipped: ${ap.skippedReason}` + release;
+        return sha + release;
       }
       case 'ai-content': {
         // `parsedFields` is an object whose keys are captureFields the

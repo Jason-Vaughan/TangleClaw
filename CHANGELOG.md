@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **A wrap that cuts a release can update the other files the release needs (#1502).** Set `releasePrepareCommand` in `.tangleclaw/project.json` to a shell command. When a wrap cuts a release, the commit step runs it after the version bump and CHANGELOG promotion are written and before anything is committed, with the release in `TANGLECLAW_RELEASE_VERSION` and `TANGLECLAW_RELEASE_PREVIOUS`. The files it changes, such as README install pins or a lockfile, go into the wrap commit and are listed in its body. If the command fails or runs past 5 minutes, nothing is committed, its output is shown on the commit row, and the version bump and CHANGELOG promotion are put back so Retry cuts the release again. The wrap popover's commit row shows the outcome: the release files it updated, or that it was not run and why (not configured, not a command string, or `.tangleclaw/project.json` unreadable). The auto-PR body lists the files too. This install sets it to the new `scripts/release-prepare.js`, which moves the README clone pins and adds the new release to the released-CHANGELOG lock. The first wrap-cut release, 5.26.0, failed CI without them (#1501). The script only adds to the lock and refuses if a published section changed.
+
 ## [5.26.0] - 2026-09-14
 
 ### Added
