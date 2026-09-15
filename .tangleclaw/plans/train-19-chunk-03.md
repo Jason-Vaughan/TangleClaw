@@ -1,3 +1,9 @@
+---
+artifact: build-plan
+version: 1
+scope: train-19-chunk-03
+---
+
 # Train 19 — Chunk 03: the Release decision in the wrap UI (L3)
 
 **Issue:** #1492 (layer L3; L2 AI recommendation and the L1-vs-L2 disagreement trigger are Chunk 04)
@@ -95,6 +101,8 @@ It now describes a decision only the operator can make, with plan mode as one ex
 
 ## Build steps
 
+### Chunk 03: Release decision in the wrap UI
+
 1. `lib/wrap-steps/version-bump.js`: validate `options.release`, the hold+level contradiction, the halt
    result, and Hold/Cut in `_releaseGate`. Tests in `test/version-bump-release-gate.test.js`.
 2. `lib/wrap-default-pipeline.js`: `version-bump` `blocker: true` with an `_orderNote` saying why. Test
@@ -107,6 +115,11 @@ It now describes a decision only the operator can make, with plan mode as one ex
 5. `public/ui.js`: the Release mode select in Settings. Test.
 6. Docs: ADR 0002 amendment + table row, `docs/configuration-reference.md`,
    `.prawduct/artifacts/api-contract.md`, CHANGELOG, `.prawduct/change-log.md`.
+7. *Added from the cumulative Critic.* The wrap modal re-reads `releaseMode` when it opens and
+   again before sending, because the page's load-time copy can be stale. The run registry
+   records each run's `options`, `/wrap/status` returns them, and a reloaded page takes back the
+   choices Retry replays. A Hold forgotten on reload became Auto, and a ready `auto` project then
+   cut the release the operator had refused.
 
 ## Done when
 

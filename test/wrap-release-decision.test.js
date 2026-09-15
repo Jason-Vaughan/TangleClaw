@@ -108,6 +108,40 @@ describe('collectOptionsFromAccessors — release', () => {
   });
 });
 
+describe('replayChoicesFromOptions', () => {
+  it('takes back every choice a Retry replays', () => {
+    const c = H.replayChoicesFromOptions({
+      release: 'cut', bumpLevel: 'major', skipPreflight: true,
+      pathDecisions: { 'a.js': 'include', 'b.js': 'leave' }, skipAiContent: { 'memory-update': true }
+    });
+    assert.deepEqual({ ...c, pathDecisions: { ...c.pathDecisions }, skipAiContent: { ...c.skipAiContent } }, {
+      release: 'cut', bumpLevel: 'major', skipPreflight: true,
+      pathDecisions: { 'a.js': 'include', 'b.js': 'leave' }, skipAiContent: { 'memory-update': true }
+    });
+  });
+
+  it('reads anything the server would refuse as not chosen', () => {
+    const c = H.replayChoicesFromOptions({
+      release: 'Hold', bumpLevel: 'huge', skipPreflight: 'yes',
+      pathDecisions: { 'a.js': 'discard' }, skipAiContent: { x: 1 }
+    });
+    assert.equal(c.release, '');
+    assert.equal(c.bumpLevel, '');
+    assert.equal(c.skipPreflight, false);
+    assert.equal(Object.keys(c.pathDecisions).length, 0);
+    assert.equal(Object.keys(c.skipAiContent).length, 0);
+  });
+
+  it('drops a level recorded beside a Hold, and treats no options as none chosen', () => {
+    assert.equal(H.replayChoicesFromOptions({ release: 'hold', bumpLevel: 'minor' }).bumpLevel, '');
+    for (const o of [null, undefined, 'x']) {
+      const c = H.replayChoicesFromOptions(o);
+      assert.equal(c.release, '');
+      assert.equal(c.skipPreflight, false);
+    }
+  });
+});
+
 describe('releaseDecisionWidget', () => {
   const rowOf = (result, blockedAt = 'version-bump') => H.buildStepRow(result, { blockedAt });
 
@@ -206,6 +240,61 @@ describe('the wrap modal release controls (run)', () => {
     assert.match(SESSION_HTML, /<label[^>]*for="wrapRelease"/);
     for (const v of ['', 'cut', 'hold']) assert.match(SESSION_HTML, new RegExp(`<option value="${v}"`));
     assert.match(SESSION_HTML, /class="form-group hidden" id="wrapBumpGroup"/);
+  });
+});
+
+describe('refreshWrapReleaseMode (run)', () => {
+  /**
+   * Run the real refresh against a stubbed project read.
+   *
+   * @param {string} pageMode - The mode the page loaded with.
+   * @param {object|Error} answer - The project JSON the server returns, or an Error to throw.
+   * @returns {Promise<{changed: boolean, el: object, ctx: object}>}
+   */
+  async function refresh(pageMode, answer) {
+    const ids = ['wrapReleaseGroup', 'wrapReleaseOff', 'wrapBumpGroup', 'wrapRelease', 'wrapBumpLevel', 'wrapReleaseHint'];
+    const { doc, ids: el } = makeDocument(ids);
+    el.wrapRelease.value = '';
+    el.wrapBumpLevel.value = '';
+    const ctx = {
+      document: doc,
+      projectName: 'demo',
+      encodeURIComponent,
+      sessionState: { project: { releaseMode: pageMode } },
+      tcFetch: async () => {
+        if (answer instanceof Error) throw answer;
+        return { ok: true, json: async () => answer };
+      }
+    };
+    vm.createContext(ctx);
+    vm.runInContext(`${liftFunction(SESSION_SRC, 'function syncWrapReleaseControls()')}
+${liftFunction(SESSION_SRC, 'async function refreshWrapReleaseMode()')}`, ctx);
+    const changed = await ctx.refreshWrapReleaseMode();
+    return { changed, el, ctx };
+  }
+
+  it('a mode switched from off in another tab brings the Release control back', async () => {
+    const { changed, el, ctx } = await refresh('off', { releaseMode: 'auto' });
+    assert.equal(changed, true);
+    assert.equal(ctx.sessionState.project.releaseMode, 'auto');
+    assert.equal(el.wrapReleaseGroup.classList.contains('hidden'), false, 'Hold is offered again');
+    assert.equal(el.wrapReleaseOff.classList.contains('hidden'), true);
+  });
+
+  it('reports no change when the mode is the same, or the read fails', async () => {
+    assert.equal((await refresh('ask', { releaseMode: 'ask' })).changed, false);
+    const failed = await refresh('ask', new Error('offline'));
+    assert.equal(failed.changed, false);
+    assert.equal(failed.ctx.sessionState.project.releaseMode, 'ask');
+    assert.equal((await refresh('ask', { name: 'no mode here' })).changed, false);
+  });
+
+  it('confirmWrap refreshes before reading the choice, and stops when the mode moved', () => {
+    const body = liftFunction(SESSION_SRC, 'async function confirmWrap()');
+    const refreshAt = body.indexOf('await refreshWrapReleaseMode()');
+    assert.ok(refreshAt !== -1, 'confirmWrap re-reads the mode');
+    assert.ok(refreshAt < body.indexOf("getElementById('wrapRelease')"), 'before the Release choice is read');
+    assert.match(body.slice(refreshAt, refreshAt + 400), /return;/, 'and returns without sending when it changed');
   });
 });
 

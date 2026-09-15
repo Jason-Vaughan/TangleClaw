@@ -138,7 +138,9 @@ function wrapGlobals(stubs, document) {
     wrapRunState: () => state,
     dispatchWrapRun: (signal) => { state = controller.reduceWrapRun(state, signal); return state; },
     wrapStatusUrl: () => '/api/sessions/demo/wrap/status',
-    wrapSkippedAiSteps: {}, wrapBumpLevel: '', currentWrapPassword: '',
+    wrapSkippedAiSteps: {}, wrapBumpLevel: '', wrapReleaseChoice: '', currentWrapPassword: '',
+    // The release-mode re-read (#1492) is its own probe; here it finds the mode unchanged.
+    refreshWrapReleaseMode: async () => false,
     window: {
       tcWrapDrawerHelpers: { collectOptionsFromAccessors: () => ({}) },
       tcWrapRunController: controller

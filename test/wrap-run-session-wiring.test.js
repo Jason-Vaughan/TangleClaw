@@ -51,7 +51,7 @@ function functionSource(name) {
 const WIRING = [
   'wrapStartInFlight', 'postWrap', 'retryWrap', 'closeWrapDrawer',
   'wrapRunState', 'wrapStatusUrl', 'dispatchWrapRun', 'syncWrapRunEffects', 'paintWrapRun',
-  'followedWrapRunKey', 'rememberFollowedWrapRun', 'recallFollowedWrapRun', 'restoreWrapRunOnLoad',
+  'followedWrapRunKey', 'rememberFollowedWrapRun', 'recallFollowedWrapRun', 'restoreWrapRunOnLoad', 'adoptWrapRunChoices',
   '_probeWrapStatus', 'startWrapStream', 'stopWrapStream', 'scheduleWrapStatusPoll', 'cancelWrapStatusPoll',
   'collapseWrapPopover', 'onWrapButtonClick', 'wrapButtonContext',
   'handbackWatched', 'syncHandbackEffects', 'startHandbackStream', 'stopHandbackStream', 'scheduleHandbackStatusPoll',
@@ -457,6 +457,27 @@ describe('wrap-run wiring in session.js — executed', () => {
       assert.equal(h.w.wrapRunState().phase, 'following');
       assert.equal(h.streams()[0].url, `/api/sessions/demo/wrap/stream/${RUN}`,
         'the stream replays the finished run, ending in its report');
+    });
+
+    it('#1492 — takes back the run\'s recorded choices, so a Retry after a reload keeps a Hold', async () => {
+      h.storage.set('tc.wrap.followedRun.demo', RUN);
+      h.net.status = {
+        runId: RUN, running: false, result: BLOCKED_RESULT,
+        options: { release: 'hold', skipPreflight: true, pathDecisions: { 'a.js': 'leave' }, skipAiContent: { 'memory-update': true } }
+      };
+      await h.w.restoreWrapRunOnLoad();
+      h.streams()[0].emit('run-done', { result: { ...BLOCKED_RESULT, runId: RUN } });
+
+      h.sandbox.document.getElementById = () => ({
+        disabled: false, classList: { add() {}, remove() {} }, querySelector: () => null, querySelectorAll: () => []
+      });
+      h.net.post = { ok: true, runId: RETRY_RUN, status: 'wrapping' };
+      await h.w.retryWrap();
+      const sent = h.last('apiMutate')[2].options;
+      assert.equal(sent.release, 'hold', 'a reload must not turn a refused release into a cut');
+      assert.equal(sent.skipPreflight, true);
+      assert.deepEqual({ ...sent.pathDecisions }, { 'a.js': 'leave' });
+      assert.deepEqual({ ...sent.skipAiContent }, { 'memory-update': true });
     });
 
     it('forgets a remembered run the server no longer holds', async () => {

@@ -6227,6 +6227,9 @@ route('GET', '/api/sessions/:project/wrap/status', (_req, res, params) => {
     currentStepStartedAt: status.currentStepStartedAt,
     finishedAt: status.finishedAt,
     result: status.result ? _wrapResultPayload(params.project, status.result) : null,
+    // #1492 — the choices this run was started with, so a reloaded page replays
+    // them on Retry instead of forgetting a Hold (and cutting the release).
+    options: status.options,
     // The fix handed back to the session for this run's blocked step, so a
     // reloaded page can show "Fixing…" or "Ready: Retry" without re-sending it.
     handback: wrapHandback.get(params.project, status.runId)

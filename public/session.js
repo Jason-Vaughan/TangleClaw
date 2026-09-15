@@ -3564,6 +3564,10 @@ function openWrapModal() {
   const releaseEl = document.getElementById('wrapRelease');
   if (releaseEl) releaseEl.value = '';
   syncWrapReleaseControls();
+  // The mode read at page load may be stale: another tab can change it while
+  // this one stays open. Re-read it so the controls match what the server will
+  // do. confirmWrap checks again before sending.
+  refreshWrapReleaseMode();
   const pwGroup = document.getElementById('wrapPasswordGroup');
   if (sessionState.config && sessionState.config.deleteProtected) {
     pwGroup.classList.remove('hidden');
@@ -3603,6 +3607,34 @@ function syncWrapReleaseControls() {
 }
 
 /**
+ * Re-read this project's release mode and re-sync the wrap modal when it changed
+ * (#1492). The session page loads the project once. A mode switched from `off` in
+ * another tab would otherwise leave the modal hiding Hold while the server,
+ * which reads the real mode, cuts a release.
+ *
+ * Uses `tcFetch`, not `api()`, so a failed probe can't overwrite `api.lastError`
+ * for a wrap POST in flight. A probe that doesn't answer changes nothing.
+ *
+ * @returns {Promise<boolean>} true when the mode changed and the controls moved
+ */
+async function refreshWrapReleaseMode() {
+  let fresh;
+  try {
+    const res = await tcFetch(`/api/projects/${encodeURIComponent(projectName)}`);
+    if (!res.ok) return false;
+    fresh = await res.json();
+  } catch { // a probe that could not run leaves the mode as the page last knew it
+    return false;
+  }
+  if (!fresh || typeof fresh.releaseMode !== 'string') return false;
+  if (!sessionState.project) sessionState.project = {};
+  if (sessionState.project.releaseMode === fresh.releaseMode) return false;
+  sessionState.project.releaseMode = fresh.releaseMode;
+  syncWrapReleaseControls();
+  return true;
+}
+
+/**
  * True while a wrap POST is in flight — the controller's `starting` phase.
  * Guards against dismissing the modal mid-request; the controller itself
  * refuses a second start.
@@ -3638,6 +3670,16 @@ async function confirmWrap() {
 
   // Fresh wrap — drop any ai-content skips accumulated by a prior wrap's
   // retries (#328) so they don't leak into this run.
+  // #1492: the release control must show the mode the server will use. If it
+  // changed since the modal opened, stop here so the operator sees the right
+  // choices before anything is sent.
+  if (await refreshWrapReleaseMode()) {
+    const errEl = document.getElementById('wrapError');
+    errEl.textContent = `This project's release mode is now ${sessionState.project.releaseMode}. Check Release, then press Wrap again.`;
+    errEl.classList.remove('hidden');
+    return;
+  }
+
   wrapSkippedAiSteps = {};
   wrapPathDecisions = {};
   wrapSkipPreflight = false;
@@ -5608,8 +5650,26 @@ async function restoreWrapRunOnLoad() {
     return;
   }
   if (status.running === true || status.runId === recallFollowedWrapRun()) {
+    adoptWrapRunChoices(status.options);
     dispatchWrapRun({ type: 'follow', runId: status.runId });
   }
+}
+
+/**
+ * Take back the choices a Retry replays from the run this page is following
+ * again after a reload (#1492). Retry keeps them in page memory, which a reload
+ * wipes. A forgotten Hold would otherwise let the next Retry cut the release
+ * the operator refused. The server recorded them when the run started.
+ *
+ * @param {*} options - `status.options` from `/wrap/status`.
+ */
+function adoptWrapRunChoices(options) {
+  const choices = window.tcWrapDrawerHelpers.replayChoicesFromOptions(options);
+  wrapReleaseChoice = choices.release;
+  wrapBumpLevel = choices.bumpLevel;
+  wrapSkipPreflight = choices.skipPreflight;
+  wrapPathDecisions = choices.pathDecisions;
+  wrapSkippedAiSteps = choices.skipAiContent;
 }
 
 /**

@@ -952,6 +952,38 @@
   }
 
   /**
+   * The choices a Retry replays, read back from a run's recorded `options`
+   * (`/wrap/status`) after the page reloads (#1492). Page memory is where Retry
+   * keeps them, and a reload wipes it. For most choices that only means being
+   * asked again, but a lost Hold became Auto, and on a ready `auto` project
+   * the next Retry cut the release the operator had refused.
+   *
+   * Only values the server would honour come back. Anything else reads as not
+   * chosen, which is what the page held before the reload taught it anything.
+   *
+   * @param {*} options - `status.options` for the run being followed.
+   * @returns {{release: string, bumpLevel: string, skipPreflight: boolean, pathDecisions: Object<string, string>, skipAiContent: Object<string, true>}}
+   */
+  function replayChoicesFromOptions(options) {
+    const o = options && typeof options === 'object' ? options : {};
+    const release = o.release === 'cut' || o.release === 'hold' ? o.release : '';
+    const bumpLevel = release !== 'hold' && ['patch', 'minor', 'major'].includes(o.bumpLevel) ? o.bumpLevel : '';
+    const pathDecisions = {};
+    if (o.pathDecisions && typeof o.pathDecisions === 'object') {
+      for (const [p, v] of Object.entries(o.pathDecisions)) {
+        if (v === 'include' || v === 'leave') pathDecisions[p] = v;
+      }
+    }
+    const skipAiContent = {};
+    if (o.skipAiContent && typeof o.skipAiContent === 'object') {
+      for (const [stepId, v] of Object.entries(o.skipAiContent)) {
+        if (v === true) skipAiContent[stepId] = true;
+      }
+    }
+    return { release, bumpLevel, skipPreflight: o.skipPreflight === true, pathDecisions, skipAiContent };
+  }
+
+  /**
    * Merge this retry's ai-content skip choice into a persistent accumulator
    * and reflect the full set back onto `options` (#328). The wrap pipeline
    * re-runs from step 0 on every retry and the drawer only shows the
@@ -1478,6 +1510,7 @@
     prCheckResolutionWidget,
     pathDecisionWidget,
     releaseDecisionWidget,
+    replayChoicesFromOptions,
     accumulatePathDecisions,
     planPickerWidget,
     ruleProposalWidget,
