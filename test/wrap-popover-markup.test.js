@@ -189,6 +189,23 @@ describe('wrap popover stylesheet (#1312)', () => {
     }
   });
 
+  // The decision now sits below every step in the scroll body, so a blocked wrap's
+  // skip checkbox (which changes what Retry does) could open out of view.
+  // session.js is browser DOM code, not require()-able, hence a source pin.
+  it('the decision is scrolled into view when it first appears, and only then (#1491)', () => {
+    const src = fs.readFileSync(path.join(PUBLIC, 'session.js'), 'utf8');
+    const start = src.indexOf('function renderWrapDrawer(');
+    assert.ok(start !== -1, 'renderWrapDrawer exists');
+    const next = src.indexOf('\nfunction ', start + 1);
+    const body = src.slice(start, next === -1 ? undefined : next);
+    const captured = body.indexOf("const decisionWasHidden = decisionEl.classList.contains('hidden')");
+    const toggled = body.indexOf("decisionEl.classList.toggle('hidden', !widgetRendered)");
+    const scrolled = body.indexOf("if (widgetRendered && decisionWasHidden) decisionEl.scrollIntoView({ block: 'nearest' })");
+    assert.ok(captured !== -1 && toggled !== -1 && scrolled !== -1, 'capture, reveal and guarded scroll are all present');
+    assert.ok(captured < toggled, 'hidden state is read before this render reveals the decision');
+    assert.ok(toggled < scrolled, 'the scroll happens after the reveal, when the element has a box');
+  });
+
   it('honours reduced motion', () => {
     const d = rule('.wrap-drawer', '@media (prefers-reduced-motion: reduce)');
     assert.equal(d.transition, 'none');

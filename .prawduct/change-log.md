@@ -54,6 +54,7 @@ the overflow was clipped outside any scroll container.
 - `public/session.css`: `.wrap-drawer-body` is `flex: 1 1 auto; min-height: 0; overflow-y: auto` and
   deliberately not a flex container. The header and actions are `flex-shrink: 0`. The step list and
   decision lose their own flex/scroll declarations.
+- `public/session.js` (`renderWrapDrawer`): the decision is scrolled into view (`block: 'nearest'`) on first reveal only, since it now sits below every step (Critic R-1).
 - `test/wrap-popover-markup.test.js`: #1312's "the step list scrolls" contract is replaced, explicitly,
   by the one-scroll-region contract (markup nesting, body/header/actions rules, no section capping or
   scrolling itself). The new tests fail against `origin/main`'s CSS and HTML.

@@ -1962,12 +1962,9 @@ body {
   .wrap-drawer.open { transition: none; }
 }
 /* #1491 — the header and the action row hold their height; everything between
-   them lives in ONE scroll region at its natural height. Several flex children
-   sharing a capped column used to squeeze each other: the skip list and the
-   decision refused to shrink, the step list collapsed to nothing, and the
-   parent's `overflow: hidden` cut off a rule proposal's Approve/Reject and the
-   Close/Done row with no way to scroll to them. The body is deliberately NOT a
-   flex container, so no section inside it can be shrunk to fit. */
+   them lives in ONE scroll region at its natural height, so no control can end
+   up clipped outside what scrolls. The body is deliberately NOT a flex
+   container, so no section inside it can be shrunk to fit. */
 .wrap-drawer-body {
   flex: 1 1 auto;
   min-height: 0;
