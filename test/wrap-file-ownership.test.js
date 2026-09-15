@@ -396,7 +396,9 @@ describe('#1508/#1509: TangleClaw\'s own files dirty at launch are not asked abo
   const engines = require('../lib/engines');
   const MD = engines._managedBlockMarkers('markdown');
   const guide = (body, operator = 'Operator notes.\n') => `# Project\n\n${operator}\n${MD.begin}\n${body}\n${MD.end}\n`;
-  const config = (sha) => `${JSON.stringify({ engine: 'claude', lastWrapSha: sha }, null, 2)}\n`;
+  // The committed copy still carries the retired `lastWrapSha`; TangleClaw's
+  // migration removes it before the session launches (#1510).
+  const config = (sha) => `${JSON.stringify(sha ? { engine: 'claude', lastWrapSha: sha } : { engine: 'claude' }, null, 2)}\n`;
 
   /**
    * A project that tracks its engine config, project.json and a state file, where
@@ -416,7 +418,7 @@ describe('#1508/#1509: TangleClaw\'s own files dirty at launch are not asked abo
     git(repo, 'add', '-A');
     git(repo, 'commit', '-q', '-m', 'tracked tangleclaw files');
     fs.writeFileSync(path.join(repo, 'CLAUDE.md'), guide('guide v2', operatorLine ? `Operator notes.\n${operatorLine}\n` : 'Operator notes.\n'));
-    fs.writeFileSync(path.join(repo, '.tangleclaw', 'project.json'), config('bbb'));
+    fs.writeFileSync(path.join(repo, '.tangleclaw', 'project.json'), config(null));
     fs.writeFileSync(path.join(repo, '.tangleclaw', 'session-prime.md'), 'prime v2\n');
     const baseline = launchBaseline.capture(repo);
     if (sessionWork) fs.writeFileSync(path.join(repo, 'mine.js'), 'session work\n');
@@ -429,17 +431,17 @@ describe('#1508/#1509: TangleClaw\'s own files dirty at launch are not asked abo
 
     const files = await runStep(sessionFiles, repo, scope);
     assert.equal(files.status, 'done', files.blockers.join('; '));
-    assert.deepEqual(files.output.tangleclawMaintenance, ['CLAUDE.md']);
-    assert.deepEqual(files.output.tangleclawState.sort(), ['.tangleclaw/project.json', '.tangleclaw/session-prime.md']);
-    assert.match(files.output.detail, /1 TangleClaw update to commit · 2 TangleClaw state files not committed/);
+    assert.deepEqual(files.output.tangleclawMaintenance.sort(), ['.tangleclaw/project.json', 'CLAUDE.md']);
+    assert.deepEqual(files.output.tangleclawState, ['.tangleclaw/session-prime.md']);
+    assert.match(files.output.detail, /2 TangleClaw updates to commit · 1 TangleClaw state file not committed/);
 
     const r = await runStep(commitStep, repo, scope);
     assert.equal(r.status, 'done');
-    assert.deepEqual(git(repo, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort(), ['CLAUDE.md', 'mine.js']);
-    assert.match(r.output.message, /^- TangleClaw maintenance \(changed only where TangleClaw writes\): CLAUDE\.md$/m);
-    assert.deepEqual(r.output.tangleclawMaintenance, ['CLAUDE.md']);
+    assert.deepEqual(git(repo, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort(), ['.tangleclaw/project.json', 'CLAUDE.md', 'mine.js']);
+    assert.match(r.output.message, /^- TangleClaw maintenance \(changed only where TangleClaw writes\): .*CLAUDE\.md/m);
+    assert.deepEqual(r.output.tangleclawMaintenance.sort(), ['.tangleclaw/project.json', 'CLAUDE.md']);
     assert.equal(fs.readFileSync(path.join(repo, '.tangleclaw', 'session-prime.md'), 'utf8'), 'prime v2\n');
-    assert.match(git(repo, 'status', '--porcelain'), /^ M \.tangleclaw\/session-prime\.md$/m, 'state stays uncommitted');
+    assert.equal(git(repo, 'status', '--porcelain', '--', '.tangleclaw/session-prime.md'), 'M .tangleclaw/session-prime.md', 'state stays uncommitted');
   });
 
   it('one operator line outside the managed block still asks, exactly as before', async () => {

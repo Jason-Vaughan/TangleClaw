@@ -230,6 +230,23 @@ describe('wrap-scope picks the tree the session\'s pane is in (#1469)', () => {
     assert.equal(stepProject.configPath, repo);
   });
 
+  it('reads the wrap boundary from the registered checkout\'s state file on a worktree wrap (#1510)', async () => {
+    const wrapState = require('../lib/wrap-state');
+    const repo = makeRepo();
+    const boundary = git(repo, 'rev-parse', 'HEAD');
+    wrapState.stampLastWrapSha(repo, boundary);
+    const wt = `${repo}-wt`;
+    dirs.push(wt);
+    git(repo, 'worktree', 'add', '-q', '-b', 'feat/wt-boundary', wt);
+    assert.equal(fs.existsSync(path.join(wt, '.tangleclaw', 'state.json')), false, 'fixture precondition: the worktree has no state file');
+    const project = { name: 'p', path: repo };
+    const session = { id: 1, tmuxSession: 'p', startedAt: '2026-09-14 10:00:00' };
+    const scope = await wrapScope.resolve(project, session, { ...noopDeps(wt), getLaunchBaseline: () => null });
+    assert.equal(scope.worktreeTarget, true);
+    assert.equal(scope.lastWrapSha, boundary);
+    assert.equal(scope.lastWrapShaRead, 'recorded');
+  });
+
   it('keeps the registered checkout for a pane in the checkout, in another repo, or unreadable', async () => {
     const repo = makeRepo();
     const other = makeRepo();

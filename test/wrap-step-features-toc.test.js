@@ -8,6 +8,7 @@
 
 const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
+const wrapState = require('../lib/wrap-state');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -720,8 +721,9 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
 
     it('diffs <lastWrapSha>..HEAD so files merged this session are stubbed even though main...HEAD is empty', async () => {
       store.projectConfig.save(projectPath, {
-        engine: 'claude', methodology: 'minimal', featureIndexEnabled: true, lastWrapSha: SHA
+        engine: 'claude', methodology: 'minimal', featureIndexEnabled: true
       });
+      wrapState.stampLastWrapSha(projectPath, SHA);
       fs.writeFileSync(path.join(projectPath, 'FEATURES.md'), '# Feature Index\n\n## UI\n');
 
       const origExec = featuresToc._internal.execSync;
@@ -911,8 +913,9 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
 
     it('stubs a file added this session but NOT one deleted this session', async () => {
       store.projectConfig.save(projectPath, {
-        engine: 'claude', methodology: 'minimal', featureIndexEnabled: true, lastWrapSha: firstSha
+        engine: 'claude', methodology: 'minimal', featureIndexEnabled: true
       });
+      wrapState.stampLastWrapSha(projectPath, firstSha);
 
       const origToday = featuresToc._internal.todayIso;
       featuresToc._internal.todayIso = () => '2026-07-19';
@@ -946,8 +949,9 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       fs.rmSync(path.join(projectPath, 'lib', 'transient.js')); // uncommitted deletion
 
       store.projectConfig.save(projectPath, {
-        engine: 'claude', methodology: 'minimal', featureIndexEnabled: true, lastWrapSha: headBefore
+        engine: 'claude', methodology: 'minimal', featureIndexEnabled: true
       });
+      wrapState.stampLastWrapSha(projectPath, headBefore);
 
       const rangeSawIt = execSync(`git diff --name-only ${headBefore}..HEAD`, { cwd: projectPath, encoding: 'utf8' });
       assert.match(rangeSawIt, /transient\.js/,
@@ -973,8 +977,9 @@ describe('wrap-step features-toc (#207 Chunk 3)', () => {
       execSync('git add -A && git commit -q -m "delete only"', { cwd: projectPath, stdio: 'ignore' });
 
       store.projectConfig.save(projectPath, {
-        engine: 'claude', methodology: 'minimal', featureIndexEnabled: true, lastWrapSha: headBefore
+        engine: 'claude', methodology: 'minimal', featureIndexEnabled: true
       });
+      wrapState.stampLastWrapSha(projectPath, headBefore);
 
       const staged = {};
       const result = await featuresToc.run({ project: createdProject, staged });

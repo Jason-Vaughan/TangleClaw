@@ -34,6 +34,7 @@ const os = require('node:os');
 const { wasTimedOut } = require('../lib/exec-timeout');
 const gitRange = require('../lib/wrap-steps/_git-range');
 const changelogCoverage = require('../lib/wrap-steps/changelog-coverage');
+const wrapState = require('../lib/wrap-state');
 
 /**
  * Produce a genuine `execSync` timeout error by killing a real process.
@@ -161,9 +162,9 @@ describe('changelog-coverage explains an unavailable verdict honestly (#897)', (
 
   it('a killed `git log` says the commits are unknown, not that the range failed', () => {
     const savedExec = changelogCoverage._internal.execSync;
-    const savedCfg = changelogCoverage._internal.loadProjectConfig;
+    const savedCfg = changelogCoverage._internal.readLastWrapSha;
     try {
-      changelogCoverage._internal.loadProjectConfig = () => ({ lastWrapSha: null });
+      changelogCoverage._internal.readLastWrapSha = () => ({ sha: null, read: 'absent' });
       let call = 0;
       changelogCoverage._internal.execSync = (command) => {
         call += 1;
@@ -181,15 +182,15 @@ describe('changelog-coverage explains an unavailable verdict honestly (#897)', (
       assert.ok(call > 1, 'the git log call was actually reached');
     } finally {
       changelogCoverage._internal.execSync = savedExec;
-      changelogCoverage._internal.loadProjectConfig = savedCfg;
+      changelogCoverage._internal.readLastWrapSha = savedCfg;
     }
   });
 
   it('a killed working-tree read says the uncommitted files are unknown', () => {
     const savedExec = changelogCoverage._internal.execSync;
-    const savedCfg = changelogCoverage._internal.loadProjectConfig;
+    const savedCfg = changelogCoverage._internal.readLastWrapSha;
     try {
-      changelogCoverage._internal.loadProjectConfig = () => ({ lastWrapSha: null });
+      changelogCoverage._internal.readLastWrapSha = () => ({ sha: null, read: 'absent' });
       changelogCoverage._internal.execSync = (command) => {
         const cmd = String(command);
         if (cmd.startsWith('git diff --name-only --relative HEAD')) throw realTimeoutError();
@@ -204,15 +205,15 @@ describe('changelog-coverage explains an unavailable verdict honestly (#897)', (
       assert.match(r.reason, /uncommitted files are unknown/);
     } finally {
       changelogCoverage._internal.execSync = savedExec;
-      changelogCoverage._internal.loadProjectConfig = savedCfg;
+      changelogCoverage._internal.readLastWrapSha = savedCfg;
     }
   });
 
   it('a killed range probe does not claim the repo has no main or master', () => {
     const savedExec = changelogCoverage._internal.execSync;
-    const savedCfg = changelogCoverage._internal.loadProjectConfig;
+    const savedCfg = changelogCoverage._internal.readLastWrapSha;
     try {
-      changelogCoverage._internal.loadProjectConfig = () => ({ lastWrapSha: null });
+      changelogCoverage._internal.readLastWrapSha = () => ({ sha: null, read: 'absent' });
       changelogCoverage._internal.execSync = () => { throw realTimeoutError(); };
 
       const r = changelogCoverage.evaluate('/tmp', ['CHANGELOG.md'], []);
@@ -223,16 +224,16 @@ describe('changelog-coverage explains an unavailable verdict honestly (#897)', (
         'a stopped probe is no evidence about which branches this repo has');
     } finally {
       changelogCoverage._internal.execSync = savedExec;
-      changelogCoverage._internal.loadProjectConfig = savedCfg;
+      changelogCoverage._internal.readLastWrapSha = savedCfg;
     }
   });
 
   it('a genuinely missing trunk branch keeps its original wording', () => {
     // The other direction — the new message must not swallow the real case.
     const savedExec = changelogCoverage._internal.execSync;
-    const savedCfg = changelogCoverage._internal.loadProjectConfig;
+    const savedCfg = changelogCoverage._internal.readLastWrapSha;
     try {
-      changelogCoverage._internal.loadProjectConfig = () => ({ lastWrapSha: null });
+      changelogCoverage._internal.readLastWrapSha = () => ({ sha: null, read: 'absent' });
       changelogCoverage._internal.execSync = () => {
         const err = new Error('Command failed');
         err.status = 1;
@@ -245,7 +246,7 @@ describe('changelog-coverage explains an unavailable verdict honestly (#897)', (
       assert.match(r.reason, /no main\/master base branch/);
     } finally {
       changelogCoverage._internal.execSync = savedExec;
-      changelogCoverage._internal.loadProjectConfig = savedCfg;
+      changelogCoverage._internal.readLastWrapSha = savedCfg;
     }
   });
 });
@@ -278,8 +279,13 @@ describe('features-toc names a stopped probe rather than a fact (#897)', () => {
   async function runWith(projConfig, exec) {
     const savedExec = featuresToc._internal.execSync;
     const savedLoad = store.projectConfig.load;
+    const savedBoundary = wrapState.readLastWrapSha;
     try {
       store.projectConfig.load = () => projConfig;
+      // The boundary lives in the wrap state file, not project config (#1510).
+      wrapState.readLastWrapSha = () => (projConfig.lastWrapSha
+        ? { sha: projConfig.lastWrapSha, read: 'recorded' }
+        : { sha: null, read: 'absent' });
       featuresToc._internal.execSync = exec;
       return await featuresToc.run({
         project: { name: 'p', path: projectPath },
@@ -289,6 +295,7 @@ describe('features-toc names a stopped probe rather than a fact (#897)', () => {
     } finally {
       featuresToc._internal.execSync = savedExec;
       store.projectConfig.load = savedLoad;
+      wrapState.readLastWrapSha = savedBoundary;
     }
   }
 
@@ -377,9 +384,9 @@ describe('a widened range reaches the operator who is blocked by it (#897)', () 
 
   it('changelog-coverage flags an uncovered verdict computed over a guessed range', () => {
     const savedExec = changelogCoverage._internal.execSync;
-    const savedCfg = changelogCoverage._internal.loadProjectConfig;
+    const savedCfg = changelogCoverage._internal.readLastWrapSha;
     try {
-      changelogCoverage._internal.loadProjectConfig = () => ({ lastWrapSha: 'abcdef1234567' });
+      changelogCoverage._internal.readLastWrapSha = () => ({ sha: 'abcdef1234567', read: 'recorded' });
       changelogCoverage._internal.execSync = (command) => {
         const cmd = String(command);
         if (cmd.includes('merge-base --is-ancestor')) throw realTimeoutError();
@@ -398,15 +405,15 @@ describe('a widened range reaches the operator who is blocked by it (#897)', () 
       assert.match(r.reason, /may reach further back than this session/);
     } finally {
       changelogCoverage._internal.execSync = savedExec;
-      changelogCoverage._internal.loadProjectConfig = savedCfg;
+      changelogCoverage._internal.readLastWrapSha = savedCfg;
     }
   });
 
   it('an uncovered verdict over a confirmed range carries no caveat', () => {
     const savedExec = changelogCoverage._internal.execSync;
-    const savedCfg = changelogCoverage._internal.loadProjectConfig;
+    const savedCfg = changelogCoverage._internal.readLastWrapSha;
     try {
-      changelogCoverage._internal.loadProjectConfig = () => ({ lastWrapSha: 'abcdef1234567' });
+      changelogCoverage._internal.readLastWrapSha = () => ({ sha: 'abcdef1234567', read: 'recorded' });
       changelogCoverage._internal.execSync = (command) => {
         if (String(command).startsWith('git log')) {
           return Buffer.from('\x1eabc123\x1fp1\x1fAdd a thing\nlib/thing.js\n');
@@ -420,7 +427,7 @@ describe('a widened range reaches the operator who is blocked by it (#897)', () 
       assert.equal(r.reason, null, 'nothing to caveat when every probe answered');
     } finally {
       changelogCoverage._internal.execSync = savedExec;
-      changelogCoverage._internal.loadProjectConfig = savedCfg;
+      changelogCoverage._internal.readLastWrapSha = savedCfg;
     }
   });
 
@@ -493,9 +500,9 @@ describe('the degraded-range caveat goes only where the range was used (#897)', 
 
   it('an uncommitted-work verdict carries no caveat even when a probe was stopped', () => {
     const savedExec = changelogCoverage._internal.execSync;
-    const savedCfg = changelogCoverage._internal.loadProjectConfig;
+    const savedCfg = changelogCoverage._internal.readLastWrapSha;
     try {
-      changelogCoverage._internal.loadProjectConfig = () => ({ lastWrapSha: 'abcdef1234567' });
+      changelogCoverage._internal.readLastWrapSha = () => ({ sha: 'abcdef1234567', read: 'recorded' });
       changelogCoverage._internal.execSync = (command) => {
         const cmd = String(command);
         if (cmd.includes('merge-base --is-ancestor')) throw realTimeoutError();
@@ -515,7 +522,7 @@ describe('the degraded-range caveat goes only where the range was used (#897)', 
         'a verdict the range did not produce must not carry a range caveat');
     } finally {
       changelogCoverage._internal.execSync = savedExec;
-      changelogCoverage._internal.loadProjectConfig = savedCfg;
+      changelogCoverage._internal.readLastWrapSha = savedCfg;
     }
   });
 

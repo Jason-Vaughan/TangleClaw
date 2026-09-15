@@ -567,7 +567,7 @@ describe('commit → continuity-write — the two steps agree on the boundary (#
     const first = await wrap(1);
     assert.equal(first.ok, true);
     assert.ok(first.output.commitSha, 'session 1 committed');
-    const stampedBySession1 = require('../lib/store').projectConfig.load(repo).lastWrapSha;
+    const stampedBySession1 = require('../lib/wrap-state').readLastWrapSha(repo).sha;
     assert.ok(stampedBySession1, 'session 1 left a boundary behind');
 
     fs.writeFileSync(path.join(repo, 'second.js'), 'two\n');

@@ -2770,9 +2770,8 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
   });
 
   it('stamps lastWrapSha with the wrap commit\'s PARENT, so it survives squash-merge (#664)', async () => {
-    // projectConfig.load/save are file-based on the project's own
-    // `.tangleclaw/project.json` — no store DB init needed.
-    const storeMod = require('../lib/store');
+    // The boundary is file-based on the project's own `.tangleclaw/state.json`
+    // — no store DB init needed.
     fs.writeFileSync(path.join(projectPath, 'changed.txt'), 'hi\n');
     const ctx = buildContext({});
     const result = await commitStep.run(ctx);
@@ -2781,7 +2780,7 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
     assert.equal(result.output.stamped, true);
 
     const parentSha = execSync('git rev-parse HEAD~1', { cwd: projectPath }).toString().trim();
-    const cfg = storeMod.projectConfig.load(projectPath);
+    const cfg = { lastWrapSha: require('../lib/wrap-state').readLastWrapSha(projectPath).sha };
     assert.equal(cfg.lastWrapSha, parentSha,
       'lastWrapSha must be the wrap commit PARENT (the pre-wrap tip that survives a '
       + 'squash-merge as an ancestor), not the wrap commit itself');
@@ -2790,14 +2789,12 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
   });
 
   it('reports the range base it replaced, for the steps that run after it (#797)', async () => {
-    const storeMod = require('../lib/store');
+    const wrapState = require('../lib/wrap-state');
     // The boundary the PREVIOUS wrap left. `continuity-write` runs after this
     // step and measures the session's changed set from it — and by then the
     // stamp below has overwritten it on disk, so this step has to hand it on.
     const priorBase = execSync('git rev-parse HEAD', { cwd: projectPath }).toString().trim();
-    const cfg0 = storeMod.projectConfig.load(projectPath);
-    cfg0.lastWrapSha = priorBase;
-    storeMod.projectConfig.save(projectPath, cfg0);
+    wrapState.stampLastWrapSha(projectPath, priorBase);
     // A commit of the session's own, so the wrap commit's parent is NOT the
     // recorded base — otherwise the stamp lands on the same value and the test
     // could not tell a reported base from a re-read of the current one.
@@ -2808,7 +2805,7 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
     assert.equal(result.ok, true);
     assert.equal(result.output.previousWrapSha, priorBase);
     assert.equal(result.output.previousWrapShaRead, 'recorded');
-    assert.notEqual(storeMod.projectConfig.load(projectPath).lastWrapSha, priorBase,
+    assert.notEqual(wrapState.readLastWrapSha(projectPath).sha, priorBase,
       'the on-disk value has moved — the reported one is the only surviving copy');
   });
 
@@ -2836,13 +2833,10 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
   });
 
   it('reports the range base on the skip path too, where no stamp moves (#797)', async () => {
-    const storeMod = require('../lib/store');
-    const cfg0 = storeMod.projectConfig.load(projectPath);
-    cfg0.lastWrapSha = execSync('git rev-parse HEAD', { cwd: projectPath }).toString().trim();
-    storeMod.projectConfig.save(projectPath, cfg0);
-    // Commit the config write itself, or the tree is dirty and nothing skips.
+    const priorBase = execSync('git rev-parse HEAD', { cwd: projectPath }).toString().trim();
+    require('../lib/wrap-state').stampLastWrapSha(projectPath, priorBase);
+    // Commit the state write itself, or the tree is dirty and nothing skips.
     execSync('git add -A && git commit -qm "record a boundary"', { cwd: projectPath, shell: '/bin/sh' });
-    const priorBase = cfg0.lastWrapSha;
 
     // Nothing to commit: a clean session still writes a continuity record, and
     // that record must be able to say the session changed nothing.
@@ -2854,7 +2848,6 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
   });
 
   it('falls back to the wrap commit itself when it is a parentless root commit (#664)', async () => {
-    const storeMod = require('../lib/store');
     // A repo whose very first commit is the wrap commit — HEAD~1 does not resolve,
     // so there is no pre-wrap base and the stamp falls back to the wrap commit.
     const rootRepo = fs.mkdtempSync(path.join(tmpDir, 'rootrepo-'));
@@ -2867,7 +2860,7 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
     assert.equal(result.ok, true);
     assert.ok(result.output.commitSha);
     assert.equal(result.output.stamped, true, 'a root-commit wrap still stamps a base');
-    const cfg = storeMod.projectConfig.load(rootRepo);
+    const cfg = { lastWrapSha: require('../lib/wrap-state').readLastWrapSha(rootRepo).sha };
     assert.equal(cfg.lastWrapSha, result.output.commitSha,
       'with no parent, the stamp falls back to the wrap commit itself');
   });
@@ -2970,14 +2963,13 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
 
   // ── Critic MINOR pins (#139 Chunk 9): failure-path test coverage ──
 
-  it('returns ok:true with stamped:false when projConfig.save throws but commit succeeded', async () => {
-    // Critic MINOR: the _stampLastWrapSha path is non-fatal — the commit
-    // already landed, the stamp is a hint for Chunks 4/7 range detection.
-    // Mock the store.projectConfig.save to throw and assert the run
-    // result stays ok:true with output.stamped:false.
-    const storeMod = require('../lib/store');
-    const origSave = storeMod.projectConfig.save;
-    storeMod.projectConfig.save = () => { throw new Error('EACCES from save mock'); };
+  it('returns ok:true with stamped:false when the boundary write throws but commit succeeded', async () => {
+    // The _stampLastWrapSha path is non-fatal — the commit already landed, the
+    // stamp is a hint for later range detection. Make the wrap-state write
+    // throw and assert the run result stays ok:true with output.stamped:false.
+    const wrapStateMod = require('../lib/wrap-state');
+    const origSave = wrapStateMod.stampLastWrapSha;
+    wrapStateMod.stampLastWrapSha = () => { throw new Error('EACCES from stamp mock'); };
     try {
       fs.writeFileSync(path.join(projectPath, 'something.txt'), 'x\n');
       const ctx = buildContext({});
@@ -2988,7 +2980,7 @@ describe('wrap-step commit — handler against real git repo (#139 Chunk 9)', ()
       assert.equal(result.output.stamped, false,
         'output.stamped must reflect the failure so Chunk 10 UI can surface "stamp failed"');
     } finally {
-      storeMod.projectConfig.save = origSave;
+      wrapStateMod.stampLastWrapSha = origSave;
     }
   });
 
@@ -3315,7 +3307,7 @@ describe('bundled wrap_pipeline templates — commit step contract (#139 Chunk 9
   });
 });
 
-describe('projConfig — lastWrapSha default (#139 Chunk 9)', () => {
+describe('projConfig — lastWrapSha lives outside project.json (#1510)', () => {
   let tmpDir;
   let projectPath;
 
@@ -3329,18 +3321,20 @@ describe('projConfig — lastWrapSha default (#139 Chunk 9)', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('DEFAULT_PROJECT_CONFIG includes lastWrapSha:null', () => {
-    assert.equal(store.DEFAULT_PROJECT_CONFIG.lastWrapSha, null,
-      'lastWrapSha must default to null so Chunks 4/7 fallbacks remain authoritative for un-wrapped projects');
+  it('DEFAULT_PROJECT_CONFIG no longer carries lastWrapSha', () => {
+    assert.equal(Object.prototype.hasOwnProperty.call(store.DEFAULT_PROJECT_CONFIG, 'lastWrapSha'), false,
+      'a default key is written into project.json by every save, which is the churn #1510 removes');
   });
 
-  it('round-trips lastWrapSha through load/save', () => {
+  it('a boundary carried through load/save survives, in the state file and not project.json', () => {
+    const wrapState = require('../lib/wrap-state');
     const cfg = store.projectConfig.load(projectPath);
-    assert.equal(cfg.lastWrapSha, null);
+    assert.equal(cfg.lastWrapSha, undefined);
     cfg.lastWrapSha = 'abc123def456';
     store.projectConfig.save(projectPath, cfg);
-    const reloaded = store.projectConfig.load(projectPath);
-    assert.equal(reloaded.lastWrapSha, 'abc123def456');
+    const onDisk = JSON.parse(fs.readFileSync(path.join(projectPath, '.tangleclaw', 'project.json'), 'utf8'));
+    assert.equal(Object.prototype.hasOwnProperty.call(onDisk, 'lastWrapSha'), false);
+    assert.deepEqual(wrapState.readLastWrapSha(projectPath), { sha: 'abc123def456', read: 'recorded', source: 'state', error: null });
   });
 });
 
