@@ -34,6 +34,28 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-15 — A wrap that cuts a release runs the project's releasePrepareCommand (#1502)
+
+<!-- prawduct: type=feature | scope=release-prepare-1502 -->
+
+Fast follow to the 5.26.0 rescue (PR #1501). The first wrap-cut release went red because the wrap committed only version.json and the promoted CHANGELOG, while this repo's release also needs the README clone pins and a released-sections lock line. The commit step now runs a project-declared `releasePrepareCommand` after the flush and before staging, with the release in `TANGLECLAW_RELEASE_VERSION` / `TANGLECLAW_RELEASE_PREVIOUS`. It commits the paths the command changed (measured by git status plus content hashes, under the #1406 ownership rules) and restores the flushed release files if the command fails or times out, so Retry cuts again. The commit row and the auto-PR body report the outcome, including a skip and its reason. `scripts/release-prepare.js` is this repo's command and only ever adds to the lock. The live install's `.tangleclaw/project.json` now sets it. Design recorded in ADR 0002 (extended 2026-09-15).
+
+**Review.** Critic final — 1 blocking, 2 warning, 3 note; the blocking finding and both warnings were fixed, and verify-resolutions came back clean (two observations were demoted and accepted: the drawer lists every changed path while the body lists committed ones; a stale body line on an unlikely retry path). The timeout-orphan note was filed as #1503.
+
+**rev-20260915T045942Z-63ca6711** — 2026-09-15T05:04:00Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | warning | fixed | This repo is never actually set up to use releasePrepareCommand, but the CHANGELOG and release-process doc say it is |
+| R-2 | note | accepted | Filed as #1503: the fix belongs in the shared execShell runner, which every command-running wrap step uses |
+| R-3 | warning | fixed | The line listing releasePrepareCommand's files is added to the commit message outside _buildBodyLines, so the auto-PR body leaves it out |
+| R-4 | note | accepted | The hook reads commit's own flush, scope and ownership state; extracting it would thread that state through a new module for no behaviour change |
+| R-5 | blocking | fixed | On a release cut, a skipped releasePrepareCommand never reaches the operator, and an unreadable project.json is reported as 'no releasePrepareCommand configured' |
+| R-6 | note | accepted | #976 referenced from the PR, not closed: it was offered to a contributor as a good first issue, so closing it is the operator's call; #1492 is correctly not claimed |
+
+**6 findings** (1 blocking, 2 warning, 3 note) — accepted: 3, fixed: 3.
+
+
 ## 2026-09-15 — The AI recommends a release, and a disagreement with readiness goes to the operator (#1492 L2)
 
 <!-- prawduct: type=feature | scope=train-19-chunk-04 -->
