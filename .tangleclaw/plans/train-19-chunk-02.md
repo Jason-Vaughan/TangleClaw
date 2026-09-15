@@ -129,8 +129,8 @@ path, no subprocess, no network. The verdict is identical on every engine (proje
 
 ## Status
 
-- [ ] 02a L1 readiness module
-- [ ] 02b releaseMode resolver
-- [ ] 02c version-bump gate
-- [ ] 02d settings API + enrich
-- [ ] 02e docs + follow-up issue filed (linked-issue-closed signal)
+- [x] 02a L1 readiness module
+- [x] 02b releaseMode resolver
+- [x] 02c version-bump gate
+- [x] 02d settings API + enrich
+- [x] 02e docs + follow-up issue filed (linked-issue-closed signal: #1495)
