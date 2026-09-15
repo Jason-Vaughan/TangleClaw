@@ -3,7 +3,8 @@
 /*
  * #1312 — the wrap drawer became a non-modal popover: no backdrop, so the
  * terminal behind it stays usable; anchored under the Wrap button on a wide
- * screen and a 60vh bottom sheet on a phone; its steps scroll inside it; and
+ * screen and a 60vh bottom sheet on a phone; everything between its header and
+ * its buttons scrolls as one region (#1491); and
  * closed, it cannot take a click meant for the terminal. Behaviour is covered
  * in `wrap-run-session-wiring.test.js`; these pin the markup and the CSS rules
  * the layout rests on, read the way a parser reads them (comments stripped,
@@ -95,6 +96,25 @@ describe('wrap popover markup (#1312)', () => {
     assert.match(asideTag[0], /role="dialog"/);
   });
 
+  it('status, skip list, steps and decision sit inside the scroll body; the header and actions do not (#1491)', () => {
+    const asideAt = HTML.indexOf('id="wrapDrawer"');
+    const aside = HTML.slice(asideAt, HTML.indexOf('</aside>', asideAt));
+    const bodyOpen = aside.indexOf('id="wrapDrawerBody"');
+    assert.ok(bodyOpen !== -1, 'the scroll body exists');
+    // The body holds only its four sections and no nested <div> of its own, so
+    // its end is the first </div> after the last section closes.
+    const decisionAt = aside.indexOf('id="wrapDrawerDecision"');
+    const bodyClose = aside.indexOf('</div>', aside.indexOf('</div>', decisionAt) + 1);
+    for (const id of ['wrapDrawerStatus', 'wrapDrawerSkipRoll', 'wrapStepList', 'wrapDrawerDecision']) {
+      const at = aside.indexOf(`id="${id}"`);
+      assert.ok(at > bodyOpen && at < bodyClose, `${id} is inside the scroll body`);
+    }
+    for (const id of ['wrapDrawerCloseBtn', 'wrapDrawerCancelBtn', 'wrapDrawerDoneBtn', 'wrapDrawerRetryBtn']) {
+      const at = aside.indexOf(`id="${id}"`);
+      assert.ok(at !== -1 && (at < bodyOpen || at > bodyClose), `${id} stays outside the scroll body`);
+    }
+  });
+
   it('the Wrap button names the popover it controls', () => {
     assert.match(HTML, /<button[^>]*id="wrapBtn"[^>]*aria-controls="wrapDrawer"/);
   });
@@ -144,10 +164,29 @@ describe('wrap popover stylesheet (#1312)', () => {
     assert.equal(rule('.wrap-drawer.open', phone).transform, 'translateY(0)');
   });
 
-  it('the steps scroll inside the popover', () => {
-    const list = rule('.wrap-step-list', null);
-    assert.equal(list['overflow-y'], 'auto');
-    assert.equal(list['min-height'], '0', 'a flex child only scrolls inside a capped parent when it may shrink');
+  // #1491 replaces #1312's "the step list scrolls" with one scroll region. With the
+  // step list, skip list and decision sharing a capped flex column, the two that
+  // refused to shrink pushed a rule proposal's Approve/Reject and the Close/Done row
+  // below the popover's clipped edge, where no scrollbar could reach them.
+  it('the steps, skip list and decision scroll together in one body, between a fixed header and fixed actions', () => {
+    const body = rule('.wrap-drawer-body', null);
+    assert.equal(body['overflow-y'], 'auto');
+    assert.equal(body['min-height'], '0', 'a flex child only scrolls inside a capped parent when it may shrink');
+    assert.match(body.flex, /^1\b/);
+    assert.notEqual(body.display, 'flex', 'a flex body would let its sections be squeezed again');
+    assert.equal(rule('.wrap-drawer-header', null)['flex-shrink'], '0');
+    assert.equal(rule('.wrap-drawer-actions', null)['flex-shrink'], '0');
+  });
+
+  it('no section inside the body caps itself or scrolls on its own', () => {
+    for (const sel of ['.wrap-drawer-status', '.wrap-drawer-skiproll', '.wrap-step-list', '.wrap-drawer-decision']) {
+      for (const r of RULES.filter((x) => x.selector.split(',').map((s) => s.trim()).includes(sel))) {
+        const d = decls(r.body);
+        assert.equal(d['max-height'], undefined, `${sel} ${r.media || ''} caps its own height`);
+        assert.equal(d['overflow-y'], undefined, `${sel} ${r.media || ''} scrolls inside the scroll region`);
+        assert.equal(d['flex-shrink'], undefined, `${sel} ${r.media || ''} takes part in flex sizing`);
+      }
+    }
   });
 
   it('honours reduced motion', () => {

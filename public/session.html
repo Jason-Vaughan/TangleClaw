@@ -490,10 +490,15 @@
       <h3 class="wrap-drawer-title">Session Wrap</h3>
       <button class="banner-btn" id="wrapDrawerCloseBtn" aria-label="Hide wrap progress">&times;</button>
     </div>
-    <div class="wrap-drawer-status" id="wrapDrawerStatus" aria-live="polite"></div>
-    <div class="wrap-drawer-skiproll hidden" id="wrapDrawerSkipRoll"></div>
-    <ul class="wrap-step-list" id="wrapStepList" aria-label="Pipeline steps"></ul>
-    <div class="wrap-drawer-decision hidden" id="wrapDrawerDecision"></div>
+    <!-- One scroll region between the fixed header and the fixed actions (#1491):
+         every section reports at its natural height and the body scrolls, so a
+         long skip list can never push a decision or the buttons out of reach. -->
+    <div class="wrap-drawer-body" id="wrapDrawerBody">
+      <div class="wrap-drawer-status" id="wrapDrawerStatus" aria-live="polite"></div>
+      <div class="wrap-drawer-skiproll hidden" id="wrapDrawerSkipRoll"></div>
+      <ul class="wrap-step-list" id="wrapStepList" aria-label="Pipeline steps"></ul>
+      <div class="wrap-drawer-decision hidden" id="wrapDrawerDecision"></div>
+    </div>
     <div class="wrap-drawer-actions">
       <button class="btn" id="wrapDrawerCopyBtn">Copy report</button>
       <button class="btn" id="wrapDrawerCancelBtn">Close</button>
