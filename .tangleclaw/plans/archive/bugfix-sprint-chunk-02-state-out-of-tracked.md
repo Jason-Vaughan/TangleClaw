@@ -191,6 +191,6 @@ In `session-files`, after `classify`:
     - A decline overwrote an unreadable `state.json`.
   - The notes were also addressed: the commit removes only the paths it showed; heal reuses `resolve`; web UI heal logs at warn.
   - verify-resolutions `rev-20260915T220406Z-26fb3a1f`: clean.
-- [ ] 02d — docs, CHANGELOG, FEATURES.md; full suite; cumulative Critic; operator verification of the drawer offer from a remote browser; PR
+- [x] 02d — docs, CHANGELOG, FEATURES.md; full suite; cumulative Critic; operator verification of the drawer offer from a remote browser; PR
   - Done: docs, CHANGELOG, FEATURES.md, the full suite, and the cumulative Critic + verify-resolutions (clean).
-  - Still to do: PR (PR creation = wait_for_user) and operator verification of the Stop/Keep tracking widget from a remote browser.
+  - PR opened on the operator's go (2026-09-15). The browser check of the Stop/Keep tracking widget is queued as `VRF-1512-untrack-offer`, to run against the live install after merge.
