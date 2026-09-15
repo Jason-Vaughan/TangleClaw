@@ -279,6 +279,7 @@ const serverInfo = require('./lib/server-info');
 const behindOrigin = require('./lib/behind-origin');
 const bindPolicy = require('./lib/bind-policy');
 const wrapRunRegistry = require('./lib/wrap-run-registry');
+const wrapHandback = require('./lib/wrap-handback');
 const wrapDefaultPipeline = require('./lib/wrap-default-pipeline');
 const evalAudit = require('./lib/eval-audit');
 const pidfile = require('./lib/pidfile');
@@ -6218,8 +6219,13 @@ route('GET', '/api/sessions/:project/wrap/status', (_req, res, params) => {
     sessionId: status.sessionId,
     startedAt: status.startedAt,
     currentStepId: status.currentStepId,
+    // When the current step began (server epoch ms) — the Wrap button's elapsed time.
+    currentStepStartedAt: status.currentStepStartedAt,
     finishedAt: status.finishedAt,
-    result: status.result ? _wrapResultPayload(params.project, status.result) : null
+    result: status.result ? _wrapResultPayload(params.project, status.result) : null,
+    // The fix handed back to the session for this run's blocked step, so a
+    // reloaded page can show "Fixing…" or "Ready: Retry" without re-sending it.
+    handback: wrapHandback.get(params.project, status.runId)
   });
 });
 
@@ -6352,6 +6358,90 @@ route('GET', '/api/sessions/:project/wrap/stream/:runId', (req, res, params) => 
   // a subscriber.
   req.on('close', () => {
     if (open) log.info('Wrap stream client went away', { project: params.project, runId: params.runId });
+    open = false;
+    sub.unsubscribe();
+  });
+});
+
+// POST /api/sessions/:project/wrap/handback — Ask the session to fix the step
+// its settled wrap blocked on, and watch for it to finish (#1312).
+// Body: { stepId, prompt } — the drawer composes the prompt; the server appends
+// the completion instruction with a fresh nonce. Answers 202 once the prompt is
+// sent; the outcome is read from the handback stream or `GET /wrap/status`.
+// Gated like `POST /command`, which it replaces for the drawer: it sends a narrower
+// thing (a prompt for one blocked step) through the same injection path.
+route('POST', '/api/sessions/:project/wrap/handback', (_req, res, params, body) => {
+  const started = wrapHandback.start(params.project, body);
+  if (!started.ok) return errorResponse(res, started.status, started.error, started.code);
+  const project = encodeURIComponent(params.project);
+  jsonResponse(res, 202, {
+    ok: true,
+    project: params.project,
+    handbackId: started.handbackId,
+    handback: started.handback,
+    statusUrl: `/api/sessions/${project}/wrap/status`,
+    streamUrl: `/api/sessions/${project}/wrap/handback/stream/${encodeURIComponent(started.handbackId)}`
+  });
+});
+
+// GET /api/sessions/:project/wrap/handback/stream/:handbackId — the handback's
+// watch as `text/event-stream`: `handback-start`, then one terminal
+// `handback-done` carrying `state`, after which the stream closes. A handback
+// that already ended replays both and closes at once. Unknown id → 404, and
+// the client reads `GET /wrap/status` instead. Read-only, like the run stream.
+route('GET', '/api/sessions/:project/wrap/handback/stream/:handbackId', (req, res, params) => {
+  let open = false;
+  let sub = null;
+  const close = () => {
+    if (!open) return;
+    open = false;
+    if (sub) sub.unsubscribe();
+    res.end();
+  };
+  const write = (event) => {
+    if (!open) return;
+    const { seq, type, ...data } = event;
+    try {
+      res.write(`id: ${seq}\nevent: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+    } catch (err) { // prawduct:allow prawduct/broad-except -- a dead socket must end this stream, never reach the process-global handler
+      log.warn('Handback stream write failed — closing', { project: params.project, handbackId: params.handbackId, error: err.message });
+      close();
+    }
+  };
+  res.on('error', (err) => {
+    if (!open) return;
+    log.warn('Handback stream socket errored — dropping the subscription', {
+      project: params.project, handbackId: params.handbackId, error: err.message
+    });
+    open = false;
+    if (sub) sub.unsubscribe();
+  });
+  sub = wrapHandback.subscribe(params.project, params.handbackId, { onEvent: write, onEnd: close });
+  if (!sub.ok) {
+    log.warn('Handback stream refused — no such handback for this project', {
+      project: params.project, handbackId: params.handbackId
+    });
+    return errorResponse(res, 404,
+      `No handback "${params.handbackId}" for "${params.project}" — it may predate a server restart or have been replaced.`,
+      'HANDBACK_NOT_FOUND');
+  }
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  open = true;
+  // A comment line opens the stream in the browser before the first event.
+  try {
+    res.write(': handback stream\n\n');
+  } catch (err) { // prawduct:allow prawduct/broad-except -- a dead socket must end this stream, never reach the process-global handler
+    log.warn('Handback stream open failed — closing', { project: params.project, handbackId: params.handbackId, error: err.message });
+    return close();
+  }
+  for (const event of sub.replay) write(event);
+  if (sub.finished) return close();
+  req.on('close', () => {
     open = false;
     sub.unsubscribe();
   });
