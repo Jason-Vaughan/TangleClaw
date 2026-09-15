@@ -537,6 +537,23 @@ describe('API — /api/master/medusa/* is the project route family, mounted for 
     assert.equal(bridge.received.length, before);
   });
 
+  it('the Master mount carries the same 64 KB message limit — 60 KB delivered, 70 KB refused with sizes (#1514)', async () => {
+    const { MESSAGE_BODY_LIMIT_BYTES } = require('../server');
+    startListening();
+    assert.equal((await req('/api/master/medusa/status')).data.messageLimitBytes, MESSAGE_BODY_LIMIT_BYTES);
+    const fits = await req('/api/master/medusa/send', 'POST', { to: 'live-ws', message: 'm'.repeat(60 * 1024) });
+    assert.equal(fits.status, 200);
+    const before = bridge.received.length;
+    for (const urlPath of ['/api/master/medusa/send', '/api/master/medusa/loop', '/api/master/medusa/loops/loop-1/continue']) {
+      const { status, data } = await req(urlPath, 'POST', { to: 'live-ws', target: 'live-ws', message: 'm'.repeat(70 * 1024) });
+      assert.equal(status, 413, urlPath);
+      assert.equal(data.code, 'BODY_TOO_LARGE', urlPath);
+      assert.equal(data.limitBytes, MESSAGE_BODY_LIMIT_BYTES, urlPath);
+      assert.ok(data.receivedBytes > 70 * 1024, urlPath);
+    }
+    assert.equal(bridge.received.length, before, 'a refused body never reaches the Bridge');
+  });
+
   it('the gate reads config per request — a flip binds with no restart, both ways', async () => {
     startListening();
     setMaster({ accessLevel: 'read-only' });

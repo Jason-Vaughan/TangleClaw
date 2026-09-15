@@ -317,6 +317,14 @@ const log = createLogger('server');
 
 const MAX_BODY_SIZE = 10 * 1024; // 10 KB
 
+// The body cap for the routes that carry a message a person or agent wrote — the
+// switchboard send / loop / continue family (both mounts) and the session command
+// route. 10 KB turned an ordinary multi-paragraph hand-off into a refusal (#1514).
+// This is the ONE place the number lives: the switchboard status response serves
+// it to the browser, and every 413 carries it back as `limitBytes`, so the UI and
+// `tc` render the limit they were actually held to rather than a copy of it.
+const MESSAGE_BODY_LIMIT_BYTES = 64 * 1024;
+
 // Methods that can change server state, and so must not be accepted from a page
 // on another site. GET/HEAD are excluded because they are the ones a browser
 // issues while merely navigating; any route that mutates behind a GET is a bug
@@ -931,6 +939,36 @@ function errorResponse(res, status, message, code, extra) {
 // ── Body Parser ──
 
 /**
+ * The 413 refusal for an over-limit body, carrying the numbers a client needs to
+ * say what happened: `limitBytes` (the cap this route enforced) and
+ * `receivedBytes` (how big the body was).
+ *
+ * `receivedBytes` is exact when the request declared a Content-Length: Node's
+ * HTTP parser frames the body by that header, so the body is exactly that long
+ * even though reading stops at the limit. Without one (chunked transfer) the
+ * body is abandoned mid-stream and its full size is never learned, so the count
+ * at the moment of refusal is reported with `receivedBytesIsLowerBound: true` —
+ * "at least this much", never a guessed total.
+ * @param {http.IncomingMessage} req - The request being refused.
+ * @param {number} counted - Bytes read when the limit was crossed.
+ * @param {number} limit - The route's body cap in bytes.
+ * @returns {{status: number, message: string, code: string, extra: object}}
+ */
+function bodyTooLarge(req, counted, limit) {
+  const declared = Number(req.headers && req.headers['content-length']);
+  const exact = Number.isSafeInteger(declared) && declared > limit;
+  const receivedBytes = exact ? declared : counted;
+  return {
+    status: 413,
+    message: `Request body too large: ${exact ? '' : 'more than '}${receivedBytes} bytes, limit is ${limit} bytes`,
+    code: 'BODY_TOO_LARGE',
+    extra: exact
+      ? { limitBytes: limit, receivedBytes }
+      : { limitBytes: limit, receivedBytes, receivedBytesIsLowerBound: true }
+  };
+}
+
+/**
  * Parse JSON request body with size limit.
  * @param {http.IncomingMessage} req
  * @param {number} [maxSize] - Override default max body size
@@ -953,7 +991,7 @@ function parseBody(req, maxSize) {
         rejected = true;
         // Resume and discard remaining data so the response can be sent
         req.resume();
-        reject({ status: 413, message: 'Request body too large', code: 'BODY_TOO_LARGE' });
+        reject(bodyTooLarge(req, size, limit));
         return;
       }
       if (!rejected) {
@@ -5791,7 +5829,9 @@ function registerMedusaRoutes(prefix, resolve) {
     // and because both mounts must gate on the same predicate rather than each
     // page deciding for itself.
     const enabled = r.enabled === true;
-    const base = { ...status, loops, outbound, enabled };
+    // The message body cap rides the same fetch, so a compose box can count
+    // against the limit the send will actually meet (#1514).
+    const base = { ...status, loops, outbound, enabled, messageLimitBytes: MESSAGE_BODY_LIMIT_BYTES };
     jsonResponse(res, 200, loopsError ? { ...base, loopsError } : base);
   });
 
@@ -5960,7 +6000,7 @@ function registerMedusaRoutes(prefix, resolve) {
     } catch (err) {
       errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_SEND_FAILED');
     }
-  });
+  }, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES });
 
   // POST <prefix>/loop — open a Medusa loop to a target workspace (MED-2K9P v2
   // T3, the setup modal's launch). Body `{ target, task, doneCriteria, mode,
@@ -5987,7 +6027,7 @@ function registerMedusaRoutes(prefix, resolve) {
     } catch (err) {
       errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_LOOP_FAILED');
     }
-  });
+  }, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES });
 
   // POST <prefix>/loops/:loopId/force-done — the human kill-switch on a loop
   // this participant initiated (MED-2K9P v2 T4). Rides the Bridge's
@@ -6025,7 +6065,7 @@ function registerMedusaRoutes(prefix, resolve) {
     } catch (err) {
       errorResponse(res, err.httpStatus || 502, err.message, err.code || 'MEDUSA_CONTINUE_FAILED');
     }
-  });
+  }, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES });
 
   // POST <prefix>/loops/:loopId/closeout — the SATISFIED closeout of a loop
   // this participant initiated (TC#561 — the CLOSEOUT half of the control
@@ -6085,7 +6125,7 @@ route('POST', '/api/sessions/:project/command', (_req, res, params, body) => {
     project: params.project,
     command: body.command
   });
-});
+}, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES });
 
 // POST /api/sessions/:project/wrap — Start the wrap pipeline
 // Body: { password?, options? } — `options` carries the per-wrap user choices
@@ -8487,7 +8527,7 @@ async function handleRequest(req, res) {
       await matched.handler(req, res, matched.params, body);
     } catch (err) {
       if (err.status) {
-        return errorResponse(res, err.status, err.message, err.code);
+        return errorResponse(res, err.status, err.message, err.code, err.extra);
       }
       log.error('Unhandled error in route handler', {
         method, path: pathname, error: err.message, stack: err.stack
@@ -9852,4 +9892,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, serverProtocol, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers };
+module.exports = { createServer, serverProtocol, warnUnbindablePortEnv, handleRequest, handleUpgrade, route, matchRoute, jsonResponse, errorResponse, parseBody, parseQuery, reqUrl, MAX_BODY_SIZE, MESSAGE_BODY_LIMIT_BYTES, _setRestartScheduler, _setCutoverSpawner, _recoveryFailures, _openclawProxyHeaders, _openclawWsRequestLines, _hostIsAllowed, _servedHostsOrEmpty, _sharedDocWatchers: sharedDocWatchers, _sharedDocDebounceTimers: docDebounceTimers };

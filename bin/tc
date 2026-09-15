@@ -26,7 +26,7 @@
  */
 
 const path = require('node:path');
-const { VERB_ROSTER, renderUsage, receiptVerbLabel } = require(path.join(__dirname, '..', 'lib', 'tc-verbs.js'));
+const { VERB_ROSTER, renderUsage, receiptVerbLabel, renderBodyTooLarge } = require(path.join(__dirname, '..', 'lib', 'tc-verbs.js'));
 
 async function main() {
   const verb = process.argv[2];
@@ -114,10 +114,19 @@ async function main() {
       // Surface the server's error message — "unregistered peer", "gate
       // denied" — verbatim; a bare status code teaches guessing.
       let detail = '';
+      let parsed = null;
       try {
-        const parsed = await res.json();
+        parsed = await res.json();
         if (parsed && parsed.error) detail = ` — ${parsed.error}`;
       } catch { /* non-JSON error body; the status alone will have to do */ }
+      // An over-limit body is the caller's to fix, so lead with the sizes
+      // (#1514) and carry the code for a caller that branches on it.
+      const tooLarge = renderBodyTooLarge(parsed);
+      if (tooLarge) {
+        const err = new Error(`${tooLarge} (the TangleClaw API answered ${res.status} for ${url})`);
+        err.code = parsed.code;
+        throw err;
+      }
       throw new Error(`the TangleClaw API answered ${res.status} for ${url}${detail}`);
     }
     return res.json();

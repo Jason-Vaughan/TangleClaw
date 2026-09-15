@@ -1187,7 +1187,7 @@ async function injectUpdatePrompt(data) {
     toast.textContent = 'Update instructions sent to AI agent';
     toast.className = 'toast toast-ok visible';
   } else {
-    toast.textContent = api.lastError || 'Could not inject the prompt.';
+    toast.textContent = window.tcApiFailureText(api, 'Could not inject the prompt.');
     toast.className = 'toast toast-warn visible';
   }
   setTimeout(() => { toast.classList.remove('visible'); }, 5000);
@@ -1566,6 +1566,7 @@ async function openMedusaLoopModal() {
   if (select) { select.innerHTML = ''; select.disabled = true; }
   if (status) status.textContent = 'Loading sessions…'; // honest loading state, no fake list
   syncMedusaLoopGuardMode(); // the hint must match the mode the modal actually opens on
+  renderMedusaSizeLine(document.getElementById('medusaLoopSize'), medusaLoopPayload()); // count what is already typed
 
   modal.classList.add('open');
   if (loopBtn) loopBtn.setAttribute('aria-expanded', 'true');
@@ -1610,6 +1611,48 @@ function renderMedusaLoopTargets(workspaces) {
 }
 
 /**
+ * The body the loop modal's Launch would POST, read from the form as it stands.
+ * One builder for both the live size count and the send, so the count measures
+ * exactly what the server's body cap will (#1514).
+ * @returns {{target: string, task: string, doneCriteria: string, mode: string, guards: {maxRounds: number, maxWallTimeSeconds: number}}}
+ */
+function medusaLoopPayload() {
+  const val = (id) => {
+    const el = document.getElementById(id);
+    return el ? el.value : '';
+  };
+  return {
+    target: val('medusaLoopTarget'),
+    task: val('medusaLoopTask').trim(),
+    doneCriteria: val('medusaLoopDone').trim(),
+    mode: val('medusaLoopMode') || 'supervised',
+    guards: {
+      maxRounds: parseInt(val('medusaLoopMaxRounds'), 10),
+      maxWallTimeSeconds: parseInt(val('medusaLoopMaxMinutes'), 10) * 60
+    }
+  };
+}
+
+/**
+ * Paint a compose box's live size line — "12.5 KB of 64 KB", with a warning
+ * class near the limit and an error class over it (#1514). Blank until the
+ * switchboard status has served the limit: a count against a guessed number
+ * would be a second source for it.
+ * @param {HTMLElement|null} el - The size line element.
+ * @param {object} payload - The body the send would POST.
+ * @returns {{bytes: number, limitBytes: (number|null), level: string, text: string}} The measurement.
+ */
+function renderMedusaSizeLine(el, payload) {
+  const size = window.tcMessageSize(payload, sessionState.medusa.messageLimitBytes);
+  if (el) {
+    el.textContent = size.text;
+    el.classList.toggle('is-warn', size.level === 'warn');
+    el.classList.toggle('is-over', size.level === 'over');
+  }
+  return size;
+}
+
+/**
  * Launch the loop (the Launch button): validate the form client-side, POST to
  * the loop endpoint, and surface the HONEST result — the loop id plus whether
  * the task notice was delivered live or queued (offline target) — never a
@@ -1621,7 +1664,6 @@ async function launchMedusaLoop() {
   const select = document.getElementById('medusaLoopTarget');
   const task = document.getElementById('medusaLoopTask');
   const done = document.getElementById('medusaLoopDone');
-  const mode = document.getElementById('medusaLoopMode');
   const rounds = document.getElementById('medusaLoopMaxRounds');
   const minutes = document.getElementById('medusaLoopMaxMinutes');
   const btn = document.getElementById('medusaLoopLaunchBtn');
@@ -1648,14 +1690,14 @@ async function launchMedusaLoop() {
   if (!Number.isInteger(maxRounds) || maxRounds < 1) { fail('Max rounds must be a positive whole number.'); return; }
   if (!Number.isInteger(maxMinutes) || maxMinutes < 1) { fail('Max minutes must be a positive whole number.'); return; }
 
+  // The count's builder, with the validated guards — minutes become the
+  // contract's wall-clock seconds.
+  const payload = { ...medusaLoopPayload(), guards: { maxRounds, maxWallTimeSeconds: maxMinutes * 60 } };
+  const size = renderMedusaSizeLine(document.getElementById('medusaLoopSize'), payload);
+  if (size.level === 'over') { fail(window.tcTooLongText(size.bytes, size.limitBytes)); return; }
+
   if (btn) { btn.disabled = true; btn.textContent = 'Launching…'; }
-  const result = await apiMutate(`/api/sessions/${encodeURIComponent(projectName)}/medusa/loop`, 'POST', {
-    target,
-    task: task.value.trim(),
-    doneCriteria: done.value.trim(),
-    mode: mode ? mode.value : 'supervised',
-    guards: { maxRounds, maxWallTimeSeconds: maxMinutes * 60 }
-  });
+  const result = await apiMutate(`/api/sessions/${encodeURIComponent(projectName)}/medusa/loop`, 'POST', payload);
   if (btn) { btn.disabled = false; btn.textContent = 'Launch loop'; }
 
   if (result && result.loop) {
@@ -1668,7 +1710,7 @@ async function launchMedusaLoop() {
     closeMedusaLoopModal();
   } else {
     // api() surfaces the server's error message on api.lastError; never claim launched.
-    fail(`Couldn't open loop: ${api.lastError || 'launch failed'}`);
+    fail(`Couldn't open loop: ${window.tcApiFailureText(api, 'launch failed')}`);
   }
 }
 
@@ -1833,10 +1875,13 @@ async function renderMedusaLoopsPanel() {
     if (canJudge && feedbackOpen) {
       const fid = `medusaFeedback-${esc(loop.id)}`;
       const draft = medusaFeedbackDrafts.get(loop.id) || '';
+      const size = window.tcMessageSize({ message: draft.trim() }, sessionState.medusa.messageLimitBytes);
+      const sizeClass = size.level === 'warn' ? ' is-warn' : (size.level === 'over' ? ' is-over' : '');
       feedback = '<div class="medusa-loop-feedback">'
         + `<label class="medusa-loop-feedback-label" for="${fid}">Feedback to continue this loop</label>`
         + `<textarea id="${fid}" class="medusa-loop-feedback-input" data-loop-id="${esc(loop.id)}" rows="2" placeholder="What should ${esc(other)} do next?">${esc(draft)}</textarea>`
         + `<button type="button" class="medusa-loop-feedback-send" data-loop-id="${esc(loop.id)}">Send</button>`
+        + `<div class="medusa-size-count${sizeClass}" data-size-for="${esc(loop.id)}" aria-live="polite">${esc(size.text)}</div>`
         + '</div>';
     }
 
@@ -1911,6 +1956,11 @@ async function forceDoneMedusaLoop(loopId) {
 async function continueMedusaLoop(loopId, message) {
   const text = (message || '').trim();
   if (!text) { showBannerActionToast('Enter feedback before sending.', true); return; }
+  const size = window.tcMessageSize({ message: text }, sessionState.medusa.messageLimitBytes);
+  if (size.level === 'over') {
+    showBannerActionToast(`Couldn't send feedback: ${window.tcTooLongText(size.bytes, size.limitBytes)}`, true);
+    return;
+  }
   const result = await apiMutate(
     `/api/sessions/${encodeURIComponent(projectName)}/medusa/loops/${encodeURIComponent(loopId)}/continue`,
     'POST',
@@ -1933,7 +1983,7 @@ async function continueMedusaLoop(loopId, message) {
     }
     renderMedusaControl();
   } else {
-    showBannerActionToast(`Couldn't send feedback: ${api.lastError || 'the bridge rejected it'}`, true);
+    showBannerActionToast(`Couldn't send feedback: ${window.tcApiFailureText(api, 'the bridge rejected it')}`, true);
   }
 }
 
@@ -2397,6 +2447,10 @@ async function sendCommand(command) {
   if (result && result.ok) {
     addToHistory(command);
     document.getElementById('commandInput').value = '';
+  } else {
+    // A refused command used to leave the bar exactly as it was, with no word
+    // of why (#1514). The typed text stays so it can be fixed and resent.
+    showBannerActionToast(`Couldn't send command: ${window.tcApiFailureText(api, 'the server rejected it')}`, true);
   }
 }
 
@@ -6273,6 +6327,12 @@ function bindEvents() {
   // preset + hint track the mode — unless the operator has typed their own value.
   const medusaLoopMode = $('medusaLoopMode');
   if (medusaLoopMode) medusaLoopMode.addEventListener('change', syncMedusaLoopGuardMode);
+  // Live size count for the loop's task + done criteria (#1514): the operator
+  // sees the message approach the body limit while typing, not after a refusal.
+  for (const id of ['medusaLoopTask', 'medusaLoopDone']) {
+    const field = $(id);
+    if (field) field.addEventListener('input', () => renderMedusaSizeLine($('medusaLoopSize'), medusaLoopPayload()));
+  }
   const medusaLoopMaxMinutes = $('medusaLoopMaxMinutes');
   if (medusaLoopMaxMinutes) medusaLoopMaxMinutes.addEventListener('input', () => { medusaLoopMinutesDirty = true; });
   // Loop view (MED-2K9P v2 T4): the ⟳ chip opens the loops panel; its content
@@ -6318,7 +6378,12 @@ function bindEvents() {
     // re-seeds the textarea from the Map rather than losing in-progress text.
     medusaLoopsPanel.addEventListener('input', (e) => {
       const ta = e.target.closest('.medusa-loop-feedback-input');
-      if (ta && ta.dataset.loopId) medusaFeedbackDrafts.set(ta.dataset.loopId, ta.value);
+      if (ta && ta.dataset.loopId) {
+        medusaFeedbackDrafts.set(ta.dataset.loopId, ta.value);
+        const line = Array.from(medusaLoopsPanel.querySelectorAll('.medusa-size-count'))
+          .find((el) => el.dataset.sizeFor === ta.dataset.loopId);
+        renderMedusaSizeLine(line || null, { message: ta.value.trim() });
+      }
     });
   }
   document.addEventListener('keydown', (e) => {

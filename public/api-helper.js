@@ -1334,6 +1334,113 @@
     return { postServerRestart, pollServerBackAndReload };
   }
 
+  // ── Message size (#1514) ──
+  //
+  // The switchboard and command routes cap a request body at a limit the server
+  // serves (`messageLimitBytes` on the switchboard status) and repeats in every
+  // 413 (`limitBytes`). Nothing here holds its own copy of that number.
+
+  /** Share of the limit at which a compose box starts warning. */
+  const MESSAGE_SIZE_WARN_RATIO = 0.8;
+
+  /**
+   * UTF-8 byte length of a string — what the server's body cap counts, which
+   * `String.length` (UTF-16 units) does not. A lone surrogate counts as the
+   * three bytes of the U+FFFD it is encoded as.
+   * @param {string} str - Any string.
+   * @returns {number} Bytes when UTF-8 encoded.
+   */
+  function tcUtf8Bytes(str) {
+    let bytes = 0;
+    for (let i = 0; i < str.length; i++) {
+      const c = str.charCodeAt(i);
+      if (c < 0x80) bytes += 1;
+      else if (c < 0x800) bytes += 2;
+      else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < str.length
+        && str.charCodeAt(i + 1) >= 0xDC00 && str.charCodeAt(i + 1) <= 0xDFFF) {
+        bytes += 4;
+        i++;
+      } else bytes += 3;
+    }
+    return bytes;
+  }
+
+  /**
+   * Bytes as kilobytes for a person to read: whole numbers stay whole, anything
+   * else rounds UP to one decimal, so one byte over a 64 KB limit reads
+   * "64.1 KB" and never "64 KB, limit is 64 KB". `lib/tc-verbs.js#formatKB` is
+   * the CLI's twin — a browser script cannot require it.
+   * @param {number} bytes - A byte count.
+   * @returns {string} e.g. "64 KB", "0.1 KB".
+   */
+  function tcFormatKB(bytes) {
+    const tenths = Math.ceil((bytes / 1024) * 10);
+    return `${tenths % 10 === 0 ? tenths / 10 : (tenths / 10).toFixed(1)} KB`;
+  }
+
+  /**
+   * Measure a request payload against the message limit, for a compose box's
+   * live count. The payload is measured as the JSON body `apiMutate` will send,
+   * because that — not the text alone — is what the server's cap counts.
+   * @param {object} payload - The body the send will POST.
+   * @param {number|null|undefined} limitBytes - The served limit; unknown until
+   *   the first switchboard status arrives.
+   * @returns {{bytes: number, limitBytes: (number|null), level: ('unknown'|'ok'|'warn'|'over'), text: string}}
+   *   `text` is the count line; empty when the limit is not known yet.
+   */
+  function tcMessageSize(payload, limitBytes) {
+    const bytes = tcUtf8Bytes(JSON.stringify(payload));
+    if (!Number.isFinite(limitBytes) || limitBytes <= 0) {
+      return { bytes, limitBytes: null, level: 'unknown', text: '' };
+    }
+    const count = `${tcFormatKB(bytes)} of ${tcFormatKB(limitBytes)}`;
+    if (bytes > limitBytes) {
+      return { bytes, limitBytes, level: 'over', text: `${count} — too long to send` };
+    }
+    if (bytes >= limitBytes * MESSAGE_SIZE_WARN_RATIO) {
+      return { bytes, limitBytes, level: 'warn', text: `${count} — close to the limit` };
+    }
+    return { bytes, limitBytes, level: 'ok', text: count };
+  }
+
+  /**
+   * "message is X KB, limit is 64 KB" — for a size check before sending, or
+   * from a 413 BODY_TOO_LARGE refusal's own numbers. A size the server could
+   * only bound from below says "more than".
+   * @param {number} bytes - The message size.
+   * @param {number} limitBytes - The limit it exceeded.
+   * @param {boolean} [lowerBound] - True when `bytes` is a floor, not a total.
+   * @returns {string}
+   */
+  function tcTooLongText(bytes, limitBytes, lowerBound) {
+    return `message is ${lowerBound ? 'more than ' : ''}${tcFormatKB(bytes)}, limit is ${tcFormatKB(limitBytes)}`;
+  }
+
+  /**
+   * The sentence for a failed write: the too-long wording when the refusal was
+   * a 413 carrying its sizes, else the server's own error, else `fallback`.
+   * Reads the side channel `api()` leaves on its function object.
+   * @param {{lastError: (string|null), lastErrorCode: (string|null), lastBody: (object|null|undefined)}} apiFn - The page's `api`.
+   * @param {string} fallback - Words for a failure that named nothing.
+   * @returns {string}
+   */
+  function tcApiFailureText(apiFn, fallback) {
+    const body = apiFn && apiFn.lastBody;
+    // `lastBody` is not cleared on a connection loss, `lastErrorCode` is — so
+    // the code is what proves the body belongs to THIS failure.
+    if (apiFn && apiFn.lastErrorCode === 'BODY_TOO_LARGE' && body && body.code === 'BODY_TOO_LARGE'
+        && Number.isFinite(body.limitBytes) && Number.isFinite(body.receivedBytes)) {
+      return tcTooLongText(body.receivedBytes, body.limitBytes, body.receivedBytesIsLowerBound === true);
+    }
+    return (apiFn && apiFn.lastError) || fallback;
+  }
+
+  global.tcUtf8Bytes = tcUtf8Bytes;
+  global.tcFormatKB = tcFormatKB;
+  global.tcMessageSize = tcMessageSize;
+  global.tcTooLongText = tcTooLongText;
+  global.tcApiFailureText = tcApiFailureText;
+
   global.tcCreateApi = tcCreateApi;
   global.tcCreateApiMutate = tcCreateApiMutate;
   // Published so the suite can exercise the CSRF plumbing directly, and so a
@@ -3095,6 +3202,9 @@
       // no `enabled`, and blanking it there would hide the control the operator
       // just switched on.
       if ('enabled' in data) m.enabled = data.enabled === true;
+      // The body cap a compose box counts against (#1514). Taken only when
+      // present: a toggle response carries none, and the limit did not change.
+      if ('messageLimitBytes' in data) m.messageLimitBytes = data.messageLimitBytes;
       render();
     }
 
