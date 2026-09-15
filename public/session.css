@@ -1899,26 +1899,65 @@ body {
   font-style: italic;
 }
 
-/* ── Wrap Pipeline Drawer (#139 Chunk 10) ── */
-/* Reuses .drawer-backdrop / .drawer-handle from the peek drawer. */
+/* ── Wrap popover (#139 Chunk 10; a popover since #1312) ── */
+/* Non-modal: no backdrop, so the terminal stays visible and usable while it is
+   open. Anchored under the Wrap button (session.js sets the two position
+   variables from the button's box when it opens); a bottom sheet on a phone.
+   Closed, it is `visibility: hidden` so it never takes a click meant for the
+   terminal. Reuses .drawer-handle from the peek drawer for the phone sheet. */
 .wrap-drawer {
   position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  top: var(--wrap-popover-top, 64px);
+  right: var(--wrap-popover-right, 16px);
+  left: auto;
+  bottom: auto;
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(70vh, 560px);
   z-index: var(--z-drawer);
   background: var(--card-bg);
   border: 1px solid var(--elevated-bg);
-  border-radius: var(--radius-modal) var(--radius-modal) 0 0;
-  max-height: 80vh;
-  transform: translateY(100%);
-  transition: transform 0.3s ease;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  border-radius: var(--radius-modal);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-6px);
+  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0s linear 0.15s;
 }
-.wrap-drawer.open { transform: translateY(0); }
+.wrap-drawer.open {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.wrap-drawer .drawer-handle { display: none; }
+@media (max-width: 600px) {
+  .wrap-drawer {
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: auto;
+    height: 60vh;
+    max-height: 60vh;
+    border-radius: var(--radius-modal) var(--radius-modal) 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    opacity: 1;
+    transform: translateY(100%);
+    transition: transform 0.3s ease, visibility 0s linear 0.3s;
+  }
+  .wrap-drawer.open {
+    transform: translateY(0);
+    transition: transform 0.3s ease;
+  }
+  .wrap-drawer .drawer-handle { display: block; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wrap-drawer,
+  .wrap-drawer.open { transition: none; }
+}
 .wrap-drawer-header {
   display: flex;
   align-items: center;
@@ -1984,6 +2023,8 @@ body {
   padding: 8px 0;
   overflow-y: auto;
   flex: 1;
+  /* A flex child only scrolls inside a capped parent when allowed to shrink. */
+  min-height: 0;
 }
 .wrap-step-row {
   display: grid;
@@ -2062,6 +2103,41 @@ body {
   border-radius: 4px;
 }
 .wrap-step-handback:disabled { opacity: 0.6; cursor: default; }
+/* The handed-back fix's progress on the blocked row (#1312). Each tone also
+   says its state in words, so colour is never the only signal. */
+.wrap-step-handback-status {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.wrap-step-handback-status--working { color: #60a5fa; }
+.wrap-step-handback-status--ready { color: #4ade80; }
+.wrap-step-handback-status--problem { color: #fbbf24; }
+/* A running step past the slow threshold. */
+.wrap-step-slow {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.8rem;
+  color: #fbbf24;
+}
+/* #1229 — copy a preflight block's text and remediation. */
+.wrap-step-copy-block {
+  display: inline-block;
+  margin: 8px 0 2px 8px;
+  font-size: 0.8rem;
+  min-height: 44px;
+  padding: 2px 12px;
+  cursor: pointer;
+  background: var(--elevated-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color, #444);
+  border-radius: 4px;
+}
+/* Retry once the session says its fix is done. */
+.btn.wrap-retry--ready {
+  box-shadow: 0 0 0 2px #4ade80;
+}
 /* Status badges carry a `title` tooltip (#222) — hint it's hoverable. */
 .wrap-step-status[title] { cursor: help; }
 .wrap-step-status {
@@ -2101,6 +2177,10 @@ body {
   color: #fbbf24;
 }
 .wrap-drawer-decision {
+  /* Scrolls on its own so a long list of choices cannot squeeze the steps out. */
+  max-height: 35vh;
+  overflow-y: auto;
+  flex-shrink: 0;
   padding: 12px 16px;
   border-top: 1px solid var(--elevated-bg);
   background: var(--elevated-bg);

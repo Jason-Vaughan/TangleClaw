@@ -152,7 +152,7 @@
       <!-- Wrap and Kill wrap as one unit (#1478): when the actions do not fit a
            phone's width, Kill must not be the button stranded on a line alone. -->
       <span class="banner-end-actions">
-        <button class="banner-btn btn-wrap" id="wrapBtn" aria-label="Wrap session">Wrap</button>
+        <button class="banner-btn btn-wrap" id="wrapBtn" aria-label="Wrap session" aria-controls="wrapDrawer">Wrap</button>
         <button class="banner-btn btn-kill" id="killBtn" aria-label="Kill session">Kill</button>
       </span>
     </div>
@@ -482,12 +482,13 @@
   <!-- Wrap Pipeline Drawer — opens when a wrap run is followed; renders
        live per-step progress, then the run's result with decision widgets
        for any blocking step. -->
-  <div class="drawer-backdrop" id="wrapDrawerBackdrop"></div>
-  <aside class="wrap-drawer" id="wrapDrawer" role="dialog" aria-label="Wrap pipeline" aria-modal="true">
+  <!-- A popover, not a modal (#1312): no backdrop, so the terminal behind it
+       stays visible and usable while the operator watches a fix land. -->
+  <aside class="wrap-drawer" id="wrapDrawer" role="dialog" aria-label="Wrap pipeline">
     <div class="drawer-handle" aria-hidden="true"></div>
     <div class="wrap-drawer-header">
       <h3 class="wrap-drawer-title">Session Wrap</h3>
-      <button class="banner-btn" id="wrapDrawerCloseBtn" aria-label="Close wrap drawer">&times;</button>
+      <button class="banner-btn" id="wrapDrawerCloseBtn" aria-label="Hide wrap progress">&times;</button>
     </div>
     <div class="wrap-drawer-status" id="wrapDrawerStatus" aria-live="polite"></div>
     <div class="wrap-drawer-skiproll hidden" id="wrapDrawerSkipRoll"></div>

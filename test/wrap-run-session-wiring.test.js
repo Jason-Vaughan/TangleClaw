@@ -52,7 +52,10 @@ const WIRING = [
   'wrapStartInFlight', 'postWrap', 'retryWrap', 'closeWrapDrawer',
   'wrapRunState', 'wrapStatusUrl', 'dispatchWrapRun', 'syncWrapRunEffects', 'paintWrapRun',
   'followedWrapRunKey', 'rememberFollowedWrapRun', 'recallFollowedWrapRun', 'restoreWrapRunOnLoad',
-  '_probeWrapStatus', 'startWrapStream', 'stopWrapStream', 'scheduleWrapStatusPoll', 'cancelWrapStatusPoll'
+  '_probeWrapStatus', 'startWrapStream', 'stopWrapStream', 'scheduleWrapStatusPoll', 'cancelWrapStatusPoll',
+  'collapseWrapPopover', 'onWrapButtonClick', 'wrapButtonContext',
+  'syncHandbackEffects', 'startHandbackStream', 'stopHandbackStream', 'scheduleHandbackStatusPoll',
+  'syncWrapClock', 'wrapClockTick'
 ];
 
 /** A controllable `EventSource`. */
@@ -90,6 +93,7 @@ function harness() {
   const calls = [];
   const record = (name) => (...args) => { calls.push({ name, args }); };
   const timers = [];
+  const intervals = [];
   const storage = new Map();
   const net = { post: null, status: null, lastError: null };
 
@@ -111,6 +115,8 @@ function harness() {
     },
     setTimeout: (fn, ms) => { const t = { fn, ms, cleared: false }; timers.push(t); return t; },
     clearTimeout: (t) => { if (t) t.cleared = true; },
+    setInterval: (fn, ms) => { const t = { fn, ms, cleared: false, interval: true }; intervals.push(t); return t; },
+    clearInterval: (t) => { if (t) t.cleared = true; },
     apiMutate: async (url, method, body) => { calls.push({ name: 'apiMutate', args: [url, method, body] }); return net.post; },
     api: {},
     tcFetch: async () => ({ ok: true, headers: { get: () => null }, json: async () => net.status }),
@@ -122,6 +128,12 @@ function harness() {
     openWrapDrawerNotice: record('openWrapDrawerNotice'),
     renderWrapDrawerError: record('renderWrapDrawerError'),
     hideWrapDrawer: record('hideWrapDrawer'),
+    collapseWrapDrawer: record('collapseWrapDrawer'),
+    expandWrapDrawer: record('expandWrapDrawer'),
+    openWrapModal: record('openWrapModal'),
+    paintWrapButton: record('paintWrapButton'),
+    paintHandback: record('paintHandback'),
+    paintLiveTiming: record('paintLiveTiming'),
     showWrappingState: record('showWrappingState'),
     clearWrappingState: record('clearWrappingState')
   };
@@ -132,10 +144,12 @@ function harness() {
   vm.runInContext(fs.readFileSync(path.join(PUBLIC, 'wrap-run-controller.js'), 'utf8'), sandbox);
   const globals = [
     'let wrapRun = null;', 'let currentWrapStream = null;', 'let currentWrapStreamRunId = null;',
-    'let wrapStatusPollTimer = null;', 'const WRAP_STATUS_POLL_MS = 4000;'
+    'let wrapStatusPollTimer = null;', 'const WRAP_STATUS_POLL_MS = 4000;',
+    'let currentHandbackStream = null;', 'let currentHandbackStreamId = null;', 'let handbackStatusPollTimer = null;',
+    'let wrapClockTimer = null;'
   ].join('\n');
   vm.runInContext(`${globals}\n${WIRING.map(functionSource).join('\n\n')}\n`
-    + 'this.__wiring = { postWrap, retryWrap, closeWrapDrawer, dispatchWrapRun, wrapRunState, restoreWrapRunOnLoad, getPassword: () => currentWrapPassword, setPassword: (p) => { currentWrapPassword = p; } };', sandbox);
+    + 'this.__wiring = { postWrap, retryWrap, closeWrapDrawer, collapseWrapPopover, onWrapButtonClick, wrapClockTick, dispatchWrapRun, wrapRunState, restoreWrapRunOnLoad, getPassword: () => currentWrapPassword, setPassword: (p) => { currentWrapPassword = p; } };', sandbox);
   sandbox.api.lastError = null;
 
   return {
@@ -144,6 +158,7 @@ function harness() {
     net,
     storage,
     timers,
+    intervals,
     calls,
     count: (name) => calls.filter((c) => c.name === name).length,
     last: (name) => { const hits = calls.filter((c) => c.name === name); return hits.length ? hits[hits.length - 1].args : null; },
@@ -401,5 +416,94 @@ describe('wrap-run wiring in session.js — executed', () => {
       assert.equal(h.w.wrapRunState().phase, 'idle');
       assert.equal(h.storage.has('tc.wrap.followedRun.demo'), false);
     });
+  });
+});
+
+describe('the Wrap popover — toggle, handback and clock (#1312)', () => {
+  let h;
+  beforeEach(() => { h = harness(); });
+
+  it('with no run, the Wrap button opens the wrap modal', () => {
+    h.w.onWrapButtonClick();
+    assert.equal(h.count('openWrapModal'), 1);
+  });
+
+  it('toggling a blocked report closed keeps it; the Wrap button re-opens it without re-rendering', async () => {
+    await wrapToBlocked(h);
+    assert.equal(h.count('openWrapDrawer'), 1);
+    h.w.onWrapButtonClick();
+    assert.equal(h.w.wrapRunState().phase, 'settled');
+    assert.equal(h.w.wrapRunState().visible, false);
+    assert.equal(h.count('collapseWrapDrawer'), 1);
+    assert.equal(h.count('hideWrapDrawer'), 0, 'the report is kept, not cleared');
+    assert.equal(h.storage.get('tc.wrap.followedRun.demo'), RUN, 'a reload still restores it');
+    h.w.onWrapButtonClick();
+    assert.equal(h.w.wrapRunState().visible, true);
+    assert.equal(h.count('expandWrapDrawer'), 1);
+    assert.equal(h.count('openWrapDrawer'), 1, 'not re-rendered: the widgets keep the operator\'s choices');
+    assert.equal(h.count('openWrapModal'), 0, 'never a second wrap while a report is held');
+  });
+
+  it('the × (collapseWrapPopover) during a live run keeps following, and the button shows it again', async () => {
+    h.w.dispatchWrapRun({ type: 'follow', runId: RUN });
+    h.w.collapseWrapPopover();
+    assert.equal(h.w.wrapRunState().phase, 'following');
+    assert.equal(h.streams()[0].closed, false);
+    h.w.onWrapButtonClick();
+    assert.equal(h.w.wrapRunState().visible, true);
+  });
+
+  it('a blocked run settling reads the handback from /wrap/status, watches its stream, and stops when it is ready', async () => {
+    h.net.status = { runId: RUN, running: false, result: BLOCKED_RESULT, handback: { handbackId: 'hb1', stepId: 'test', state: 'working', startedAt: 1 } };
+    await wrapToBlocked(h);
+    await h.tick();
+    assert.equal(h.w.wrapRunState().handback.state, 'working');
+    const hbStream = h.streams().find((es) => es.url.endsWith('/wrap/handback/stream/hb1'));
+    assert.ok(hbStream, 'the handback stream is opened');
+    hbStream.emit('handback-done', { handbackId: 'hb1', stepId: 'test', state: 'ready', completedVia: 'marker', startedAt: 1, finishedAt: 2 });
+    assert.equal(h.w.wrapRunState().handback.state, 'ready');
+    assert.equal(hbStream.closed, true, 'nothing left to watch');
+    assert.ok(h.count('paintHandback') > 0);
+  });
+
+  it('a handback stream that dies while working falls back to /wrap/status', async () => {
+    h.net.status = { runId: RUN, running: false, result: BLOCKED_RESULT, handback: { handbackId: 'hb2', stepId: 'test', state: 'working', startedAt: 1 } };
+    await wrapToBlocked(h);
+    await h.tick();
+    const hbStream = h.streams().find((es) => es.url.endsWith('/hb2'));
+    hbStream.fail();
+    h.net.status = { ...h.net.status, handback: { ...h.net.status.handback, state: 'timed-out', error: 'no line' } };
+    await h.flushTimers();
+    assert.equal(h.w.wrapRunState().handback.state, 'timed-out');
+  });
+
+  it('dismissing the run stops watching its handback', async () => {
+    h.net.status = { runId: RUN, running: false, result: BLOCKED_RESULT, handback: { handbackId: 'hb3', stepId: 'test', state: 'working', startedAt: 1 } };
+    await wrapToBlocked(h);
+    await h.tick();
+    const hbStream = h.streams().find((es) => es.url.endsWith('/hb3'));
+    h.w.closeWrapDrawer();
+    assert.equal(hbStream.closed, true);
+  });
+
+  it('the clock runs only while a step or a fix is timed, and its tick only paints', async () => {
+    h.w.dispatchWrapRun({ type: 'follow', runId: RUN });
+    assert.equal(h.intervals.length, 0, 'no clock before a step has a start time');
+    const es = h.streams()[0];
+    es.emit('run-start', { steps: [{ stepId: 'test', kind: 'test' }], at: 1, sentAt: 1 });
+    es.emit('step-start', { stepId: 'test', kind: 'test', at: 2, sentAt: 2 });
+    assert.equal(h.intervals.filter((t) => !t.cleared).length, 1);
+    es.emit('step-start', { stepId: 'test', kind: 'test', at: 3, sentAt: 3 });
+    assert.equal(h.intervals.filter((t) => !t.cleared).length, 1, 'one clock, not one per frame');
+
+    const before = h.w.wrapRunState();
+    const callsBefore = h.calls.length;
+    h.intervals[0].fn();
+    const tickCalls = h.calls.slice(callsBefore).map((c) => c.name);
+    assert.deepEqual([...new Set(tickCalls)].sort(), ['paintHandback', 'paintLiveTiming', 'paintWrapButton']);
+    assert.equal(h.w.wrapRunState(), before, 'a tick sends the controller nothing');
+
+    es.emit('run-done', { result: BLOCKED_RESULT });
+    assert.equal(h.intervals.filter((t) => !t.cleared).length, 0, 'the clock stops when nothing is timed');
   });
 });

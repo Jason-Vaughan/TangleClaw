@@ -64,6 +64,7 @@ function fakeElement(value) {
     checked: false,
     title: '',
     type: '',
+    dataset: {},
     classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
     listeners,
     addEventListener(name, fn) { listeners[name] = fn; }
@@ -217,6 +218,8 @@ describe('#83 — form handlers render the server reason, not a guess', () => {
       const { document, el } = fakeDocument({});
       const ctx = lift(SRC.session, ['function buildHandbackButton('], {
         api, apiMutate, document, projectName: 'demo',
+        // The handback is addressed to the run the drawer shows (#1312).
+        wrapRunState: () => ({ runId: 'r1' }),
         window: { tcWrapDrawerHelpers: { composeHandbackPrompt: () => 'fix it' } }
       });
       const btn = ctx.buildHandbackButton({ id: 'changelog', kindLabel: 'CHANGELOG', remediation: 'x', agentResolvable: true });
