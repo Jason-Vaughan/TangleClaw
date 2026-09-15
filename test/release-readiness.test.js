@@ -160,9 +160,64 @@ describe('buildPlanStatusSignal', () => {
     }
   });
 
+  it('reads a plan symlinked in from another checkout, as a worktree carries it', () => {
+    const primary = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-readiness-primary-'));
+    try {
+      fs.writeFileSync(path.join(primary, 'p.md'), PLAN('- [x] one\n- [ ] two'));
+      writeState('active_build_plan: artifacts/p.md\n');
+      fs.mkdirSync(path.join(root, '.prawduct', 'artifacts'), { recursive: true });
+      fs.symlinkSync(path.join(primary, 'p.md'), path.join(root, '.prawduct', 'artifacts', 'p.md'));
+      const s = rr.buildPlanStatusSignal(root);
+      assert.equal(s.state, 'fail', s.detail);
+      assert.match(s.detail, /1 of 2 Status boxes unticked/);
+    } finally {
+      fs.rmSync(primary, { recursive: true, force: true });
+    }
+  });
+
+  it('treats a suffixed Status heading as the Status section', () => {
+    writeState('active_build_plan: artifacts/p.md\n');
+    writePlan('artifacts/p.md', '# Plan\n\n## Status — Train 19\n\n- [x] one\n- [ ] two\n');
+    assert.equal(rr.buildPlanStatusSignal(root).state, 'fail');
+  });
+
   it('is unknown when project-state.yaml is unreadable', () => {
     fs.mkdirSync(path.join(root, '.prawduct', 'project-state.yaml'), { recursive: true });
     assert.equal(rr.buildPlanStatusSignal(root).state, 'unknown');
+  });
+});
+
+describe('prawductRootFor', () => {
+  let wt; let primary;
+  beforeEach(() => {
+    wt = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-readiness-wt-'));
+    primary = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-readiness-reg-'));
+  });
+  afterEach(() => {
+    fs.rmSync(wt, { recursive: true, force: true });
+    fs.rmSync(primary, { recursive: true, force: true });
+  });
+
+  it('uses the wrapped checkout when there is no separate registered folder', () => {
+    assert.equal(rr.prawductRootFor(wt), wt);
+    assert.equal(rr.prawductRootFor(wt, wt), wt);
+  });
+
+  it('prefers the worktree when it carries Prawduct state', () => {
+    fs.mkdirSync(path.join(wt, '.prawduct'));
+    fs.writeFileSync(path.join(wt, '.prawduct', 'project-state.yaml'), 'active_build_plan: null\n');
+    assert.equal(rr.prawductRootFor(wt, primary), wt);
+  });
+
+  it('falls back to the registered checkout when the worktree has none, so an unfinished plan still holds', () => {
+    fs.mkdirSync(path.join(primary, '.prawduct', 'artifacts'), { recursive: true });
+    fs.writeFileSync(path.join(primary, '.prawduct', 'project-state.yaml'), 'active_build_plan: artifacts/p.md\n');
+    fs.writeFileSync(path.join(primary, '.prawduct', 'artifacts', 'p.md'), '## Status\n\n- [ ] open\n');
+    assert.equal(rr.prawductRootFor(wt, primary), primary);
+    const signals = rr.gatherReleaseSignals(wt, {
+      changelog: { found: true, sectionFound: true, hasEntries: true }, configRoot: primary
+    });
+    assert.equal(rr.evaluateReleaseReadiness(signals).verdict, 'not-ready');
   });
 });
 

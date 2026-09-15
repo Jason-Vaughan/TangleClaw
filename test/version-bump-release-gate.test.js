@@ -165,6 +165,15 @@ describe('version-bump release gate', () => {
     });
   });
 
+  it('in a worktree with no Prawduct state, holds on the registered checkout\'s unfinished plan', async () => {
+    const registered = makeProject({ config: { releaseMode: 'auto' }, plan: '- [ ] open' });
+    const worktree = makeProject();
+    const { result, staged } = await run({ name: registered.name, path: worktree.path, configPath: registered.path });
+    assert.equal(result.status, 'skipped');
+    assert.equal(result.output.readiness.verdict, 'not-ready');
+    assert.deepEqual(staged, {});
+  });
+
   it('keeps fail-closed guards ahead of the gate, so a hold never hides them', async () => {
     const project = makeProject({ config: { releaseMode: 'auto' }, plan: '- [ ] open' });
     fs.writeFileSync(path.join(project.path, 'version.json'), JSON.stringify({ version: '1.2.3.4' }));

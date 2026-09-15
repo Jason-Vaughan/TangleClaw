@@ -75,6 +75,20 @@ through the plan signal. The first rule (a missing Status section read as `unkno
 Monad-1's releases indefinitely: its plan tracks per-chunk checklists, one of them a struck-out
 unticked box. That is now `n/a`. No other project changes behavior. This repo resolves to `off`.
 
+**Critic (cumulative, 0 blocking).** Fixed in one commit:
+- A worktree wrap read its plan signal wrong both ways. A symlinked plan read as an escape, so `auto`
+  held forever. A worktree with no Prawduct state read `n/a`, so `auto` cut mid-plan. Now
+  `prawductRootFor` reads the wrapped checkout when it has state and the registered one otherwise, and
+  containment is lexical (`followSymlinks: false`, as in priming-roll).
+- The `## Status` heading now matches priming-roll's `^##\s+Status\b`.
+- Two descriptions of the settings save (the `lib/project-config.js` comment and
+  `docs/configuration-reference.md`) were corrected to "a save carrying either key writes both".
+
+Regression tests cover a symlinked plan, the registered-checkout fallback (also through the step, with
+`configPath` ≠ `path`) and a suffixed heading. Mutation checks: reverting symlink-following fails 1,
+and dropping the fallback fails 2. The shared Status/pointer helper with priming-roll is accepted, not
+built. #1374 (the update checks don't run at project creation) is unchanged by this.
+
 **Descoped, explicitly.** Clean-tree signal: dirty is the normal wrap state. Linked-issue-closed
 signal: needs the network, filed as #1495. No `public/` change: the drawer's Release control is Chunk 03.
 
