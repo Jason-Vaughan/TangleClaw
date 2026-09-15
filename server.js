@@ -6182,7 +6182,8 @@ function _wrapResultPayload(projectName, result) {
  * `data:` line is always a complete frame. A `run-done` event's raw result
  * is shaped through `_wrapResultPayload` — the same shaping the POST and
  * `GET /wrap/status` apply — so a client can render the stream's terminal
- * event exactly as it would render either of them.
+ * event exactly as it would render either of them. Every frame also carries
+ * `sentAt`, the server time it was written.
  *
  * @param {string} projectName - Route-level project name (for the payload shape)
  * @param {{seq: number, type: string}} event - Registry event
@@ -6190,9 +6191,12 @@ function _wrapResultPayload(projectName, result) {
  */
 function _wrapStreamFrame(projectName, event) {
   const { seq, type, ...rest } = event;
+  // `sentAt` is when this frame was written, so the page can measure its clock
+  // against the server's even from a replay, whose `at` is minutes old.
+  const sentAt = Date.now();
   const data = type === WRAP_STREAM_EVENTS.RUN_DONE
-    ? { ...rest, result: rest.result ? _wrapResultPayload(projectName, rest.result) : null }
-    : rest;
+    ? { ...rest, sentAt, result: rest.result ? _wrapResultPayload(projectName, rest.result) : null }
+    : { ...rest, sentAt };
   return `id: ${seq}\nevent: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
@@ -6400,7 +6404,8 @@ route('GET', '/api/sessions/:project/wrap/handback/stream/:handbackId', (req, re
   };
   const write = (event) => {
     if (!open) return;
-    const { seq, type, ...data } = event;
+    const { seq, type, ...rest } = event;
+    const data = { ...rest, sentAt: Date.now() };
     try {
       res.write(`id: ${seq}\nevent: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
     } catch (err) { // prawduct:allow prawduct/broad-except -- a dead socket must end this stream, never reach the process-global handler

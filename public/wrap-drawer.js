@@ -165,8 +165,11 @@
       // the fix prompt exactly as it discarded the wrap prompt), so offering
       // "Ask the session to fix this" would promise a recovery that cannot
       // happen and send the operator round the same five-minute loop.
+      // #1229 — a halting `preflight` is resolvable the same way: the session's
+      // own agent runs what prawduct's block text asks for. TangleClaw only sends
+      // the prompt, so the button is not an agent invocation of its own.
       agentResolvable: blockedAt !== null && stepResult.stepId === blockedAt
-        && stepResult.kind === 'ai-content' && status !== 'needs-operator',
+        && (stepResult.kind === 'ai-content' || stepResult.kind === 'preflight') && status !== 'needs-operator',
       warning
     };
   }
@@ -184,7 +187,7 @@
    * prompt half-typed — so every newline in the remediation is flattened to a
    * space. Capped to stay well under injectCommand's 4096-char limit.
    *
-   * @param {{id: string, kindLabel: string, remediation: string|null}} stepRow
+   * @param {{id: string, kind?: string, kindLabel: string, remediation: string|null, blockers?: string[]}} stepRow
    *   A row view-model from `buildStepRow` (expected `agentResolvable`).
    * @returns {string} A single-line prompt (no newlines), length-capped.
    */
@@ -193,10 +196,15 @@
     const step = flatten(stepRow && (stepRow.kindLabel || stepRow.id) ? (stepRow.kindLabel || stepRow.id) : 'a wrap step');
     const stepId = flatten(stepRow && stepRow.id ? stepRow.id : '');
     const fix = flatten(stepRow && stepRow.remediation ? stepRow.remediation : '');
+    const isPreflight = stepRow && stepRow.kind === 'preflight';
+    const blockText = isPreflight ? flatten(Array.isArray(stepRow.blockers) ? stepRow.blockers.join(' ') : '') : '';
     const parts = [
       `Your session wrap is blocked at the ${step}${stepId && stepId !== step ? ` (${stepId})` : ''} step.`,
+      blockText ? `prawduct says: ${blockText}` : '',
       fix ? `How to fix it: ${fix}` : '',
-      'Please resolve it properly — write a genuine entry, never a placeholder just to pass the gate; if the work truly warrants no entry, that is a decision to note, not to fake.',
+      isPreflight
+        ? 'Please satisfy the gate properly — run the review or write the reflection it asks for; never waive it or write a gate file just to pass.'
+        : 'Please resolve it properly — write a genuine entry, never a placeholder just to pass the gate; if the work truly warrants no entry, that is a decision to note, not to fake.',
       'Then stop — do NOT trigger the wrap yourself; the operator will hit Retry.'
     ].filter(Boolean);
     const prompt = parts.join(' ');
@@ -676,6 +684,17 @@
           inputType: 'checkbox',
           stepId: stepRow.id
         };
+      case 'preflight':
+        // #1229 — only a HALTING preflight reaches here (`isBlocker`): an advisory
+        // one already let the wrap continue. "Wrap anyway" passes over prawduct's
+        // verdict for this run and says so in the commit body. There is no waive:
+        // a waiver is prawduct's own file, and TangleClaw does not write it.
+        return {
+          kind: 'preflight',
+          optionsKey: 'skipPreflight',
+          label: 'Wrap anyway — pass over the prawduct gates and record it in the commit body',
+          inputType: 'checkbox'
+        };
       default:
         return null;
     }
@@ -970,7 +989,7 @@
    * @returns {{results: object[], blockedAt: string|null, currentStepId: string|null, started: boolean, done: boolean, result: object|null}}
    */
   function emptyWrapLive() {
-    return { results: [], blockedAt: null, currentStepId: null, started: false, done: false, result: null };
+    return { results: [], blockedAt: null, currentStepId: null, currentStepStartedAt: null, skewMs: null, started: false, done: false, result: null };
   }
 
   /**
@@ -1019,7 +1038,29 @@
     if (!event || typeof event.type !== 'string') return next;
     if (!Object.prototype.hasOwnProperty.call(WRAP_STREAM_FOLDS, event.type)) return next;
     WRAP_STREAM_FOLDS[event.type](next, event);
+    next.skewMs = foldSkew(next.skewMs, event);
     return next;
+  }
+
+  /**
+   * Refine the estimate of how far this page's clock runs ahead of the server's.
+   *
+   * Each frame carries `sentAt` (server time it was written) and the page stamps
+   * `receivedAt` on arrival; their difference is skew plus network delay, so the
+   * smallest seen is the best estimate. `sentAt` rather than the event's `at`,
+   * because a replayed event's `at` is as old as the step and would read as
+   * minutes of delay.
+   *
+   * @param {number|null} prev - Prior estimate
+   * @param {{sentAt?: number, receivedAt?: number}} event - One stream event
+   * @returns {number|null}
+   */
+  function foldSkew(prev, event) {
+    if (!event || !Number.isFinite(event.sentAt) || !Number.isFinite(event.receivedAt)) {
+      return Number.isFinite(prev) ? prev : null;
+    }
+    const sample = event.receivedAt - event.sentAt;
+    return Number.isFinite(prev) ? Math.min(prev, sample) : sample;
   }
 
   /**
@@ -1037,7 +1078,10 @@
     row.output = event.output === undefined ? null : event.output;
     row.blockers = Array.isArray(event.blockers) ? event.blockers : [];
     if (event.halted === true) next.blockedAt = event.stepId;
-    if (next.currentStepId === event.stepId) next.currentStepId = null;
+    if (next.currentStepId === event.stepId) {
+      next.currentStepId = null;
+      next.currentStepStartedAt = null;
+    }
     next.started = true;
   }
 
@@ -1062,12 +1106,15 @@
       next.started = true;
       next.blockedAt = null;
       next.currentStepId = null;
+      next.currentStepStartedAt = null;
     },
     'step-start': (next, event) => {
       if (typeof event.stepId !== 'string') return;
       const row = upsertLiveRow(next.results, event);
       row.status = 'running';
       next.currentStepId = event.stepId;
+      // Server time the step began; a legacy frame without it shows no clock.
+      next.currentStepStartedAt = Number.isFinite(event.at) ? event.at : null;
       next.started = true;
     },
     'step-done': (next, event) => settleLiveRow(next, event, 'done'),
@@ -1076,6 +1123,7 @@
       next.done = true;
       next.result = event.result && typeof event.result === 'object' ? event.result : null;
       next.currentStepId = null;
+      next.currentStepStartedAt = null;
     }
   };
 
@@ -1153,6 +1201,184 @@
   }
 
   /**
+   * A running step taking longer than this turns the Wrap button amber and says
+   * so on its row. Past a content step's quiet fallback (60s), short of its
+   * maximum wait (5min), so a step still inside an honest wait reads amber
+   * before it times out.
+   * @type {number}
+   */
+  const SLOW_STEP_MS = 120 * 1000;
+
+  /**
+   * Milliseconds since a server timestamp, on this page's clock.
+   * @param {number|null} serverAt - Server epoch ms
+   * @param {number|null} skewMs - From `foldSkew`; treated as 0 when unknown
+   * @param {number} nowMs - This page's `Date.now()`
+   * @returns {number|null} Null when there is no timestamp to measure from
+   */
+  function elapsedSince(serverAt, skewMs, nowMs) {
+    if (!Number.isFinite(serverAt) || !Number.isFinite(nowMs)) return null;
+    const skew = Number.isFinite(skewMs) ? skewMs : 0;
+    return Math.max(0, nowMs - skew - serverAt);
+  }
+
+  /**
+   * `m:ss`, or `h:mm:ss` from an hour.
+   * @param {number} ms - Duration
+   * @returns {string}
+   */
+  function formatElapsed(ms) {
+    const total = Math.floor(Math.max(0, Number.isFinite(ms) ? ms : 0) / 1000);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const sec = String(total % 60).padStart(2, '0');
+    return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+  }
+
+  /**
+   * Where a live run is and how long its current step has run.
+   * @param {object|null} live - Live state from `applyWrapStreamEvent`
+   * @param {number} nowMs - This page's clock
+   * @returns {{stepId: string, ordinal: number, total: number, elapsedMs: number|null, slow: boolean}|null}
+   *   Null when no step is running
+   */
+  function liveStepTiming(live, nowMs) {
+    if (!live || typeof live !== 'object' || !Array.isArray(live.results) || !live.currentStepId) return null;
+    const index = live.results.findIndex((r) => r.stepId === live.currentStepId);
+    if (index === -1) return null;
+    const elapsedMs = elapsedSince(live.currentStepStartedAt, live.skewMs, nowMs);
+    return {
+      stepId: live.currentStepId,
+      ordinal: index + 1,
+      total: live.results.length,
+      elapsedMs,
+      slow: elapsedMs !== null && elapsedMs >= SLOW_STEP_MS
+    };
+  }
+
+  /**
+   * What a handback (the fix sent to the session for a blocked step) means for
+   * the blocked row and for Retry. Retry is never disabled by it: `retryReady`
+   * only emphasises the button.
+   *
+   * @param {object|null} handback - From `POST /wrap/handback`, its stream, or `GET /wrap/status`
+   * @param {{nowMs: number, skewMs?: number|null}} opts
+   * @returns {{state: string, detail: string, tone: 'working'|'ready'|'problem', retryReady: boolean, canResend: boolean}|null}
+   *   Null when there is no handback worth showing
+   */
+  function handbackView(handback, opts) {
+    if (!handback || typeof handback !== 'object' || typeof handback.state !== 'string') return null;
+    const o = opts || {};
+    switch (handback.state) {
+      case 'working': {
+        const elapsed = elapsedSince(handback.startedAt, o.skewMs, o.nowMs);
+        return {
+          state: 'working',
+          detail: `Fixing in the session${elapsed === null ? '…' : ` · ${formatElapsed(elapsed)}`}`,
+          tone: 'working',
+          retryReady: false,
+          canResend: false
+        };
+      }
+      case 'ready':
+        return {
+          state: 'ready',
+          detail: handback.completedVia === 'quiet'
+            ? `Probably done — ${handback.completionNote || 'no completion marker seen'}. Check the terminal, then Retry.`
+            : 'The session says it is done. Retry when you are ready.',
+          tone: 'ready',
+          retryReady: true,
+          canResend: true
+        };
+      case 'timed-out':
+      case 'failed':
+        return {
+          state: handback.state,
+          detail: `${handback.error || 'The session did not say it finished.'} Check the terminal, then Retry.`,
+          tone: 'problem',
+          retryReady: false,
+          canResend: true
+        };
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * The Retry button's label: a ticked skip wins (the run will skip, and the
+   * label must say so), then a finished handback's "Ready: Retry".
+   * @param {{skipChosen?: boolean, handbackReady?: boolean}} opts
+   * @returns {string}
+   */
+  function retryLabel(opts) {
+    const o = opts || {};
+    if (o.skipChosen) return 'Skip & continue';
+    if (o.handbackReady) return 'Ready: Retry';
+    return 'Retry';
+  }
+
+  /**
+   * The Wrap button while the page follows a run — the run's surface when the
+   * popover is closed. `mode: 'confirm'` opens the wrap modal (no run to show);
+   * `mode: 'toggle'` opens or closes the popover. A slow step is marked with a
+   * glyph and in `ariaLabel`, not by colour alone.
+   *
+   * @param {object|null} run - `tcWrapRunController` state
+   * @param {{nowMs: number, sessionEnded?: boolean, wrapCompleted?: boolean}} opts
+   * @returns {{label: string, ariaLabel: string, mode: 'confirm'|'toggle', slow: boolean, disabled: boolean}}
+   */
+  function wrapButtonView(run, opts) {
+    const o = opts || {};
+    const nowMs = Number.isFinite(o.nowMs) ? o.nowMs : 0;
+    const phase = run && typeof run.phase === 'string' ? run.phase : 'idle';
+    const toggle = (label, ariaLabel, slow) => ({ label, ariaLabel, mode: 'toggle', slow: Boolean(slow), disabled: false });
+    switch (phase) {
+      case 'starting':
+        return toggle('Wrapping…', 'Wrap starting — show progress');
+      case 'following': {
+        const t = liveStepTiming(run.live, nowMs);
+        if (!t) return toggle('Wrapping…', 'Wrapping — show progress');
+        const time = t.elapsedMs === null ? '' : ` · ${formatElapsed(t.elapsedMs)}`;
+        return toggle(
+          `${t.slow ? '⚠ ' : ''}Wrapping ${t.ordinal}/${t.total}${time}`,
+          `Wrapping, step ${t.ordinal} of ${t.total}${time ? `, running ${formatElapsed(t.elapsedMs)}` : ''}${t.slow ? ', taking long' : ''} — show progress`,
+          t.slow
+        );
+      }
+      case 'settled': {
+        const result = run.result;
+        if (result && result.ok === false) {
+          const hb = handbackView(run.handback, { nowMs, skewMs: run.live && run.live.skewMs });
+          if (hb && hb.state === 'working') {
+            const elapsed = elapsedSince(run.handback.startedAt, run.live && run.live.skewMs, nowMs);
+            const time = elapsed === null ? '…' : ` · ${formatElapsed(elapsed)}`;
+            return toggle(`Fixing${time}`, `Wrap blocked; the session is fixing it${elapsed === null ? '' : `, ${formatElapsed(elapsed)}`} — show the report`);
+          }
+          if (hb && hb.retryReady) return toggle('Ready: Retry', 'Wrap blocked; the session finished its fix — show the report');
+          return toggle('Wrap blocked', 'Wrap blocked — show the report');
+        }
+        return toggle('Wrapped', 'Wrap finished — show the report');
+      }
+      case 'stalled':
+        return toggle('Wrap: not reporting', 'Wrap stopped reporting — show details');
+      case 'lost':
+        return toggle('Wrap: lost track', 'Lost track of the wrap — show details');
+      case 'refused':
+        if (run.result) return toggle('Wrap blocked', 'Retry was refused — show the report');
+        break;
+      default:
+        break;
+    }
+    return {
+      label: 'Wrap',
+      ariaLabel: 'Wrap this session',
+      mode: 'confirm',
+      slow: false,
+      disabled: Boolean(o.sessionEnded || o.wrapCompleted)
+    };
+  }
+
+  /**
    * #185 — the stream URL for a run, encoded the way the other wrap routes
    * are addressed.
    * @param {string} projectName
@@ -1191,7 +1417,15 @@
     liveWrapAsPipelineResult,
     summarizeLiveStatus,
     streamUnavailableStatus,
-    wrapStreamUrl
+    wrapStreamUrl,
+    SLOW_STEP_MS,
+    foldSkew,
+    elapsedSince,
+    formatElapsed,
+    liveStepTiming,
+    handbackView,
+    retryLabel,
+    wrapButtonView
   };
 
   // Browser: attach to window so session.js can call helpers.

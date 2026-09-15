@@ -215,7 +215,7 @@ the PR link.
 ## Status
 
 - [x] 04a server: timing, handback watch + routes, skipPreflight
-- [ ] 04b view-model
+- [x] 04b view-model
 - [ ] 04c session page
 - [ ] 04d docs
 - [ ] 04e live check

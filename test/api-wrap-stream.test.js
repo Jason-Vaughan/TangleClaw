@@ -301,6 +301,10 @@ describe('GET /api/sessions/:project/wrap/stream/:runId (#185)', () => {
       [[1, 'run-start'], [2, 'step-start'], [3, 'step-done']],
       'the replay is the missed events, in order, with their registry seq as the SSE id');
     assert.deepEqual(stream.frames[0].data.steps.map((s) => s.stepId), ['open-pr-check', 'changelog-update']);
+    // Replayed frames carry the time they happened (`at`) and the time they were
+    // written (`sentAt`), so the page can time a step even from a replay.
+    assert.ok(stream.frames.slice(0, 3).every((f) => Number.isFinite(f.data.at) && Number.isFinite(f.data.sentAt)));
+    assert.ok(stream.frames[2].data.sentAt >= stream.frames[2].data.at);
     assert.equal(stream.frames[2].data.status, 'done');
     assert.equal(stream.ended, false, 'the stream stays open while the run is live');
 

@@ -186,6 +186,7 @@ describe('wrap handback routes (#1312)', () => {
     assert.deepEqual(stream.frames.map((f) => f.event), ['handback-start', 'handback-done']);
     assert.equal(stream.frames[1].data.state, 'ready');
     assert.equal(stream.frames[1].data.completedVia, 'marker');
+    assert.ok(stream.frames.every((f) => Number.isFinite(f.data.at) && Number.isFinite(f.data.sentAt)));
   });
 
   it('a stream opened after the watch ended replays both frames and closes at once', async () => {
