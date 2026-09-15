@@ -46,10 +46,10 @@
 
   /**
    * The state of a page following no run.
-   * @returns {{phase: 'idle', runId: null, retry: false, transport: null, live: null, result: null, error: null, visible: false}}
+   * @returns {{phase: 'idle', runId: null, retry: false, transport: null, live: null, result: null, error: null, visible: false, handback: null}}
    */
   function initialWrapRun() {
-    return { phase: 'idle', runId: null, retry: false, transport: null, live: null, result: null, error: null, visible: false };
+    return { phase: 'idle', runId: null, retry: false, transport: null, live: null, result: null, error: null, visible: false, handback: null };
   }
 
   /**
@@ -80,6 +80,8 @@
         .map((r) => ({ stepId: r.stepId, kind: typeof r.kind === 'string' ? r.kind : '', status: 'pending', output: null, blockers: [] })),
       blockedAt: null,
       currentStepId: null,
+      currentStepStartedAt: null,
+      skewMs: null,
       started: false,
       done: false,
       result: null
@@ -125,7 +127,9 @@
       transport: 'stream',
       live: how.live,
       error: null,
-      visible: true
+      visible: true,
+      // A handback belongs to the settled run it was sent for; a new run has none.
+      handback: null
     };
   }
 
@@ -145,7 +149,13 @@
    *   - `stream-lost` `{runId}` — the stream ended without a terminal frame.
    *   - `status` `{runId, status}` — a `GET /wrap/status` payload, polled while
    *     the stream is gone.
-   *   - `hide` — the operator closed the drawer (Close, Cancel, Done, backdrop).
+   *   - `hide` — the operator toggled the popover closed (×, Escape, the Wrap
+   *     button). Nothing is let go: the popover re-opens on the same run.
+   *   - `show` — the operator toggled it open again.
+   *   - `dismiss` — the operator finished with the run (Close, Cancel, Done).
+   *   - `handback` `{runId, handback}` — the state of the fix sent to the
+   *     session for the settled run's blocked step (`POST /wrap/handback`, its
+   *     stream, or `GET /wrap/status`).
    *
    * Signals naming a `runId` other than the followed one are ignored: a late
    * frame from a previous run must not repaint the current one.
@@ -218,12 +228,34 @@
       }
 
       case 'hide':
+        // Toggling the popover closed keeps everything: the operator closes it to
+        // read the terminal, often while the session is fixing the blocked step,
+        // and the report must be there when they open it again. A live run's
+        // report still re-opens it when it lands.
         if (!s.visible) return s;
-        // Hiding a live run keeps following it — its report re-opens the drawer
-        // when it lands. So does hiding a Retry whose POST is still out: dropping
-        // to idle there would ignore the `accepted` that follows, and the run the
-        // server just started would go unwatched. Hiding a finished run lets it go.
-        return isBusy(s) ? { ...s, visible: false } : initialWrapRun();
+        return { ...s, visible: false };
+
+      case 'show':
+        if (s.visible || s.phase === 'idle') return s;
+        // A refused first wrap has no report to show; its error was the modal's.
+        if (s.phase === 'refused' && s.result === null) return s;
+        return { ...s, visible: true };
+
+      case 'dismiss':
+        if (s.phase === 'idle') return s;
+        // Dismissing a live run keeps following it, hidden — its report re-opens
+        // the popover when it lands. So does dismissing a Retry whose POST is still
+        // out: dropping to idle there would ignore the `accepted` that follows, and
+        // the run the server just started would go unwatched. Dismissing a finished
+        // run lets it go.
+        return isBusy(s) ? (s.visible ? { ...s, visible: false } : s) : initialWrapRun();
+
+      case 'handback': {
+        if (s.phase !== 'settled' || signal.runId !== s.runId) return s;
+        const hb = signal.handback;
+        if (hb !== null && (!hb || typeof hb !== 'object' || typeof hb.state !== 'string')) return s;
+        return { ...s, handback: hb };
+      }
 
       default:
         return s;

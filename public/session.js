@@ -3607,6 +3607,7 @@ async function confirmWrap() {
   // retries (#328) so they don't leak into this run.
   wrapSkippedAiSteps = {};
   wrapPathDecisions = {};
+  wrapSkipPreflight = false;
   const pw = document.getElementById('wrapPassword').value;
   // #540 ask-mode — capture the operator's bump-level choice up front, before
   // version-bump runs. Empty string keeps the CHANGELOG heuristic. Threaded as
@@ -3735,6 +3736,15 @@ let wrapSkippedAiSteps = {};
 let wrapPathDecisions = {};
 
 /**
+ * #1229 — the operator chose "Wrap anyway" past a halting preflight during this
+ * wrap. Kept across retries, because every retry re-runs the pipeline from
+ * preflight, and a later step's block must not send the operator round the same
+ * gate again. Reset by a new wrap from the modal.
+ * @type {boolean}
+ */
+let wrapSkipPreflight = false;
+
+/**
  * #540 ask-mode — the operator's chosen version-bump level (`patch`/`minor`/
  * `major`, or `''` for the CHANGELOG heuristic), captured from the wrap modal
  * at `confirmWrap`. Replayed on every retry because the pipeline re-runs from
@@ -3781,20 +3791,96 @@ function openWrapDrawer(pipelineResult) {
   // no auto-redirect, so a countdown already ticking is cancelled here.
   cancelEndedCountdown();
   renderWrapDrawer(pipelineResult);
-  document.getElementById('wrapDrawerBackdrop').classList.add('open');
-  document.getElementById('wrapDrawer').classList.add('open');
+  expandWrapDrawer();
 }
 
 /**
- * The operator closed the drawer (Close, Cancel, Done, or the backdrop). A run
- * still in progress keeps being followed and re-opens the drawer with its
- * report; a finished one is let go.
+ * The operator finished with the run (Close, Cancel, Done). A run still in
+ * progress keeps being followed and re-opens the popover with its report; a
+ * finished one is let go.
  */
 function closeWrapDrawer() {
   const before = wrapRunState();
-  // A drawer open with nothing followed (the controller saw no change) is still
+  // A popover open with nothing followed (the controller saw no change) is still
   // closed; otherwise the controller's own effect closes it.
+  if (dispatchWrapRun({ type: 'dismiss' }) === before) hideWrapDrawer();
+}
+
+/**
+ * The operator toggled the popover closed (×, Escape, the Wrap button) to see the
+ * terminal. Nothing is let go: the Wrap button opens it again on the same run.
+ */
+function collapseWrapPopover() {
+  const before = wrapRunState();
   if (dispatchWrapRun({ type: 'hide' }) === before) hideWrapDrawer();
+}
+
+/**
+ * The Wrap button: with a run to show, it opens or closes the popover; with
+ * none, it opens the wrap modal.
+ */
+function onWrapButtonClick() {
+  const view = window.tcWrapDrawerHelpers.wrapButtonView(wrapRunState(), wrapButtonContext());
+  if (view.mode === 'confirm') {
+    openWrapModal();
+    return;
+  }
+  if (wrapRunState().visible) collapseWrapPopover();
+  else dispatchWrapRun({ type: 'show' });
+}
+
+/**
+ * The facts `wrapButtonView` needs from outside the controller.
+ * @returns {{nowMs: number, sessionEnded: boolean}}
+ */
+function wrapButtonContext() {
+  // A completed wrap ends the session, so `ended` covers both.
+  return { nowMs: Date.now(), sessionEnded: Boolean(sessionState.ended) };
+}
+
+/**
+ * Paint the Wrap button from the run it is the surface of: label, accessible
+ * name, amber when a step runs slow, and whether the popover is open.
+ * A paint primitive — the controller's effects and the clock tick call it.
+ */
+function paintWrapButton() {
+  const btn = document.getElementById('wrapBtn');
+  if (!btn || !window.tcWrapDrawerHelpers) return;
+  const run = wrapRunState();
+  const view = window.tcWrapDrawerHelpers.wrapButtonView(run, wrapButtonContext());
+  if (btn.textContent !== view.label) btn.textContent = view.label;
+  btn.setAttribute('aria-label', view.ariaLabel);
+  btn.disabled = view.disabled;
+  btn.classList.toggle('btn-wrap--active', view.mode === 'toggle');
+  btn.classList.toggle('btn-wrap--slow', view.slow);
+  if (view.mode === 'toggle') btn.setAttribute('aria-expanded', String(Boolean(run.visible)));
+  else btn.removeAttribute('aria-expanded');
+}
+
+/**
+ * Show the popover without re-rendering it. A paint primitive.
+ */
+function expandWrapDrawer() {
+  const drawer = document.getElementById('wrapDrawer');
+  // Anchor under the Wrap button: the banner wraps to more rows on narrower
+  // screens, so its height is read rather than assumed. The phone sheet ignores it.
+  const btn = document.getElementById('wrapBtn');
+  if (btn && btn.getBoundingClientRect && drawer.style) {
+    const box = btn.getBoundingClientRect();
+    if (box.bottom > 0) {
+      drawer.style.setProperty('--wrap-popover-top', `${Math.round(box.bottom + 6)}px`);
+      drawer.style.setProperty('--wrap-popover-right', `${Math.max(16, Math.round(window.innerWidth - box.right))}px`);
+    }
+  }
+  drawer.classList.add('open');
+}
+
+/**
+ * Close the popover but keep what it shows, so re-opening it restores the same
+ * report with the operator's choices in its widgets. A paint primitive.
+ */
+function collapseWrapDrawer() {
+  document.getElementById('wrapDrawer').classList.remove('open');
 }
 
 /**
@@ -3802,7 +3888,6 @@ function closeWrapDrawer() {
  * primitive: the controller's effects call it.
  */
 function hideWrapDrawer() {
-  document.getElementById('wrapDrawerBackdrop').classList.remove('open');
   document.getElementById('wrapDrawer').classList.remove('open');
   const skipRoll = document.getElementById('wrapDrawerSkipRoll');
   if (skipRoll) { skipRoll.innerHTML = ''; skipRoll.classList.add('hidden'); }
@@ -4126,9 +4211,17 @@ function syncRetryLabel() {
   if (!retryBtn) return;
   const decisionEl = document.getElementById('wrapDrawerDecision');
   const skipChecked = decisionEl && decisionEl.querySelector(
-    'input[data-options-key="skipAiContent"]:checked, input[data-options-key="skipTests"]:checked'
+    'input[data-options-key="skipAiContent"]:checked, input[data-options-key="skipTests"]:checked, input[data-options-key="skipPreflight"]:checked'
   );
-  retryBtn.textContent = skipChecked ? 'Skip & continue' : 'Retry';
+  const run = wrapRunState();
+  const hb = run.phase === 'settled' && window.tcWrapDrawerHelpers
+    ? window.tcWrapDrawerHelpers.handbackView(run.handback, { nowMs: Date.now() })
+    : null;
+  const handbackReady = Boolean(hb && hb.retryReady);
+  retryBtn.textContent = window.tcWrapDrawerHelpers
+    ? window.tcWrapDrawerHelpers.retryLabel({ skipChosen: Boolean(skipChecked), handbackReady })
+    : (skipChecked ? 'Skip & continue' : 'Retry');
+  retryBtn.classList.toggle('wrap-retry--ready', handbackReady && !skipChecked);
 }
 
 /**
@@ -4195,6 +4288,17 @@ function renderStepRow(row) {
     main.appendChild(blockersLine);
   }
 
+  // The fix handed back to the session (#1312): "Fixing in the session · 0:42",
+  // then whether it is done. Outside "How to fix this" so it shows while that is
+  // collapsed; `paintHandback` fills it.
+  if (row.agentResolvable) {
+    const handbackLine = document.createElement('span');
+    handbackLine.className = 'wrap-step-handback-status';
+    handbackLine.setAttribute('aria-live', 'polite');
+    handbackLine.hidden = true;
+    main.appendChild(handbackLine);
+  }
+
   // "How to fix this" — handler-supplied remediation for a blocked step
   // (#223). Collapsible <details> so it doesn't crowd the row but is one
   // click from the operator. Absent remediation → nothing rendered, the
@@ -4215,6 +4319,9 @@ function renderStepRow(row) {
     // `agentResolvable` so it never appears on a structural block a retry-prompt
     // can't fix. v1: it injects the fix; the operator still hits Retry.
     if (row.agentResolvable) fix.appendChild(buildHandbackButton(row));
+    // #1229 — a preflight block is prawduct's text to act on elsewhere, so it can
+    // be copied with its remediation.
+    if (row.kind === 'preflight') fix.appendChild(buildCopyBlockButton(row));
     main.appendChild(fix);
   }
 
@@ -4231,52 +4338,75 @@ function renderStepRow(row) {
 }
 
 /**
- * #702 — build the "Ask the session to fix this" button for a content-authoring
- * block (`row.agentResolvable`). Injects the blocked step's remediation into the
- * owning session via command injection so the operator doesn't have to leave the
- * drawer and hand-type it — the pain point that recurs on mobile. v1 only
- * *injects* the fix; the operator still taps Retry (no auto-retry — that's a v2
- * concern needing a block→fix→block loop guard). Liveness is enforced server-side
- * by `injectCommand` (active session + live tmux); a dead/absent session surfaces
- * as a warn toast rather than a silent no-op.
+ * #702 — build the "Ask the session to fix this" button for a block the session
+ * can resolve (`row.agentResolvable`: a content step, or a halting preflight).
+ * Sends the blocked step's remediation to the owning session through
+ * `POST /wrap/handback`, which watches for the session's completion line; the
+ * row's status line and the Retry button then follow that watch (#1312). There
+ * is still no auto-retry — the operator presses Retry, which lights up when the
+ * session is done. A dead or absent session surfaces as a warn toast.
  *
- * @param {{id: string, kindLabel: string, remediation: string|null, agentResolvable: boolean}} row
+ * @param {{id: string, kind: string, kindLabel: string, remediation: string|null, agentResolvable: boolean}} row
  * @returns {HTMLButtonElement}
  */
 function buildHandbackButton(row) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'wrap-step-handback';
-  btn.textContent = 'Ask the session to fix this';
-  btn.title = 'Send the fix to the session that ran the wrap. It writes the entry; you then hit Retry.';
+  const label = row.kind === 'preflight' ? 'Ask the session to satisfy this' : 'Ask the session to fix this';
+  btn.dataset.label = label;
+  btn.textContent = label;
+  btn.title = 'Send the fix to the session that ran the wrap. TangleClaw watches for it to finish and lights up Retry.';
   btn.addEventListener('click', async () => {
     btn.disabled = true;
+    btn.dataset.sending = '1';
     btn.textContent = 'Sending…';
     const prompt = window.tcWrapDrawerHelpers.composeHandbackPrompt(row);
+    const runId = wrapRunState().runId;
     const result = await apiMutate(
-      `/api/sessions/${encodeURIComponent(projectName)}/command`,
+      `/api/sessions/${encodeURIComponent(projectName)}/wrap/handback`,
       'POST',
-      { command: prompt }
+      { stepId: row.id, prompt }
     );
+    delete btn.dataset.sending;
     const toast = document.getElementById('toast');
-    if (result && result.ok) {
-      // Stay disabled: the fix is in flight in the session. The operator's next
-      // action is Retry, not a second injection.
-      btn.textContent = 'Sent — resolve it in the session, then Retry';
-      if (toast) {
-        toast.textContent = 'Fix sent to the session — resolve it there, then Retry';
-        toast.className = 'toast toast-ok visible';
-        setTimeout(() => { toast.classList.remove('visible'); }, 5000);
-      }
+    if (result && result.ok && result.handback) {
+      // The row's status line and Retry follow the watch from here (paintHandback).
+      dispatchWrapRun({ type: 'handback', runId, handback: result.handback });
+      paintHandback();
     } else {
-      // Re-enable so the operator can retry the injection once the session is live.
+      // Re-enable so the operator can send again once the session is live.
       btn.disabled = false;
-      btn.textContent = 'Ask the session to fix this';
+      btn.textContent = label;
       if (toast) {
         toast.textContent = api.lastError || 'Could not send the fix to the session.';
         toast.className = 'toast toast-warn visible';
         setTimeout(() => { toast.classList.remove('visible'); }, 5000);
       }
+    }
+  });
+  return btn;
+}
+
+/**
+ * #1229 — a "Copy" button for a preflight block: prawduct's block text and the
+ * remediation, for the operator to act on in the session or elsewhere.
+ *
+ * @param {{blockers: string[], remediation: string|null}} row
+ * @returns {HTMLButtonElement}
+ */
+function buildCopyBlockButton(row) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'wrap-step-copy-block';
+  btn.textContent = 'Copy block text';
+  btn.addEventListener('click', async () => {
+    const text = [...(row.blockers || []), row.remediation || ''].filter(Boolean).join('\n\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      btn.textContent = 'Copied';
+    } catch { // clipboard refused (plain HTTP, permissions) — say so rather than pretend
+      btn.textContent = 'Copy failed — select the text above';
     }
   });
   return btn;
@@ -4801,6 +4931,10 @@ async function retryWrap() {
       const el = decisionEl.querySelector('input[data-options-key="skipTests"]');
       return el ? el.checked === true : false;
     },
+    skipPreflight: () => {
+      const el = decisionEl.querySelector('input[data-options-key="skipPreflight"]');
+      return el ? el.checked === true : false;
+    },
     prHandling: () => {
       const selects = decisionEl.querySelectorAll('select.wrap-decision-prselect');
       if (selects.length === 0) return null;
@@ -4840,6 +4974,10 @@ async function retryWrap() {
   // it would re-block. The merge lives in a pure drawer helper so it's unit-
   // testable; `wrapSkippedAiSteps` is the session-level accumulator.
   H.accumulateAiContentSkips(wrapSkippedAiSteps, options);
+
+  // #1229: "Wrap anyway" holds for the rest of this wrap (see `wrapSkipPreflight`).
+  if (options.skipPreflight === true) wrapSkipPreflight = true;
+  if (wrapSkipPreflight) options.skipPreflight = true;
 
   // M1: replay the password collected at the initial wrap modal so a
   // delete-protected install can retry without re-prompting.
@@ -4892,6 +5030,23 @@ let currentWrapStreamRunId = null;
  * @type {ReturnType<typeof setTimeout>|null}
  */
 let wrapStatusPollTimer = null;
+
+/**
+ * The handback stream (`GET /wrap/handback/stream/:handbackId`) and the id it
+ * watches, plus its status-read fallback timer.
+ * @type {EventSource|null}
+ */
+let currentHandbackStream = null;
+/** @type {string|null} */
+let currentHandbackStreamId = null;
+/** @type {ReturnType<typeof setTimeout>|null} */
+let handbackStatusPollTimer = null;
+
+/**
+ * The once-a-second repaint of running clocks (`syncWrapClock`).
+ * @type {ReturnType<typeof setInterval>|null}
+ */
+let wrapClockTimer = null;
 
 /**
  * Pause between two status polls once the stream is gone. The run is minutes
@@ -4972,7 +5127,223 @@ function syncWrapRunEffects(prev, next) {
     rememberFollowedWrapRun(next.phase === 'idle' ? null : next.runId);
   }
 
+  syncHandbackEffects(prev, next);
   paintWrapRun(prev, next);
+  paintWrapButton();
+  paintHandback();
+  syncWrapClock(next);
+}
+
+/**
+ * Whether the server is still watching a handback. Read from `finishedAt`, not
+ * from `state` alone: `quiet` is both a watched state and, at its cap, an ending.
+ *
+ * @param {object|null} hb - The controller's handback
+ * @returns {boolean}
+ */
+function handbackWatched(hb) {
+  return Boolean(hb && hb.finishedAt == null && (hb.state === 'working' || hb.state === 'quiet'));
+}
+
+/**
+ * Keep the handback's transport in step with the controller: its stream open
+ * only while the settled run's handback is `working`, and — when a blocked run
+ * first settles on this page — one status read, so a fix sent before a reload
+ * (or from another device) is shown rather than sent again.
+ *
+ * @param {object} prev - State before the signal
+ * @param {object} next - State after it
+ */
+function syncHandbackEffects(prev, next) {
+  const hb = next.phase === 'settled' ? next.handback : null;
+  // A quiet handback is still being watched until it ends: the session may print
+  // its line once the operator answers it.
+  const watchId = handbackWatched(hb) ? hb.handbackId : null;
+  if (currentHandbackStreamId !== watchId) {
+    stopHandbackStream();
+    if (watchId) startHandbackStream(next.runId, watchId);
+  }
+  const justSettledBlocked = next.phase === 'settled' && prev.phase !== 'settled'
+    && next.result && next.result.ok === false;
+  if (justSettledBlocked && !next.handback) {
+    const runId = next.runId;
+    _probeWrapStatus(wrapStatusUrl()).then((status) => {
+      if (status && status.runId === runId && status.handback) {
+        dispatchWrapRun({ type: 'handback', runId, handback: status.handback });
+      }
+    });
+  }
+}
+
+/**
+ * Open the handback's stream: each frame is the handback's current state. A
+ * stream that closes for good falls back to reading `/wrap/status` until the
+ * handback stops `working`.
+ *
+ * @param {string} runId - The settled run the handback belongs to
+ * @param {string} handbackId - The handback to watch
+ */
+function startHandbackStream(runId, handbackId) {
+  stopHandbackStream();
+  currentHandbackStreamId = handbackId;
+  const url = `/api/sessions/${encodeURIComponent(projectName)}/wrap/handback/stream/${encodeURIComponent(handbackId)}`;
+  if (typeof EventSource !== 'function') {
+    scheduleHandbackStatusPoll(runId, handbackId, 0);
+    return;
+  }
+  const es = new EventSource(url);
+  currentHandbackStream = es;
+  const handle = (type) => (msg) => {
+    if (currentHandbackStream !== es) return;
+    let data;
+    try {
+      data = JSON.parse(msg.data);
+    } catch { // a malformed frame changes nothing; the status route still has the truth
+      console.warn('[wrap] handback: discarded a malformed frame', { type });
+      return;
+    }
+    dispatchWrapRun({ type: 'handback', runId, handback: data });
+  };
+  for (const type of window.tcWrapStreamEvents.HANDBACK_STREAM_EVENT_TYPES) {
+    es.addEventListener(type, handle(type));
+  }
+  es.onerror = () => {
+    if (currentHandbackStream !== es) return;
+    if (es.readyState !== EventSource.CLOSED) return;
+    // The terminal frame closes a finished stream too; only a close while the
+    // handback is still being watched needs the fallback.
+    const s = wrapRunState();
+    if (!s.handback || s.handback.handbackId !== handbackId || !handbackWatched(s.handback)) return;
+    console.warn('[wrap] handback stream closed; following it by status instead.', { handbackId });
+    currentHandbackStream = null;
+    scheduleHandbackStatusPoll(runId, handbackId, 0);
+  };
+}
+
+/**
+ * Close the handback stream and any status fallback. Idempotent.
+ */
+function stopHandbackStream() {
+  if (currentHandbackStream) currentHandbackStream.close();
+  currentHandbackStream = null;
+  currentHandbackStreamId = null;
+  if (handbackStatusPollTimer) clearTimeout(handbackStatusPollTimer);
+  handbackStatusPollTimer = null;
+}
+
+/**
+ * Read the handback from `/wrap/status` after `delayMs`, again while it is still
+ * `working` and still the one being watched.
+ *
+ * @param {string} runId - The settled run
+ * @param {string} handbackId - The handback being watched
+ * @param {number} delayMs - Wait before this read
+ */
+function scheduleHandbackStatusPoll(runId, handbackId, delayMs) {
+  if (handbackStatusPollTimer) return;
+  const timer = setTimeout(async () => {
+    const status = await _probeWrapStatus(wrapStatusUrl());
+    if (handbackStatusPollTimer !== timer) return;
+    handbackStatusPollTimer = null;
+    if (status && status.runId === runId && status.handback && status.handback.handbackId === handbackId) {
+      dispatchWrapRun({ type: 'handback', runId, handback: status.handback });
+    } else if (status) {
+      // The server answered and no longer holds this handback: a restart ended
+      // the watch, or another tab replaced it. Stop showing "Fixing" for a watch
+      // nobody runs; the row offers to send the fix again.
+      dispatchWrapRun({ type: 'handback', runId, handback: null });
+    }
+    const s = wrapRunState();
+    if (currentHandbackStreamId === handbackId && s.handback && s.handback.handbackId === handbackId
+      && handbackWatched(s.handback)) {
+      scheduleHandbackStatusPoll(runId, handbackId, WRAP_STATUS_POLL_MS);
+    }
+  }, delayMs);
+  handbackStatusPollTimer = timer;
+}
+
+/**
+ * Run the once-a-second repaint while something on screen shows a running clock
+ * — a step's elapsed time, or a handback's — and stop it when nothing does.
+ *
+ * The tick only repaints text and the slow marker (`wrapClockTick`); it never
+ * opens, closes or dismisses anything and sends the controller no signal, so it
+ * cannot drive the popover's lifecycle.
+ *
+ * @param {object} state - The controller state now
+ */
+function syncWrapClock(state) {
+  const live = state.phase === 'following' && state.live && Number.isFinite(state.live.currentStepStartedAt);
+  const fixing = state.phase === 'settled' && state.handback && state.handback.state === 'working';
+  if (live || fixing) {
+    if (!wrapClockTimer) wrapClockTimer = setInterval(wrapClockTick, 1000);
+  } else if (wrapClockTimer) {
+    clearInterval(wrapClockTimer);
+    wrapClockTimer = null;
+  }
+}
+
+/**
+ * One clock tick: repaint what shows elapsed time. Paint only.
+ */
+function wrapClockTick() {
+  paintWrapButton();
+  paintLiveTiming();
+  paintHandback();
+}
+
+/**
+ * Mark the running step's row "Taking long — check the terminal" once it runs
+ * past the slow threshold, and clear the note otherwise. A paint primitive.
+ */
+function paintLiveTiming() {
+  const listEl = document.getElementById('wrapStepList');
+  if (!listEl || !window.tcWrapDrawerHelpers) return;
+  const run = wrapRunState();
+  const timing = run.phase === 'following'
+    ? window.tcWrapDrawerHelpers.liveStepTiming(run.live, Date.now())
+    : null;
+  for (const note of listEl.querySelectorAll('.wrap-step-slow')) {
+    if (!timing || !timing.slow || note.dataset.stepId !== timing.stepId) note.remove();
+  }
+  if (!timing || !timing.slow) return;
+  const row = Array.from(listEl.children).find((li) => li.dataset && li.dataset.stepId === timing.stepId);
+  if (!row || row.querySelector('.wrap-step-slow')) return;
+  const note = document.createElement('span');
+  note.className = 'wrap-step-slow';
+  note.dataset.stepId = timing.stepId;
+  note.textContent = '⚠ Taking long — check the terminal';
+  const main = row.querySelector('.wrap-step-main') || row;
+  main.appendChild(note);
+}
+
+/**
+ * Paint the handback's state onto the blocked row and the Retry button: the
+ * row's status line, whether the handback button can send again, and Retry's
+ * "Ready: Retry" emphasis. Targeted, never a re-render, so the decision widgets
+ * keep the operator's choices. A paint primitive.
+ */
+function paintHandback() {
+  const H = window.tcWrapDrawerHelpers;
+  if (!H) return;
+  const run = wrapRunState();
+  const view = run.phase === 'settled'
+    ? H.handbackView(run.handback, { nowMs: Date.now(), skewMs: run.live && run.live.skewMs })
+    : null;
+  const listEl = document.getElementById('wrapStepList');
+  const line = listEl ? listEl.querySelector('.wrap-step-handback-status') : null;
+  if (line) {
+    line.hidden = !view;
+    line.textContent = view ? view.detail : '';
+    line.className = `wrap-step-handback-status${view ? ` wrap-step-handback-status--${view.tone}` : ''}`;
+  }
+  const btn = listEl ? listEl.querySelector('.wrap-step-handback') : null;
+  if (btn && !btn.dataset.sending) {
+    btn.disabled = Boolean(view && !view.canResend);
+    btn.textContent = !view ? btn.dataset.label
+      : (view.canResend ? 'Ask the session again' : 'Sent — the session is working on it');
+  }
+  syncRetryLabel();
 }
 
 /**
@@ -4984,8 +5355,20 @@ function syncWrapRunEffects(prev, next) {
  * @param {object} next - State after it
  */
 function paintWrapRun(prev, next) {
+  // A report the operator toggled closed is kept in the popover, so opening it
+  // again shows the same report with their choices still in its widgets. A live
+  // run repaints on every frame anyway, so closing it just hides it.
+  const heldReport = (phase) => phase === 'settled' || phase === 'stalled' || phase === 'lost' || phase === 'refused';
   if (!next.visible) {
-    if (prev.visible) hideWrapDrawer();
+    if (next.phase === 'idle' && prev.phase !== 'idle') hideWrapDrawer();
+    else if (prev.visible) {
+      if (heldReport(next.phase)) collapseWrapDrawer();
+      else hideWrapDrawer();
+    }
+    return;
+  }
+  if (!prev.visible && prev.phase === next.phase && prev.runId === next.runId && heldReport(next.phase)) {
+    expandWrapDrawer();
     return;
   }
   const entered = prev.phase !== next.phase || !prev.visible;
@@ -5155,7 +5538,10 @@ function startWrapStream(runId) {
       console.warn('[wrap] live progress: discarded a malformed frame', { type });
       return;
     }
-    dispatchWrapRun({ type: 'event', runId, event: { ...data, type } });
+    // `receivedAt` against the frame's `sentAt` is how the page measures its clock
+    // against the server's, so a step's elapsed time is right on a phone whose
+    // clock is off (`tcWrapDrawerHelpers.foldSkew`).
+    dispatchWrapRun({ type: 'event', runId, event: { ...data, type, receivedAt: Date.now() } });
   };
   for (const type of window.tcWrapStreamEvents.WRAP_STREAM_EVENT_TYPES) {
     es.addEventListener(type, handle(type));
@@ -5258,8 +5644,8 @@ function renderLiveWrapDrawer(live, opts) {
   document.getElementById('wrapDrawerDoneBtn').classList.add('hidden');
   document.getElementById('wrapDrawerCancelBtn').textContent = 'Close';
 
-  document.getElementById('wrapDrawerBackdrop').classList.add('open');
-  document.getElementById('wrapDrawer').classList.add('open');
+  paintLiveTiming();
+  expandWrapDrawer();
 }
 
 // ── Wrapping State ──
@@ -5277,8 +5663,8 @@ function showWrappingState() {
   dot.classList.add('wrapping');
   setPillDetail(document.getElementById('statusPill'), 'Wrapping\u2026');
 
-  // Disable wrap/cmd buttons but keep kill enabled as escape hatch
-  document.getElementById('wrapBtn').disabled = true;
+  // Disable cmd buttons but keep kill enabled as escape hatch. The Wrap button
+  // stays live: it is the run's surface and toggles its popover (paintWrapButton).
   document.getElementById('killBtn').disabled = false;
   document.getElementById('cmdBtn').disabled = true;
   document.getElementById('commandSend').disabled = true;
@@ -5303,7 +5689,6 @@ function clearWrappingState() {
   dot.classList.remove('wrapping');
   setPillDetail(document.getElementById('statusPill'), 'Active');
 
-  document.getElementById('wrapBtn').disabled = false;
   document.getElementById('killBtn').disabled = false;
   document.getElementById('cmdBtn').disabled = false;
   document.getElementById('commandSend').disabled = false;
@@ -5349,8 +5734,7 @@ function openWrapDrawerNotice(label, detail) {
   // renderWrapDrawerError mirrored a "Retry failed" label; this notice overrode it,
   // so keep the report mirror in step with the displayed label.
   currentWrapDisplayedStatus = { label, tone: 'error', detail };
-  document.getElementById('wrapDrawerBackdrop').classList.add('open');
-  document.getElementById('wrapDrawer').classList.add('open');
+  expandWrapDrawer();
 }
 
 /**
@@ -5660,6 +6044,14 @@ function bindEvents() {
     // Pill details open from the keyboard (Enter/Space), so they must close
     // from it too (#104).
     closeBannerPopovers();
+    // The wrap popover closes without letting its run go, and focus returns to
+    // the Wrap button that opens it again.
+    const wrapDrawer = $('wrapDrawer');
+    if (wrapDrawer && wrapDrawer.classList.contains('open')) {
+      collapseWrapPopover();
+      const wrapBtn = $('wrapBtn');
+      if (wrapBtn) wrapBtn.focus();
+    }
   });
 
   // Banner buttons
@@ -5682,7 +6074,7 @@ function bindEvents() {
   $('masterCloseBtn').addEventListener('click', closeMasterDrawer);
   $('masterBackdrop').addEventListener('click', closeMasterDrawer);
   $('settingsBtn').addEventListener('click', openSettings);
-  $('wrapBtn').addEventListener('click', openWrapModal);
+  $('wrapBtn').addEventListener('click', onWrapButtonClick);
   $('killBtn').addEventListener('click', openKillModal);
 
   // Stay button — cancel the auto-redirect countdown set by handleSessionEnded
@@ -5807,12 +6199,13 @@ function bindEvents() {
   });
 
   // Wrap pipeline drawer (#139 Chunk 10)
-  $('wrapDrawerCloseBtn').addEventListener('click', closeWrapDrawer);
+  // × toggles the popover closed; Close/Cancel/Done finish with the run.
+  $('wrapDrawerCloseBtn').addEventListener('click', collapseWrapPopover);
   $('wrapDrawerCopyBtn').addEventListener('click', copyWrapReport);
   $('wrapDrawerCancelBtn').addEventListener('click', closeWrapDrawer);
   $('wrapDrawerDoneBtn').addEventListener('click', closeWrapDrawer);
   $('wrapDrawerRetryBtn').addEventListener('click', retryWrap);
-  $('wrapDrawerBackdrop').addEventListener('click', closeWrapDrawer);
+  paintWrapButton();
 
   // Audio context initialization on first interaction (mobile requirement)
   document.addEventListener('touchstart', initAudio, { once: true });

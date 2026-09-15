@@ -225,10 +225,69 @@ describe('wrap-run controller — closing the drawer', () => {
     assert.equal(s.visible, true);
   });
 
-  it('hiding a finished run returns to idle; hiding nothing changes nothing', () => {
-    assert.deepEqual(C.reduceWrapRun(settledBlocked(), { type: 'hide' }), C.initialWrapRun());
+  // The drawer's Close/Cancel/Done became `dismiss` when the drawer became a
+  // popover the operator toggles (#1312): the finished-run contract moved with it.
+  it('dismissing a finished run returns to idle; dismissing or hiding nothing changes nothing', () => {
+    assert.deepEqual(C.reduceWrapRun(settledBlocked(), { type: 'dismiss' }), C.initialWrapRun());
     const idle = C.initialWrapRun();
     assert.equal(C.reduceWrapRun(idle, { type: 'hide' }), idle);
+    assert.equal(C.reduceWrapRun(idle, { type: 'dismiss' }), idle);
+  });
+
+  it('dismissing a live run or an outstanding Retry keeps following it, hidden', () => {
+    const live = C.reduceWrapRun(run([{ type: 'follow', runId: RUN }]), { type: 'dismiss' });
+    assert.equal(live.phase, 'following');
+    assert.equal(live.visible, false);
+    const starting = C.reduceWrapRun(C.reduceWrapRun(settledBlocked(), { type: 'start', retry: true }), { type: 'dismiss' });
+    assert.equal(starting.phase, 'starting');
+    assert.equal(C.reduceWrapRun(starting, { type: 'accepted', runId: NEXT }).runId, NEXT);
+  });
+
+  it('toggling a finished run\'s popover closed keeps its report, and show re-opens it (#1312)', () => {
+    const settled = settledBlocked();
+    const hidden = C.reduceWrapRun(settled, { type: 'hide' });
+    assert.equal(hidden.phase, 'settled');
+    assert.equal(hidden.visible, false);
+    assert.deepEqual(hidden.result, settled.result, 'the blocked report survives the operator reading the terminal');
+    const shown = C.reduceWrapRun(hidden, { type: 'show' });
+    assert.equal(shown.visible, true);
+    assert.equal(C.reduceWrapRun(shown, { type: 'show' }), shown, 'showing a visible popover changes nothing');
+  });
+
+  it('show does nothing with no run, or for a refused first wrap with no report', () => {
+    const idle = C.initialWrapRun();
+    assert.equal(C.reduceWrapRun(idle, { type: 'show' }), idle);
+    let refused = C.reduceWrapRun(idle, { type: 'start', retry: false });
+    refused = C.reduceWrapRun(refused, { type: 'refused', error: 'no session' });
+    assert.equal(refused.visible, false);
+    assert.equal(C.reduceWrapRun(refused, { type: 'show' }), refused);
+  });
+});
+
+describe('wrap-run controller — handback (#1312)', () => {
+  const HB = { handbackId: 'h1', stepId: 'changelog-update', state: 'working', completedVia: null, completionNote: null, error: null, startedAt: 1, finishedAt: null };
+
+  it('records the handback of the settled run it was sent for', () => {
+    const s = C.reduceWrapRun(settledBlocked(), { type: 'handback', runId: RUN, handback: HB });
+    assert.deepEqual(s.handback, HB);
+    const ready = C.reduceWrapRun(s, { type: 'handback', runId: RUN, handback: { ...HB, state: 'ready', completedVia: 'marker' } });
+    assert.equal(ready.handback.state, 'ready');
+    assert.equal(C.reduceWrapRun(ready, { type: 'handback', runId: RUN, handback: null }).handback, null);
+  });
+
+  it('ignores a handback for another run, a run not settled, or a malformed one', () => {
+    const settled = settledBlocked();
+    assert.equal(C.reduceWrapRun(settled, { type: 'handback', runId: NEXT, handback: HB }), settled);
+    assert.equal(C.reduceWrapRun(settled, { type: 'handback', runId: RUN, handback: { state: 5 } }), settled);
+    const following = run([{ type: 'follow', runId: RUN }]);
+    assert.equal(C.reduceWrapRun(following, { type: 'handback', runId: RUN, handback: HB }), following);
+  });
+
+  it('a Retry\'s new run starts with no handback', () => {
+    let s = C.reduceWrapRun(settledBlocked(), { type: 'handback', runId: RUN, handback: HB });
+    s = C.reduceWrapRun(s, { type: 'start', retry: true });
+    s = C.reduceWrapRun(s, { type: 'accepted', runId: NEXT });
+    assert.equal(s.handback, null);
   });
 });
 

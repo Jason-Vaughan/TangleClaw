@@ -43,7 +43,29 @@
    */
   const WRAP_STREAM_EVENT_TYPES = Object.freeze(Object.values(WRAP_STREAM_EVENTS));
 
-  const vocabulary = { WRAP_STREAM_EVENTS, WRAP_STREAM_EVENT_TYPES };
+  /**
+   * Event names on a handback's own stream: the watch TangleClaw runs after the
+   * drawer asks the session to fix a blocked step. A separate stream, because a
+   * settled run's stream has already delivered its terminal frame and closed.
+   * @type {Readonly<{HANDBACK_START: string, HANDBACK_UPDATE: string, HANDBACK_DONE: string}>}
+   */
+  const HANDBACK_STREAM_EVENTS = Object.freeze({
+    // The prompt was sent and the watch began.
+    HANDBACK_START: 'handback-start',
+    // The watch's state changed without ending: the terminal went quiet, or
+    // started moving again after going quiet.
+    HANDBACK_UPDATE: 'handback-update',
+    // Terminal: the watch ended; `state` says how.
+    HANDBACK_DONE: 'handback-done'
+  });
+
+  /**
+   * Every handback event name, in emission order.
+   * @type {ReadonlyArray<string>}
+   */
+  const HANDBACK_STREAM_EVENT_TYPES = Object.freeze(Object.values(HANDBACK_STREAM_EVENTS));
+
+  const vocabulary = { WRAP_STREAM_EVENTS, WRAP_STREAM_EVENT_TYPES, HANDBACK_STREAM_EVENTS, HANDBACK_STREAM_EVENT_TYPES };
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = vocabulary;

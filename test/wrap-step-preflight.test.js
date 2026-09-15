@@ -428,6 +428,45 @@ async function windowlessRegistry(plugins, expected) {
   });
 }
 
+describe('preflight "Wrap anyway" override (#1229)', () => {
+  const commitStep = require('../lib/wrap-steps/commit');
+  const defaultPipeline = require('../lib/wrap-default-pipeline');
+
+  it('with allowOverride and skipPreflight, skips without probing and stages the commit-body line', async () => {
+    const exec = execDouble({ exitCode: 2, stderr: 'critic not run' });
+    await withGovernedProject(async (project) => {
+      const staged = {};
+      const result = await withInternal({ locateHook: () => ({ path: '/bin/prawduct-hook' }), execFileArgs: exec }, () =>
+        preflight.run({ project, step: { id: 'preflight', blocker: true, allowOverride: true }, options: { skipPreflight: true }, staged }));
+      assert.equal(result.ok, true);
+      assert.equal(result.status, 'skipped');
+      assert.equal(result.output.override, true);
+      assert.equal(result.output.measured, false, 'passed over, never reported as clear');
+      assert.equal(exec.calls.length, 0, 'the verdict the operator is overriding is not re-probed');
+      assert.deepEqual(commitStep._buildBodyLines(staged),
+        ['- Preflight (preflight): prawduct gates passed over — operator chose to wrap anyway']);
+    });
+  });
+
+  it('without allowOverride, skipPreflight is ignored and the gate still blocks', async () => {
+    const exec = execDouble({ exitCode: 2, stderr: 'critic not run' });
+    await withGovernedProject(async (project) => {
+      const staged = {};
+      const result = await withInternal({ locateHook: () => ({ path: '/bin/prawduct-hook' }), execFileArgs: exec }, () =>
+        preflight.run({ project, step: { id: 'preflight', blocker: true }, options: { skipPreflight: true }, staged }));
+      assert.equal(result.ok, false);
+      assert.equal(result.status, 'blocked');
+      assert.equal(exec.calls.length, 1);
+      assert.deepEqual(staged, {});
+    });
+  });
+
+  it('the shipped pipeline lets preflight be overridden', () => {
+    const spec = defaultPipeline.steps().find((s) => s.id === 'preflight');
+    assert.equal(spec.allowOverride, true);
+  });
+});
+
 describe('_exec-shell options the preflight probe needs (#854)', () => {
   /** Long enough not to race a spawn, short enough to keep the suite fast. */
   const TIMEOUT_MS = 4000;

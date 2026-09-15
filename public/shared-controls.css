@@ -230,6 +230,17 @@
   background: var(--primary-dark);
   color: #fff;
 }
+/* While the Wrap button shows a run (#1312): digits that do not jitter as the
+   clock ticks, and amber when the current step runs slow. The slow state also
+   leads the label with a warning glyph, so it is not colour alone. */
+.banner-btn.btn-wrap--active {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.banner-btn.btn-wrap--slow {
+  color: #fbbf24;
+  border-color: #b45309;
+}
 .banner-btn.btn-kill {
   color: var(--danger);
   border-color: var(--danger-dark);
