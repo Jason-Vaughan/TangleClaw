@@ -34,6 +34,59 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-14 — Step completion marker; learnings-capture credits an entry already written (#1450, #843, #1405)
+
+<!-- prawduct: type=bugfix | scope=train-18-chunk-03 -->
+
+Train 18 Chunk 03. Plan: `.tangleclaw/plans/train-18-chunk-03.md`. Operator GO in the Builder pane;
+operator ruled "Marker first, fallback" for the no-marker case.
+
+**Why.** A tmux content step finished when `detectIdle` saw the pane's last 3 lines unchanged for 10s.
+Those lines are a TUI's input box and footer, which hold still while the model thinks, so the next
+step's prompt landed in a turn still in progress (#1450). Separately, `learnings-capture` passed only
+on a mutation during the step, so an entry already on disk (written during preparation, or finished
+after a blocked attempt) blocked every Retry (#843, #1405).
+
+**What.**
+- `ai-content.js`: each tmux prompt ends with `_completionInstruction(nonce)`, a fresh per-send nonce.
+  The poll reads `PANE_TAIL_LINES` of the pane and checks the marker, then #672 file-settle (after a
+  `MARKER_GRACE_MS` window for the marker, added when the live check showed Claude writing its file
+  ~2s before its marker), then
+  `QUIET_FALLBACK_MS` (60s) of an unchanged tail. `_withCompletion` stamps `completedVia` (and a
+  `completionNote` on `quiet`) at one site; the post-wait half moved into `_captureAndValidate`.
+  `detectIdle` is no longer used by the wrap; the `_internal.detectIdle` seam became `readPaneTail` +
+  `newNonce`.
+- `learnings-coverage.js` (`learnings-entry`): covered when the file's mtime ≥ session start AND it has
+  a `## YYYY-MM-DD` heading or no-op line dated in [start day, today]; `unavailable` without a start.
+  `_satisfactionPredicateGate` dispatches through `SATISFACTION_PREDICATES`; the pipeline's
+  implemented-names guard now reads that table instead of a hand-kept set. `_date.isoLocalDate` added.
+- Pipeline: `learnings-capture` declares `verifySatisfiedBy: 'learnings-entry'`, and its prompt gains
+  the don't-duplicate paragraph and the verification-contract sentence.
+- Docs: ADR 0002 `ai-content` row amendment, `wrap-direction.md` Instances (#1450, #843/#1405),
+  FEATURES.md, CHANGELOG `[Unreleased]` Fixed.
+
+**Tests changed on purpose (named, per Tests Are Contracts).** Stubs of `_internal.detectIdle` in
+`wrap-step-ai-content`, `wrap-plan-mode-precheck` and `wrap-pipeline` tests moved to `readPaneTail`
+(marker line for "finished", a moving pane for "still working", a throw for "tmux died"). Assertions on
+the old wording changed with the requirement: the timeout blocker ("no idle detected" → "no completion
+line, and the terminal never went quiet"), the pane-read failure ("Idle detection failed" → "Could not
+read the terminal while waiting for …"), the capture-read "after the AI went idle" → "after the step
+finished", and the exact sent-prompt equality now includes the completion instruction.
+`test/chime-at-prompt.test.js` pinned `ai-content.js` to `detectIdle` as #1180's "untouched caller"
+statement; #1450 moves that caller on purpose, so the guard now asserts `invoke-critic.js` still uses it
+and `ai-content.js` does not. No assertion was dropped.
+
+**Review.** `rev-20260914T232956Z-abe22ba3` (cumulative): 0 blocking, 1 warning, 6 notes. The warning
+said `completedVia` / `completionNote` were written but nothing showed or logged them, while CHANGELOG
+and FEATURES promised the row note. Fixed in `93558448`: the drawer's `ai-content` detail appends the
+note, and a log line records which signal ended the wait. The note that `invoke-critic.js` still judges
+`/critic` finished by `detectIdle` was filed as #1487. The rest were accepted as informational.
+
+**Live check.** A real Claude Code pane over tmux, driven by the real handler: (1) an entry-less file,
+Claude writes the no-op line, and the step finishes on the marker; (2) an entry already on disk, Claude
+declines to duplicate it, the step finishes on the marker, and the predicate credits the entry. The
+evidence is in the plan.
+
 ## 2026-09-14 — Session range & ownership: launch baseline, first-parent range, explicit staging, worktree target (#1309, #1406, #1469)
 
 <!-- prawduct: type=feature | scope=train-18-chunk-02 -->

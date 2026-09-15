@@ -1541,10 +1541,11 @@ describe('wrap-step ai-content — handler (#139 Chunk 5)', () => {
     assert.equal(result.status, 'skipped');
   });
 
-  it('sends the prompt and reports done on idle with adequate response (no captureFields)', async () => {
+  it('sends the prompt and reports done on the completion marker with adequate response (no captureFields)', async () => {
     let sentText;
     aiContent._internal.sendKeys = (sess, text) => { sentText = text; };
-    aiContent._internal.detectIdle = () => ({ idle: true, lastOutputAge: 12 });
+    aiContent._internal.newNonce = () => 'n0nce';
+    aiContent._internal.readPaneTail = () => 'TCWRAP-DONE n0nce'; // the AI printed its completion line
     aiContent._internal.capturePane = () => ({
       lines: ['the AI produced a meaningful response here'],
       alternateScreen: false
@@ -1560,7 +1561,8 @@ describe('wrap-step ai-content — handler (#139 Chunk 5)', () => {
     assert.equal(result.status, 'done');
     // #627 — sent prompt carries the self-identifying header (numberless: this
     // direct run() call sets no aiContentProgress).
-    assert.equal(sentText, '[TangleClaw wrap — memory-update]\n\nUpdate MEMORY.md');
+    assert.equal(sentText, `[TangleClaw wrap — memory-update]\n\nUpdate MEMORY.md\n\n${aiContent._completionInstruction('n0nce')}`);
+    assert.equal(result.output.completedVia, 'marker');
     assert.equal(result.output.parsedFields, null);
     assert.ok(staged['memory-update'], 'must stage captured output for the commit step');
     assert.match(staged['memory-update'].capturedText, /meaningful response/);
@@ -1568,7 +1570,8 @@ describe('wrap-step ai-content — handler (#139 Chunk 5)', () => {
 
   it('blocks when AI response is too short (no captureFields validation path)', async () => {
     aiContent._internal.sendKeys = () => {};
-    aiContent._internal.detectIdle = () => ({ idle: true, lastOutputAge: 12 });
+    aiContent._internal.newNonce = () => 'n0nce';
+    aiContent._internal.readPaneTail = () => 'TCWRAP-DONE n0nce'; // the AI printed its completion line
     aiContent._internal.capturePane = () => ({ lines: ['ok'], alternateScreen: false });
 
     const result = await aiContent.run(buildContext(
@@ -1584,7 +1587,8 @@ describe('wrap-step ai-content — handler (#139 Chunk 5)', () => {
     // threshold by 1" change is caught.
     const exactlyTwenty = 'a'.repeat(20);
     aiContent._internal.sendKeys = () => {};
-    aiContent._internal.detectIdle = () => ({ idle: true, lastOutputAge: 12 });
+    aiContent._internal.newNonce = () => 'n0nce';
+    aiContent._internal.readPaneTail = () => 'TCWRAP-DONE n0nce'; // the AI printed its completion line
     aiContent._internal.capturePane = () => ({ lines: [exactlyTwenty], alternateScreen: false });
 
     const result = await aiContent.run(buildContext(
@@ -1597,7 +1601,8 @@ describe('wrap-step ai-content — handler (#139 Chunk 5)', () => {
   it('blocks at MIN_RESPONSE_CHARS-1 (exactly 19 chars trimmed → ok:false)', async () => {
     const nineteen = 'a'.repeat(19);
     aiContent._internal.sendKeys = () => {};
-    aiContent._internal.detectIdle = () => ({ idle: true, lastOutputAge: 12 });
+    aiContent._internal.newNonce = () => 'n0nce';
+    aiContent._internal.readPaneTail = () => 'TCWRAP-DONE n0nce'; // the AI printed its completion line
     aiContent._internal.capturePane = () => ({ lines: [nineteen], alternateScreen: false });
 
     const result = await aiContent.run(buildContext(
@@ -1610,7 +1615,8 @@ describe('wrap-step ai-content — handler (#139 Chunk 5)', () => {
 
   it('validates captureFields and reports done when all are present', async () => {
     aiContent._internal.sendKeys = () => {};
-    aiContent._internal.detectIdle = () => ({ idle: true, lastOutputAge: 12 });
+    aiContent._internal.newNonce = () => 'n0nce';
+    aiContent._internal.readPaneTail = () => 'TCWRAP-DONE n0nce'; // the AI printed its completion line
     aiContent._internal.capturePane = () => ({
       lines: [
         'AI scratchpad ramble...',
@@ -1644,7 +1650,8 @@ describe('wrap-step ai-content — handler (#139 Chunk 5)', () => {
 
   it('blocks when a required captureField is missing or empty', async () => {
     aiContent._internal.sendKeys = () => {};
-    aiContent._internal.detectIdle = () => ({ idle: true, lastOutputAge: 12 });
+    aiContent._internal.newNonce = () => 'n0nce';
+    aiContent._internal.readPaneTail = () => 'TCWRAP-DONE n0nce'; // the AI printed its completion line
     aiContent._internal.capturePane = () => ({
       lines: ['## Summary', 'present', '## Learnings', ''],
       alternateScreen: false
@@ -1668,7 +1675,8 @@ describe('wrap-step ai-content — handler (#139 Chunk 5)', () => {
   it('interpolates {previousMemoryBlock} into the prompt before sending', async () => {
     let sentText;
     aiContent._internal.sendKeys = (sess, text) => { sentText = text; };
-    aiContent._internal.detectIdle = () => ({ idle: true, lastOutputAge: 12 });
+    aiContent._internal.newNonce = () => 'n0nce';
+    aiContent._internal.readPaneTail = () => 'TCWRAP-DONE n0nce'; // the AI printed its completion line
     aiContent._internal.capturePane = () => ({
       lines: ['## Summary', 'fine', '## NextSteps', 'ok', '## Learnings', 'good'],
       alternateScreen: false
@@ -1691,10 +1699,10 @@ describe('wrap-step ai-content — handler (#139 Chunk 5)', () => {
     assert.ok(!sentText.includes('{previousMemoryBlock}'));
   });
 
-  it('blocks on idle timeout when detectIdle never returns idle', async () => {
+  it('blocks on timeout when the pane never shows the marker and never goes quiet', async () => {
     aiContent._internal.sendKeys = () => {};
-    // Idle always false → polling loop runs until MAX_WAIT_MS elapses.
-    aiContent._internal.detectIdle = () => ({ idle: false, lastOutputAge: 0 });
+    // A moving pane with no marker → polling loop runs until MAX_WAIT_MS elapses.
+    aiContent._internal.readPaneTail = (() => { let n = 0; return () => `still working ${n++}`; })(); // a moving pane: no marker, never quiet
     aiContent._internal.capturePane = () => ({ lines: [], alternateScreen: false });
 
     // Skip wall-clock waiting: stub sleep to advance "time" by pretending
@@ -1713,7 +1721,7 @@ describe('wrap-step ai-content — handler (#139 Chunk 5)', () => {
       ));
       assert.equal(result.ok, false);
       assert.equal(result.status, 'blocked');
-      assert.match(result.blockers[0], /AI did not return within/);
+      assert.match(result.blockers[0], /AI did not finish within/);
     } finally {
       Date.now = realDateNow;
     }
@@ -1730,21 +1738,22 @@ describe('wrap-step ai-content — handler (#139 Chunk 5)', () => {
     assert.match(result.blockers[0], /Failed to send prompt to tmux: no such session/);
   });
 
-  it('blocks when detectIdle throws (tmux session died mid-poll)', async () => {
+  it('blocks when the pane read throws (tmux session died mid-poll)', async () => {
     aiContent._internal.sendKeys = () => {};
-    aiContent._internal.detectIdle = () => { throw new Error('tmux session gone'); };
+    aiContent._internal.readPaneTail = () => { throw new Error('tmux session gone'); };
 
     const result = await aiContent.run(buildContext(
       { id: 'memory-update', prompt: 'go' }
     ));
     assert.equal(result.ok, false);
     assert.equal(result.status, 'blocked');
-    assert.match(result.blockers[0], /Idle detection failed/);
+    assert.match(result.blockers[0], /Could not read the terminal while waiting for memory-update: tmux session gone/);
   });
 
-  it('blocks when capturePane throws after idle detected', async () => {
+  it('blocks when capturePane throws after the step finished', async () => {
     aiContent._internal.sendKeys = () => {};
-    aiContent._internal.detectIdle = () => ({ idle: true, lastOutputAge: 12 });
+    aiContent._internal.newNonce = () => 'n0nce';
+    aiContent._internal.readPaneTail = () => 'TCWRAP-DONE n0nce'; // the AI printed its completion line
     aiContent._internal.capturePane = () => { throw new Error('capture failed'); };
 
     const result = await aiContent.run(buildContext(

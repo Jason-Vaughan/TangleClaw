@@ -1315,6 +1315,10 @@ describe('#867 — stranded-wrap classification agrees with the server', () => {
 
   it('an ai-content row says when its capture was reused by a Retry, not freshly written (#1404)', () => {
     const { deriveDetail } = loadHelpers();
+    // #1450 — a quiet-terminal finish names itself on the row; a marker finish adds nothing.
+    assert.equal(deriveDetail({ kind: 'ai-content', status: 'done', output: { capturedText: 'x', completedVia: 'marker' } }), 'captured');
+    assert.equal(deriveDetail({ kind: 'ai-content', status: 'done', output: { capturedText: 'x', completedVia: 'quiet', completionNote: 'no completion marker seen — finished after 60s of an unchanged terminal' } }),
+      'captured · no completion marker seen — finished after 60s of an unchanged terminal');
     const fresh = deriveDetail({ kind: 'ai-content', status: 'done', output: { capturedText: 'x', parsedFields: { summary: 's' } } });
     const reused = deriveDetail({ kind: 'ai-content', status: 'done', output: { capturedText: 'x', parsedFields: { summary: 's' }, resumed: true } });
     assert.equal(fresh, 'captured 1 field');

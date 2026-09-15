@@ -158,10 +158,12 @@ describe('#1180 detectAtPrompt — wired to a real session row', () => {
   });
 
   it('the other detectIdle callers are untouched, and the reason is recorded', () => {
-    for (const f of ['lib/wrap-steps/ai-content.js', 'lib/actions/invoke-critic.js']) {
-      const src = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
-      assert.match(src, /detectIdle\(/, `${f} should still use the staleness heuristic`);
-    }
+    const critic = fs.readFileSync(path.join(__dirname, '..', 'lib/actions/invoke-critic.js'), 'utf8');
+    assert.match(critic, /detectIdle\(/, 'invoke-critic should still use the staleness heuristic');
+    // The wrap's content steps left the heuristic on purpose (#1450): its 3-line
+    // window reads a TUI footer as idle while the model is still thinking.
+    const aiContent = fs.readFileSync(path.join(__dirname, '..', 'lib/wrap-steps/ai-content.js'), 'utf8');
+    assert.doesNotMatch(aiContent, /detectIdle\(/, 'ai-content must not finish a step on output staleness');
     assert.match(sessionsSrc, /output-staleness heuristic|OUTPUT-STALENESS/i,
       'detectIdle must say what it actually measures, so the split is legible');
   });
