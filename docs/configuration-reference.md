@@ -253,7 +253,8 @@ Stored in `<project>/.tangleclaw/project.json`. Created when a project is added 
 | `quickCommands` | array | `[]` | Project-specific quick command buttons |
 | `tags` | array | `[]` | Project tags for filtering |
 | `silentPrime` | boolean | `true` | Deliver the session prime silently rather than as typed input |
-| `versionBumpEnabled` | boolean | `true` | Run the wrap's `version-bump` step. Turn off for projects that manage their own versioning |
+| `releaseMode` | `"off"`\|`"auto"`\|`"ask"`\|null | `null` | Whether a wrap may cut a release (#1492). `off`: never; the project versions itself. `auto`: only when release readiness is `ready` (see below). `ask`: never by itself. In `auto` and `ask`, picking a bump level in the wrap modal cuts whatever the readiness says; `off` ignores the pick. `null` derives the mode: `off` when `versionBumpEnabled` is `false`, `auto` otherwise. An unrecognized value is treated as `ask`, with a warning in the step's output |
+| `versionBumpEnabled` | boolean | `true` | Legacy switch `releaseMode` replaces, still read when `releaseMode` is unset: `false` means `off`. A settings save that changes the mode writes both keys, with `versionBumpEnabled` `true` only for `auto`, so an older TangleClaw reading only this key holds rather than cuts |
 | `versionFilePath` | string\|null | `null` | Explicit version file, relative to the project root (e.g. `VERSION.json`). `null` probes `version.json` then `package.json`. Set it when the file has a different name or case — the probe only tests the lowercase name, so on a case-sensitive filesystem it would otherwise miss and bump `package.json` instead. Must stay inside the project — enforced after resolving symlinks, at both the API and the write site, since a hand-edited `project.json` never passes through the API. The wrap's version-bump **refuses** if a configured path is unusable — it never falls back to another file. Version *detection* (what the dashboard shows) is more forgiving: it prefers `CHANGELOG.md`, then this file, then the probe, warning and degrading rather than refusing. So an unusable value can show a probe-derived version while the wrap declines to bump |
 | `featureIndexEnabled` | boolean | `false` | Maintain `FEATURES.md` during wrap |
 | `projectMapEnabled` | boolean | `false` | Maintain `PROJECT-MAP.md` during wrap |
@@ -366,7 +367,7 @@ are worth calling out:
   bump and changelog update reporting success with nothing landing. You may still set its
   `blocker`.
 
-**Relationship to the individual toggles.** `versionBumpEnabled`, `featureIndexEnabled`, and
+**Relationship to the individual toggles.** `releaseMode` (and its legacy `versionBumpEnabled`), `featureIndexEnabled`, and
 `projectMapEnabled` are independent of this map: each is checked by its own step at run time, so
 either switch turning a step off is enough to skip it. There is no precedence to reason about —
 they cannot contradict, only agree or disagree about which one did the skipping. Prefer the

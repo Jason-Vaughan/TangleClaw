@@ -34,6 +34,50 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-15 — Release readiness signals and `releaseMode` (#1492, L1 + L4)
+
+<!-- prawduct: type=feature | scope=train-19-chunk-02 -->
+
+Train 19 (The Wrap Release Gate) Chunk 02. The operator asked for it in the Builder pane ("starting chunk O2. Go."), and the Coordinator
+confirmed over the switchboard that O2 meant Chunk 02. Plan:
+`/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder/.tangleclaw/plans/train-19-chunk-02.md`.
+
+**Why.** `versionBumpEnabled` answered two different questions with one boolean: "does TangleClaw version this
+project?" and "should this wrap cut?" So a mid-feature save cut a release, and a project that wanted
+"hold unless I choose" had to switch versioning off entirely. That is also the root of the
+picker-ignored bug #1492 calls out, which stays separate (plan D6).
+
+**What.**
+- `lib/release-readiness.js` (new): a pure `evaluateReleaseReadiness` (fail beats unknown beats ready;
+  `n/a` never counts; an empty or malformed signal list is `unknown`) and a files-only
+  `gatherReleaseSignals` with `unreleased-entries` and `build-plan-status`. The plan is resolved per
+  Prawduct's template (relative to `.prawduct/`, unset meaning `artifacts/build-plan.md`). Only
+  `## Status` boxes are judged, and a plan without that section is `n/a`.
+- `lib/project-config.js`: `releaseMode: null` default, `RELEASE_MODES`, `resolveReleaseMode` (migration
+  on read; an unrecognized value reads as `ask`), and `nextReleaseMode` (the legacy boolean as an alias
+  that can't undo `ask`).
+- `lib/wrap-steps/version-bump.js`: `off` skips first, as before. `auto`/`ask` pass every fail-closed
+  guard, then meet `_releaseGate` just before staging. A bump level the operator picked cuts in both.
+  A hold is a skip carrying `held`, `releaseMode`, `readiness`, `needsOperator` and `wouldBump`.
+  Remedies now name `releaseMode`.
+- `lib/projects.js`: one validator row for both keys (a contradictory pair is refused), a persist that
+  keeps `versionBumpEnabled` in step (true only for `auto`) for a rolled-back reader, and `releaseMode`
+  in `enrichProject`.
+- Tests: `test/release-readiness.test.js`, `test/release-mode.test.js`,
+  `test/version-bump-release-gate.test.js`. `test/version-bump-fail-closed.test.js`'s two "names the
+  remedy" assertions now match `releaseMode to off`. The contract is unchanged (the skip names a remedy);
+  the remedy is renamed.
+- Docs: `docs/configuration-reference.md`, `docs/release-process.md`, `CHANGELOG.md` (Added + Changed),
+  plus the gitignored `data-model.md` and `api-contract.md` artifacts.
+
+**Measured against real projects.** Every local project with a `.tangleclaw/project.json` was run
+through the plan signal. The first rule (a missing Status section read as `unknown`) would have held
+Monad-1's releases indefinitely: its plan tracks per-chunk checklists, one of them a struck-out
+unticked box. That is now `n/a`. No other project changes behavior. This repo resolves to `off`.
+
+**Descoped, explicitly.** Clean-tree signal: dirty is the normal wrap state. Linked-issue-closed
+signal: needs the network, filed as #1495. No `public/` change: the drawer's Release control is Chunk 03.
+
 ## 2026-09-15 — The wrap popover scrolls as one body, so nothing is cut off (#1491)
 
 <!-- prawduct: type=bugfix | scope=wrap-1491 -->

@@ -131,7 +131,7 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
       assert.ok(s.skip);
       assert.match(s.skip, /VERSION\.json/, 'names the configured file');
       assert.match(s.skip, /2\.85\.0\.41/, 'names the value');
-      assert.match(s.skip, /versionBumpEnabled/, 'names the remedy');
+      assert.match(s.skip, /releaseMode to off/, 'names the remedy');
     });
 
     it('skips rather than falling through when the configured path is missing', () => {
@@ -268,7 +268,7 @@ describe('version-bump fail-closed (#540, #571 item 3)', () => {
       assert.equal(r.status, 'skipped');
       assert.match(r.output.reason, /2\.85\.0\.41/, 'names the value');
       assert.match(r.output.reason, /MAJOR\.MINOR\.PATCH/, 'names the problem');
-      assert.match(r.output.reason, /versionBumpEnabled/, 'names the remedy');
+      assert.match(r.output.reason, /releaseMode to off/, 'names the remedy');
       assert.match(r.output.reason, /VERSION\.json/, 'names the file it read');
       assert.deepEqual(c.staged, {});
     });
