@@ -165,7 +165,13 @@ In `session-files`, after `classify`:
 
 ## Status
 
-- [ ] 02a — `wrap-state.js` accessor + readers moved + `save` migration + judge update, with tests; Critic chunk
+- [x] 02a — `wrap-state.js` accessor + readers moved + `save` migration + judge update, with tests; Critic chunk
+  - Review `rev-20260915T212905Z-89b9c406`: 0 blocking, 3 warnings.
+    - R-1 fixed: a changed-but-present `lastWrapSha` is state again, so upgraded projects are not asked.
+    - R-2/R-4 fixed: an unreadable state file is never overwritten, and the key stays.
+    - R-8 fixed: a temp file is cleaned up on a failed write.
+    - The rest are accepted.
+    - Fix commit `a85ae495` is re-covered by the 02b chunk review rather than a separate verify-resolutions round.
 - [ ] 02b — `project-heal.js` + exclude block + launch wiring + prime line, with tests; Critic chunk
 - [ ] 02c — un-track offer (session-files, commit, drawer widget, option sanitizers), with tests; Critic chunk
 - [ ] 02d — docs, CHANGELOG, FEATURES.md; full suite; cumulative Critic; operator verification of the drawer offer from a remote browser; PR
