@@ -429,13 +429,20 @@ describe('#1508/#1509: TangleClaw\'s own files dirty at launch are not asked abo
     const { repo, scope } = await tangleclawWritesThenSession();
     assert.equal(scope.snapshotApplies, true, 'fixture precondition: the files are dirty at launch per the snapshot');
 
-    const files = await runStep(sessionFiles, repo, scope);
+    // session-prime.md is tracked, so the one-time un-track offer (#1512) asks first;
+    // keeping it tracked is the answer that leaves this test's subject unchanged.
+    const asked = await runStep(sessionFiles, repo, scope);
+    assert.equal(asked.status, 'needs-operator');
+    assert.deepEqual(asked.output.untrackOffer.paths, ['.tangleclaw/session-prime.md']);
+    const keep = { untrackState: 'decline' };
+
+    const files = await runStep(sessionFiles, repo, scope, keep);
     assert.equal(files.status, 'done', files.blockers.join('; '));
     assert.deepEqual(files.output.tangleclawMaintenance.sort(), ['.tangleclaw/project.json', 'CLAUDE.md']);
     assert.deepEqual(files.output.tangleclawState, ['.tangleclaw/session-prime.md']);
     assert.match(files.output.detail, /2 TangleClaw updates to commit · 1 TangleClaw state file not committed/);
 
-    const r = await runStep(commitStep, repo, scope);
+    const r = await runStep(commitStep, repo, scope, keep);
     assert.equal(r.status, 'done');
     assert.deepEqual(git(repo, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort(), ['.tangleclaw/project.json', 'CLAUDE.md', 'mine.js']);
     assert.match(r.output.message, /^- TangleClaw maintenance \(changed only where TangleClaw writes\): .*CLAUDE\.md/m);
@@ -490,10 +497,137 @@ describe('#1508/#1509: TangleClaw\'s own files dirty at launch are not asked abo
     fs.writeFileSync(path.join(repo, '.tangleclaw', 'continuity', 'index.md'), 'v2\n');
     const scope = await scopeFor(repo, launchBaseline.capture(repo));
     const head = git(repo, 'rev-parse', 'HEAD');
-    assert.equal((await runStep(sessionFiles, repo, scope)).status, 'done');
-    const r = await runStep(commitStep, repo, scope);
+    const keep = { untrackState: 'decline' };
+    assert.equal((await runStep(sessionFiles, repo, scope, keep)).status, 'done');
+    const r = await runStep(commitStep, repo, scope, keep);
     assert.equal(r.status, 'skipped');
     assert.match(r.output.reason, /only uncommitted files are TangleClaw state/);
     assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+  });
+});
+
+describe('#1512: the one-time offer to stop tracking TangleClaw state', () => {
+  const wrapState = require('../lib/wrap-state');
+
+  /**
+   * A project that committed two state files, an authored plan, and the operator's
+   * own staged work; TangleClaw then rewrote a state file and the session wrote `mine.js`.
+   * @returns {Promise<{repo:string, scope:object}>}
+   */
+  async function trackedStateProject() {
+    const repo = makeRepo();
+    for (const [rel, text] of [['.tangleclaw/medusa/registry.json', '{}\n'], ['.tangleclaw/session-prime.md', 'p1\n'], ['.tangleclaw/plans/a.md', 'plan\n']]) {
+      fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+      fs.writeFileSync(path.join(repo, rel), text);
+    }
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'tracked state');
+    fs.writeFileSync(path.join(repo, 'shared.js'), 'operator staged\n');
+    git(repo, 'add', 'shared.js');
+    fs.writeFileSync(path.join(repo, '.tangleclaw', 'session-prime.md'), 'p2\n');
+    const baseline = launchBaseline.capture(repo);
+    fs.writeFileSync(path.join(repo, 'mine.js'), 'session work\n');
+    return { repo, scope: await scopeFor(repo, baseline) };
+  }
+
+  it('asks once, naming exactly the tracked state paths, and never an authored file', async () => {
+    const { repo, scope } = await trackedStateProject();
+    const r = await runStep(sessionFiles, repo, scope, { pathDecisions: { 'shared.js': 'leave' } });
+    assert.equal(r.status, 'needs-operator');
+    assert.deepEqual(r.output.untrackOffer.paths, ['.tangleclaw/medusa/registry.json', '.tangleclaw/session-prime.md']);
+    assert.match(r.blockers[0], /2 TangleClaw state files are tracked by git/);
+    assert.match(r.output.remediation, /git rm --cached/);
+  });
+
+  it('an Include / Leave question comes first; the offer waits until those are settled', async () => {
+    const { repo, scope } = await trackedStateProject();
+    const r = await runStep(sessionFiles, repo, scope);
+    assert.equal(r.status, 'blocked');
+    assert.ok(Array.isArray(r.output.foreignPaths));
+    assert.equal(r.output.untrackOffer, undefined);
+  });
+
+  it('approve: the wrap commit removes exactly those paths from tracking, the files stay, the operator\'s staged work stays out', async () => {
+    const { repo, scope } = await trackedStateProject();
+    const options = { pathDecisions: { 'shared.js': 'leave' }, untrackState: 'approve' };
+    const files = await runStep(sessionFiles, repo, scope, options);
+    assert.equal(files.status, 'done', files.blockers.join('; '));
+    assert.match(files.output.detail, /2 TangleClaw state files to stop tracking/);
+
+    const r = await runStep(commitStep, repo, scope, options);
+    assert.equal(r.status, 'done', (r.blockers || []).join('; '));
+    assert.deepEqual(r.output.untrackState, ['.tangleclaw/medusa/registry.json', '.tangleclaw/session-prime.md']);
+    const changed = git(repo, 'show', '--name-status', '--format=', 'HEAD').split('\n').sort();
+    assert.deepEqual(changed, ['A\tmine.js', 'D\t.tangleclaw/medusa/registry.json', 'D\t.tangleclaw/session-prime.md']);
+    assert.match(r.output.message, /^- Stopped tracking TangleClaw state \(the files stay on disk\): \.tangleclaw\/medusa\/registry\.json, \.tangleclaw\/session-prime\.md$/m);
+    assert.equal(fs.readFileSync(path.join(repo, '.tangleclaw', 'session-prime.md'), 'utf8'), 'p2\n', 'the file stays on disk');
+    assert.deepEqual(git(repo, 'ls-files', '--', '.tangleclaw').split('\n'), ['.tangleclaw/plans/a.md'], 'authored content stays tracked');
+    assert.equal(git(repo, 'diff', '--cached', '--name-only'), 'shared.js', 'the operator\'s staged work is still staged, and not committed');
+  });
+
+  it('approve with nothing else to commit still makes the un-track commit, and stages nothing else', async () => {
+    const repo = makeRepo();
+    fs.mkdirSync(path.join(repo, '.tangleclaw', 'medusa'), { recursive: true });
+    fs.writeFileSync(path.join(repo, '.tangleclaw', 'medusa', 'registry.json'), '{}\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'tracked registry');
+    fs.writeFileSync(path.join(repo, 'untracked-operator.txt'), 'not mine to commit\n');
+    const baseline = launchBaseline.capture(repo);
+    const scope = await scopeFor(repo, baseline);
+    const options = { pathDecisions: { 'untracked-operator.txt': 'leave' }, untrackState: 'approve' };
+    assert.equal((await runStep(sessionFiles, repo, scope, options)).status, 'done');
+    const r = await runStep(commitStep, repo, scope, options);
+    assert.equal(r.status, 'done', (r.blockers || []).join('; '));
+    assert.deepEqual(git(repo, 'show', '--name-status', '--format=', 'HEAD').split('\n'), ['D\t.tangleclaw/medusa/registry.json']);
+    assert.match(git(repo, 'status', '--porcelain'), /\?\? untracked-operator\.txt/);
+  });
+
+  it('decline is remembered, so the next wrap does not ask; a newly tracked state path is offered again', async () => {
+    const { repo, scope } = await trackedStateProject();
+    const declined = await runStep(sessionFiles, repo, scope, { pathDecisions: { 'shared.js': 'leave' }, untrackState: 'decline' });
+    assert.equal(declined.status, 'done');
+    assert.match(declined.output.detail, /kept 2 TangleClaw state files tracked, as you chose/);
+    assert.deepEqual(wrapState.readUntrackDeclined(repo), ['.tangleclaw/medusa/registry.json', '.tangleclaw/session-prime.md']);
+
+    const next = await runStep(sessionFiles, repo, scope, { pathDecisions: { 'shared.js': 'leave' } });
+    assert.equal(next.status, 'done', 'a remembered decline is not asked again');
+
+    fs.writeFileSync(path.join(repo, '.tangleclaw', 'critic-runs.json'), '[]\n');
+    git(repo, 'add', '.tangleclaw/critic-runs.json');
+    git(repo, 'commit', '-q', '-m', 'tracked another', '--', '.tangleclaw/critic-runs.json');
+    const again = await runStep(sessionFiles, repo, scope, { pathDecisions: { 'shared.js': 'leave' } });
+    assert.equal(again.status, 'needs-operator');
+    assert.deepEqual(again.output.untrackOffer.paths, ['.tangleclaw/critic-runs.json']);
+  });
+
+  it('commit removes nothing without an approval, even when state is tracked', async () => {
+    const { repo, scope } = await trackedStateProject();
+    const r = await runStep(commitStep, repo, scope, { pathDecisions: { 'shared.js': 'leave' } });
+    assert.equal(r.status, 'done');
+    assert.deepEqual(r.output.untrackState, []);
+    assert.equal(git(repo, 'ls-files', '--', '.tangleclaw/medusa/registry.json'), '.tangleclaw/medusa/registry.json');
+  });
+
+  it('an unrecognised answer is no answer', async () => {
+    const { repo, scope } = await trackedStateProject();
+    const r = await runStep(sessionFiles, repo, scope, { pathDecisions: { 'shared.js': 'leave' }, untrackState: 'yes' });
+    assert.equal(r.status, 'needs-operator');
+  });
+
+  it('a failed un-track preparation commits nothing and names the git step', async () => {
+    const orig = commitStep._internal.exec;
+    const { repo, scope } = await trackedStateProject();
+    commitStep._internal.exec = (file, args, opts) => (args[0] === 'read-tree'
+      ? Promise.resolve({ exitCode: 128, stdout: '', stderr: 'fatal: bad tree' })
+      : orig(file, args, opts));
+    try {
+      const head = git(repo, 'rev-parse', 'HEAD');
+      const r = await runStep(commitStep, repo, scope, { pathDecisions: { 'shared.js': 'leave' }, untrackState: 'approve' });
+      assert.equal(r.status, 'blocked');
+      assert.match(r.blockers[0], /preparing the commit \(git read-tree\) failed, so nothing was committed/);
+      assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
+    } finally {
+      commitStep._internal.exec = orig;
+    }
   });
 });

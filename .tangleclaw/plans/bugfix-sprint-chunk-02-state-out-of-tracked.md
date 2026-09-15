@@ -163,6 +163,11 @@ In `session-files`, after `classify`:
 - JSDoc on every new function.
 - Check `docs/adr/0002-wrap-pipeline-contract.md` for the options vocabulary (`untrackState`).
 
+## Known limits
+
+- **A pre-upgrade TangleClaw on another clone of the same project** still stamps `lastWrapSha` into `project.json`. If that clone commits it, this clone's launch heal removes it again, and the key flips between clones until every clone runs this version. Each flip costs one maintenance commit, never a lost boundary: the reader prefers `state.json`.
+- **A project registered below its repository root** is skipped for the exclude (the stated reason is logged). Chunk 01's known limit stands.
+
 ## Status
 
 - [x] 02a — `wrap-state.js` accessor + readers moved + `save` migration + judge update, with tests; Critic chunk
@@ -172,6 +177,12 @@ In `session-files`, after `classify`:
     - R-8 fixed: a temp file is cleaned up on a failed write.
     - The rest are accepted.
     - Fix commit `a85ae495` is re-covered by the 02b chunk review rather than a separate verify-resolutions round.
-- [ ] 02b — `project-heal.js` + exclude block + launch wiring + prime line, with tests; Critic chunk
+- [x] 02b — `project-heal.js` + exclude block + launch wiring + prime line, with tests; Critic chunk
+  - Review `rev-20260915T214003Z-727705ea`: 1 blocking (R-1: nothing tested that a launch heals after the baseline) and 4 warnings.
+  - All of them are fixed in the 02c commit, re-covered by 02c's review:
+    - launch-order tests for the tmux and web UI paths, with the mutation check red when heal runs before the baseline;
+    - R-2 (the prime promised the offer), which 02c builds;
+    - R-4/R-6: an explicit `failed` flag on the migration, git run in the C locale, and problems logged by value.
+  - R-7 is accepted as a known limit (below).
 - [ ] 02c — un-track offer (session-files, commit, drawer widget, option sanitizers), with tests; Critic chunk
 - [ ] 02d — docs, CHANGELOG, FEATURES.md; full suite; cumulative Critic; operator verification of the drawer offer from a remote browser; PR

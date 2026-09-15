@@ -3683,6 +3683,7 @@ async function confirmWrap() {
   wrapSkippedAiSteps = {};
   wrapPathDecisions = {};
   wrapSkipPreflight = false;
+  wrapUntrackState = '';
   const pw = document.getElementById('wrapPassword').value;
   // #540 ask-mode — capture the operator's bump-level choice up front, before
   // version-bump runs. Empty string keeps the CHANGELOG heuristic. Threaded as
@@ -3824,6 +3825,14 @@ let wrapPathDecisions = {};
  * @type {boolean}
  */
 let wrapSkipPreflight = false;
+
+/**
+ * #1512 — the operator's answer to the offer to stop tracking TangleClaw state
+ * (`approve` / `decline`, or `''` when not asked). Kept across retries for the
+ * same reason as `wrapSkipPreflight`. Reset by a new wrap from the modal.
+ * @type {string}
+ */
+let wrapUntrackState = '';
 
 /**
  * #540 ask-mode — the operator's chosen version-bump level (`patch`/`minor`/
@@ -4207,6 +4216,13 @@ function renderWrapDrawer(pipelineResult) {
       const releaseWidget = H.releaseDecisionWidget(row, raw.output);
       if (releaseWidget) {
         decisionEl.appendChild(renderReleaseDecisionWidget(releaseWidget));
+        widgetRendered = true;
+      }
+      // #1512: session-files halted on the one-time offer to stop tracking
+      // TangleClaw state — Stop tracking or Keep tracking is the way past it.
+      const untrackWidget = H.untrackOfferWidget(row, raw.output);
+      if (untrackWidget) {
+        decisionEl.appendChild(renderUntrackOfferWidget(untrackWidget));
         widgetRendered = true;
       }
       // A blocked pr-check IS the unresolved-PR gate — its recovery
@@ -4635,6 +4651,64 @@ function renderReleaseDecisionWidget(widget) {
     const input = document.createElement('input');
     input.type = 'radio';
     input.name = 'wrapReleaseDecision';
+    input.value = choice.v;
+    opt.appendChild(input);
+    const text = document.createElement('span');
+    text.textContent = choice.label;
+    opt.appendChild(text);
+    group.appendChild(opt);
+  }
+  wrap.appendChild(group);
+  return wrap;
+}
+
+/**
+ * Build the Stop tracking / Keep tracking offer (#1512): the exact tracked
+ * TangleClaw state paths and two radios. Neither is preselected — removing files
+ * from a project's history is the operator's call.
+ *
+ * @param {object} widget - From `untrackOfferWidget`.
+ * @returns {HTMLDivElement}
+ */
+function renderUntrackOfferWidget(widget) {
+  const wrap = document.createElement('div');
+  wrap.className = 'wrap-decision wrap-decision--untrack';
+  wrap.dataset.optionsKey = widget.optionsKey;
+  wrap.dataset.kind = widget.kind;
+
+  const labelId = 'wrapUntrackOfferLabel';
+  const label = document.createElement('div');
+  label.className = 'wrap-decision-label';
+  label.id = labelId;
+  const n = widget.paths.length;
+  label.textContent = `${n} TangleClaw state file${n === 1 ? ' is' : 's are'} tracked by git, so ${n === 1 ? 'it shows' : 'they show'} as changed every session. Stop tracking ${n === 1 ? 'it' : 'them'} in this wrap's commit?`;
+  wrap.appendChild(label);
+
+  const list = document.createElement('ul');
+  list.className = 'wrap-decision-untrack-paths';
+  for (const p of widget.paths) {
+    const li = document.createElement('li');
+    const code = document.createElement('code');
+    code.textContent = p;
+    li.appendChild(code);
+    list.appendChild(li);
+  }
+  wrap.appendChild(list);
+
+  const note = document.createElement('p');
+  note.className = 'wrap-decision-note';
+  note.textContent = 'Stop tracking removes exactly these paths from git; the files stay on disk and TangleClaw keeps using them. Keep tracking is remembered, so these paths are not offered again.';
+  wrap.appendChild(note);
+
+  const group = document.createElement('fieldset');
+  group.className = 'wrap-decision-pathrow wrap-decision-untrackrow';
+  group.setAttribute('aria-labelledby', labelId);
+  for (const choice of [{ v: 'approve', label: 'Stop tracking' }, { v: 'decline', label: 'Keep tracking' }]) {
+    const opt = document.createElement('label');
+    opt.className = 'wrap-decision-pathchoice';
+    const input = document.createElement('input');
+    input.type = 'radio';
+    input.name = 'wrapUntrackOffer';
     input.value = choice.v;
     opt.appendChild(input);
     const text = document.createElement('span');
@@ -5143,7 +5217,13 @@ async function retryWrap() {
       return picked ? picked.value : wrapReleaseChoice;
     },
     // #540 ask-mode — replay the modal's bump choice on each retry.
-    bumpLevel: () => wrapBumpLevel
+    bumpLevel: () => wrapBumpLevel,
+    // #1512 — Stop / Keep tracking answered under the offer, else the answer
+    // already given in this wrap.
+    untrackState: () => {
+      const picked = decisionEl.querySelector('.wrap-decision--untrack input[type="radio"]:checked');
+      return picked ? picked.value : wrapUntrackState;
+    }
   };
 
   const options = H.collectOptionsFromAccessors(accessors);
@@ -5151,6 +5231,9 @@ async function retryWrap() {
   // #1492: an answer given in the drawer holds for the rest of this wrap, so a
   // later halt on another step doesn't re-ask it.
   if (options.release) wrapReleaseChoice = options.release;
+  // #1512: the pipeline re-runs from its first step, so the answer must ride
+  // every later Retry or session-files would ask again.
+  if (options.untrackState) wrapUntrackState = options.untrackState;
 
   // #1406: the pipeline re-runs from its first step, so a file already answered
   // must keep its answer or the wrap would ask about it again.
@@ -5682,6 +5765,7 @@ function adoptWrapRunChoices(options) {
   wrapReleaseChoice = choices.release;
   wrapBumpLevel = choices.bumpLevel;
   wrapSkipPreflight = choices.skipPreflight;
+  wrapUntrackState = choices.untrackState;
   wrapPathDecisions = choices.pathDecisions;
   wrapSkippedAiSteps = choices.skipAiContent;
 }

@@ -203,6 +203,15 @@ describe('what heal only reports', () => {
     assert.equal(git(repo, 'ls-files', '--', '.tangleclaw/medusa/registry.json'), '.tangleclaw/medusa/registry.json');
   });
 
+  it('does not raise tracked state the operator chose to keep tracked', () => {
+    const repo = makeRepo({ 'README.md': 'x\n', '.tangleclaw/medusa/registry.json': '{}\n', '.tangleclaw/session-prime.md': 'p\n' });
+    heal.healOnLaunch(repo);
+    wrapState.recordUntrackDeclined(repo, ['.tangleclaw/medusa/registry.json']);
+    const r = heal.healOnLaunch(repo);
+    assert.deepEqual(r.trackedState, ['.tangleclaw/session-prime.md']);
+    assert.match(r.report, /1 TangleClaw state file is still tracked by git \(the wrap offers to stop tracking it\)/);
+  });
+
   it('a folder that is not a repository gets a reason and no report, and still migrates', () => {
     const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-heal-norepo-')));
     dirs.push(dir);
@@ -221,6 +230,37 @@ describe('what heal only reports', () => {
     assert.match(r.excludeReason, /below its repository root \(svc\)/);
     assert.equal(fs.existsSync(path.join(repo, '.git', 'info', 'exclude'))
       && fs.readFileSync(path.join(repo, '.git', 'info', 'exclude'), 'utf8').includes('tangleclaw-state'), false);
+  });
+
+  it('an unreadable project.json is reported as unfinished, and left alone', () => {
+    const repo = makeRepo({ '.tangleclaw/project.json': '{ not json' });
+    const r = heal.healOnLaunch(repo);
+    assert.equal(r.migrated, false);
+    assert.match(r.report, /could not finish: project\.json could not be read/);
+    assert.equal(fs.readFileSync(path.join(repo, '.tangleclaw', 'project.json'), 'utf8'), '{ not json');
+  });
+
+  it('an unreadable state file blocks the migration and is reported, not overwritten', () => {
+    const repo = makeRepo({ '.tangleclaw/project.json': json({ engine: 'claude', lastWrapSha: 'abc1234' }) });
+    write(repo, '.tangleclaw/state.json', 'garbage');
+    const r = heal.healOnLaunch(repo);
+    assert.equal(r.migrated, false);
+    assert.match(r.report, /could not finish: state file could not be read/);
+    assert.equal(fs.readFileSync(path.join(repo, '.tangleclaw', 'state.json'), 'utf8'), 'garbage');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(repo, '.tangleclaw', 'project.json'), 'utf8')).lastWrapSha, 'abc1234');
+  });
+
+  it('a plain folder is recognised under a non-English locale too', () => {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tc-heal-locale-')));
+    dirs.push(dir);
+    const saved = { LC_ALL: process.env.LC_ALL, LANGUAGE: process.env.LANGUAGE };
+    process.env.LC_ALL = 'de_DE.UTF-8';
+    process.env.LANGUAGE = 'de';
+    try {
+      assert.equal(heal.healOnLaunch(dir).excludeReason, 'not a git repository');
+    } finally {
+      for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
   });
 
   it('a git failure that is not "not a repository" is reported as unfinished', () => {

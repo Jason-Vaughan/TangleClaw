@@ -181,6 +181,7 @@ describe('migrating project.json', () => {
     const configBefore = configBytes(dir);
     const r = wrapState.migrateProjectConfig(dir, { now: NOW });
     assert.equal(r.migrated, false);
+    assert.equal(r.failed, true);
     assert.match(r.reason, /could not be read/);
     assert.equal(fs.readFileSync(wrapState.statePath(dir), 'utf8'), '{ corrupt', 'the unreadable record is not replaced by a stale one');
     assert.equal(configBytes(dir), configBefore, 'the legacy copy is the only one left, so it stays');
@@ -195,7 +196,9 @@ describe('migrating project.json', () => {
     assert.equal(configBytes(dir), '{ not json');
   });
 
-  it('says so when there is nothing to migrate', () => {
+  it('says so when there is nothing to migrate, and that is not a failure', () => {
+    assert.equal(wrapState.migrateProjectConfig(project()).failed, false);
+    assert.equal(wrapState.migrateProjectConfig(project({ engine: 'claude' })).failed, false);
     assert.match(wrapState.migrateProjectConfig(project()).reason, /no project\.json/);
     assert.match(wrapState.migrateProjectConfig(project({ engine: 'claude' })).reason, /holds no lastWrapSha/);
   });

@@ -112,19 +112,20 @@ describe('replayChoicesFromOptions', () => {
   it('takes back every choice a Retry replays', () => {
     const c = H.replayChoicesFromOptions({
       release: 'cut', bumpLevel: 'major', skipPreflight: true,
-      pathDecisions: { 'a.js': 'include', 'b.js': 'leave' }, skipAiContent: { 'memory-update': true }
+      pathDecisions: { 'a.js': 'include', 'b.js': 'leave' }, skipAiContent: { 'memory-update': true }, untrackState: 'decline'
     });
     assert.deepEqual({ ...c, pathDecisions: { ...c.pathDecisions }, skipAiContent: { ...c.skipAiContent } }, {
       release: 'cut', bumpLevel: 'major', skipPreflight: true,
-      pathDecisions: { 'a.js': 'include', 'b.js': 'leave' }, skipAiContent: { 'memory-update': true }
+      pathDecisions: { 'a.js': 'include', 'b.js': 'leave' }, skipAiContent: { 'memory-update': true }, untrackState: 'decline'
     });
   });
 
   it('reads anything the server would refuse as not chosen', () => {
     const c = H.replayChoicesFromOptions({
       release: 'Hold', bumpLevel: 'huge', skipPreflight: 'yes',
-      pathDecisions: { 'a.js': 'discard' }, skipAiContent: { x: 1 }
+      pathDecisions: { 'a.js': 'discard' }, skipAiContent: { x: 1 }, untrackState: 'yes'
     });
+    assert.equal(c.untrackState, '');
     assert.equal(c.release, '');
     assert.equal(c.bumpLevel, '');
     assert.equal(c.skipPreflight, false);
