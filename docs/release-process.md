@@ -57,6 +57,20 @@ the tag always points at the commit that actually carries the version.
 `[Unreleased]` CHANGELOG section. Merging PRs does not. So a release happens when you run a wrap and
 that wrap's PR merges to `main` — not when feature PRs merge.
 
+Whether a wrap cuts at all is the project's `releaseMode` (`docs/configuration-reference.md`):
+
+- `off` never cuts. A project on `off` releases by a PR that bumps `version.json`, not by a wrap.
+- `auto` cuts when release readiness is `ready`. Readiness holds when `[Unreleased]` is empty, and
+  when the project's active Prawduct build plan (`active_build_plan:` in `.prawduct/project-state.yaml`,
+  else `.prawduct/artifacts/build-plan.md`) has an unticked box under `## Status`. A plan with no
+  `## Status` section isn't judged.
+  A signal that can't be read, such as a pointer to a missing plan, also holds, and the step's output
+  asks the operator to decide.
+- `ask` never cuts by itself.
+
+In `auto` and `ask`, picking a bump level in the wrap modal cuts regardless. A hold is reported as a
+skipped `version-bump` step whose reason names the signal responsible.
+
 The wrap picks the bump level from what is in `[Unreleased]`:
 
 | `[Unreleased]` content | Bump |
