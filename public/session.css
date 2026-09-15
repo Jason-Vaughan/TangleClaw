@@ -1961,7 +1961,18 @@ body {
   .wrap-drawer,
   .wrap-drawer.open { transition: none; }
 }
+/* #1491 — the header and the action row hold their height; everything between
+   them lives in ONE scroll region at its natural height, so no control can end
+   up clipped outside what scrolls. The body is deliberately NOT a flex
+   container, so no section inside it can be shrunk to fit. */
+.wrap-drawer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
 .wrap-drawer-header {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2024,10 +2035,6 @@ body {
   list-style: none;
   margin: 0;
   padding: 8px 0;
-  overflow-y: auto;
-  flex: 1;
-  /* A flex child only scrolls inside a capped parent when allowed to shrink. */
-  min-height: 0;
 }
 .wrap-step-row {
   display: grid;
@@ -2180,10 +2187,7 @@ body {
   color: #fbbf24;
 }
 .wrap-drawer-decision {
-  /* Scrolls on its own so a long list of choices cannot squeeze the steps out. */
-  max-height: 35vh;
-  overflow-y: auto;
-  flex-shrink: 0;
+  /* Natural height, no inner scroll: .wrap-drawer-body scrolls it (#1491). */
   padding: 12px 16px;
   border-top: 1px solid var(--elevated-bg);
   background: var(--elevated-bg);
@@ -2397,6 +2401,7 @@ body {
   line-height: 1.4;
 }
 .wrap-drawer-actions {
+  flex-shrink: 0;
   display: flex;
   gap: 8px;
   justify-content: flex-end;

@@ -4091,6 +4091,9 @@ function renderWrapDrawer(pipelineResult) {
   // that surfaced a non-blocking warning (`output.warning`) OR a
   // pr-check with unresolved session-scoped PRs.
   const decisionEl = document.getElementById('wrapDrawerDecision');
+  // Read before this render reveals it: the decision sits below every step in the
+  // one scroll region (#1491), so it is brought into view when it first appears.
+  const decisionWasHidden = decisionEl.classList.contains('hidden');
   decisionEl.innerHTML = '';
   let widgetRendered = false;
   let warningOnly = false;
@@ -4161,6 +4164,9 @@ function renderWrapDrawer(pipelineResult) {
     }
   }
   decisionEl.classList.toggle('hidden', !widgetRendered);
+  // Only on first reveal, and `nearest`, so a later re-render never yanks the
+  // operator's scroll position away from wherever they were reading.
+  if (widgetRendered && decisionWasHidden) decisionEl.scrollIntoView({ block: 'nearest' });
 
   // Action buttons:
   // - Retry: visible whenever there's something actionable (blocker OR
