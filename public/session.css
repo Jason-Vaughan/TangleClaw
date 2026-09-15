@@ -593,6 +593,10 @@ body {
 }
 .medusa-loop-feedback-input:focus-visible { outline: 2px solid var(--root-accent); outline-offset: 1px; }
 .medusa-loop-feedback-send { align-self: flex-start; }
+/* #1514: live message size against the served body limit — amber near it, red over it. */
+.medusa-size-count { color: var(--text-muted); font-size: 10px; min-height: 1em; }
+.medusa-size-count.is-warn { color: var(--warning); font-weight: 600; }
+.medusa-size-count.is-over { color: var(--danger); font-weight: 600; }
 
 /* ── Banner Action Buttons ── */
 .banner-actions {

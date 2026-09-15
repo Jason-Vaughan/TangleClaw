@@ -45,6 +45,19 @@ Bugfix Sprint Chunk 05, built by a delegate and integrated by the coordinator.
 **#1516.** `priming-roll` blocked with "Multiple in-progress plans" even when a candidate's work had shipped — on 2026-09-15 it had been rolling the pointer onto a plan whose issues were all closed. It now filters candidates by the state of the issues each plan cites: a plan whose cited issues are all closed is dropped and reported as an archive candidate (a warning; no file is moved), and if one candidate remains it is used without asking. When `gh` is missing, logged out or offline, today's picker shows with the reason stated, following the honest-`unknown` pattern in `lib/ci-status.js`. The lookup is a shared, cached, test-fakeable module (`lib/gh-issue-state.js`) that later GitHub features reuse. An `activePlan` pointing at a since-archived plan now falls through to normal selection instead of blocking the wrap, and the drawer's priming row reads the pointer the step actually writes, so "→ chunk N" shows again.
 
 Integration widened the filter after review: it first hung off the multi-candidate branch, so a project with ONE in-progress plan rolled it even when its issues were all closed — #1516's own bug surviving on the path the fix had not reached. It now runs wherever the step chose the plan itself; a plan the operator named (`step.planPath`, `activePlan`) is rolled as named and never dropped underneath them, and the lone plan in a directory is rolled as before, since dropping it would leave the project pointing at nothing. The drawer's fallback for a flat pointer shape is also gone: no handler has ever emitted it, and the fixture that carried it is what hid the missing "→ chunk N" row.
+## 2026-09-15 — Switchboard and command messages reach 64 KB, and say why a longer one fails (#1514)
+
+<!-- prawduct: type=bugfix | scope=bugfix-sprint-chunk-04 -->
+
+Bugfix Sprint Chunk 04, built by a delegate and integrated by the coordinator.
+
+`MESSAGE_BODY_LIMIT_BYTES = 64 * 1024` now applies to `<prefix>/send`, `<prefix>/loop`, `<prefix>/loops/:loopId/continue` on both the project and Master prefixes, and to `POST /api/sessions/:project/command`. Every 413 carries `limitBytes` and `receivedBytes`, from the body parser, so the routes still on 10 KB report their own limit too. `receivedBytes` is exact when the request declares `Content-Length`; a chunked body reports the count at the point reading stopped and sets `receivedBytesIsLowerBound: true`, which clients render as "more than X KB".
+
+The limit has one source: the server. The switchboard `/status` response serves it as `messageLimitBytes`, and each 413 carries it back, so neither `public/` nor `tc message send` holds a copy. The loop task, done-criteria and feedback boxes show a live size count that turns amber at 80% of the limit and red above it, and a send over the limit is refused before it goes out. A 413 renders as "message is X KB, limit is 64 KB" on the loop, feedback, command-bar and update-prompt sends; the command bar previously showed nothing at all when a command was refused. `tc message send` prints the same and exits 2.
+
+The limit covers every route that carries operator or agent prose into a session, not the ones that were noticed first: integration added `POST /api/sessions/:project/wrap/handback` and `POST /api/sessions/:project/wrap/complete`, which the delegate's hand-enumerated list missed. The handback caps its own prompt at 3800 characters, and 3800 multibyte characters is about 11 KB — refused by the old 10 KB default before the handler's own cap could answer.
+
+Deliberately unchanged: the command route still refuses a `command` over 4096 characters with a 400, because the wrap drawer depends on that limit. The 64 KB body limit only matters there for multibyte text.
 
 
 ## 2026-09-15 — TangleClaw state leaves the files projects track (#1510, #1511, #1512)

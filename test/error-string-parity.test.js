@@ -209,7 +209,10 @@ describe('#83 — form handlers render the server reason, not a guess', () => {
       const { document, el } = fakeDocument({});
       const ctx = lift(SRC.session, ['async function injectUpdatePrompt('], {
         api, apiMutate, document, projectName: 'demo',
-        buildUpdatePrompt: () => 'update please'
+        buildUpdatePrompt: () => 'update please',
+        // The reason is read through the shared helper (#1514), which renders
+        // a 413 with its sizes and every other refusal as the server's words.
+        window: require('./_api-helper-globals')()
       });
       await ctx.injectUpdatePrompt({});
       assert.equal(el('toast').textContent, 'Session "demo" is not running');
