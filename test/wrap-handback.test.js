@@ -125,13 +125,13 @@ describe('wrap handback watch (#1312)', () => {
     assert.equal(current().state, 'working');
   });
 
-  it('a static pane is ready after the quiet window, not before, and says no marker was seen', async () => {
+  it('a static pane settles `quiet` after the quiet window, not before — never `ready` without the marker', async () => {
     settleBlockedRun('changelog-update');
     handback.start(PROJECT, { stepId: 'changelog-update', prompt: 'fix' });
     pane = 'a pane that never changes';
     await runUntil(() => current().state !== 'working');
     const hb = current();
-    assert.equal(hb.state, 'ready');
+    assert.equal(hb.state, 'quiet', 'a session that stopped to ask something is not done');
     assert.equal(hb.completedVia, 'quiet');
     assert.ok(hb.finishedAt - hb.startedAt >= aiContent.QUIET_FALLBACK_MS, 'not before the quiet window');
     assert.match(hb.completionNote, /no completion marker seen/);

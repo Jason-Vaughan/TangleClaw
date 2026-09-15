@@ -3607,6 +3607,7 @@ async function confirmWrap() {
   // retries (#328) so they don't leak into this run.
   wrapSkippedAiSteps = {};
   wrapPathDecisions = {};
+  wrapSkipPreflight = false;
   const pw = document.getElementById('wrapPassword').value;
   // #540 ask-mode — capture the operator's bump-level choice up front, before
   // version-bump runs. Empty string keeps the CHANGELOG heuristic. Threaded as
@@ -3733,6 +3734,15 @@ let wrapSkippedAiSteps = {};
  * @type {Object<string, string>}
  */
 let wrapPathDecisions = {};
+
+/**
+ * #1229 — the operator chose "Wrap anyway" past a halting preflight during this
+ * wrap. Kept across retries, because every retry re-runs the pipeline from
+ * preflight, and a later step's block must not send the operator round the same
+ * gate again. Reset by a new wrap from the modal.
+ * @type {boolean}
+ */
+let wrapSkipPreflight = false;
 
 /**
  * #540 ask-mode — the operator's chosen version-bump level (`patch`/`minor`/
@@ -4921,6 +4931,10 @@ async function retryWrap() {
       const el = decisionEl.querySelector('input[data-options-key="skipTests"]');
       return el ? el.checked === true : false;
     },
+    skipPreflight: () => {
+      const el = decisionEl.querySelector('input[data-options-key="skipPreflight"]');
+      return el ? el.checked === true : false;
+    },
     prHandling: () => {
       const selects = decisionEl.querySelectorAll('select.wrap-decision-prselect');
       if (selects.length === 0) return null;
@@ -4960,6 +4974,10 @@ async function retryWrap() {
   // it would re-block. The merge lives in a pure drawer helper so it's unit-
   // testable; `wrapSkippedAiSteps` is the session-level accumulator.
   H.accumulateAiContentSkips(wrapSkippedAiSteps, options);
+
+  // #1229: "Wrap anyway" holds for the rest of this wrap (see `wrapSkipPreflight`).
+  if (options.skipPreflight === true) wrapSkipPreflight = true;
+  if (wrapSkipPreflight) options.skipPreflight = true;
 
   // M1: replay the password collected at the initial wrap modal so a
   // delete-protected install can retry without re-prompting.

@@ -115,9 +115,23 @@ describe('wrap popover stylesheet (#1312)', () => {
     assert.match(d['max-height'], /^min\(70vh/);
   });
 
-  it('closed, it cannot take a click; open, it shows', () => {
-    assert.equal(rule('.wrap-drawer', null).visibility, 'hidden');
-    assert.equal(rule('.wrap-drawer.open', null).visibility, 'visible');
+  it('closed, it cannot take a click — at once, not after a transition; open, it shows', () => {
+    const closed = rule('.wrap-drawer', null);
+    assert.equal(closed.visibility, 'hidden');
+    assert.equal(closed['pointer-events'], 'none');
+    // Seen live: in a backgrounded tab no transition runs, so a `visibility`
+    // transition delay left an invisible popover taking the terminal's clicks.
+    for (const media of [null, '@media (max-width: 600px)']) {
+      for (const sel of ['.wrap-drawer', '.wrap-drawer.open']) {
+        const hit = RULES.find((r) => r.media === media && r.selector === sel);
+        if (hit && decls(hit.body).transition) {
+          assert.doesNotMatch(decls(hit.body).transition, /visibility|pointer-events/, `${sel} ${media || ''} animates hiding`);
+        }
+      }
+    }
+    const open = rule('.wrap-drawer.open', null);
+    assert.equal(open.visibility, 'visible');
+    assert.equal(open['pointer-events'], 'auto');
   });
 
   it('phones: a 60vh bottom sheet', () => {

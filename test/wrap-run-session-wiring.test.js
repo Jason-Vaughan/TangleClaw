@@ -106,6 +106,7 @@ function harness() {
     sessionState: { wrapDrawerOpen: false },
     wrapSkippedAiSteps: {},
     wrapPathDecisions: {},
+    wrapSkipPreflight: false,
     wrapBumpLevel: '',
     currentWrapPassword: '',
     sessionStorage: {
@@ -323,6 +324,30 @@ describe('wrap-run wiring in session.js — executed', () => {
     // is that realm's and a strict deep-equal against this realm's literal fails.
     assert.deepEqual(JSON.parse(JSON.stringify(h.last('apiMutate')[2].options.pathDecisions)),
       { 'earlier.js': 'include', 'shared.js': 'leave', 'notes.md': 'include' });
+  });
+
+  it('#1229 — Retry sends "Wrap anyway", and a later retry keeps it', async () => {
+    await wrapToBlocked(h);
+    const ticked = { checked: true, dataset: {} };
+    h.sandbox.document.getElementById = () => ({
+      disabled: false,
+      classList: { add() {}, remove() {} },
+      querySelector: (sel) => (sel.includes('skipPreflight') ? ticked : null),
+      querySelectorAll: () => []
+    });
+    h.net.post = { ok: true, runId: RETRY_RUN, status: 'wrapping' };
+    await h.w.retryWrap();
+    assert.equal(h.last('apiMutate')[2].options.skipPreflight, true, 'the ticked box reaches the server');
+
+    // The retried run blocks at a later step; the box is no longer on screen.
+    const es = h.streams().find((s) => s.url.endsWith(RETRY_RUN));
+    es.emit('run-done', { result: { ...BLOCKED_RESULT, runId: RETRY_RUN } });
+    h.sandbox.document.getElementById = () => ({
+      disabled: false, classList: { add() {}, remove() {} }, querySelector: () => null, querySelectorAll: () => []
+    });
+    h.net.post = { ok: true, runId: 'c'.repeat(32), status: 'wrapping' };
+    await h.w.retryWrap();
+    assert.equal(h.last('apiMutate')[2].options.skipPreflight, true, 'a retry re-runs preflight, so the choice must hold');
   });
 
   it('a 409 follows the run already in progress instead of reporting a failure', async () => {

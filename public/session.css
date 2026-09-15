@@ -1903,8 +1903,11 @@ body {
 /* Non-modal: no backdrop, so the terminal stays visible and usable while it is
    open. Anchored under the Wrap button (session.js sets the two position
    variables from the button's box when it opens); a bottom sheet on a phone.
-   Closed, it is `visibility: hidden` so it never takes a click meant for the
-   terminal. Reuses .drawer-handle from the peek drawer for the phone sheet. */
+   Closed, it is hidden and takes no pointer events AT ONCE — not at the end of a
+   transition: a backgrounded tab runs no transitions, and a transparent popover
+   left `visible` there swallowed clicks meant for the terminal. Only opacity and
+   transform animate. Reuses .drawer-handle from the peek drawer for the phone
+   sheet. */
 .wrap-drawer {
   position: fixed;
   top: var(--wrap-popover-top, 64px);
@@ -1923,14 +1926,15 @@ body {
   overflow: hidden;
   opacity: 0;
   visibility: hidden;
+  pointer-events: none;
   transform: translateY(-6px);
-  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0s linear 0.15s;
+  transition: opacity 0.15s ease, transform 0.15s ease;
 }
 .wrap-drawer.open {
   opacity: 1;
   visibility: visible;
+  pointer-events: auto;
   transform: none;
-  transition: opacity 0.15s ease, transform 0.15s ease;
 }
 .wrap-drawer .drawer-handle { display: none; }
 @media (max-width: 600px) {
@@ -1946,11 +1950,10 @@ body {
     padding-bottom: env(safe-area-inset-bottom, 0px);
     opacity: 1;
     transform: translateY(100%);
-    transition: transform 0.3s ease, visibility 0s linear 0.3s;
+    transition: transform 0.3s ease;
   }
   .wrap-drawer.open {
     transform: translateY(0);
-    transition: transform 0.3s ease;
   }
   .wrap-drawer .drawer-handle { display: block; }
 }

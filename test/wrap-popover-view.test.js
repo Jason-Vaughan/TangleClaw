@@ -121,6 +121,8 @@ describe('the Wrap button as the run\'s surface', () => {
     assert.equal(D.wrapButtonView(s, { nowMs: 43_000 }).label, 'Fixing · 0:42');
     s = C.reduceWrapRun(s, { type: 'handback', runId: RUN, handback: { state: 'ready', completedVia: 'marker', startedAt: 1_000 } });
     assert.equal(D.wrapButtonView(s, { nowMs: 50_000 }).label, 'Ready: Retry');
+    s = C.reduceWrapRun(s, { type: 'handback', runId: RUN, handback: { state: 'quiet', completedVia: 'quiet', startedAt: 1_000 } });
+    assert.equal(D.wrapButtonView(s, { nowMs: 50_000 }).label, 'Check terminal');
     s = C.reduceWrapRun(s, { type: 'handback', runId: RUN, handback: { state: 'timed-out', error: 'x', startedAt: 1_000 } });
     assert.equal(D.wrapButtonView(s, { nowMs: 50_000 }).label, 'Wrap blocked');
   });
@@ -146,11 +148,15 @@ describe('handback row and Retry (#1312)', () => {
     assert.deepEqual(v, { state: 'working', detail: 'Fixing in the session · 1:00', tone: 'working', retryReady: false, canResend: false });
   });
 
-  it('ready on the marker lights Retry; ready on quiet says so', () => {
+  it('ready on the marker lights Retry; a quiet session does not, and says it may be waiting on you', () => {
     assert.equal(D.handbackView({ state: 'ready', completedVia: 'marker' }, { nowMs: 0 }).retryReady, true);
-    const quiet = D.handbackView({ state: 'ready', completedVia: 'quiet', completionNote: 'no completion marker seen — the terminal was unchanged for 60s' }, { nowMs: 0 });
-    assert.equal(quiet.retryReady, true);
-    assert.match(quiet.detail, /^Probably done — no completion marker seen/);
+    // Seen live: handed a gate it would not fake, Claude stopped to ask the
+    // operator and printed no marker. Sixty quiet seconds later that is not "done".
+    const quiet = D.handbackView({ state: 'quiet', completedVia: 'quiet', completionNote: 'no completion marker seen — the terminal was unchanged for 60s' }, { nowMs: 0 });
+    assert.equal(quiet.retryReady, false);
+    assert.equal(quiet.canResend, true);
+    assert.equal(quiet.tone, 'problem');
+    assert.match(quiet.detail, /may be waiting on you/);
   });
 
   it('timed-out and failed explain, allow a resend, and do not light Retry', () => {
@@ -201,7 +207,7 @@ describe('a blocked preflight row (#1229)', () => {
     const prompt = D.composeHandbackPrompt(row);
     assert.match(prompt, /prawduct says: CRITIC: no review captured/);
     assert.match(prompt, /How to fix it: Run \/prawduct:critic\./);
-    assert.match(prompt, /never waive it/);
+    assert.match(prompt, /never waive it \(\.prawduct\/\.gates-waived\)/);
     assert.doesNotMatch(prompt, /write a genuine entry/);
     assert.doesNotMatch(prompt, /[\r\n]/);
   });
@@ -211,6 +217,12 @@ describe('a blocked preflight row (#1229)', () => {
     const prompt = D.composeHandbackPrompt(row);
     assert.match(prompt, /write a genuine entry/);
     assert.doesNotMatch(prompt, /prawduct says/);
+  });
+
+  it('Retry\'s option collector carries "Wrap anyway" only when ticked', () => {
+    assert.equal(D.collectOptionsFromAccessors({ skipPreflight: () => true }).skipPreflight, true);
+    assert.equal('skipPreflight' in D.collectOptionsFromAccessors({ skipPreflight: () => false }), false);
+    assert.equal('skipPreflight' in D.collectOptionsFromAccessors({}), false);
   });
 
   it('other structural blocks stay unresolvable by the session', () => {

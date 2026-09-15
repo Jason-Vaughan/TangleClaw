@@ -203,7 +203,7 @@
       blockText ? `prawduct says: ${blockText}` : '',
       fix ? `How to fix it: ${fix}` : '',
       isPreflight
-        ? 'Please satisfy the gate properly — run the review or write the reflection it asks for; never waive it or write a gate file just to pass.'
+        ? 'Please satisfy the gate properly — do what the block asks for (a review, a reflection); never waive it (.prawduct/.gates-waived) just to pass.'
         : 'Please resolve it properly — write a genuine entry, never a placeholder just to pass the gate; if the work truly warrants no entry, that is a decision to note, not to fake.',
       'Then stop — do NOT trigger the wrap yourself; the operator will hit Retry.'
     ].filter(Boolean);
@@ -841,6 +841,10 @@
     if (accessors.skipTests && accessors.skipTests() === true) {
       options.skipTests = true;
     }
+    // #1229 — "Wrap anyway" past a halting preflight.
+    if (accessors.skipPreflight && accessors.skipPreflight() === true) {
+      options.skipPreflight = true;
+    }
     if (accessors.prHandling) {
       const v = accessors.prHandling();
       if (v && typeof v === 'object') {
@@ -1283,11 +1287,21 @@
       case 'ready':
         return {
           state: 'ready',
-          detail: handback.completedVia === 'quiet'
-            ? `Probably done — ${handback.completionNote || 'no completion marker seen'}. Check the terminal, then Retry.`
-            : 'The session says it is done. Retry when you are ready.',
+          // "Finished", not "fixed": seen live, a session handed a changelog block
+          // it judged unwarranted finished by recommending Skip & note instead.
+          detail: 'The session finished — read its reply in the terminal, then Retry.',
           tone: 'ready',
           retryReady: true,
+          canResend: true
+        };
+      case 'quiet':
+        // Silence is not "done": a session handed a fix often stops to ask the
+        // operator something. So Retry is not lit, and the row says where to look.
+        return {
+          state: 'quiet',
+          detail: 'The session went quiet without saying it finished — it may be waiting on you. Check the terminal, then Retry.',
+          tone: 'problem',
+          retryReady: false,
           canResend: true
         };
       case 'timed-out':
@@ -1355,6 +1369,7 @@
             return toggle(`Fixing${time}`, `Wrap blocked; the session is fixing it${elapsed === null ? '' : `, ${formatElapsed(elapsed)}`} — show the report`);
           }
           if (hb && hb.retryReady) return toggle('Ready: Retry', 'Wrap blocked; the session finished its fix — show the report');
+          if (hb && hb.state === 'quiet') return toggle('Check terminal', 'Wrap blocked; the session went quiet without finishing — show the report');
           return toggle('Wrap blocked', 'Wrap blocked — show the report');
         }
         return toggle('Wrapped', 'Wrap finished — show the report');
