@@ -580,3 +580,13 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/fixtures/caddy-adapt-ungated-unguarded.json` — the ungated fixture as a release before the peer guard wrote it: the one fixture `checkOffboxRefused` must report, and the input `planOffboxGuard` must turn into exactly `caddy-adapt-ungated`'s Caddyfile.
 - `test/fixtures/caddy-adapt-no-h1.json` — the same shape as the generated baseline with `protocols: ['h1']` removed from the `:8443` listener, so `checkHttpsProtocols` is exercised against a file that differs in exactly the pinned property and nothing else.
 - `test/fixtures/caddy-adapt-ungated.json` — a minimal `:8443` site carrying the `h1` pin, the peer guard and NO `authentication` handler, so `checkGates` is driven by gate absence alone rather than by the larger hand-edited file, where three properties break at once.
+
+## TODO (auto-stubbed 2026-09-14)
+
+- **TBD** — touched in this session: `test/release-mode.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/release-readiness.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/version-bump-release-gate.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-release-decision.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/release-recommendation.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-release-recommendation-step.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-session-scope.test.js`. <!-- describe -->
