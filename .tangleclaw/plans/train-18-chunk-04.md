@@ -206,6 +206,60 @@ states and the handback. ADR 0011 gains no amendment (D6 stays inside the seam).
   - (4) a project with `preflight.blocker: true` and an unmet gate: "Wrap anyway" retries past it and
     the commit body records it.
 
+## Amendments from the live check (04e)
+
+Three defects a real Claude pane and a real browser found, each now fixed and guarded:
+
+1. **D4/D5 — quiet is not done.** Handed a demo gate with the preflight prompt's "never write a gate
+   file", Claude declined, asked the operator which option to take, and printed no marker. Sixty quiet
+   seconds later the watch reported `ready/quiet` and the page lit "Ready: Retry" on a question.
+   `quiet` is now its own handback state: tone `problem`, Retry not lit, resend allowed, the row saying
+   the session may be waiting on the operator, the button reading `Check terminal`. The `ready` copy
+   says the session *finished* (read its reply), not that it fixed the block: in the same check Claude
+   finished a changelog handback by recommending Skip & note. The preflight prompt now forbids the
+   waiver file specifically, not "a gate file".
+2. **D1 — a closed popover took clicks.** Closed in a backgrounded tab, the popover was `opacity: 0`
+   but still `visibility: visible`, because the visibility change rode a transition delay and a
+   backgrounded tab runs no transitions. `elementFromPoint` over the terminal returned the invisible
+   decision panel. Closed now means `visibility: hidden` and `pointer-events: none` at once; only
+   opacity and transform animate. Confirmed in the same tab after the fix.
+3. **D6 — "Wrap anyway" never reached the server.** `retryWrap` builds options from a fixed accessor
+   list with no `skipPreflight`. Added, and kept for the rest of the wrap (`wrapSkipPreflight`, reset by
+   a new wrap): every retry re-runs preflight, so a later block would otherwise send the operator round
+   the same gate. Seen live on the second retry, with no box on screen.
+
+Also amended in 04a: no `unwatched` state (`injectCommand` refuses webui sessions, so a gateway session
+never reaches a watch), and no password gate on the handback route (it replaces `/command` for the
+drawer, which has none).
+
+## Live check evidence (04e, 2026-09-14)
+
+Scratch server from the TC-a02 tree (`main()` not run, own `TANGLECLAW_HOME`, tailnet IP, leased
+port 5412, fake `prawduct-hook` that blocks until `.gate-ok` exists), a real Claude Code pane in tmux
+(`--permission-mode acceptEdits`), desktop Chrome. Most steps disabled via `wrapStepOverrides`;
+`preflight.blocker: true`.
+
+1. **Popover.** First wrap halted at preflight. Popover open at 420px wide under the button, inside
+   the 1320px viewport; step list 261px tall scrolling 782px; `elementFromPoint(200,300)` hit the
+   terminal frame; no backdrop element. Button `Wrap blocked`, `aria-expanded="true"`.
+2. **Handback, marker.** "Ask the session to satisfy this" → row `Fixing in the session · 0:01`, button
+   `Fixing · 0:01`, popover toggled closed with the button still counting. Claude created the file and
+   printed `TCWRAP-DONE ac0d69f8`; watch `ready/marker` at 10.2s; Retry `Ready: Retry`, lit. Retry
+   completed and committed. (An earlier attempt is defect 1 above.)
+3. **Live clock.** A second session's wrap: `Wrapping 4/16 · 0:00 … 0:25` sampled each second, the
+   popover closed from 0:05 with the clock still counting, and the report re-opened the popover on
+   `Wrapped` (commit `e0b0f62`). Reload during a blocked report restored it.
+4. **Wrap anyway.** Preflight blocked; box ticked → Retry reads `Skip & continue`; preflight `skipped`,
+   "operator chose to wrap anyway". session-files then blocked; answered Leave and retried with no
+   preflight box on screen: preflight skipped again. changelog-update blocked; content handback →
+   `ready/marker` in 8s (Claude judged the change unworthy of an entry and said so); Skip & note →
+   commit `525e9ed` with body lines `- Preflight (preflight): prawduct gates passed over — operator
+   chose to wrap anyway` and `- AI content (changelog-update): skipped via user override`.
+5. **Not observed:** the phone sheet. The window could not be narrowed from here. Queued as
+   `VRF-1312-wrap-popover-on-a-phone` in `.prawduct/operator-verification.md`.
+6. **Not observed live:** the amber slow state (needs a two-minute step). Covered by
+   `test/wrap-popover-view.test.js`.
+
 ## Done when
 
 Suite green; 04e observed (or its on-device item recorded as owed); `/prawduct:critic cumulative` with
@@ -216,6 +270,6 @@ the PR link.
 
 - [x] 04a server: timing, handback watch + routes, skipPreflight
 - [x] 04b view-model
-- [ ] 04c session page
-- [ ] 04d docs
+- [x] 04c session page
+- [x] 04d docs
 - [ ] 04e live check

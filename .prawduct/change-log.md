@@ -34,6 +34,38 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-14 — The wrap popover, a watched handback, and a preflight resolution (#1312, #1229)
+
+<!-- prawduct: type=feature | scope=train-18-chunk-04 -->
+
+Train 18 Chunk 04. Plan: `.tangleclaw/plans/train-18-chunk-04.md`. Operator "Go chunk 04" in the
+Builder pane, after declining a relayed GO from the Coordinator.
+
+**Why.** The wrap drawer was a modal sheet up to 80vh over a dimmed page, so the operator could not see
+the terminal where a handed-back fix was being typed (#1312's comments). "Ask the session to fix this"
+went through `/command` and nothing watched for the session to finish (#1312's body). The Wrap button
+was disabled with a fixed label during a wrap, and step events had no time. A halting `preflight` had
+no resolution in the drawer (#1229).
+
+**What.**
+- `lib/wrap-run-registry.js`: events carry `at`; `get()` reports `currentStepStartedAt`. SSE frames
+  carry `sentAt`, so the page measures skew even from a replay.
+- `lib/wrap-handback.js` + `POST /wrap/handback`, `GET /wrap/handback/stream/:id`: the fix is sent with
+  `ai-content`'s completion instruction and a fresh nonce and watched with its constants; states
+  `working → ready | quiet | timed-out | failed | superseded`. `/wrap/status` carries `handback`.
+- `preflight`: `allowOverride: true` in the default pipeline; `options.skipPreflight` skips without
+  re-probing and stages a commit-body line. Halting preflight rows are `agentResolvable`.
+- `public/wrap-run-controller.js`: `hide`/`show` (keep a held report) split from `dismiss`; a
+  `handback` signal. `public/wrap-drawer.js`: `wrapButtonView`, `liveStepTiming`, `foldSkew`,
+  `handbackView`, `retryLabel`, the preflight widget and prompt.
+- `public/session.js`/`.html`/`.css`: the non-modal popover (no backdrop), the button as the run's
+  surface, the handback stream with a status fallback, a one-second paint-only clock, Copy block text,
+  `wrapSkipPreflight` across retries.
+
+**Live check** found three defects the suites did not (plan "Amendments from the live check"): quiet
+reported as ready, a closed popover taking clicks in a backgrounded tab, and Retry never sending
+"Wrap anyway". All fixed with guards. Phone layout queued for the operator.
+
 ## 2026-09-14 — Step completion marker; learnings-capture credits an entry already written (#1450, #843, #1405)
 
 <!-- prawduct: type=bugfix | scope=train-18-chunk-03 -->
