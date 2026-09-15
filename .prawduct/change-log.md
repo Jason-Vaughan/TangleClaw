@@ -38,8 +38,9 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- prawduct: type=bugfix | scope=wrap-1491 -->
 
-Train 18 fast-follow, a regression from Chunk 04 (#1489). The operator asked for it as a fast-follow in the
-Builder pane: the Coordinator coordinates, the Builder builds. The Coordinator then gave GO for #1491.
+Train 19 (The Wrap Release Gate) Chunk 1, fixing a regression from Train 18 Chunk 04 (#1489). The operator asked
+for it in the Builder pane as a Train 18 fast-follow (the Coordinator coordinates, the Builder builds). The
+Coordinator gave GO, then re-homed it as Train 19 Chunk 1, because the release gate (#1492) needs this popover's buttons.
 
 **Why.** The operator hit it on a tablet during a wrap. A long result (5 of 16 steps skipped, plus a
 rule proposal) cut off the proposed rule's Approve/Reject and the Close/Done row, and the rule had to be
