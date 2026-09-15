@@ -291,4 +291,4 @@ the PR link.
 - [x] 04b view-model
 - [x] 04c session page
 - [x] 04d docs
-- [ ] 04e live check
+- [x] 04e live check
