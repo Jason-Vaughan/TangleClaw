@@ -225,3 +225,33 @@ describe('extractManagedBlock reads only an established block', () => {
     assert.equal(extractManagedBlock('x', { begin: '#a', end: '#a' }), null);
   });
 });
+
+describe('differsOnlyInsideManagedBlock', () => {
+  const { differsOnlyInsideManagedBlock, outsideManagedBlock } = require('../lib/managed-block');
+  const file = (body, before = '# Doc\n', after = '\ntail\n') => `${before}${B}\n${body}\n${E}${after}`;
+
+  test('a change confined to the block is inside', () => {
+    const r = differsOnlyInsideManagedBlock(file('old'), file('new'), MARKERS);
+    assert.deepEqual(r, { onlyInside: true, reason: 'differs only inside the managed block' });
+  });
+
+  test('one operator line outside the block is not inside', () => {
+    const r = differsOnlyInsideManagedBlock(file('old'), file('new', '# Doc\nmine\n'), MARKERS);
+    assert.equal(r.onlyInside, false);
+    assert.equal(r.reason, 'the file differs outside the managed block');
+  });
+
+  test('trailing whitespace outside the block still counts as an edit', () => {
+    assert.equal(differsOnlyInsideManagedBlock(file('a'), file('a', '# Doc \n'), MARKERS).onlyInside, false);
+  });
+
+  test('fails closed when either side lacks exactly one well-formed pair', () => {
+    assert.match(differsOnlyInsideManagedBlock('# Doc\n', file('a'), MARKERS).reason, /committed copy/);
+    assert.match(differsOnlyInsideManagedBlock(file('a'), `${file('a')}${B}`, MARKERS).reason, /working copy/);
+    assert.equal(outsideManagedBlock(`${E}\nx\n${B}`, MARKERS), null);
+  });
+
+  test('an unusable marker pair is never inside', () => {
+    assert.equal(differsOnlyInsideManagedBlock('x', 'x', { begin: '#a', end: '#a' }).onlyInside, false);
+  });
+});
