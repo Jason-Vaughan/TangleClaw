@@ -34,6 +34,39 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-15 — The wrap popover scrolls as one body, so nothing is cut off (#1491)
+
+<!-- prawduct: type=bugfix | scope=wrap-1491 -->
+
+Train 18 fast-follow, a regression from Chunk 04 (#1489). The operator asked for it as a fast-follow in the
+Builder pane: the Coordinator coordinates, the Builder builds. The Coordinator then gave GO for #1491.
+
+**Why.** The operator hit it on a tablet during a wrap. A long result (5 of 16 steps skipped, plus a
+rule proposal) cut off the proposed rule's Approve/Reject and the Close/Done row, and the rule had to be
+approved through `PUT /api/session-rules/29/status`. The cause was in `.wrap-drawer`, a capped flex
+column with `overflow: hidden`. The skip list could not shrink, and `.wrap-drawer-decision`
+(`flex-shrink: 0`, `max-height: 35vh`) refused to, so `.wrap-step-list` collapsed to its padding and
+the overflow was clipped outside any scroll container.
+
+**What.**
+- `public/session.html`: status, skip list, steps and decision move into `#wrapDrawerBody`; the header
+  and the action row stay outside it.
+- `public/session.css`: `.wrap-drawer-body` is `flex: 1 1 auto; min-height: 0; overflow-y: auto` and
+  deliberately not a flex container. The header and actions are `flex-shrink: 0`. The step list and
+  decision lose their own flex/scroll declarations.
+- `test/wrap-popover-markup.test.js`: #1312's "the step list scrolls" contract is replaced, explicitly,
+  by the one-scroll-region contract (markup nesting, body/header/actions rules, no section capping or
+  scrolling itself). The new tests fail against `origin/main`'s CSS and HTML.
+- `CHANGELOG.md`: a `### Fixed` entry; the unreleased #1312 line "Its steps scroll inside it" corrected.
+
+**Live check.** A static harness served the real popover markup and stylesheets for `origin/main` and
+the branch, filled like the reported wrap, to a real Chrome over the tailnet IP (port leased, released
+after). Each control was scrolled into view only through user-scrollable ancestors, then hit-tested.
+Before the change, Approve, Reject, Done and Close could not be reached at 800×850, 1280×800, 1280×600,
+390×844 or 360×640. After it, all were reachable at every size. A real wheel scroll on the branch moved
+the body to its end with Approve and Done hit-testable. `session.css` and navigations are network-first
+in `sw.js`, so there is no `CACHE_NAME` bump.
+
 ## 2026-09-14 — The wrap popover, a watched handback, and a preflight resolution (#1312, #1229)
 
 <!-- prawduct: type=feature | scope=train-18-chunk-04 -->
