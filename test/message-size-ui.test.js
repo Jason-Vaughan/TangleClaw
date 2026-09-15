@@ -89,6 +89,21 @@ describe('api-helper — message size helpers (#1514)', () => {
     assert.equal(G.tcUtf8Bytes('\ud800'), 3, 'a lone surrogate is encoded as U+FFFD');
   });
 
+  it('the browser and the CLI say the same sentence for the same refusal (#1514)', () => {
+    // The wording and the rounding rule exist twice — `public/api-helper.js` for the
+    // page and `lib/tc-verbs.js` for `tc` — because a browser script cannot load a
+    // Node module and this project has no build step. Asserting each copy against its
+    // own literals lets a reworded one drift with both suites green, so the two are
+    // pinned against EACH OTHER here.
+    const tcVerbs = require('../lib/tc-verbs');
+    for (const [received, lowerBound] of [[LIMIT + 1, false], [70 * 1024, false], [LIMIT + 1, true], [1, false]]) {
+      const body = { code: 'BODY_TOO_LARGE', limitBytes: LIMIT, receivedBytes: received };
+      if (lowerBound) body.receivedBytesIsLowerBound = true;
+      assert.equal(G.tcTooLongText(received, LIMIT, lowerBound), tcVerbs.renderBodyTooLarge(body),
+        `browser and CLI must agree for ${received} bytes${lowerBound ? ' (lower bound)' : ''}`);
+    }
+  });
+
   it('tcFormatKB keeps whole kilobytes whole and rounds anything else up', () => {
     assert.equal(G.tcFormatKB(LIMIT), '64 KB');
     assert.equal(G.tcFormatKB(LIMIT + 1), '64.1 KB');

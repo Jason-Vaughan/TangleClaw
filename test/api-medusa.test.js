@@ -1886,6 +1886,19 @@ describe('API — Medusa Chunk 03 routes (send / roster)', () => {
       assert.equal(data.receivedBytes, 70 * 1024);
     });
 
+    it('the wrap routes that carry prose into a session are in the family too (handback, wrap/complete)', async () => {
+      // Every route that carries operator or agent prose into a session takes the
+      // same body cap — a hand-kept list of the ones somebody noticed is how the
+      // handback stayed on 10 KB while its own cap allows ~11 KB of multibyte text.
+      for (const urlPath of ['/api/sessions/no-session-c04/wrap/handback', '/api/sessions/no-session-c04/wrap/complete']) {
+        const fits = await rawPost(urlPath, bodyOfSize({}, 12 * 1024));
+        assert.notEqual(fits.status, 413, `${urlPath} must accept 12 KB`);
+        const { status, data } = await rawPost(urlPath, bodyOfSize({}, 70 * 1024));
+        assert.equal(status, 413, urlPath);
+        assert.equal(data.limitBytes, MESSAGE_BODY_LIMIT_BYTES, urlPath);
+      }
+    });
+
     it('a route left on the default still 413s at 10 KB, now with its own limit named', async () => {
       const { status, data } = await rawPost('/api/sessions/sender/medusa/read', bodyOfSize({}, 11 * 1024));
       assert.equal(status, 413);

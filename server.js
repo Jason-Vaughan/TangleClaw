@@ -6417,6 +6417,11 @@ route('GET', '/api/sessions/:project/wrap/stream/:runId', (req, res, params) => 
 // sent; the outcome is read from the handback stream or `GET /wrap/status`.
 // Gated like `POST /command`, which it replaces for the drawer: it sends a narrower
 // thing (a prompt for one blocked step) through the same injection path.
+// The 64 KB limit covers every route that carries operator or agent PROSE into a
+// session (#1514) — the switchboard sends, the loop bodies, `/command`, this
+// handback and the wrap summary below — not a hand-kept list of the ones that
+// were noticed. A 3800-character handback of multibyte text is ~11 KB, which the
+// 10 KB default refused before the handler's own cap could answer.
 route('POST', '/api/sessions/:project/wrap/handback', (_req, res, params, body) => {
   const started = wrapHandback.start(params.project, body);
   if (!started.ok) return errorResponse(res, started.status, started.error, started.code);
@@ -6429,7 +6434,7 @@ route('POST', '/api/sessions/:project/wrap/handback', (_req, res, params, body) 
     statusUrl: `/api/sessions/${project}/wrap/status`,
     streamUrl: `/api/sessions/${project}/wrap/handback/stream/${encodeURIComponent(started.handbackId)}`
   });
-});
+}, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES });
 
 // GET /api/sessions/:project/wrap/handback/stream/:handbackId — the handback's
 // watch as `text/event-stream`: `handback-start`, then one terminal
@@ -6537,7 +6542,7 @@ route('POST', '/api/sessions/:project/wrap/complete', (_req, res, params, body) 
     ok: true,
     session: result.session
   });
-});
+}, { maxBodySize: MESSAGE_BODY_LIMIT_BYTES });
 
 // GET /api/sessions/:project/peek — Peek at terminal output
 route('GET', '/api/sessions/:project/peek', (req, res, params) => {
