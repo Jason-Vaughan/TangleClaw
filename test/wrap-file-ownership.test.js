@@ -582,6 +582,55 @@ describe('#1512: the one-time offer to stop tracking TangleClaw state', () => {
     assert.match(git(repo, 'status', '--porcelain'), /\?\? untracked-operator\.txt/);
   });
 
+  it('approve on an otherwise clean tree (the state file unchanged) still removes it from tracking', async () => {
+    const repo = makeRepo();
+    fs.mkdirSync(path.join(repo, '.tangleclaw', 'medusa'), { recursive: true });
+    fs.writeFileSync(path.join(repo, '.tangleclaw', 'medusa', 'registry.json'), '{}\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'tracked registry');
+    assert.equal(git(repo, 'status', '--porcelain'), '', 'fixture precondition: nothing is dirty');
+    const scope = await scopeFor(repo, launchBaseline.capture(repo));
+    const options = { untrackState: 'approve' };
+    const files = await runStep(sessionFiles, repo, scope, options);
+    assert.equal(files.status, 'done');
+    const r = await runStep(commitStep, repo, scope, options);
+    assert.equal(r.status, 'done', r.output && r.output.reason);
+    assert.deepEqual(git(repo, 'show', '--name-status', '--format=', 'HEAD').split('\n'), ['D\t.tangleclaw/medusa/registry.json']);
+    assert.equal(git(repo, 'ls-files', '--', '.tangleclaw'), '');
+  });
+
+  it('commit removes only the paths session-files showed, not one tracked after it asked', async () => {
+    const { repo, scope } = await trackedStateProject();
+    const options = { pathDecisions: { 'shared.js': 'leave' }, untrackState: 'approve' };
+    const files = await runStep(sessionFiles, repo, scope, options);
+    assert.deepEqual(files.output.untrackState, ['.tangleclaw/medusa/registry.json', '.tangleclaw/session-prime.md']);
+    // A state file becomes tracked between the question and the commit.
+    fs.writeFileSync(path.join(repo, '.tangleclaw', 'critic-runs.json'), '[]\n');
+    git(repo, 'add', '.tangleclaw/critic-runs.json');
+    git(repo, 'commit', '-q', '-m', 'tracked late', '--', '.tangleclaw/critic-runs.json');
+    const r = await commitStep.run({
+      project: wrapScope.stepProject({ id: 1, name: 'own', path: repo }, scope),
+      session: null,
+      step: { id: 'commit' },
+      previousResults: [{ stepId: 'session-files', status: 'done', output: files.output }],
+      staged: {},
+      options,
+      scope
+    });
+    assert.equal(r.status, 'done', (r.blockers || []).join('; '));
+    assert.deepEqual(r.output.untrackState, ['.tangleclaw/medusa/registry.json', '.tangleclaw/session-prime.md']);
+    assert.equal(git(repo, 'ls-files', '--', '.tangleclaw/critic-runs.json'), '.tangleclaw/critic-runs.json', 'never shown, so never removed');
+  });
+
+  it('decline over an unreadable state file is not remembered, and the unreadable boundary stays unreadable', async () => {
+    const { repo, scope } = await trackedStateProject();
+    fs.writeFileSync(path.join(repo, '.tangleclaw', 'state.json'), '{ corrupt');
+    const r = await runStep(sessionFiles, repo, scope, { pathDecisions: { 'shared.js': 'leave' }, untrackState: 'decline' });
+    assert.equal(r.status, 'done');
+    assert.equal(fs.readFileSync(path.join(repo, '.tangleclaw', 'state.json'), 'utf8'), '{ corrupt');
+    assert.equal(wrapState.readLastWrapSha(repo).read, 'unreadable');
+  });
+
   it('decline is remembered, so the next wrap does not ask; a newly tracked state path is offered again', async () => {
     const { repo, scope } = await trackedStateProject();
     const declined = await runStep(sessionFiles, repo, scope, { pathDecisions: { 'shared.js': 'leave' }, untrackState: 'decline' });

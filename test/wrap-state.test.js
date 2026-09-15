@@ -204,6 +204,27 @@ describe('migrating project.json', () => {
   });
 });
 
+describe('remembering a declined un-track offer', () => {
+  it('merges with an earlier decline and keeps the boundary', () => {
+    const dir = project();
+    wrapState.stampLastWrapSha(dir, 'abc1234', { now: NOW });
+    assert.equal(wrapState.recordUntrackDeclined(dir, ['.tangleclaw/b'], { now: NOW }).recorded, true);
+    wrapState.recordUntrackDeclined(dir, ['.tangleclaw/a'], { now: NOW });
+    assert.deepEqual(wrapState.readUntrackDeclined(dir), ['.tangleclaw/a', '.tangleclaw/b']);
+    assert.equal(wrapState.readLastWrapSha(dir).sha, 'abc1234');
+  });
+
+  it('never overwrites an unreadable state file', () => {
+    const dir = project();
+    fs.mkdirSync(path.dirname(wrapState.statePath(dir)), { recursive: true });
+    fs.writeFileSync(wrapState.statePath(dir), '{ corrupt');
+    const r = wrapState.recordUntrackDeclined(dir, ['.tangleclaw/a'], { now: NOW });
+    assert.equal(r.recorded, false);
+    assert.equal(fs.readFileSync(wrapState.statePath(dir), 'utf8'), '{ corrupt');
+    assert.deepEqual(wrapState.readUntrackDeclined(dir), []);
+  });
+});
+
 describe('store.projectConfig.save never writes the boundary back', () => {
   let store;
   let tmpBase;
