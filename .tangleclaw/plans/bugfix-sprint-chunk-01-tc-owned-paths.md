@@ -107,7 +107,7 @@ A new module, `lib/wrap-steps/_tc-owned-paths.js`, is the single source of truth
 
 ## Status
 
-- [ ] 01a — `managed-block.js` shared region-only proof; update-applier uses it (behavior unchanged, suite green)
-- [ ] 01b — `_tc-owned-paths.js` registry + judgements, with tests
-- [ ] 01c — `classify` integration + session-files/commit output + commit body, with tests
-- [ ] 01d — docs, CHANGELOG, FEATURES.md; full suite; Critic; PR
+- [x] 01a — `managed-block.js` shared region-only proof; update-applier uses it (behavior unchanged, suite green)
+- [x] 01b — `_tc-owned-paths.js` registry + judgements, with tests
+- [x] 01c — `classify` integration + session-files/commit output + commit body, with tests
+- [x] 01d — docs, CHANGELOG, FEATURES.md; full suite; Critic (1 blocking, fixed; verify-resolutions clean); PR
