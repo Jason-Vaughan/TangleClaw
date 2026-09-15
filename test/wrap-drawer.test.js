@@ -204,7 +204,10 @@ describe('wrap-drawer helpers — buildStepRow', () => {
     assert.equal(row.detail, '1 session PR');
   });
 
-  it('surfaces priming-roll target chunk in detail', () => {
+  it('reads nothing from a flat pointer shape, which no handler emits', () => {
+    // This fixture used to assert `→ chunk 10` from `output.current`, a shape
+    // the handler has never written. It hid the real row showing nothing at all
+    // for as long as it stood (#1516), so it now pins the opposite.
     const row = H.buildStepRow({
       stepId: 'priming',
       kind: 'priming-roll',
@@ -212,7 +215,35 @@ describe('wrap-drawer helpers — buildStepRow', () => {
       output: { current: '10', allDone: false },
       blockers: []
     }, {});
-    assert.equal(row.detail, '→ chunk 10');
+    assert.equal(row.detail, null);
+  });
+
+  it('surfaces the chunk from the pointer shape the priming-roll handler actually emits', () => {
+    const row = H.buildStepRow({
+      stepId: 'next-session-prime',
+      kind: 'priming-roll',
+      status: 'done',
+      output: { pointer: { current: { id: '05', title: 'Wrap friction' }, next: null, allDone: false }, changed: true },
+      blockers: []
+    }, {});
+    assert.equal(row.detail, '→ chunk 05');
+    const allDone = H.buildStepRow({ stepId: 'p', kind: 'priming-roll', status: 'done', output: { pointer: { current: null, allDone: true } }, blockers: [] }, {});
+    assert.equal(allDone.detail, 'All chunks done');
+  });
+
+  it('names an archive candidate on the priming-roll row, done or blocked (#1516)', () => {
+    const note = 'Archive candidate: train-9.md (#1416 closed) — every cited issue is closed';
+    const done = H.buildStepRow({
+      stepId: 'next-session-prime', kind: 'priming-roll', status: 'done',
+      output: { pointer: { current: { id: '1' }, allDone: false }, warning: true, note }, blockers: []
+    }, {});
+    assert.equal(done.detail, `→ chunk 1 · ${note}`);
+    assert.equal(done.warning, true);
+    const blocked = H.buildStepRow({
+      stepId: 'next-session-prime', kind: 'priming-roll', status: 'blocked',
+      output: { candidates: ['a.md', 'b.md'], warning: true, note }, blockers: ['Multiple in-progress plans']
+    }, {});
+    assert.equal(blocked.detail, note);
   });
 
   it('surfaces ai-content captured field count', () => {
@@ -1342,7 +1373,7 @@ describe('#867 — stranded-wrap classification agrees with the server', () => {
     const fresh = deriveDetail({ kind: 'ai-content', status: 'done', output: { capturedText: 'x', parsedFields: { summary: 's' } } });
     const reused = deriveDetail({ kind: 'ai-content', status: 'done', output: { capturedText: 'x', parsedFields: { summary: 's' }, resumed: true } });
     assert.equal(fresh, 'captured 1 field');
-    assert.match(reused, /^captured 1 field · reused from the blocked wrap, not re-asked$/,
+    assert.match(reused, /^captured 1 field · reused from the halted attempt, not re-asked$/,
       'reused content lands in the commit; the row must not read as if it was just written');
     assert.match(deriveDetail({ kind: 'ai-content', status: 'done', output: { capturedText: 'edit done', resumed: true } }),
       /^captured · reused/);

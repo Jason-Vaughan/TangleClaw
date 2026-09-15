@@ -148,6 +148,29 @@ describe('wrap-step priming-roll — pure helpers (#139 Chunk 6)', () => {
     });
   });
 
+  describe('_citedIssues (#1516)', () => {
+    it('reads issue field lines, a ## Issues section and closing keywords — not prose', () => {
+      const md = [
+        '# Plan',
+        '**Issues:** [#1139](https://github.com/o/r/issues/1139), #1140',
+        '- Tracking issue: **#710**.',
+        'Background: #999 shipped last month, and #998 is related.',
+        '## Issues',
+        '| 01 | #1508, #1509 |',
+        '## Plan',
+        'Mentions #997 here.',
+        '- [ ] PR with `Fixes #1015` and closes #1016',
+        '**Issue:** #1140 again'
+      ].join('\n');
+      assert.deepStrictEqual(primingRoll._citedIssues(md), [1139, 1140, 710, 1508, 1509, 1015, 1016]);
+    });
+
+    it('returns [] for a plan with no issue field', () => {
+      assert.deepStrictEqual(primingRoll._citedIssues('### Chunk 1: A\nSee #12.\n'), []);
+      assert.deepStrictEqual(primingRoll._citedIssues(''), []);
+    });
+  });
+
   describe('_selectPointer', () => {
     it('returns the first un-done as current and the next as on-deck', () => {
       const chunks = [
@@ -580,6 +603,166 @@ describe('wrap-step priming-roll — handler (#139 Chunk 6)', () => {
     assert.equal(result.status, 'blocked');
     assert.match(result.blockers[0], /activePlan "ghost\.md".*does not exist/);
     assert.match(result.output.remediation, /activePlan/);
+  });
+
+  describe('plans whose cited issues are all closed (#1516)', () => {
+    /**
+     * Install a fake issue lookup; records every call.
+     * @param {object|Function} answer - The lookup result, or a function of the numbers
+     * @returns {Array<{cwd: string, numbers: number[]}>} calls
+     */
+    function fakeLookup(answer) {
+      const calls = [];
+      primingRoll._internal.lookupIssueStates = async (cwd, numbers) => {
+        calls.push({ cwd, numbers: [...numbers].sort((a, b) => a - b) });
+        return typeof answer === 'function' ? answer(numbers) : answer;
+      };
+      return calls;
+    }
+
+    it('two candidates, one citing only closed issues: the live one is picked and the other reported as an archive candidate', async () => {
+      writePlan('train-9.md', '**Issues:** #1416 (addendum), #1417 (store).\n\n### Chunk 1: A\n');
+      writePlan('sprint.md', '## Issues\n\n| Chunk | Issues |\n|---|---|\n| 01 | #1508, #1416 |\n\n## Plan\n\n### Chunk 1: A\n');
+      const calls = fakeLookup({ available: true, states: { 1416: 'closed', 1417: 'closed', 1508: 'open' } });
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.deepEqual(calls, [{ cwd: projectPath, numbers: [1416, 1417, 1508] }], 'one lookup for every cited issue');
+      assert.equal(result.ok, true);
+      assert.equal(result.status, 'done', 'exactly one live candidate is used without asking');
+      assert.match(result.output.planPath, /sprint\.md$/);
+      assert.deepEqual(result.output.archiveCandidates, [{ file: 'train-9.md', issues: [1416, 1417] }]);
+      assert.equal(result.output.warning, true, 'the row is flagged for the operator to look at');
+      assert.match(result.output.note, /Archive candidate: train-9\.md \(#1416, #1417 closed\)/);
+      assert.ok(fs.existsSync(path.join(projectPath, '.claude', 'plans', 'train-9.md')), 'a warning only — nothing is moved');
+    });
+
+    it('two live candidates: the picker still shows, with no archive candidate', async () => {
+      writePlan('one.md', '**Issue:** #1\n### Chunk 1: A\n');
+      writePlan('two.md', '**Issues:** #2, #3\n### Chunk 1: A\n');
+      fakeLookup({ available: true, states: { 1: 'open', 2: 'closed', 3: 'open' } });
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.equal(result.status, 'blocked');
+      assert.deepEqual(result.output.candidates.slice().sort(), ['one.md', 'two.md']);
+      assert.equal(result.output.archiveCandidates, undefined);
+      assert.equal(result.output.warning, undefined);
+      assert.equal(result.blockers.length, 1);
+    });
+
+    it('three candidates, one shipped: the picker offers only the two still live', async () => {
+      writePlan('a.md', '**Issue:** #1\n### Chunk 1: A\n');
+      writePlan('b.md', '**Issue:** #2\n### Chunk 1: A\n');
+      writePlan('shipped.md', 'Fixes #3\n### Chunk 1: A\n');
+      fakeLookup({ available: true, states: { 1: 'open', 2: 'open', 3: 'closed' } });
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.equal(result.status, 'blocked');
+      assert.deepEqual(result.output.candidates.slice().sort(), ['a.md', 'b.md']);
+      assert.ok(!result.blockers[0].includes('shipped.md'));
+      assert.deepEqual(result.output.archiveCandidates.map((a) => a.file), ['shipped.md']);
+      assert.match(result.output.note, /shipped\.md/);
+    });
+
+    it('every candidate shipped: skips, naming them as archive candidates', async () => {
+      writePlan('old-a.md', '**Issue:** #1\n### Chunk 1: A\n');
+      writePlan('old-b.md', '**Issue:** #2\n### Chunk 1: A\n');
+      fakeLookup({ available: true, states: { 1: 'closed', 2: 'closed' } });
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.equal(result.ok, true);
+      assert.equal(result.status, 'skipped');
+      assert.match(result.output.reason, /nothing to roll/);
+      assert.match(result.output.reason, /old-a\.md.*old-b\.md/);
+      assert.equal(result.output.archiveCandidates.length, 2);
+    });
+
+    it('ONE in-progress plan, shipped: dropped and skipped — the filter is not only for a picker', async () => {
+      // The fix first hung off the multi-candidate branch, so the one-live-plan
+      // route rolled a shipped plan with no note: #1516's own bug, surviving on
+      // the path the fix had not reached.
+      writePlan('shipped.md', '**Issues:** #1, #2\n### Chunk 1: A\n');
+      writePlan('finished.md', '### Chunk 1: Done ✅\n');
+      fakeLookup({ available: true, states: { 1: 'closed', 2: 'closed' } });
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.equal(result.ok, true);
+      assert.equal(result.status, 'skipped');
+      assert.deepEqual(result.output.archiveCandidates.map((a) => a.file), ['shipped.md']);
+      assert.match(result.output.reason, /every in-progress plan cites only closed issues/);
+      assert.ok(fs.existsSync(path.join(projectPath, '.claude', 'plans', 'shipped.md')), 'a warning only — nothing is moved');
+    });
+
+    it('ONE in-progress plan with an open issue is rolled exactly as before', async () => {
+      writePlan('live.md', '**Issues:** #1, #2\n### Chunk 1: A\n');
+      writePlan('finished.md', '### Chunk 1: Done ✅\n');
+      fakeLookup({ available: true, states: { 1: 'closed', 2: 'open' } });
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.equal(result.status, 'done');
+      assert.match(result.output.planPath, /live\.md$/);
+      assert.equal(result.output.archiveCandidates, undefined);
+    });
+
+    it('an operator pointer is rolled as named, never dropped underneath them', async () => {
+      writePlan('pinned.md', '**Issues:** #1\n### Chunk 1: A\n');
+      const calls = fakeLookup(() => { throw new Error('must not be called'); });
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime', planPath: '.claude/plans/pinned.md' }));
+      assert.equal(result.status, 'done');
+      assert.match(result.output.planPath, /pinned\.md$/);
+      assert.equal(calls.length, 0, 'a named plan is not second-guessed against GitHub');
+    });
+
+    it('gh unavailable: the picker shows every candidate, with the stated reason', async () => {
+      writePlan('one.md', '**Issue:** #1\n### Chunk 1: A\n');
+      writePlan('two.md', '**Issue:** #2\n### Chunk 1: A\n');
+      fakeLookup({ available: false, reason: 'gh is not installed' });
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.equal(result.status, 'blocked');
+      assert.deepEqual(result.output.candidates.slice().sort(), ['one.md', 'two.md']);
+      assert.match(result.blockers[0], /Multiple in-progress plans/);
+      assert.match(result.blockers[1], /gh is not installed/);
+      assert.deepEqual(result.output.issueCheck, { state: 'unavailable', reason: 'gh is not installed' });
+    });
+
+    it('a plan citing no issues is not "all closed" and stays a candidate; gh is not asked when nothing cites an issue', async () => {
+      writePlan('uncited.md', '### Chunk 1: A\nSee #1 in passing prose.\n');
+      writePlan('shipped.md', '**Issue:** #2\n### Chunk 1: A\n');
+      fakeLookup({ available: true, states: { 2: 'closed' } });
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.equal(result.status, 'done');
+      assert.match(result.output.planPath, /uncited\.md$/, 'prose references do not make a plan shipped');
+
+      fs.rmSync(path.join(projectPath, '.claude', 'plans', 'shipped.md'));
+      writePlan('also-uncited.md', '### Chunk 1: A\n');
+      const calls = fakeLookup(() => { throw new Error('must not be called'); });
+      const blocked = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.equal(blocked.status, 'blocked');
+      assert.equal(calls.length, 0, 'no cited issue, no lookup');
+      assert.deepEqual(blocked.output.issueCheck, { state: 'not-needed', reason: null });
+    });
+
+    it('an issue GitHub does not know keeps its plan a candidate', async () => {
+      writePlan('one.md', '**Issues:** #1, #2\n### Chunk 1: A\n');
+      writePlan('two.md', '**Issue:** #3\n### Chunk 1: A\n');
+      fakeLookup({ available: true, states: { 1: 'closed', 2: 'unknown', 3: 'open' } });
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.equal(result.status, 'blocked');
+      assert.equal(result.output.candidates.length, 2);
+    });
+
+    it('an activePlan naming a since-archived plan falls through to resolution and says so, without rewriting project.json', async () => {
+      writePlan('live.md', '### Chunk 1: A\n');
+      writePlan('shipped-done.md', '### Chunk 1: A ✅\n');
+      const archive = path.join(projectPath, '.claude', 'plans', 'archive');
+      fs.mkdirSync(archive, { recursive: true });
+      fs.writeFileSync(path.join(archive, 'picked-before.md'), '### Chunk 1: A\n');
+      const cfg = path.join(projectPath, '.tangleclaw', 'project.json');
+      fs.mkdirSync(path.dirname(cfg), { recursive: true });
+      const cfgBody = JSON.stringify({ activePlan: 'picked-before.md' });
+      fs.writeFileSync(cfg, cfgBody);
+      fakeLookup(() => { throw new Error('no issues cited'); });
+      const result = await primingRoll.run(buildContext({ id: 'next-session-prime' }));
+      assert.equal(result.status, 'done');
+      assert.match(result.output.planPath, /live\.md$/);
+      assert.equal(result.output.staleActivePlan, 'picked-before.md');
+      assert.equal(result.output.warning, true);
+      assert.match(result.output.note, /activePlan "picked-before\.md".*archived/);
+      assert.equal(fs.readFileSync(cfg, 'utf8'), cfgBody, 'project.json is read, never written');
+    });
   });
 
   it('honors step.planPath when set (project-relative)', async () => {

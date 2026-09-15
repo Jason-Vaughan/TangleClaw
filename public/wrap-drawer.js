@@ -120,7 +120,8 @@
    *   remediation: string|null,
    *   isBlocker: boolean,
    *   agentResolvable: boolean,
-   *   warning: boolean
+   *   warning: boolean,
+   *   reused: boolean
    * }}
    */
   function buildStepRow(stepResult, ctx) {
@@ -140,17 +141,18 @@
     const remediation = output && typeof output.remediation === 'string' && output.remediation.trim()
       ? output.remediation.trim()
       : null;
+    const reuse = reuseMeta(stepResult, status, output);
     return {
       id: stepResult.stepId,
       kind: stepResult.kind,
       kindLabel: KIND_LABELS[stepResult.kind] || stepResult.kind,
       kindTooltip: KIND_DESCRIPTIONS[stepResult.kind] || '',
       status,
-      statusLabel: meta.label,
-      statusTone: meta.tone,
-      statusTooltip: meta.tooltip || '',
+      statusLabel: reuse ? reuse.label : meta.label,
+      statusTone: reuse ? 'reused' : meta.tone,
+      statusTooltip: reuse ? reuse.tooltip : (meta.tooltip || ''),
       blockers,
-      detail: deriveDetail(stepResult),
+      detail: deriveDetail(stepResult) || (reuse ? reuse.detail : null),
       remediation,
       isBlocker: blockedAt !== null && stepResult.stepId === blockedAt,
       // #702 — is THIS block one the owning session can resolve by writing
@@ -170,8 +172,46 @@
       // the prompt, so the button is not an agent invocation of its own.
       agentResolvable: blockedAt !== null && stepResult.stepId === blockedAt
         && (stepResult.kind === 'ai-content' || stepResult.kind === 'preflight') && status !== 'needs-operator',
-      warning
+      warning,
+      // #1515 — a content step a Retry reuses from the halted attempt rather
+      // than asking again. The session paints the row distinctly.
+      reused: Boolean(reuse)
     };
+  }
+
+  /**
+   * #1515 — the badge for a content step a Retry reuses from the halted attempt,
+   * or null for every other row.
+   *
+   * Two sources, one per moment of the run: a pending row the new run announced
+   * with `reused: true` in its `run-start` shape (the server's own "will reuse"
+   * decision, so the drawer never guesses it from the previous report), and a
+   * settled row whose output carries the runner's `resumed` flag. Without them a
+   * Retry repainted every step as pending and read as the whole wrap restarting.
+   * A running row keeps its Running badge — the reuse is instant, and a badge
+   * that claimed the step had already settled would be ahead of the server.
+   *
+   * @param {object} stepResult - The step row (`reused` is set by the live fold)
+   * @param {string} status - The row's resolved status
+   * @param {object|null} output - The row's output, when an object
+   * @returns {{label: string, tooltip: string, detail: string|null}|null}
+   */
+  function reuseMeta(stepResult, status, output) {
+    if (status === 'done' && output && output.resumed === true) {
+      return {
+        label: 'Reused',
+        tooltip: 'Reused from the halted attempt: this Retry kept the content captured before the wrap stopped and did not ask the AI again.',
+        detail: 'reused from the halted attempt, not re-asked'
+      };
+    }
+    if (status === 'pending' && stepResult.reused === true) {
+      return {
+        label: 'Will reuse',
+        tooltip: 'This Retry will reuse the content captured by the halted attempt instead of asking the AI again.',
+        detail: 'reused from the halted attempt, not re-asked'
+      };
+    }
+    return null;
   }
 
   /**
@@ -274,10 +314,22 @@
       case 'lint':
         if (typeof output.exitCode === 'number') return `exit ${output.exitCode}`;
         return null;
-      case 'priming-roll':
-        if (output.allDone) return 'All chunks done';
-        if (output.current) return `→ chunk ${output.current}`;
-        return null;
+      case 'priming-roll': {
+        // The handler reports its pointer under `output.pointer` ({current: {id}}).
+        // Read only that shape: the flat `current`/`allDone` form was never emitted
+        // by any handler, and the fixture that carried it is what hid this row
+        // showing nothing for as long as it did (#1516).
+        const pointer = output.pointer && typeof output.pointer === 'object' ? output.pointer : {};
+        const current = pointer.current && typeof pointer.current === 'object' ? pointer.current.id : pointer.current;
+        let line = null;
+        if (pointer.allDone) line = 'All chunks done';
+        else if (current) line = `→ chunk ${current}`;
+        // #1516 — a plan dropped as shipped, or a stale activePlan, is named on
+        // the row: the step picked around it, and only the operator archives.
+        const note = typeof output.note === 'string' && output.note ? output.note : null;
+        if (note) return line ? `${line} · ${note}` : note;
+        return line;
+      }
       case 'commit': {
         if (!output.commitSha) return null;
         const sha = output.commitSha.slice(0, 12);
@@ -319,7 +371,7 @@
         // of re-asking the AI. That content lands in the commit, so the row
         // says so: an operator reading "captured" would assume it was just
         // written.
-        const reused = output.resumed === true ? ' · reused from the blocked wrap, not re-asked' : '';
+        const reused = output.resumed === true ? ' · reused from the halted attempt, not re-asked' : '';
         // #1450 — a step the AI never marked finished ended on a quiet terminal,
         // which can be wrong about a model still thinking; the row says so.
         const quiet = typeof output.completionNote === 'string' && output.completionNote ? ` · ${output.completionNote}` : '';
@@ -1260,7 +1312,13 @@
       const steps = Array.isArray(event.steps) ? event.steps : [];
       next.results = steps
         .filter((s) => s && typeof s.stepId === 'string')
-        .map((s) => ({ stepId: s.stepId, kind: typeof s.kind === 'string' ? s.kind : '', status: 'pending', output: null, blockers: [] }));
+        .map((s) => {
+          const row = { stepId: s.stepId, kind: typeof s.kind === 'string' ? s.kind : '', status: 'pending', output: null, blockers: [] };
+          // #1515 — the server's "this Retry reuses this step"; only set when true,
+          // so a run with nothing to reuse folds to the rows it always did.
+          if (s.reused === true) row.reused = true;
+          return row;
+        });
       next.started = true;
       next.blockedAt = null;
       next.currentStepId = null;

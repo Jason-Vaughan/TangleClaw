@@ -228,6 +228,80 @@ describe('wrap-drawer helpers — live banner + report (#185)', () => {
   });
 });
 
+describe('wrap-drawer helpers — a Retry that reuses steps does not read as a restart (#1515)', () => {
+  const H = loadHelpers();
+  const RETRY_START = {
+    type: 'run-start',
+    steps: [
+      { stepId: 'open-pr-check', kind: 'pr-check' },
+      { stepId: 'changelog-update', kind: 'ai-content', reused: true },
+      { stepId: 'version-bump', kind: 'version-bump' }
+    ]
+  };
+
+  it('run-start marks the announced reused rows, and only those', () => {
+    const live = H.applyWrapStreamEvent(null, RETRY_START);
+    assert.equal(live.results[1].reused, true);
+    assert.ok(!('reused' in live.results[0]));
+    assert.ok(!('reused' in live.results[2]));
+    const rows = H.liveWrapAsPipelineResult(live).results.map((r) => H.buildStepRow(r, {}));
+    assert.equal(rows[1].statusLabel, 'Will reuse');
+    assert.equal(rows[1].statusTone, 'reused');
+    assert.equal(rows[1].reused, true);
+    assert.match(rows[1].detail, /reused from the halted attempt/);
+    assert.equal(rows[0].statusLabel, 'Pending', 'a step the Retry actually runs still reads pending');
+    assert.equal(rows[0].reused, false);
+  });
+
+  it('the reused step keeps its mark while it runs and settles as Reused, driven by the resumed flag', () => {
+    // The producer's sequence for a reused step: step-start, then step-done
+    // carrying output.resumed — no other frame.
+    let live = H.applyWrapStreamEvent(null, RETRY_START);
+    live = H.applyWrapStreamEvent(live, { type: 'step-start', stepId: 'changelog-update', kind: 'ai-content' });
+    const running = H.buildStepRow(H.liveWrapAsPipelineResult(live).results[1], {});
+    assert.equal(running.statusLabel, 'Running', 'no badge gets ahead of the server');
+    live = H.applyWrapStreamEvent(live, {
+      type: 'step-done', stepId: 'changelog-update', kind: 'ai-content', status: 'done',
+      output: { capturedText: 'x', parsedFields: { entry: 'e' }, resumed: true, capturedAt: 1 }, blockers: [], halted: false
+    });
+    const row = H.buildStepRow(H.liveWrapAsPipelineResult(live).results[1], {});
+    assert.equal(row.statusLabel, 'Reused');
+    assert.equal(row.statusTone, 'reused');
+    assert.equal(row.detail, 'captured 1 field · reused from the halted attempt, not re-asked');
+    const report = H.buildReportText(H.liveWrapAsPipelineResult(live), H.summarizeLiveStatus(live, { retry: true }));
+    assert.match(report, /\[Reused\] AI content — changelog-update/);
+  });
+
+  it('the final report renders a reused step as Reused from its output alone', () => {
+    const row = H.buildStepRow({ stepId: 'memory-update', kind: 'ai-content', status: 'done', output: { capturedText: 'm', resumed: true }, blockers: [] }, {});
+    assert.equal(row.statusLabel, 'Reused');
+    assert.equal(row.reused, true);
+  });
+
+  it('a Retry with nothing to reuse renders exactly as before', () => {
+    const plainStart = { type: 'run-start', steps: RETRY_START.steps.map(({ stepId, kind }) => ({ stepId, kind })) };
+    const live = H.applyWrapStreamEvent(null, plainStart);
+    for (const r of H.liveWrapAsPipelineResult(live).results) {
+      const row = H.buildStepRow(r, {});
+      assert.equal(row.statusLabel, 'Pending');
+      assert.equal(row.statusTone, 'pending');
+      assert.equal(row.reused, false);
+      assert.equal(row.detail, null);
+    }
+    const fresh = H.buildStepRow({ stepId: 'memory-update', kind: 'ai-content', status: 'done', output: { capturedText: 'm' }, blockers: [] }, {});
+    assert.equal(fresh.statusLabel, 'Done');
+    assert.equal(fresh.detail, 'captured');
+  });
+
+  it('the reused tone and row are styled, and session.js marks the row', () => {
+    const css = fs.readFileSync(path.join(PUBLIC, 'session.css'), 'utf8');
+    assert.ok(css.includes('.wrap-step-status--reused {'));
+    assert.ok(css.includes('.wrap-step-row--reused'));
+    const body = functionBody(fs.readFileSync(path.join(PUBLIC, 'session.js'), 'utf8'), 'function renderStepRow(');
+    assert.ok(body.includes("classList.add('wrap-step-row--reused')"));
+  });
+});
+
 describe('session.js wiring (#185)', () => {
   let src;
 
