@@ -42,6 +42,21 @@ Train 19 Chunk 04, the last layer of #1492. A new non-blocking content step, `re
 
 Tests changed by requirement, not weakened: the pipeline order and length pins now include the new step. The `wrapShape` capture union gains its three fields. The `{sessionScope}` prompt roster gains the step. The reused-step header test resumes the new step too, so its Retry still has one prompt.
 
+**Review.** Critic cumulative — 0 blocking, 0 warning. All notes accepted; none needed another round.
+
+**rev-20260915T040643Z-064df35f** — 2026-09-15T04:10:40Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | note | accepted | Release outcome stays the operator's; carrying AI text in Retry options would let an HTTP body supply it, which #1404's resume design refuses. Recorded under plan D5. |
+| R-2 | note | accepted | Invalid release/bumpLevel costs at most one prompt and version-bump refuses them by name (pinned by a test); the cycle is a documented lazy require. A shared decision module is not worth a second round now. |
+| R-3 | note | accepted | The step output already carries decidedBy and recommendation, and the drawer row and wrap summary Freshness line record both; the log line is secondary. |
+| R-4 | note | accepted | PR references #1492 without Fixes. Whether hiding the control settles the off-mode picker bug, or it gets its own issue, is still the operator's call (chunk-02 D6) and has been raised with them. |
+| R-5 | note | accepted | Informational: learnings cross-check passed. |
+| R-6 | note | accepted | Informational: prior dispositions acknowledged. |
+
+**6 findings** (6 note) — accepted: 6.
+
 
 ## 2026-09-15 — The operator decides whether a wrap cuts: Release Auto / Cut / Hold, and a halt when it's theirs (#1492 L3)
 

@@ -173,10 +173,10 @@ the `/wrap/status` comment in `server.js`.
 
 ## Status
 
-- [ ] 04a recommendation module (precondition, parse, read-back)
-- [ ] 04b precondition seam in the content handler and the prompt roster
-- [ ] 04c pipeline step + prompt
-- [ ] 04d version-bump disagreement trigger
-- [ ] 04e continuity Freshness line
-- [ ] 04f drawer widget + row detail
-- [ ] 04g D8 comment rewrites + docs + live check
+- [x] 04a recommendation module (precondition, parse, read-back)
+- [x] 04b precondition seam in the content handler and the prompt roster
+- [x] 04c pipeline step + prompt
+- [x] 04d version-bump disagreement trigger
+- [x] 04e continuity Freshness line
+- [x] 04f drawer widget + row detail
+- [x] 04g D8 comment rewrites + docs + live check
