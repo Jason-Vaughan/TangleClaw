@@ -314,10 +314,20 @@
       case 'lint':
         if (typeof output.exitCode === 'number') return `exit ${output.exitCode}`;
         return null;
-      case 'priming-roll':
-        if (output.allDone) return 'All chunks done';
-        if (output.current) return `→ chunk ${output.current}`;
-        return null;
+      case 'priming-roll': {
+        // The handler reports its pointer under `output.pointer` ({current: {id}});
+        // the flat `current`/`allDone` form is still read for older results.
+        const pointer = output.pointer && typeof output.pointer === 'object' ? output.pointer : output;
+        const current = pointer.current && typeof pointer.current === 'object' ? pointer.current.id : pointer.current;
+        let line = null;
+        if (pointer.allDone) line = 'All chunks done';
+        else if (current) line = `→ chunk ${current}`;
+        // #1516 — a plan dropped as shipped, or a stale activePlan, is named on
+        // the row: the step picked around it, and only the operator archives.
+        const note = typeof output.note === 'string' && output.note ? output.note : null;
+        if (note) return line ? `${line} · ${note}` : note;
+        return line;
+      }
       case 'commit': {
         if (!output.commitSha) return null;
         const sha = output.commitSha.slice(0, 12);
