@@ -353,6 +353,15 @@ describe('the changelog check judges only what the wrap will commit', () => {
     const included = coverage.evaluate(repo, ['CHANGELOG.md'], [], scope, { pathDecisions: { 'shared.js': 'include' } });
     assert.deepEqual(included.uncommittedWork, ['shared.js'], 'once included it will ship, so it needs an entry');
   });
+
+  it('TangleClaw machine state is named among the files the wrap will not commit', async () => {
+    const repo = makeRepo();
+    fs.mkdirSync(path.join(repo, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(path.join(repo, '.tangleclaw', 'session-prime.md'), 'prime\n');
+    fs.writeFileSync(path.join(repo, 'shared.js'), 'operator wip\n');
+    const scope = await scopeFor(repo, launchBaseline.capture(repo));
+    assert.deepEqual([...coverage._excludedFromCommit(repo, scope, {})].sort(), ['.tangleclaw/session-prime.md', 'shared.js']);
+  });
 });
 
 describe('the #1469 repro: a session in a worktree wraps the worktree', () => {
@@ -380,5 +389,91 @@ describe('the #1469 repro: a session in a worktree wraps the worktree', () => {
     assert.deepEqual(git(wt, 'show', '--name-only', '--format=', 'HEAD').split('\n'), ['feature.js']);
     assert.match(git(repo, 'status', '--porcelain'), /CLAUDE\.md/, 'the registered checkout is untouched');
     assert.equal(git(repo, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main');
+  });
+});
+
+describe('#1508/#1509: TangleClaw\'s own files dirty at launch are not asked about on every wrap', () => {
+  const engines = require('../lib/engines');
+  const MD = engines._managedBlockMarkers('markdown');
+  const guide = (body, operator = 'Operator notes.\n') => `# Project\n\n${operator}\n${MD.begin}\n${body}\n${MD.end}\n`;
+  const config = (sha) => `${JSON.stringify({ engine: 'claude', lastWrapSha: sha }, null, 2)}\n`;
+
+  /**
+   * A project that tracks its engine config, project.json and a state file, where
+   * TangleClaw rewrote all three before the session launched — the state every
+   * later wrap used to ask about — and the session then wrote `mine.js`.
+   * @param {object} [opts]
+   * @param {string} [opts.operatorLine] - Also add this line outside the managed block.
+   * @param {boolean} [opts.sessionWork=true] - Whether the session writes `mine.js`.
+   * @returns {Promise<{repo:string, scope:object}>}
+   */
+  async function tangleclawWritesThenSession({ operatorLine = null, sessionWork = true } = {}) {
+    const repo = makeRepo();
+    fs.mkdirSync(path.join(repo, '.tangleclaw'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'CLAUDE.md'), guide('guide v1'));
+    fs.writeFileSync(path.join(repo, '.tangleclaw', 'project.json'), config('aaa'));
+    fs.writeFileSync(path.join(repo, '.tangleclaw', 'session-prime.md'), 'prime v1\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'tracked tangleclaw files');
+    fs.writeFileSync(path.join(repo, 'CLAUDE.md'), guide('guide v2', operatorLine ? `Operator notes.\n${operatorLine}\n` : 'Operator notes.\n'));
+    fs.writeFileSync(path.join(repo, '.tangleclaw', 'project.json'), config('bbb'));
+    fs.writeFileSync(path.join(repo, '.tangleclaw', 'session-prime.md'), 'prime v2\n');
+    const baseline = launchBaseline.capture(repo);
+    if (sessionWork) fs.writeFileSync(path.join(repo, 'mine.js'), 'session work\n');
+    return { repo, scope: await scopeFor(repo, baseline) };
+  }
+
+  it('session-files and commit agree: maintenance is committed by name, state is left, nothing is asked', async () => {
+    const { repo, scope } = await tangleclawWritesThenSession();
+    assert.equal(scope.snapshotApplies, true, 'fixture precondition: the files are dirty at launch per the snapshot');
+
+    const files = await runStep(sessionFiles, repo, scope);
+    assert.equal(files.status, 'done', files.blockers.join('; '));
+    assert.deepEqual(files.output.tangleclawMaintenance, ['CLAUDE.md']);
+    assert.deepEqual(files.output.tangleclawState.sort(), ['.tangleclaw/project.json', '.tangleclaw/session-prime.md']);
+    assert.match(files.output.detail, /1 TangleClaw update to commit · 2 TangleClaw state files not committed/);
+
+    const r = await runStep(commitStep, repo, scope);
+    assert.equal(r.status, 'done');
+    assert.deepEqual(git(repo, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort(), ['CLAUDE.md', 'mine.js']);
+    assert.match(r.output.message, /^- TangleClaw maintenance \(changed only where TangleClaw writes\): CLAUDE\.md$/m);
+    assert.deepEqual(r.output.tangleclawMaintenance, ['CLAUDE.md']);
+    assert.equal(fs.readFileSync(path.join(repo, '.tangleclaw', 'session-prime.md'), 'utf8'), 'prime v2\n');
+    assert.match(git(repo, 'status', '--porcelain'), /^ M \.tangleclaw\/session-prime\.md$/m, 'state stays uncommitted');
+  });
+
+  it('one operator line outside the managed block still asks, exactly as before', async () => {
+    const { repo, scope } = await tangleclawWritesThenSession({ operatorLine: 'My own line.' });
+    const files = await runStep(sessionFiles, repo, scope);
+    assert.equal(files.status, 'blocked');
+    assert.deepEqual(files.output.foreignPaths.map((f) => f.path), ['CLAUDE.md']);
+    const head = git(repo, 'rev-parse', 'HEAD');
+    assert.equal((await runStep(commitStep, repo, scope)).status, 'blocked');
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), head, 'nothing was committed');
+  });
+
+  it('the changelog check does not demand an entry for TangleClaw maintenance', async () => {
+    const { repo, scope } = await tangleclawWritesThenSession({ sessionWork: false });
+    // The session made no commits, so the range from its launch SHA is empty and
+    // only the uncommitted tree is judged.
+    const judged = coverage.evaluate(repo, ['CHANGELOG.md'], [], scope);
+    assert.deepEqual(judged.uncommittedWork, [], 'a managed-block refresh is not the session\'s unlogged work');
+    assert.equal(judged.verdict, coverage.VERDICTS.COVERED);
+  });
+
+  it('a tree dirty only with TangleClaw state skips the commit and says why', async () => {
+    const repo = makeRepo();
+    fs.mkdirSync(path.join(repo, '.tangleclaw', 'continuity'), { recursive: true });
+    fs.writeFileSync(path.join(repo, '.tangleclaw', 'continuity', 'index.md'), 'v1\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'tracked continuity');
+    fs.writeFileSync(path.join(repo, '.tangleclaw', 'continuity', 'index.md'), 'v2\n');
+    const scope = await scopeFor(repo, launchBaseline.capture(repo));
+    const head = git(repo, 'rev-parse', 'HEAD');
+    assert.equal((await runStep(sessionFiles, repo, scope)).status, 'done');
+    const r = await runStep(commitStep, repo, scope);
+    assert.equal(r.status, 'skipped');
+    assert.match(r.output.reason, /only uncommitted files are TangleClaw state/);
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), head);
   });
 });
