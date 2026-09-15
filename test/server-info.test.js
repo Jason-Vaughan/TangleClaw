@@ -334,9 +334,20 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       }
     });
 
-    it('returns null on Linux today (deliberate follow-up, not a regression)', () => {
+    it("returns 'systemctl' on Linux when the systemd unit exists", () => {
       serverInfo._internal.platform = () => 'linux';
-      serverInfo._internal.existsSync = () => true; // even with a stray file, Linux returns null
+      serverInfo._internal.existsSync = (p) =>
+        p === '/etc/systemd/system/tangleclaw.service';
+      try {
+        assert.equal(serverInfo.detectRestartMechanism(), 'systemctl');
+      } finally {
+        restoreInternal();
+      }
+    });
+
+    it('returns null on Linux when the systemd unit is absent', () => {
+      serverInfo._internal.platform = () => 'linux';
+      serverInfo._internal.existsSync = () => false;
       try {
         assert.equal(serverInfo.detectRestartMechanism(), null);
       } finally {
@@ -382,8 +393,12 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       assert.equal(cmd, 'launchctl kickstart -k gui/$(id -u)/com.tangleclaw.server');
     });
 
+    it("emits the correct systemctl restart command for 'systemctl'", () => {
+      const cmd = serverInfo.buildRestartCommand('systemctl');
+      assert.equal(cmd, 'systemctl restart tangleclaw.service');
+    });
+
     it('returns null for an unknown mechanism (defensive — should never reach the exec path)', () => {
-      assert.equal(serverInfo.buildRestartCommand('systemctl'), null);
       assert.equal(serverInfo.buildRestartCommand('unknown'), null);
       assert.equal(serverInfo.buildRestartCommand(null), null);
       assert.equal(serverInfo.buildRestartCommand(undefined), null);
@@ -412,6 +427,20 @@ describe('lib/server-info (#199 stale-server detection)', () => {
         serverInfo.captureStartup();
         const info = serverInfo.getServerInfo();
         assert.equal(info.restartMechanism, null);
+      } finally {
+        restoreInternal();
+      }
+    });
+
+    it("restartMechanism is 'systemctl' on Linux with the systemd unit", () => {
+      serverInfo._internal.execSync = () => 'sha-1\n';
+      serverInfo._internal.platform = () => 'linux';
+      serverInfo._internal.existsSync = (p) =>
+        p === '/etc/systemd/system/tangleclaw.service';
+      try {
+        serverInfo.captureStartup();
+        const info = serverInfo.getServerInfo();
+        assert.equal(info.restartMechanism, 'systemctl');
       } finally {
         restoreInternal();
       }
