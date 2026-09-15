@@ -193,4 +193,5 @@ In `session-files`, after `classify`:
   - verify-resolutions `rev-20260915T220406Z-26fb3a1f`: clean.
 - [x] 02d — docs, CHANGELOG, FEATURES.md; full suite; cumulative Critic; operator verification of the drawer offer from a remote browser; PR
   - Done: docs, CHANGELOG, FEATURES.md, the full suite, and the cumulative Critic + verify-resolutions (clean).
-  - PR opened on the operator's go (2026-09-15). The browser check of the Stop/Keep tracking widget is queued as `VRF-1512-untrack-offer`, to run against the live install after merge.
+  - PR opened on the operator's go (2026-09-15).
+  - **Not done: the remote-browser check of the Stop/Keep tracking widget.** It is deferred to after merge as `VRF-1512-untrack-offer`, and tracked live in the program plan (`.tangleclaw/plans/bugfix-sprint-wrap-noise.md`, Chunk 02) and `.prawduct/operator-verification.md`.
