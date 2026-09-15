@@ -34,6 +34,15 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-15 — The AI recommends a release, and a disagreement with readiness goes to the operator (#1492 L2)
+
+<!-- prawduct: type=feature | scope=train-19-chunk-04 -->
+
+Train 19 Chunk 04, the last layer of #1492. A new non-blocking content step, `release-recommendation`, runs between `changelog-update` and `version-bump`. It asks the session for cut / hold / unsure, the operator's quoted intent from its own conversation, and a reason, written to `.tangleclaw/.release-recommendation.md`. The prompt doesn't carry the readiness verdict. `version-bump` reads the answer from `previousResults`. In `auto`, `ready` + hold or `not-ready` + cut halts with `needs-operator` and `disagreement: true`; `unsure` or no answer leaves L1 alone. A new `precondition` step field (the `PRECONDITIONS` registry in the content handler, not overridable) keeps the step from prompting when `releaseMode` is off, the operator already chose, or `[Unreleased]` is empty. The runner's prompt roster asks it with `planning: true`, so the CHANGELOG check is left out before `changelog-update` has run. The drawer widget and row carry the recommendation. `continuity-write` adds a `release:` line to the wrap summary's `Freshness`. ADR 0002 extended. The Chunk 03 reviewer's two history-narrating comments (`begin()` in `lib/wrap-run-registry.js`, `/wrap/status` in `server.js`) now give present-tense reasons.
+
+Tests changed by requirement, not weakened: the pipeline order and length pins now include the new step. The `wrapShape` capture union gains its three fields. The `{sessionScope}` prompt roster gains the step. The reused-step header test resumes the new step too, so its Retry still has one prompt.
+
+
 ## 2026-09-15 — The operator decides whether a wrap cuts: Release Auto / Cut / Hold, and a halt when it's theirs (#1492 L3)
 
 <!-- prawduct: type=feature | scope=train-19-chunk-03 -->

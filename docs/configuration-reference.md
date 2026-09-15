@@ -253,7 +253,7 @@ Stored in `<project>/.tangleclaw/project.json`. Created when a project is added 
 | `quickCommands` | array | `[]` | Project-specific quick command buttons |
 | `tags` | array | `[]` | Project tags for filtering |
 | `silentPrime` | boolean | `true` | Deliver the session prime silently rather than as typed input |
-| `releaseMode` | `"off"`\|`"auto"`\|`"ask"`\|null | `null` | Whether a wrap may cut a release (#1492). `off`: never; the project versions itself. `auto`: only when release readiness is `ready` (see below). `ask`: never by itself; a wrap with a release to cut stops at `version-bump` and asks you to choose Cut or Hold. `auto` asks the same way when readiness is `unknown`. In `auto` and `ask`, the wrap modal's Release: Cut or Hold decides whatever the readiness says; `off` hides that control, and the step reads no choice. Set it in the settings modal's **Release mode** select. `null` derives the mode: `off` when `versionBumpEnabled` is `false`, `auto` otherwise. An unrecognized value is treated as `ask`, with a warning in the step's output |
+| `releaseMode` | `"off"`\|`"auto"`\|`"ask"`\|null | `null` | Whether a wrap may cut a release (#1492). `off`: never; the project versions itself. `auto`: only when release readiness is `ready` (see below). `ask`: never by itself; a wrap with a release to cut stops at `version-bump` and asks you to choose Cut or Hold. `auto` asks the same way when readiness is `unknown`, and when the AI's release recommendation disagrees with it (readiness `ready` but the AI recommends hold, or `not-ready` but it recommends cut). The `release-recommendation` wrap step asks the session for that recommendation just before `version-bump`, based first on what you said in the conversation about the wrap. It sends no prompt when the mode is `off`, when you already chose Cut or Hold, or when `[Unreleased]` is empty. Disable it with `wrapStepOverrides` (`{"release-recommendation": {"enabled": false}}`) to have `auto` decide on readiness alone. In `auto` and `ask`, the wrap modal's Release: Cut or Hold decides whatever the readiness says; `off` hides that control, and the step reads no choice. Set it in the settings modal's **Release mode** select. `null` derives the mode: `off` when `versionBumpEnabled` is `false`, `auto` otherwise. An unrecognized value is treated as `ask`, with a warning in the step's output |
 | `versionBumpEnabled` | boolean | `true` | Legacy switch `releaseMode` replaces, still read when `releaseMode` is unset: `false` means `off`. A settings save carrying either key writes both, with `versionBumpEnabled` `true` only for `auto`, so an older TangleClaw reading only this key holds rather than cuts |
 | `versionFilePath` | string\|null | `null` | Explicit version file, relative to the project root (e.g. `VERSION.json`). `null` probes `version.json` then `package.json`. Set it when the file has a different name or case — the probe only tests the lowercase name, so on a case-sensitive filesystem it would otherwise miss and bump `package.json` instead. Must stay inside the project — enforced after resolving symlinks, at both the API and the write site, since a hand-edited `project.json` never passes through the API. The wrap's version-bump **refuses** if a configured path is unusable — it never falls back to another file. Version *detection* (what the dashboard shows) is more forgiving: it prefers `CHANGELOG.md`, then this file, then the probe, warning and degrading rather than refusing. So an unusable value can show a probe-derived version while the wrap declines to bump |
 | `featureIndexEnabled` | boolean | `false` | Maintain `FEATURES.md` during wrap |
@@ -355,13 +355,16 @@ the shared pipeline; per-project ordering would turn that into a promise nothing
 There is no "different pipeline": per-project variation is exactly these overrides plus the
 dedicated effect toggles below.
 
-Fields outside the table above are ignored, and the API rejects them with the field named. Two
+Fields outside the table above are ignored, and the API rejects them with the field named. Three
 are worth calling out:
 
 - **`verifyChanged` cannot be overridden.** It lists the files a step must actually have changed
   to count as done. Blanking it would leave the check reporting success while verifying nothing.
   Its additive companion `coveragePaths` (in the table above) only *widens* what the
   `changelog-update` coverage check accepts, so it carries no such risk.
+- **`precondition` cannot be overridden.** It names the check that stops a content step from
+  prompting when its answer could change nothing (`release-recommendation` uses it). Disable the
+  step instead if you don't want it.
 - **The `commit` step cannot be disabled.** Every other step stages its writes in memory; the
   commit step is the only one that flushes them to disk. Turning it off would leave the version
   bump and changelog update reporting success with nothing landing. You may still set its

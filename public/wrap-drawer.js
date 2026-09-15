@@ -326,13 +326,15 @@
         // version-bump emits `{from, to, bumpLevel, detail}` on done. Skips
         // are handled by the status check above (#204).
         if (output.from && output.to) {
-          return `${output.from} → ${output.to}${output.decidedBy === 'operator' ? ' (your call)' : ''}`;
+          const rec = output.recommendation && output.recommendation.state === 'given' ? ` · AI recommended ${output.recommendation.value}` : '';
+          return `${output.from} → ${output.to}${output.decidedBy === 'operator' ? ' (your call)' : ''}${rec}`;
         }
         if (output.to) return String(output.to);
         // #1492 — a release question halts the wrap with nothing cut yet. The
         // row names what is at stake; the choice renders below the steps.
         if (stepResult.status === 'needs-operator' && output.wouldBump && output.wouldBump.to) {
-          return `release decision needed: would cut ${output.wouldBump.from} → ${output.wouldBump.to}`;
+          const split = output.disagreement === true ? ' · the release checks and the AI disagree' : '';
+          return `release decision needed: would cut ${output.wouldBump.from} → ${output.wouldBump.to}${split}`;
         }
         return null;
       case 'rule-proposal': {
@@ -762,13 +764,17 @@
   /**
    * Descriptor for the Cut / Hold choice (#1492 L3): `version-bump` halted
    * because whether this wrap cuts a release is the operator's decision and it
-   * hasn't been made. Carries what would be cut and why the gate couldn't
-   * decide, so the choice is made on the evidence. Returns `null` unless the
-   * step is the active `needs-operator` blocker with a `wouldBump`.
+   * hasn't been made. Carries what would be cut, why the gate couldn't decide,
+   * and the AI's recommendation with whether it disagreed with the checks, so
+   * the choice is made on the evidence. Returns `null` unless the step is the
+   * active `needs-operator` blocker with a `wouldBump`.
+   *
+   * `recommendation` is `null` when the AI gave none, and `recommendationNote`
+   * then says why, so "the AI wasn't asked" doesn't read as "the AI had no view".
    *
    * @param {object} stepRow - View-model from `buildStepRow`.
    * @param {object} rawOutput - Raw `step.output` from the runner.
-   * @returns {{kind: 'release-decision', optionsKey: 'release', from: string, to: string, bumpLevel: string, releaseMode: string, verdict: string, reason: string, signals: Array<{id: string, state: string, detail: string}>}|null}
+   * @returns {{kind: 'release-decision', optionsKey: 'release', from: string, to: string, bumpLevel: string, releaseMode: string, verdict: string, reason: string, signals: Array<{id: string, state: string, detail: string}>, recommendation: {value: string, operatorIntent: string, reason: string}|null, recommendationNote: string, disagreement: boolean}|null}
    */
   function releaseDecisionWidget(stepRow, rawOutput) {
     if (!stepRow || stepRow.kind !== 'version-bump' || !stepRow.isBlocker) return null;
@@ -795,8 +801,27 @@
       releaseMode: typeof rawOutput.releaseMode === 'string' ? rawOutput.releaseMode : '',
       verdict: typeof readiness.verdict === 'string' ? readiness.verdict : 'unknown',
       reason: typeof readiness.reason === 'string' ? readiness.reason : '',
-      signals
+      signals,
+      ...recommendationView(rawOutput.recommendation),
+      disagreement: rawOutput.disagreement === true
     };
+  }
+
+  /**
+   * The AI recommendation a version-bump output carries, shaped for display.
+   *
+   * @param {*} rec - `output.recommendation` from version-bump
+   * @returns {{recommendation: {value: string, operatorIntent: string, reason: string}|null, recommendationNote: string}}
+   */
+  function recommendationView(rec) {
+    const str = (v) => (typeof v === 'string' ? v : '');
+    if (rec && rec.state === 'given' && typeof rec.value === 'string') {
+      return {
+        recommendation: { value: rec.value, operatorIntent: str(rec.operatorIntent), reason: str(rec.reason) },
+        recommendationNote: ''
+      };
+    }
+    return { recommendation: null, recommendationNote: rec && rec.state === 'absent' ? str(rec.reason) : '' };
   }
 
   /**

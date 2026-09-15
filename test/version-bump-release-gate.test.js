@@ -66,8 +66,8 @@ describe('version-bump release gate', () => {
     return { name: path.basename(dir), path: dir };
   }
 
-  const run = (project, options = {}) => {
-    const context = { project, step: { id: 'version-bump', kind: 'version-bump' }, staged: {}, options };
+  const run = (project, options = {}, previousResults = []) => {
+    const context = { project, step: { id: 'version-bump', kind: 'version-bump' }, staged: {}, options, previousResults };
     return versionBump.run(context).then((result) => ({ result, staged: context.staged }));
   };
 
@@ -279,5 +279,103 @@ describe('version-bump release gate', () => {
     assert.equal(result.status, 'skipped');
     assert.match(result.output.reason, /isn't MAJOR\.MINOR\.PATCH/);
     assert.equal(result.output.held, undefined);
+  });
+
+  describe('the AI recommendation (#1492 L2)', () => {
+    /**
+     * The prior results a wrap leaves when the recommendation step captured.
+     *
+     * @param {string} value - What the AI wrote under `## ReleaseRecommendation`
+     * @param {object} [extra] - `operatorIntent` / `reason`
+     * @returns {object[]}
+     */
+    const advised = (value, extra = {}) => [
+      { stepId: 'changelog-update', status: 'done', output: {} },
+      { stepId: 'release-recommendation', status: 'done', output: { parsedFields: { releaseRecommendation: value, ...extra } } }
+    ];
+    const ready = () => makeProject({ config: { releaseMode: 'auto' }, plan: '- [x] done' });
+    const notReady = () => makeProject({ config: { releaseMode: 'auto' }, plan: '- [x] one\n- [ ] two' });
+
+    it('halts when the checks say ready and the AI recommends holding, quoting the operator', async () => {
+      const { result, staged } = await run(ready(), {},
+        advised('hold', { operatorIntent: '"wrapping to save state"', reason: 'mid-feature save' }));
+      assert.equal(result.status, 'needs-operator');
+      assert.equal(result.ok, false);
+      assert.equal(result.output.disagreement, true);
+      assert.equal(result.output.needsOperator, true);
+      assert.match(result.output.reason, /checks say ready, but the AI recommends holding: you said "wrapping to save state"; mid-feature save/);
+      assert.deepEqual(result.output.recommendation, {
+        state: 'given', value: 'hold', operatorIntent: '"wrapping to save state"', reason: 'mid-feature save'
+      });
+      assert.deepEqual(result.output.wouldBump, { from: '1.2.3', to: '1.3.0', bumpLevel: 'minor' });
+      assert.deepEqual(staged, {});
+    });
+
+    it('halts when the checks say not-ready and the AI recommends cutting', async () => {
+      const { result, staged } = await run(notReady(), {}, advised('cut', { operatorIntent: '"cut a release"' }));
+      assert.equal(result.status, 'needs-operator');
+      assert.equal(result.output.disagreement, true);
+      assert.match(result.output.reason, /checks say not-ready \(build-plan-status: 1 of 2 Status boxes unticked[^)]*\), but the AI recommends cutting: you said "cut a release"/);
+      assert.deepEqual(staged, {});
+    });
+
+    it('cuts when both say release, and records the agreement', async () => {
+      const { result, staged } = await run(ready(), {}, advised('cut'));
+      assert.equal(result.status, 'done');
+      assert.equal(result.output.decidedBy, 'readiness');
+      assert.equal(result.output.recommendation.value, 'cut');
+      assert.equal(result.output.disagreement, undefined);
+      assert.ok(staged['version-bump:changelog']);
+    });
+
+    it('holds without halting when both say hold', async () => {
+      const { result } = await run(notReady(), {}, advised('hold'));
+      assert.equal(result.status, 'skipped');
+      assert.equal(result.ok, true);
+      assert.equal(result.output.needsOperator, false);
+      assert.equal(result.output.recommendation.value, 'hold');
+      assert.equal(result.output.disagreement, undefined);
+    });
+
+    it('leaves the verdict to decide alone when the AI is unsure, unreadable or absent', async () => {
+      for (const prior of [advised('unsure'), advised('probably fine'), [], [{ stepId: 'release-recommendation', status: 'blocked', output: null, blockers: ['timed out'] }]]) {
+        const cut = await run(ready(), {}, prior);
+        assert.equal(cut.result.status, 'done', `ready cuts with ${JSON.stringify(prior)}`);
+        const held = await run(notReady(), {}, prior);
+        assert.equal(held.result.status, 'skipped');
+        assert.equal(held.result.output.needsOperator, false);
+      }
+      const { result } = await run(ready(), {}, [{ stepId: 'release-recommendation', status: 'blocked', output: null, blockers: ['timed out'] }]);
+      assert.deepEqual(result.output.recommendation, {
+        state: 'absent', reason: 'the release-recommendation step did not finish (blocked): timed out'
+      });
+    });
+
+    it('still halts on an unknown verdict, naming the AI\'s view as a hint', async () => {
+      const project = makeProject({ config: { releaseMode: 'auto' }, pointer: 'artifacts/missing.md' });
+      const { result } = await run(project, {}, advised('cut', { reason: 'feature complete' }));
+      assert.equal(result.status, 'needs-operator');
+      assert.equal(result.output.disagreement, undefined, 'no verdict to disagree with');
+      assert.match(result.output.reason, /readiness is unknown .*; the AI recommends cut: feature complete$/);
+    });
+
+    it('in ask, carries the recommendation as a hint and never cuts on it', async () => {
+      const project = makeProject({ config: { releaseMode: 'ask' }, plan: '- [x] done' });
+      const { result, staged } = await run(project, {}, advised('cut'));
+      assert.equal(result.status, 'needs-operator');
+      assert.equal(result.output.disagreement, undefined);
+      assert.match(result.output.reason, /releaseMode is ask.*; the AI recommends cut\)$/);
+      assert.deepEqual(staged, {});
+    });
+
+    it('lets the operator\'s decision win over a disagreement', async () => {
+      const hold = await run(ready(), { release: 'hold' }, advised('cut'));
+      assert.equal(hold.result.status, 'skipped');
+      assert.equal(hold.result.output.decidedBy, 'operator');
+      const cut = await run(notReady(), { release: 'cut' }, advised('hold'));
+      assert.equal(cut.result.status, 'done');
+      assert.equal(cut.result.output.decidedBy, 'operator');
+      assert.equal(cut.result.output.recommendation.value, 'hold', 'the overruled recommendation stays on the record');
+    });
   });
 });

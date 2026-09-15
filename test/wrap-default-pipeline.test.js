@@ -23,7 +23,7 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
     // update deliberately, never casually.
     assert.deepStrictEqual(
       defaultPipeline.steps().map((s) => s.id),
-      ['preflight', 'session-files', 'open-pr-check', 'changelog-update', 'version-bump', 'learnings-capture', 'learnings-db-write', 'rule-proposal', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write', 'apply-pr-resolutions']
+      ['preflight', 'session-files', 'open-pr-check', 'changelog-update', 'release-recommendation', 'version-bump', 'learnings-capture', 'learnings-db-write', 'rule-proposal', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write', 'apply-pr-resolutions']
     );
   });
 
@@ -31,6 +31,10 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
     const ids = defaultPipeline.steps().map((s) => s.id);
     assert.ok(ids.indexOf('changelog-update') < ids.indexOf('version-bump'),
       'version-bump derives its level from the changelog the AI just wrote');
+    assert.ok(ids.indexOf('changelog-update') < ids.indexOf('release-recommendation'),
+      'the release recommendation judges the entries this session just wrote');
+    assert.ok(ids.indexOf('release-recommendation') < ids.indexOf('version-bump'),
+      'version-bump reads the recommendation to decide whether a disagreement halts');
     assert.ok(ids.indexOf('version-bump') < ids.indexOf('commit'),
       'the commit flush must include the staged bump');
     assert.ok(ids.indexOf('commit') < ids.indexOf('continuity-write'),
@@ -49,7 +53,7 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
     first.push({ id: 'extra', kind: 'commit' });
     const second = defaultPipeline.steps();
     assert.equal(second[0].id, 'preflight');
-    assert.equal(second.length, 16);
+    assert.equal(second.length, defaultPipeline._internal.pipeline.steps.length);
     assert.ok(!second.some((s) => s.id === 'extra'), 'the pushed step did not leak into the shared list');
   });
 
@@ -119,7 +123,7 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
       const shape = defaultPipeline.wrapShape();
       assert.equal(shape.command, null);
       assert.deepStrictEqual(shape.steps, defaultPipeline.steps().map((s) => s.id));
-      assert.deepStrictEqual(shape.captureFields, ['summary', 'nextSteps', 'learnings', 'delta', 'openThreads', 'decisions', 'pointers']);
+      assert.deepStrictEqual(shape.captureFields, ['releaseRecommendation', 'operatorIntent', 'reason', 'summary', 'nextSteps', 'learnings', 'delta', 'openThreads', 'decisions', 'pointers']);
     });
   });
 

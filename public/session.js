@@ -4574,7 +4574,8 @@ function renderDecisionWidget(widget) {
 
 /**
  * Build the Cut / Hold choice (#1492) for a version-bump halted on a release
- * decision: what would be cut, what the release checks found, and two radios.
+ * decision: what would be cut, what the release checks found, what the AI
+ * recommended and whether the two disagree, and two radios.
  * Neither is preselected, because preselecting one would make the decision the
  * halt exists to hand to the operator.
  *
@@ -4600,6 +4601,19 @@ function renderReleaseDecisionWidget(widget) {
   const mode = widget.releaseMode ? `Release mode ${widget.releaseMode}. ` : '';
   checks.textContent = `${mode}Release checks: ${widget.verdict}${widget.reason ? ` — ${widget.reason}` : ''}`;
   wrap.appendChild(checks);
+
+  const advice = document.createElement('p');
+  advice.className = 'wrap-decision-note wrap-decision-release-advice';
+  if (widget.recommendation) {
+    const rec = widget.recommendation;
+    const said = rec.operatorIntent && rec.operatorIntent !== 'none stated' ? ` You said ${rec.operatorIntent}.` : '';
+    const why = rec.reason ? ` ${rec.reason}` : '';
+    const split = widget.disagreement ? 'The release checks and the AI disagree. ' : '';
+    advice.textContent = `${split}AI recommends ${rec.value}.${said}${why}`;
+  } else {
+    advice.textContent = `No AI recommendation${widget.recommendationNote ? `: ${widget.recommendationNote}` : '.'}`;
+  }
+  wrap.appendChild(advice);
 
   if (widget.signals.length > 0) {
     const list = document.createElement('ul');
