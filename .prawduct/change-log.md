@@ -34,6 +34,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-16 — Codex sessions can be woken for switchboard mail (#1344)
+
+<!-- prawduct: type=feature | scope=codex-wake-1344 -->
+
+The wake monitor refused codex twice over. First, codex's profile declared no measured idle signature, so the monitor returned `unprofiled-engine` before any wake attempt. Codex now carries one, read off a running pane from outside it: prompt glyph `›`, a one-space pad, dim placeholder SGR, busy marker `esc to interrupt`, and `· Ready ·` as the at-rest marker (45/45 at rest, 0/5 busy). Second, codex animates a braille shimmer over its composer and the lines above it, so the movement gate never saw two matching digests (8 distinct in 8 idle samples) and reported `pane-writing` forever. Engines can now declare `capabilities.wake.decorativePattern`, and both idle gates discount the cells it matches. The pattern is refused outright when it could match typed text: it is checked against every printable character, including matches that only occur across cells. Verified live end to end (`unprofiled-engine` → `wake-not-opted-in` → `pane-writing` → `no-mail` → `nudged`) on two models. Claude and Antigravity are unaffected; Aider and OpenClaw remain unprofiled.
+
+Five follow-up commits came out of review rounds: the decoration discount must not mask real movement, the `lastIndex` hazard of a global regex is gone, and a broad pattern is judged by what it matches, not by how it looks. The last round was reviewed on 2026-09-16 after a crash interrupted the session.
+
 ## 2026-09-16 — The remaining OpenClaw ssh routes stop freezing the server (#1529)
 
 <!-- prawduct: type=bugfix | scope=async-ssh-1529 -->
