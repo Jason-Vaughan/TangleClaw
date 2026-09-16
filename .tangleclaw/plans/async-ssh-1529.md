@@ -85,4 +85,4 @@ Done when:
 
 ## Status
 
-- [ ] Chunk 01 — async detect, approve and connection test
+- [x] Chunk 01 — async detect, approve and connection test (Critic rev-20260916T182912Z-a417b56f + verify rev-20260916T183503Z-f89b43b2, 0 blocking)
