@@ -142,9 +142,9 @@ agree by construction. `strandedWraps.covers(items, keys)` returns the items the
 `stranded: {blocking, unacknowledged, grandfathered}`, or `stranded: null` with `strandedError` when the
 read failed. A read failure never breaks the list. The card badge reads `blocking`. The detail panel
 fetches `GET /api/projects/:project/stranded-wraps` when opened, for the items.
-- Cost: three indexed-by-type activity queries per project, per list load. Measured on the live store
-  copy during verification. If a list load gets noticeably slower, the count moves to one grouped query
-  before merge.
+- Cost: three indexed-by-type activity queries per project, per list load, and the list is polled every
+  10 seconds. *Measured while building:* 2.6 ms per list load for all 41 projects on a backup copy of the
+  live store, so the count stays as three queries.
 
 **D8: the refusal UI is one shared renderer.** A pure helper in `public/wrap-drawer.js`,
 `renderStrandedItems(items)`, builds the list (branch, full SHA, recorded date, the API path) and is
@@ -157,6 +157,20 @@ returns HTML and is tested by running it.
   `collectOptionsFromAccessors`, so the first wrap and every Retry shape it the same way (the Train 18
   lesson: trace it widget → collector → POST → server).
 - Hidden states use `visibility`/`pointer-events` switched instantly; nothing is timed.
+
+**D10: a store read failure lets the launch or wrap through, and says so.** *Added while building.*
+Both gates catch a failed read of the records, log a warning, and answer `ok` with `unchecked: <reason>`.
+The store that failed is the one every other launch and wrap step also needs, so refusing here would only
+replace that failure's own error with a misleading "stranded wraps" one. The session prime already says
+"could not be read" in the same case, and the project list reports `stranded: null` with the reason.
+- `[DECISION: fail open on an unreadable store | a gate that fails closed on the store it shares with
+  the rest of the launch adds no protection and hides the real error | operator can veto: refuse with
+  the read error instead]`
+
+**D11: a Retry refused for stranded wraps lists them in the drawer.** *Added while building.* The
+session page's Retry goes through the same POST, so a Retry can be refused when the retried wrap
+stranded a new branch. The drawer then shows the list with the same "Wrap anyway" box, and the next
+Retry sends the whole list the server gave (it lists every blocking item, so nothing earlier is lost).
 
 **D9: no new persisted format.** The gate writes only `wrap.strand_ack` rows, whose shape Chunk 01
 fixed. The wrap override lives in the run registry's existing options record.
@@ -206,6 +220,28 @@ Type: cumulative-final
    (MagicDNS URL).
 8. `/prawduct:critic cumulative`, resolve the findings, PR with `Fixes #1539`, `Fixes #1540`,
    `Fixes #1541`. Tell the Coordinator at each step.
+
+## Verification record (2026-09-16)
+
+- **Suite:** full suite green (TAP run, 0 failures) on the implementation commit.
+- **Existing tests that changed, and why:**
+  - `test/sessions.test.js`: the Chunk 01 prime case recorded a stranded wrap on the shared fixture
+    project and never settled it, so the new soft block refused every later wrap case there. The case
+    now acknowledges its own record in a `finally`. No assertion changed.
+  - `test/card-detail-disclosure.test.js`, `test/degraded-reads-frontend.test.js`,
+    `test/error-string-parity.test.js`, `test/wrap-run-session-wiring.test.js`: their sandboxes list each
+    function a lifted page function calls, so the new helpers were added to those lists. No assertion
+    changed.
+  - `test/wrap-release-decision.test.js`: "takes back every choice a Retry replays" now includes
+    `proceedPastStranded`, because Retry now replays it.
+  - `test/session-wrapper.test.js` pins that the session wrap modal re-enables Wrap in `finally`. The
+    code keeps that line and then holds the button only while listed items are unconfirmed.
+- **Deliberate breakages:** 13, each caught by a failing test: the gate moved after the launch writes,
+  grandfathered items blocking, the remote ignored in key matching, wrapping anyway acknowledging, Retry
+  dropping the confirmation, the badge counting the wrong number, a running wrap gated instead of
+  followed, the launch route losing its 409, `postWrap` forgetting the items, the options collector
+  dropping the choice, the launch acknowledgement losing its owner, the dashboard not sending the
+  acknowledgements, and the project list losing its counts.
 
 ## Done when
 
