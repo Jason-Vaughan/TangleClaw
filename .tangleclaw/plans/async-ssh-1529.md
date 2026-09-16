@@ -1,3 +1,7 @@
+---
+scope: async-ssh-1529
+---
+
 # Blocking ssh calls off the event loop (#1529)
 
 **Issue:** #1529
@@ -60,7 +64,7 @@ Requirements confidence: High.
 
 ## Chunk 01 — async detect, approve and connection test
 
-Files: `lib/openclaw-remote.js`, `lib/openclaw-detect.js`, `lib/openclaw-approve.js`, `server.js`,
+Files: `FEATURES.md`, `lib/openclaw-remote.js`, `lib/openclaw-detect.js`, `lib/openclaw-approve.js`, `server.js`,
 `test/openclaw-remote.test.js`, `test/openclaw-detect.test.js`, `test/openclaw-approve.test.js`,
 `test/openclaw-ssh-routes-nonblocking.test.js`, `CHANGELOG.md`.
 
@@ -73,8 +77,11 @@ Done when:
 - The runners are tested against real processes: stdin input, exit code + stderr on failure,
   timeout detection, argument vectors passed without a shell, and a timer running mid-command.
 - Suite green (`test/*.test.js`); Critic final with zero blocking.
-- Live: `POST /api/openclaw/test` against the unreachable 192.168.20.10 returns its SSH error
-  while another request answers promptly.
+- Live, after merge and restart (the server runs from the primary checkout, not this branch):
+  `POST /api/openclaw/test` against the unreachable 192.168.20.10 returns its SSH error while another
+  request answers promptly. Result recorded in the PR.
+- A timeout reads as one on all three routes (`… timed out after Nms`), and no failure message
+  echoes the ssh command line.
 
 ## Status
 

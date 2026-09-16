@@ -30,11 +30,35 @@ describe('openclaw-remote runShell (#1529)', () => {
     );
   });
 
-  it('kills a command that outlives its timeout and reports it as one', async () => {
+  it('kills a command that outlives its timeout and names the timeout', async () => {
     await assert.rejects(
       remote._runShell('sleep 5', { timeout: 100 }),
       (err) => {
         assert.equal(wasTimedOut(err), true);
+        assert.equal(err.timedOut, true);
+        assert.equal(err.message, 'timed out after 100ms');
+        assert.equal(err.stderr, '', 'nothing was said, so the message carries the timeout');
+        return true;
+      }
+    );
+  });
+
+  it('keeps what a timed-out command said, and still names the timeout', async () => {
+    await assert.rejects(
+      remote._runShell('echo connecting >&2; sleep 5', { timeout: 300 }),
+      (err) => {
+        assert.equal(err.stderr, 'connecting (timed out after 300ms)');
+        return true;
+      }
+    );
+  });
+
+  it('never echoes the command line in a failure message', async () => {
+    await assert.rejects(
+      remote._runShell('exit 4 # -i /secret/key/path'),
+      (err) => {
+        assert.equal(err.message, 'exited with status 4');
+        assert.doesNotMatch(err.message, /secret/);
         return true;
       }
     );
@@ -72,10 +96,10 @@ describe('openclaw-remote runFile (#1529)', () => {
     );
   });
 
-  it('reports a timeout it caused', async () => {
+  it('reports a timeout it caused, by name', async () => {
     await assert.rejects(
       remote._runFile('sleep', ['5'], { timeout: 100 }),
-      (err) => wasTimedOut(err) && typeof err.code !== 'number'
+      (err) => wasTimedOut(err) && typeof err.code !== 'number' && err.message === 'timed out after 100ms'
     );
   });
 });

@@ -224,17 +224,27 @@ describe('OpenClaw ssh routes do not block the event loop (#1529)', () => {
       assert.equal(json.reason, 'Permission denied (publickey)');
     });
 
-    it('reports its own timeout by name rather than as a raw process error', async () => {
-      const runner = heldRunner();
-      remote._internal.runFile = runner.fn;
-      const { done, res } = send('POST', `/api/openclaw/connections/${connId}/approve-pending`);
-      await untilCalls(runner, 1);
-      // The shape async execFile produces when its timeout kills the child.
-      runner.release(0, childError({ code: null, killed: true, signal: 'SIGTERM' }));
-      await done;
-      const json = JSON.parse(res.body);
-      assert.equal(json.code, 'SSH_FAILED');
-      assert.equal(json.reason, 'timed out after 15000ms');
+    it('reports a timeout through the real runner, by name, on every route', async () => {
+      // No stub: a real child that outlives a short timeout, so the message is
+      // the one the runner writes, not one this test invented.
+      const slow = (opts) => remote._runShell('sleep 5', { ...opts, timeout: 150 });
+      remote._internal.runFile = (_file, _args, opts) => slow(opts);
+      remote._internal.runShell = (_cmd, opts) => slow(opts);
+
+      let r = send('POST', `/api/openclaw/connections/${connId}/approve-pending`);
+      await r.done;
+      assert.deepEqual(
+        (({ code, reason }) => ({ code, reason }))(JSON.parse(r.res.body)),
+        { code: 'SSH_FAILED', reason: 'timed out after 150ms' }
+      );
+
+      r = send('POST', '/api/openclaw/detect-instance-dir', SSH_TARGET);
+      await r.done;
+      assert.equal(JSON.parse(r.res.body).error, 'ssh detect failed: timed out after 150ms');
+
+      r = send('POST', '/api/openclaw/test', { ...SSH_TARGET, port: 18789 });
+      await r.done;
+      assert.deepEqual(JSON.parse(r.res.body).errors, ['SSH: timed out after 150ms', 'Gateway: timed out after 150ms']);
     });
 
     it('never lets the gateway token reach the response', async () => {

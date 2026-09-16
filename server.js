@@ -288,7 +288,6 @@ const openclawApprove = require('./lib/openclaw-approve');
 const openclawVersion = require('./lib/openclaw-version');
 const openclawDetect = require('./lib/openclaw-detect');
 const openclawRemote = require('./lib/openclaw-remote');
-const { wasTimedOut } = require('./lib/exec-timeout');
 const tunnelMonitor = require('./lib/tunnel-monitor');
 const net = require('node:net');
 const httpsSetup = require('./lib/https-setup');
@@ -7541,12 +7540,12 @@ async function _runOnGatewayHost(conn, command, opts = {}) {
   } catch (err) {
     // Async execFile reports the exit status as a numeric `code` (the sync form
     // used `status`); anything else — a spawn failure, or our own timeout, whose
-    // `code` is null — is not an exit status and maps to -1.
-    const timedOut = wasTimedOut(err);
+    // `code` is null — is not an exit status and maps to -1. The runner has
+    // already named a timeout in `stderr`/`message`.
     return {
       ok: false,
       stdout: err.stdout ? String(err.stdout) : '',
-      stderr: redact(err.stderr || (timedOut ? `timed out after ${timeout}ms` : err.message) || ''),
+      stderr: redact(err.stderr || err.message || ''),
       code: typeof err.code === 'number' ? err.code : -1
     };
   }
