@@ -288,6 +288,7 @@ const openclawApprove = require('./lib/openclaw-approve');
 const openclawVersion = require('./lib/openclaw-version');
 const openclawDetect = require('./lib/openclaw-detect');
 const openclawRemote = require('./lib/openclaw-remote');
+const openclawHtml = require('./lib/openclaw-html');
 const tunnelMonitor = require('./lib/tunnel-monitor');
 const net = require('node:net');
 const httpsSetup = require('./lib/https-setup');
@@ -7744,7 +7745,11 @@ function proxyToOpenclaw(req, res, projectName, subPath) {
     method: req.method,
     headers: _openclawProxyHeaders(req.headers, localPort, resolved.conn.gatewayToken)
   }, (proxyRes) => {
-    res.writeHead(proxyRes.statusCode, _stripFrameBlockers(proxyRes.headers));
+    const headers = _stripFrameBlockers(proxyRes.headers);
+    if (openclawHtml.shouldRewrite(req.method, proxyRes.statusCode, proxyRes.headers)) {
+      return openclawHtml.relayRewrittenHtml(proxyRes, res, proxyRes.statusCode, headers, `/openclaw/${encodeURIComponent(projectName)}`);
+    }
+    res.writeHead(proxyRes.statusCode, headers);
     proxyRes.pipe(res);
   });
 
@@ -8616,7 +8621,11 @@ async function handleRequest(req, res) {
         method: req.method,
         headers: _openclawProxyHeaders(req.headers, resolved.localPort, resolved.conn.gatewayToken)
       }, (proxyRes) => {
-        res.writeHead(proxyRes.statusCode, _stripFrameBlockers(proxyRes.headers));
+        const headers = _stripFrameBlockers(proxyRes.headers);
+        if (openclawHtml.shouldRewrite(req.method, proxyRes.statusCode, proxyRes.headers)) {
+          return openclawHtml.relayRewrittenHtml(proxyRes, res, proxyRes.statusCode, headers, `/openclaw-direct/${parts[2]}`);
+        }
+        res.writeHead(proxyRes.statusCode, headers);
         proxyRes.pipe(res);
       });
 

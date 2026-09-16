@@ -201,7 +201,11 @@ fails any auto-stub section older than 14 days.
   `_openclawWsRequestLines` and the `/terminal` branch of `handleUpgrade`). The two OpenClaw builders
   also drop client-attribution headers (`X-Forwarded-*`, `Forwarded`, `X-Real-IP`) through one shared
   predicate, `server.js#_isClientAttributionHeader` (#1532): TangleClaw is the trust boundary there, and
-  OpenClaw 2026.9.x refuses a request carrying them from an untrusted proxy. Dashboard side: `public/api-helper.js#tcCsrfToken`/`#tcWithCsrf`, applied
+  OpenClaw 2026.9.x refuses a request carrying them from an untrusted proxy.
+  Gateway HTML pages are rewritten on the way out (#1534, `lib/openclaw-html.js#relayRewrittenHtml`,
+  `#rewriteControlUiHtml`): OpenClaw 2026.9 references its bundle by root-absolute path, so the proxy moves
+  those references under its own prefix and fills `data-openclaw-control-ui-base-path`, decoding br/gzip/
+  deflate first and passing through anything it cannot safely rewrite. Dashboard side: `public/api-helper.js#tcCsrfToken`/`#tcWithCsrf`, applied
   inside `api()` because that is the one choke-point every write already goes through, bodyless ones
   included. Revocation reaches live sessions — `users.disable` and `users.setPassword` destroy them,
   and `#resolve` re-checks `disabled_at` every request. The login route uses
@@ -471,6 +475,7 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/caddy.test.js` — Caddyfile classification and generation, credential adoption, admin-password rules, `validateCaddyfile`, the detection that decides whether a gate can be run at all, and `redactHashes` (no bcrypt hash survives into text bound for a log, #821).
 - `test/openclaw-cache.test.js` — #162: a cached WebSocket URL on the TC origin routed a second OpenClaw connection to the wrong tunnel; stale entries must be cleared before navigating.
 - `test/openclaw-detect.test.js` — auto-detecting an OpenClaw connection's `instanceDir` over SSH (#306-followup): pure helpers with a mocked exec, plus the frontend wiring by source assertion.
+- `test/openclaw-html.test.js` — the Control UI rewrite (#1534) against captured 2026.9.4 (absolute paths) and 2026.6.11 (relative paths) index pages: only root-absolute references move, the base path is filled once, compressed bodies are decoded and re-sent with corrected headers, anything unreadable or oversized passes through, and an end-to-end run through the real direct proxy serves a page whose entry script then loads.
 - `test/openclaw-remote.test.js` — the non-blocking runners behind the OpenClaw routes that reach a remote host (#1529), driven with real processes: stdin input, exit status and stderr, timeouts named as timeouts, argument vectors passed without a shell, and a timer running mid-command.
 - `test/openclaw-ssh-routes-nonblocking.test.js` — detect-instance-dir, approve-pending and the connection test through the real request handler (#1529): each lets a timer run while its ssh is pending, and each names a real timeout.
 - `test/openclaw-version-route.test.js` — the connection version route awaits its async read (#1527), so a pending read never reaches the response as a missing version.
