@@ -19,7 +19,8 @@ modulepreloads, favicon, manifest) and `data-openclaw-control-ui-base-path=""`. 
 
 1. **Problem:** a 2026.9+ gateway's Control UI never starts through either OpenClaw proxy prefix.
 2. **Success:** for an HTML response from a gateway, the proxy rewrites root-absolute `src`/`href` to sit under the
-   request's proxy prefix and fills an empty or absent `data-openclaw-control-ui-base-path` with that prefix.
+   request's proxy prefix and fills an empty or absent `data-openclaw-control-ui-base-path` with that prefix
+   (a page that declares its own base path is left alone).
    Live: TiLT Claw's Control UI loads and connects through TangleClaw, and RentalClaw still does.
 3. **Out of scope:** URLs inside inline scripts (the captured page has none), the manifest's own contents,
    non-HTML responses, and the WebSocket path (the bundle builds it from the base path).
@@ -32,9 +33,10 @@ path is inferred from minified code; the live check settles it.
 - [DECISION: rewrite in TangleClaw, in a pure module `lib/openclaw-html.js`], not on each gateway. Setting
   `gateway.controlUi.basePath` would tie OpenClaw's config to a TangleClaw connection id, and routing root
   `/assets/*` by Referer collides with TangleClaw's own paths.
-- [DECISION: only root-absolute `src=`/`href=` attributes are rewritten] (`"/x"`, not `"//host"`, not
-  `"https://…"`, not relative), in double or single quotes. The base-path attribute is set only when empty or
-  absent, so a gateway that declares its own base path keeps it.
+- [DECISION: only root-absolute `src=`/`href=` attributes inside tags are rewritten] (`"/x"`, not `"//host"`,
+  not `"https://…"`, not relative), in double or single quotes, with the prefix attribute-escaped. The base-path
+  attribute is filled when it is empty or absent. A page whose gateway declares its own base path is returned
+  unchanged, because rewriting half of a page already laid out for another path would leave it inconsistent.
 - [DECISION: HTML is buffered and decoded before rewriting.] The gateway sends `Content-Encoding: br`. The body
   is decoded (br, gzip, deflate, identity) and re-sent uncompressed, with `Content-Length` recomputed and
   `Content-Encoding` and `ETag` removed, since the bytes changed. An unknown encoding, or a decode failure,
@@ -52,14 +54,16 @@ Files: `lib/openclaw-html.js`, `server.js`, `test/openclaw-html.test.js`,
 
 Done when:
 - Pure rewrite: the 2026.9.4 fixture has every root-absolute reference prefixed and the base path set; the
-  2026.6.11 fixture is byte-identical; protocol-relative, absolute and relative URLs are untouched; a declared
-  base path is kept; the prefix is escaped for an attribute value.
+  2026.6.11 fixture is byte-identical; protocol-relative, absolute and relative URLs are untouched; a page with
+  a declared base path is unchanged; the prefix is escaped for an attribute value.
 - Response handling: br, gzip, deflate and identity bodies are rewritten, with headers corrected; an unknown
-  encoding, a corrupt body or a non-HTML response passes through; an oversized body streams unmodified.
+  encoding, a corrupt body or a non-HTML response passes through; an oversized body streams unmodified;
+  decompression is capped on output; hop-by-hop headers never accompany a `Content-Length`; every fallback is
+  logged with its reason; a gateway that drops mid-page gets the client a 502.
 - Both proxy prefixes (`/openclaw-direct/<connId>/` and `/openclaw/<project>/`) use it.
 - Suite green; Critic final with zero blocking.
 - Live after merge and restart: TiLT Claw's Control UI loads and connects; RentalClaw still does.
 
 ## Status
 
-- [ ] Chunk 01 — rewrite gateway HTML under the proxy prefix
+- [x] Chunk 01 — rewrite gateway HTML under the proxy prefix
