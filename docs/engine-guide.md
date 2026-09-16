@@ -325,12 +325,14 @@ a submission.
 `decorativePattern` (and its `evidence` entry) only if the engine draws something that MOVES while the
 session is at rest. codex paints an animated braille shimmer across and above its composer, which made the
 pane digest change on every tick — the monitor read it as still writing and never nudged it, permanently.
-Both idle gates discount cells matched by this pattern: the transcript digest blanks them to spaces (never
-deletes them, which would shorten a line and reintroduce the instability), and the composer scan skips them.
-It is refused unless it matches decoration ONLY: a pattern matching the empty string, any printable ASCII
-character, or a run of them is rejected, because that is what an operator types. The check evaluates the
-pattern against those characters rather than inspecting its source, so a broad pattern is caught however it
-is written. Getting this wrong would silently disable both idle gates and let a nudge land on the operator's
+Both idle gates test the pattern against ONE cell at a time: the transcript digest blanks each matching cell
+to a single space (never deletes it or collapses a run, either of which would shorten the line and
+reintroduce the instability), and the composer scan skips matching cells. It is refused unless it matches
+decoration ONLY: a pattern matching the empty string, any printable ASCII character, or any of a sample of
+common non-ASCII letters (accented Latin, Greek, Cyrillic, CJK, kana, Hangul, Arabic, Hebrew, Devanagari) is
+rejected, because that is what an operator types. The check tests the pattern against those characters
+rather than reading its source, so `\S` and `[a-z]` are caught as surely as `.`. The non-ASCII sample is
+not all of Unicode: a range covering a script outside it would pass, so keep the range to the decoration. Getting this wrong would silently disable both idle gates and let a nudge land on the operator's
 own half-written text, so the engine stays unprofiled instead.
 Anything it matches stops counting as operator input for that engine, so declare the narrowest range that
 covers the decoration and nothing else.

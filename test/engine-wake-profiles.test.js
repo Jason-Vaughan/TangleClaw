@@ -207,10 +207,8 @@ describe('the wake signature is declared in the engine profile (#1255)', () => {
         assert.deepEqual(derived[field], value, `${id}.${field} did not survive the derivation`);
       }
       // Both directions, without pinning HOW MANY compiled forms a pattern
-      // takes: `decorativePattern` yields a plain and a global regex, because a
-      // single shared global one would carry `lastIndex` between callers. What
-      // must hold is that every derived key traces back to a declared field,
-      // and every declared field reaches the table.
+      // takes: every derived key must trace back to a declared field, and every
+      // declared field must reach the table.
       const declaredNames = Object.keys(declared).filter((k) => k !== 'evidence');
       for (const key of Object.keys(derived)) {
         const base = key.replace(/ReAll$|Re$/, 'Pattern');
@@ -610,9 +608,8 @@ describe('an engine that animates decoration at rest is still readable as idle (
   });
 
   it('a decorative cell PAST the separator is not input either', () => {
-    // R-1: the left loop (contentStart..cursor) was never exercised — the
-    // fixture put the cursor at contentStart, so deleting its `continue` left
-    // the suite green. Here the shimmer sits at the first input column.
+    // Exercises the left loop (contentStart..cursor): the shimmer sits at the
+    // first input column, so the `continue` there is what keeps this empty.
     assert.equal(wake._composerEmpty({ line: `\u203a \u2801${PH}`, x: 3 }, codex()), true,
       'a shimmer cell past the pad is decoration, not typed input');
   });
@@ -632,10 +629,10 @@ describe('an engine that animates decoration at rest is still readable as idle (
   });
 
   it('a moving shimmer cannot shorten a line and destabilise the digest', () => {
-    // R-2: the digest BLANKS decorative cells rather than deleting them.
-    // Deleting shortened the line by however many cells were drawn, so two
-    // frames of one idle pane hashed differently whenever decoration sat ahead
-    // of real text — the permanent pane-writing failure, returning.
+    // The digest BLANKS decorative cells rather than deleting them: deleting
+    // shortens the line by however many cells were drawn, so two frames of one
+    // idle pane would hash differently whenever decoration sat ahead of real
+    // text, and the permanent pane-writing failure would return.
     // Real text sits AFTER the decoration: with it before, the trailing-space
     // trim absorbs the whole tail and the line is identical either way, so the
     // case proves nothing. Deletion only shows up as a shift of what follows.
@@ -651,6 +648,38 @@ describe('an engine that animates decoration at rest is still readable as idle (
     assert.equal(digest([10, 20, 30]), digest([5]), 'nor must the number of cells drawn');
   });
 
+  it('a run of shimmer of any length blanks cell for cell, even with a greedy pattern', () => {
+    // A pattern is only ever applied to one cell. Were the digest to apply it
+    // across the line, `[⠀-⣿]+` would collapse a run into one space, the line
+    // length would track the animation, and an idle pane would never settle.
+    const greedy = derive({ ...wellFormedCodex(), decorativePattern: '[\u2800-\u28ff]+' }).probe;
+    assert.ok(greedy, 'a greedy braille range is still decoration only, so it is accepted');
+    const frame = (n) => [`${'\u2801'.repeat(n)} tx`, '\u203a Ask Codex'];
+    assert.equal(wake._paneDigest(frame(2), greedy), wake._paneDigest(frame(2), codex()),
+      'the greedy and single-cell patterns must read a pane identically');
+    const digests = new Set([1, 2, 5, 9].map((n) => wake._paneDigest(frame(n), greedy)));
+    assert.equal(digests.size, 4, 'runs of different lengths keep the text at different columns, as the pane does');
+    assert.equal(wake._paneDigest([`${'\u2801'.repeat(3)}xx`, '\u203a'], greedy),
+      wake._paneDigest([`${'\u2802'.repeat(3)}xx`, '\u203a'], greedy),
+      'the same run length in a different animation frame reads the same');
+  });
+
+  it('a pattern that only matches across cells discounts nothing', () => {
+    // Applied cell by cell, a pattern like `\\w+\\s` or `ab` can never match,
+    // so it cannot hide typed text: "hello world" and "hallo world" stay
+    // distinguishable. That is why the refusal check only needs single cells.
+    for (const pattern of ['\\w+\\s', 'ab', '[a-z] [a-z]']) {
+      const profile = derive({ ...wellFormedCodex(), decorativePattern: pattern }).probe;
+      assert.ok(profile, `${pattern} matches no single cell, so it is accepted`);
+      assert.notEqual(
+        wake._paneDigest(['hello world', 'ab cd', '\u203a'], profile),
+        wake._paneDigest(['hallo world', 'xy cd', '\u203a'], profile),
+        `${pattern} must not blank typed text`);
+      assert.equal(wake._composerEmpty({ line: '\u203a ab', x: 4 }, profile), false,
+        `${pattern} must not launder typed input in the composer`);
+    }
+  });
+
   it('a decorativePattern that would match everything is REFUSED, not shipped', () => {
     // A pattern matching a space or the empty string turns both gates off
     // silently: the digest blanks every line to nothing so the pane always
@@ -661,11 +690,11 @@ describe('an engine that animates decoration at rest is still readable as idle (
     assert.ok(withPattern('[\u2800-\u28ff]').probe, 'the real braille range must still be accepted');
     assert.ok(withPattern('[\u2500-\u257f]').probe,
       'box-drawing decoration must be accepted too — the rule is about typed text, not about braille');
-    // `\\S`, `\\w` and `[a-z]` are the ones an earlier version of this check
-    // ACCEPTED: it refused a blacklist of obvious offenders and let through
-    // three patterns exactly as broad. They are why the check now asks what a
-    // pattern MATCHES rather than what it looks like.
-    for (const bad of ['.', '[\\s\\S]', '\\s*', '', 'x?', '\\S', '\\w', '[a-z]', '[^\\s]', '[a-z]{2}', 'ab']) {
+    // `\\S`, `\\w` and `[a-z]` are as broad as `.` while looking narrower,
+    // which is why the check asks what a pattern MATCHES. `[^ -~]` and `\\p{L}`-
+    // style ranges pass an ASCII-only check while matching typed non-ASCII.
+    for (const bad of ['.', '[\\s\\S]', '\\s*', '', 'x?', '\\S', '\\w', '[a-z]', '[^\\s]', '[a-z]{2}|[a-z]',
+      '[^ -~]', '[\u00c0-\u024f]', '[\u4e00-\u9fff]', '[\u0400-\u04ff]']) {
       assert.equal(withPattern(bad).probe, undefined,
         `decorativePattern ${JSON.stringify(bad)} must leave the engine unprofiled rather than blind both gates`);
     }

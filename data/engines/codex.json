@@ -92,7 +92,7 @@
         },
         "placeholderSgr": {
           "verifiedOn": "2026-09-16",
-          "source": "Live capture: the placeholder is emitted as `\\u001b[2mAsk Codex to do anything`, i.e. SGR 2 (dim), the same attribute Claude uses. Correction to an earlier claim in this file's history: it is NOT true that the braille shimmer is uncovered by this field because it carries only a truecolor foreground. `_cells` applies SGR sub-parameters as attributes, so `\\u001b[38;2;R;G;Bm` records 38, 2 and R — the 2 from the truecolor selector is indistinguishable from a real dim attribute, and a probe confirms `sgr.has(2)` is true for such a cell. The shimmer is therefore handled by `decorativePattern`, which names it explicitly, rather than by this field happening to catch it."
+          "source": "Live capture: the placeholder is emitted as `\\u001b[2mAsk Codex to do anything`, i.e. SGR 2 (dim), the same attribute Claude uses. The braille shimmer is NOT outside this field merely because it carries only a truecolor foreground. `_cells` applies SGR sub-parameters as attributes, so `\\u001b[38;2;R;G;Bm` records 38, 2 and R — the 2 from the truecolor selector is indistinguishable from a real dim attribute, and a probe confirms `sgr.has(2)` is true for such a cell. The shimmer is therefore handled by `decorativePattern`, which names it explicitly, rather than by this field happening to catch it."
         },
         "idleMarker": {
           "verifiedOn": "2026-09-16",
