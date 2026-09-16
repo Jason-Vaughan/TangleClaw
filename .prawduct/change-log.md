@@ -34,6 +34,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-16 — Stranded wraps are surfaced at session start and can be acknowledged (#868, #1538)
+
+<!-- prawduct: type=feature | scope=train-20-chunk-01 -->
+
+Train 20 Chunk 01. A wrap branch pushed with no pull request was recorded in `wrap.auto_pr` but read by nothing, so a later session found it only by accident. The commit step now also writes a `wrap.stranded` row with the remote (credentials removed by the new `remote-output.js#stripRemoteCredentials`), the branch and the wrap commit. It is a separate event type because `activity_log` keeps at most 500 rows per type, and the busy `wrap.auto_pr` type would evict a stranded row within months. A stranded `wrap.auto_pr` row with no `wrap.stranded` companion predates the change and is listed as grandfathered, with no remote or SHA. The new `lib/stranded-wraps.js` lists items (newest head per branch), acknowledges one at its full head SHA as a `wrap.strand_ack` row (the signed-in user or null; a repeat writes nothing; a save the read-back can't confirm answers 500), and renders a session-start section on every engine: one line when there are none, "could not be read" on a store error, otherwise up to five items with full SHAs. `GET /api/projects/:project/stranded-wraps` returns the list with `counts.blocking` (unacknowledged and not grandfathered, `isBlocking`), which is what Chunk 02's launch gate will read. `POST …/ack` answers 201, 200, 400, 404 or 500. Nothing calls GitHub. The cumulative Critic found 0 blocking, 5 warnings and 7 notes; all were fixed and verify-resolutions closed them. Fifteen deliberate breakages were each caught by a test, and a scratch-server run with a real push to a bare repo covered record, list, ack and the prime.
+
+
 ## 2026-09-16 — OpenClaw 2026.9's Control UI starts behind the proxy (#1534)
 
 <!-- prawduct: type=bugfix | scope=control-ui-base-path-1534 -->
