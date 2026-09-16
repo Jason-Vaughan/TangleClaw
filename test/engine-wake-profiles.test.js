@@ -665,7 +665,7 @@ describe('an engine that animates decoration at rest is still readable as idle (
     // ACCEPTED: it refused a blacklist of obvious offenders and let through
     // three patterns exactly as broad. They are why the check now asks what a
     // pattern MATCHES rather than what it looks like.
-    for (const bad of ['.', '[\\s\\S]', '\\s*', '', 'x?', '\\S', '\\w', '[a-z]', '[^\\s]']) {
+    for (const bad of ['.', '[\\s\\S]', '\\s*', '', 'x?', '\\S', '\\w', '[a-z]', '[^\\s]', '[a-z]{2}', 'ab']) {
       assert.equal(withPattern(bad).probe, undefined,
         `decorativePattern ${JSON.stringify(bad)} must leave the engine unprofiled rather than blind both gates`);
     }

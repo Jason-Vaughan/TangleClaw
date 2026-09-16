@@ -327,7 +327,10 @@ session is at rest. codex paints an animated braille shimmer across and above it
 pane digest change on every tick — the monitor read it as still writing and never nudged it, permanently.
 Both idle gates discount cells matched by this pattern: the transcript digest blanks them to spaces (never
 deletes them, which would shorten a line and reintroduce the instability), and the composer scan skips them.
-It is refused unless it matches decoration ONLY: a pattern matching the empty string or ANY printable ASCII character is rejected, because that is the range an operator types. Checked by evaluating the pattern against every such character rather than by blacklisting known-bad sources — an earlier version refused `.` and `[\s\S]` but accepted `\S`, `\w` and `[a-z]`, which are exactly as broad. Getting this wrong would silently disable both gates and let a nudge land on the operator's
+It is refused unless it matches decoration ONLY: a pattern matching the empty string, any printable ASCII
+character, or a run of them is rejected, because that is what an operator types. The check evaluates the
+pattern against those characters rather than inspecting its source, so a broad pattern is caught however it
+is written. Getting this wrong would silently disable both idle gates and let a nudge land on the operator's
 own half-written text, so the engine stays unprofiled instead.
 Anything it matches stops counting as operator input for that engine, so declare the narrowest range that
 covers the decoration and nothing else.
