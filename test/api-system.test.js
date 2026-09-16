@@ -296,6 +296,9 @@ describe('API — system, engines, tmux', () => {
         assert.equal(data.ok, false);
         assert.match(data.error, /no restart mechanism available/i,
           'error must signal that the mechanism is absent so the frontend can hide the button cleanly');
+        assert.match(data.error, /systemd user unit at ~\/\.config\/systemd\/user\/tangleclaw\.service/,
+          'a Linux operator must be told which file enables the restart, not that Linux is unsupported');
+        assert.doesNotMatch(data.error, /follow-up/i);
       } finally {
         serverInfo.detectRestartMechanism = origDetect;
       }

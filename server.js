@@ -1489,11 +1489,12 @@ route('POST', '/api/master/rules/restore-defaults', (_req, res) => {
 
 // POST /api/server/restart — kick the TC server via the platform's
 // process manager (#235). 202 Accepted is sent BEFORE the exec so the
-// browser sees a clean response, then ~80ms later the launchctl
-// kickstart kills this process. The browser polls /api/server-info to
-// detect when the new process is up and reloads. Returns 501 when no
-// restart mechanism is available (e.g. bare-node, Linux today) so the
-// frontend can hide the button cleanly.
+// browser sees a clean response, then ~300ms later the process manager
+// (launchd or a systemd user unit) replaces this process. The browser
+// polls /api/server-info to detect when the new process is up and
+// reloads. Returns 501 when no restart mechanism is available (e.g.
+// bare-node, or Linux without the user unit) so the frontend can hide
+// the button cleanly.
 route('POST', '/api/server/restart', (_req, res, _params, body) => {
   // #583 — a restart kills any in-flight wrap pipeline (the 2026-07-16
   // incident's first domino: a restart POSTed mid-wrap 502'd the wrap and
@@ -1511,7 +1512,7 @@ route('POST', '/api/server/restart', (_req, res, _params, body) => {
   if (!mechanism) {
     jsonResponse(res, 501, {
       ok: false,
-      error: 'no restart mechanism available on this host (macOS launchd plist not detected; Linux support is a follow-up)'
+      error: 'no restart mechanism available on this host (no macOS launchd plist, and no systemd user unit at ~/.config/systemd/user/tangleclaw.service)'
     });
     return;
   }

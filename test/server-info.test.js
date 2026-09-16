@@ -6,6 +6,8 @@
 
 const { describe, it, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
+const os = require('node:os');
+const path = require('node:path');
 
 const serverInfo = require('../lib/server-info');
 
@@ -334,14 +336,60 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       }
     });
 
-    it('returns null on Linux today (deliberate follow-up, not a regression)', () => {
+    it("returns 'systemctl' on Linux when the systemd user unit exists", () => {
       serverInfo._internal.platform = () => 'linux';
-      serverInfo._internal.existsSync = () => true; // even with a stray file, Linux returns null
+      serverInfo._internal.existsSync = (p) => p === serverInfo.LINUX_SYSTEMD_USER_UNIT_PATH;
+      try {
+        assert.equal(serverInfo.detectRestartMechanism(), 'systemctl');
+      } finally {
+        restoreInternal();
+      }
+    });
+
+    it('returns null on Linux when the user unit is absent (e.g. node started manually)', () => {
+      serverInfo._internal.platform = () => 'linux';
+      serverInfo._internal.existsSync = () => false;
       try {
         assert.equal(serverInfo.detectRestartMechanism(), null);
       } finally {
         restoreInternal();
       }
+    });
+
+    it('returns null on Linux when only a system-wide unit exists — the server cannot restart it unprivileged', () => {
+      // A unit under /etc/systemd/system is owned by the system manager;
+      // restarting it needs root or a polkit grant the server does not
+      // have, so offering the button would promise an action that fails.
+      const seen = [];
+      serverInfo._internal.platform = () => 'linux';
+      serverInfo._internal.existsSync = (p) => { seen.push(p); return p === '/etc/systemd/system/tangleclaw.service'; };
+      try {
+        assert.equal(serverInfo.detectRestartMechanism(), null);
+        assert.ok(!seen.includes('/etc/systemd/system/tangleclaw.service'),
+          'detection must not consult the system-wide unit path at all');
+      } finally {
+        restoreInternal();
+      }
+    });
+
+    it('does not cross platforms — a launchd plist on Linux or a user unit on macOS enables nothing', () => {
+      try {
+        serverInfo._internal.platform = () => 'linux';
+        serverInfo._internal.existsSync = (p) => p === serverInfo.MACOS_PLIST_PATH;
+        assert.equal(serverInfo.detectRestartMechanism(), null);
+
+        serverInfo.__unsafeResetForTest();
+        serverInfo._internal.platform = () => 'darwin';
+        serverInfo._internal.existsSync = (p) => p === serverInfo.LINUX_SYSTEMD_USER_UNIT_PATH;
+        assert.equal(serverInfo.detectRestartMechanism(), null);
+      } finally {
+        restoreInternal();
+      }
+    });
+
+    it('the user unit path lives under ~/.config/systemd/user', () => {
+      assert.equal(serverInfo.LINUX_SYSTEMD_USER_UNIT_PATH,
+        path.join(os.homedir(), '.config', 'systemd', 'user', 'tangleclaw.service'));
     });
 
     it('returns null on unknown platforms (Windows, etc.)', () => {
@@ -382,8 +430,16 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       assert.equal(cmd, 'launchctl kickstart -k gui/$(id -u)/com.tangleclaw.server');
     });
 
+    it("emits a non-blocking user-manager restart for 'systemctl'", () => {
+      // --user: the unit belongs to the operator's own service manager.
+      // --no-block: the route runs this with execSync, which stalls the
+      // event loop until the command returns; a blocking restart would wait
+      // on a job that needs this very process to exit first.
+      assert.equal(serverInfo.buildRestartCommand('systemctl'),
+        'systemctl --user --no-block restart tangleclaw.service');
+    });
+
     it('returns null for an unknown mechanism (defensive — should never reach the exec path)', () => {
-      assert.equal(serverInfo.buildRestartCommand('systemctl'), null);
       assert.equal(serverInfo.buildRestartCommand('unknown'), null);
       assert.equal(serverInfo.buildRestartCommand(null), null);
       assert.equal(serverInfo.buildRestartCommand(undefined), null);
@@ -399,6 +455,19 @@ describe('lib/server-info (#199 stale-server detection)', () => {
         serverInfo.captureStartup();
         const info = serverInfo.getServerInfo();
         assert.equal(info.restartMechanism, 'launchctl');
+      } finally {
+        restoreInternal();
+      }
+    });
+
+    it("surfaces 'systemctl' on Linux with the user unit — the frontend shows the button on this signal", () => {
+      serverInfo._internal.execSync = () => 'sha-1\n';
+      serverInfo._internal.platform = () => 'linux';
+      serverInfo._internal.existsSync = (p) => p === serverInfo.LINUX_SYSTEMD_USER_UNIT_PATH;
+      try {
+        serverInfo.captureStartup();
+        const info = serverInfo.getServerInfo();
+        assert.equal(info.restartMechanism, 'systemctl');
       } finally {
         restoreInternal();
       }

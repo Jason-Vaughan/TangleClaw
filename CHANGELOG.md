@@ -11,6 +11,12 @@ All notable changes to TangleClaw are documented in this file.
   - Wraps stranded before this change are still listed, marked as older records with no commit SHA. Those can still be dropped with the rest of their entry type.
   - `GET /api/projects/<id or name>/stranded-wraps` returns the list with counts. `counts.blocking` leaves out older records, which are shown but never meant to hold anything up. Nothing here calls GitHub; later work checks the list against GitHub.
 - **Acknowledge a stranded wrap you've dealt with** (#1538). `POST /api/projects/<id or name>/stranded-wraps/ack` with `{"branch", "headSha"}` records who acknowledged it (the signed-in user, or nobody when sign-in is off) and when. Use the full commit SHA; the session-start list shows it. An acknowledged wrap drops out of the session-start list, and acknowledging it again records nothing new. If the acknowledgement can't be saved, the request fails with a 500 rather than claiming success. The acknowledgement covers that commit only, so the same branch stranded again at a new commit is listed again. A wrap that isn't listed at that commit gets a 404 and nothing is recorded. For older records, send `"headSha": null`.
+- **The Restart TangleClaw button works on Linux when TangleClaw runs as a systemd user service** (#1506, refs #239). If `~/.config/systemd/user/tangleclaw.service` exists, the stale-server banner and Settings → Diagnostics offer the restart, and it runs `systemctl --user --no-block restart tangleclaw.service`. Before this, Linux always showed the button disabled.
+  - Only a **user** unit counts. The server runs as you, not as root, so it can't restart a system-wide unit in `/etc/systemd/system`. Detection never looks there.
+  - `--no-block` returns as soon as systemd has queued the restart. The server waits for the command to finish before doing anything else, and a blocking restart would be waiting on this very process to stop.
+  - Nothing installs the unit yet; the installer work is tracked in #1424. Until then, you get the button if you create the unit yourself. When there's no unit, the disabled button and the API's 501 now name the file to create instead of calling Linux a follow-up.
+
+  Reconstructed under ADR 0014 from #239 rather than from the submitted patch. Reported and independently implemented by **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in PR #1506; their bytes were not merged, per `CONTRIBUTING.md`.
 
 ## [5.28.0] - 2026-09-16
 
