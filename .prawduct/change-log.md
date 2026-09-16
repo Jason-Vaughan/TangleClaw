@@ -58,6 +58,17 @@ The limit has one source: the server. The switchboard `/status` response serves 
 The limit covers every route that carries operator or agent prose into a session, not the ones that were noticed first: integration added `POST /api/sessions/:project/wrap/handback` and `POST /api/sessions/:project/wrap/complete`, which the delegate's hand-enumerated list missed. The handback caps its own prompt at 3800 characters, and 3800 multibyte characters is about 11 KB — refused by the old 10 KB default before the handler's own cap could answer.
 
 Deliberately unchanged: the command route still refuses a `command` over 4096 characters with a 400, because the wrap drawer depends on that limit. The 64 KB body limit only matters there for multibyte text.
+## 2026-09-15 — The wrap holds back files that look like they carry a credential (#1513)
+
+<!-- prawduct: type=feature | scope=bugfix-sprint-chunk-03 -->
+
+Bugfix Sprint Chunk 03, built by a delegate and integrated by the coordinator.
+
+`session-files` and `commit` scan what the wrap would commit with `lib/secret-scan.js`, plus the files it is already asking about. A match the operator has not decided on joins the same Include / Leave list rather than a new decision channel — the drawer only renders that list for those two steps, so a new blocking step would have offered no way to answer. Include commits the file as it is; Leave keeps it out; removing the credential clears the block with no decision. The drawer shows the file and the rule that matched, never the matched text, and a `wrap.secret_scan` activity row records the outcome.
+
+`commit` scans again after the wrap's own writes, so a credential written after the first question is still caught. Binary files, files over 1 MB, symbolic links and unreadable files are not scanned and are listed with the reason. `looksLikeText` moved into `lib/secret-scan.js`, so uploads and the wrap agree on what counts as binary.
+
+Known limit, recorded rather than fixed: a decision is keyed by path, so a file Included before a credential was written into it keeps that Include for the rest of the wrap. Closing that needs a new decision value and UI work.
 
 
 ## 2026-09-15 — TangleClaw state leaves the files projects track (#1510, #1511, #1512)

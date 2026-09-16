@@ -819,7 +819,9 @@ describe('wrap-drawer helpers — Include / Leave for uncommitted files (#1406)'
       assert.deepEqual(plain(H.pathDecisionWidget(blockedRow(kind), output)), {
         kind: 'path-decisions',
         optionsKey: 'pathDecisions',
-        paths: [{ path: 'shared.js', why: 'already uncommitted when this session launched', deleted: false }]
+        // `secret` joined the view model in #1513: the heading has to tell a
+        // credential match apart from a file the session did not change.
+        paths: [{ path: 'shared.js', why: 'already uncommitted when this session launched', deleted: false, secret: false }]
       });
     }
     assert.equal(H.pathDecisionWidget(blockedRow('test'), output), null);
@@ -1603,5 +1605,91 @@ describe('#867 — stranded-wrap classification agrees with the server', () => {
       results: [{ output: { autoPr: { pushed: false, prUrl: null, autoMergeArmed: false, skippedReason: 'wrapAutoPrEnabled is false for this project', error: null } } }]
     });
     assert.equal(info, null, 'an opt-out pushes nothing, so there is nothing to banner about');
+  });
+});
+
+describe('the Include / Leave heading describes what is actually in the list (#1513)', () => {
+  const H = loadHelpers();
+
+  it('says "not changed by this session" only when that is true of every file', () => {
+    const label = H.pathDecisionLabel([{ secret: false }, { secret: false }]);
+    assert.equal(label, '2 uncommitted files were not changed by this session. Include in the wrap commit, or leave uncommitted? Leave never discards anything.');
+  });
+
+  it('never claims a secret match was not changed by this session', () => {
+    // The defect this pins: a token pasted into a file the session DID write
+    // rides this list, and the old heading told the operator it was someone
+    // else's leftover — the sentence the Include decision is made against.
+    const label = H.pathDecisionLabel([{ secret: true }]);
+    assert.ok(!/not changed by this session/.test(label), label);
+    assert.match(label, /1 file the wrap would commit matches a credential pattern/);
+  });
+
+  it('a mixed list counts both kinds instead of describing one as the other', () => {
+    const label = H.pathDecisionLabel([{ secret: true }, { secret: false }, { secret: false }]);
+    assert.match(label, /3 files need a decision/);
+    assert.match(label, /1 matches a credential pattern/);
+    assert.match(label, /2 were not changed by this session/);
+  });
+
+  it('the widget carries the secret flag through from secretRules', () => {
+    const w = H.pathDecisionWidget(
+      { kind: 'session-files' },
+      { foreignPaths: [{ path: 'a.js', why: 'w', secretRules: ['github-token'] }, { path: 'b.js', why: 'w' }] }
+    );
+    assert.deepEqual(w.paths.map((p) => p.secret), [true, false]);
+  });
+});
+
+describe('the commit row reports what its rescan found (#1513)', () => {
+  const H = loadHelpers();
+
+  it('says nothing when the scan found nothing', () => {
+    assert.equal(H.secretScanPhrase({ flagged: [], skipped: [] }), '');
+    assert.equal(H.secretScanPhrase(null), '');
+  });
+
+  it('a skipped file is visible rather than reading like a clean scan', () => {
+    const phrase = H.secretScanPhrase({ flagged: [], skipped: [{ path: 'x.bin', reason: 'looks binary' }] });
+    assert.equal(phrase, ' · 1 file not scanned for secrets');
+  });
+
+  it('names included and left matches separately', () => {
+    const phrase = H.secretScanPhrase({
+      flagged: [{ decision: 'include' }, { decision: 'leave' }, { decision: 'leave' }],
+      skipped: []
+    });
+    assert.match(phrase, /1 secret match you included/);
+    assert.match(phrase, /2 secret matches left uncommitted/);
+  });
+});
+
+describe('the commit row renders its rescan outcome, not just the helper (#1513)', () => {
+  const H = loadHelpers();
+  const commit = (output) => H.deriveDetail({ kind: 'commit', status: 'done', output });
+
+  it('a commit that skipped a file says so on the row', () => {
+    // R-15's defect was that nothing rendered output.secretScan, so a commit
+    // that could not read a file looked identical to a clean one. Pins the
+    // call site, not just secretScanPhrase.
+    const detail = commit({
+      commitSha: 'abcdef1234567890',
+      secretScan: { flagged: [], skipped: [{ path: 'x.bin', reason: 'looks binary' }] }
+    });
+    assert.match(detail, /1 file not scanned for secrets/);
+    assert.match(detail, /^abcdef123456/);
+  });
+
+  it('a commit carrying an included match names it', () => {
+    const detail = commit({
+      commitSha: 'abcdef1234567890',
+      secretScan: { flagged: [{ decision: 'include' }], skipped: [] }
+    });
+    assert.match(detail, /1 secret match you included/);
+  });
+
+  it('a clean scan adds nothing to the row', () => {
+    assert.equal(commit({ commitSha: 'abcdef1234567890', secretScan: { flagged: [], skipped: [] } }), 'abcdef123456');
+    assert.equal(commit({ commitSha: 'abcdef1234567890' }), 'abcdef123456');
   });
 });
