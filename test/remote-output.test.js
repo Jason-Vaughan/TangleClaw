@@ -22,7 +22,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { redactRemoteOutput, detailFromFailure, reasonFromFailure, MAX_CHARS, REDACTED_PREFIX } = require('../lib/remote-output');
+const { redactRemoteOutput, detailFromFailure, reasonFromFailure, stripRemoteCredentials, MAX_CHARS, REDACTED_PREFIX } = require('../lib/remote-output');
 
 // Assembled, never written contiguously — see the header note.
 const GH_CLASSIC = `gh${'p'}_${'a'.repeat(36)}`;
@@ -173,5 +173,28 @@ test('remote-output: detailFromFailure is the same text without the fallback', a
       exitCode: 128
     });
     assert.doesNotMatch(out, new RegExp(GH_OAUTH));
+  });
+});
+
+test('remote-output: stripRemoteCredentials', async (t) => {
+  await t.test('removes a token with no password, the most likely credential form', () => {
+    assert.strictEqual(stripRemoteCredentials(`https://${GH_OAUTH}@github.com/o/r.git`), 'https://github.com/o/r.git');
+  });
+  await t.test('removes user:password userinfo', () => {
+    assert.strictEqual(stripRemoteCredentials(`https://x-access-token:${GH_CLASSIC}@github.com/o/r.git`),
+      'https://github.com/o/r.git');
+  });
+  await t.test('removes it rather than masking it, so the result is still the repository identity', () => {
+    const out = stripRemoteCredentials(`https://${GH_OAUTH}@github.com/o/r.git`);
+    assert.ok(!out.includes('***'));
+    assert.strictEqual(out, stripRemoteCredentials('https://github.com/o/r.git'));
+  });
+  await t.test('leaves a URL with no credentials unchanged, apart from surrounding whitespace', () => {
+    assert.strictEqual(stripRemoteCredentials('  https://github.com/o/r.git\n'), 'https://github.com/o/r.git');
+    assert.strictEqual(stripRemoteCredentials('git@github.com:o/r.git'), 'git@github.com:o/r.git');
+    assert.strictEqual(stripRemoteCredentials('/srv/git/r.git'), '/srv/git/r.git');
+  });
+  await t.test('returns null for anything that is not a non-blank string', () => {
+    for (const v of [null, undefined, 42, '', '   ']) assert.strictEqual(stripRemoteCredentials(v), null);
   });
 });

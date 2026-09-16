@@ -87,6 +87,26 @@ describe('sessions', () => {
       assert.doesNotMatch(sessions.generatePrimePrompt(project, engine, { healReport: null }), /TangleClaw housekeeping/);
     });
 
+    it('says whether the project has stranded wraps, on every engine (#868)', () => {
+      const project = store.projects.getByName('prime-test');
+      const before = sessions.generatePrimePrompt(project, store.engines.get('claude'));
+      assert.match(before, /Stranded wraps: none recorded for this project\./);
+
+      require('../lib/stranded-wraps').record({
+        projectId: project.id, remote: 'https://github.com/example/prime.git',
+        branch: 'wrap/20260916-prime-test', headSha: 'd'.repeat(40)
+      });
+      for (const engineId of ['claude', 'codex', 'gemini']) {
+        const engine = store.engines.get(engineId);
+        if (!engine) continue;
+        const prompt = sessions.generatePrimePrompt(project, engine);
+        assert.match(prompt, /## Stranded wraps/, engineId);
+        assert.ok(prompt.includes(`\`wrap/20260916-prime-test\` at \`${'d'.repeat(40)}\``), engineId);
+      }
+      assert.ok(store.engines.get('codex') || store.engines.get('gemini'),
+        'the engine-parity loop must cover at least one engine besides claude');
+    });
+
     it('names every rule source in force, in the engine\'s own config filename — never a hard-coded CLAUDE.md (#796)', () => {
       const project = store.projects.getByName('prime-test');
       const claude = store.engines.get('claude');

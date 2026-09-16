@@ -447,6 +447,75 @@ describe('wrap-step commit — auto-PR close-loop (#467)', () => {
         'the row must point back at the session that stranded the branch');
     });
 
+    /**
+     * The full stranded record (#868): its own event type, so the per-type
+     * retention cap on the busy `wrap.auto_pr` type cannot evict it, keyed by
+     * remote, branch and head so an acknowledgement covers exactly one head.
+     * @returns {object[]}
+     */
+    function strandedRows() {
+      return store.activity.query({ projectId, eventType: 'wrap.stranded', limit: 50 });
+    }
+
+    it('writes a wrap.stranded row with the remote, branch and wrap commit for a stranded wrap', async () => {
+      interceptExec({ 'gh-version': { exitCode: 127, stdout: '', stderr: 'command not found: gh\n' } });
+      const ctx = buildContext();
+      const sessionId = store.sessions.start({ projectId, engineId: 'claude' }).id;
+      ctx.session = { id: sessionId };
+      const result = await commitStep.run(ctx);
+
+      const rows = strandedRows();
+      assert.equal(rows.length, 1);
+      assert.deepEqual(rows[0].detail, {
+        remote: 'https://github.com/example/sandbox.git',
+        branch: result.output.branch,
+        headSha: result.output.commitSha
+      });
+      assert.match(rows[0].detail.headSha, /^[0-9a-f]{40}$/);
+      assert.equal(rows[0].sessionId, sessionId);
+      assert.equal(result.output.autoPr.remote, 'https://github.com/example/sandbox.git');
+    });
+
+    it('strips credentials from the remote in both the stranded record and the step output', async () => {
+      interceptExec({
+        remote: { exitCode: 0, stdout: 'https://x-access-token:ghp_abc123@github.com/example/sandbox.git\n', stderr: '' },
+        'gh-version': { exitCode: 127, stdout: '', stderr: 'command not found: gh\n' }
+      });
+      const result = await commitStep.run(buildContext());
+
+      assert.equal(strandedRows()[0].detail.remote, 'https://github.com/example/sandbox.git');
+      assert.equal(result.output.autoPr.remote, 'https://github.com/example/sandbox.git');
+      assert.doesNotMatch(JSON.stringify(result.output), /ghp_abc123/);
+    });
+
+    it('lists the wrap the commit step stranded, not as grandfathered', async () => {
+      interceptExec({ 'gh-version': { exitCode: 127, stdout: '', stderr: 'command not found: gh\n' } });
+      const result = await commitStep.run(buildContext());
+
+      const { items } = require('../lib/stranded-wraps').list({ id: projectId });
+      assert.equal(items.length, 1);
+      assert.equal(items[0].branch, result.output.branch);
+      assert.equal(items[0].grandfathered, false);
+    });
+
+    it('writes a wrap.stranded row when the branch pushed but gh pr create failed', async () => {
+      interceptExec({ 'gh-create': { exitCode: 1, stdout: '', stderr: 'GraphQL: broke\n' } });
+      await commitStep.run(buildContext());
+      assert.equal(strandedRows().length, 1, 'a pushed branch with no PR is stranded whatever stopped the PR');
+    });
+
+    for (const [label, overrides] of [
+      ['a wrap whose PR opened and armed auto-merge', {}],
+      ['a wrap whose push failed', { push: { exitCode: 1, stdout: '', stderr: 'rejected\n' } }],
+      ['a wrap with no origin remote', { remote: { exitCode: 2, stdout: '', stderr: 'error: No such remote' } }]
+    ]) {
+      it(`writes no wrap.stranded row for ${label}`, async () => {
+        interceptExec(overrides);
+        await commitStep.run(buildContext());
+        assert.equal(strandedRows().length, 0);
+      });
+    }
+
     it('writes no row when the wrap did not auto-branch (nothing can dangle)', async () => {
       execSync('git checkout -b feat/regular --quiet', { cwd: projectPath });
       interceptExec();
