@@ -198,7 +198,10 @@ fails any auto-stub section older than 14 days.
   off-box, non-browser `/openclaw-direct/*` request #1419 left open. The session
   cookie is stripped before proxying on every path that copies request headers to an upstream
   (`authSession#stripOwnCookiesFromHeaders`, applied in `proxyToTtyd`, `_openclawProxyHeaders`,
-  `_openclawWsRequestLines` and the `/terminal` branch of `handleUpgrade`). Dashboard side: `public/api-helper.js#tcCsrfToken`/`#tcWithCsrf`, applied
+  `_openclawWsRequestLines` and the `/terminal` branch of `handleUpgrade`). The two OpenClaw builders
+  also drop client-attribution headers (`X-Forwarded-*`, `Forwarded`, `X-Real-IP`) through one shared
+  predicate, `server.js#_isClientAttributionHeader` (#1532): TangleClaw is the trust boundary there, and
+  OpenClaw 2026.9.x refuses a request carrying them from an untrusted proxy. Dashboard side: `public/api-helper.js#tcCsrfToken`/`#tcWithCsrf`, applied
   inside `api()` because that is the one choke-point every write already goes through, bodyless ones
   included. Revocation reaches live sessions — `users.disable` and `users.setPassword` destroy them,
   and `#resolve` re-checks `disabled_at` every request. The login route uses

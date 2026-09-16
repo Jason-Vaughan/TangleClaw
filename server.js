@@ -7635,6 +7635,24 @@ function _stripFrameBlockers(headers) {
 }
 
 /**
+ * Is this a header that attributes the request to a client or an earlier hop?
+ *
+ * Caddy adds `X-Forwarded-*` to everything it fronts. The OpenClaw proxy must not
+ * pass them on: TangleClaw is the trust boundary for these requests (it
+ * authenticated the operator), the gateway's real peer is the SSH tunnel's
+ * loopback end, and OpenClaw 2026.9.x refuses a request carrying them unless the
+ * proxy is configured as trusted (`403 proxy_attribution_required`). A prefix
+ * rule rather than a list, so any `X-Forwarded-*` a front end adds is covered.
+ * Shared by the HTTP and WebSocket builders so the two cannot drift apart.
+ * @param {string} name - Header name, any letter case.
+ * @returns {boolean}
+ */
+function _isClientAttributionHeader(name) {
+  const k = String(name).toLowerCase();
+  return k === 'forwarded' || k === 'x-real-ip' || k.startsWith('x-forwarded-');
+}
+
+/**
  * Build proxy headers for OpenClaw requests, rewriting origin/referer to match the target
  * and injecting the gateway token for server-side auth.
  * @param {object} headers - Original request headers
@@ -7649,6 +7667,9 @@ function _openclawProxyHeaders(headers, localPort, gatewayToken) {
   // (ADR 0016 OQ1). Only our two cookies are removed; the gateway sets its own
   // through this proxy and those must survive.
   const out = { ...authSession.stripOwnCookiesFromHeaders(headers), host: `127.0.0.1:${localPort}` };
+  for (const key of Object.keys(out)) {
+    if (_isClientAttributionHeader(key)) delete out[key];
+  }
   const localOrigin = `http://127.0.0.1:${localPort}`;
   if (out.origin) out.origin = localOrigin;
   if (out.referer) out.referer = localOrigin + '/';
@@ -7670,7 +7691,8 @@ function _openclawProxyHeaders(headers, localPort, gatewayToken) {
  * the incoming `Authorization` header (the operator's caddy Basic credential in
  * gated mode) is always dropped, and a `Bearer <gatewayToken>` is injected when a
  * token is configured. `Host` is pinned to the upstream and `Origin`/`Referer` are
- * rewritten to the local origin. TangleClaw's own session and CSRF cookies are
+ * rewritten to the local origin, and client-attribution headers are dropped
+ * ({@link _isClientAttributionHeader}). TangleClaw's own session and CSRF cookies are
  * stripped, as on HTTP (ADR 0016 OQ1). Terminates with the blank line ending the block.
  * @param {object} headers - Incoming request headers (`req.headers`, lowercased keys).
  * @param {string} targetUrl - Rewritten request target for the upstream.
@@ -7688,6 +7710,7 @@ function _openclawWsRequestLines(headers, targetUrl, localPort, gatewayToken) {
   for (const [key, value] of Object.entries(authSession.stripOwnCookiesFromHeaders(headers))) {
     const k = key.toLowerCase();
     if (k === 'host') continue;
+    if (_isClientAttributionHeader(k)) continue; // same rule as the HTTP builder
     if (k === 'authorization') continue; // stripped; gateway token injected below (#470)
     if (k === 'origin') { lines.push(`origin: ${localOrigin}`); continue; }
     if (k === 'referer') { lines.push(`referer: ${localOrigin}/`); continue; }
