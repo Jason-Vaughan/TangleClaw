@@ -169,13 +169,32 @@ describe('openclaw-version (#296)', () => {
       assert.equal(ocv._inflight.size, 0, 'in-flight entry cleared once settled');
     });
 
-    it('a failed read is not cached, so the next call retries', async () => {
+    it('a failed read backs off for FAILURE_TTL_MS, then retries; force retries at once', async () => {
       let calls = 0;
-      ocv._internal.execAsync = async () => { calls++; throw Object.assign(new Error('timeout'), { stderr: '' }); };
+      ocv._internal.execAsync = async () => { calls++; throw Object.assign(new Error('timeout'), { stderr: 'no route' }); };
+      const r1 = await ocv.fetchVersion(conn());
+      const r2 = await ocv.fetchVersion(conn());
+      assert.equal(calls, 1, 'a render inside the back-off does not start another ssh');
+      assert.equal(r2.cached, true);
+      assert.equal(r2.version, null);
+      assert.equal(r2.error, r1.error, 'the cached failure still carries its reason');
+      await ocv.fetchVersion(conn(), { force: true });
+      assert.equal(calls, 2, 'force bypasses the back-off');
+      ocv._cache.get('c1').fetchedAt -= ocv.FAILURE_TTL_MS + 1;
       await ocv.fetchVersion(conn());
+      assert.equal(calls, 3, 'retried once the back-off lapses');
+      assert.ok(ocv.FAILURE_TTL_MS < ocv.TTL_MS);
+    });
+
+    it('a successful read is not cut short by the failure back-off', async () => {
+      let calls = 0;
+      ocv._internal.execAsync = async () => { calls++; return { stdout: 'OPENCLAW_IMAGE=openclaw:edge' }; };
       await ocv.fetchVersion(conn());
-      assert.equal(calls, 2);
-      assert.equal(ocv._cache.size, 0);
+      ocv._cache.get('c1').fetchedAt -= ocv.FAILURE_TTL_MS + 1;
+      const r = await ocv.fetchVersion(conn());
+      assert.equal(calls, 1);
+      assert.equal(r.cached, true);
+      assert.equal(r.error, null);
     });
 
     it('a read in flight when the connection is invalidated is not cached', async () => {
