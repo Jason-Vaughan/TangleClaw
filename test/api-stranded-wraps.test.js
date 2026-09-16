@@ -120,7 +120,8 @@ describe('stranded-wraps API (#868, #1538)', () => {
       const body = json(res);
       assert.deepEqual(body.project, { id: project.id, name: project.name });
       assert.deepEqual(body.items.map((i) => [i.branch, i.grandfathered]), [['wrap/1-x', false], ['wrap/0-old', true]]);
-      assert.deepEqual(body.counts, { total: 2, unacknowledged: 2, grandfathered: 1 });
+      assert.deepEqual(body.counts, { total: 2, unacknowledged: 2, grandfathered: 1, blocking: 1 },
+        'a grandfathered item is listed and unacknowledged, but never blocking');
     });
 
     it('answers by numeric project id as well as by name', async () => {
@@ -134,7 +135,7 @@ describe('stranded-wraps API (#868, #1538)', () => {
       const res = await send('GET', base());
       assert.equal(res.statusCode, 200);
       assert.deepEqual(json(res).items, []);
-      assert.deepEqual(json(res).counts, { total: 0, unacknowledged: 0, grandfathered: 0 });
+      assert.deepEqual(json(res).counts, { total: 0, unacknowledged: 0, grandfathered: 0, blocking: 0 });
     });
 
     it('404s for an unknown project', async () => {
@@ -164,6 +165,31 @@ describe('stranded-wraps API (#868, #1538)', () => {
       const after = json(await send('GET', base()));
       assert.equal(after.items[0].acknowledged, true);
       assert.equal(after.counts.unacknowledged, 0);
+      assert.equal(after.counts.blocking, 0);
+    });
+
+    it('answers 200 with created:false when the item was already acknowledged', async () => {
+      stranded.record({ projectId: project.id, remote: REMOTE, branch: 'wrap/1-x', headSha: SHA });
+      const first = await send('POST', `${base()}/ack`, { body: { branch: 'wrap/1-x', headSha: SHA } });
+      const again = await send('POST', `${base()}/ack`, { body: { branch: 'wrap/1-x', headSha: SHA } });
+      assert.equal(first.statusCode, 201);
+      assert.equal(json(first).created, true);
+      assert.equal(again.statusCode, 200);
+      assert.equal(json(again).created, false);
+    });
+
+    it('answers 500 when the acknowledgement could not be saved', async () => {
+      stranded.record({ projectId: project.id, remote: REMOTE, branch: 'wrap/1-x', headSha: SHA });
+      const real = stranded._internal.log;
+      stranded._internal.log = () => {};
+      let res;
+      try {
+        res = await send('POST', `${base()}/ack`, { body: { branch: 'wrap/1-x', headSha: SHA } });
+      } finally {
+        stranded._internal.log = real;
+      }
+      assert.equal(res.statusCode, 500);
+      assert.equal(json(res).code, 'WRITE_FAILED');
     });
 
     it('records the signed-in user as the acknowledger, never a name from the body', async () => {

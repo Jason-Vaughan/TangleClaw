@@ -5255,7 +5255,10 @@ route('GET', '/api/projects/:project/stranded-wraps', (_req, res, params) => {
     counts: {
       total: items.length,
       unacknowledged: items.filter((i) => !i.acknowledged).length,
-      grandfathered: items.filter((i) => i.grandfathered).length
+      grandfathered: items.filter((i) => i.grandfathered).length,
+      // Unacknowledged and fully recorded: what "needs attention before
+      // continuing" means. Grandfathered items are listed but never count here.
+      blocking: items.filter(strandedWraps.isBlocking).length
     }
   });
 });
@@ -5276,9 +5279,11 @@ route('POST', '/api/projects/:project/stranded-wraps/ack', (req, res, params, bo
   const by = (req.tcSession && req.tcSession.username) || null;
   const result = strandedWraps.acknowledge(project, body, by);
   if (!result.ok) {
-    return errorResponse(res, result.code === 'NOT_FOUND' ? 404 : 400, result.error, result.code);
+    const status = { NOT_FOUND: 404, WRITE_FAILED: 500 }[result.code] || 400;
+    return errorResponse(res, status, result.error, result.code);
   }
-  jsonResponse(res, 201, { ok: true, item: result.item });
+  // 201 when this request recorded the acknowledgement, 200 when it already existed.
+  jsonResponse(res, result.created ? 201 : 200, { ok: true, created: result.created, item: result.item });
 });
 
 // POST /api/projects

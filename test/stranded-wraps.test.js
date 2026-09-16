@@ -227,6 +227,38 @@ describe('stranded wraps — local records (#868, #1538)', () => {
       assert.equal(result.code, 'NOT_FOUND');
     });
 
+    it('records nothing new when the item is already acknowledged at that head', () => {
+      stranded.record({ projectId: project.id, remote: REMOTE, branch: 'wrap/1-x', headSha: SHA_A });
+      const first = stranded.acknowledge(project, { branch: 'wrap/1-x', headSha: SHA_A }, 'operator');
+      const again = stranded.acknowledge(project, { branch: 'wrap/1-x', headSha: SHA_A }, 'someone-else');
+      assert.equal(first.created, true);
+      assert.equal(again.ok, true);
+      assert.equal(again.created, false);
+      assert.equal(again.item.acknowledgedBy, 'operator', 'the original acknowledgement stands');
+      assert.equal(store.activity.query({ projectId: project.id, eventType: 'wrap.strand_ack' }).length, 1);
+    });
+
+    it('reports a failed save as a failure, not as an acknowledgement', () => {
+      stranded.record({ projectId: project.id, remote: REMOTE, branch: 'wrap/1-x', headSha: SHA_A });
+      const real = stranded._internal.log;
+      stranded._internal.log = () => {};
+      let result;
+      try {
+        result = stranded.acknowledge(project, { branch: 'wrap/1-x', headSha: SHA_A }, 'operator');
+      } finally {
+        stranded._internal.log = real;
+      }
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'WRITE_FAILED');
+      assert.equal(stranded.list(project).items[0].acknowledged, false);
+    });
+
+    it('rejects a short SHA, because only the full SHA identifies the head', () => {
+      stranded.record({ projectId: project.id, remote: REMOTE, branch: 'wrap/1-x', headSha: SHA_A });
+      const result = stranded.acknowledge(project, { branch: 'wrap/1-x', headSha: SHA_A.slice(0, 7) }, 'operator');
+      assert.equal(result.code, 'NOT_FOUND');
+    });
+
     it('rejects a request with no branch', () => {
       const result = stranded.acknowledge(project, { headSha: SHA_A }, 'operator');
       assert.equal(result.ok, false);
@@ -241,6 +273,22 @@ describe('stranded wraps — local records (#868, #1538)', () => {
     it('rejects a missing head SHA, so a grandfathered acknowledgement is always said on purpose', () => {
       const result = stranded.acknowledge(project, { branch: 'wrap/1-x' }, 'operator');
       assert.equal(result.code, 'BAD_REQUEST');
+    });
+  });
+
+  describe('isBlocking()', () => {
+    const base = { grandfathered: false, acknowledged: false };
+    it('blocks an unacknowledged, fully recorded item', () => {
+      assert.equal(stranded.isBlocking(base), true);
+    });
+    it('never blocks a grandfathered item, acknowledged or not', () => {
+      assert.equal(stranded.isBlocking({ ...base, grandfathered: true }), false);
+    });
+    it('does not block an acknowledged item', () => {
+      assert.equal(stranded.isBlocking({ ...base, acknowledged: true }), false);
+    });
+    it('does not block nothing', () => {
+      assert.equal(stranded.isBlocking(null), false);
     });
   });
 
@@ -266,7 +314,8 @@ describe('stranded wraps — local records (#868, #1538)', () => {
     it('names each unacknowledged item with its branch, short SHA and date, and points at the full list', () => {
       const text = stranded.primeLines({ project: 'demo', items: [itemAt(1)] }).join('\n');
       assert.match(text, /^## Stranded wraps/m);
-      assert.match(text, /`wrap\/1-x` at `aaaaaaa`, recorded 2026-09-10/);
+      assert.ok(text.includes(`\`wrap/1-x\` at \`${SHA_A}\`, recorded 2026-09-10`),
+        'the full SHA is shown, because an acknowledgement needs the full SHA');
       assert.match(text, /GET \/api\/projects\/demo\/stranded-wraps/);
       assert.match(text, /operator/, 'acknowledging is the operator\'s call, and the section says so');
       assert.match(text, /1 wrap branch was pushed .* Its version bump/);

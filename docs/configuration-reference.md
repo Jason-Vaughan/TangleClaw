@@ -541,6 +541,8 @@ TangleClaw's HTTP API lives under `/api/`; the tables below are the reference. A
 | `/api/projects/import` | POST | Import project from external source |
 | `/api/projects/:name` | PATCH | Update project |
 | `/api/projects/:name` | DELETE | Delete project |
+| `/api/projects/:project/stranded-wraps` | GET | Stranded wraps from local records (id or name): `items`, and `counts` with `total`, `unacknowledged`, `grandfathered` and `blocking` (unacknowledged and not grandfathered) |
+| `/api/projects/:project/stranded-wraps/ack` | POST | Acknowledge one listed item at its current head: `{branch, headSha}` with the full SHA (`null` only for an older record). **201** recorded, **200** already acknowledged, **404** not listed at that head, **500** not saved. Records the signed-in user |
 
 ### Sessions
 

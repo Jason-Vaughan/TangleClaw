@@ -101,7 +101,7 @@ describe('sessions', () => {
         if (!engine) continue;
         const prompt = sessions.generatePrimePrompt(project, engine);
         assert.match(prompt, /## Stranded wraps/, engineId);
-        assert.match(prompt, /`wrap\/20260916-prime-test` at `ddddddd`/, engineId);
+        assert.ok(prompt.includes(`\`wrap/20260916-prime-test\` at \`${'d'.repeat(40)}\``), engineId);
       }
       assert.ok(store.engines.get('codex') || store.engines.get('gemini'),
         'the engine-parity loop must cover at least one engine besides claude');

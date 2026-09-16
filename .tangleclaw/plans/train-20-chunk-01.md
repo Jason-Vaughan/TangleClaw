@@ -36,7 +36,9 @@ accident. The 2026-07-30 branch was found five days late that way.
    items, and where to find the rest. When there are none, it says so in one line. The text is the same
    on every engine.
 4. Grandfathered items (recorded before this chunk's upgrade) appear, flagged, and never count as
-   unacknowledged blockers for later chunks.
+   blockers for later chunks. They are still reported as unacknowledged until someone acknowledges them;
+   "blocking" is a separate count (`counts.blocking`, `isBlocking`) that leaves them out, and it is what
+   Chunk 02's gate reads.
 
 **Out of scope.**
 - Any GitHub or network call (Chunk 03). "Stranded" here means only what the local record says.
@@ -102,15 +104,32 @@ answers the three questions the program plan sets:
 for a (remote, branch) wins; an older SHA for the same branch is superseded, not listed twice. Chunk 03
 replaces this with the head GitHub reports.
 
-**D6: the prime section is its own module, `lib/stranded-wraps.js`, with `list(project)` and
-`primeLines(items)`.** It follows the pattern of `ciStatus.primeLines`. It is placed next to the CI block
+**D6: the prime section is its own module, `lib/stranded-wraps.js`, with `list(project)`,
+`primeLines({project, items, error})` and `primeSection(project)`.** It follows the pattern of `ciStatus.primeLines`. It is placed next to the CI block
 in `lib/sessions.js`, and `primeLines` doesn't depend on that position, so Train 21's step-by-step launch
 can move it unchanged.
-- Budget: a heading, a count line, at most five items (branch, short SHA, age), and a pointer to the API
-  route. A test holds 50 items within the budget.
-- The "none" line is one line: `No stranded wraps recorded for this project.`
+- Budget: a heading, a count line, at most five items (branch, full SHA, date), and a pointer to the API
+  route. A test holds 50 items within the budget. The full SHA is shown because an acknowledgement needs
+  it; a short one would 404 as if the wrap didn't exist.
+- The "none" line is one line: `Stranded wraps: none recorded for this project.` When every item is
+  acknowledged, it is one line too, with the acknowledged count.
 - The text names no engine, file or UI (rule #5).
 - A read failure renders as "could not be read", never as "none".
+
+**D8: an acknowledgement is recorded once.** Acknowledging an item that is already acknowledged at
+that head writes nothing and answers 200 `created: false`. `wrap.strand_ack` rows are kept for the audit
+questions in D4 and pruned with their type at the store's per-type cap; with one row per acknowledged
+head that is far off, and a pruned acknowledgement shows its item as unacknowledged again rather than
+hiding it.
+
+**D9: a failed acknowledgement is reported as failed.** `store.activity.log` swallows write failures, so
+`acknowledge` reads the list back and answers `WRITE_FAILED` (500) when the acknowledgement isn't there.
+
+**D10: the two writes for a stranded wrap are not a transaction (accepted).** The commit step writes the
+`wrap.auto_pr` row and then the `wrap.stranded` row. If only the second fails, the wrap is listed as
+grandfathered, so it shows but doesn't block. Both are inserts into the same local database a moment
+apart, and the store logs any failure, so this is accepted rather than wrapped in a transaction the
+activity API doesn't offer. Chunk 03's GitHub check sees the branch either way.
 
 **D7: the routes are `/api/projects/:project/stranded-wraps` and `…/ack`,** taking the numeric id or
 the name like the plans listing (`_projectByIdOrName`). They sit behind the same sign-in gate and CSRF
@@ -135,6 +154,24 @@ check as the rest of the API.
 5. Verify on a scratch server (not the live install): seed a stranded row, GET it, ack it, GET again,
    and read a generated prime.
 6. `/prawduct:critic`, resolve the findings, PR.
+
+## Verification record (2026-09-16)
+
+- **Suite:** full suite green on `609694ff` (`prawduct-hook test-status`); re-run after the review fixes.
+- **Deliberate breakages:** 15, each caught by a failing test (9 on the first build, 6 on the review
+  fixes): the commit-step record, the prime hook, the ack key's head SHA, the grandfather de-duplication,
+  credential stripping, the branch supersession, the 5-item cap, the acknowledger's source, the headSha
+  type check, the save read-back, the repeat-ack short-circuit, `isBlocking`'s grandfather rule, the
+  `blocking` count, removal-not-masking of credentials, and the full SHA in the prime.
+- **Scratch server** (temporary store and repo, never the live install): a real wrap commit on `main`
+  auto-branched, pushed to a local bare `origin`, and with `gh` unavailable was recorded stranded. Then:
+  `GET …/stranded-wraps` → 200 with the item (full SHA, not grandfathered, unacknowledged); the codex
+  prime showed the `## Stranded wraps` section with the branch; `POST …/ack` with a wrong SHA → 404
+  `NOT_FOUND`; `POST /api/projects/<id>/stranded-wraps/ack` with the listed SHA → 201; `GET` again →
+  `unacknowledged: 0`; the prime then read `Stranded wraps: none unacknowledged (1 acknowledged)`.
+  Script: `scratchpad/vrf.js` (session scratchpad, not kept).
+- **Not done:** `prawduct-hook verify-chunk-refs` reads `.prawduct/artifacts/build-plan.md`, and this
+  repo keeps one file per plan (`train-20-chunk-01-build-plan.md`), so that check could not run.
 
 ## Done when
 
