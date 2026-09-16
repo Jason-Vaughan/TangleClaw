@@ -243,6 +243,22 @@ Type: cumulative-final
   dropping the choice, the launch acknowledgement losing its owner, the dashboard not sending the
   acknowledgements, and the project list losing its counts.
 
+- **Scratch server** (temporary store and repos, tmux, engine detection and the wrap pipeline stubbed,
+  served on the tailnet IP from a leased port): the project list gave the right counts for a blocking,
+  a clean and an older-only project. A launch was refused with 409 and left the project with only its
+  own files. The older-only and clean projects launched. A wrong head SHA answered 404, and a partial
+  acknowledgement answered 409 with the rest. A wrap was refused with no run claimed, and wrapping past the
+  item started a run that recorded the choice and left the item blocking.
+- **Chrome on this Mac, same scratch server:** the badge and detail row, the launch-mode picker then
+  the Stranded wraps dialog, and Acknowledge and launch opening the session. The session wrap modal held
+  Wrap until the box was ticked, then started the wrap. A Retry refused for a new stranded wrap listed
+  both items in the drawer, and ticking the box let the next Retry start. It found three gaps, all fixed in
+  `466f6bbc`: acknowledged items were not marked in the list, a disabled dialog button looked enabled on
+  both pages, and the refusal sentence shown to the operator named request fields.
+- **Queued for the operator:** `VRF-1539-stranded-gates` (remote browser, both themes, phone width).
+- **Not done:** `prawduct-hook verify-chunk-refs` reads `.prawduct/artifacts/build-plan.md`, and this repo
+  keeps one file per plan, so that check could not run.
+
 ## Done when
 
 - The suite is green (`prawduct-hook test-status`), confirmed with a TAP run.
