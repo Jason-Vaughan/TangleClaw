@@ -182,4 +182,4 @@ check as the rest of the API.
 
 ## Status
 
-- [ ] Chunk 01: local stranded-wrap query, acknowledgement, prime section
+- [x] Chunk 01: local stranded-wrap query, acknowledgement, prime section
