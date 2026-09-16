@@ -34,6 +34,17 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-16 — The Restart button works on Linux hosts with a qualifying systemd user unit (#1506, refs #239)
+
+<!-- prawduct: type=feature | scope=linux-systemd-restart-1506 -->
+
+A clean-room reconstruction under ADR 0014 of external PR #1506 (@madhavanms2803-ui). The PR was audited as text at head `9e309bae`, and the fix was re-derived from #239; none of the contributor's code was merged. Their patch detected `/etc/systemd/system/tangleclaw.service` and ran a plain `systemctl restart`. That is a system unit, which an unprivileged server cannot restart. The reconstruction makes three changes to that approach:
+- `lib/server-info.js#detectRestartMechanism` returns `'systemctl'` only on Linux, only for `~/.config/systemd/user/tangleclaw.service`, and only when that unit has an active `KillMode=process` line. With the default `control-group`, a restart also stops the tmux server TangleClaw started, while the restart dialog promises sessions survive.
+- `buildRestartCommand` emits `systemctl --user --no-block restart tangleclaw.service`. The route calls it through `execSync`, and a blocking restart would wait on the calling process to stop.
+- The route now logs the command's stderr when the command fails.
+
+The disabled-button hint and the 501 message now name the unit file and the `KillMode` line. The cumulative Critic found 0 blocking, 4 warnings and 4 notes. R-2 (sessions killed), R-4 (stale docs) and the server half of R-6 were fixed, and verify-resolutions confirmed them. The rest were accepted, with follow-ups filed as #1555 and a comment on #1424. Mutation checks: pointing detection at the system unit, dropping the `KillMode` test, and discarding stderr each turn a test red. #239 stays open for the installer half (#1424).
+
 ## 2026-09-16 — Stranded wraps are surfaced at session start and can be acknowledged (#868, #1538)
 
 <!-- prawduct: type=feature | scope=train-20-chunk-01 -->
