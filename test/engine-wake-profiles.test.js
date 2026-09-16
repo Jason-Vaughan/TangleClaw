@@ -184,20 +184,26 @@ describe('the wake signature is declared in the engine profile (#1255)', () => {
     // Driven off the JSON rather than a list written here: a field added to a
     // profile and not to the builder would otherwise reach neither the table
     // nor this guard.
+    // A declared `*Pattern` is compiled to the matching `*Re`; the mapping is
+    // expressed once here rather than per field, so a second compiled field
+    // (`decorativePattern`, #1344) is covered by the same rule instead of
+    // needing this guard edited alongside it.
+    const compiledName = (field) => field.replace(/Pattern$/, 'Re');
     for (const id of ['claude', 'antigravity', 'codex']) {
       const declared = block(id);
       const derived = wake.ENGINE_WAKE_PROFILES[id];
       for (const [field, value] of Object.entries(declared)) {
         if (field === 'evidence') continue;
-        if (field === 'promptPattern') {
-          assert.equal(derived.promptRe.source, value,
-            `${id}: the compiled pattern must be the declared one`);
+        if (field.endsWith('Pattern')) {
+          const re = derived[compiledName(field)];
+          assert.ok(re instanceof RegExp, `${id}.${field} must be compiled to ${compiledName(field)}`);
+          assert.equal(re.source, value, `${id}: the compiled pattern must be the declared one`);
           continue;
         }
         assert.deepEqual(derived[field], value, `${id}.${field} did not survive the derivation`);
       }
       const expected = Object.keys(declared).filter((k) => k !== 'evidence')
-        .map((k) => (k === 'promptPattern' ? 'promptRe' : k)).sort();
+        .map(compiledName).sort();
       assert.deepEqual(Object.keys(derived).sort(), expected,
         `${id}: the derived profile carries a field the profile never declared`);
     }
@@ -540,5 +546,52 @@ describe('the table is derived when it is READ, not when the module is required'
     assert.equal(out.warns, 1, 'reported once per process, not once per read');
     assert.deepEqual(out.afterFix, declaringIds(),
       'and the table recovers once the file is fixed, with no restart');
+  });
+});
+
+describe('an engine that animates decoration at rest is still readable as idle (#1344)', () => {
+  // codex paints a braille shimmer across and above its composer, forever, in
+  // any session with history. It broke BOTH idle gates, so both are pinned.
+  const codex = () => wake.ENGINE_WAKE_PROFILES.codex;
+  const shimmer = (n) => Array.from({ length: n }, (_, i) => String.fromCharCode(0x2801 + (i % 40))).join(' ');
+
+  it('the transcript digest settles even though the decoration moves', () => {
+    // The blocker that actually kept codex unwakeable: the digest hashes the
+    // region ABOVE the composer, the shimmer is drawn there too, so the pane
+    // never repeated and the monitor reported `pane-writing` forever. Measured
+    // live as 8 distinct digests over 8 samples of a completely idle pane.
+    const frame = (n) => ['• Edited a file', `  ${shimmer(n)}`, '  transcript line', `› Ask Codex to do anything ${shimmer(n)}`];
+    const digests = new Set([3, 7, 11, 19].map((n) => wake._paneDigest(frame(n), codex())));
+    assert.equal(digests.size, 1, 'the digest must not change as the shimmer animates');
+  });
+
+  it('real transcript movement is still seen — the fix does not blind the gate', () => {
+    const a = wake._paneDigest(['• one', `  ${shimmer(5)}`, '› Ask Codex to do anything'], codex());
+    const b = wake._paneDigest(['• one', '• two', `  ${shimmer(5)}`, '› Ask Codex to do anything'], codex());
+    assert.notEqual(a, b, 'new transcript content must still change the digest');
+  });
+
+  it('an engine that declares no decoration is unaffected', () => {
+    // The scoping that makes this safe: for claude a braille cell is input.
+    const frames = [3, 9].map((n) => wake._paneDigest(['• work', `  ${shimmer(n)}`, '❯ '], wake.ENGINE_WAKE_PROFILES.claude));
+    assert.notEqual(frames[0], frames[1], 'claude declares no decorative range, so nothing is discounted');
+  });
+
+  it('a shimmer cell between glyph and cursor is not read as typed input', () => {
+    // The second gate: the shimmer OVERWRITES the pad cell, which made the
+    // separator unrecognisable and the cell read as input (8/12 live).
+    // The real shape: codex renders the placeholder dim (SGR 2), which is what
+    // `placeholderSgr` matches. A fixture without those escapes is a line the
+    // engine never draws, and would pass or fail for the wrong reason.
+    const ph = '\u001b[2mAsk Codex to do anything\u001b[0m';
+    assert.equal(wake._composerEmpty({ line: `›⠁${ph}`, x: 2 }, codex()), true,
+      'the shimmer sitting where the pad was is still an empty composer');
+    assert.equal(wake._composerEmpty({ line: `› ${ph}`, x: 2 }, codex()), true,
+      'and so is the ordinary space');
+  });
+
+  it('actually typed input is still input', () => {
+    assert.equal(wake._composerEmpty({ line: '› hello', x: 7 }, codex()), false,
+      'a typed word must never read as an empty composer');
   });
 });
