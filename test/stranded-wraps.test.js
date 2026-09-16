@@ -311,7 +311,7 @@ describe('stranded wraps — local records (#868, #1538)', () => {
       assert.doesNotMatch(text, /none recorded/);
     });
 
-    it('names each unacknowledged item with its branch, short SHA and date, and points at the full list', () => {
+    it('names each unacknowledged item with its branch, full SHA and date, and points at the full list', () => {
       const text = stranded.primeLines({ project: 'demo', items: [itemAt(1)] }).join('\n');
       assert.match(text, /^## Stranded wraps/m);
       assert.ok(text.includes(`\`wrap/1-x\` at \`${SHA_A}\`, recorded 2026-09-10`),
