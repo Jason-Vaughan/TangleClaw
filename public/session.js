@@ -4779,9 +4779,10 @@ function renderUntrackOfferWidget(widget) {
 
 /**
  * Build the Include / Leave list (#1406) — one row per uncommitted file the
- * session did not change, with the reason and a two-choice radio group. Neither
- * choice is preselected: committing someone else's work, or leaving it out, is
- * the operator's call, and a default would make it for them.
+ * session did not change or that matched a credential rule (#1513), with the
+ * reason and a two-choice radio group. Neither choice is preselected:
+ * committing someone else's work, or leaving it out, is the operator's call,
+ * and a default would make it for them.
  *
  * @param {object} widget - From `pathDecisionWidget`.
  * @returns {HTMLDivElement}
@@ -4796,8 +4797,7 @@ function renderPathDecisionWidget(widget) {
   const label = document.createElement('div');
   label.className = 'wrap-decision-label';
   label.id = groupLabelId;
-  const n = widget.paths.length;
-  label.textContent = `${n} uncommitted file${n === 1 ? '' : 's'} ${n === 1 ? 'was' : 'were'} not changed by this session. Include in the wrap commit, or leave uncommitted? Leave never discards anything.`;
+  label.textContent = window.tcWrapDrawerHelpers.pathDecisionLabel(widget.paths);
   wrap.appendChild(label);
 
   const list = document.createElement('div');

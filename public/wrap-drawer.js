@@ -37,7 +37,7 @@
    */
   const KIND_DESCRIPTIONS = {
     'preflight': 'Asks prawduct for its session-end verdict before the wrap writes to any file: in a prawduct-governed project it runs the Stop hook and shows the block text if a gate (Critic review, reflection) is unmet. Advisory by default — the wrap continues; a project can make it blocking in its wrap step settings. Skips in projects without .prawduct/.',
-    'session-files': 'Finds uncommitted files this session did not change (already uncommitted when it launched) and asks whether to include each in the wrap commit or leave it uncommitted. The wrap commits only files changed since the session launched, files the wrap writes, and files you include. Blocks until every listed file has a choice.',
+    'session-files': 'Finds uncommitted files this session did not change (already uncommitted when it launched), and files whose contents match a credential pattern — including files this session DID change — and asks whether to include each in the wrap commit or leave it uncommitted. The wrap commits only files changed since the session launched, files the wrap writes, and files you include. A file that matches a secret rule is held out of the commit until you choose, and only the rule name is ever shown, never the matched text. Blocks until every listed file has a choice.',
     'pr-check': 'Checks for open GitHub PRs on this branch and asks you to resolve each one (merge, defer, or ignore). Blocks the wrap until you decide; skips silently when GitHub can\u2019t be reached.',
     'pr-merge': 'Applies the PR decisions you made earlier \u2014 each PR you marked \u201cmerge\u201d gets GitHub auto-merge enabled, so it lands once its checks pass. Runs after the wrap commit. Never blocks.',
     'lint': 'Runs the project’s linter over the working tree.',
@@ -332,7 +332,7 @@
       }
       case 'commit': {
         if (!output.commitSha) return null;
-        const sha = output.commitSha.slice(0, 12);
+        const sha = output.commitSha.slice(0, 12) + secretScanPhrase(output.secretScan);
         // #1502 — on a release cut, whether releasePrepareCommand ran. A skip is
         // shown rather than hidden: the release PR then lacks whatever the command adds.
         const rp = output.releasePrepare;
@@ -551,6 +551,60 @@
   function isStrandedWrap(ap) {
     if (!ap) return false;
     return ap.pushed === true && !ap.prUrl && ap.autoMergeArmed !== true;
+  }
+
+  /**
+   * The heading above the Include / Leave list.
+   *
+   * The list holds two different kinds of file and the heading must not claim
+   * one is the other (#1513). #1406 filled it only with files the session did
+   * not change, so the heading said exactly that; a secret match can be a file
+   * this session DID write, and heading that "not changed by this session"
+   * reads as a co-resident's leftover — the one sentence that could talk an
+   * operator into clicking Include on a live credential. So the heading
+   * describes what is actually in the list.
+   *
+   * @param {Array<{secret: boolean}>} paths - From {@link pathDecisionWidget}.
+   * @returns {string}
+   */
+  function pathDecisionLabel(paths) {
+    const n = paths.length;
+    const secrets = paths.filter((p) => p && p.secret).length;
+    const one = n === 1;
+    const tail = 'Include in the wrap commit, or leave uncommitted? Leave never discards anything.';
+    if (secrets === 0) {
+      return `${n} uncommitted file${one ? '' : 's'} ${one ? 'was' : 'were'} not changed by this session. ${tail}`;
+    }
+    if (secrets === n) {
+      return `${n} file${one ? '' : 's'} the wrap would commit ${one ? 'matches' : 'match'} a credential pattern. ${tail}`;
+    }
+    const rest = n - secrets;
+    return `${n} files need a decision before the wrap commits: ${secrets} ${secrets === 1 ? 'matches' : 'match'} a credential pattern, and ${rest} ${rest === 1 ? 'was' : 'were'} not changed by this session. ${tail}`;
+  }
+
+  /**
+   * #1513 — what the commit step's secret scan found, for the commit row.
+   *
+   * The commit step rescans after the wrap's own writes and that pass is the
+   * one that decides what git records, so its outcome belongs on the row the
+   * operator reads. Without this, a commit that skipped a file as unreadable
+   * looked exactly like one that scanned everything clean. Rule names only;
+   * `scanText` never returns matched text, so none can reach here.
+   *
+   * @param {{flagged?: Array<{decision: string}>, skipped?: Array<object>}} scan - `output.secretScan`.
+   * @returns {string} Leading ` · ` separated phrases, or '' when there is nothing to say.
+   */
+  function secretScanPhrase(scan) {
+    if (!scan || typeof scan !== 'object') return '';
+    const flagged = Array.isArray(scan.flagged) ? scan.flagged : [];
+    const skipped = Array.isArray(scan.skipped) ? scan.skipped : [];
+    const parts = [];
+    const included = flagged.filter((f) => f && f.decision === 'include').length;
+    const left = flagged.filter((f) => f && f.decision === 'leave').length;
+    if (included) parts.push(`${included} secret match${included === 1 ? '' : 'es'} you included`);
+    if (left) parts.push(`${left} secret match${left === 1 ? '' : 'es'} left uncommitted`);
+    if (skipped.length) parts.push(`${skipped.length} file${skipped.length === 1 ? '' : 's'} not scanned for secrets`);
+    return parts.length ? ` · ${parts.join(' · ')}` : '';
   }
 
   /**
@@ -810,16 +864,26 @@
    * blocked `commit` step, which re-checks the same rule and names any file that
    * turned up after the first question.
    *
+   * Each path carries `secret` (#1513): true when the file matched a credential
+   * rule. A secret match may be a file this session DID change, so the caller
+   * must not describe the list as "files this session did not change" without
+   * checking — see `wrapPathDecisionLabel`.
+   *
    * @param {object} stepRow - View-model from `buildStepRow`.
    * @param {object} rawOutput - Raw `step.output` from the runner.
-   * @returns {{kind: 'path-decisions', optionsKey: 'pathDecisions', paths: Array<{path: string, why: string, deleted: boolean}>}|null}
+   * @returns {{kind: 'path-decisions', optionsKey: 'pathDecisions', paths: Array<{path: string, why: string, deleted: boolean, secret: boolean}>}|null}
    */
   function pathDecisionWidget(stepRow, rawOutput) {
     if (!stepRow || (stepRow.kind !== 'session-files' && stepRow.kind !== 'commit')) return null;
     if (!rawOutput || typeof rawOutput !== 'object' || !Array.isArray(rawOutput.foreignPaths)) return null;
     const paths = rawOutput.foreignPaths
       .filter((f) => f && typeof f.path === 'string' && f.path)
-      .map((f) => ({ path: f.path, why: typeof f.why === 'string' ? f.why : '', deleted: f.deleted === true }));
+      .map((f) => ({
+        path: f.path,
+        why: typeof f.why === 'string' ? f.why : '',
+        deleted: f.deleted === true,
+        secret: Array.isArray(f.secretRules) && f.secretRules.length > 0
+      }));
     if (paths.length === 0) return null;
     return { kind: 'path-decisions', optionsKey: 'pathDecisions', paths };
   }
@@ -1631,6 +1695,8 @@
     decisionWidgetForBlockedStep,
     prCheckResolutionWidget,
     pathDecisionWidget,
+    pathDecisionLabel,
+    secretScanPhrase,
     releaseDecisionWidget,
     untrackOfferWidget,
     replayChoicesFromOptions,

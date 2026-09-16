@@ -351,6 +351,60 @@ describe('check', () => {
   it('detailPhrase says nothing when there is nothing to say', () => {
     assert.equal(secretCheck.detailPhrase({ flagged: [], skipped: [] }), null);
   });
+
+  it('a file budget stops the scan and says so, rather than reading the whole tree', () => {
+    const repo = makeRepo();
+    const names = [];
+    for (let i = 0; i < 5; i++) {
+      const n = `f${i}.txt`;
+      names.push(n);
+      fs.writeFileSync(path.join(repo, n), 'fine\n');
+    }
+    const res = secretCheck.check(repo, classification({ owned: names, stageable: names }), {}, { maxFiles: 2 });
+    assert.equal(res.report.scannedCount, 2, 'stopped at the budget');
+    assert.equal(res.report.skipped.length, 3, 'the rest are reported, not silently dropped');
+    for (const s of res.report.skipped) {
+      assert.match(s.reason, /stopped scanning after/, 'the reason names the budget');
+    }
+    assert.deepEqual(res.classified.stageable, names, 'an unscanned file is not withheld');
+  });
+
+  it('a byte budget stops the scan the same way', () => {
+    const repo = makeRepo();
+    fs.writeFileSync(path.join(repo, 'big.txt'), 'x'.repeat(4096));
+    fs.writeFileSync(path.join(repo, 'next.txt'), 'fine\n');
+    const res = secretCheck.check(
+      repo,
+      classification({ owned: ['big.txt', 'next.txt'], stageable: ['big.txt', 'next.txt'] }),
+      {},
+      { maxBytes: 100 }
+    );
+    assert.equal(res.report.scannedCount, 1);
+    assert.deepEqual(res.report.skipped.map((s) => s.path), ['next.txt']);
+  });
+
+  it('a budget never hides a secret already found before it was reached', () => {
+    const repo = makeRepo();
+    fs.writeFileSync(path.join(repo, 'a.txt'), `key: ${TOKEN}\n`);
+    fs.writeFileSync(path.join(repo, 'b.txt'), 'fine\n');
+    const res = secretCheck.check(
+      repo,
+      classification({ owned: ['a.txt', 'b.txt'], stageable: ['a.txt', 'b.txt'] }),
+      {},
+      { maxFiles: 1 }
+    );
+    assert.deepEqual(res.undecided.map((f) => f.path), ['a.txt'], 'the match still blocks');
+    assert.ok(!res.classified.stageable.includes('a.txt'), 'and is still withheld');
+  });
+});
+
+describe('the scan size cap has one owner', () => {
+  it('secret-scan owns it and uploads re-exports the same number', () => {
+    const uploadsFs = require('../lib/uploads-fs');
+    assert.equal(typeof secretScan.SCAN_SIZE_CAP, 'number');
+    assert.equal(uploadsFs.SCAN_SIZE_CAP, secretScan.SCAN_SIZE_CAP);
+    assert.equal(secretCheck.SCAN_SIZE_CAP, secretScan.SCAN_SIZE_CAP);
+  });
 });
 
 describe('looksLikeText', () => {
