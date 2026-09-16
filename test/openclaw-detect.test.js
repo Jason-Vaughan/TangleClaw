@@ -73,35 +73,35 @@ describe('openclaw-detect (#306-followup)', () => {
     beforeEach(() => { calls = []; });
     afterEach(() => { detect._internal.exec = orig; });
 
-    it('refuses an unsafe target without running ssh', () => {
+    it('refuses an unsafe target without running ssh', async () => {
       detect._internal.exec = (...a) => { calls.push(a); return ''; };
-      const r = detect.detectInstanceDir({ ...GOOD, host: 'h;evil' });
+      const r = await detect.detectInstanceDir({ ...GOOD, host: 'h;evil' });
       assert.deepEqual(r.dirs, []);
       assert.match(r.error, /host/);
       assert.equal(calls.length, 0, 'ssh must not run for an unsafe target');
     });
 
-    it('feeds the discovery script over stdin and returns parsed dirs', () => {
+    it('feeds the discovery script over stdin and returns parsed dirs', async () => {
       detect._internal.exec = (cmd, opts) => {
         calls.push({ cmd, opts });
         return '/Users/deploy-user/openclaw\n';
       };
-      const r = detect.detectInstanceDir(GOOD);
+      const r = await detect.detectInstanceDir(GOOD);
       assert.deepEqual(r.dirs, ['/Users/deploy-user/openclaw']);
       assert.equal(r.error, null);
       assert.equal(calls[0].opts.input, detect.DISCOVERY_SCRIPT, 'script is passed via stdin, not interpolated');
     });
 
-    it('reports a clean "not found" when discovery yields nothing', () => {
+    it('reports a clean "not found" when discovery yields nothing', async () => {
       detect._internal.exec = () => '\n';
-      const r = detect.detectInstanceDir(GOOD);
+      const r = await detect.detectInstanceDir(GOOD);
       assert.deepEqual(r.dirs, []);
       assert.match(r.error, /no OpenClaw stack directory found/i);
     });
 
-    it('surfaces an ssh failure as an error without throwing', () => {
+    it('surfaces an ssh failure as an error without throwing', async () => {
       detect._internal.exec = () => { const e = new Error('boom'); e.stderr = 'Permission denied'; throw e; };
-      const r = detect.detectInstanceDir(GOOD);
+      const r = await detect.detectInstanceDir(GOOD);
       assert.deepEqual(r.dirs, []);
       assert.match(r.error, /ssh detect failed: Permission denied/);
     });
