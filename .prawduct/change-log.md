@@ -34,6 +34,14 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-16 — Codex sessions can be woken for switchboard mail (#1344)
+
+<!-- prawduct: type=feature | scope=codex-wake-1344 -->
+
+The wake monitor refused codex twice over. First, codex's profile declared no measured idle signature, so the monitor returned `unprofiled-engine` before any wake attempt. Codex now carries one, read off a running pane from outside it: prompt glyph `›`, a one-space pad, dim placeholder SGR, busy marker `esc to interrupt`, and `· Ready ·` as the at-rest marker (45/45 at rest, 0/5 busy). Second, codex animates a braille shimmer over its composer and the lines above it, so the movement gate never saw two matching digests (8 distinct in 8 idle samples) and reported `pane-writing` forever. Engines can now declare `capabilities.wake.decorativePattern`, and both idle gates discount the cells it matches. Both gates apply the pattern to one cell at a time, and it is refused outright when it matches any typed character: all printable ASCII, plus a sample of common non-ASCII letters. Verified live end to end (`unprofiled-engine` → `wake-not-opted-in` → `pane-writing` → `no-mail` → `nudged`) on two models. Claude and Antigravity are unaffected; Aider and OpenClaw remain unprofiled.
+
+Five follow-up commits came out of review rounds: the decoration discount must not mask real movement, the `lastIndex` hazard of a global regex is gone, and a broad pattern is judged by what it matches, not by how it looks. The final commit went unreviewed when a crash interrupted the session. Its cumulative review (2026-09-16) found that the transcript digest applied the pattern across whole lines while the refusal check tested single characters, so `\w+\s`, `[a-z] [a-z]`, `[^ -~]` and greedy runs slipped through. The digest now blanks cell by cell with the same non-global regex, the global copy and the run check are gone, and the check also refuses common non-ASCII letters.
+
 ## 2026-09-16 — The remaining OpenClaw ssh routes stop freezing the server (#1529)
 
 <!-- prawduct: type=bugfix | scope=async-ssh-1529 -->

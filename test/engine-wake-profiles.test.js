@@ -59,6 +59,22 @@ function bundled() {
     .map((f) => ({ file: f, profile: JSON.parse(fs.readFileSync(path.join(ENGINES_DIR, f), 'utf8')) }));
 }
 
+/**
+ * The bundled engines that declare a wake block, sorted.
+ *
+ * Computed rather than written out, for the reason this file already gives
+ * elsewhere: a list written here goes stale the moment an engine is profiled,
+ * and the tests below that merely need "the expected table" would then fail
+ * for a reason that has nothing to do with what they assert (#1344 added
+ * codex and broke exactly those two).
+ *
+ * @returns {string[]}
+ */
+function declaringIds() {
+  return bundled().filter((b) => b.profile.capabilities && b.profile.capabilities.wake)
+    .map((b) => b.profile.id).sort();
+}
+
 /** @param {string} id - Engine id. @returns {object} Its declared wake block. */
 function block(id) {
   const found = bundled().find((b) => b.profile.id === id);
@@ -86,15 +102,23 @@ function derive(wakeBlock) {
 }
 
 describe('the wake signature is declared in the engine profile (#1255)', () => {
-  it('exactly the two live-probed engines declare a block, and the set is unchanged', () => {
-    // The migration must not change WHICH engines can be nudged. Codex, aider
-    // and openclaw have no live pane capture, and declaring an unmeasured
+  it('exactly the live-probed engines declare a block, and the set is unchanged', () => {
+    // The bar is a live pane capture, not a wish: declaring an unmeasured
     // signature to make the settings modal read better is the exact dishonesty
-    // this chunk exists to end.
+    // #1255 exists to end. Codex joined in #1344 by meeting that bar — its
+    // glyph, pad, placeholder SGR, busy marker and idle marker were each read
+    // off a running codex pane from OUTSIDE it (a session cannot measure its
+    // own markers; its reasoning about them lands in its own capture), with
+    // the idle marker separated over 50 samples. aider and openclaw still have
+    // no capture, so they are still absent.
     const declaring = bundled().filter((b) => b.profile.capabilities && b.profile.capabilities.wake)
       .map((b) => b.profile.id).sort();
-    assert.deepEqual(declaring, ['antigravity', 'claude']);
-    assert.deepEqual(Object.keys(wake.ENGINE_WAKE_PROFILES).sort(), ['antigravity', 'claude'],
+    // These two literals are deliberate and must NOT become declaringIds():
+    // this case exists to NOTICE the set changing, and deriving both sides
+    // would make it compare a value with itself and pass forever. Every
+    // other loop in this file derives; this one is the guard.
+    assert.deepEqual(declaring, ['antigravity', 'claude', 'codex']);
+    assert.deepEqual(Object.keys(wake.ENGINE_WAKE_PROFILES).sort(), ['antigravity', 'claude', 'codex'],
       'the derived table is the declaring set — no engine gained or lost a profile in the move');
   });
 
@@ -102,7 +126,7 @@ describe('the wake signature is declared in the engine profile (#1255)', () => {
     // Both directions: a field added without provenance is a measurement
     // nobody made, and a stale entry for a removed field is provenance for
     // nothing. Both read as "this was verified" to the next author.
-    for (const id of ['claude', 'antigravity']) {
+    for (const id of declaringIds()) {
       const b = block(id);
       const fields = Object.keys(b).filter((k) => k !== 'evidence').sort();
       assert.ok(fields.length > 0, `${id} declares no wake fields — this asserts nothing`);
@@ -117,7 +141,7 @@ describe('the wake signature is declared in the engine profile (#1255)', () => {
     // and found absent — Claude's `idleMarker` is null and carries a date,
     // because the absence itself was what got measured.
     let nulls = 0;
-    for (const id of ['claude', 'antigravity']) {
+    for (const id of declaringIds()) {
       for (const [field, entry] of Object.entries(block(id).evidence)) {
         assert.ok(entry && typeof entry === 'object', `${id}.${field} needs an evidence object`);
         if (entry.verifiedOn === null) nulls++;
@@ -164,22 +188,37 @@ describe('the wake signature is declared in the engine profile (#1255)', () => {
     // Driven off the JSON rather than a list written here: a field added to a
     // profile and not to the builder would otherwise reach neither the table
     // nor this guard.
-    for (const id of ['claude', 'antigravity']) {
+    // A declared `*Pattern` is compiled to the matching `*Re`; the mapping is
+    // expressed once here rather than per field, so a second compiled field
+    // (`decorativePattern`, #1344) is covered by the same rule instead of
+    // needing this guard edited alongside it.
+    const compiledName = (field) => field.replace(/Pattern$/, 'Re');
+    for (const id of declaringIds()) {
       const declared = block(id);
       const derived = wake.ENGINE_WAKE_PROFILES[id];
       for (const [field, value] of Object.entries(declared)) {
         if (field === 'evidence') continue;
-        if (field === 'promptPattern') {
-          assert.equal(derived.promptRe.source, value,
-            `${id}: the compiled pattern must be the declared one`);
+        if (field.endsWith('Pattern')) {
+          const re = derived[compiledName(field)];
+          assert.ok(re instanceof RegExp, `${id}.${field} must be compiled to ${compiledName(field)}`);
+          assert.equal(re.source, value, `${id}: the compiled pattern must be the declared one`);
           continue;
         }
         assert.deepEqual(derived[field], value, `${id}.${field} did not survive the derivation`);
       }
-      const expected = Object.keys(declared).filter((k) => k !== 'evidence')
-        .map((k) => (k === 'promptPattern' ? 'promptRe' : k)).sort();
-      assert.deepEqual(Object.keys(derived).sort(), expected,
-        `${id}: the derived profile carries a field the profile never declared`);
+      // Both directions, without pinning HOW MANY compiled forms a pattern
+      // takes: every derived key must trace back to a declared field, and every
+      // declared field must reach the table.
+      const declaredNames = Object.keys(declared).filter((k) => k !== 'evidence');
+      for (const key of Object.keys(derived)) {
+        const base = key.replace(/ReAll$|Re$/, 'Pattern');
+        assert.ok(declaredNames.includes(base) || declaredNames.includes(key),
+          `${id}: the derived profile carries ${key}, which traces to no declared field`);
+      }
+      for (const name of declaredNames) {
+        const reached = Object.keys(derived).some((k) => k === name || k.replace(/ReAll$|Re$/, 'Pattern') === name);
+        assert.ok(reached, `${id}.${name} never reached the derived table`);
+      }
     }
   });
 
@@ -457,7 +496,7 @@ describe('the table is derived when it is READ, not when the module is required'
     const out = JSON.parse(execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' }).trim());
     assert.deepEqual(out.before, [],
       'precondition: the engines directory really is empty at require time');
-    assert.deepEqual(out.after, ['antigravity', 'claude'],
+    assert.deepEqual(out.after, declaringIds(),
       'the table must be built from the store the sync populated, not from the pre-sync directory');
   });
 
@@ -518,7 +557,186 @@ describe('the table is derived when it is READ, not when the module is required'
     fs.rmSync(path.dirname(answer), { recursive: true, force: true });
     assert.deepEqual(out.whileBroken, [], 'one unparsable file answers for the whole directory');
     assert.equal(out.warns, 1, 'reported once per process, not once per read');
-    assert.deepEqual(out.afterFix, ['antigravity', 'claude'],
+    assert.deepEqual(out.afterFix, declaringIds(),
       'and the table recovers once the file is fixed, with no restart');
+  });
+});
+
+describe('an engine that animates decoration at rest is still readable as idle (#1344)', () => {
+  // codex paints a braille shimmer across and above its composer, forever, in
+  // any session with history. It broke BOTH idle gates, so both are pinned.
+  const codex = () => wake.ENGINE_WAKE_PROFILES.codex;
+  const shimmer = (n) => Array.from({ length: n }, (_, i) => String.fromCharCode(0x2801 + (i % 40))).join(' ');
+  /** The placeholder as codex renders it: dim (SGR 2), which is what `placeholderSgr` matches. */
+  const PH = '\u001b[2mAsk Codex to do anything\u001b[0m';
+  /** codex's declared block, as a mutable copy — the base for malformed cases. */
+  const wellFormedCodex = () => JSON.parse(JSON.stringify(block('codex')));
+
+  it('the transcript digest settles even though the decoration moves', () => {
+    // The blocker that actually kept codex unwakeable: the digest hashes the
+    // region ABOVE the composer, the shimmer is drawn there too, so the pane
+    // never repeated and the monitor reported `pane-writing` forever. Measured
+    // live as 8 distinct digests over 8 samples of a completely idle pane.
+    const frame = (n) => ['• Edited a file', `  ${shimmer(n)}`, '  transcript line', `› Ask Codex to do anything ${shimmer(n)}`];
+    const digests = new Set([3, 7, 11, 19].map((n) => wake._paneDigest(frame(n), codex())));
+    assert.equal(digests.size, 1, 'the digest must not change as the shimmer animates');
+  });
+
+  it('real transcript movement is still seen — the fix does not blind the gate', () => {
+    const a = wake._paneDigest(['• one', `  ${shimmer(5)}`, '› Ask Codex to do anything'], codex());
+    const b = wake._paneDigest(['• one', '• two', `  ${shimmer(5)}`, '› Ask Codex to do anything'], codex());
+    assert.notEqual(a, b, 'new transcript content must still change the digest');
+  });
+
+  it('an engine that declares no decoration is unaffected', () => {
+    // The scoping that makes this safe: for claude a braille cell is input.
+    const frames = [3, 9].map((n) => wake._paneDigest(['• work', `  ${shimmer(n)}`, '❯ '], wake.ENGINE_WAKE_PROFILES.claude));
+    assert.notEqual(frames[0], frames[1], 'claude declares no decorative range, so nothing is discounted');
+  });
+
+  it('a shimmer cell between glyph and cursor is not read as typed input', () => {
+    // The second gate: the shimmer OVERWRITES the pad cell, which made the
+    // separator unrecognisable and the cell read as input (8/12 live).
+    // The real shape: codex renders the placeholder dim (SGR 2), which is what
+    // `placeholderSgr` matches. A fixture without those escapes is a line the
+    // engine never draws, and would pass or fail for the wrong reason.
+    const ph = '\u001b[2mAsk Codex to do anything\u001b[0m';
+    assert.equal(wake._composerEmpty({ line: `›⠁${ph}`, x: 2 }, codex()), true,
+      'the shimmer sitting where the pad was is still an empty composer');
+    assert.equal(wake._composerEmpty({ line: `› ${ph}`, x: 2 }, codex()), true,
+      'and so is the ordinary space');
+  });
+
+  it('a decorative cell PAST the separator is not input either', () => {
+    // Exercises the left loop (contentStart..cursor): the shimmer sits at the
+    // first input column, so the `continue` there is what keeps this empty.
+    assert.equal(wake._composerEmpty({ line: `\u203a \u2801${PH}`, x: 3 }, codex()), true,
+      'a shimmer cell past the pad is decoration, not typed input');
+  });
+
+  it('a decorative cell right of the cursor that is not placeholder-styled is skipped', () => {
+    // The right-hand loop's `continue`: the evidence's own observed shape has
+    // shimmer AFTER the placeholder, outside the dim run.
+    assert.equal(wake._composerEmpty({ line: `\u203a ${PH}\u2861\u2801`, x: 2 }, codex()), true,
+      'trailing shimmer outside the placeholder run must not read as input');
+  });
+
+  it('decoration MIXED with real input still reads as input', () => {
+    // The negative that makes discounting safe. If this ever passes as "empty",
+    // a nudge pastes over what the operator was typing.
+    assert.equal(wake._composerEmpty({ line: '\u203a \u2801hi', x: 5 }, codex()), false,
+      'a shimmer cell beside typed text must not launder the text away');
+  });
+
+  it('a moving shimmer cannot shorten a line and destabilise the digest', () => {
+    // The digest BLANKS decorative cells rather than deleting them: deleting
+    // shortens the line by however many cells were drawn, so two frames of one
+    // idle pane would hash differently whenever decoration sat ahead of real
+    // text, and the permanent pane-writing failure would return.
+    // Real text sits AFTER the decoration: with it before, the trailing-space
+    // trim absorbs the whole tail and the line is identical either way, so the
+    // case proves nothing. Deletion only shows up as a shift of what follows.
+    const W = 60;
+    const frame = (positions) => {
+      const cells = Array(W).fill(' ');
+      for (const i of positions) cells[i] = '\u2801';
+      cells[50] = 't'; cells[51] = 'x';
+      return cells.join('');
+    };
+    const digest = (positions) => wake._paneDigest([frame(positions), '\u203a Ask Codex'], codex());
+    assert.equal(digest([10, 20, 30]), digest([12, 25, 41]), 'decoration moving must not change the digest');
+    assert.equal(digest([10, 20, 30]), digest([5]), 'nor must the number of cells drawn');
+  });
+
+  it('a run of shimmer of any length blanks cell for cell, even with a greedy pattern', () => {
+    // A pattern is only ever applied to one cell. Were the digest to apply it
+    // across the line, `[⠀-⣿]+` would collapse a run into one space, the line
+    // length would track the animation, and an idle pane would never settle.
+    const greedy = derive({ ...wellFormedCodex(), decorativePattern: '[\u2800-\u28ff]+' }).probe;
+    assert.ok(greedy, 'a greedy braille range is still decoration only, so it is accepted');
+    const frame = (n) => [`${'\u2801'.repeat(n)} tx`, '\u203a Ask Codex'];
+    assert.equal(wake._paneDigest(frame(2), greedy), wake._paneDigest(frame(2), codex()),
+      'the greedy and single-cell patterns must read a pane identically');
+    const digests = new Set([1, 2, 5, 9].map((n) => wake._paneDigest(frame(n), greedy)));
+    assert.equal(digests.size, 4, 'runs of different lengths keep the text at different columns, as the pane does');
+    assert.equal(wake._paneDigest([`${'\u2801'.repeat(3)}xx`, '\u203a'], greedy),
+      wake._paneDigest([`${'\u2802'.repeat(3)}xx`, '\u203a'], greedy),
+      'the same run length in a different animation frame reads the same');
+  });
+
+  it('a pattern that only matches across cells discounts nothing', () => {
+    // Applied cell by cell, a pattern like `\\w+\\s` or `ab` can never match,
+    // so it cannot hide typed text: "hello world" and "hallo world" stay
+    // distinguishable. That is why the refusal check only needs single cells.
+    for (const pattern of ['\\w+\\s', 'ab', '[a-z] [a-z]']) {
+      const profile = derive({ ...wellFormedCodex(), decorativePattern: pattern }).probe;
+      assert.ok(profile, `${pattern} matches no single cell, so it is accepted`);
+      assert.notEqual(
+        wake._paneDigest(['hello world', 'ab cd', '\u203a'], profile),
+        wake._paneDigest(['hallo world', 'xy cd', '\u203a'], profile),
+        `${pattern} must not blank typed text`);
+      assert.equal(wake._composerEmpty({ line: '\u203a ab', x: 4 }, profile), false,
+        `${pattern} must not launder typed input in the composer`);
+    }
+  });
+
+  it('a decorativePattern that would match everything is REFUSED, not shipped', () => {
+    // A pattern matching a space or the empty string turns both gates off
+    // silently: the digest blanks every line to nothing so the pane always
+    // looks settled, and the composer discounts every cell so typed input
+    // reads as empty — the engine is then nudged over the operator's own text.
+    // Failing closed here is the difference between no wake and a wrong wake.
+    const withPattern = (pattern) => derive({ ...wellFormedCodex(), decorativePattern: pattern });
+    assert.ok(withPattern('[\u2800-\u28ff]').probe, 'the real braille range must still be accepted');
+    assert.ok(withPattern('[\u2500-\u257f]').probe,
+      'box-drawing decoration must be accepted too — the rule is about typed text, not about braille');
+    // `\\S`, `\\w` and `[a-z]` are as broad as `.` while looking narrower,
+    // which is why the check asks what a pattern MATCHES. `[^ -~]` and `\\p{L}`-
+    // style ranges pass an ASCII-only check while matching typed non-ASCII.
+    for (const bad of ['.', '[\\s\\S]', '\\s*', '', 'x?', '\\S', '\\w', '[a-z]', '[^\\s]', '[a-z]{2}|[a-z]',
+      '[^ -~]', '[\u00c0-\u024f]', '[\u4e00-\u9fff]', '[\u0400-\u04ff]']) {
+      assert.equal(withPattern(bad).probe, undefined,
+        `decorativePattern ${JSON.stringify(bad)} must leave the engine unprofiled rather than blind both gates`);
+    }
+  });
+
+  it('actually typed input is still input', () => {
+    assert.equal(wake._composerEmpty({ line: '› hello', x: 7 }, codex()), false,
+      'a typed word must never read as an empty composer');
+  });
+});
+
+describe('the engine guide\'s wake table agrees with the real field set', () => {
+  // The class of drift #1344 hit: the guide stated "every field except
+  // pasteRejectedMarker is required", which was true until decorativePattern
+  // landed and then silently was not. An author reads the guide, not
+  // WAKE_FIELDS, so the guide going stale is the failure. Parsed rather than
+  // eyeballed, mirroring test/engine-capability-reads.test.js's Read? guard.
+  const GUIDE = path.join(ROOT, 'docs', 'engine-guide.md');
+
+  it('every declared field appears in the guide table, and vice versa', () => {
+    const guide = fs.readFileSync(GUIDE, 'utf8');
+    const start = guide.indexOf('| `busyMarker`');
+    assert.ok(start > 0, 'the wake field table must be findable in the guide');
+    const table = guide.slice(start, guide.indexOf('\n\n', start));
+    const documented = new Set();
+    for (const line of table.split('\n')) {
+      const row = /^\|\s*`([^`]+)`\s*\|/.exec(line);
+      if (row) documented.add(row[1]);
+    }
+    assert.deepEqual([...documented].sort(), Object.keys(wake.WAKE_FIELDS).sort(),
+      'the guide table and WAKE_FIELDS must cover each other');
+  });
+
+  it('the guide names exactly the optional fields', () => {
+    const guide = fs.readFileSync(GUIDE, 'utf8');
+    const optional = Object.entries(wake.WAKE_FIELDS)
+      .filter(([, spec]) => !spec.required).map(([name]) => name).sort();
+    assert.ok(optional.length > 0, 'no optional field — this case compared nothing');
+    const sentence = /Every field except ([^.]+) is \*\*required\*\*/.exec(guide);
+    assert.ok(sentence, 'the guide must still state which fields are required');
+    const named = [...sentence[1].matchAll(/`([^`]+)`/g)].map((m) => m[1]).sort();
+    assert.deepEqual(named, optional,
+      'the guide names a different optional set than WAKE_FIELDS declares');
   });
 });

@@ -23,7 +23,7 @@ const medusaWake = require('../lib/medusa-wake');
 let tmpDir;
 let sessions;
 let projectId;
-let codexProjectId;
+let unprofiledProjectId;
 
 before(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-chime-payload-'));
@@ -35,9 +35,9 @@ before(() => {
   projectId = store.projects.create({ name: 'chime-payload', path: projDir, engine: 'claude' }).id;
   // A project of its own, so an active session left by another case cannot be
   // the one `getSessionStatus` resolves here.
-  const codexDir = path.join(tmpDir, 'projects', 'chime-payload-codex');
-  fs.mkdirSync(codexDir, { recursive: true });
-  codexProjectId = store.projects.create({ name: 'chime-payload-codex', path: codexDir, engine: 'codex' }).id;
+  const unprofiledDir = path.join(tmpDir, 'projects', 'chime-payload-unprofiled');
+  fs.mkdirSync(unprofiledDir, { recursive: true });
+  unprofiledProjectId = store.projects.create({ name: 'chime-payload-unprofiled', path: unprofiledDir, engine: 'aider' }).id;
 });
 
 after(() => {
@@ -83,10 +83,12 @@ describe('#1180 the status payload carries which gate answered', () => {
   it('names the FALLBACK on an engine with no wake profile', () => {
     // This is the case that would otherwise re-report #1180 against code that
     // never ran for them.
-    withPane(['transcript', '', '> '], 'codex', () => {
-      const status = sessions.getSessionStatus('chime-payload-codex');
-      assert.match(status.idleReason, /^staleness:no-wake-profile:codex$/);
-    }, codexProjectId);
+    // aider: codex gained a measured wake profile in #1344, so it is no longer
+    // an engine with no wake profile.
+    withPane(['transcript', '', '> '], 'aider', () => {
+      const status = sessions.getSessionStatus('chime-payload-unprofiled');
+      assert.match(status.idleReason, /^staleness:no-wake-profile:aider$/);
+    }, unprofiledProjectId);
   });
 });
 

@@ -322,6 +322,21 @@ carries — one character, not the six characters a pasted `\u00a0` would give y
 `pasteRejectedMarker` (and its `evidence` entry) only if you have measured this engine discarding
 a submission.
 
+`decorativePattern` (and its `evidence` entry) only if the engine draws something that MOVES while the
+session is at rest. codex paints an animated braille shimmer across and above its composer, which made the
+pane digest change on every tick — the monitor read it as still writing and never nudged it, permanently.
+Both idle gates test the pattern against ONE cell at a time: the transcript digest blanks each matching cell
+to a single space (never deletes it or collapses a run, either of which would shorten the line and
+reintroduce the instability), and the composer scan skips matching cells. It is refused unless it matches
+decoration ONLY: a pattern matching the empty string, any printable ASCII character, or any of a sample of
+common non-ASCII letters (accented Latin, Greek, Cyrillic, CJK, kana, Hangul, Arabic, Hebrew, Devanagari) is
+rejected, because that is what an operator types. The check tests the pattern against those characters
+rather than reading its source, so `\S` and `[a-z]` are caught as surely as `.`. The non-ASCII sample is
+not all of Unicode: a range covering a script outside it would pass, so keep the range to the decoration. Getting this wrong would silently disable both idle gates and let a nudge land on the operator's
+own half-written text, so the engine stays unprofiled instead.
+Anything it matches stops counting as operator input for that engine, so declare the narrowest range that
+covers the decoration and nothing else.
+
 | Field | What it is |
 |-------|------------|
 | `busyMarker` | Substring present iff a turn is in flight; its presence blocks a nudge |
@@ -331,8 +346,9 @@ a submission.
 | `placeholderSgr` | SGR attributes this engine renders text the operator did **not** type in |
 | `idleMarker` | A POSITIVE at-rest signal, or `null` when nothing was found that is present at rest and absent mid-turn |
 | `pasteRejectedMarker` | Optional — see below |
+| `decorativePattern` | Optional — a regex source matching cells the engine ANIMATES at rest (decoration the operator did not type). Declare it only where you have watched an idle pane and seen it move |
 
-Every field except `pasteRejectedMarker` is **required**, `null` included. An author who has not
+Every field except `pasteRejectedMarker` and `decorativePattern` is **required**, `null` included. An author who has not
 measured a value writes `null` and says so in `evidence`, which is a recorded gap; an omitted field
 would be the same gap with nobody able to tell it from an oversight.
 
