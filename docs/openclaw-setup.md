@@ -214,7 +214,7 @@ When an OpenClaw connection has a **Bridge Port** and **Bridge Token** configure
 ### "The OpenClaw gateway … refused to serve the page"
 
 - The tunnel is working; the gateway itself refused the request, and its reason is shown in the message.
-- `proxy_attribution_required` means a TangleClaw older than the #1532 fix is forwarding `X-Forwarded-*` headers to an OpenClaw 2026.9+ gateway. Update TangleClaw and restart it.
+- `proxy_attribution_required` means an older TangleClaw is forwarding `X-Forwarded-*` headers to an OpenClaw 2026.9+ gateway. Update TangleClaw to the latest release and restart it.
 - For any other reason, fix it on the gateway side (its token, pairing or configuration).
 
 ### "Origin not allowed"

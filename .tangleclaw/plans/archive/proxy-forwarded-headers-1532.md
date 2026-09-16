@@ -60,4 +60,4 @@ Done when:
 
 ## Status
 
-- [ ] Chunk 01 — strip attribution headers, name the gateway's refusal
+- [x] Chunk 01 — strip attribution headers, name the gateway's refusal

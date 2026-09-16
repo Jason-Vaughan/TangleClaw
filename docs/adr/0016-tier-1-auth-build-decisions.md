@@ -249,8 +249,9 @@ on the tunnel's loopback end. Two cases, and they differ:
   that used to accompany it are gone, and OpenClaw 2026.9+ refuses those headers anyway. What OpenClaw
   grants an unauthenticated loopback client has **not** been verified from this repo, so for such a
   connection the session gate is the only control in front of the gateway. Configure a gateway token, and
-  keep the login armed, wherever a gateway is reachable this way. The trade-off: the
-gateway's own records (`remoteIp`, #254 part B) now show the tunnel address instead of the operator's
+  keep the login armed, wherever a gateway is reachable this way.
+
+In both cases the trade-off is the same: the gateway's own records (`remoteIp`, #254 part B) now show the tunnel address instead of the operator's
 machine. Rebuilding attribution was rejected, because it would still come from a hop the gateway has no
 configured reason to trust, and OpenClaw 2026.9 refuses exactly that (`proxy_attribution_required`).
 
