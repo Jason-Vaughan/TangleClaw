@@ -27,9 +27,9 @@ chunkage").
 accident. The 2026-07-30 branch was found five days late that way.
 
 **Success.**
-1. `GET /api/projects/:name/stranded-wraps` returns the project's stranded wraps from local records,
+1. `GET /api/projects/:project/stranded-wraps` returns the project's stranded wraps from local records,
    each with `{scope: 'repo', remote, branch, headSha, recordedAt, sessionId, grandfathered, acknowledged}`.
-2. `POST /api/projects/:name/stranded-wraps/ack` with `{branch, headSha}` records who acknowledged which
+2. `POST /api/projects/:project/stranded-wraps/ack` with `{branch, headSha}` records who acknowledged which
    item and when. The item then counts as acknowledged. A newer stranded record for the same branch at a
    different SHA shows up unacknowledged again.
 3. Every session prime carries a short "Stranded wraps" section: a count, up to five unacknowledged
@@ -52,30 +52,37 @@ recorded) and D3 (the retention answer). Both are recorded below and can be veto
 
 ## Decisions
 
-**D1: new stranded records carry the remote and the head SHA.** Today's `wrap.auto_pr` row has `branch`
-but not the remote or the commit, and the acknowledgement key is (remote, branch, headSha). The commit
-step already knows both. `remote` is the `origin` URL with any credentials stripped (it is served over
-the API). `headSha` is the wrap commit.
+**D1: a stranded wrap gets a full record with the remote and the head SHA.** Today's `wrap.auto_pr` row
+has `branch` but not the remote or the commit, and the acknowledgement key is (remote, branch, headSha).
+The commit step already knows both. `remote` is the `origin` URL with any credentials stripped (it is
+served over the API); `headSha` is the wrap commit. The close-loop result also carries the stripped
+`remote`.
+- *Refined while building:* the fields go on the new `wrap.stranded` row (D3), not on `wrap.auto_pr`.
+  An existing test pins the exact `wrap.auto_pr` shape, and that record doesn't need them.
 
-**D2: the grandfather boundary is the record's shape, not a date.** New records carry
-`recordVersion: 2`. A stranded record without it was written before this upgrade, so it is
-grandfathered. This is the "boundary recorded at upgrade" from locked decision 4, carried on each row:
-it can't drift with the clock, and a fresh install simply has no old rows.
+**D2: the grandfather boundary is the record's shape, not a date.** A stranded wrap recorded after this
+change always has a `wrap.stranded` row. A `wrap.auto_pr` row with `stranded: true` and no
+`wrap.stranded` row for its branch was written before the change, so it is grandfathered. This is the
+"boundary recorded at upgrade" from locked decision 4, carried by the records themselves: it can't drift
+with the clock, and a fresh install simply has no old rows.
+- *Refined while building:* the plan first put a `recordVersion: 2` stamp on each row. Once the new
+  record became its own event type, the type itself marks the shape, so the stamp added nothing and was
+  dropped. The substance the operator approved (shape, not date) is unchanged.
 - Alternative considered: a schema migration whose `applied_at` is the boundary. Rejected, because
   `activity_log.created_at` and `schema_version.applied_at` are both second-resolution text, so a wrap in
-  the same second as the upgrade would be ambiguous. The row-shape test can't be.
-- `[ASSUMPTION: every writer of a stranded record goes through the commit step. Check it with grep before
-  building.]`
+  the same second as the upgrade would be ambiguous.
+- `[ASSUMPTION: every writer of a stranded record goes through the commit step.]` **Checked:**
+  `lib/wrap-steps/commit.js` is the only writer of `wrap.auto_pr`.
 
 **D3: stranded wraps get their own rare event type, so retention can't evict them.** `activity_log`
 keeps at most 500 rows per event type (#869). This install has written 62 `wrap.auto_pr` rows since
 August, so a stranded row would be evicted within months, and the thing this chunk surfaces would
 silently disappear. #869's design says a rare type is safe on its own, with no exemption list to
 maintain. So when a wrap is stranded, the commit step also writes a `wrap.stranded` row
-(`{recordVersion: 2, remote, branch, headSha, prUrl: null}`).
-- The query reads `wrap.stranded` rows and the legacy `wrap.auto_pr` rows with `stranded: true` (these
-  are grandfathered, and pruning can still evict them; that risk is stated in the docs rather than solved
-  with an exemption).
+(`{remote, branch, headSha}`).
+- The query reads `wrap.stranded` rows and the grandfathered `wrap.auto_pr` rows (D2). Pruning can still
+  evict the grandfathered ones; the docs say so rather than solving it with an exemption.
+- Queries read up to 1000 rows, above the retention cap, so no row the table still holds is skipped.
 - Alternative considered: exempting stranded rows from the prune. Rejected, because it is the exemption
   list #869 was designed to avoid.
 
@@ -105,8 +112,9 @@ can move it unchanged.
 - The text names no engine, file or UI (rule #5).
 - A read failure renders as "could not be read", never as "none".
 
-**D7: the routes live under `/api/projects/:name/`,** matching the other project-scoped routes. Their
-auth follows those routes'.
+**D7: the routes are `/api/projects/:project/stranded-wraps` and `…/ack`,** taking the numeric id or
+the name like the plans listing (`_projectByIdOrName`). They sit behind the same sign-in gate and CSRF
+check as the rest of the API.
 
 ---
 
@@ -118,8 +126,8 @@ auth follows those routes'.
    - `test/stranded-wraps.test.js`: listing, grandfathered flag, supersession by a newer SHA, the ack
      cycle (ack hides it, a new SHA brings it back), the 404 on an unknown key, and `by` null vs set.
    - The prime section: the none line, the read-failure line, a 50-item budget, and no engine names.
-   - The commit step: a stranded close-loop writes both records with `recordVersion: 2`, the remote has
-     no credentials, and a non-stranded one writes no `wrap.stranded` row.
+   - The commit step: a stranded close-loop writes a `wrap.stranded` row with the remote, branch and
+     commit; the remote has no credentials; a non-stranded one writes no `wrap.stranded` row.
    - The routes: the GET shape, the POST validation (400), the 404 and the 201.
 3. Implement `lib/stranded-wraps.js`, the commit-step change, the two routes and the prime hook.
 4. Docs: CHANGELOG `[Unreleased]` `### Added`, FEATURES.md, the API reference for both routes, and the

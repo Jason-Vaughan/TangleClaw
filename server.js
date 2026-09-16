@@ -312,6 +312,7 @@ const recoveryCodes = require('./lib/recovery-codes');
 const passwordHashing = require('./lib/password');
 const sessionOwnership = require('./lib/session-ownership');
 const planDocs = require('./lib/plan-docs');
+const strandedWraps = require('./lib/stranded-wraps');
 const serviceToken = require('./lib/service-token');
 const medusa = require('./lib/medusa');
 
@@ -5236,6 +5237,48 @@ route('GET', '/api/projects/:project/plans', (req, res, params) => {
     originNote: sessionOwnership.operatorLinkDirective(topology.host),
     plans
   });
+});
+
+// GET /api/projects/:project/stranded-wraps — the project's stranded wraps from
+// local records (#868): wrap branches that reached the remote with no pull
+// request. Accepts the numeric id or the name. Nothing here calls GitHub, so an
+// item means "the wrap recorded it stranded", not "GitHub still shows it so".
+route('GET', '/api/projects/:project/stranded-wraps', (_req, res, params) => {
+  const project = _projectByIdOrName(params.project);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  }
+  const { items } = strandedWraps.list(project);
+  jsonResponse(res, 200, {
+    project: { id: project.id, name: project.name },
+    items,
+    counts: {
+      total: items.length,
+      unacknowledged: items.filter((i) => !i.acknowledged).length,
+      grandfathered: items.filter((i) => i.grandfathered).length
+    }
+  });
+});
+
+// POST /api/projects/:project/stranded-wraps/ack — acknowledge one listed
+// stranded wrap at its current head (#1538): { branch, headSha, remote? }.
+// `headSha` is required and is null only for an older record that has none.
+// The acknowledger is the signed-in user, or null when nobody is signed in —
+// never a name taken from the request body, which anyone can write.
+route('POST', '/api/projects/:project/stranded-wraps/ack', (req, res, params, body) => {
+  const project = _projectByIdOrName(params.project);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
+  }
+  const by = (req.tcSession && req.tcSession.username) || null;
+  const result = strandedWraps.acknowledge(project, body, by);
+  if (!result.ok) {
+    return errorResponse(res, result.code === 'NOT_FOUND' ? 404 : 400, result.error, result.code);
+  }
+  jsonResponse(res, 201, { ok: true, item: result.item });
 });
 
 // POST /api/projects

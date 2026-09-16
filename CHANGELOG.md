@@ -4,6 +4,14 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Every session now starts by saying whether the project has stranded wraps** (#868). A wrap branch that reached the remote with no pull request used to be found only by accident; one sat for five days that way. Each new session's start now lists up to five of them, with branch, short commit and date, and says to tell you before starting new work. When there are none, it says so in one line. When the record can't be read, it says that, rather than "none".
+  - The wrap now records each stranded wrap with its remote (credentials removed), branch and wrap commit, as a `wrap.stranded` activity entry. It's a separate entry type because the activity log keeps a fixed number of entries per type, and the busy wrap-outcome type would have dropped a stranded wrap within months.
+  - Wraps stranded before this change are still listed, marked as older records with no commit SHA. Those can still be dropped with the rest of their entry type.
+  - `GET /api/projects/<id or name>/stranded-wraps` returns the list with counts. Nothing here calls GitHub; later work checks the list against GitHub.
+- **Acknowledge a stranded wrap you've dealt with** (#1538). `POST /api/projects/<id or name>/stranded-wraps/ack` with `{"branch", "headSha"}` records who acknowledged it (the signed-in user, or nobody when sign-in is off) and when. An acknowledged wrap drops out of the session-start list. The acknowledgement covers that commit only, so the same branch stranded again at a new commit is listed again. A wrap that isn't listed at that commit gets a 404 and nothing is recorded. For older records, send `"headSha": null`.
+
 ## [5.28.0] - 2026-09-16
 
 ### Added
