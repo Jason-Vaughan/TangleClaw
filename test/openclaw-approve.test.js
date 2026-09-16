@@ -34,10 +34,10 @@ const {
  * Build a runRemote stub from a list of [matcher, response] rules, recording
  * every command it was asked to run.
  * @param {Array<[RegExp, object]>} rules
- * @returns {Function & {calls: string[]}}
+ * @returns {Function & {calls: string[]}} An async runner, matching the real seam.
  */
 function stubRemote(rules) {
-  const fn = (command, opts) => {
+  const fn = async (command, opts) => {
     fn.calls.push(command);
     if (opts && opts.secret) fn.secrets.push(opts.secret);
     for (const [re, resp] of rules) {
@@ -54,89 +54,89 @@ const OK_DOCKER = [/command -v docker/, { ok: true, stdout: '/usr/bin/docker\n' 
 const OK_PS = [/docker ps --filter/, { ok: true, stdout: 'openclaw-openclaw-gateway-1\n' }];
 
 describe('#1076 resolveDockerBin — the binary is found, not assumed', () => {
-  it('uses the path `command -v docker` reports', () => {
+  it('uses the path `command -v docker` reports', async () => {
     const run = stubRemote([[/command -v docker/, { ok: true, stdout: '/usr/bin/docker\n' }]]);
-    assert.deepEqual(resolveDockerBin(run), { ok: true, bin: '/usr/bin/docker', code: CODES.APPROVED, detail: null });
+    assert.deepEqual(await resolveDockerBin(run), { ok: true, bin: '/usr/bin/docker', code: CODES.APPROVED, detail: null });
   });
 
-  it('falls back to known install locations when PATH has nothing', () => {
+  it('falls back to known install locations when PATH has nothing', async () => {
     // The exact live shape: docker exists, just not where the old code looked.
     const run = stubRemote([[/command -v docker/, { ok: false, stdout: '/usr/bin/docker\n', code: 42 }]]);
-    const r = resolveDockerBin(run);
+    const r = await resolveDockerBin(run);
     assert.equal(r.ok, true);
     assert.equal(r.bin, '/usr/bin/docker');
   });
 
-  it('probes the old hardcoded path too, so hosts that DID work keep working', () => {
+  it('probes the old hardcoded path too, so hosts that DID work keep working', async () => {
     const run = stubRemote([[/command -v docker/, { ok: true, stdout: '' }]]);
-    resolveDockerBin(run);
+    await resolveDockerBin(run);
     assert.match(run.calls[0], /\$HOME\/\.local\/bin\/docker/,
       'the pre-#1076 location must remain one of the candidates');
     assert.ok(DOCKER_FALLBACK_PATHS.includes('/usr/bin/docker'), 'and the location that was actually in use');
   });
 
-  it('reports DOCKER_NOT_FOUND — never a missing container — when docker is absent', () => {
+  it('reports DOCKER_NOT_FOUND — never a missing container — when docker is absent', async () => {
     // THE regression guard. The old code turned this exact situation into
     // "No Docker container found", which is a claim about a different thing.
     const run = stubRemote([[/command -v docker/, { ok: false, stdout: '', code: 42 }]]);
-    const r = resolveDockerBin(run);
+    const r = await resolveDockerBin(run);
     assert.equal(r.ok, false);
     assert.equal(r.code, CODES.DOCKER_NOT_FOUND);
     assert.doesNotMatch(r.detail, /container/i, 'a missing binary must not be described as a missing container');
   });
 
-  it('distinguishes an SSH failure from a missing docker', () => {
+  it('distinguishes an SSH failure from a missing docker', async () => {
     const run = stubRemote([[/command -v docker/, { ok: false, stdout: '', stderr: 'Permission denied (publickey)', code: 255 }]]);
-    const r = resolveDockerBin(run);
+    const r = await resolveDockerBin(run);
     assert.equal(r.code, CODES.SSH_FAILED);
     assert.match(r.detail, /publickey/);
   });
 });
 
 describe('#1076 findContainer — a failed command is not an absent container', () => {
-  it('returns the container name on success', () => {
+  it('returns the container name on success', async () => {
     const run = stubRemote([OK_PS]);
-    assert.equal(findContainer(run, '/usr/bin/docker', 18789).container, 'openclaw-openclaw-gateway-1');
+    assert.equal((await findContainer(run, '/usr/bin/docker', 18789)).container, 'openclaw-openclaw-gateway-1');
   });
 
-  it('does NOT pipe through head — that is what masked the exit status', () => {
+  it('does NOT pipe through head — that is what masked the exit status', async () => {
     // The root cause in one assertion: `docker ... | head -1` makes the
     // pipeline's status head's (0), so a failing docker looks like success.
     const run = stubRemote([OK_PS]);
-    findContainer(run, '/usr/bin/docker', 18789);
+    await findContainer(run, '/usr/bin/docker', 18789);
     assert.doesNotMatch(run.calls[0], /\|\s*head/, 'piping to head hides the docker exit status');
   });
 
-  it('reports LIST_FAILED when docker ps itself errors', () => {
+  it('reports LIST_FAILED when docker ps itself errors', async () => {
     const run = stubRemote([[/docker ps/, { ok: false, stdout: '', stderr: 'Cannot connect to the Docker daemon', code: 1 }]]);
-    const r = findContainer(run, '/usr/bin/docker', 18789);
+    const r = await findContainer(run, '/usr/bin/docker', 18789);
     assert.equal(r.code, CODES.LIST_FAILED);
     assert.match(r.detail, /Docker daemon/);
   });
 
-  it('reports NO_CONTAINER only when the command SUCCEEDED and found nothing', () => {
+  it('reports NO_CONTAINER only when the command SUCCEEDED and found nothing', async () => {
     const run = stubRemote([[/docker ps/, { ok: true, stdout: '\n' }]]);
-    const r = findContainer(run, '/usr/bin/docker', 18789);
+    const r = await findContainer(run, '/usr/bin/docker', 18789);
     assert.equal(r.code, CODES.NO_CONTAINER);
     assert.match(r.detail, /18789/, 'names the port it looked at');
   });
 
-  it('takes only the first line when several containers publish the port', () => {
+  it('takes only the first line when several containers publish the port', async () => {
     const run = stubRemote([[/docker ps/, { ok: true, stdout: 'first\nsecond\n' }]]);
-    assert.equal(findContainer(run, '/usr/bin/docker', 18789).container, 'first');
+    assert.equal((await findContainer(run, '/usr/bin/docker', 18789)).container, 'first');
   });
 });
 
 describe('#1076 approvePending — end to end over the remote seam', () => {
   const listing = (pending) => [/devices list --json/, { ok: true, stdout: JSON.stringify({ pending }) }];
 
-  it('approves the NEWEST pending request', () => {
+  it('approves the NEWEST pending request', async () => {
     const run = stubRemote([
       OK_DOCKER, OK_PS,
       listing([{ requestId: 'old-1', ts: 100 }, { requestId: 'new-2', ts: 900 }]),
       [/devices approve/, { ok: true, stdout: '{"ok":true}' }]
     ]);
-    const r = approvePending({ runRemote: run, port: 18789, gatewayToken: 'tok' });
+    const r = await approvePending({ runRemote: run, port: 18789, gatewayToken: 'tok' });
     assert.equal(r.approved, true);
     assert.equal(r.code, CODES.APPROVED);
     assert.equal(r.requestId, 'new-2');
@@ -144,73 +144,73 @@ describe('#1076 approvePending — end to end over the remote seam', () => {
     assert.match(run.calls[run.calls.length - 1], /devices approve 'new-2'/);
   });
 
-  it('passes the requestId positionally, not via --latest (which only previews)', () => {
+  it('passes the requestId positionally, not via --latest (which only previews)', async () => {
     const run = stubRemote([
       OK_DOCKER, OK_PS, listing([{ requestId: 'r-1', ts: 1 }]),
       [/devices approve/, { ok: true, stdout: '{}' }]
     ]);
-    approvePending({ runRemote: run, port: 18789, gatewayToken: 'tok' });
+    await approvePending({ runRemote: run, port: 18789, gatewayToken: 'tok' });
     const cmd = run.calls[run.calls.length - 1];
     assert.doesNotMatch(cmd, /--latest/, '--latest is a preview and approves nothing');
     assert.match(cmd, /devices approve 'r-1'/);
   });
 
-  it('surfaces DOCKER_NOT_FOUND end to end, and never says "container"', () => {
+  it('surfaces DOCKER_NOT_FOUND end to end, and never says "container"', async () => {
     // The live failure, reproduced through the whole path.
     const run = stubRemote([[/command -v docker/, { ok: false, stdout: '', code: 42 }]]);
-    const r = approvePending({ runRemote: run, port: 18789, gatewayToken: 'tok' });
+    const r = await approvePending({ runRemote: run, port: 18789, gatewayToken: 'tok' });
     assert.equal(r.approved, false);
     assert.equal(r.code, CODES.DOCKER_NOT_FOUND);
     assert.doesNotMatch(r.reason, /No Docker container found/);
     assert.doesNotMatch(r.reason, /container/i);
   });
 
-  it('reports NO_PENDING distinctly from every failure', () => {
+  it('reports NO_PENDING distinctly from every failure', async () => {
     const run = stubRemote([OK_DOCKER, OK_PS, listing([])]);
-    const r = approvePending({ runRemote: run, port: 18789, gatewayToken: 'tok' });
+    const r = await approvePending({ runRemote: run, port: 18789, gatewayToken: 'tok' });
     assert.equal(r.code, CODES.NO_PENDING);
     assert.equal(r.approved, false);
   });
 
-  it('reports LIST_FAILED on unparseable JSON rather than pretending nothing is pending', () => {
+  it('reports LIST_FAILED on unparseable JSON rather than pretending nothing is pending', async () => {
     const run = stubRemote([OK_DOCKER, OK_PS, [/devices list --json/, { ok: true, stdout: 'not json' }]]);
-    const r = approvePending({ runRemote: run, port: 18789, gatewayToken: 'tok' });
+    const r = await approvePending({ runRemote: run, port: 18789, gatewayToken: 'tok' });
     assert.equal(r.code, CODES.LIST_FAILED);
     assert.notEqual(r.code, CODES.NO_PENDING);
   });
 
-  it('reports MISSING_REQUEST_ID when the newest entry has none', () => {
+  it('reports MISSING_REQUEST_ID when the newest entry has none', async () => {
     const run = stubRemote([OK_DOCKER, OK_PS, listing([{ ts: 5 }])]);
-    assert.equal(approvePending({ runRemote: run, port: 18789, gatewayToken: 'tok' }).code, CODES.MISSING_REQUEST_ID);
+    assert.equal((await approvePending({ runRemote: run, port: 18789, gatewayToken: 'tok' })).code, CODES.MISSING_REQUEST_ID);
   });
 
-  it('reports APPROVE_FAILED with the gateway stderr', () => {
+  it('reports APPROVE_FAILED with the gateway stderr', async () => {
     const run = stubRemote([
       OK_DOCKER, OK_PS, listing([{ requestId: 'r-1', ts: 1 }]),
       [/devices approve/, { ok: false, stdout: '', stderr: 'scope upgrade pending approval', code: 1 }]
     ]);
-    const r = approvePending({ runRemote: run, port: 18789, gatewayToken: 'tok' });
+    const r = await approvePending({ runRemote: run, port: 18789, gatewayToken: 'tok' });
     assert.equal(r.code, CODES.APPROVE_FAILED);
     assert.match(r.reason, /scope upgrade/);
   });
 
-  it('marks the approve call as carrying a secret so the caller can redact it', () => {
+  it('marks the approve call as carrying a secret so the caller can redact it', async () => {
     const run = stubRemote([
       OK_DOCKER, OK_PS, listing([{ requestId: 'r-1', ts: 1 }]),
       [/devices approve/, { ok: true, stdout: '{}' }]
     ]);
-    approvePending({ runRemote: run, port: 18789, gatewayToken: 'super-secret-token' });
+    await approvePending({ runRemote: run, port: 18789, gatewayToken: 'super-secret-token' });
     assert.deepEqual(run.secrets, ['super-secret-token'],
       'the token must be flagged to the runner, which redacts it from captured stderr');
   });
 
-  it('never issues a second redundant container lookup', () => {
+  it('never issues a second redundant container lookup', async () => {
     // The pre-#1076 handler ran `docker ps` twice for one approval.
     const run = stubRemote([
       OK_DOCKER, OK_PS, listing([{ requestId: 'r-1', ts: 1 }]),
       [/devices approve/, { ok: true, stdout: '{}' }]
     ]);
-    approvePending({ runRemote: run, port: 18789, gatewayToken: 'tok' });
+    await approvePending({ runRemote: run, port: 18789, gatewayToken: 'tok' });
     assert.equal(run.calls.filter((c) => /docker ps --filter/.test(c)).length, 1);
   });
 });
@@ -246,14 +246,14 @@ describe('#1076 shellQuote — remote-shell injection', () => {
     assert.equal(arg1, sneaky, 'the single argument must equal the input byte for byte');
   });
 
-  it('quotes the requestId, which arrives from the gateway rather than from us', () => {
+  it('quotes the requestId, which arrives from the gateway rather than from us', async () => {
     const hostileId = `r'; whoami; echo '`;
     const run = stubRemote([
       OK_DOCKER, OK_PS,
       [/devices list --json/, { ok: true, stdout: JSON.stringify({ pending: [{ requestId: hostileId, ts: 1 }] }) }],
       [/devices approve/, { ok: true, stdout: '{}' }]
     ]);
-    approvePending({ runRemote: run, port: 18789, gatewayToken: 'tok' });
+    await approvePending({ runRemote: run, port: 18789, gatewayToken: 'tok' });
     const cmd = run.calls[run.calls.length - 1];
     // Round-trip the whole built command through a shell's tokenizer: the
     // hostile id must survive as one argument to `devices approve`.
@@ -261,13 +261,13 @@ describe('#1076 shellQuote — remote-shell injection', () => {
     assert.equal(echoed, hostileId, 'the requestId must reach the CLI intact, not as extra commands');
   });
 
-  it('quotes the gateway token so it cannot terminate its own quoting', () => {
+  it('quotes the gateway token so it cannot terminate its own quoting', async () => {
     const run = stubRemote([
       OK_DOCKER, OK_PS,
       [/devices list --json/, { ok: true, stdout: JSON.stringify({ pending: [{ requestId: 'r-1', ts: 1 }] }) }],
       [/devices approve/, { ok: true, stdout: '{}' }]
     ]);
-    approvePending({ runRemote: run, port: 18789, gatewayToken: `t'; id; echo '` });
+    await approvePending({ runRemote: run, port: 18789, gatewayToken: `t'; id; echo '` });
     const cmd = run.calls[run.calls.length - 1];
     const tokenArg = cmd.slice(cmd.indexOf('--token ') + 8).replace(/ --json$/, '');
     const echoed = execFileSync('sh', ['-c', `printf '%s' ${tokenArg}`], { encoding: 'utf8' });

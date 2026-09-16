@@ -287,6 +287,7 @@ const sidecar = require('./lib/sidecar');
 const openclawApprove = require('./lib/openclaw-approve');
 const openclawVersion = require('./lib/openclaw-version');
 const openclawDetect = require('./lib/openclaw-detect');
+const openclawRemote = require('./lib/openclaw-remote');
 const tunnelMonitor = require('./lib/tunnel-monitor');
 const net = require('node:net');
 const httpsSetup = require('./lib/https-setup');
@@ -7217,12 +7218,12 @@ route('GET', '/api/openclaw/connections/:id/version', async (req, res, params) =
 // POST /api/openclaw/detect-instance-dir — auto-discover candidate instanceDir
 // values over SSH (#306-followup). Stateless: takes the SSH-target fields in
 // the body so it works from the Add form before the connection exists.
-route('POST', '/api/openclaw/detect-instance-dir', (_req, res, _params, body) => {
+route('POST', '/api/openclaw/detect-instance-dir', async (_req, res, _params, body) => {
   if (!body || typeof body !== 'object') {
     return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
   }
   const { host, sshUser, sshKeyPath } = body;
-  const result = openclawDetect.detectInstanceDir({ host, sshUser, sshKeyPath });
+  const result = await openclawDetect.detectInstanceDir({ host, sshUser, sshKeyPath });
   jsonResponse(res, 200, { dirs: result.dirs, error: result.error });
 });
 
@@ -7331,7 +7332,7 @@ route('DELETE', '/api/openclaw/connections/:id', (_req, res, params) => {
 });
 
 // POST /api/openclaw/test — Test SSH connectivity + gateway health
-route('POST', '/api/openclaw/test', (_req, res, _params, body) => {
+route('POST', '/api/openclaw/test', async (_req, res, _params, body) => {
   if (!body || !body.host || !body.sshUser || !body.sshKeyPath) {
     return errorResponse(res, 400, 'host, sshUser, and sshKeyPath are required', 'BAD_REQUEST');
   }
@@ -7362,14 +7363,14 @@ route('POST', '/api/openclaw/test', (_req, res, _params, body) => {
   const host = body.host;
   const sshUser = body.sshUser;
 
-  // Test SSH connectivity with a short timeout
-  const { execSync } = require('node:child_process');
+  // Test SSH connectivity with a short timeout. Both probes run off the event
+  // loop: a host that does not answer waits out the whole timeout.
   const results = { ssh: false, gateway: false, errors: [] };
 
   try {
-    execSync(
+    await openclawRemote.runShell(
       `ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -i "${keyPath}" ${sshUser}@${host} "echo ok"`,
-      { timeout: 10000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+      { timeout: 10000 }
     );
     results.ssh = true;
   } catch (err) {
@@ -7380,9 +7381,9 @@ route('POST', '/api/openclaw/test', (_req, res, _params, body) => {
   if (body.localPort || port) {
     const testPort = body.localPort || port;
     try {
-      const output = execSync(
+      const { stdout: output } = await openclawRemote.runShell(
         `curl -s -m 5 http://localhost:${testPort}/healthz`,
-        { timeout: 10000, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+        { timeout: 10000 }
       );
       try {
         const parsed = JSON.parse(output);
@@ -7515,31 +7516,37 @@ route('DELETE', '/api/openclaw/connections/:id/tunnel', async (_req, res, params
  * `opts.secret`, when given, is redacted from the error text so a gateway token
  * interpolated into the command can never reach a log line.
  *
+ * Async: an unreachable gateway host waits out the connect timeout, and a
+ * synchronous call would hold the whole server for it.
+ *
  * @param {object} conn - OpenClaw connection record (`sshKeyPath`, `sshUser`, `host`).
  * @param {string} command - Command to run on the remote host.
  * @param {object} [opts] - Options.
  * @param {number} [opts.timeoutMs=15000] - Abandon the command after this long.
  * @param {string} [opts.secret] - Value to redact from captured stderr.
- * @returns {{ok: boolean, stdout: string, stderr: string, code: number}}
+ * @returns {Promise<{ok: boolean, stdout: string, stderr: string, code: number}>}
  */
-function _runOnGatewayHost(conn, command, opts = {}) {
-  const { execFileSync } = require('node:child_process');
+async function _runOnGatewayHost(conn, command, opts = {}) {
   const keyPath = conn.sshKeyPath.replace(/^~/, process.env.HOME || '');
   const timeout = opts.timeoutMs || 15000;
   const redact = (text) => (opts.secret ? String(text).split(opts.secret).join('«token»') : String(text));
 
   try {
-    const stdout = execFileSync('ssh', [
+    const { stdout } = await openclawRemote.runFile('ssh', [
       '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', '-o', 'StrictHostKeyChecking=no',
       '-i', keyPath, `${conn.sshUser}@${conn.host}`, command
-    ], { timeout, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+    ], { timeout });
     return { ok: true, stdout: stdout || '', stderr: '', code: 0 };
   } catch (err) {
+    // Async execFile reports the exit status as a numeric `code` (the sync form
+    // used `status`); anything else — a spawn failure, or our own timeout, whose
+    // `code` is null — is not an exit status and maps to -1. The runner has
+    // already named a timeout in `stderr`/`message`.
     return {
       ok: false,
       stdout: err.stdout ? String(err.stdout) : '',
       stderr: redact(err.stderr || err.message || ''),
-      code: typeof err.status === 'number' ? err.status : -1
+      code: typeof err.code === 'number' ? err.code : -1
     };
   }
 }
@@ -7559,7 +7566,7 @@ route('POST', '/api/openclaw/connections/:id/approve-pending', async (_req, res,
     return errorResponse(res, 400, 'No gateway token configured — cannot approve pairing', 'BAD_REQUEST');
   }
 
-  const result = openclawApprove.approvePending({
+  const result = await openclawApprove.approvePending({
     runRemote: (command, opts) => _runOnGatewayHost(conn, command, opts),
     port: conn.port,
     gatewayToken: conn.gatewayToken
