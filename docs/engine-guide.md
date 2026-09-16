@@ -322,6 +322,16 @@ carries — one character, not the six characters a pasted `\u00a0` would give y
 `pasteRejectedMarker` (and its `evidence` entry) only if you have measured this engine discarding
 a submission.
 
+`decorativePattern` (and its `evidence` entry) only if the engine draws something that MOVES while the
+session is at rest. codex paints an animated braille shimmer across and above its composer, which made the
+pane digest change on every tick — the monitor read it as still writing and never nudged it, permanently.
+Both idle gates discount cells matched by this pattern: the transcript digest blanks them to spaces (never
+deletes them, which would shorten a line and reintroduce the instability), and the composer scan skips them.
+It is refused unless it matches decoration ONLY — a pattern that also matches a space or the empty string
+would silently disable both gates and let a nudge land on a busy pane, so the engine stays unprofiled instead.
+Anything it matches stops counting as operator input for that engine, so declare the narrowest range that
+covers the decoration and nothing else.
+
 | Field | What it is |
 |-------|------------|
 | `busyMarker` | Substring present iff a turn is in flight; its presence blocks a nudge |
@@ -331,8 +341,9 @@ a submission.
 | `placeholderSgr` | SGR attributes this engine renders text the operator did **not** type in |
 | `idleMarker` | A POSITIVE at-rest signal, or `null` when nothing was found that is present at rest and absent mid-turn |
 | `pasteRejectedMarker` | Optional — see below |
+| `decorativePattern` | Optional — a regex source matching cells the engine ANIMATES at rest (decoration the operator did not type). Declare it only where you have watched an idle pane and seen it move |
 
-Every field except `pasteRejectedMarker` is **required**, `null` included. An author who has not
+Every field except `pasteRejectedMarker` and `decorativePattern` is **required**, `null` included. An author who has not
 measured a value writes `null` and says so in `evidence`, which is a recorded gap; an omitted field
 would be the same gap with nobody able to tell it from an oversight.
 

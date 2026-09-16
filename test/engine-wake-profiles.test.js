@@ -554,6 +554,10 @@ describe('an engine that animates decoration at rest is still readable as idle (
   // any session with history. It broke BOTH idle gates, so both are pinned.
   const codex = () => wake.ENGINE_WAKE_PROFILES.codex;
   const shimmer = (n) => Array.from({ length: n }, (_, i) => String.fromCharCode(0x2801 + (i % 40))).join(' ');
+  /** The placeholder as codex renders it: dim (SGR 2), which is what `placeholderSgr` matches. */
+  const PH = '\u001b[2mAsk Codex to do anything\u001b[0m';
+  /** codex's declared block, as a mutable copy — the base for malformed cases. */
+  const wellFormedCodex = () => JSON.parse(JSON.stringify(block('codex')));
 
   it('the transcript digest settles even though the decoration moves', () => {
     // The blocker that actually kept codex unwakeable: the digest hashes the
@@ -590,8 +594,99 @@ describe('an engine that animates decoration at rest is still readable as idle (
       'and so is the ordinary space');
   });
 
+  it('a decorative cell PAST the separator is not input either', () => {
+    // R-1: the left loop (contentStart..cursor) was never exercised — the
+    // fixture put the cursor at contentStart, so deleting its `continue` left
+    // the suite green. Here the shimmer sits at the first input column.
+    assert.equal(wake._composerEmpty({ line: `\u203a \u2801${PH}`, x: 3 }, codex()), true,
+      'a shimmer cell past the pad is decoration, not typed input');
+  });
+
+  it('a decorative cell right of the cursor that is not placeholder-styled is skipped', () => {
+    // The right-hand loop's `continue`: the evidence's own observed shape has
+    // shimmer AFTER the placeholder, outside the dim run.
+    assert.equal(wake._composerEmpty({ line: `\u203a ${PH}\u2861\u2801`, x: 2 }, codex()), true,
+      'trailing shimmer outside the placeholder run must not read as input');
+  });
+
+  it('decoration MIXED with real input still reads as input', () => {
+    // The negative that makes discounting safe. If this ever passes as "empty",
+    // a nudge pastes over what the operator was typing.
+    assert.equal(wake._composerEmpty({ line: '\u203a \u2801hi', x: 5 }, codex()), false,
+      'a shimmer cell beside typed text must not launder the text away');
+  });
+
+  it('a moving shimmer cannot shorten a line and destabilise the digest', () => {
+    // R-2: the digest BLANKS decorative cells rather than deleting them.
+    // Deleting shortened the line by however many cells were drawn, so two
+    // frames of one idle pane hashed differently whenever decoration sat ahead
+    // of real text — the permanent pane-writing failure, returning.
+    // Real text sits AFTER the decoration: with it before, the trailing-space
+    // trim absorbs the whole tail and the line is identical either way, so the
+    // case proves nothing. Deletion only shows up as a shift of what follows.
+    const W = 60;
+    const frame = (positions) => {
+      const cells = Array(W).fill(' ');
+      for (const i of positions) cells[i] = '\u2801';
+      cells[50] = 't'; cells[51] = 'x';
+      return cells.join('');
+    };
+    const digest = (positions) => wake._paneDigest([frame(positions), '\u203a Ask Codex'], codex());
+    assert.equal(digest([10, 20, 30]), digest([12, 25, 41]), 'decoration moving must not change the digest');
+    assert.equal(digest([10, 20, 30]), digest([5]), 'nor must the number of cells drawn');
+  });
+
+  it('a decorativePattern that would match everything is REFUSED, not shipped', () => {
+    // A pattern matching a space or the empty string turns both gates off
+    // silently: the digest blanks every line to nothing so the pane always
+    // looks settled, and the composer discounts every cell so typed input
+    // reads as empty — the engine is then nudged over the operator's own text.
+    // Failing closed here is the difference between no wake and a wrong wake.
+    const withPattern = (pattern) => derive({ ...wellFormedCodex(), decorativePattern: pattern });
+    assert.ok(withPattern('[\u2800-\u28ff]').probe, 'the real braille range must still be accepted');
+    for (const bad of ['.', '[\\s\\S]', '\\s*', '', 'x?']) {
+      assert.equal(withPattern(bad).probe, undefined,
+        `decorativePattern ${JSON.stringify(bad)} must leave the engine unprofiled rather than blind both gates`);
+    }
+  });
+
   it('actually typed input is still input', () => {
     assert.equal(wake._composerEmpty({ line: '› hello', x: 7 }, codex()), false,
       'a typed word must never read as an empty composer');
+  });
+});
+
+describe('the engine guide\'s wake table agrees with the real field set', () => {
+  // The class of drift #1344 hit: the guide stated "every field except
+  // pasteRejectedMarker is required", which was true until decorativePattern
+  // landed and then silently was not. An author reads the guide, not
+  // WAKE_FIELDS, so the guide going stale is the failure. Parsed rather than
+  // eyeballed, mirroring test/engine-capability-reads.test.js's Read? guard.
+  const GUIDE = path.join(ROOT, 'docs', 'engine-guide.md');
+
+  it('every declared field appears in the guide table, and vice versa', () => {
+    const guide = fs.readFileSync(GUIDE, 'utf8');
+    const start = guide.indexOf('| `busyMarker`');
+    assert.ok(start > 0, 'the wake field table must be findable in the guide');
+    const table = guide.slice(start, guide.indexOf('\n\n', start));
+    const documented = new Set();
+    for (const line of table.split('\n')) {
+      const row = /^\|\s*`([^`]+)`\s*\|/.exec(line);
+      if (row) documented.add(row[1]);
+    }
+    assert.deepEqual([...documented].sort(), Object.keys(wake.WAKE_FIELDS).sort(),
+      'the guide table and WAKE_FIELDS must cover each other');
+  });
+
+  it('the guide names exactly the optional fields', () => {
+    const guide = fs.readFileSync(GUIDE, 'utf8');
+    const optional = Object.entries(wake.WAKE_FIELDS)
+      .filter(([, spec]) => !spec.required).map(([name]) => name).sort();
+    assert.ok(optional.length > 0, 'no optional field — this case compared nothing');
+    const sentence = /Every field except ([^.]+) is \*\*required\*\*/.exec(guide);
+    assert.ok(sentence, 'the guide must still state which fields are required');
+    const named = [...sentence[1].matchAll(/`([^`]+)`/g)].map((m) => m[1]).sort();
+    assert.deepEqual(named, optional,
+      'the guide names a different optional set than WAKE_FIELDS declares');
   });
 });

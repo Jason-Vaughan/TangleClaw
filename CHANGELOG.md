@@ -4,6 +4,12 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Codex sessions can be woken for switchboard mail** (#1344). A codex session was never nudged when a message arrived: the wake monitor only considers engines whose profile declares a measured idle signature, and codex declared none, so it skipped before any wake attempt. Mail was delivered and sat there until someone told the session to look. Codex now carries a signature measured off a running pane — prompt glyph, separator, placeholder styling, the busy marker, and `· Ready ·` as a positive at-rest signal (present in 45 of 45 at-rest samples, absent in all 5 working ones). Turn on **Auto-wake on inbound messages** in the project's settings; the row used to be disabled with "has no measured idle signature".
+  - **An engine can now declare decoration it animates while idle**, as `capabilities.wake.decorativePattern`. This is what actually stood between codex and a working nudge: codex paints an animated braille shimmer across its composer and the lines above it, so the pane never looked settled — the monitor reported that the session was still writing, forever, and the nudge could never fire. Both idle checks now ignore cells the engine draws rather than the operator. It is optional and per-engine: Claude and Antigravity declare nothing and are unaffected, and a pattern broad enough to match ordinary text is refused outright rather than quietly switching the checks off.
+  - Aider and OpenClaw are still unwakeable. Nobody has captured their panes, and a guessed signature would read as a measured one.
+
 ### Fixed
 
 - **Switchboard and command messages up to 64 KB now go through, and a longer one says why it failed** (#1514). The switchboard send, loop and loop-feedback routes (for projects and the Project Master), the session command route, and the wrap's "ask the session to fix this" and wrap-complete routes used the 10 KB default body limit. An ordinary long hand-off got a 413 that the page never showed, so the send just failed.
