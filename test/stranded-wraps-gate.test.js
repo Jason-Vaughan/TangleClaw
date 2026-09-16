@@ -137,6 +137,7 @@ describe('stranded-wrap gate helpers (#1539, #1540)', () => {
       assert.equal(gate.code, 'STRANDED_WRAPS');
       assert.deepEqual(gate.items.map((i) => i.branch), ['wrap/1-x'], 'grandfathered items are not listed as blockers');
       assert.match(gate.error, /wrap\/1-x|stranded/i);
+      assert.doesNotMatch(gate.error, /acknowledgeStranded|headSha/, 'the sentence is shown to the operator as it is');
     });
 
     it('acknowledges every listed key, as the signed-in user, and then lets the launch through', () => {
@@ -207,6 +208,8 @@ describe('stranded-wrap gate helpers (#1539, #1540)', () => {
       const gate = stranded.wrapGate(project, undefined);
       assert.equal(gate.code, 'STRANDED_WRAPS');
       assert.deepEqual(gate.items.map((i) => i.branch), ['wrap/1-x']);
+      assert.match(gate.error, /it stays unacknowledged/);
+      assert.doesNotMatch(gate.error, /proceedPastStranded|headSha/, 'the sentence is shown to the operator as it is');
     });
 
     it('lets the wrap start past the listed items without acknowledging them', () => {

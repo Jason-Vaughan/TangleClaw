@@ -140,6 +140,13 @@ describe('shared stranded-wrap helpers (api-helper.js)', () => {
     assert.doesNotMatch(html, /null/);
   });
 
+  it('marks an acknowledged item, and who acknowledged it', () => {
+    const html = helpers.tcStrandedItemsMarkup([{ ...ITEM, acknowledged: true, acknowledgedBy: '<op>' }]);
+    assert.match(html, /acknowledged by &lt;op&gt;/);
+    assert.match(helpers.tcStrandedItemsMarkup([{ ...ITEM, acknowledged: true }]), /stranded-acked">acknowledged</);
+    assert.doesNotMatch(helpers.tcStrandedItemsMarkup([ITEM]), /stranded-acked/);
+  });
+
   it('renders nothing for no items', () => {
     assert.equal(helpers.tcStrandedItemsMarkup([]), '');
     assert.equal(helpers.tcStrandedItemsMarkup(null), '');

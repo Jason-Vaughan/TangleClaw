@@ -648,6 +648,22 @@
   font-size: 11px;
   overflow-wrap: anywhere;
 }
+/* A disabled dialog button must look disabled. Neither page styled it, so a
+   Wrap held for the "Wrap anyway" tick looked ready and did nothing. */
+.modal-actions .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.stranded-acked {
+  color: var(--text-muted, #9aa0a6);
+  font-style: italic;
+}
+/* A card's detail values are right-aligned, so the list follows them. */
+.detail-value .stranded-list {
+  list-style: none;
+  padding-left: 0;
+  margin: 4px 0 0;
+}
 .stranded-block {
   margin: 10px 0;
 }

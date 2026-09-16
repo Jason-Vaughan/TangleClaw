@@ -594,7 +594,7 @@ function renderStrandedBadge(project) {
   const blocking = project.stranded && project.stranded.blocking;
   if (!blocking) return '';
   const title = `${blocking} wrap branch${blocking === 1 ? '' : 'es'} pushed with no pull request, unacknowledged. `
-    + 'Launching asks you to acknowledge them. Open the card for the list.';
+    + `Launching asks you to acknowledge ${blocking === 1 ? 'it' : 'them'}. Open the card for the list.`;
   return `<span class="badge badge-stranded" title="${esc(title)}">&#9888; ${blocking} stranded</span>`;
 }
 

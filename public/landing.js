@@ -1607,7 +1607,7 @@ function openStrandedLaunchModal(held) {
   document.getElementById('strandedLaunchText').innerHTML =
     `<strong>${esc(held.name)}</strong> has ${n} wrap branch${n === 1 ? '' : 'es'} pushed with no pull request. `
     + `${n === 1 ? 'Its' : 'Their'} version bump, CHANGELOG promotion and index files have not reached the base branch. `
-    + 'Acknowledging records that you have seen them; they stay listed until they are dealt with.';
+    + `Acknowledging records that you have seen ${n === 1 ? 'it; it stays' : 'them; they stay'} listed until dealt with.`;
   document.getElementById('strandedLaunchList').innerHTML = tcStrandedItemsMarkup(held.items);
   document.getElementById('strandedLaunchError').classList.add('hidden');
   const confirmBtn = document.getElementById('strandedLaunchConfirmBtn');

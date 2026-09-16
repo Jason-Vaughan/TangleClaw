@@ -4491,8 +4491,11 @@
       const remote = typeof i.remote === 'string' && i.remote
         ? `<span class="stranded-remote">${tcEscapeHtml(i.remote)}</span>`
         : '';
+      const acked = i.acknowledged === true
+        ? ` <span class="stranded-acked">acknowledged${typeof i.acknowledgedBy === 'string' && i.acknowledgedBy ? ` by ${tcEscapeHtml(i.acknowledgedBy)}` : ''}</span>`
+        : '';
       return `<li class="stranded-item"><code class="stranded-branch">${tcEscapeHtml(i.branch)}</code>${sha}, `
-        + `recorded ${tcEscapeHtml(date)}${remote ? ` ${remote}` : ''}</li>`;
+        + `recorded ${tcEscapeHtml(date)}${acked}${remote ? ` ${remote}` : ''}</li>`;
     });
     return `<ul class="stranded-list">${rows.join('')}</ul>`;
   }
