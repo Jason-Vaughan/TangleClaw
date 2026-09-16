@@ -34,6 +34,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-16 — The OpenClaw proxy stops forwarding client-attribution headers (#1532)
+
+<!-- prawduct: type=bugfix | scope=proxy-forwarded-headers-1532 -->
+
+Chunk 01 of `proxy-forwarded-headers-1532`. OpenClaw 2026.9.4 refuses a request carrying `X-Forwarded-*` from an untrusted proxy (`403 proxy_attribution_required`), and `_openclawProxyHeaders` / `_openclawWsRequestLines` forwarded Caddy's unchanged, so TiLT Claw's Control UI would not open after its upgrade. Reproduced against the live tunnel: no forwarded headers gave 200, and any one of them gave 403. Both builders now drop `forwarded`, `x-real-ip` and every `x-forwarded-*` through one predicate, `_isClientAttributionHeader`. The headers are stripped rather than rebuilt, because rebuilt attribution would still come from an untrusted hop, and TangleClaw is the trust boundary. The dashboard probe now recognises OpenClaw's `{error: {message}}` body on a non-5xx refusal and reports it as the gateway's (`refusedBy: 'gateway'`), with wording that no longer blames the tunnel. TangleClaw's own `{error: "<string>"}` shape and unreadable bodies keep the tunnel wording, and a 5xx body is never read. Tests cover both builders in mixed letter case, set symmetry between HTTP and WS, the probe's three body shapes and the view wiring; stripping and the view's gateway branch are mutation-checked. Linked to #254 part B (wrong `remoteIp`).
+
 ## 2026-09-16 — Codex sessions can be woken for switchboard mail (#1344)
 
 <!-- prawduct: type=feature | scope=codex-wake-1344 -->

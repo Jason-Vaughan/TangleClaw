@@ -133,7 +133,8 @@ async function init() {
   const probe = await tcTunnelState.probeProxy(connId);
   connectionIndicator.record('probe', probe);
   if (!probe.reachable) {
-    failTunnel(tcTunnelState.describeTunnelFailure('probe', conn.name, probe.reason));
+    const kind = probe.refusedBy === 'gateway' ? 'gateway' : 'probe';
+    failTunnel(tcTunnelState.describeTunnelFailure(kind, conn.name, probe.reason));
     return;
   }
 

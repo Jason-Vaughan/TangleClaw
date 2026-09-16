@@ -160,6 +160,7 @@ curl -sk -X POST https://localhost:3102/api/openclaw/connections \
 3. The proxy injects the gateway token as a `Bearer` header on every request
 4. The proxy rewrites `Origin` and `Referer` headers so the gateway accepts the requests
 5. The proxy strips `X-Frame-Options` and `frame-ancestors` CSP headers so the iframe works
+6. The proxy drops client-attribution headers (`X-Forwarded-*`, `Forwarded`, `X-Real-IP`) before they reach the gateway. TangleClaw is the trust boundary, so the gateway sees every request as coming from the tunnel. OpenClaw 2026.9 and later refuse these headers from a proxy they were not told to trust.
 
 ### First-time device pairing
 
@@ -209,6 +210,12 @@ When an OpenClaw connection has a **Bridge Port** and **Bridge Token** configure
 - Verify SSH connectivity: `ssh -i <key> <user>@<host> "echo ok"`
 - Check that the SSH key has no passphrase (TangleClaw uses `BatchMode=yes`)
 - Ensure the gateway port (default 18789) is accessible on the OpenClaw host
+
+### "The OpenClaw gateway … refused to serve the page"
+
+- The tunnel is working; the gateway itself refused the request, and its reason is shown in the message.
+- `proxy_attribution_required` means an older TangleClaw is forwarding `X-Forwarded-*` headers to an OpenClaw 2026.9+ gateway. Update TangleClaw to the latest release and restart it.
+- For any other reason, fix it on the gateway side (its token, pairing or configuration).
 
 ### "Origin not allowed"
 

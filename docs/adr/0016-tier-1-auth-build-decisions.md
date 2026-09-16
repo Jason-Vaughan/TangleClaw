@@ -236,6 +236,25 @@ Mechanism: `lib/auth-gate.js#isGateBypassPath` — Caddy's list minus that prefi
 canonical path, so it can never exempt anything Caddy's list does not. The WebSocket verdict,
 `#evaluateUpgrade`, takes no path at all, so no HTTP exemption reaches an upgrade.
 
+**Recorded during #1532 — client attribution stops at the proxy.** Both builders also drop
+`X-Forwarded-*`, `Forwarded` and `X-Real-IP`, so every proxied request reaches the gateway as a client
+on the tunnel's loopback end. Two cases, and they differ:
+
+- **A connection with a gateway token** (the normal setup) gains nothing new. The injected token already
+  authenticates every request as the operator, so whatever OpenClaw extends to a local client, the caller
+  already had through that token, and the session gate above (when armed) decides who gets it.
+- **A connection with no gateway token** (`gatewayToken` may be null) reaches the gateway as an
+  unauthenticated loopback client with nothing naming the real caller. The tunnel always ended on the
+  gateway host's loopback, so the peer address is unchanged. What changed is that the forwarded headers
+  that used to accompany it are gone, and OpenClaw 2026.9+ refuses those headers anyway. What OpenClaw
+  grants an unauthenticated loopback client has **not** been verified from this repo, so for such a
+  connection the session gate is the only control in front of the gateway. Configure a gateway token, and
+  keep the login armed, wherever a gateway is reachable this way.
+
+In both cases the trade-off is the same: the gateway's own records (`remoteIp`, #254 part B) now show the tunnel address instead of the operator's
+machine. Rebuilding attribution was rejected, because it would still come from a hop the gateway has no
+configured reason to trust, and OpenClaw 2026.9 refuses exactly that (`proxy_attribution_required`).
+
 ---
 
 ## Addendum (2026-09-13, Checkpoint 1): the cutover's kill-switch, migration state, and the machine carve-out

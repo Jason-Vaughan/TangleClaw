@@ -147,6 +147,57 @@ describe('#1012 probeProxy — the tunnel is verified before the frame loads', (
     assert.equal(r.reason, 'network down');
   });
 
+  it('reports a gateway refusal in the gateway\'s own words (#1532)', async () => {
+    // OpenClaw 2026.9.x answered the probe with this through a healthy tunnel;
+    // the old wording blamed the tunnel for the gateway's decision.
+    const body = { error: { message: 'Proxy client attribution is required.', type: 'proxy_attribution_required' } };
+    const r = await probeProxy('abc-123', {
+      fetchImpl: () => Promise.resolve({ status: 403, json: () => Promise.resolve(body) }),
+      AbortControllerImpl: makeAC()
+    });
+    assert.equal(r.reachable, false);
+    assert.equal(r.refusedBy, 'gateway');
+    assert.equal(r.reason, 'gateway returned 403: Proxy client attribution is required.');
+  });
+
+  it('keeps the tunnel wording for TangleClaw\'s own error shape and unreadable bodies', async () => {
+    for (const json of [
+      () => Promise.resolve({ error: 'Sign in to continue.', code: 'UNAUTHENTICATED' }),
+      () => Promise.reject(new SyntaxError('Unexpected token <')),
+      () => Promise.resolve({ error: { type: 'no_message' } }),
+      undefined
+    ]) {
+      const r = await probeProxy('abc-123', {
+        fetchImpl: () => Promise.resolve({ status: 403, json }),
+        AbortControllerImpl: makeAC()
+      });
+      assert.equal(r.refusedBy, null);
+      assert.equal(r.reason, 'proxy returned 403');
+    }
+  });
+
+  it('never waits on a slow body longer than the probe budget', async () => {
+    const started = Date.now();
+    const r = await probeProxy('abc-123', {
+      fetchImpl: () => Promise.resolve({ status: 403, json: () => new Promise(() => {}) }),
+      AbortControllerImpl: makeAC(),
+      timeoutMs: 40
+    });
+    assert.ok(Date.now() - started < 1000, 'the body wait must follow deps.timeoutMs, not a fixed 2 s');
+    assert.equal(r.refusedBy, null);
+    assert.equal(r.reason, 'proxy returned 403');
+  });
+
+  it('never reads a 5xx as the gateway talking', async () => {
+    let read = false;
+    const r = await probeProxy('abc-123', {
+      fetchImpl: () => Promise.resolve({ status: 502, json: () => { read = true; return Promise.resolve({ error: { message: 'x' } }); } }),
+      AbortControllerImpl: makeAC()
+    });
+    assert.equal(r.refusedBy, null);
+    assert.equal(read, false, 'a dead upstream is the proxy\'s fact, not the gateway\'s');
+  });
+
   it('URL-encodes the connection id', async () => {
     let calledUrl = null;
     await probeProxy('a/b c', {
@@ -159,7 +210,7 @@ describe('#1012 probeProxy — the tunnel is verified before the frame loads', (
 
 describe('#1012 describeTunnelFailure — names the connection, and owns the blame', () => {
   it('names the connection in every failure kind', () => {
-    for (const kind of ['timeout', 'probe', 'refused', 'anything-else']) {
+    for (const kind of ['timeout', 'probe', 'refused', 'gateway', 'anything-else']) {
       const msg = describeTunnelFailure(kind, 'TiLT Claw');
       assert.match(msg, /TiLT Claw/,
         `"${kind}" must name the connection — with four gateways on one host, which one failed IS the information`);
@@ -173,6 +224,14 @@ describe('#1012 describeTunnelFailure — names the connection, and owns the bla
     assert.match(msg, /TangleClaw tunnel problem/);
     assert.match(msg, /not a browser or extension problem/);
     assert.match(msg, /502/, 'carries the specific reason');
+  });
+
+  it('a gateway refusal names the gateway, not the tunnel (#1532)', () => {
+    const msg = describeTunnelFailure('gateway', 'TiLT Claw', 'gateway returned 403: Proxy client attribution is required.');
+    assert.match(msg, /TiLT Claw/);
+    assert.match(msg, /gateway/);
+    assert.match(msg, /Proxy client attribution is required/);
+    assert.doesNotMatch(msg, /TangleClaw tunnel problem/, 'the tunnel carried the request; it is not the thing to fix');
   });
 
   it('distinguishes a timeout from a refusal', () => {
@@ -190,9 +249,32 @@ describe('#1012 describeTunnelFailure — names the connection, and owns the bla
   });
 });
 
+describe('deriveConnectionState — a gateway refusal is not a dead tunnel (#1532)', () => {
+  const { deriveConnectionState } = require('../public/openclaw-tunnel-state.js');
+  it('says the tunnel is up and the gateway refused, not "Not connected"', () => {
+    const s = deriveConnectionState({
+      connName: 'TiLT Claw',
+      probe: { reachable: false, status: 403, reason: 'gateway returned 403: nope', refusedBy: 'gateway' }
+    });
+    assert.equal(s.level, 'dead', 'the page still cannot load');
+    assert.doesNotMatch(s.label, /Not connected/);
+    assert.match(s.label, /gateway refused/);
+    assert.match(s.label, /nope/);
+  });
+  it('keeps "Not connected" for a tunnel failure', () => {
+    const s = deriveConnectionState({ probe: { reachable: false, status: 502, reason: 'proxy returned 502', refusedBy: null } });
+    assert.match(s.label, /^Not connected — proxy returned 502$/);
+  });
+});
+
 describe('#1012 wiring — openclaw-view.js actually uses the helpers', () => {
   const viewSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'openclaw-view.js'), 'utf8');
   const htmlSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'openclaw-view.html'), 'utf8');
+
+  it('a gateway refusal is shown with the gateway wording (#1532)', () => {
+    assert.match(viewSrc, /probe\.refusedBy === 'gateway' \? 'gateway' : 'probe'/,
+      'the view must pick the gateway wording when the probe says the gateway refused');
+  });
 
   it('loads the helper script before the view script', () => {
     const helper = htmlSrc.indexOf('openclaw-tunnel-state.js');

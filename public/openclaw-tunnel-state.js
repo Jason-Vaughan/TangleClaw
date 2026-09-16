@@ -143,11 +143,14 @@
    *
    * Uses raw `fetch` rather than the page's `api()` on purpose — unlike the
    * tunnel-start call, this path serves HTML, and `api()` parses every response
-   * as JSON. Its status code is the entire signal here.
+   * as JSON. The status code is the main signal. The one exception: a non-5xx
+   * refusal whose JSON body carries OpenClaw's own `{error: {message}}` is the
+   * gateway answering through a working tunnel, so it is reported with the
+   * gateway's words and `refusedBy: 'gateway'` rather than as a tunnel failure.
    *
    * @param {string} connId - OpenClaw connection id.
    * @param {object} [deps] - Injection seam for tests (`fetchImpl`, `AbortControllerImpl`, `timeoutMs`).
-   * @returns {Promise<{reachable: boolean, status: number|null, reason: string|null}>}
+   * @returns {Promise<{reachable: boolean, status: number|null, reason: string|null, refusedBy?: string|null}>}
    */
   async function probeProxy(connId, deps) {
     const url = `/openclaw-direct/${encodeURIComponent(connId)}/`;
@@ -157,13 +160,46 @@
       if (status >= 200 && status < 400) return { reachable: true, status, reason: null };
       // 502/503/504 is the proxy reporting a dead upstream; anything else is
       // still a refusal to serve the page the frame needs.
-      return { reachable: false, status, reason: `proxy returned ${status}` };
+      const said = status > 0 && status < 500 ? await gatewayRefusal(res, Math.min(2000, probeBudget(deps))) : null;
+      if (said) return { reachable: false, status, reason: `gateway returned ${status}: ${said}`, refusedBy: 'gateway' };
+      return { reachable: false, status, reason: `proxy returned ${status}`, refusedBy: null };
     } catch (err) {
       return {
         reachable: false,
         status: null,
         reason: err && err.name === 'TimeoutError' ? 'the proxy did not answer' : ((err && err.message) || 'probe failed')
       };
+    }
+  }
+
+  /**
+   * The gateway's own refusal message, when a proxied response carries one.
+   *
+   * OpenClaw answers `{"error": {"message": "...", "type": "..."}}`; TangleClaw's
+   * own errors put a plain string in `error`, so the object shape is what says
+   * the words came from the gateway. Never throws, and gives up after a short
+   * wait (bounded by the probe budget) so an unread body cannot stall the probe.
+   *
+   * @param {{json?: Function}} res - The probe's response.
+   * @param {number} waitMs - Longest to wait for the body; the caller bounds it by the probe budget.
+   * @returns {Promise<string|null>} The message, trimmed to a sentence's length, or null.
+   */
+  async function gatewayRefusal(res, waitMs) {
+    if (!res || typeof res.json !== 'function') return null;
+    let timer = null;
+    try {
+      const body = await Promise.race([
+        res.json(),
+        new Promise((resolve) => { timer = setTimeout(() => resolve(null), waitMs); })
+      ]);
+      const err = body && body.error;
+      if (!err || typeof err !== 'object' || typeof err.message !== 'string') return null;
+      const message = err.message.trim();
+      return message ? message.slice(0, 300) : null;
+    } catch {
+      return null; // an unreadable body is not the gateway's words
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -175,7 +211,7 @@
    * TangleClaw tunnel drop — so an anonymous "Tunnel failed" is not enough:
    * with four connections on one host, which one failed IS the information.
    *
-   * @param {string} kind - `timeout` · `refused` · `unreachable` · `probe`.
+   * @param {string} kind - `timeout` · `refused` · `unreachable` · `probe` · `gateway`.
    * @param {string} connName - Human name of the connection.
    * @param {string} [detail] - Optional specific reason to append.
    * @returns {string}
@@ -190,6 +226,10 @@
         return `Tunnel for ${who} came up but dropped before the page could load${tail}. This is a TangleClaw tunnel problem, not a browser or extension problem.`;
       case 'refused':
         return `Tunnel for ${who} failed to start — check SSH connectivity.${tail}`;
+      case 'gateway':
+        // The tunnel carried the request and the gateway itself said no, so
+        // the tunnel is not the thing to go and fix.
+        return `The OpenClaw gateway for ${who} refused to serve the page${tail}. The tunnel is up; the refusal came from the gateway.`;
       default:
         return `Tunnel for ${who} is not usable${tail}.`;
     }
@@ -306,6 +346,11 @@
     }
     if (probe.reachable !== true) {
       const why = probe.reason || 'the tunnel could not be probed';
+      // The tunnel carried the request and the gateway said no: still unusable,
+      // but "Not connected" would contradict the failure message beside it.
+      if (probe.refusedBy === 'gateway') {
+        return { level: 'dead', label: `Tunnel up, gateway refused — ${why}`, detail: why };
+      }
       return { level: 'dead', label: `Not connected — ${why}`, detail: why };
     }
 

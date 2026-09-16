@@ -785,6 +785,58 @@ describe('server', () => {
       });
     });
 
+    describe('client-attribution headers never reach the gateway (#1532)', () => {
+      // Caddy adds these to every request. OpenClaw 2026.9.x refuses a request
+      // carrying them unless the proxy is configured as trusted, answering
+      // 403 proxy_attribution_required; TangleClaw is the trust boundary here
+      // and the gateway's real peer is the tunnel, so the proxy drops them.
+      const ATTRIBUTION = {
+        'x-forwarded-for': '100.87.179.35',
+        'x-forwarded-host': 'cursatory.example.ts.net:8443',
+        'X-Forwarded-Proto': 'https',
+        'x-forwarded-port': '8443',
+        'X-Forwarded-Prefix': '/openclaw-direct/c1',
+        forwarded: 'for=100.87.179.35;proto=https',
+        'X-Real-IP': '100.87.179.35'
+      };
+      const KEPT = { accept: '*/*', 'user-agent': 'Mozilla/5.0', 'sec-fetch-mode': 'cors' };
+
+      it('HTTP: every attribution header is dropped, in any letter case', () => {
+        const out = _openclawProxyHeaders({ ...ATTRIBUTION, ...KEPT }, 5001, TOKEN);
+        const names = Object.keys(out).map((k) => k.toLowerCase());
+        for (const name of Object.keys(ATTRIBUTION)) {
+          assert.equal(names.includes(name.toLowerCase()), false, `${name} must not be forwarded`);
+        }
+        assert.equal(JSON.stringify(out).includes('100.87.179.35'), false, 'the client address must not leak in any header');
+      });
+
+      it('HTTP: everything else still gets the existing rules', () => {
+        const out = _openclawProxyHeaders({ ...ATTRIBUTION, ...KEPT, origin: 'https://tc.example.com' }, 5001, TOKEN);
+        assert.equal(out.host, '127.0.0.1:5001');
+        assert.equal(out.origin, 'http://127.0.0.1:5001');
+        assert.equal(out.authorization, `Bearer ${TOKEN}`);
+        for (const [k, v] of Object.entries(KEPT)) assert.equal(out[k], v, `${k} must survive`);
+      });
+
+      it('WS: every attribution header is dropped from the handshake, in any letter case', () => {
+        const lines = _openclawWsRequestLines({ ...ATTRIBUTION, ...KEPT, upgrade: 'websocket' }, '/ws', 5001, TOKEN);
+        for (const name of Object.keys(ATTRIBUTION)) {
+          assert.equal(lines.some((l) => l.toLowerCase().startsWith(`${name.toLowerCase()}:`)), false,
+            `${name} must not be forwarded on the WebSocket handshake`);
+        }
+        assert.equal(lines.some((l) => l.includes('100.87.179.35')), false);
+        assert.ok(lines.includes('upgrade: websocket'));
+        assert.ok(lines.includes('user-agent: Mozilla/5.0'));
+      });
+
+      it('HTTP and WS drop the same set', () => {
+        const http = Object.keys(_openclawProxyHeaders({ ...ATTRIBUTION }, 5001, null)).map((k) => k.toLowerCase());
+        const ws = _openclawWsRequestLines({ ...ATTRIBUTION }, '/ws', 5001, null)
+          .slice(2).filter(Boolean).map((l) => l.slice(0, l.indexOf(':')).toLowerCase());
+        assert.deepEqual(http.filter((k) => k !== 'host').sort(), ws.sort());
+      });
+    });
+
     it('HTTP and WS paths agree on the Cookie outcome (symmetry, #1419)', () => {
       const cookie = `gw_sid=theirs; ${authSession.SESSION_COOKIE}=ours`;
       const http = _openclawProxyHeaders({ cookie }, 5001, TOKEN);
