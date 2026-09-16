@@ -71,6 +71,8 @@ let openNextAction = null;
 
 function renderProjects() {
   const grid = document.getElementById('cardsGrid');
+  // The open card lists its stranded wraps; fetch them when its counts moved.
+  if (openCardDetail) ensureStrandedItems(state.projects.find(p => p.name === openCardDetail));
   const filtered = filterProjects();
 
   // The ROOT panel carries the "this list may be short" notice, so it is
@@ -402,6 +404,7 @@ function renderCard(project) {
     : '';
 
   const awarenessBadge = renderAwarenessBadge(project);
+  const strandedBadge = renderStrandedBadge(project);
 
   const statusDot = renderStatusDot(project);
 
@@ -433,6 +436,7 @@ function renderCard(project) {
       ${auditBadge}
       ${driftBadge}
       ${awarenessBadge}
+      ${strandedBadge}
       <span class="card-row-actions">
         <button class="btn btn-compact btn-launch" onclick="event.stopPropagation(); launchProject('${n}')">${hasSession ? 'Open' : 'Launch'}</button>
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openPeekFromCard('${n}')" title="Peek">&#128065;</button>` : ''}
@@ -579,6 +583,99 @@ function renderAwarenessBadge(project) {
 }
 
 /**
+ * The card badge for stranded wraps that hold the next launch (#1541): pushed
+ * wrap branches with no pull request that nobody has acknowledged. Older
+ * (grandfathered) and acknowledged items never count, so a card shows the
+ * badge exactly when a launch would be refused.
+ * @param {object} project - Project data with `stranded` counts
+ * @returns {string} Badge HTML, or ''
+ */
+function renderStrandedBadge(project) {
+  const blocking = project.stranded && project.stranded.blocking;
+  if (!blocking) return '';
+  const title = `${blocking} wrap branch${blocking === 1 ? '' : 'es'} pushed with no pull request, unacknowledged. `
+    + 'Launching asks you to acknowledge them. Open the card for the list.';
+  return `<span class="badge badge-stranded" title="${esc(title)}">&#9888; ${blocking} stranded</span>`;
+}
+
+/**
+ * The stranded-wraps items shown in an open card, fetched on demand and kept
+ * with the counts they were fetched for, so a changed count fetches again.
+ * @type {Object<string, {sig: string, items: object[]|null, error: string|null, loading: boolean}>}
+ */
+const strandedItemsCache = {};
+
+/**
+ * The counts an item list was fetched for.
+ * @param {object} project
+ * @returns {string}
+ */
+function strandedSig(project) {
+  return JSON.stringify(project.stranded || null);
+}
+
+/**
+ * Fetch the open card's stranded-wrap items when its counts changed since the
+ * last fetch, then re-render. Does nothing for a project with none recorded,
+ * or while a fetch for the same counts is out.
+ * @param {object|undefined} project
+ */
+async function ensureStrandedItems(project) {
+  if (!project || !project.stranded || project.stranded.total === 0) return;
+  const sig = strandedSig(project);
+  const cached = strandedItemsCache[project.name];
+  if (cached && cached.sig === sig) return;
+  strandedItemsCache[project.name] = { sig, items: null, error: null, loading: true };
+  let entry;
+  try {
+    const res = await tcFetch(`/api/projects/${encodeURIComponent(project.name)}/stranded-wraps`);
+    const data = await res.json();
+    entry = res.ok && Array.isArray(data.items)
+      ? { sig, items: data.items, error: null, loading: false }
+      : { sig, items: null, error: data.error || `HTTP ${res.status}`, loading: false };
+  } catch (err) { // a failed fetch is shown in the row, never as an empty list
+    entry = { sig, items: null, error: err.message || 'request failed', loading: false };
+  }
+  if (strandedItemsCache[project.name] && strandedItemsCache[project.name].sig === sig) {
+    strandedItemsCache[project.name] = entry;
+    renderProjects();
+  }
+}
+
+/**
+ * The Stranded wraps row of a card's detail panel (#1541): the counts, and the
+ * items once fetched. Empty when nothing is recorded. A count that could not be
+ * read says so rather than showing nothing.
+ * @param {object} project - Project data with `stranded` / `strandedError`
+ * @returns {string} HTML for the row, or ''
+ */
+function renderStrandedDetail(project) {
+  const label = '<span class="detail-label">Stranded</span>';
+  if (!project.stranded) {
+    if (!project.strandedError) return '';
+    return `<div class="detail-row detail-row-warn">${label}<span class="detail-value">`
+      + `<span class="detail-unknown">could not be read: ${esc(project.strandedError)}</span></span></div>`;
+  }
+  const c = project.stranded;
+  if (!c.total) return '';
+  const parts = [];
+  if (c.blocking) parts.push(`${c.blocking} unacknowledged (hold the next launch)`);
+  const acked = c.total - c.unacknowledged;
+  if (acked) parts.push(`${acked} acknowledged`);
+  const olderOpen = c.unacknowledged - c.blocking;
+  if (olderOpen) parts.push(`${olderOpen} older record${olderOpen === 1 ? '' : 's'} (never blocks)`);
+  const cached = strandedItemsCache[project.name];
+  let list = '';
+  if (cached && cached.sig === strandedSig(project)) {
+    if (cached.loading) list = '<span class="detail-unknown">loading the list…</span>';
+    else if (cached.error) list = `<span class="detail-unknown">list could not be loaded: ${esc(cached.error)}</span>`;
+    else list = tcStrandedItemsMarkup(cached.items);
+  }
+  const rowClass = c.blocking ? 'detail-row detail-row-warn' : 'detail-row';
+  return `<div class="${rowClass}">${label}<span class="detail-value">${esc(parts.join(', '))}${list}</span></div>`;
+}
+
+/**
  * The Awareness row of a card's detail panel: the latest session's composed
  * state (confirmed / sent / unverified / no-rules / unaware) with the basis said in
  * words. Empty when the project has never launched a session — nothing
@@ -630,6 +727,7 @@ function renderCardDetail(project) {
       <div class="detail-row"><span class="detail-label">Engine</span><span class="detail-value">${engineInfo}</span></div>
       <div class="detail-row"><span class="detail-label">Session</span><span class="detail-value">${sessionInfo}</span></div>
       ${awarenessInfo ? `<div class="detail-row"><span class="detail-label">Awareness</span><span class="detail-value">${awarenessInfo}</span></div>` : ''}
+      ${renderStrandedDetail(project)}
       <div class="detail-row"><span class="detail-label">Git</span><span class="detail-value">${gitInfo}</span></div>
       <div class="detail-row"><span class="detail-label">Tags</span><span class="detail-value">${tagsInfo}</span></div>
       <div class="detail-row"><span class="detail-label">Groups</span><span class="detail-value">${groupsInfo}</span></div>
@@ -4655,10 +4753,14 @@ $('killConfirmBtn').addEventListener('click', confirmKill);
 $('killModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeKill(); });
 $('wrapCancelBtn').addEventListener('click', closeWrapModal);
 $('wrapConfirmBtn').addEventListener('click', confirmWrap);
+$('wrapStrandedConfirm').addEventListener('change', syncWrapConfirmButton);
+$('strandedLaunchCancelBtn').addEventListener('click', closeStrandedLaunchModal);
+$('strandedLaunchConfirmBtn').addEventListener('click', confirmStrandedLaunch);
 $('settingsCancelBtn').addEventListener('click', closeSettings);
 $('settingsSaveBtn').addEventListener('click', saveSettings);
 $('deleteModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeDelete(); });
 $('wrapModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeWrapModal(); });
+$('strandedLaunchModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeStrandedLaunchModal(); });
 $('settingsModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeSettings(); });
 // CC-6 (#381): delegated Project Rules add/toggle/delete. Attached once to the
 // stable #settingsBody (its innerHTML is swapped per open, so child listeners

@@ -209,6 +209,7 @@ describe('the card detail panel (#1015)', () => {
       esc,
       renderSessionDetail: () => 'session',
       renderAwarenessDetail: () => '',
+      renderStrandedDetail: () => '',
       renderGitDetail: () => 'git',
       tcUnreadableNotice: () => null,
       renderNextActionRow: () => nextRowHtml
@@ -254,6 +255,7 @@ describe('open-ness survives a re-render (#1015)', () => {
       renderEngineBadge: () => '',
       renderUnreadableBadge: () => '',
       renderAwarenessBadge: () => '',
+      renderStrandedBadge: () => '',
       renderEngineErrorBadge: () => '',
       degradedTooltip: () => '',
       tcSessionLiveness: () => 'none',

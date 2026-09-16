@@ -1521,8 +1521,11 @@ async function launchProject(name) {
  * Execute the actual session launch with optional launch mode.
  * @param {string} name - Project name
  * @param {string|null} launchMode - Launch mode key or null for default
+ * @param {string|null} continuityMode - Continuity choice, or null
+ * @param {Array<object>} [acknowledgeStranded] - Stranded wraps the operator
+ *   acknowledged in the stranded-wraps dialog, sent with this launch (#1539)
  */
-async function doLaunchProject(name, launchMode, continuityMode) {
+async function doLaunchProject(name, launchMode, continuityMode, acknowledgeStranded) {
   // Immediate visual feedback — swap button text to "Launching…" and disable
   const btn = document.querySelector(`button[onclick*="launchProject('${name}')"]`);
   const originalText = btn ? btn.textContent : '';
@@ -1535,6 +1538,9 @@ async function doLaunchProject(name, launchMode, continuityMode) {
   const body = {};
   if (launchMode) body.launchMode = launchMode;
   if (continuityMode) body.continuityMode = continuityMode;
+  if (Array.isArray(acknowledgeStranded) && acknowledgeStranded.length > 0) {
+    body.acknowledgeStranded = acknowledgeStranded;
+  }
 
   try {
     const res = await tcFetch(`/api/sessions/${encodeURIComponent(name)}`, {
@@ -1546,6 +1552,16 @@ async function doLaunchProject(name, launchMode, continuityMode) {
 
     if (!res.ok) {
       if (btn) { btn.textContent = originalText; btn.disabled = false; }
+      // #1539: stranded wraps hold the launch. Show them and let the operator
+      // acknowledge and launch in one step, with the same launch choices.
+      if (data.code === 'STRANDED_WRAPS' && Array.isArray(data.items) && data.items.length > 0) {
+        openStrandedLaunchModal({ name, launchMode, continuityMode, items: data.items, error: data.error });
+        return;
+      }
+      if (acknowledgeStranded && strandedLaunch && strandedLaunch.name === name) {
+        showStrandedLaunchError(data.error || `HTTP ${res.status}`);
+        return;
+      }
       toast.textContent = `Launch failed: ${data.error || `HTTP ${res.status}`}`;
       toast.className = 'toast toast-warn visible';
       setTimeout(() => { toast.classList.remove('visible'); }, 6000);
@@ -1553,16 +1569,87 @@ async function doLaunchProject(name, launchMode, continuityMode) {
     }
 
     setConnected(true);
+    closeStrandedLaunchModal();
     navigateToSession(name, { launched: true });
   } catch (err) {
     if (btn) { btn.textContent = originalText; btn.disabled = false; }
     if (err.name === 'TypeError' || err.message === 'Failed to fetch') {
       setConnected(false);
     }
+    if (acknowledgeStranded && strandedLaunch && strandedLaunch.name === name) {
+      showStrandedLaunchError(`Launch failed: ${err.message}`);
+      return;
+    }
     toast.textContent = `Launch failed: ${err.message}`;
     toast.className = 'toast toast-warn visible';
     setTimeout(() => { toast.classList.remove('visible'); }, 6000);
   }
+}
+
+// ── Stranded Wraps Launch Modal (#1539) ──
+
+/**
+ * The launch the stranded-wraps dialog is holding: the project, the launch
+ * choices already made, and the items the server listed. Null when closed.
+ * @type {{name: string, launchMode: string|null, continuityMode: string|null, items: object[]}|null}
+ */
+let strandedLaunch = null;
+
+/**
+ * Show the stranded wraps that hold a launch, with one action: acknowledge
+ * them all and launch. Opening it again for a new refusal replaces the list,
+ * so the operator always acknowledges what the server listed last.
+ * @param {{name: string, launchMode: string|null, continuityMode: string|null, items: object[], error?: string}} held
+ */
+function openStrandedLaunchModal(held) {
+  strandedLaunch = held;
+  const n = held.items.length;
+  document.getElementById('strandedLaunchText').innerHTML =
+    `<strong>${esc(held.name)}</strong> has ${n} wrap branch${n === 1 ? '' : 'es'} pushed with no pull request. `
+    + `${n === 1 ? 'Its' : 'Their'} version bump, CHANGELOG promotion and index files have not reached the base branch. `
+    + 'Acknowledging records that you have seen them; they stay listed until they are dealt with.';
+  document.getElementById('strandedLaunchList').innerHTML = tcStrandedItemsMarkup(held.items);
+  document.getElementById('strandedLaunchError').classList.add('hidden');
+  const confirmBtn = document.getElementById('strandedLaunchConfirmBtn');
+  confirmBtn.disabled = false;
+  confirmBtn.textContent = 'Acknowledge and launch';
+  document.getElementById('strandedLaunchModal').classList.add('open');
+}
+
+/**
+ * Close the stranded-wraps launch dialog without launching.
+ */
+function closeStrandedLaunchModal() {
+  document.getElementById('strandedLaunchModal').classList.remove('open');
+  strandedLaunch = null;
+}
+
+/**
+ * Say inline why an acknowledge-and-launch did not go through, and leave the
+ * dialog open so the operator can try again or cancel.
+ * @param {string} message - The server's reason
+ */
+function showStrandedLaunchError(message) {
+  const el = document.getElementById('strandedLaunchError');
+  el.textContent = message;
+  el.classList.remove('hidden');
+  const confirmBtn = document.getElementById('strandedLaunchConfirmBtn');
+  confirmBtn.disabled = false;
+  confirmBtn.textContent = 'Acknowledge and launch';
+}
+
+/**
+ * Acknowledge the listed stranded wraps and launch, in one request.
+ */
+async function confirmStrandedLaunch() {
+  if (!strandedLaunch) return;
+  const held = strandedLaunch;
+  const confirmBtn = document.getElementById('strandedLaunchConfirmBtn');
+  if (confirmBtn.disabled) return;
+  confirmBtn.disabled = true;
+  confirmBtn.textContent = 'Launching\u2026';
+  document.getElementById('strandedLaunchError').classList.add('hidden');
+  await doLaunchProject(held.name, held.launchMode, held.continuityMode, tcStrandedKeys(held.items));
 }
 
 // ── Launch Mode Modal ──
@@ -1684,6 +1771,7 @@ function openWrapModal(name) {
     `Wrap the session for <strong>${esc(name)}</strong>? This sends the wrap command and ends the session.`;
   document.getElementById('wrapError').classList.add('hidden');
   document.getElementById('wrapPassword').value = '';
+  showWrapStranded(null);
   const pwGroup = document.getElementById('wrapPasswordGroup');
   if (state.config && state.config.deleteProtected) {
     pwGroup.classList.remove('hidden');
@@ -1691,6 +1779,51 @@ function openWrapModal(name) {
     pwGroup.classList.add('hidden');
   }
   document.getElementById('wrapModal').classList.add('open');
+}
+
+/**
+ * Stranded wraps the server listed when it refused this wrap (#1540), or null.
+ * While set, Wrap stays disabled until the operator ticks "Wrap anyway", and
+ * the wrap is sent with these items as `options.proceedPastStranded`.
+ * @type {object[]|null}
+ */
+let wrapStrandedItems = null;
+
+/**
+ * Show (or, with null, hide and reset) the stranded-wraps block in the wrap
+ * modal. A new list always starts unticked: the operator confirms what is on
+ * screen, not what was there before.
+ * @param {object[]|null} items - Items from a `STRANDED_WRAPS` refusal
+ */
+function showWrapStranded(items) {
+  const block = document.getElementById('wrapStranded');
+  const confirm = document.getElementById('wrapStrandedConfirm');
+  confirm.checked = false;
+  if (!Array.isArray(items) || items.length === 0) {
+    wrapStrandedItems = null;
+    block.classList.add('hidden');
+    document.getElementById('wrapStrandedList').innerHTML = '';
+  } else {
+    wrapStrandedItems = items;
+    const n = items.length;
+    document.getElementById('wrapStrandedText').textContent =
+      `${n} earlier wrap branch${n === 1 ? ' was' : 'es were'} pushed with no pull request and nobody has acknowledged `
+      + `${n === 1 ? 'it' : 'them'}. Wrapping now does not acknowledge ${n === 1 ? 'it' : 'them'}: `
+      + `${n === 1 ? 'it' : 'they'} will still hold the next launch.`;
+    document.getElementById('wrapStrandedList').innerHTML = tcStrandedItemsMarkup(items);
+    block.classList.remove('hidden');
+  }
+  syncWrapConfirmButton();
+}
+
+/**
+ * Enable Wrap only when nothing is waiting on the operator: no wrap in flight,
+ * and any listed stranded wraps confirmed.
+ */
+function syncWrapConfirmButton() {
+  const confirmBtn = document.getElementById('wrapConfirmBtn');
+  const needsConfirm = Array.isArray(wrapStrandedItems) && !document.getElementById('wrapStrandedConfirm').checked;
+  confirmBtn.disabled = wrapInFlight || needsConfirm;
 }
 
 /**
@@ -1721,9 +1854,14 @@ async function confirmWrap() {
   // still in flight, so a double-click can't fire two concurrent wraps.
   if (wrapInFlight) return;
 
+  if (Array.isArray(wrapStrandedItems) && !document.getElementById('wrapStrandedConfirm').checked) return;
+
   const pw = document.getElementById('wrapPassword').value;
   const body = {};
   if (pw) body.password = pw;
+  if (Array.isArray(wrapStrandedItems)) {
+    body.options = { proceedPastStranded: tcStrandedKeys(wrapStrandedItems) };
+  }
 
   const confirmBtn = document.getElementById('wrapConfirmBtn');
   const cancelBtn = document.getElementById('wrapCancelBtn');
@@ -1737,6 +1875,12 @@ async function confirmWrap() {
     const target = wrapTarget;
     const data = await apiMutate(`/api/sessions/${encodeURIComponent(target)}/wrap`, 'POST', body);
     if (!data) {
+      // #1540: stranded wraps hold the wrap until the operator confirms. The
+      // list replaces any earlier one, and Wrap waits for the new tick.
+      if (api.lastErrorCode === 'STRANDED_WRAPS' && api.lastBody && Array.isArray(api.lastBody.items)) {
+        showWrapStranded(api.lastBody.items);
+        return;
+      }
       // Failure — surface the server's reason inline and let `finally`
       // re-enable so the operator can fix and retry without reopening.
       document.getElementById('wrapError').textContent = api.lastError || 'Wrap failed.';
@@ -1760,6 +1904,9 @@ async function confirmWrap() {
     confirmBtn.disabled = false;
     cancelBtn.disabled = false;
     confirmBtn.textContent = priorLabel;
+    // A refused wrap re-enables Wrap, except while listed stranded wraps
+    // still wait for the operator's confirmation.
+    syncWrapConfirmButton();
   }
 }
 

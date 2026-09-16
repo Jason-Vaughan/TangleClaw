@@ -5252,14 +5252,9 @@ route('GET', '/api/projects/:project/stranded-wraps', (_req, res, params) => {
   jsonResponse(res, 200, {
     project: { id: project.id, name: project.name },
     items,
-    counts: {
-      total: items.length,
-      unacknowledged: items.filter((i) => !i.acknowledged).length,
-      grandfathered: items.filter((i) => i.grandfathered).length,
-      // Unacknowledged and fully recorded: what "needs attention before
-      // continuing" means. Grandfathered items are listed but never count here.
-      blocking: items.filter(strandedWraps.isBlocking).length
-    }
+    // `blocking` is what holds a launch or a wrap: unacknowledged and fully
+    // recorded. Grandfathered items are listed but never count there.
+    counts: strandedWraps.counts(items)
   });
 });
 
@@ -5566,6 +5561,8 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
     mode: body ? body.mode : undefined,
     launchMode: body ? body.launchMode : undefined,
     continuityMode: body ? body.continuityMode : undefined,
+    // #1539: stranded wraps the operator acknowledges as part of this launch.
+    acknowledgeStranded: body ? body.acknowledgeStranded : undefined,
     owner
   });
 
@@ -5619,6 +5616,16 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
       // answer, this call changed nothing, and trying again once the server is
       // responsive is the remedy.
       return errorResponse(res, 503, result.error, result.code);
+    }
+    // #1539: stranded wraps hold the launch. 409 with the items, so the client
+    // can show them and resend the launch acknowledging each one. The other
+    // codes are an acknowledgement in that resend that failed.
+    if (result.code === 'STRANDED_WRAPS') {
+      return errorResponse(res, 409, result.error, result.code, { items: result.items });
+    }
+    const ackStatus = { BAD_REQUEST: 400, NOT_FOUND: 404, WRITE_FAILED: 500 }[result.code];
+    if (ackStatus) {
+      return errorResponse(res, ackStatus, result.error, result.code);
     }
     if (result.error.includes('already active')) {
       return errorResponse(res, 409, result.error, 'CONFLICT');
@@ -6213,6 +6220,14 @@ route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => 
     if (started.code === 'WRAP_IN_PROGRESS') {
       return errorResponse(res, 409, started.error, 'WRAP_IN_PROGRESS',
         started.wrapRun && typeof started.wrapRun.runId === 'string' ? { runId: started.wrapRun.runId } : undefined);
+    }
+    // #1540: the stranded-wrap soft block. Nothing was claimed; the client shows
+    // the items and may resend with `options.proceedPastStranded`.
+    if (started.code === 'STRANDED_WRAPS') {
+      return errorResponse(res, 409, started.error, 'STRANDED_WRAPS', { items: started.items });
+    }
+    if (started.code === 'BAD_REQUEST') {
+      return errorResponse(res, 400, started.error, 'BAD_REQUEST');
     }
     return errorResponse(res, 404, started.error, 'NOT_FOUND');
   }

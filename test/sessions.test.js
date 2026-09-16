@@ -92,19 +92,26 @@ describe('sessions', () => {
       const before = sessions.generatePrimePrompt(project, store.engines.get('claude'));
       assert.match(before, /Stranded wraps: none recorded for this project\./);
 
-      require('../lib/stranded-wraps').record({
+      const stranded = require('../lib/stranded-wraps');
+      stranded.record({
         projectId: project.id, remote: 'https://github.com/example/prime.git',
         branch: 'wrap/20260916-prime-test', headSha: 'd'.repeat(40)
       });
-      for (const engineId of ['claude', 'codex', 'gemini']) {
-        const engine = store.engines.get(engineId);
-        if (!engine) continue;
-        const prompt = sessions.generatePrimePrompt(project, engine);
-        assert.match(prompt, /## Stranded wraps/, engineId);
-        assert.ok(prompt.includes(`\`wrap/20260916-prime-test\` at \`${'d'.repeat(40)}\``), engineId);
+      try {
+        for (const engineId of ['claude', 'codex', 'gemini']) {
+          const engine = store.engines.get(engineId);
+          if (!engine) continue;
+          const prompt = sessions.generatePrimePrompt(project, engine);
+          assert.match(prompt, /## Stranded wraps/, engineId);
+          assert.ok(prompt.includes(`\`wrap/20260916-prime-test\` at \`${'d'.repeat(40)}\``), engineId);
+        }
+        assert.ok(store.engines.get('codex') || store.engines.get('gemini'),
+          'the engine-parity loop must cover at least one engine besides claude');
+      } finally {
+        // An unacknowledged stranded wrap holds every later launch and wrap of
+        // this shared fixture project, so this case settles the one it made.
+        stranded.acknowledge(project, { branch: 'wrap/20260916-prime-test', headSha: 'd'.repeat(40) }, null);
       }
-      assert.ok(store.engines.get('codex') || store.engines.get('gemini'),
-        'the engine-parity loop must cover at least one engine besides claude');
     });
 
     it('names every rule source in force, in the engine\'s own config filename — never a hard-coded CLAUDE.md (#796)', () => {
