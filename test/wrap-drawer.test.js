@@ -1663,3 +1663,33 @@ describe('the commit row reports what its rescan found (#1513)', () => {
     assert.match(phrase, /2 secret matches left uncommitted/);
   });
 });
+
+describe('the commit row renders its rescan outcome, not just the helper (#1513)', () => {
+  const H = loadHelpers();
+  const commit = (output) => H.deriveDetail({ kind: 'commit', status: 'done', output });
+
+  it('a commit that skipped a file says so on the row', () => {
+    // R-15's defect was that nothing rendered output.secretScan, so a commit
+    // that could not read a file looked identical to a clean one. Pins the
+    // call site, not just secretScanPhrase.
+    const detail = commit({
+      commitSha: 'abcdef1234567890',
+      secretScan: { flagged: [], skipped: [{ path: 'x.bin', reason: 'looks binary' }] }
+    });
+    assert.match(detail, /1 file not scanned for secrets/);
+    assert.match(detail, /^abcdef123456/);
+  });
+
+  it('a commit carrying an included match names it', () => {
+    const detail = commit({
+      commitSha: 'abcdef1234567890',
+      secretScan: { flagged: [{ decision: 'include' }], skipped: [] }
+    });
+    assert.match(detail, /1 secret match you included/);
+  });
+
+  it('a clean scan adds nothing to the row', () => {
+    assert.equal(commit({ commitSha: 'abcdef1234567890', secretScan: { flagged: [], skipped: [] } }), 'abcdef123456');
+    assert.equal(commit({ commitSha: 'abcdef1234567890' }), 'abcdef123456');
+  });
+});

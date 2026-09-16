@@ -37,6 +37,18 @@ after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true 
  */
 const TOKEN = ['gh', 'p_'].join('') + 'Ab12Cd34Ef'.repeat(3) + 'Gh56Ij';
 
+/**
+ * A classification whose only stageable files are `names`.
+ * @param {string[]} names - Repo-relative paths owned by the session.
+ * @returns {object} The shape `ownership.classify` returns.
+ */
+function classificationFor(names) {
+  return {
+    owned: [...names], foreign: [], included: [], left: [], undecided: [],
+    tangleclawMaintenance: [], tangleclawState: [], stageable: [...names]
+  };
+}
+
 /** Activity rows the check recorded during the current test. */
 let activity = [];
 const realLogActivity = secretCheck._internal.logActivity;
@@ -279,8 +291,52 @@ describe('files that are not scanned say why', () => {
     const row = activity.find((a) => a.detail.step === 'commit');
     assert.ok(row, 'the commit records the skips');
     assert.equal(row.detail.skippedCount, 2);
+    // session-files records a skip-only scan too, or a wrap that could not read
+    // a file looks in the log exactly like one that scanned everything clean.
+    const sfRow = activity.find((a) => a.detail.step === 'session-files');
+    assert.ok(sfRow, 'session-files records a scan that only skipped');
+    assert.equal(sfRow.detail.skippedCount, 2);
+    assert.deepEqual(sfRow.detail.flagged, []);
     assertNoToken(activity, 'the activity row');
     assertNoToken(r, 'the commit result');
+  });
+
+  it('a binary file is sniffed, not read whole — the stall the budget exists to prevent', () => {
+    const repo = makeRepo();
+    // 4 MB is over SCAN_SIZE_CAP, so use one just under it: the size check
+    // must not be what saves us here, the prefix sniff must.
+    const size = secretCheck.SCAN_SIZE_CAP - 1;
+    const buf = Buffer.alloc(size, 0x41);
+    buf[3] = 0x00; // NUL inside the sniff window → binary
+    fs.writeFileSync(path.join(repo, 'image.bin'), buf);
+    const reads = [];
+    const realReadFile = secretCheck._internal.readFile;
+    secretCheck._internal.readFile = (abs) => { reads.push(abs); return realReadFile(abs); };
+    try {
+      const r = secretCheck.scanFile(repo, 'image.bin');
+      assert.equal(r.state, 'skipped');
+      assert.match(r.reason, /looks binary/);
+      assert.deepEqual(reads, [], 'the whole file was never read');
+      assert.ok(r.bytes > 0 && r.bytes <= 8192, `only the sniff window was read, got ${r.bytes}`);
+    } finally {
+      secretCheck._internal.readFile = realReadFile;
+    }
+  });
+
+  it('bytes read for a file that ends in a skip still count against the budget', () => {
+    const repo = makeRepo();
+    // Two binaries, each costing a sniff. A budget below their combined sniff
+    // cost must stop the loop — under the old code neither counted at all.
+    for (const n of ['a.bin', 'b.bin', 'c.bin']) {
+      const buf = Buffer.alloc(9000, 0x41);
+      buf[3] = 0x00;
+      fs.writeFileSync(path.join(repo, n), buf);
+    }
+    const names = ['a.bin', 'b.bin', 'c.bin'];
+    const res = secretCheck.check(repo, classificationFor(names), {}, { maxBytes: 9000 });
+    const stopped = res.report.skipped.filter((s) => /stopped scanning after/.test(s.reason));
+    assert.equal(stopped.length, 1, 'the third was refused by the budget, not sniffed');
+    assert.equal(res.report.skipped.length, 3, 'all three are still reported');
   });
 
   it('a symbolic link is skipped: git commits the link, not its target', () => {
@@ -302,12 +358,45 @@ describe('files that are not scanned say why', () => {
   it('an unreadable file is skipped with the error code, not treated as clean', () => {
     const repo = makeRepo();
     fs.writeFileSync(path.join(repo, 'x.js'), 'hello\n');
+    const real = secretCheck._internal.readPrefix;
+    secretCheck._internal.readPrefix = () => { const e = new Error('nope'); e.code = 'EACCES'; throw e; };
+    try {
+      assert.deepEqual(secretCheck.scanFile(repo, 'x.js'),
+        { state: 'skipped', reason: 'could not be read (EACCES), so it was not scanned', bytes: 0 });
+    } finally {
+      secretCheck._internal.readPrefix = real;
+    }
+  });
+
+  it('a file that turns unreadable after the sniff is skipped too, never clean', () => {
+    // A file larger than the sniff window takes the second read, so both read
+    // paths must fail closed. This is the one the prefix sniff added.
+    const repo = makeRepo();
+    fs.writeFileSync(path.join(repo, 'big.txt'), 'a'.repeat(20000));
     const real = secretCheck._internal.readFile;
     secretCheck._internal.readFile = () => { const e = new Error('nope'); e.code = 'EACCES'; throw e; };
     try {
-      assert.deepEqual(secretCheck.scanFile(repo, 'x.js'), { state: 'skipped', reason: 'could not be read (EACCES), so it was not scanned' });
+      const r = secretCheck.scanFile(repo, 'big.txt');
+      assert.equal(r.state, 'skipped');
+      assert.match(r.reason, /could not be read \(EACCES\)/);
+      assert.ok(r.bytes > 0, 'the sniff that did happen still counts against the budget');
     } finally {
       secretCheck._internal.readFile = real;
+    }
+  });
+
+  it('a real permission denial is skipped, not clean', function () {
+    if (process.getuid && process.getuid() === 0) return; // root reads anything
+    const repo = makeRepo();
+    const f = path.join(repo, 'locked.txt');
+    fs.writeFileSync(f, `${TOKEN}\n`);
+    fs.chmodSync(f, 0o000);
+    try {
+      const r = secretCheck.scanFile(repo, 'locked.txt');
+      assert.equal(r.state, 'skipped', 'an unopenable file is never reported clean');
+      assert.match(r.reason, /could not be read/);
+    } finally {
+      fs.chmodSync(f, 0o644);
     }
   });
 });
