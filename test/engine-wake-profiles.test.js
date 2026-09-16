@@ -113,6 +113,10 @@ describe('the wake signature is declared in the engine profile (#1255)', () => {
     // no capture, so they are still absent.
     const declaring = bundled().filter((b) => b.profile.capabilities && b.profile.capabilities.wake)
       .map((b) => b.profile.id).sort();
+    // These two literals are deliberate and must NOT become declaringIds():
+    // this case exists to NOTICE the set changing, and deriving both sides
+    // would make it compare a value with itself and pass forever. Every
+    // other loop in this file derives; this one is the guard.
     assert.deepEqual(declaring, ['antigravity', 'claude', 'codex']);
     assert.deepEqual(Object.keys(wake.ENGINE_WAKE_PROFILES).sort(), ['antigravity', 'claude', 'codex'],
       'the derived table is the declaring set — no engine gained or lost a profile in the move');
@@ -122,7 +126,7 @@ describe('the wake signature is declared in the engine profile (#1255)', () => {
     // Both directions: a field added without provenance is a measurement
     // nobody made, and a stale entry for a removed field is provenance for
     // nothing. Both read as "this was verified" to the next author.
-    for (const id of ['claude', 'antigravity', 'codex']) {
+    for (const id of declaringIds()) {
       const b = block(id);
       const fields = Object.keys(b).filter((k) => k !== 'evidence').sort();
       assert.ok(fields.length > 0, `${id} declares no wake fields — this asserts nothing`);
@@ -137,7 +141,7 @@ describe('the wake signature is declared in the engine profile (#1255)', () => {
     // and found absent — Claude's `idleMarker` is null and carries a date,
     // because the absence itself was what got measured.
     let nulls = 0;
-    for (const id of ['claude', 'antigravity', 'codex']) {
+    for (const id of declaringIds()) {
       for (const [field, entry] of Object.entries(block(id).evidence)) {
         assert.ok(entry && typeof entry === 'object', `${id}.${field} needs an evidence object`);
         if (entry.verifiedOn === null) nulls++;
@@ -189,7 +193,7 @@ describe('the wake signature is declared in the engine profile (#1255)', () => {
     // (`decorativePattern`, #1344) is covered by the same rule instead of
     // needing this guard edited alongside it.
     const compiledName = (field) => field.replace(/Pattern$/, 'Re');
-    for (const id of ['claude', 'antigravity', 'codex']) {
+    for (const id of declaringIds()) {
       const declared = block(id);
       const derived = wake.ENGINE_WAKE_PROFILES[id];
       for (const [field, value] of Object.entries(declared)) {
@@ -202,10 +206,21 @@ describe('the wake signature is declared in the engine profile (#1255)', () => {
         }
         assert.deepEqual(derived[field], value, `${id}.${field} did not survive the derivation`);
       }
-      const expected = Object.keys(declared).filter((k) => k !== 'evidence')
-        .map(compiledName).sort();
-      assert.deepEqual(Object.keys(derived).sort(), expected,
-        `${id}: the derived profile carries a field the profile never declared`);
+      // Both directions, without pinning HOW MANY compiled forms a pattern
+      // takes: `decorativePattern` yields a plain and a global regex, because a
+      // single shared global one would carry `lastIndex` between callers. What
+      // must hold is that every derived key traces back to a declared field,
+      // and every declared field reaches the table.
+      const declaredNames = Object.keys(declared).filter((k) => k !== 'evidence');
+      for (const key of Object.keys(derived)) {
+        const base = key.replace(/ReAll$|Re$/, 'Pattern');
+        assert.ok(declaredNames.includes(base) || declaredNames.includes(key),
+          `${id}: the derived profile carries ${key}, which traces to no declared field`);
+      }
+      for (const name of declaredNames) {
+        const reached = Object.keys(derived).some((k) => k === name || k.replace(/ReAll$|Re$/, 'Pattern') === name);
+        assert.ok(reached, `${id}.${name} never reached the derived table`);
+      }
     }
   });
 
