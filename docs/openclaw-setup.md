@@ -161,6 +161,7 @@ curl -sk -X POST https://localhost:3102/api/openclaw/connections \
 4. The proxy rewrites `Origin` and `Referer` headers so the gateway accepts the requests
 5. The proxy strips `X-Frame-Options` and `frame-ancestors` CSP headers so the iframe works
 6. The proxy drops client-attribution headers (`X-Forwarded-*`, `Forwarded`, `X-Real-IP`) before they reach the gateway. TangleClaw is the trust boundary, so the gateway sees every request as coming from the tunnel. OpenClaw 2026.9 and later refuse these headers from a proxy they were not told to trust.
+7. For a gateway's HTML pages, the proxy moves root-absolute `src`/`href` references (OpenClaw 2026.9+ serves `/assets/…`) under the proxy path and sets `data-openclaw-control-ui-base-path`, so the Control UI can load its bundle behind the proxy. The page is decompressed to do this; pages that need no change pass through untouched.
 
 ### First-time device pairing
 
@@ -216,6 +217,11 @@ When an OpenClaw connection has a **Bridge Port** and **Bridge Token** configure
 - The tunnel is working; the gateway itself refused the request, and its reason is shown in the message.
 - `proxy_attribution_required` means an older TangleClaw is forwarding `X-Forwarded-*` headers to an OpenClaw 2026.9+ gateway. Update TangleClaw to the latest release and restart it.
 - For any other reason, fix it on the gateway side (its token, pairing or configuration).
+
+### Control UI shows "Control UI did not start"
+
+- The page loaded, but its bundle did not. On OpenClaw 2026.9+ this happens with a TangleClaw that predates the #1534 fix, because the page asks for `/assets/…` outside the proxy path. Update TangleClaw to the latest release and restart it.
+- If TangleClaw is current, check its log (`~/.tangleclaw/logs/tangleclaw.log`) for `OpenClaw Control UI page not rewritten`. The reason on that line says why: an encoding TangleClaw can't read, or a page too large to rewrite, both sent unmodified. If the gateway dropped the connection mid-page, the browser gets a 502 instead, logged the same way.
 
 ### "Origin not allowed"
 

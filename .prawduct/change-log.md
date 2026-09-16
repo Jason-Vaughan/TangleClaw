@@ -34,6 +34,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-16 — OpenClaw 2026.9's Control UI starts behind the proxy (#1534)
+
+<!-- prawduct: type=bugfix | scope=control-ui-base-path-1534 -->
+
+Chunk 01 of `control-ui-base-path-1534`. Once #1532 removed the 403, TiLT Claw's page loaded but never mounted: OpenClaw 2026.9.4 serves `src="/assets/index-….js"`, eight modulepreloads, a favicon and a manifest by root-absolute path, with `data-openclaw-control-ui-base-path=""`. Through `/openclaw-direct/<id>/` the entry script hit TangleClaw's root and got a 404. 2026.6.11 used relative `./assets/…` and worked. The new `lib/openclaw-html.js` rewrites root-absolute `src`/`href` under the request's proxy prefix and fills an empty or absent base-path attribute; the bundle builds its config and WebSocket URLs from that base path. The gateway sends the page Brotli-compressed, so the body is decoded (br, gzip, deflate) and re-sent uncompressed without `Content-Encoding` or `ETag`. A page with nothing to rewrite, an unknown encoding, a corrupt body and anything over 2 MB all pass through exactly as sent. Only a GET that returns 200 HTML is touched, and both proxy prefixes use the same code. The tests use captured 2026.9.4 and 2026.6.11 pages, real compressed streams, and an end-to-end run through the real direct proxy to a stand-in gateway; the direct wiring is mutation-checked.
+
 ## 2026-09-16 — The OpenClaw proxy stops forwarding client-attribution headers (#1532)
 
 <!-- prawduct: type=bugfix | scope=proxy-forwarded-headers-1532 -->
