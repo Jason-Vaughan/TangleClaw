@@ -62,7 +62,43 @@
     "supportsPrimePrompt": true,
     "supportsConfigFile": true,
     "supportsCoAuthor": true,
-    "supportsSilentPrime": false
+    "supportsSilentPrime": false,
+    "wake": {
+      "busyMarker": "esc to interrupt",
+      "promptPattern": "^\\s*›[  ⠀-⣿]?Ask Codex to do anything",
+      "promptGlyph": "›",
+      "promptPad": " ",
+      "placeholderSgr": [
+        2
+      ],
+      "idleMarker": "Ready",
+      "evidence": {
+        "busyMarker": {
+          "verifiedOn": "2026-09-16",
+          "source": "Live capture of a working codex pane (codex-cli 0.154.0, gpt-6-astra): the status row renders `• Working (23s • esc to interrupt)`. `esc to interrupt` is the stable half of that line; the elapsed seconds change every tick. NOT sufficient alone here — codex keeps its composer drawn mid-turn, which is why `idleMarker` is also set. Key bindings are user-configurable, so a rebound interrupt key would change this string; that is a known limit of every marker in this block, not a defect of this one."
+        },
+        "promptPattern": {
+          "verifiedOn": "2026-09-16",
+          "source": "Live capture. An EMPTY codex composer is not a bare glyph — it draws the glyph, a separator, then the dim placeholder `Ask Codex to do anything`. Matching the placeholder is a POSITIVE test for a bare prompt: typing replaces it, so a half-typed line stops matching, and a dialog row (`› 1. Yes, continue`, seen on the directory-trust prompt) never matches. Two things were measured rather than assumed. The line cannot be end-anchored: codex draws an animated braille shimmer across it, so it rarely ends at the placeholder. And the separator cell is not reliably a space — the shimmer OVERWRITES it, observed live as `›⠁Ask Codex to do anything⡁`, so the class accepts a space, an NBSP, or one braille cell (U+2800-U+28FF). A pattern requiring a space there matched 0 of 1 live captures and was corrected."
+        },
+        "promptGlyph": {
+          "verifiedOn": "2026-09-16",
+          "source": "Live capture: U+203A SINGLE RIGHT-POINTING ANGLE QUOTATION MARK, rendered bold (`\\x1b[1m›\\x1b[0m`), at column 0 of the composer line. Observed identical across gpt-5.6-terra and gpt-6-astra at low/medium/high reasoning effort. Not established as invariant across themes or future versions."
+        },
+        "promptPad": {
+          "verifiedOn": "2026-09-16",
+          "source": "Live capture: one ordinary space (U+0020) between glyph and first input column, not an NBSP as Claude uses. Confirmed by cursor position — tmux reports cursor_x=2 with the glyph at column 0 on an empty composer, across 12 samples."
+        },
+        "placeholderSgr": {
+          "verifiedOn": "2026-09-16",
+          "source": "Live capture: the placeholder is emitted as `\\x1b[2mAsk Codex to do anything`, i.e. SGR 2 (dim), same attribute Claude uses for its own placeholder. The braille shimmer drawn on the same line is NOT dim — it carries truecolor foreground (`38;2;R;G;B`) with no SGR 2 — so it is not covered by this field. See the shimmer note under `idleMarker`."
+        },
+        "idleMarker": {
+          "verifiedOn": "2026-09-16",
+          "source": "Measured from outside the pane over 50 samples at 1.5s intervals against a live codex session (gpt-6-astra): `Ready` in the status row was present in 45/45 at-rest samples and absent in 5/5 working samples, where it reads `Working`. Zero overlap. Required here because codex keeps its composer drawn during a turn, so the composer-empty read alone would call a working pane idle. KNOWN LIMIT, measured not assumed: codex draws an animated braille shimmer (U+2800-U+28FF) on the composer line in sessions that have conversation history. It lands in the single cell between glyph and cursor about a third of the time, and `_composerEmpty` then reads an idle pane as holding typed input — 8 empty / 4 blocked in each of two independent 12-sample runs. This does not prevent wake (mean 3.75 ticks to a clean streak of 2, against a floor of 2) but roughly doubles latency. It is NOT caused by `tui.animations`, the model, or reasoning effort: a fresh astra-high session with animations enabled showed zero shimmer over 12 samples. Tracked separately; the profile is correct as measured."
+        }
+      }
+    }
   },
   "statusPage": {
     "adapter": "atlassian",

@@ -144,7 +144,9 @@ describe('#1180 detectAtPrompt — wired to a real session row', () => {
     // But answering "unknown" forever would delete the chime for that engine
     // and break #907's contract that a REACHED pane yields a real reading.
     const sessions = require('../lib/sessions.js');
-    const r = sessions.detectAtPrompt('nonexistent-pane', 'codex');
+    // aider, not codex: codex gained a measured wake profile in #1344, so it
+    // no longer exercises the unprofiled path this case exists for.
+    const r = sessions.detectAtPrompt('nonexistent-pane', 'aider');
     assert.notEqual(r.idle, null, 'a reached pane must still produce a real reading (#907)');
     assert.match(r.reason, /^staleness:no-wake-profile/,
       'the reason must name WHICH gate answered, or the degradation is invisible');

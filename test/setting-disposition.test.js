@@ -1109,8 +1109,10 @@ describe('the wake nudge says where it cannot reach (#1255)', () => {
 
   it('applies on exactly the engines whose profile declares a wake signature', () => {
     // Both directions, over the bundled roster: a gate keyed on the wrong field
-    // would either kill the setting on the two engines where it works or offer
-    // it on the three where a nudge would be typed against a guessed signature.
+    // would either kill the setting on the engines where it works or offer it on
+    // the ones where a nudge would be typed against a guessed signature. The
+    // expected set is derived, not written here, so profiling a new engine
+    // (codex, #1344) updates one place — the profile — not this list too.
     const nudgeable = [];
     for (const profile of bundledProfiles()) {
       const d = engines.settingDisposition('medusaWake', { medusaWake: true }, profile);
@@ -1123,7 +1125,10 @@ describe('the wake nudge says where it cannot reach (#1255)', () => {
         assert.equal(d.evidence, 'capabilities.wake is not declared, or is declared malformed');
       }
     }
-    assert.deepEqual(nudgeable.sort(), ['antigravity', 'claude'],
+    const declaring = bundledProfiles()
+      .filter((p) => p.capabilities && p.capabilities.wake).map((p) => p.id).sort();
+    assert.ok(declaring.length > 0, 'no engine declares a signature — this compared nothing');
+    assert.deepEqual(nudgeable.sort(), declaring,
       'the modal must agree with the monitor about which engines can be nudged');
   });
 
@@ -1141,17 +1146,19 @@ describe('the wake nudge says where it cannot reach (#1255)', () => {
     }
     assert.ok(client('claude').capabilities.wake,
       'the browser must receive the wake block, or its predicate is answering about nothing');
-    assert.equal(client('codex').capabilities.wake, undefined);
+    // aider: codex declares a measured block since #1344.
+    assert.equal(client('aider').capabilities.wake, undefined);
   });
 
   it('losing a wake the operator switched on warns; losing the default records', () => {
-    const codex = bundledProfiles().find((p) => p.id === 'codex');
-    const chosen = engines.settingDisposition('medusaWake', { medusaWake: true }, codex);
+    // An engine with no measured signature — aider, since codex gained one in #1344.
+    const unprofiled = bundledProfiles().find((p) => p.id === 'aider');
+    const chosen = engines.settingDisposition('medusaWake', { medusaWake: true }, unprofiled);
     assert.equal(chosen.chosen, true);
     assert.equal(chosen.level, 'warn');
     // A project that never set the key is on the shipped default — off — and
     // was never promised anything, so it records rather than alarms.
-    const untouched = engines.settingDisposition('medusaWake', {}, codex);
+    const untouched = engines.settingDisposition('medusaWake', {}, unprofiled);
     assert.equal(untouched.chosen, false);
     assert.equal(untouched.value, false);
     assert.equal(untouched.level, 'info');
@@ -1211,8 +1218,9 @@ describe('the wake nudge says where it cannot reach (#1255)', () => {
     });
 
     it('renders the reason, and no checkbox, on an engine with no signature', () => {
-      const codex = client('codex');
-      const html = render({ engineId: 'codex', projectEngine: codex, engines: [codex], checked: true });
+      // aider: codex declares a measured signature since #1344.
+      const unprofiled = client('aider');
+      const html = render({ engineId: 'aider', projectEngine: unprofiled, engines: [unprofiled], checked: true });
       assert.match(html, /has no measured idle signature/);
       // The pin the plan asks for: no `#settingsMedusaWake` element at all, so
       // `doSaveSettings` attaches no value and cannot post a stale checkbox.

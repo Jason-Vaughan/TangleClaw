@@ -59,6 +59,22 @@ function bundled() {
     .map((f) => ({ file: f, profile: JSON.parse(fs.readFileSync(path.join(ENGINES_DIR, f), 'utf8')) }));
 }
 
+/**
+ * The bundled engines that declare a wake block, sorted.
+ *
+ * Computed rather than written out, for the reason this file already gives
+ * elsewhere: a list written here goes stale the moment an engine is profiled,
+ * and the tests below that merely need "the expected table" would then fail
+ * for a reason that has nothing to do with what they assert (#1344 added
+ * codex and broke exactly those two).
+ *
+ * @returns {string[]}
+ */
+function declaringIds() {
+  return bundled().filter((b) => b.profile.capabilities && b.profile.capabilities.wake)
+    .map((b) => b.profile.id).sort();
+}
+
 /** @param {string} id - Engine id. @returns {object} Its declared wake block. */
 function block(id) {
   const found = bundled().find((b) => b.profile.id === id);
@@ -86,15 +102,19 @@ function derive(wakeBlock) {
 }
 
 describe('the wake signature is declared in the engine profile (#1255)', () => {
-  it('exactly the two live-probed engines declare a block, and the set is unchanged', () => {
-    // The migration must not change WHICH engines can be nudged. Codex, aider
-    // and openclaw have no live pane capture, and declaring an unmeasured
+  it('exactly the live-probed engines declare a block, and the set is unchanged', () => {
+    // The bar is a live pane capture, not a wish: declaring an unmeasured
     // signature to make the settings modal read better is the exact dishonesty
-    // this chunk exists to end.
+    // #1255 exists to end. Codex joined in #1344 by meeting that bar — its
+    // glyph, pad, placeholder SGR, busy marker and idle marker were each read
+    // off a running codex pane from OUTSIDE it (a session cannot measure its
+    // own markers; its reasoning about them lands in its own capture), with
+    // the idle marker separated over 50 samples. aider and openclaw still have
+    // no capture, so they are still absent.
     const declaring = bundled().filter((b) => b.profile.capabilities && b.profile.capabilities.wake)
       .map((b) => b.profile.id).sort();
-    assert.deepEqual(declaring, ['antigravity', 'claude']);
-    assert.deepEqual(Object.keys(wake.ENGINE_WAKE_PROFILES).sort(), ['antigravity', 'claude'],
+    assert.deepEqual(declaring, ['antigravity', 'claude', 'codex']);
+    assert.deepEqual(Object.keys(wake.ENGINE_WAKE_PROFILES).sort(), ['antigravity', 'claude', 'codex'],
       'the derived table is the declaring set — no engine gained or lost a profile in the move');
   });
 
@@ -102,7 +122,7 @@ describe('the wake signature is declared in the engine profile (#1255)', () => {
     // Both directions: a field added without provenance is a measurement
     // nobody made, and a stale entry for a removed field is provenance for
     // nothing. Both read as "this was verified" to the next author.
-    for (const id of ['claude', 'antigravity']) {
+    for (const id of ['claude', 'antigravity', 'codex']) {
       const b = block(id);
       const fields = Object.keys(b).filter((k) => k !== 'evidence').sort();
       assert.ok(fields.length > 0, `${id} declares no wake fields — this asserts nothing`);
@@ -117,7 +137,7 @@ describe('the wake signature is declared in the engine profile (#1255)', () => {
     // and found absent — Claude's `idleMarker` is null and carries a date,
     // because the absence itself was what got measured.
     let nulls = 0;
-    for (const id of ['claude', 'antigravity']) {
+    for (const id of ['claude', 'antigravity', 'codex']) {
       for (const [field, entry] of Object.entries(block(id).evidence)) {
         assert.ok(entry && typeof entry === 'object', `${id}.${field} needs an evidence object`);
         if (entry.verifiedOn === null) nulls++;
@@ -164,7 +184,7 @@ describe('the wake signature is declared in the engine profile (#1255)', () => {
     // Driven off the JSON rather than a list written here: a field added to a
     // profile and not to the builder would otherwise reach neither the table
     // nor this guard.
-    for (const id of ['claude', 'antigravity']) {
+    for (const id of ['claude', 'antigravity', 'codex']) {
       const declared = block(id);
       const derived = wake.ENGINE_WAKE_PROFILES[id];
       for (const [field, value] of Object.entries(declared)) {
@@ -457,7 +477,7 @@ describe('the table is derived when it is READ, not when the module is required'
     const out = JSON.parse(execFileSync(process.execPath, ['-e', script], { encoding: 'utf8' }).trim());
     assert.deepEqual(out.before, [],
       'precondition: the engines directory really is empty at require time');
-    assert.deepEqual(out.after, ['antigravity', 'claude'],
+    assert.deepEqual(out.after, declaringIds(),
       'the table must be built from the store the sync populated, not from the pre-sync directory');
   });
 
@@ -518,7 +538,7 @@ describe('the table is derived when it is READ, not when the module is required'
     fs.rmSync(path.dirname(answer), { recursive: true, force: true });
     assert.deepEqual(out.whileBroken, [], 'one unparsable file answers for the whole directory');
     assert.equal(out.warns, 1, 'reported once per process, not once per read');
-    assert.deepEqual(out.afterFix, ['antigravity', 'claude'],
+    assert.deepEqual(out.afterFix, declaringIds(),
       'and the table recovers once the file is fixed, with no restart');
   });
 });
