@@ -34,6 +34,23 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-16 — The remaining OpenClaw ssh routes stop freezing the server (#1529)
+
+<!-- prawduct: type=bugfix | scope=async-ssh-1529 -->
+
+Chunk 01 of `async-ssh-1529`. `POST /api/openclaw/detect-instance-dir`, `POST /api/openclaw/connections/:id/approve-pending` (through `_runOnGatewayHost` and `lib/openclaw-approve.js`) and `POST /api/openclaw/test` ran ssh, and the test also ran curl, as blocking calls. A host that did not answer held every request for up to 10–15 s, and approve runs several commands per call. All three now wait off the event loop through a new module, `lib/openclaw-remote.js` (`runShell` with stdin, `runFile` with an argument vector), behind one `_internal` seam, and answer exactly as before. `lib/openclaw-approve.js` is async end to end, and its `runRemote` result shape is unchanged.
+
+Review changed how failures read. Only approve had mapped a timeout, and only when ssh said nothing; the other two routes showed Node's `Command failed: <whole ssh command>`, which never says it timed out and includes the key path. The runner now writes both fields once for every caller: `timed out after Nms`, keeping anything the host said first, or `exited with status N`. The runner tests use real processes, and the route tests prove ORDER (a timer runs while the command is pending) through the real request handler, mutation-checked by removing each route's `await`.
+
+`GET …/tunnel` was on the issue but does not block: its 6–12 s was an awaited connect probe and HTTP round-trip. Descoped and corrected on #1529, together with `lib/tunnel.js`'s local `ps`/`lsof` helpers.
+
+## 2026-09-16 — An unreachable OpenClaw host no longer freezes the server (#1527)
+
+<!-- prawduct: type=bugfix | scope=openclaw-version-1527 -->
+
+Recorded after the fact (PR #1528 merged without this entry, as `c3e038de`). After a hard reboot and a network move, `GET /api/openclaw/connections/:id/version` held the event loop for its 6 s ssh connect timeout on every panel render, through `execSync` in `lib/openclaw-version.js`. WebSockets dropped and the dashboard reloaded continuously. The Coordinator hotfixed it in place to async `exec`. The PR kept that and added what the switch made necessary: concurrent reads of one connection share a single ssh; a failure is cached for 60 s (live, the server had been starting an ssh roughly every 4 s against the dead host); a read in flight when the connection is invalidated is not cached; and a route test pins the `await`. Two Critic rounds were run, and the second made the event-loop test able to fail.
+
+
 ## 2026-09-15 — A wrap Retry shows what it reused, and the plan picker drops shipped plans (#1515, #1516)
 
 <!-- prawduct: type=bugfix | scope=bugfix-sprint-chunk-05 -->
