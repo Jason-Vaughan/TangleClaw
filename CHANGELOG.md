@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.28.0] - 2026-09-16
+
 ### Added
 
 - **Codex sessions can be woken for switchboard mail** (#1344). A codex session was never nudged when a message arrived: the wake monitor only considers engines whose profile declares a measured idle signature, and codex declared none, so it skipped before any wake attempt. Mail was delivered and sat there until someone told the session to look. Codex now carries a signature measured off a running pane — prompt glyph, separator, placeholder styling, the busy marker, and `· Ready ·` as a positive at-rest signal (present in 45 of 45 at-rest samples, absent in all 5 working ones). Turn on **Auto-wake on inbound messages** in the project's settings; the row used to be disabled with "has no measured idle signature".

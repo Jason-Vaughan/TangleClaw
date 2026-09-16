@@ -596,3 +596,22 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/fixtures/caddy-adapt-ungated-unguarded.json` — the ungated fixture as a release before the peer guard wrote it: the one fixture `checkOffboxRefused` must report, and the input `planOffboxGuard` must turn into exactly `caddy-adapt-ungated`'s Caddyfile.
 - `test/fixtures/caddy-adapt-no-h1.json` — the same shape as the generated baseline with `protocols: ['h1']` removed from the `:8443` listener, so `checkHttpsProtocols` is exercised against a file that differs in exactly the pinned property and nothing else.
 - `test/fixtures/caddy-adapt-ungated.json` — a minimal `:8443` site carrying the `h1` pin, the peer guard and NO `authentication` handler, so `checkGates` is driven by gate absence alone rather than by the larger hand-edited file, where three properties break at once.
+
+## TODO (auto-stubbed 2026-09-16)
+
+- **TBD** — touched in this session: `lib/tangleclaw-project-files.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-file-ownership.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/wrap-steps/_config-root.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/launch-baseline.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/project-heal.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-continuity-session-provenance.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-release-decision.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-session-scope.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-state.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-step-git-range-killed.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-untrack-offer-ui.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/openclaw-version.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/openclaw-version.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/openclaw-detect.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/fixtures/openclaw-control-ui-2026.6.11.html`. <!-- describe -->
+- **TBD** — touched in this session: `test/fixtures/openclaw-control-ui-2026.9.4.html`. <!-- describe -->
