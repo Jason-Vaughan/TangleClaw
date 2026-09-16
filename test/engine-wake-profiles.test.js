@@ -659,7 +659,13 @@ describe('an engine that animates decoration at rest is still readable as idle (
     // Failing closed here is the difference between no wake and a wrong wake.
     const withPattern = (pattern) => derive({ ...wellFormedCodex(), decorativePattern: pattern });
     assert.ok(withPattern('[\u2800-\u28ff]').probe, 'the real braille range must still be accepted');
-    for (const bad of ['.', '[\\s\\S]', '\\s*', '', 'x?']) {
+    assert.ok(withPattern('[\u2500-\u257f]').probe,
+      'box-drawing decoration must be accepted too — the rule is about typed text, not about braille');
+    // `\\S`, `\\w` and `[a-z]` are the ones an earlier version of this check
+    // ACCEPTED: it refused a blacklist of obvious offenders and let through
+    // three patterns exactly as broad. They are why the check now asks what a
+    // pattern MATCHES rather than what it looks like.
+    for (const bad of ['.', '[\\s\\S]', '\\s*', '', 'x?', '\\S', '\\w', '[a-z]', '[^\\s]']) {
       assert.equal(withPattern(bad).probe, undefined,
         `decorativePattern ${JSON.stringify(bad)} must leave the engine unprofiled rather than blind both gates`);
     }
