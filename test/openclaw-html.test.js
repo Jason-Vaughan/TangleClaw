@@ -68,16 +68,23 @@ describe('rewriteControlUiHtml (#1534)', () => {
     assert.ok(out.startsWith(`<html data-openclaw-control-ui-base-path="${PREFIX}" lang="en">`));
   });
 
-  it('keeps a base path the gateway declared itself', () => {
+  it('leaves a page untouched when the gateway declares its own base path', () => {
     const page = '<html data-openclaw-control-ui-base-path="/claw"><script src="/claw/assets/a.js"></script></html>';
-    const out = html.rewriteControlUiHtml(page, PREFIX);
-    assert.ok(out.includes('data-openclaw-control-ui-base-path="/claw"'));
+    assert.equal(html.rewriteControlUiHtml(page, PREFIX), page);
   });
 
-  it('escapes the prefix for the attribute, and is safe with $ in it', () => {
+  it('only rewrites attributes inside tags, not look-alike text', () => {
+    const page = '<html><!-- src="/x" --><script>const t = \' href="/y"\';</script><img src="/z.png"></html>';
+    const out = html.rewriteControlUiHtml(page, PREFIX);
+    assert.ok(out.includes('<!-- src="/x" -->'), 'a comment is not a tag');
+    assert.ok(out.includes(`<img src="${PREFIX}/z.png">`));
+  });
+
+  it('escapes the prefix wherever it is written, and is safe with $ in it', () => {
     const out = html.rewriteControlUiHtml('<html data-openclaw-control-ui-base-path=""><script src="/a.js"></script></html>',
       '/openclaw/a"b$&c');
     assert.ok(out.includes('data-openclaw-control-ui-base-path="/openclaw/a&quot;b$&amp;c"'));
+    assert.ok(out.includes('src="/openclaw/a&quot;b$&amp;c/a.js"'));
   });
 
   it('tolerates a trailing slash on the prefix', () => {
@@ -104,17 +111,23 @@ describe('shouldRewrite (#1534)', () => {
  * @param {object} headers - Upstream headers.
  * @returns {Promise<{status: number, headers: object, body: Buffer}>}
  */
-function relay(chunks, headers) {
+function relay(chunks, headers, opts = {}) {
   return new Promise((resolve) => {
     const upstream = new PassThrough();
     const got = [];
+    const reasons = [];
     const res = new PassThrough();
-    res.writeHead = (status, h) => { res.status = status; res.sent = h; };
+    res.headersSent = false;
+    res.writeHead = (status, h) => { res.status = status; res.sent = h; res.headersSent = true; };
     res.on('data', (c) => got.push(c));
-    res.on('finish', () => resolve({ status: res.status, headers: res.sent, body: Buffer.concat(got) }));
-    html.relayRewrittenHtml(upstream, res, 200, headers, PREFIX);
+    const done = () => resolve({ status: res.status, headers: res.sent, body: Buffer.concat(got), reasons, destroyed: res.destroyed });
+    res.on('finish', done);
+    res.on('close', done);
+    html.relayRewrittenHtml(upstream, res, 200, headers, PREFIX, (r) => reasons.push(r));
     for (const c of chunks) upstream.write(c);
-    upstream.end();
+    if (opts.cutOff === 'close') upstream.destroy();
+    else if (opts.cutOff) upstream.emit('aborted');
+    else upstream.end();
   });
 }
 
@@ -157,7 +170,8 @@ describe('relayRewrittenHtml (#1534)', () => {
     const headers = { ...base, 'content-encoding': 'zstd' };
     const r = await relay([raw], headers);
     assert.deepEqual(r.body, raw);
-    assert.deepEqual(r.headers, headers);
+    assert.deepEqual(r.headers, { ...headers, 'content-length': String(raw.length) },
+      'untouched apart from the exact length of the whole body it is sent as');
   });
 
   it('passes a corrupt compressed body through untouched', async () => {
@@ -167,6 +181,40 @@ describe('relayRewrittenHtml (#1534)', () => {
     assert.equal(r.headers['content-encoding'], 'br');
   });
 
+  it('never sends Content-Length beside Transfer-Encoding', async () => {
+    const r = await relay([Buffer.from(NEW)], { ...base, 'transfer-encoding': 'chunked', connection: 'keep-alive', 'keep-alive': 'timeout=5' });
+    assert.equal(r.headers['transfer-encoding'], undefined);
+    assert.equal(r.headers.connection, undefined);
+    assert.equal(r.headers['keep-alive'], undefined);
+    assert.equal(r.headers['content-length'], String(r.body.length));
+  });
+
+  it('refuses to inflate a compressed body past the cap', async () => {
+    // A few kilobytes of Brotli that would decode to far more than the cap.
+    const bomb = zlib.brotliCompressSync(Buffer.alloc(html.MAX_REWRITE_BYTES * 4, 0x61));
+    assert.ok(bomb.length < 64 * 1024, 'the compressed body is small enough to pass the input cap');
+    const r = await relay([bomb], { ...base, 'content-encoding': 'br' });
+    assert.deepEqual(r.body, bomb, 'sent unmodified rather than decoded');
+    assert.match(r.reasons.join(' '), /could not decode a br page/);
+  });
+
+  it('reports every fallback so an operator can find it', async () => {
+    const r = await relay([Buffer.from('opaque')], { ...base, 'content-encoding': 'zstd' });
+    assert.deepEqual(r.reasons, ['could not decode a zstd page; sent unmodified']);
+  });
+
+  it('answers 502 when the gateway cuts off before anything was sent', async () => {
+    const r = await relay([Buffer.from('<html><script src="/a')], { ...base }, { cutOff: true });
+    assert.equal(r.status, 502);
+    assert.match(r.body.toString('utf8'), /cut off/);
+    assert.match(r.reasons.join(' '), /closed the connection mid-page/);
+  });
+
+  it('also answers 502 when the upstream simply closes early', async () => {
+    const r = await relay([Buffer.from('<html>')], { ...base }, { cutOff: 'close' });
+    assert.equal(r.status, 502);
+  });
+
   it('streams an oversized body through unmodified', async () => {
     const big = Buffer.alloc(html.MAX_REWRITE_BYTES + 1024, 'a');
     const head = Buffer.from('<html><script src="/assets/a.js"></script>');
@@ -174,19 +222,17 @@ describe('relayRewrittenHtml (#1534)', () => {
     assert.equal(r.body.length, head.length + big.length, 'every byte arrives');
     assert.ok(r.body.subarray(0, head.length).equals(head), 'and none of it was rewritten');
     assert.equal(r.headers.etag, base.etag);
+    assert.match(r.reasons.join(' '), /over \d+ bytes/);
   });
 });
 
-describe('both OpenClaw proxies route HTML through the rewrite (#1534)', () => {
+describe('both OpenClaw proxies hand their response to one helper (#1534)', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  it('the direct proxy passes its own prefix', () => {
-    assert.match(src, /openclawHtml\.relayRewrittenHtml\(proxyRes, res, proxyRes\.statusCode, headers, `\/openclaw-direct\/\$\{parts\[2\]\}`\)/);
-  });
-  it('the project proxy passes its own prefix', () => {
-    assert.match(src, /openclawHtml\.relayRewrittenHtml\(proxyRes, res, proxyRes\.statusCode, headers, `\/openclaw\/\$\{encodeURIComponent\(projectName\)\}`\)/);
-  });
-  it('both decide with shouldRewrite', () => {
-    assert.equal((src.match(/openclawHtml\.shouldRewrite\(req\.method, proxyRes\.statusCode, proxyRes\.headers\)/g) || []).length, 2);
+  it('relayOpenclawResponse is used for both prefixes, and nothing else relays HTML', () => {
+    assert.equal((src.match(/openclawHtml\.relayOpenclawResponse\(/g) || []).length, 2);
+    assert.match(src, /`\/openclaw-direct\/\$\{parts\[2\]\}`/);
+    assert.match(src, /`\/openclaw\/\$\{encodeURIComponent\(projectName\)\}`/);
+    assert.equal((src.match(/relayRewrittenHtml/g) || []).length, 0, 'the lower-level relay is the helper\'s business');
   });
 });
 

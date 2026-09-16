@@ -7745,12 +7745,8 @@ function proxyToOpenclaw(req, res, projectName, subPath) {
     method: req.method,
     headers: _openclawProxyHeaders(req.headers, localPort, resolved.conn.gatewayToken)
   }, (proxyRes) => {
-    const headers = _stripFrameBlockers(proxyRes.headers);
-    if (openclawHtml.shouldRewrite(req.method, proxyRes.statusCode, proxyRes.headers)) {
-      return openclawHtml.relayRewrittenHtml(proxyRes, res, proxyRes.statusCode, headers, `/openclaw/${encodeURIComponent(projectName)}`);
-    }
-    res.writeHead(proxyRes.statusCode, headers);
-    proxyRes.pipe(res);
+    openclawHtml.relayOpenclawResponse(req, res, proxyRes, _stripFrameBlockers(proxyRes.headers),
+      `/openclaw/${encodeURIComponent(projectName)}`, log);
   });
 
   proxyReq.on('error', (err) => {
@@ -8597,15 +8593,18 @@ async function handleRequest(req, res) {
         return errorResponse(res, 404, 'OpenClaw connection not found', 'NOT_FOUND');
       }
       // #1012 — the bare `/openclaw-direct/<connId>` form serves the Control UI
-      // index, whose script tag is RELATIVE (`src="./assets/index-*.js"`). From a
-      // base with no trailing slash the browser resolves that to
+      // index. Builds before 2026.9 reference their bundle RELATIVELY
+      // (`src="./assets/index-*.js"`), and from a base with no trailing slash the
+      // browser resolves that to
       // `/openclaw-direct/assets/...`, where `parts[2]` above reads "assets" as the
       // connection id, misses, and 404s the bundle. The page then renders but the
       // `openclaw-app` component never registers, and OpenClaw's own error card
       // blames a browser extension — a misdiagnosis three layers from the cause.
       // Redirect to the canonical slashed form so relative assets resolve from any
       // entry point (a link, a bookmark, a hand-typed URL), not just from the
-      // `/chat` sub-path today's UI happens to use.
+      // `/chat` sub-path today's UI happens to use. (2026.9+ builds use
+      // root-absolute paths instead; `openclawHtml.relayOpenclawResponse` moves
+      // those under this prefix, #1534.)
       if (parts.length === 3) {
         const query = req.url.includes('?') ? '?' + req.url.split('?').slice(1).join('?') : '';
         res.writeHead(301, { Location: pathname + '/' + query });
@@ -8621,12 +8620,8 @@ async function handleRequest(req, res) {
         method: req.method,
         headers: _openclawProxyHeaders(req.headers, resolved.localPort, resolved.conn.gatewayToken)
       }, (proxyRes) => {
-        const headers = _stripFrameBlockers(proxyRes.headers);
-        if (openclawHtml.shouldRewrite(req.method, proxyRes.statusCode, proxyRes.headers)) {
-          return openclawHtml.relayRewrittenHtml(proxyRes, res, proxyRes.statusCode, headers, `/openclaw-direct/${parts[2]}`);
-        }
-        res.writeHead(proxyRes.statusCode, headers);
-        proxyRes.pipe(res);
+        openclawHtml.relayOpenclawResponse(req, res, proxyRes, _stripFrameBlockers(proxyRes.headers),
+          `/openclaw-direct/${parts[2]}`, log);
       });
 
       proxyReq.on('error', (err) => {

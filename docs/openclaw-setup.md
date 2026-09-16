@@ -221,6 +221,7 @@ When an OpenClaw connection has a **Bridge Port** and **Bridge Token** configure
 ### Control UI shows "Control UI did not start"
 
 - The page loaded, but its bundle did not. On OpenClaw 2026.9+ this happens with a TangleClaw that predates the #1534 fix, because the page asks for `/assets/…` outside the proxy path. Update TangleClaw to the latest release and restart it.
+- If TangleClaw is current, check its log (`~/.tangleclaw/logs/tangleclaw.log`) for `OpenClaw Control UI page not rewritten`. The reason on that line says why the page was sent unmodified: an encoding TangleClaw can't read, a page too large to rewrite, or a gateway connection that dropped mid-page.
 
 ### "Origin not allowed"
 
