@@ -6,6 +6,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **An unreachable OpenClaw host no longer freezes the server** (#1527). Opening the OpenClaw panel asks the server for each connection's version, which it reads over SSH. That read used a blocking call, so when a host couldn't be reached (after a network change, for example) the whole server stopped for the 6-second connect timeout on every render: WebSockets dropped and the dashboard kept reloading. The read now runs in the background, and requests for the same connection that arrive while one is running share it instead of each starting another SSH. A failed read is still not cached, and a read that was running when the connection was edited or deleted is not cached either.
+
 - **Switchboard and command messages up to 64 KB now go through, and a longer one says why it failed** (#1514). The switchboard send, loop and loop-feedback routes (for projects and the Project Master), the session command route, and the wrap's "ask the session to fix this" and wrap-complete routes used the 10 KB default body limit. An ordinary long hand-off got a 413 that the page never showed, so the send just failed.
   - These routes now take up to 64 KB. The number lives in one place on the server, and the switchboard status serves it to the page.
   - A 413 now carries `limitBytes` and `receivedBytes`. `receivedBytes` is exact when the request declared its length, and is marked as a lower bound when it didn't.

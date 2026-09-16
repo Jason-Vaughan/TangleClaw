@@ -7204,13 +7204,13 @@ route('GET', '/api/openclaw/connections/:id', (_req, res, params) => {
 // GET /api/openclaw/connections/:id/version — OpenClaw instance version (#296).
 // Reads the pinned image tag from the instance's .env over SSH (cached). Needs
 // the connection's `instanceDir` set; returns version:null + a reason otherwise.
-route('GET', '/api/openclaw/connections/:id/version', (req, res, params) => {
+route('GET', '/api/openclaw/connections/:id/version', async (req, res, params) => {
   const conn = store.openclawConnections.get(params.id);
   if (!conn) {
     return errorResponse(res, 404, `Connection "${params.id}" not found`, 'NOT_FOUND');
   }
   const force = /[?&]force=(1|true)\b/.test(req.url || '');
-  const result = openclawVersion.fetchVersion(conn, { force });
+  const result = await openclawVersion.fetchVersion(conn, { force });
   jsonResponse(res, 200, { version: result.version, cached: !!result.cached, error: result.error });
 });
 
