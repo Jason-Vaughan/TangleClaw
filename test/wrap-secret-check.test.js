@@ -38,15 +38,26 @@ after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true 
 const TOKEN = ['gh', 'p_'].join('') + 'Ab12Cd34Ef'.repeat(3) + 'Gh56Ij';
 
 /**
- * A classification whose only stageable files are `names`.
- * @param {string[]} names - Repo-relative paths owned by the session.
+ * A classification with only the fields `check` reads. The one builder for
+ * both shapes: pass field overrides here, or use `classificationFor` for the
+ * common case of "these paths are the session's own and all stageable".
+ * @param {object} [over] - Field overrides.
  * @returns {object} The shape `ownership.classify` returns.
  */
-function classificationFor(names) {
+function classification(over) {
   return {
-    owned: [...names], foreign: [], included: [], left: [], undecided: [],
-    tangleclawMaintenance: [], tangleclawState: [], stageable: [...names]
+    owned: [], foreign: [], included: [], left: [], undecided: [],
+    tangleclawMaintenance: [], tangleclawState: [], stageable: [], ...over
   };
+}
+
+/**
+ * A classification whose only stageable files are `names`, owned by the session.
+ * @param {string[]} names - Repo-relative paths.
+ * @returns {object}
+ */
+function classificationFor(names) {
+  return classification({ owned: [...names], stageable: [...names] });
 }
 
 /** Activity rows the check recorded during the current test. */
@@ -402,18 +413,6 @@ describe('files that are not scanned say why', () => {
 });
 
 describe('check', () => {
-  /**
-   * A classification with only the fields `check` reads.
-   * @param {object} over - Field overrides.
-   * @returns {object}
-   */
-  function classification(over) {
-    return {
-      owned: [], foreign: [], included: [], left: [], undecided: [],
-      tangleclawMaintenance: [], tangleclawState: [], stageable: [], ...over
-    };
-  }
-
   it('TangleClaw maintenance that matches is held back like any other file', () => {
     const repo = makeRepo();
     fs.writeFileSync(path.join(repo, 'CLAUDE.md'), `key: ${TOKEN}\n`);
