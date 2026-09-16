@@ -1,6 +1,12 @@
 # Bugfix Sprint — Wrap Noise, Secrets, Message Size
 
-Status: APPROVED 2026-09-15 by the operator directly ("GO on all of it"). Issues filed by Builder the same day. It runs before Train 20. This is the program-level split; each chunk gets its own build plan when it starts.
+Status: **COMPLETE 2026-09-16 — archived.** All five chunks shipped; every issue it names (#1508–#1516) is closed. Chunk 01 → PR #1519, 02 → #1520, 04 → #1521, 05 → #1523, 03 → #1524 (merge `f1ce81ef`, last to land because it was built in a delegate worktree and sat unintegrated).
+
+Approved 2026-09-15 by the operator directly ("GO on all of it"). Issues filed by Builder the same day. It ran before Train 20. This was the program-level split; each chunk got its own build plan when it started.
+
+> **The `VRF-1512-untrack-offer` check below is still owed**, along with `VRF-1513-secret-heading`
+> (the Include / Leave heading, unit-tested but never seen rendered). Both are carried forward in
+> `.prawduct/.handoff-notes.md` so archiving this file does not bury them.
 
 ## Issues
 
