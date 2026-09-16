@@ -160,7 +160,7 @@
       if (status >= 200 && status < 400) return { reachable: true, status, reason: null };
       // 502/503/504 is the proxy reporting a dead upstream; anything else is
       // still a refusal to serve the page the frame needs.
-      const said = status > 0 && status < 500 ? await gatewayRefusal(res) : null;
+      const said = status > 0 && status < 500 ? await gatewayRefusal(res, Math.min(2000, probeBudget(deps))) : null;
       if (said) return { reachable: false, status, reason: `gateway returned ${status}: ${said}`, refusedBy: 'gateway' };
       return { reachable: false, status, reason: `proxy returned ${status}`, refusedBy: null };
     } catch (err) {
@@ -178,18 +178,19 @@
    * OpenClaw answers `{"error": {"message": "...", "type": "..."}}`; TangleClaw's
    * own errors put a plain string in `error`, so the object shape is what says
    * the words came from the gateway. Never throws, and gives up after a short
-   * wait so an unread body cannot stall the probe.
+   * wait (bounded by the probe budget) so an unread body cannot stall the probe.
    *
    * @param {{json?: Function}} res - The probe's response.
+   * @param {number} waitMs - Longest to wait for the body; the caller bounds it by the probe budget.
    * @returns {Promise<string|null>} The message, trimmed to a sentence's length, or null.
    */
-  async function gatewayRefusal(res) {
+  async function gatewayRefusal(res, waitMs) {
     if (!res || typeof res.json !== 'function') return null;
     let timer = null;
     try {
       const body = await Promise.race([
         res.json(),
-        new Promise((resolve) => { timer = setTimeout(() => resolve(null), 2000); })
+        new Promise((resolve) => { timer = setTimeout(() => resolve(null), waitMs); })
       ]);
       const err = body && body.error;
       if (!err || typeof err !== 'object' || typeof err.message !== 'string') return null;
@@ -345,6 +346,11 @@
     }
     if (probe.reachable !== true) {
       const why = probe.reason || 'the tunnel could not be probed';
+      // The tunnel carried the request and the gateway said no: still unusable,
+      // but "Not connected" would contradict the failure message beside it.
+      if (probe.refusedBy === 'gateway') {
+        return { level: 'dead', label: `Tunnel up, gateway refused — ${why}`, detail: why };
+      }
       return { level: 'dead', label: `Not connected — ${why}`, detail: why };
     }
 

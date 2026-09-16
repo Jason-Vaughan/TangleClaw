@@ -176,6 +176,18 @@ describe('#1012 probeProxy — the tunnel is verified before the frame loads', (
     }
   });
 
+  it('never waits on a slow body longer than the probe budget', async () => {
+    const started = Date.now();
+    const r = await probeProxy('abc-123', {
+      fetchImpl: () => Promise.resolve({ status: 403, json: () => new Promise(() => {}) }),
+      AbortControllerImpl: makeAC(),
+      timeoutMs: 40
+    });
+    assert.ok(Date.now() - started < 1000, 'the body wait must follow deps.timeoutMs, not a fixed 2 s');
+    assert.equal(r.refusedBy, null);
+    assert.equal(r.reason, 'proxy returned 403');
+  });
+
   it('never reads a 5xx as the gateway talking', async () => {
     let read = false;
     const r = await probeProxy('abc-123', {
@@ -234,6 +246,24 @@ describe('#1012 describeTunnelFailure — names the connection, and owns the bla
     const msg = describeTunnelFailure('timeout', '');
     assert.doesNotMatch(msg, /undefined|null/);
     assert.match(msg, /this connection/);
+  });
+});
+
+describe('deriveConnectionState — a gateway refusal is not a dead tunnel (#1532)', () => {
+  const { deriveConnectionState } = require('../public/openclaw-tunnel-state.js');
+  it('says the tunnel is up and the gateway refused, not "Not connected"', () => {
+    const s = deriveConnectionState({
+      connName: 'TiLT Claw',
+      probe: { reachable: false, status: 403, reason: 'gateway returned 403: nope', refusedBy: 'gateway' }
+    });
+    assert.equal(s.level, 'dead', 'the page still cannot load');
+    assert.doesNotMatch(s.label, /Not connected/);
+    assert.match(s.label, /gateway refused/);
+    assert.match(s.label, /nope/);
+  });
+  it('keeps "Not connected" for a tunnel failure', () => {
+    const s = deriveConnectionState({ probe: { reachable: false, status: 502, reason: 'proxy returned 502', refusedBy: null } });
+    assert.match(s.label, /^Not connected — proxy returned 502$/);
   });
 });
 
@@ -341,45 +371,6 @@ describe('#1012 probeGateway — a 200 is not an answer', () => {
     const res = await probeGateway('c1', { fetchImpl: async () => { throw new Error('boom'); } });
     assert.equal(res.ok, false);
     assert.equal(res.answered, false);
-  });
-
-  it('reports a gateway refusal in the gateway\'s own words (#1532)', async () => {
-    // OpenClaw 2026.9.x answered the probe with this through a healthy tunnel;
-    // the old wording blamed the tunnel for the gateway's decision.
-    const body = { error: { message: 'Proxy client attribution is required.', type: 'proxy_attribution_required' } };
-    const r = await probeProxy('abc-123', {
-      fetchImpl: () => Promise.resolve({ status: 403, json: () => Promise.resolve(body) }),
-      AbortControllerImpl: makeAC()
-    });
-    assert.equal(r.reachable, false);
-    assert.equal(r.refusedBy, 'gateway');
-    assert.equal(r.reason, 'gateway returned 403: Proxy client attribution is required.');
-  });
-
-  it('keeps the tunnel wording for TangleClaw\'s own error shape and unreadable bodies', async () => {
-    for (const json of [
-      () => Promise.resolve({ error: 'Sign in to continue.', code: 'UNAUTHENTICATED' }),
-      () => Promise.reject(new SyntaxError('Unexpected token <')),
-      () => Promise.resolve({ error: { type: 'no_message' } }),
-      undefined
-    ]) {
-      const r = await probeProxy('abc-123', {
-        fetchImpl: () => Promise.resolve({ status: 403, json }),
-        AbortControllerImpl: makeAC()
-      });
-      assert.equal(r.refusedBy, null);
-      assert.equal(r.reason, 'proxy returned 403');
-    }
-  });
-
-  it('never reads a 5xx as the gateway talking', async () => {
-    let read = false;
-    const r = await probeProxy('abc-123', {
-      fetchImpl: () => Promise.resolve({ status: 502, json: () => { read = true; return Promise.resolve({ error: { message: 'x' } }); } }),
-      AbortControllerImpl: makeAC()
-    });
-    assert.equal(r.refusedBy, null);
-    assert.equal(read, false, 'a dead upstream is the proxy\'s fact, not the gateway\'s');
   });
 
   it('URL-encodes the connection id', async () => {
