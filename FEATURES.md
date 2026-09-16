@@ -298,6 +298,8 @@ fails any auto-stub section older than 14 days.
 - **Orchestration launch-binder** (TB-1, #357) — bind a project to an orchestration profile so its engine launches against a different OpenAI-compatible endpoint (LiteLLM `direct` etc.) **per project**, no engine-config edit. Profiles live in operator-owned `~/.tangleclaw/orchestration-profiles.json` (seeded from `data/orchestration-profiles.json`; loader `store.orchestrationProfiles.load`); the binding is the nullable `projects.orchestration_profile` column (schema v22). Pure resolvers in `lib/orchestration.js` (`resolveKeyRef`, `resolveLaunchProfile`, `applyLaunchOverlay`); injected at one seam in `lib/sessions.js#launchSession` (overlay onto `launch.args` `--model` + `launch.env` `OPENAI_API_BASE`/`OPENAI_API_KEY`). `NULL` binding = zero injection (byte-identical to pre-TB-1). Optional per-project key override `projConfig.orchestrationKeyRef`. Spec: `.prawduct/artifacts/tb-1-launch-binder.md`.
 - **Session ownership** (#347) — first-class queryable binding of each session to the project it owns, built once and shared so the scope guard and its sibling consumers cannot disagree about who owns what. The derived address carries the `owner` field — the signed-in TangleClaw user who launched the session (read from the session, never a header), left NULL when no one was signed in rather than fabricating an identity. `lib/session-ownership.js`. Tests: `test/session-ownership.test.js`.
 - **Wrap-step date helpers** — shared local-timezone `YYYY-MM-DD` formatting for wrap-step handlers (`todayIsoLocal`, `isoLocalDate`). `Date#toISOString` gives the wrong calendar day in the late evening on hosts behind UTC (#205), so version-bump, features-toc and the learnings steps all share this one implementation instead of their own inline copies. `lib/wrap-steps/_date.js`.
+- **OpenClaw instance version** (#296) — reads an OpenClaw connection's pinned image tag from the instance `.env` over SSH, cached, for per-connection display. `lib/openclaw-version.js`.
+- **OpenClaw instance-directory detection** (#306) — finds a connection's `instanceDir` over SSH in one round trip, so the operator needn't type the host path. `lib/openclaw-detect.js`.
 
 ## Governance / Engines
 
@@ -366,6 +368,8 @@ fails any auto-stub section older than 14 days.
 - **ADR: dual-key review for untrusted PRs** — decision record for how an external pull request is audited, clean-room reconstructed, credited and answered: two independent reviewers, the diff read with `gh pr diff` and never checked out (a contributor's test file would execute under `node --test`), and the reconstruction written from the ISSUE rather than their bytes. Written from PR #1334, the first external contribution to reach this repo, and corrected by its own first application the same day. `docs/adr/0014-dual-key-review-for-untrusted-prs.md`.
 - **ADR: TangleClaw owns authentication** — decision record moving the login out of Caddy `basic_auth` and into TangleClaw itself, on scrypt sessions using the stdlib pair already shipped at `lib/projects.js`. **Accepted 2026-09-11 and built by #1420**; the build decisions are ADR 0016. Not a reversal of the 2026-06-24 Path A choice but the upgrade that choice reserved: its own rationale named multi-user as the trigger, and #1149 pulled it. One shared credential cannot attribute a shell to a person, which is the requirement multi-user actually imposes. `docs/adr/0015-tangleclaw-owns-authentication.md`.
 - **ADR: a setting must take effect, or say why not** — decision record binding that any setting TangleClaw offers either applies or explains itself; the norm behind `engines.settingDisposition` and the four separate filings of the one bug (#741, #758, #1227, #1236). Tracked here because `.prawduct/artifacts/` is gitignored, which would otherwise leave a ratified norm on one machine. `docs/adr/0013-settings-take-effect-or-say-why-not.md`.
+- **TangleClaw project-file locations** — the repo-relative paths of TangleClaw's own machine-state files inside a managed project, shared by their writers and the wrap's ownership check. `lib/tangleclaw-project-files.js`.
+- **Wrap config root** — where a wrap step reads and writes project config and wrap state when the session works on a worktree. `lib/wrap-steps/_config-root.js`.
 
 ## CLI / Tooling
 
@@ -597,22 +601,15 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/fixtures/caddy-adapt-ungated-unguarded.json` — the ungated fixture as a release before the peer guard wrote it: the one fixture `checkOffboxRefused` must report, and the input `planOffboxGuard` must turn into exactly `caddy-adapt-ungated`'s Caddyfile.
 - `test/fixtures/caddy-adapt-no-h1.json` — the same shape as the generated baseline with `protocols: ['h1']` removed from the `:8443` listener, so `checkHttpsProtocols` is exercised against a file that differs in exactly the pinned property and nothing else.
 - `test/fixtures/caddy-adapt-ungated.json` — a minimal `:8443` site carrying the `h1` pin, the peer guard and NO `authentication` handler, so `checkGates` is driven by gate absence alone rather than by the larger hand-edited file, where three properties break at once.
-
-## TODO (auto-stubbed 2026-09-16)
-
-- **TBD** — touched in this session: `lib/tangleclaw-project-files.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-file-ownership.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `lib/wrap-steps/_config-root.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/launch-baseline.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/project-heal.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-continuity-session-provenance.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-release-decision.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-session-scope.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-state.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-step-git-range-killed.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/wrap-untrack-offer-ui.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `lib/openclaw-version.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/openclaw-version.test.js`. <!-- describe -->
-- **TBD** — touched in this session: `lib/openclaw-detect.js`. <!-- describe -->
-- **TBD** — touched in this session: `test/fixtures/openclaw-control-ui-2026.6.11.html`. <!-- describe -->
-- **TBD** — touched in this session: `test/fixtures/openclaw-control-ui-2026.9.4.html`. <!-- describe -->
+- `test/wrap-file-ownership.test.js` — what a wrap may commit and where (#1406, #1469), against real repositories.
+- `test/launch-baseline.test.js` — the tree captured when a session launches (#1309, #1406), against real temp repos.
+- `test/project-heal.test.js` — the launch heal (#1511): migrate the retired key, locally exclude state, never commit.
+- `test/wrap-continuity-session-provenance.test.js` — the wrap's `files:` stamp records only this session's changes (#797).
+- `test/wrap-release-decision.test.js` — the operator's Release: Auto / Cut / Hold decision across the wrap UI (#1492 L3).
+- `test/wrap-session-scope.test.js` — session range and work-tree scope on real history (#1309, #1450, #1469).
+- `test/wrap-state.test.js` — the wrap boundary lives in the untracked state file, not `project.json` (#1510).
+- `test/wrap-step-git-range-killed.test.js` — a killed synchronous git call is not a failed one (#897).
+- `test/wrap-untrack-offer-ui.test.js` — the Stop tracking / Keep tracking offer in the wrap drawer (#1512).
+- `test/openclaw-version.test.js` — reading an OpenClaw instance's version over SSH, with caching and input validation (#296).
+- `test/fixtures/openclaw-control-ui-2026.6.11.html` — a captured 2026.6.11 Control UI page with relative asset paths, which the proxy must pass through unchanged (#1534).
+- `test/fixtures/openclaw-control-ui-2026.9.4.html` — a captured 2026.9.4 Control UI page with root-absolute asset paths and an empty base path, which the proxy rewrites (#1534).
