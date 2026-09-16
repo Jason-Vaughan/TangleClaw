@@ -128,7 +128,7 @@ Same path: `gateway.auth.token`.
 
 ### About the version display
 
-Once **Instance Dir** is set, the connection's detail panel shows the OpenClaw image version, read from `OPENCLAW_IMAGE` in `<instanceDir>/.env` over SSH (cached ~5 min; refreshed when the panel re-renders and whenever you edit the connection). Two notes:
+Once **Instance Dir** is set, the connection's detail panel shows the OpenClaw image version, read from `OPENCLAW_IMAGE` in `<instanceDir>/.env` over SSH (cached ~5 min; refreshed when the panel re-renders and whenever you edit the connection). A failed read, such as a host that can't be reached, is retried after about a minute rather than on every render, and the read never holds up the rest of TangleClaw while it waits. Two notes:
 
 - The version reflects the **pinned image tag**. A moving tag like `:latest` won't change in `.env` when the underlying image is rebuilt, so it keeps showing `latest`. Prefer a pinned tag (e.g. `:2026.5.28`) if you want the display to track real updates.
 - Local builds with custom tags (e.g. `openclaw:qmd`) are supported — the tag is shown as-is.

@@ -143,16 +143,18 @@ describe('openclaw-version (#296)', () => {
 
     it('does not block the event loop while ssh is pending (hard-reboot hang)', async () => {
       // An unreachable host used to hold execSync for the whole connect
-      // timeout, freezing every WebSocket. A timer must fire mid-read.
+      // timeout, freezing every WebSocket. A timer must run WHILE the read is
+      // still unsettled — checking order, not just that the timer ran.
       let release;
       ocv._internal.execAsync = () => new Promise((resolve) => { release = resolve; });
+      let settled = false;
       const pending = ocv.fetchVersion(conn());
-      assert.ok(pending instanceof Promise, 'fetchVersion returns a promise');
-      let timerFired = false;
-      await new Promise((resolve) => setTimeout(() => { timerFired = true; resolve(); }, 5));
-      assert.equal(timerFired, true);
+      pending.then(() => { settled = true; });
+      const pendingWhenTimerRan = await new Promise((resolve) => setTimeout(() => resolve(!settled), 5));
+      assert.equal(pendingWhenTimerRan, true, 'a timer ran while the ssh read was still in flight');
       release({ stdout: 'OPENCLAW_IMAGE=openclaw:edge' });
       assert.equal((await pending).version, 'edge');
+      assert.equal(settled, true);
     });
 
     it('concurrent callers share one ssh read', async () => {
@@ -195,6 +197,17 @@ describe('openclaw-version (#296)', () => {
       assert.equal(calls, 1);
       assert.equal(r.cached, true);
       assert.equal(r.error, null);
+    });
+
+    it('a cached "image line missing" result keeps its reason', async () => {
+      let calls = 0;
+      ocv._internal.execAsync = async () => { calls++; return { stdout: 'SOMETHING=else\n' }; };
+      await ocv.fetchVersion(conn());
+      const r = await ocv.fetchVersion(conn());
+      assert.equal(calls, 1, 'not-found is a real answer, cached for the full TTL');
+      assert.equal(r.cached, true);
+      assert.equal(r.version, null);
+      assert.match(r.error, /not found/);
     });
 
     it('a read in flight when the connection is invalidated is not cached', async () => {
