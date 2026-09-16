@@ -296,7 +296,7 @@ describe('API — system, engines, tmux', () => {
         assert.equal(data.ok, false);
         assert.match(data.error, /no restart mechanism available/i,
           'error must signal that the mechanism is absent so the frontend can hide the button cleanly');
-        assert.match(data.error, /systemd user unit at ~\/\.config\/systemd\/user\/tangleclaw\.service/,
+        assert.match(data.error, /systemd user unit at ~\/\.config\/systemd\/user\/tangleclaw\.service with KillMode=process/,
           'a Linux operator must be told which file enables the restart, not that Linux is unsupported');
         assert.doesNotMatch(data.error, /follow-up/i);
       } finally {
@@ -327,6 +327,33 @@ describe('API — system, engines, tmux', () => {
         // PR Critic to cover Cloudflare-tunnel RTT for remote operators.)
         await new Promise((resolve) => setTimeout(resolve, 400));
       } finally {
+        serverInfo.detectRestartMechanism = origDetect;
+        serverInfo.buildRestartCommand = origBuild;
+      }
+    });
+
+    it("logs the restart command's own error output when the exec fails", async () => {
+      // A failed restart leaves this process running, so the log line is the
+      // only record of why — it must carry the command's stderr, not just its
+      // exit status.
+      const origDetect = serverInfo.detectRestartMechanism;
+      const origBuild = serverInfo.buildRestartCommand;
+      const origError = console.error;
+      const logged = [];
+      serverInfo.detectRestartMechanism = () => 'systemctl';
+      // The message is assembled by printf so the expected text appears only
+      // on stderr — execSync's err.message already quotes the command line.
+      serverInfo.buildRestartCommand = () => "printf 'Unit %s not found.\\n' tangleclaw.service 1>&2; exit 5";
+      console.error = (...args) => { logged.push(args.join(' ')); };
+      try {
+        const { status } = await request('POST', '/api/server/restart');
+        assert.equal(status, 202);
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        const line = logged.find((l) => l.includes('[server-restart] exec failed'));
+        assert.ok(line, `expected an exec-failed log line, got: ${JSON.stringify(logged)}`);
+        assert.match(line, /Unit tangleclaw\.service not found\./);
+      } finally {
+        console.error = origError;
         serverInfo.detectRestartMechanism = origDetect;
         serverInfo.buildRestartCommand = origBuild;
       }

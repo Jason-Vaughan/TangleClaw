@@ -1512,7 +1512,7 @@ route('POST', '/api/server/restart', (_req, res, _params, body) => {
   if (!mechanism) {
     jsonResponse(res, 501, {
       ok: false,
-      error: 'no restart mechanism available on this host (no macOS launchd plist, and no systemd user unit at ~/.config/systemd/user/tangleclaw.service)'
+      error: 'no restart mechanism available on this host (no macOS launchd plist, and no systemd user unit at ~/.config/systemd/user/tangleclaw.service with KillMode=process)'
     });
     return;
   }
@@ -1545,12 +1545,14 @@ route('POST', '/api/server/restart', (_req, res, _params, body) => {
   // remote-truncation risk on #235.
   setTimeout(() => {
     try {
-      require('node:child_process').execSync(command, { stdio: ['ignore', 'ignore', 'ignore'], timeout: 5000 });
+      require('node:child_process').execSync(command, { stdio: ['ignore', 'ignore', 'pipe'], timeout: 5000 });
     } catch (err) {
-      // We're about to be killed anyway; log for the next process to
-      // notice on tail, but don't crash before SIGKILL arrives.
+      // No process manager took the restart, so this process lives on:
+      // log the command's own reason (a missing unit, no user bus) rather
+      // than just its exit status, and don't crash.
+      const reason = err && err.stderr ? String(err.stderr).trim() : '';
       // eslint-disable-next-line no-console
-      console.error('[server-restart] exec failed:', err && err.message);
+      console.error('[server-restart] exec failed:', err && err.message, reason ? `— ${reason}` : '');
     }
   }, 300);
 });

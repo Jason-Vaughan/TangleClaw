@@ -336,11 +336,64 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       }
     });
 
-    it("returns 'systemctl' on Linux when the systemd user unit exists", () => {
+    function stubUserUnit(contents) {
       serverInfo._internal.platform = () => 'linux';
       serverInfo._internal.existsSync = (p) => p === serverInfo.LINUX_SYSTEMD_USER_UNIT_PATH;
+      serverInfo._internal.readFileSync = (p) => {
+        if (p !== serverInfo.LINUX_SYSTEMD_USER_UNIT_PATH) throw new Error(`unexpected read: ${p}`);
+        if (contents instanceof Error) throw contents;
+        return contents;
+      };
+    }
+
+    it("returns 'systemctl' on Linux when the user unit exists and declares KillMode=process", () => {
+      stubUserUnit('[Service]\nExecStart=/usr/bin/node server.js\nKillMode=process\n');
       try {
         assert.equal(serverInfo.detectRestartMechanism(), 'systemctl');
+      } finally {
+        restoreInternal();
+      }
+    });
+
+    it('returns null when the user unit leaves KillMode at its default — a restart would end every tmux session', () => {
+      stubUserUnit('[Service]\nExecStart=/usr/bin/node server.js\n');
+      try {
+        assert.equal(serverInfo.detectRestartMechanism(), null);
+      } finally {
+        restoreInternal();
+      }
+    });
+
+    it('returns null for a KillMode that still stops child processes, or a commented-out line', () => {
+      for (const unit of [
+        '[Service]\nKillMode=mixed\n',
+        '[Service]\nKillMode=control-group\n',
+        '[Service]\n# KillMode=process\n',
+        '[Service]\nKillMode=processes\n'
+      ]) {
+        serverInfo.__unsafeResetForTest();
+        stubUserUnit(unit);
+        try {
+          assert.equal(serverInfo.detectRestartMechanism(), null, `unit ${JSON.stringify(unit)}`);
+        } finally {
+          restoreInternal();
+        }
+      }
+    });
+
+    it('accepts spacing around KillMode=process', () => {
+      stubUserUnit('[Service]\n  KillMode = process  \n');
+      try {
+        assert.equal(serverInfo.detectRestartMechanism(), 'systemctl');
+      } finally {
+        restoreInternal();
+      }
+    });
+
+    it('returns null when the user unit exists but cannot be read', () => {
+      stubUserUnit(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
+      try {
+        assert.equal(serverInfo.detectRestartMechanism(), null);
       } finally {
         restoreInternal();
       }
@@ -464,6 +517,9 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       serverInfo._internal.execSync = () => 'sha-1\n';
       serverInfo._internal.platform = () => 'linux';
       serverInfo._internal.existsSync = (p) => p === serverInfo.LINUX_SYSTEMD_USER_UNIT_PATH;
+      const realRead = serverInfo._internal.readFileSync;
+      serverInfo._internal.readFileSync = (p, enc) =>
+        p === serverInfo.LINUX_SYSTEMD_USER_UNIT_PATH ? '[Service]\nKillMode=process\n' : realRead(p, enc);
       try {
         serverInfo.captureStartup();
         const info = serverInfo.getServerInfo();

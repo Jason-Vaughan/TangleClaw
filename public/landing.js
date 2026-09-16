@@ -798,7 +798,7 @@ function renderStaleServerBanner(info) {
 /**
  * #235 — toggle the stale-banner restart button visibility based on the
  * restart-mechanism token. The button is hidden when no mechanism is
- * available (e.g. Linux today, bare-node), so operators on those hosts see
+ * available (e.g. bare-node, or Linux without a qualifying systemd user unit), so operators on those hosts see
  * text-only guidance rather than an action that would 501. Shared by the
  * stale and cannot-determine (#1118) banner renderers.
  *
