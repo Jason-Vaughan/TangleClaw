@@ -182,8 +182,9 @@ describe('launch sequence (Train 21, Chunk 01)', () => {
       const measured = makeProject('tool-measured');
       const measuredSeq = store.launchSequences.getBySession(launch('tool-measured').session.id);
       assert.equal(measuredSeq.sourceManifest.toolOutput.measured, true);
-      assert.equal(measuredSeq.sourceManifest.toolOutput.maxChars,
-        store.engines.get('claude').capabilities.toolOutput.maxChars);
+      assert.equal(measuredSeq.sourceManifest.toolOutput.reason, null);
+      assert.ok(measuredSeq.pageBudget > 0 && measuredSeq.pageBudget < measuredSeq.sourceManifest.toolOutput.maxChars,
+        'the page budget is the declared limit less the printed footer');
       const shown = launchSequence.status({ launchId: measuredSeq.launchId, projectId: measured.id }).body;
       assert.equal(shown.toolOutput.measured, true);
       assert.equal(shown.pageBudget, measuredSeq.pageBudget);

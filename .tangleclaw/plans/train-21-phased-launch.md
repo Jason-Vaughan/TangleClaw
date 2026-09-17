@@ -10,6 +10,7 @@ governed_by:
   - .prawduct/artifacts/security-model.md
   - .tangleclaw/plans/master-startup-and-wrap.md      # Master startup — excluded here, see §2.9
   - project rule: ENGINE-AGNOSTIC BY CONSTRUCTION
+scope: train-21-phased-launch
 branch: feat/train-21-chunk-01   # the chunk in flight; the gates resolve the active plan by this claim
 partition: serial — every chunk edits lib/sessions.js, lib/store.js and server.js; the chunks that touch public/ run in a worktree
 ---

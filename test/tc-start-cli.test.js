@@ -209,12 +209,40 @@ describe('tc start (car 21.3)', () => {
     assert.equal(status.code, 0, status.stderr);
     assert.match(status.stdout, /Launch sequence \d+ .*acknowledged/);
     assert.match(status.stdout, /Preflight: not-evaluated/);
+    // The disclosure three records promise, asserted where the reader meets it:
+    // drop it from the payload or the renderer and this goes red.
+    assert.match(status.stdout, /Pages are sized to \d+ characters, against this engine's measured \d+-character tool-output limit\./);
+    assert.match(status.stdout, /Not in this version: ready, unready, recovery/);
 
     for (const args of [['start'], ['start', 'sideways'], ['start', 'next', '--ack', 'nope'], ['start', 'next', '--page', 'x']]) {
       const bad = await runTc(args, paneEnv);
       assert.equal(bad.code, 1, `${args.join(' ')} is a usage error`);
       assert.match(bad.stderr, /usage: tc start/);
     }
+  });
+
+  it('prints an ASSUMED limit as assumed, which is the case codex, aider and antigravity are in', () => {
+    // Rendered directly: the assumed branch belongs to engines that declare no
+    // measurement, and the printed sentence is what tells a session its pages
+    // rest on a guess. Asserting only the response body would leave the pane
+    // silent while the suite stayed green.
+    const printed = tcVerbs.renderStartStatus({
+      sequence: 'present',
+      sessionId: 7,
+      sequenceId: 3,
+      revision: 1,
+      applicability: 'applicable',
+      preflight: { verdict: 'not-evaluated' },
+      pageBudget: 7800,
+      toolOutput: { maxChars: 8000, measured: false, reason: 'the engine declares no measured tool-output limit, so 8000 characters is assumed' },
+      pending: { stages: ['ready', 'unready', 'recovery'], reason: 'later versions' },
+      status: { cursor: 0, ready: false, recovery: 'none', unready: false },
+      steps: [{ index: 0, id: 'identity', pageCount: 1, pagesServed: [], servedAt: null, ackedAt: null }]
+    });
+    assert.match(printed, /against an ASSUMED 8000-character tool-output limit/);
+    assert.match(printed, /no measured tool-output limit/);
+    assert.match(printed, /If a page arrives cut short, say so rather than guessing/);
+    assert.ok(!printed.includes('measured 8000'), 'an assumed limit is never presented as measured');
   });
 
   it('a pane with no launch id is told it has no sequence rather than refused', async () => {
