@@ -203,7 +203,7 @@ stays version-free.
 
 **TangleClaw API base URL**: `http://localhost:3102`
 
-- **Run `tc capabilities` BEFORE concluding a TangleClaw capability is missing — never improvise one.** The `tc` CLI is on PATH in every TangleClaw-launched pane (verbs: `whoami`, `capabilities`, `sessions`, `message`, `ports`, `docs`, `rules`, `learnings`) and reports absence honestly. A capability assumed instead of checked is how sessions fabricate outcomes. If `tc` is not found, this pane was not launched by TangleClaw — say so rather than guessing. A failed localhost `tc`/`curl` is **not proof of outage** — sandboxes block loopback; get a host-context check before reporting the server down.
+- **Run `tc capabilities` BEFORE concluding a TangleClaw capability is missing — never improvise one.** The `tc` CLI is on PATH in every TangleClaw-launched pane (verbs: `whoami`, `capabilities`, `sessions`, `message`, `start`, `ports`, `docs`, `rules`, `learnings`) and reports absence honestly. A capability assumed instead of checked is how sessions fabricate outcomes. If `tc` is not found, this pane was not launched by TangleClaw — say so rather than guessing. A failed localhost `tc`/`curl` is **not proof of outage** — sandboxes block loopback; get a host-context check before reporting the server down.
 
 - **Plans are served at a shareable URL.** .tangleclaw/plans/ are served at a shareable URL: GET /api/projects/<projectId>/plans lists each one with the link to hand the operator (tc capabilities shows it with your project id) — hand back that link, never a local file path.
 

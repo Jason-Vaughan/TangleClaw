@@ -624,3 +624,15 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/openclaw-version.test.js` — reading an OpenClaw instance's version over SSH, with caching and input validation (#296).
 - `test/fixtures/openclaw-control-ui-2026.6.11.html` — a captured 2026.6.11 Control UI page with relative asset paths, which the proxy must pass through unchanged (#1534).
 - `test/fixtures/openclaw-control-ui-2026.9.4.html` — a captured 2026.9.4 Control UI page with root-absolute asset paths and an empty base path, which the proxy rewrites (#1534).
+
+## TODO (auto-stubbed 2026-09-17)
+
+- **TBD** — touched in this session: `ROADMAP.md`. <!-- describe -->
+- **TBD** — touched in this session: `lib/launch-page.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/launch-unready.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/_prime-golden-scenarios.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/api-launch-sequences.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/launch-readiness-panel.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/launch-ready.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/launch-sequence-settings.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/launch-unready.test.js`. <!-- describe -->
