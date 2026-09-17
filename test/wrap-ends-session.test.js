@@ -181,16 +181,30 @@ describe('a finished wrap ends the session (#1558)', () => {
       assert.deepEqual(killCalls, []);
     });
 
-    it('does not report a kept session when the session was killed mid-wrap', async () => {
+    it('does not report a kept session when the session was killed mid-wrap, box ticked or not', async () => {
+      for (const options of [undefined, { keepSessionRunning: true }]) {
+        wrapRunRegistry._resetForTests();
+        const session = startSession();
+        wrapPipeline.runWrapPipeline = async () => {
+          store.sessions.kill(session.id, 'operator pressed Kill mid-wrap');
+          return FINISHED_CLEAN;
+        };
+        const result = await sessions.triggerWrap(project.name, options);
+        assert.equal(result.ok, true);
+        assert.equal(result.lifecycleCompleted, false, 'no wrap was recorded on a killed row');
+        assert.equal(result.sessionKept, false, `${JSON.stringify(options)}: a killed session is not kept`);
+      }
+    });
+
+    it('does not report a kept session when a new session replaced it mid-wrap', async () => {
       const session = startSession();
       wrapPipeline.runWrapPipeline = async () => {
-        store.sessions.kill(session.id, 'operator pressed Kill mid-wrap');
+        store.sessions.kill(session.id, 'killed');
+        startSession();
         return FINISHED_CLEAN;
       };
-      const result = await sessions.triggerWrap(project.name);
-      assert.equal(result.ok, true);
-      assert.equal(result.lifecycleCompleted, false, 'no wrap was recorded on a killed row');
-      assert.equal(result.sessionKept, false);
+      const result = await sessions.triggerWrap(project.name, { keepSessionRunning: true });
+      assert.equal(result.sessionKept, false, 'the session the wrap ran against is gone');
     });
 
     it('refuses a keepSessionRunning that is not a boolean, before claiming a run', async () => {
@@ -308,14 +322,17 @@ describe('a finished wrap ends the session (#1558)', () => {
       assert.equal(status.result.sessionOutcome, null);
     });
 
-    it('says nothing about the session when it was killed mid-wrap', async () => {
-      const session = startSession();
-      wrapPipeline.runWrapPipeline = async () => {
-        store.sessions.kill(session.id, 'killed');
-        return FINISHED_CLEAN;
-      };
-      const status = await wrapAndSettle({});
-      assert.equal(status.result.sessionOutcome, null);
+    it('says nothing about the session when it was killed mid-wrap, box ticked or not', async () => {
+      for (const body of [{}, { options: { keepSessionRunning: true } }]) {
+        wrapRunRegistry._resetForTests();
+        const session = startSession();
+        wrapPipeline.runWrapPipeline = async () => {
+          store.sessions.kill(session.id, 'killed');
+          return FINISHED_CLEAN;
+        };
+        const status = await wrapAndSettle(body);
+        assert.equal(status.result.sessionOutcome, null, JSON.stringify(body));
+      }
     });
 
     it('answers 400 for a keepSessionRunning that is not a boolean', async () => {
@@ -558,20 +575,95 @@ describe('session page wrap dialog: Keep the session running (#1558)', () => {
     assert.equal(sb.get('wrapKeepRunning'), false);
   });
 
-  it('resets the box on open, reads it on confirm, and sends it with the first POST', () => {
-    const open = liftFunction(SESSION_SRC, 'function openWrapModal(');
-    assert.match(open, /getElementById\('wrapKeepRunning'\)/);
-    assert.match(open, /keepEl\.checked = false/);
-    const confirm = liftFunction(SESSION_SRC, 'async function confirmWrap(');
-    assert.match(confirm, /wrapKeepRunning = Boolean\(keepEl && keepEl\.checked\)/);
-    assert.match(confirm, /keepSessionRunning: \(\) => wrapKeepRunning/);
+  /**
+   * Run the session page's real modal open and first-wrap confirm.
+   * @returns {object} The sandbox; `posted` holds each wrap POST body
+   */
+  function modalSandbox() {
+    const { document, els } = makeDocument();
+    const posted = [];
+    const sandbox = {
+      document, els, posted,
+      projectName: 'proj',
+      sessionState: { config: {}, project: { releaseMode: 'auto' } },
+      window: { tcWrapDrawerHelpers: drawer, tcWrapRunController: { isBusy: () => false } },
+      esc: (s) => String(s),
+      tcStrandedKeys: () => [],
+      wrapRunState: () => ({ phase: 'idle' }),
+      dispatchWrapRun() {},
+      showWrapModalStranded() {},
+      syncWrapReleaseControls() {},
+      refreshWrapReleaseMode: async () => false,
+      wrapModalNeedsStrandedConfirm: () => false,
+      closeWrapModal() {},
+      async postWrap(body) { posted.push(body); return true; }
+    };
+    vm.createContext(sandbox);
+    vm.runInContext([
+      'let wrapReleaseChoice = ""; let wrapBumpLevel = ""; let wrapUntrackState = ""; let wrapSkipPreflight = false;',
+      'let wrapPathDecisions = {}; let wrapSkippedAiSteps = {}; let wrapProceedPastStranded = [];',
+      'let wrapKeepRunning = false; let wrapModalStrandedItems = null; let lastRefusedStrandedItems = null;',
+      'let currentWrapPassword = "";',
+      liftFunction(SESSION_SRC, 'function openWrapModal('),
+      liftFunction(SESSION_SRC, 'async function confirmWrap('),
+      'this.openWrapModal = openWrapModal; this.confirmWrap = confirmWrap;',
+      'this.get = (name) => eval(name);'
+    ].join('\n'), sandbox);
+    return sandbox;
+  }
+
+  it('sends the ticked box with the first POST, and keeps it for Retry', async () => {
+    const sb = modalSandbox();
+    sb.openWrapModal();
+    sb.els.wrapKeepRunning.checked = true;
+    await sb.confirmWrap();
+    assert.equal(sb.posted[0].options.keepSessionRunning, true);
+    assert.equal(sb.get('wrapKeepRunning'), true, 'held for every Retry of this wrap');
+  });
+
+  it('sends nothing when the box is not ticked, and a new wrap forgets an earlier tick', async () => {
+    const sb = modalSandbox();
+    sb.openWrapModal();
+    sb.els.wrapKeepRunning.checked = true;
+    await sb.confirmWrap();
+    sb.openWrapModal();
+    assert.equal(sb.els.wrapKeepRunning.checked, false, 'unticked on open');
+    await sb.confirmWrap();
+    assert.equal((sb.posted[1].options || {}).keepSessionRunning, undefined);
+    assert.equal(sb.get('wrapKeepRunning'), false);
+  });
+
+  it('is in the page', () => {
     assert.match(SESSION_HTML, /<input type="checkbox" id="wrapKeepRunning">/);
     assert.match(SESSION_HTML, /Keep the session running/);
   });
 
   it('hands the run outcome to the drawer banner', () => {
+    const { document, els } = makeDocument();
+    const painted = [];
+    const sandbox = {
+      document, els,
+      window: { tcWrapDrawerHelpers: drawer },
+      sessionState: {},
+      cancelEndedCountdown() {},
+      expandWrapDrawer() {},
+      paintWrapStatus(status) { painted.push(status); },
+      renderSkipRoll() {},
+      renderStepRow: () => makeElement('li'),
+      syncRetryLabel() {}
+    };
+    vm.createContext(sandbox);
+    const renderSrc = liftFunction(SESSION_SRC, 'function renderWrapDrawer(');
+    vm.runInContext([
+      'let currentWrapPipelineResult = null; let currentWrapBaseStatus = null;',
+      liftFunction(SESSION_SRC, 'function openWrapDrawer('),
+      // Only the banner is under test: stop the render once it is painted.
+      renderSrc.replace(/paintWrapStatus\(status, status\.pr, status\);/, 'paintWrapStatus(status, status.pr, status); return;'),
+      'this.openWrapDrawer = openWrapDrawer;'
+    ].join('\n'), sandbox);
+    sandbox.openWrapDrawer(FINISHED_CLEAN, { sessionOutcome: 'ended' });
+    assert.match(painted[0].detail, /The session has ended\.$/);
+    // The controller's settled case is what supplies the outcome.
     assert.match(SESSION_SRC, /openWrapDrawer\(next\.result\.pipelineResult, \{ sessionOutcome: next\.result\.sessionOutcome \}\)/);
-    assert.match(liftFunction(SESSION_SRC, 'function openWrapDrawer('), /renderWrapDrawer\(pipelineResult, runContext\)/);
-    assert.match(liftFunction(SESSION_SRC, 'function renderWrapDrawer('), /summarizePipelineStatus\(pipelineResult, runContext\)/);
   });
 });

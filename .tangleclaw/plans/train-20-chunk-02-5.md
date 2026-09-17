@@ -106,7 +106,7 @@ Stopped, blocked, failed and thrown runs never reach that line.
 **D2: the option is `options.keepSessionRunning`, honoured only as `true`.** Anything other than a
 boolean is refused with 400 `BAD_REQUEST` before a run is claimed, so a string `"true"` fails loudly
 rather than silently ending the session. `false` and a missing value both mean end the session.
-- The choice is logged with the run (`Wrap pipeline ran` gains `keptRunning`) and kept in the run's
+- The choice is logged with the run (`Wrap pipeline ran` gains `sessionKept`) and kept in the run's
   recorded `options`, where the other choices already live.
 - It is decided before the run, not after. A Retry replays it, and `replayChoicesFromOptions`
   restores it after a reload, so a stopped run that the operator retries keeps the choice they made.
@@ -115,7 +115,8 @@ rather than silently ending the session. `false` and a missing value both mean e
 beside `lifecycleCompleted`. `_wrapResultPayload` forwards one derived field,
 `sessionOutcome: 'ended' | 'kept' | null`:
 - `ended` when `lifecycleCompleted` is true,
-- `kept` when the run finished and `keepSessionRunning` was honoured,
+- `kept` when the run finished, `keepSessionRunning` was honoured, and the session is still the
+  active one (*added after review:* a session killed during a kept wrap is `null`, not `kept`),
 - `null` otherwise: the run didn't finish, or the session had already ended (killed mid-wrap), where
   the page's own ended bar says what happened.
 - The GET `/wrap/status` result and the stream's `run-done` both go through `_wrapResultPayload`, so
@@ -124,7 +125,7 @@ beside `lifecycleCompleted`. `_wrapResultPayload` forwards one derived field,
   ended without it, and a boolean would claim "still open" for a session killed mid-wrap | operator
   can veto]`
 
-**D4: the no-commit banner names what happened.** In `summarizeWrapOutcome` (`public/wrap-drawer.js`),
+**D4: the no-commit banner names what happened.** In `summarizePipelineStatus` (`public/wrap-drawer.js`),
 an `ok` run with no commit and no warnings reads:
 - label `Wrapped — nothing new to commit`,
 - detail `Your work was already committed or merged, or there was nothing to add.` plus
@@ -140,8 +141,10 @@ the release and bump choices, so an earlier tick can't carry into a later wrap.
 - Session page: read in `confirmWrap` into `wrapKeepRunning`, sent through
   `collectOptionsFromAccessors({keepSessionRunning: () => wrapKeepRunning, …})`, replayed by the Retry
   accessors, and restored by `adoptWrapRunChoices`.
-- Dashboard: `confirmWrap` builds its body from the same collector, so both pages shape the option
-  the same way.
+- Dashboard: `confirmWrap` builds its body by hand, sending the option only when ticked, as the
+  collector does. *Changed while building:* the plan said it would use the shared collector, but the
+  dashboard doesn't load `wrap-drawer.js`, and loading the whole drawer module for one key wasn't
+  worth it. A test pins that both choices are sent together.
 - The collector sends `keepSessionRunning: true` only when ticked, and never sends `false`.
 
 **D6: no new persisted format.** The option rides in the run registry's existing in-memory options
@@ -194,6 +197,41 @@ Type: cumulative-final
 8. Add a `.prawduct/operator-verification.md` entry (remote browser, both themes, phone width).
 9. `/prawduct:critic cumulative`, resolve the findings, open the PR with `Fixes #1558`. Tell the
    Coordinator at each step.
+
+## Verification record (2026-09-16)
+
+- **Suite:** full suite green (TAP run, 0 failures) on `bf2ae27d`; evidence ingested from the junit
+  run of the same pass.
+- **Existing tests that changed, and why:**
+  - `test/sessions.test.js` "ok + null commitSha → session stays active" is now "→ wraps the session
+    and runs full teardown". This is the deliberate contract change #1558 asks for.
+  - `test/sessions.test.js` #583 single-flight case: the first wrap passes `keepSessionRunning`, so the
+    "fresh wrap after completion" still has a session to wrap. The threading case sends the option in
+    its user options (still asserted unchanged) and starts a new session before its third call, which
+    otherwise found no session and passed on a stale capture. No assertion was loosened.
+  - `test/wrap-drawer.test.js`: the no-commit banner's label is the reworded one.
+  - `test/api-wrap-status.test.js`: the result payload's key list includes `sessionOutcome`.
+  - `test/wrap-release-decision.test.js`: "takes back every choice a Retry replays" includes
+    `keepSessionRunning`.
+  - `test/stranded-wraps-ui.test.js`, `test/wrap-run-session-wiring.test.js`,
+    `test/error-string-parity.test.js`: their sandboxes declare `wrapKeepRunning`, which the lifted
+    functions now read. No assertion changed.
+- **Deliberate breakages:** 15, each caught: the old commit condition, ending a stopped run, ignoring
+  the option, accepting `"true"`, the collector dropping it, Retry dropping it, a reload losing it,
+  replay accepting a non-true value, either dialog not resetting the box, the dashboard not sending it,
+  `kept` claimed for a killed session, `kept` for a stopped run, the banner ignoring the outcome, and
+  the drawer not being handed it.
+- **Scratch server** (temporary store, tmux and the pipeline stubbed, tailnet IP, leased port): a clean
+  wrap ended the session (`sessionOutcome: ended`, tmux killed); `"true"` answered 400; a kept wrap left
+  it active (`kept`); a stopped run with the box ticked left it active (`null`), and its Retry finished
+  `kept`; a wrapped project relaunched with a new session.
+- **Chrome on this Mac, same server, dark theme:** both dialogs show the box and the new sentence; the
+  kept and ended banners read as D4 says; the ended bar appeared with Wrap disabled and no redirect
+  while the report was open; after a reload the page restored the choice and Retry kept the session;
+  the dashboard dialog ended one session and kept another, and the box was unticked on reopen.
+  The automation window reports `document.hidden`, which pauses the page's status poll by design, so
+  the ended state was driven with one direct poll.
+- **Queued for the operator:** `VRF-1558-wrap-ends-session` (remote browser, both themes, phone width).
 
 ## Done when
 
