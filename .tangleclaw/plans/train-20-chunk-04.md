@@ -228,4 +228,4 @@ Type: cumulative-final
 
 ## Status
 
-- [ ] Chunk 04: session left-work badge + stranded cleanup path
+- [x] Chunk 04: session left-work badge + stranded cleanup path
