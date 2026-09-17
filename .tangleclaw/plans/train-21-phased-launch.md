@@ -1,6 +1,6 @@
 ---
 title: Train 21 — Engine-Agnostic Phased Launch (blueprint + chunking)
-status: APPROVED rev 4 (Architect schema gate satisfied 2026-09-17, v40 + v41, blueprint level). R1 needs operator ratification before 21.6's default flips; R3 default is operator pending a ruling.
+status: APPROVED rev 4 (Architect schema gate satisfied 2026-09-17, v40 + v41, blueprint level). Operator rulings 2026-09-17: R1 RATIFIED; R3 = operator mode.
 authorized_by: TangleClaw-ProjectManager, 2026-09-17 (planning only)
 source: /Users/jasonvaughan/Documents/Projects/Shared/TangleClaw-Shared/TRAIN_21_MICROPLAN.md
 review: /Users/jasonvaughan/Documents/Projects/TangleClaw-Architect/.tangleclaw/plans/train-21-builder-schema-review.md
@@ -55,17 +55,20 @@ settings.
 
 | # | Question | Architect | Status | Effect until ruled |
 |---|---|---|---|---|
-| R1 | Paste-only engines (codex, aider, antigravity) get project rules by acknowledged pull instead of paste — an amendment to prime-delivery §3 | YES to the hybrid direction; the amendment needs the operator | **Operator ratification pending** | `launchSequence.pasteRules` stays `paste`. Pull runs as well, so it adds confirmation and replaces nothing. |
+| R1 | Paste-only engines (codex, aider, antigravity) get project rules by acknowledged pull instead of paste — an amendment to prime-delivery §3 | YES to the hybrid direction; the amendment needs the operator | **RATIFIED by the operator 2026-09-17** | The amendment text is written into `prime-delivery-direction.md` §3 in #1584's PR, which is also where the default flips to `pull`. Until then `paste` remains. |
 | R2 | The sequence is locked, never the pane | YES | **Settled** | — |
-| R3 | Recovery default: `operator` (withhold step 4 until the operator clears it) vs `advisory` (the agent reconciles in writing) | NO to `advisory` as the default | **Operator ruling pending** (sent via the PM) | Default is `operator`, as the microplan says |
+| R3 | Recovery default: `operator` (withhold step 4 until the operator clears it) vs `advisory` (the agent reconciles in writing) | NO to `advisory` as the default | **RULED by the operator 2026-09-17: operator mode** — "for now, until it's proven there are no issues" | Default `operator`. `advisory` stays a project opt-in value. Revisit only on the operator's call, with evidence from real operator-mode use |
 
-R1 — **the amendment is recorded before its default changes**, not in the last docs chunk. Car
-21.6 cannot flip `pasteRules` to `pull` until a dated amendment note, ratified by the operator,
-sits in `prime-delivery-direction.md` §3. With that setting at `paste`, §3 holds exactly as
-ratified.
+R1 — **ratified 2026-09-17.** The amendment is still recorded before its default changes, not in
+the last docs chunk. Car 21.6 (#1584) adds the dated amendment note to
+`prime-delivery-direction.md` §3, citing this ratification, in the **same PR** that flips
+`pasteRules` to `pull`. Until that PR merges, §3 reads as originally ratified and the setting stays
+`paste`.
 
-R3 — `wrap-direction` commitment 3 argues for `advisory`. The Train 21 operator design requires
-intervention. The operator decides. `advisory` remains a project opt-in value either way.
+R3 — **ruled 2026-09-17: operator mode is the default** until it has been shown to cause no
+problems. The `wrap-direction` commitment-3 argument for `advisory` is noted and deferred.
+`advisory` remains a project opt-in value, and it is built and tested in #1587 so that a later
+switch is a setting change, not new work.
 
 **Delegated clearing** ("a delegate named in project rules") is **out of scope**. It needs an
 authenticated non-operator identity path, which does not exist (#1025). A follow-up is filed.
@@ -706,7 +709,7 @@ Chunks are sequential; each one merges before the next begins.
 ### Chunk 02 — READY, unready, rule revision
 - **21.4** (#1582) `tc start ready` + `tc.ready/1` validation (server-owned verdict, duplicate/conflict/ended cases) + snapshot revision on rule change
 - **21.5** (#1583) unready window + single nudge (durable counters) + dashboard readiness/evidence panel (`public/`, worktree). **Refs #1176, does not close it.**
-- **21.6** (#1584) `launchSequence.pasteRules: paste|pull`, default `paste`. The default can flip only after the R1 amendment is recorded and ratified in the Direction, in the same PR as the flip.
+- **21.6** (#1584) `launchSequence.pasteRules: paste|pull`. R1 was ratified 2026-09-17, so this PR writes the dated amendment into `prime-delivery-direction.md` §3 **and** flips the default to `pull`, together.
 - **Acceptance cases:** restart under a changed rule set → `SNAPSHOT_REVISED`; step 1 carried over only on byte-equal content; READY with a wrong verdict; duplicate vs conflicting READY; READY after the session ended. Visual change: yes → VRF entry.
 
 ### Chunk 03 — Handoff, preflight, recovery (v41)
@@ -773,8 +776,8 @@ Chunk 03 (a whole-trajectory review before parity).
 
 ## Status
 - [x] Architect schema approval (rev 4, 2026-09-17)
-- [ ] Operator ruling R3 (default recovery mode)
-- [ ] Operator ratification R1 (needed before 21.6 flips its default; not before Chunk 01)
+- [x] Operator ruling R3: operator mode (2026-09-17)
+- [x] Operator ratification R1 (2026-09-17); the amendment text lands with #1584
 - [x] Issues filed: #1579–#1590, tracking #1591 (no milestone; trains are tracked by the tracking issue)
 - [ ] Chunk 01
 - [ ] Chunk 02

@@ -64,7 +64,7 @@ All notable changes to TangleClaw are documented in this file.
   - **Handoff:** each wrap attempt publishes its own handoff file, and it counts only once the wrap has really finished.
   - **Preflight:** a check at launch looks at the handoff before the task is handed over. Anything it cannot positively confirm as ok becomes a recovery case.
   - **Cars:** #1579–#1590, in four chunks.
-  - **Pending operator rulings:** R1, whether paste-only engines fetch their rules instead of having them pasted (it amends the prime-delivery direction), and R3, the default recovery mode.
+  - **Operator rulings (2026-09-17):** R1 is ratified: paste-only engines will fetch their rules instead of having them pasted. The amendment to the prime-delivery direction lands together with #1584. R3: recovery defaults to operator mode for now.
 
 ## [5.28.0] - 2026-09-16
 
