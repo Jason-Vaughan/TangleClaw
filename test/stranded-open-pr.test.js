@@ -12,7 +12,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { setLevel } = require('../lib/logger');
+const { setLevel, setConsoleStream } = require('../lib/logger');
 
 setLevel('error');
 
@@ -44,6 +44,9 @@ function fakeExec(scenario) {
   const fail = scenario.fail || {};
   const exec = async (file, args) => {
     calls.push({ file, args });
+    if (file === 'git' && args[0] === '--version') {
+      return scenario.gitMissing ? fail.origin : ok('git version 2.x\n');
+    }
     if (file === 'git' && args[0] === 'remote') {
       if (fail.origin) return fail.origin;
       return scenario.origin ? ok(`${scenario.origin}\n`) : failed("error: No such remote 'origin'", 2);
@@ -212,7 +215,9 @@ describe('stranded wraps — open a PR from the cleanup path (#1545)', () => {
     const cases = [
       ['origin is missing', { origin: null }, 'NOT_GITHUB', /no origin remote/],
       ['origin is not on GitHub', { origin: 'https://gitlab.com/example/sandbox.git' }, 'NOT_GITHUB', /not a GitHub repository \(https:\/\/gitlab\.com/],
-      ['git cannot run', { fail: { origin: { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }) } } }, 'READ_FAILED', /git is not installed/],
+      ['git cannot run', { gitMissing: true, fail: { origin: { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }) } } }, 'READ_FAILED', /git is not installed/],
+      ['git refuses the folder as a repository', { fail: { origin: failed('fatal: not a git repository (or any of the parent directories): .git', 128) } }, 'READ_FAILED', /git remote get-url failed: fatal: not a git repository/],
+      ['the folder is gone', { fail: { origin: { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }) } } }, 'READ_FAILED', /project folder is missing/],
       ['origin moved to another repository', { origin: 'https://github.com/example/other.git' }, 'REMOTE_MISMATCH', /recorded on https:\/\/github\.com\/example\/sandbox\.git/],
       ['the branch is gone', { remoteHeads: {} }, 'BRANCH_GONE', /no longer on origin/],
       ['the branch moved', { remoteHeads: { 'wrap/1-x': SHA_B } }, 'BRANCH_MOVED', new RegExp(`at ${SHA_B} on origin, not ${SHA_A}`)],
@@ -234,6 +239,24 @@ describe('stranded wraps — open a PR from the cleanup path (#1545)', () => {
         assert.equal(stranded.list(project).items[0].prOpened, null);
       });
     }
+
+    it('logs a failure it could not avoid, and not a refusal', async () => {
+      recordFull();
+      const lines = [];
+      setConsoleStream({ write: (text) => lines.push(text) });
+      setLevel('warn');
+      try {
+        await openWith({ remoteHeads: { 'wrap/1-x': SHA_A }, create: failed('GraphQL: boom') }, request);
+        const afterFailure = lines.join('\n');
+        lines.length = 0;
+        await openWith({ remoteHeads: {} }, request);
+        assert.match(afterFailure, /Could not open a PR for a stranded wrap.*CREATE_FAILED.*GraphQL: boom/s);
+        assert.equal(lines.join('\n'), '', 'a refusal such as BRANCH_GONE is not a warning');
+      } finally {
+        setConsoleStream(null);
+        setLevel('error');
+      }
+    });
 
     it('never sends gh pr create when a read refused', async () => {
       recordFull();

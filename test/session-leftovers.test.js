@@ -40,6 +40,8 @@ function porcelain(paths) {
  * - `status`: changed paths now
  * - `unpushed`: the `rev-list --count` answer (a number, or raw text)
  * - `fail`: `{toplevel|status|revList: execResult}` to fail that read
+ * - `gitMissing`: `git --version` fails too (with `fail.toplevel`), so an
+ *   ENOENT means git itself is missing rather than the folder
  * - `hold`: a promise every read waits on
  * @param {object} scenario
  * @returns {{exec: Function, calls: Array<string[]>}}
@@ -52,6 +54,7 @@ function fakeGit(scenario) {
     assert.equal(file, 'git');
     calls.push(args);
     if (scenario.hold) await scenario.hold;
+    if (args[0] === '--version') return scenario.gitMissing ? fail.toplevel : ok('git version 2.x\n');
     if (args[0] === 'rev-parse') return fail.toplevel || ok(`${scenario.toplevel}\n`);
     if (args[0] === 'status') return fail.status || ok(porcelain(scenario.status || []));
     if (args[0] === 'rev-list') return fail.revList || ok(`${scenario.unpushed ?? 0}\n`);
@@ -229,12 +232,36 @@ describe('session leftovers (#1544)', () => {
       assert.equal(git.calls.length, 0);
     });
 
-    it('says the folder is missing', async () => {
+    it('does not spawn into a folder the scanner found missing or unreadable, and says which', async () => {
+      sessionThat('killed');
+      const git = fakeGit({ toplevel: project.path, status: ['x.txt'] });
+      leftovers._internal.exec = git.exec;
+      const missing = await leftovers.refresh(project, { exists: false, unreadable: null });
+      assert.equal(missing.state, 'unknown');
+      assert.match(missing.reason, /project folder is missing/);
+      const blocked = await leftovers.refresh(project, { exists: false, unreadable: 'Operation not permitted' });
+      assert.match(blocked.reason, /could not be read: Operation not permitted/);
+      assert.equal(git.calls.length, 0);
+      assert.equal((await leftovers.refresh(project, { exists: true, unreadable: null })).state, 'left-work');
+    });
+
+    it('passes the scanner facts from a read to the refresh it starts', async () => {
+      sessionThat('killed');
+      const git = fakeGit({ toplevel: project.path });
+      leftovers._internal.exec = git.exec;
+      assert.equal(leftovers.read(project, { exists: false, unreadable: null }).state, 'checking');
+      await leftovers.refresh(project);
+      assert.match(leftovers.read(project).reason, /project folder is missing/);
+      assert.equal(git.calls.length, 0);
+    });
+
+    it('names a folder removed since the scan, not git, when the spawn cannot start', async () => {
       sessionThat('killed');
       fs.rmSync(project.path, { recursive: true, force: true });
-      const a = await answerWith({});
+      const a = await leftovers.refresh(project);
       assert.equal(a.state, 'unknown');
       assert.match(a.reason, /project folder is missing/);
+      assert.doesNotMatch(a.reason, /git is not installed/);
     });
 
     it('says the folder is now a different repository', async () => {
@@ -245,14 +272,16 @@ describe('session leftovers (#1544)', () => {
     });
 
     const failures = [
-      ['git is missing', { toplevel: { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }) } }, /git is not installed/],
+      ['git is missing', { gitMissing: true, fail: { toplevel: { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }) } } }, /git is not installed/],
+      ['the folder vanished after the scan', { fail: { toplevel: { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }) } } }, /project folder is missing/],
       ['the status read times out', { status: { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('killed'), { killed: true, signal: 'SIGTERM' }) } }, /git status did not finish in time/],
       ['the status read fails', { status: { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository\n', error: new Error('exit 128') } }, /git status failed: fatal: not a git repository/]
     ];
     for (const [label, fail, reason] of failures) {
       it(`answers unknown with the reason when ${label}`, async () => {
         sessionThat('killed');
-        const a = await answerWith({ fail, status: ['x.txt'] });
+        const scenario = fail.fail ? fail : { fail };
+        const a = await answerWith({ ...scenario, status: ['x.txt'] });
         assert.equal(a.state, 'unknown');
         assert.match(a.reason, reason);
         assert.equal(a.newPathCount, 0);
@@ -356,6 +385,19 @@ describe('session leftovers (#1544)', () => {
       assert.equal(enriched.sessionHealth.state, 'left-work');
       assert.equal(enriched.sessionHealth.unpushed, 2);
       assert.deepEqual(enriched.sessionHealth, leftovers.read(project));
+    });
+
+    it('hands the scanner\'s folder facts to the read, so a missing folder is never spawned into', async () => {
+      const projects = require('../lib/projects');
+      sessionThat('killed');
+      const git = fakeGit({ toplevel: project.path });
+      leftovers._internal.exec = git.exec;
+      const first = await projects.enrichProject(project, { exists: false, unreadable: null }, { tmuxSessionNames: noSessions });
+      assert.equal(first.sessionHealth.state, 'checking');
+      await leftovers.refresh(project);
+      const second = await projects.enrichProject(project, { exists: false, unreadable: null }, { tmuxSessionNames: noSessions });
+      assert.match(second.sessionHealth.reason, /project folder is missing/);
+      assert.equal(git.calls.length, 0);
     });
 
     it('reports a store that cannot be read as unknown with the reason, and still lists the project', async () => {

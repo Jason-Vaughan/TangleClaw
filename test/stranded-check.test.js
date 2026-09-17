@@ -66,6 +66,11 @@ function fakeExec(scenario) {
   const ok = (stdout) => ({ exitCode: 0, stdout, stderr: '', error: null });
   const exec = async (file, args) => {
     calls.push({ file, args });
+    if (file === 'git' && args[0] === '--version') {
+      // A git that would not start in the folder (ENOENT) is modelled as missing everywhere.
+      const e = scenario.originError;
+      return e && e.error && e.error.code === 'ENOENT' ? e : ok('git version 2.x\n');
+    }
     if (file === 'git' && args[0] === 'remote') {
       if (scenario.originError) return scenario.originError;
       if (!scenario.origin) return { exitCode: 2, stdout: '', stderr: "error: No such remote 'origin'", error: new Error('exit 2') };
@@ -104,7 +109,6 @@ describe('stranded wraps — GitHub check (#1542, #1543)', () => {
   const realExec = check._internal.exec;
   const realNow = check._internal.now;
   const realQuery = check._internal.query;
-  const realDirExists = check._internal.dirExists;
 
   before(() => {
     prevBase = store._getBasePath();
@@ -130,7 +134,6 @@ describe('stranded wraps — GitHub check (#1542, #1543)', () => {
     check._internal.exec = realExec;
     check._internal.now = realNow;
     check._internal.query = realQuery;
-    check._internal.dirExists = realDirExists;
   });
 
   /**
@@ -403,19 +406,30 @@ describe('stranded wraps — GitHub check (#1542, #1543)', () => {
       assert.notEqual(await check.checkAfterLaunch(project), null, 'a timeout never lets a launch skip the next check');
     });
 
-    it('records a failed check naming the folder when the project folder is missing', async () => {
-      const fake = fakeExec({ origin: ORIGIN });
-      check._internal.exec = fake.exec;
-      check._internal.dirExists = () => false;
+    const enoent = () => ({ exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }) });
+
+    it('records a failed check naming the folder when a git spawn cannot start but git itself runs', async () => {
+      const calls = [];
+      check._internal.exec = async (file, args, options) => {
+        calls.push([file, ...args, options && options.cwd ? 'in-folder' : 'no-folder']);
+        if (args[0] === '--version') return { exitCode: 0, stdout: 'git version 2.x\n', stderr: '', error: null };
+        return enoent();
+      };
       const result = await check.check(project);
       assert.equal(result.state, 'failed');
       assert.match(result.reason, /project folder is missing/);
       assert.doesNotMatch(result.reason, /git is not installed/);
-      assert.deepEqual(fake.calls, [], 'nothing is spawned in a folder that is not there');
+      assert.deepEqual(calls, [['git', 'remote', 'get-url', 'origin', 'in-folder'], ['git', '--version', 'no-folder']],
+        'the only other spawn is the no-folder git probe; nothing reads the folder itself');
+    });
+
+    it('says git is not installed when git will not start anywhere', async () => {
+      check._internal.exec = async () => enoent();
+      const result = await check.check(project);
+      assert.match(result.reason, /git is not installed/);
     });
 
     it('checks the real folder: a project whose path was removed fails with that reason', async () => {
-      check._internal.exec = fakeExec({ origin: ORIGIN }).exec;
       fs.rmSync(project.path, { recursive: true, force: true });
       const result = await check.check(project);
       assert.match(result.reason, /project folder is missing/);

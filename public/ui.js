@@ -910,7 +910,15 @@ async function confirmStrandedAction() {
     ? await apiMutate(`${base}/open-pr`, 'POST', { ...key, confirm: true })
     : await apiMutate(`${base}/ack`, 'POST', key);
   act.busy = false;
-  if (strandedAction !== act) return;
+  if (strandedAction !== act) {
+    // Closed while the request was out: nothing to show, but a done action
+    // still changes the list, so it is fetched again.
+    if (data) {
+      delete strandedItemsCache[act.name];
+      await loadProjects();
+    }
+    return;
+  }
   if (!data) {
     const el = document.getElementById('strandedActionError');
     el.textContent = api.lastError || 'The request failed.';

@@ -177,6 +177,12 @@ in memory only; it is re-derived from the tree, never stored.
   card passes actions.
 - A store error while reading the last session becomes `state: 'unknown'` with `status: null`, never
   `null` (which would read as "nothing to report").
+- `[DECISION: no synchronous folder check anywhere (Critic R-8) | a blocked stat on a TCC-protected folder
+  stops the whole server; the project list passes the scanner's facts, and elsewhere an ENOENT spawn is told
+  apart by a no-cwd `git --version` spawn | none]` This also changed chunk 03's `#check`, whose old
+  `statSync` guard was the same shape.
+- `git remote get-url` failing with anything but "no such remote" is `READ_FAILED` in Open PR (Critic R-2);
+  the check keeps its recorded "none" for it. Both read origin through one `_readOrigin` (Critic R-3).
 - Scratch run: all of step 5 except a real crash/kill of an engine session and a real `gh pr create`
   against GitHub. Those are in `VRF-1544-session-left-work-and-stranded-cleanup`.
 

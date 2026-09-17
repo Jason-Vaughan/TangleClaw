@@ -982,16 +982,31 @@ describe('dashboard card: per-item actions and their dialog (#1545)', () => {
     assert.deepEqual(during, { text: 'Opening…', disabled: true });
   });
 
-  it('does not reopen or reload when the dialog was closed while the request was out', async () => {
+  it('does not reopen when the dialog was closed while the request was out, but still refreshes a done action', async () => {
     let release;
     const sb = sandboxFor(() => new Promise((r) => { release = () => r({ ok: true }); }));
     sb.cache.p = { items: [ITEM] };
-    sb.open('p', 'ack', 0);
+    sb.open('p', 'open-pr', 0);
+    const pending = sb.confirm();
+    sb.close();
+    release();
+    await pending;
+    assert.ok(!sb.els.strandedActionModal._classes.has('open'));
+    assert.equal(sb.cache.p, undefined, 'the list is fetched again, so Open PR is not offered twice');
+    assert.equal(sb.loads, 1);
+  });
+
+  it('changes nothing when a request that was closed on failed', async () => {
+    let release;
+    const sb = sandboxFor(() => new Promise((r) => { release = () => r(null); }));
+    sb.cache.p = { items: [ITEM] };
+    sb.open('p', 'open-pr', 0);
     const pending = sb.confirm();
     sb.close();
     release();
     await pending;
     assert.equal(sb.loads, 0);
+    assert.ok(sb.cache.p);
     assert.ok(!sb.els.strandedActionModal._classes.has('open'));
   });
 
