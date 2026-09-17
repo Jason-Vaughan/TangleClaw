@@ -42,7 +42,7 @@ const state = {
   orphanHooksRepairInFlight: false,
   // #235 — cached restart-mechanism token from /api/server-info. `null`
   // means no mechanism available on this host (button hidden);
-  // `'launchctl'` enables the macOS path. Read by both the stale-server
+  // `'launchctl'` (macOS) or `'systemctl'` (Linux) enables it. Read by both the stale-server
   // banner and the global settings modal Diagnostics section.
   restartMechanism: null,
   restartInFlight: false,

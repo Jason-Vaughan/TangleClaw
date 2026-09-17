@@ -38,12 +38,23 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 
 <!-- prawduct: type=feature | scope=linux-systemd-restart-1506 -->
 
-A clean-room reconstruction under ADR 0014 of external PR #1506 (@madhavanms2803-ui). The PR was audited as text at head `9e309bae`, and the fix was re-derived from #239; none of the contributor's code was merged. Their patch detected `/etc/systemd/system/tangleclaw.service` and ran a plain `systemctl restart`. That is a system unit, which an unprivileged server cannot restart. The reconstruction makes three changes to that approach:
-- `lib/server-info.js#detectRestartMechanism` returns `'systemctl'` only on Linux, only for `~/.config/systemd/user/tangleclaw.service`, and only when that unit has an active `KillMode=process` line. With the default `control-group`, a restart also stops the tmux server TangleClaw started, while the restart dialog promises sessions survive.
-- `buildRestartCommand` emits `systemctl --user --no-block restart tangleclaw.service`. The route calls it through `execSync`, and a blocking restart would wait on the calling process to stop.
-- The route now logs the command's stderr when the command fails.
+A clean-room reconstruction under ADR 0014 of external PR #1506 (@madhavanms2803-ui), re-derived from #239. The PR was audited as text at head `9e309bae`, and none of the contributor's code was merged. Their patch detected `/etc/systemd/system/tangleclaw.service` and ran a plain `systemctl restart`: a system unit, which an unprivileged server cannot restart.
 
-The disabled-button hint and the 501 message now name the unit file and the `KillMode` line. The cumulative Critic found 0 blocking, 4 warnings and 4 notes. R-2 (sessions killed), R-4 (stale docs) and the server half of R-6 were fixed, and verify-resolutions confirmed them. The rest were accepted, with follow-ups filed as #1555 and a comment on #1424. Mutation checks: pointing detection at the system unit, dropping the `KillMode` test, and discarding stderr each turn a test red. A `/code-review` pass then found that the check accepted any `KillMode=process` line, while systemd applies the last one plus drop-ins. The check now computes the effective `[Service]` value across the unit and its `.conf` drop-ins (in file-name order, with the home directory masking `/etc`), handles CRLF, and fails closed on any unreadable file or directory. Mutation checks on last-wins, drop-ins, sections, directory errors, masking, the `.conf` filter and sorting each turn a test red. #239 stays open for the installer half (#1424).
+What shipped:
+- `lib/server-info.js#probeSystemdUserUnit` runs `systemctl --user show tangleclaw.service` through `execFileSync`, with no shell and a 3 s timeout. The unit qualifies only when `LoadState=loaded`, `MainPID` is this process, `KillMode=process` and `NeedDaemonReload=no`.
+- `server.js` detects the mechanism at boot, so the probe never runs on a request.
+- `POST /api/server/restart` re-checks through `confirmRestartMechanism`. On a failed re-check it answers 409 `RESTART_NOT_SAFE` with the reason and clears the cached mechanism.
+- The command is `systemctl --user --no-block restart tangleclaw.service`; the route runs it with `execSync`, and a blocking restart would wait on its own process.
+- A failed restart command now logs its stderr, and a loaded unit that doesn't qualify is logged once with its reason.
+
+How it got here:
+1. The first version checked that the unit file existed.
+2. The cumulative Critic found that systemd's default KillMode would end every tmux session, so the check required `KillMode=process` in the file.
+3. `/code-review` found that systemd applies the last line plus drop-ins, so the check computed the effective value from the files.
+4. A second `/code-review` and the next cumulative Critic (R-2) independently found that files cannot show what systemd has loaded: a pending daemon-reload, unread directories, and line continuations. The file parser was deleted in favour of asking systemd. The same query also closes the Linux half of #1555: the button now requires that the unit is running this server.
+
+Mutation checks: removing each of the four conditions, the cache clear, the confirm dispatch, the timeout, or the route re-check turns a test red. The restart-flow client already shows a refused request's error, so the 409 reaches the operator without a UI change.
+
 ## 2026-09-17 — A wrap that finishes ends the session, even with nothing to commit (#1558)
 
 <!-- prawduct: type=bugfix | scope=train-20-chunk-02-5 -->

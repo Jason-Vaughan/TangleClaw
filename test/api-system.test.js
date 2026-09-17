@@ -296,8 +296,8 @@ describe('API — system, engines, tmux', () => {
         assert.equal(data.ok, false);
         assert.match(data.error, /no restart mechanism available/i,
           'error must signal that the mechanism is absent so the frontend can hide the button cleanly');
-        assert.match(data.error, /systemd user unit at ~\/\.config\/systemd\/user\/tangleclaw\.service with KillMode=process/,
-          'a Linux operator must be told which file enables the restart, not that Linux is unsupported');
+        assert.match(data.error, /systemd user unit tangleclaw\.service that runs this server with KillMode=process/,
+          'a Linux operator must be told what enables the restart, not that Linux is unsupported');
         assert.doesNotMatch(data.error, /follow-up/i);
       } finally {
         serverInfo.detectRestartMechanism = origDetect;
@@ -332,15 +332,41 @@ describe('API — system, engines, tmux', () => {
       }
     });
 
+    it('refuses with 409 and runs nothing when the re-check says the unit is no longer safe', async () => {
+      const origDetect = serverInfo.detectRestartMechanism;
+      const origConfirm = serverInfo.confirmRestartMechanism;
+      const origBuild = serverInfo.buildRestartCommand;
+      let built = false;
+      serverInfo.detectRestartMechanism = () => 'systemctl';
+      serverInfo.confirmRestartMechanism = (mechanism) => {
+        assert.equal(mechanism, 'systemctl', 'the re-check must be asked about the detected mechanism');
+        return { ok: false, reason: 'tangleclaw.service changed on disk since systemd loaded it — run systemctl --user daemon-reload' };
+      };
+      serverInfo.buildRestartCommand = () => { built = true; return 'true'; };
+      try {
+        const { status, data } = await request('POST', '/api/server/restart');
+        assert.equal(status, 409);
+        assert.equal(data.code, 'RESTART_NOT_SAFE');
+        assert.match(data.error, /daemon-reload/, 'the operator must see why');
+        assert.equal(built, false, 'no restart command may be built after a failed re-check');
+      } finally {
+        serverInfo.detectRestartMechanism = origDetect;
+        serverInfo.confirmRestartMechanism = origConfirm;
+        serverInfo.buildRestartCommand = origBuild;
+      }
+    });
+
     it("logs the restart command's own error output when the exec fails", async () => {
       // A failed restart leaves this process running, so the log line is the
       // only record of why — it must carry the command's stderr, not just its
       // exit status.
       const origDetect = serverInfo.detectRestartMechanism;
       const origBuild = serverInfo.buildRestartCommand;
+      const origConfirm = serverInfo.confirmRestartMechanism;
       const origError = console.error;
       const logged = [];
       serverInfo.detectRestartMechanism = () => 'systemctl';
+      serverInfo.confirmRestartMechanism = () => ({ ok: true, reason: null });
       // The message is assembled by printf so the expected text appears only
       // on stderr — execSync's err.message already quotes the command line.
       serverInfo.buildRestartCommand = () => "printf 'Unit %s not found.\\n' tangleclaw.service 1>&2; exit 5";
@@ -354,6 +380,7 @@ describe('API — system, engines, tmux', () => {
         assert.match(line, /Unit tangleclaw\.service not found\./);
       } finally {
         console.error = origError;
+        serverInfo.confirmRestartMechanism = origConfirm;
         serverInfo.detectRestartMechanism = origDetect;
         serverInfo.buildRestartCommand = origBuild;
       }
@@ -366,7 +393,9 @@ describe('API — system, engines, tmux', () => {
       // rather than silently no-op-ing in production.
       const origDetect = serverInfo.detectRestartMechanism;
       const origBuild = serverInfo.buildRestartCommand;
+      const origConfirm = serverInfo.confirmRestartMechanism;
       serverInfo.detectRestartMechanism = () => 'systemctl';
+      serverInfo.confirmRestartMechanism = () => ({ ok: true, reason: null });
       serverInfo.buildRestartCommand = () => null;
       try {
         const { status, data } = await request('POST', '/api/server/restart');
@@ -374,6 +403,7 @@ describe('API — system, engines, tmux', () => {
         assert.equal(data.ok, false);
         assert.match(data.error, /no command builder for mechanism "systemctl"/);
       } finally {
+        serverInfo.confirmRestartMechanism = origConfirm;
         serverInfo.detectRestartMechanism = origDetect;
         serverInfo.buildRestartCommand = origBuild;
       }

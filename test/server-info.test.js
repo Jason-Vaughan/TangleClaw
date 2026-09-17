@@ -336,138 +336,123 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       }
     });
 
-    const ENOENT = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-
-    // Stub a Linux host whose user unit holds `contents`. `dropins` maps a
-    // drop-in directory to either {fileName: contents} or an Error to throw
-    // when the directory is listed; an unlisted directory does not exist.
-    // A file's contents may themselves be an Error to throw on read.
-    function stubUserUnit(contents, dropins = {}) {
-      const files = new Map([[serverInfo.LINUX_SYSTEMD_USER_UNIT_PATH, contents]]);
-      for (const [dir, entries] of Object.entries(dropins)) {
-        if (entries instanceof Error) continue;
-        for (const [name, text] of Object.entries(entries)) files.set(path.join(dir, name), text);
-      }
+    // Stub a Linux host whose `systemctl --user show` prints `props` (an
+    // object, rendered as key=value lines) or throws (an Error). Records each
+    // call so a test can pin what was run.
+    function stubSystemd(props, { pid = 4242 } = {}) {
+      const calls = [];
       serverInfo._internal.platform = () => 'linux';
-      serverInfo._internal.existsSync = (p) => p === serverInfo.LINUX_SYSTEMD_USER_UNIT_PATH;
-      serverInfo._internal.readFileSync = (p) => {
-        if (!files.has(p)) throw new Error(`unexpected read: ${p}`);
-        const text = files.get(p);
-        if (text instanceof Error) throw text;
-        return text;
+      serverInfo._internal.pid = () => pid;
+      serverInfo._internal.existsSync = () => { throw new Error('Linux detection must not stat files'); };
+      serverInfo._internal.execFileSync = (file, args, opts) => {
+        calls.push({ file, args, opts });
+        if (props instanceof Error) throw props;
+        return Object.entries(props).map(([k, v]) => `${k}=${v}`).join('\n') + '\n';
       };
-      serverInfo._internal.readdirSync = (dir) => {
-        if (!(dir in dropins)) throw ENOENT();
-        if (dropins[dir] instanceof Error) throw dropins[dir];
-        return Object.keys(dropins[dir]);
-      };
+      return calls;
     }
 
-    const [HOME_DROPINS, ETC_DROPINS] = serverInfo.LINUX_SYSTEMD_USER_DROPIN_DIRS;
+    const SAFE = { LoadState: 'loaded', MainPID: '4242', KillMode: 'process', NeedDaemonReload: 'no' };
 
-    function detectWith(contents, dropins) {
+    function detectWith(props, opts) {
       serverInfo.__unsafeResetForTest();
-      stubUserUnit(contents, dropins);
+      const calls = stubSystemd(props, opts);
       try {
-        return serverInfo.detectRestartMechanism();
+        return { mechanism: serverInfo.detectRestartMechanism(), calls };
       } finally {
         restoreInternal();
       }
     }
 
-    it("returns 'systemctl' on Linux when the user unit exists and declares KillMode=process", () => {
-      assert.equal(detectWith('[Service]\nExecStart=/usr/bin/node server.js\nKillMode=process\n'), 'systemctl');
+    it("returns 'systemctl' when systemd reports the unit runs this process with KillMode=process and nothing to reload", () => {
+      assert.equal(detectWith(SAFE).mechanism, 'systemctl');
     });
 
-    it('returns null when the user unit leaves KillMode at its default — a restart would end every tmux session', () => {
-      assert.equal(detectWith('[Service]\nExecStart=/usr/bin/node server.js\n'), null);
+    it('asks systemd for the loaded unit without a shell, with a timeout', () => {
+      const { calls } = detectWith(SAFE);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].file, 'systemctl');
+      assert.deepEqual(calls[0].args, ['--user', 'show', 'tangleclaw.service',
+        '-p', 'LoadState', '-p', 'MainPID', '-p', 'KillMode', '-p', 'NeedDaemonReload']);
+      assert.ok(calls[0].opts.timeout > 0, 'a hung systemctl must not hang the server');
     });
 
-    it('returns null for a KillMode that still stops child processes, or a commented-out line', () => {
-      for (const unit of [
-        '[Service]\nKillMode=mixed\n',
-        '[Service]\nKillMode=control-group\n',
-        '[Service]\n# KillMode=process\n',
-        '[Service]\n; KillMode=process\n',
-        '[Service]\nKillMode=processes\n'
-      ]) {
-        assert.equal(detectWith(unit), null, `unit ${JSON.stringify(unit)}`);
+    it('returns null when the loaded KillMode would stop child processes — a restart would end every tmux session', () => {
+      for (const killMode of ['control-group', 'mixed', 'none', '']) {
+        assert.equal(detectWith({ ...SAFE, KillMode: killMode }).mechanism, null, `KillMode=${killMode}`);
       }
     });
 
-    it('accepts spacing around KillMode=process', () => {
-      assert.equal(detectWith('[Service]\n  KillMode = process  \n'), 'systemctl');
+    it('returns null when the unit changed on disk and systemd has not reloaded it', () => {
+      assert.equal(detectWith({ ...SAFE, NeedDaemonReload: 'yes' }).mechanism, null);
     });
 
-    it('accepts a unit saved with CRLF line endings', () => {
-      assert.equal(detectWith('[Service]\r\nKillMode=process\r\n'), 'systemctl');
+    it('returns null when the unit is not what runs this server', () => {
+      assert.equal(detectWith({ ...SAFE, MainPID: '0' }).mechanism, null, 'unit stopped');
+      assert.equal(detectWith({ ...SAFE, MainPID: '9999' }).mechanism, null, 'unit runs a different process');
     });
 
-    it('the LAST KillMode line wins, as it does for systemd', () => {
-      assert.equal(detectWith('[Service]\nKillMode=process\nKillMode=control-group\n'), null);
-      assert.equal(detectWith('[Service]\nKillMode=mixed\nKillMode=process\n'), 'systemctl');
+    it('returns null when there is no such unit', () => {
+      assert.equal(detectWith({ LoadState: 'not-found', MainPID: '0', KillMode: 'control-group', NeedDaemonReload: 'no' }).mechanism, null);
     });
 
-    it('an empty KillMode= resets to the default, which does not keep sessions', () => {
-      assert.equal(detectWith('[Service]\nKillMode=process\nKillMode=\n'), null);
+    it('returns null when a property is missing from the output', () => {
+      const { NeedDaemonReload: _dropped, ...partial } = SAFE;
+      assert.equal(detectWith(partial).mechanism, null);
     });
 
-    it('ignores KillMode outside the [Service] section', () => {
-      assert.equal(detectWith('[Unit]\nKillMode=process\n[Service]\nExecStart=x\n'), null);
-      assert.equal(detectWith('[Service]\nKillMode=process\n[Install]\nKillMode=control-group\n'), 'systemctl');
+    it('returns null when systemctl is missing, fails, or times out', () => {
+      assert.equal(detectWith(Object.assign(new Error('spawn systemctl ENOENT'), { code: 'ENOENT' })).mechanism, null);
+      assert.equal(detectWith(Object.assign(new Error('Command failed'), { status: 1, stderr: 'Failed to connect to bus' })).mechanism, null);
+      assert.equal(detectWith(Object.assign(new Error('spawnSync systemctl ETIMEDOUT'), { code: 'ETIMEDOUT' })).mechanism, null);
     });
 
-    it('a drop-in overrides the unit file, in either direction', () => {
-      assert.equal(detectWith('[Service]\nKillMode=process\n',
-        { [HOME_DROPINS]: { 'override.conf': '[Service]\nKillMode=control-group\n' } }), null);
-      assert.equal(detectWith('[Service]\n',
-        { [HOME_DROPINS]: { 'override.conf': '[Service]\nKillMode=process\n' } }), 'systemctl');
+    it('probeSystemdUserUnit explains why a loaded unit does not qualify, and says nothing when there is no unit', () => {
+      stubSystemd({ ...SAFE, KillMode: 'control-group' });
+      try {
+        assert.match(serverInfo.probeSystemdUserUnit().reason, /KillMode=control-group.*set KillMode=process/);
+      } finally {
+        restoreInternal();
+      }
+      stubSystemd({ ...SAFE, NeedDaemonReload: 'yes' });
+      try {
+        assert.match(serverInfo.probeSystemdUserUnit().reason, /daemon-reload/);
+      } finally {
+        restoreInternal();
+      }
+      stubSystemd({ ...SAFE, MainPID: '0' });
+      try {
+        assert.match(serverInfo.probeSystemdUserUnit().reason, /not running this server/);
+      } finally {
+        restoreInternal();
+      }
+      stubSystemd(Object.assign(new Error('Command failed'), { status: 1, stderr: 'Failed to connect to bus' }));
+      try {
+        assert.match(serverInfo.probeSystemdUserUnit().reason, /Failed to connect to bus/);
+      } finally {
+        restoreInternal();
+      }
+      stubSystemd({ LoadState: 'not-found' });
+      try {
+        assert.deepEqual(serverInfo.probeSystemdUserUnit(), { ok: false, reason: null });
+      } finally {
+        restoreInternal();
+      }
     });
 
-    it('drop-ins apply in file-name order across both directories, and only *.conf files count', () => {
-      // 20-late.conf sorts after 10-early.conf, so its value wins even though
-      // its directory is listed first.
-      assert.equal(detectWith('[Service]\n', {
-        [HOME_DROPINS]: { '20-late.conf': '[Service]\nKillMode=mixed\n' },
-        [ETC_DROPINS]: { '10-early.conf': '[Service]\nKillMode=process\n' }
-      }), null);
-      assert.equal(detectWith('[Service]\n', {
-        [HOME_DROPINS]: { '20-late.conf': '[Service]\nKillMode=process\n' },
-        [ETC_DROPINS]: { '10-early.conf': '[Service]\nKillMode=mixed\n' }
-      }), 'systemctl');
-      assert.equal(detectWith('[Service]\nKillMode=process\n', {
-        [HOME_DROPINS]: { 'override.conf.bak': '[Service]\nKillMode=control-group\n' }
-      }), 'systemctl');
-    });
-
-    it("a drop-in in the operator's directory masks a same-named one in /etc", () => {
-      assert.equal(detectWith('[Service]\n', {
-        [ETC_DROPINS]: { 'override.conf': '[Service]\nKillMode=control-group\n' },
-        [HOME_DROPINS]: { 'override.conf': '[Service]\nKillMode=process\n' }
-      }), 'systemctl');
-    });
-
-    it('returns null when a drop-in directory or file cannot be read — never guesses in favour of the button', () => {
-      const eacces = Object.assign(new Error('EACCES'), { code: 'EACCES' });
-      assert.equal(detectWith('[Service]\nKillMode=process\n', { [HOME_DROPINS]: eacces }), null);
-      assert.equal(detectWith('[Service]\nKillMode=process\n',
-        { [HOME_DROPINS]: { 'override.conf': eacces } }), null);
-    });
-
-    it('returns null when the user unit exists but cannot be read', () => {
-      assert.equal(detectWith(Object.assign(new Error('EACCES'), { code: 'EACCES' })), null);
-    });
-
-    it('reads the drop-in directories systemd uses for this user unit', () => {
-      assert.deepEqual(serverInfo.LINUX_SYSTEMD_USER_DROPIN_DIRS, [
-        path.join(os.homedir(), '.config', 'systemd', 'user', 'tangleclaw.service.d'),
-        '/etc/systemd/user/tangleclaw.service.d'
-      ]);
-    });
-
-    it('returns null on Linux when the user unit is absent (e.g. node started manually)', () => {
-      serverInfo._internal.platform = () => 'linux';
+    it('does not cross platforms — a launchd plist on Linux enables nothing, and macOS never asks systemd', () => {
+      serverInfo.__unsafeResetForTest();
+      stubSystemd({ LoadState: 'not-found' });
+      serverInfo._internal.existsSync = (p) => p === serverInfo.MACOS_PLIST_PATH;
+      try {
+        assert.equal(serverInfo.detectRestartMechanism(), null);
+      } finally {
+        restoreInternal();
+      }
+      serverInfo.__unsafeResetForTest();
+      serverInfo._internal.platform = () => 'darwin';
       serverInfo._internal.existsSync = () => false;
+      serverInfo._internal.execFileSync = () => { throw new Error('macOS must not run systemctl'); };
       try {
         assert.equal(serverInfo.detectRestartMechanism(), null);
       } finally {
@@ -475,40 +460,53 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       }
     });
 
-    it('returns null on Linux when only a system-wide unit exists — the server cannot restart it unprivileged', () => {
-      // A unit under /etc/systemd/system is owned by the system manager;
-      // restarting it needs root or a polkit grant the server does not
-      // have, so offering the button would promise an action that fails.
-      const seen = [];
-      serverInfo._internal.platform = () => 'linux';
-      serverInfo._internal.existsSync = (p) => { seen.push(p); return p === '/etc/systemd/system/tangleclaw.service'; };
-      try {
-        assert.equal(serverInfo.detectRestartMechanism(), null);
-        assert.ok(!seen.includes('/etc/systemd/system/tangleclaw.service'),
-          'detection must not consult the system-wide unit path at all');
-      } finally {
-        restoreInternal();
-      }
-    });
+    describe('confirmRestartMechanism — the re-check before a restart', () => {
+      it('passes launchd through without asking anything', () => {
+        serverInfo._internal.execFileSync = () => { throw new Error('launchd must not be re-probed'); };
+        try {
+          assert.deepEqual(serverInfo.confirmRestartMechanism('launchctl'), { ok: true, reason: null });
+        } finally {
+          restoreInternal();
+        }
+      });
 
-    it('does not cross platforms — a launchd plist on Linux or a user unit on macOS enables nothing', () => {
-      try {
-        serverInfo._internal.platform = () => 'linux';
-        serverInfo._internal.existsSync = (p) => p === serverInfo.MACOS_PLIST_PATH;
-        assert.equal(serverInfo.detectRestartMechanism(), null);
+      it('asks systemd again, and passes when the unit still qualifies', () => {
+        const calls = stubSystemd(SAFE);
+        try {
+          assert.deepEqual(serverInfo.confirmRestartMechanism('systemctl'), { ok: true, reason: null });
+          assert.equal(calls.length, 1);
+        } finally {
+          restoreInternal();
+        }
+      });
 
+      it('refuses with the reason when the unit changed since boot, and clears the cached mechanism', () => {
         serverInfo.__unsafeResetForTest();
-        serverInfo._internal.platform = () => 'darwin';
-        serverInfo._internal.existsSync = (p) => p === serverInfo.LINUX_SYSTEMD_USER_UNIT_PATH;
-        assert.equal(serverInfo.detectRestartMechanism(), null);
-      } finally {
-        restoreInternal();
-      }
-    });
+        stubSystemd(SAFE);
+        try {
+          assert.equal(serverInfo.detectRestartMechanism(), 'systemctl');
+          stubSystemd({ ...SAFE, NeedDaemonReload: 'yes' });
+          const result = serverInfo.confirmRestartMechanism('systemctl');
+          assert.equal(result.ok, false);
+          assert.match(result.reason, /daemon-reload/);
+          stubSystemd(SAFE);
+          assert.equal(serverInfo.detectRestartMechanism(), null,
+            'a failed re-check hides the button until the server restarts');
+        } finally {
+          restoreInternal();
+        }
+      });
 
-    it('the user unit path lives under ~/.config/systemd/user', () => {
-      assert.equal(serverInfo.LINUX_SYSTEMD_USER_UNIT_PATH,
-        path.join(os.homedir(), '.config', 'systemd', 'user', 'tangleclaw.service'));
+      it('refuses with a reason even when the unit has disappeared entirely', () => {
+        stubSystemd({ LoadState: 'not-found' });
+        try {
+          const result = serverInfo.confirmRestartMechanism('systemctl');
+          assert.equal(result.ok, false);
+          assert.match(result.reason, /no longer loaded/);
+        } finally {
+          restoreInternal();
+        }
+      });
     });
 
     it('returns null on unknown platforms (Windows, etc.)', () => {
@@ -579,14 +577,11 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       }
     });
 
-    it("surfaces 'systemctl' on Linux with the user unit — the frontend shows the button on this signal", () => {
+    it("surfaces 'systemctl' on Linux when systemd confirms the unit — the frontend shows the button on this signal", () => {
       serverInfo._internal.execSync = () => 'sha-1\n';
       serverInfo._internal.platform = () => 'linux';
-      serverInfo._internal.existsSync = (p) => p === serverInfo.LINUX_SYSTEMD_USER_UNIT_PATH;
-      const realRead = serverInfo._internal.readFileSync;
-      serverInfo._internal.readFileSync = (p, enc) =>
-        p === serverInfo.LINUX_SYSTEMD_USER_UNIT_PATH ? '[Service]\nKillMode=process\n' : realRead(p, enc);
-      serverInfo._internal.readdirSync = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+      serverInfo._internal.pid = () => 77;
+      serverInfo._internal.execFileSync = () => 'LoadState=loaded\nMainPID=77\nKillMode=process\nNeedDaemonReload=no\n';
       try {
         serverInfo.captureStartup();
         const info = serverInfo.getServerInfo();
@@ -599,7 +594,7 @@ describe('lib/server-info (#199 stale-server detection)', () => {
     it("restartMechanism is null when no mechanism is available — frontend hides the button on this signal", () => {
       serverInfo._internal.execSync = () => 'sha-1\n';
       serverInfo._internal.platform = () => 'linux';
-      serverInfo._internal.existsSync = () => false;
+      serverInfo._internal.execFileSync = () => 'LoadState=not-found\nMainPID=0\n';
       try {
         serverInfo.captureStartup();
         const info = serverInfo.getServerInfo();

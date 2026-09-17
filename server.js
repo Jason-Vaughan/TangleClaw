@@ -1493,8 +1493,9 @@ route('POST', '/api/master/rules/restore-defaults', (_req, res) => {
 // (launchd or a systemd user unit) replaces this process. The browser
 // polls /api/server-info to detect when the new process is up and
 // reloads. Returns 501 when no restart mechanism is available (e.g.
-// bare-node, or Linux without the user unit) so the frontend can hide
-// the button cleanly.
+// bare-node, or Linux without a qualifying user unit) so the frontend can
+// hide the button cleanly, and 409 when a systemd unit that qualified at
+// boot no longer does.
 route('POST', '/api/server/restart', (_req, res, _params, body) => {
   // #583 — a restart kills any in-flight wrap pipeline (the 2026-07-16
   // incident's first domino: a restart POSTed mid-wrap 502'd the wrap and
@@ -1512,9 +1513,15 @@ route('POST', '/api/server/restart', (_req, res, _params, body) => {
   if (!mechanism) {
     jsonResponse(res, 501, {
       ok: false,
-      error: 'no restart mechanism available on this host (no macOS launchd plist, and no systemd user unit at ~/.config/systemd/user/tangleclaw.service with KillMode=process)'
+      error: 'no restart mechanism available on this host (no macOS launchd plist, and no systemd user unit tangleclaw.service that runs this server with KillMode=process)'
     });
     return;
+  }
+  // The unit may have changed since boot; a restart it cannot survive would
+  // end every tmux session, so check again before acting.
+  const confirmed = serverInfo.confirmRestartMechanism(mechanism);
+  if (!confirmed.ok) {
+    return errorResponse(res, 409, `Restart not safe right now: ${confirmed.reason}`, 'RESTART_NOT_SAFE');
   }
   const command = serverInfo.buildRestartCommand(mechanism);
   if (!command) {
@@ -9478,6 +9485,9 @@ if (require.main === module) {
   // Doing this before store.init keeps the snapshot honest — any code
   // paths the store init triggers run against the SHA we just stamped.
   serverInfo.captureStartup();
+  // Detect the restart mechanism now, not on the first /api/server-info
+  // request: on Linux it asks systemd, and that must not stall a request.
+  serverInfo.detectRestartMechanism();
 
   // Initialize store (needed for config before PID check)
   store.init();
