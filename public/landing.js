@@ -2083,6 +2083,10 @@ function ignoreLeaseProject(name) {
 }
 
 async function init() {
+  // Keep the Master pane's prompt above the soft keyboard (#1570): the shared
+  // listener publishes the visible area while the keyboard is up.
+  window.tcWireVisualViewport(window, document);
+
   // Restore persisted preferences
   try {
     const saved = localStorage.getItem('tc_showUnregistered');

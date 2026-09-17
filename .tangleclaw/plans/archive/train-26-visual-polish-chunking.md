@@ -72,14 +72,17 @@ What I would do differently, or watch:
 ## Status
 
 - [x] Chunk 01: Project name first (#1571, #1569)
-- [ ] Chunk 02: Terminal on a phone — input visible above the keyboard, and tappable links (#1570, #1572)
+- [x] Chunk 02: Terminal on a phone — input visible above the keyboard, and tappable links (#1570, #1572)
 Context: Chunk plan written 2026-09-17 at the ProjectManager's and operator's request, and updated the same day to add
 #1572 to chunk 02. Chunk 01 built the same day on `feat/name-first-1571` (cumulative Critic
 `rev-20260917T123138Z-6120d2aa`, 0 blocking); its measurements and decisions are in the tracked
 `.prawduct/change-log.md` entry "The project name gets the row's space first" (2026-09-17). Two findings worth carrying: #1569 reproduces only from
 601 to 900px (below 600 the name already had its own line), and at 320–390px the banner row has no free space, so
 #1571's fix changes nothing there; `VRF-1571-name-first-phone` asks the operator whether the engine pill should
-give room first. Chunk 02 starts in a fresh session with a real-device probe, reusing chunk 01's scratch rig.
+give room first. Chunk 02 built the same day on `feat/terminal-phone-1570` (cumulative Critic `rev-20260917T131135Z-011df657`, 0
+blocking); its research and decisions are in the tracked `.prawduct/change-log.md` entry "The terminal on a phone"
+(2026-09-17). Both chunks shipped; the on-device checks are `VRF-1571-name-first-phone` and
+`VRF-1570-terminal-phone`. Train 26 is complete and this plan is archived.
 
 ## Verification Strategy
 

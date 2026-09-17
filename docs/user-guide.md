@@ -592,10 +592,11 @@ Every plan or design doc a session writes to `<project>/.tangleclaw/plans/<name>
 
 ### Touch Patterns
 
-- **Tap** — buttons, pills, cards
+- **Tap** — buttons, pills, cards. In the terminal, a tap focuses it and brings up the keyboard; a tap on a web address (`http` or `https`) printed in the terminal opens it in a new tab instead, and the keyboard stays down (#1572).
 - **Swipe down** — pull to refresh on landing page
-- **Drag** — peek drawer handle to resize
-- **Long press** — not used (avoids conflicts with browser gestures)
+- **Drag** — peek drawer handle to resize; one finger in the terminal scrolls it (#443)
+- **Long press** — in the terminal, starts a selection; drag to extend it and lift to get a Copy pill (#445). See "Select" above.
+- **Keyboard** — while the soft keyboard is up, the page shrinks to what is left visible so the terminal's prompt line stays above it, in the session view and in both Master terminals; dismissing the keyboard restores the layout (#1570).
 
 ## Troubleshooting
 

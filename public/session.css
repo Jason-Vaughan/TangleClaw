@@ -82,6 +82,21 @@ body {
   overscroll-behavior: none;
   touch-action: manipulation;
 }
+/* While the soft keyboard is up (#1570), the page is only as tall as what
+   the keyboard leaves visible, and it follows the visual viewport's offset
+   (iOS pans the layout viewport when it focuses the terminal). The
+   `visualViewport` listener in api-helper.js sets the attribute and both
+   vars and removes them when the keyboard closes; nothing here applies
+   without the attribute, so a page with no keyboard is the rule above,
+   unchanged. The transform is gated on purpose: even `translateY(0)` would
+   make body the containing block for every fixed element on the page. The
+   terminal iframe fills the flexing viewport, and ttyd refits xterm on its
+   window's resize, so the shorter box re-rows the terminal and the prompt
+   line moves up with the bottom edge. */
+html[data-tc-keyboard] body {
+  height: var(--tc-visual-height);
+  transform: translateY(var(--tc-visual-top));
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
@@ -1186,7 +1201,9 @@ body {
 .master-drawer-frame {
   display: block;
   width: 100%;
-  height: 60vh;
+  /* 60% of what is visible: the layout viewport, or the area above the
+     soft keyboard while it is up (#1570). */
+  height: calc(var(--tc-visual-height, 100dvh) * 0.6);
   min-height: 240px;
   border: 1px solid var(--elevated-bg);
   border-radius: var(--radius-btn);
