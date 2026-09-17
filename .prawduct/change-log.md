@@ -34,6 +34,16 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-17 — ADR 0014: the ProjectManager owns replies and the Operator posts them
+
+<!-- prawduct: type=docs | scope=adr-0014-reply-contract -->
+
+These are the operator's rulings of 2026-09-17, after the #1506 reply was posted.
+- **Rename:** the Coordinator is now the ProjectManager. Rulings recorded before the rename keep the old name.
+- **Ownership:** the ProjectManager owns every contributor reply and writes it from the recorded findings. No other session drafts one, and the PR Reviewer hands over findings, not reply text. This replaces the PR Reviewer's earlier practice of sending ready-made wording.
+- **Posting:** the Operator posts every reply, and no session posts to a contributor.
+- **One reply per PR:** the PR's comments are checked before posting. A draft relayed to the old Coordinator id went unseen after the rename and had to be re-sent, so a relayed message can arrive twice or late.
+
 ## 2026-09-17 — ADR 0014 amended: PR Reviewer role, trust boundary, intake, injection hold, promotion
 
 <!-- prawduct: type=docs | scope=adr-0014-amendment -->

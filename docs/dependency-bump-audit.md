@@ -67,7 +67,7 @@ new version did not break the suite. It tells you nothing about whether the new 
 Work from raw text: `gh pr diff`, `gh api`, `gh release view`. Do not check out the bot's branch.
 The audit has two parts, split between the two ADR 0014 roles.
 
-### 1. Macro filter (Coordinator): is this really a bump, and only a bump?
+### 1. Macro filter (ProjectManager): is this really a bump, and only a bump?
 
 - **Author and branch.** `gh pr view <N> --json author,headRefName` shows the author as
   `app/dependabot` and the branch under `dependabot/github_actions/`. If the author is anything

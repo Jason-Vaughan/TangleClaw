@@ -46,6 +46,10 @@ All notable changes to TangleClaw are documented in this file.
   - **Code Reviewer:** a separate Code Reviewer reviews reconstructions, and none auto-merges. Until that session exists, the Prawduct Critic, Claude Code's `/code-review` and the Operator's own review all review a reconstruction.
   - **Honest limits:** each rule whose mechanism doesn't exist yet says so (#1554, #1553, #1551, #1552, #1436).
   - `docs/dependency-bump-audit.md` names the PR Reviewer as the micro filter and says plainly that its checks are evidence, not proof that a release is safe.
+- **ADR 0014: who owns and sends contributor replies** (2026-09-17). The Coordinator role is renamed ProjectManager.
+  - **Ownership:** the ProjectManager owns every contributor reply and writes it from the recorded findings; no other session drafts one, and the PR Reviewer hands over findings, not reply text.
+  - **Posting:** the Operator posts every reply. No session posts to a contributor.
+  - **One reply per PR:** before posting, check that the PR hasn't already been answered.
 
 ## [5.28.0] - 2026-09-16
 
