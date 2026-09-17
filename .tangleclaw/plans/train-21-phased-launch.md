@@ -11,7 +11,7 @@ governed_by:
   - .tangleclaw/plans/master-startup-and-wrap.md      # Master startup — excluded here, see §2.9
   - project rule: ENGINE-AGNOSTIC BY CONSTRUCTION
 scope: train-21-phased-launch
-branch: feat/train-21-chunk-01   # the chunk in flight; the gates resolve the active plan by this claim
+branch: feat/train-21-chunk-02   # the chunk in flight; the gates resolve the active plan by this claim
 partition: serial — every chunk edits lib/sessions.js, lib/store.js and server.js; the chunks that touch public/ run in a worktree
 ---
 
@@ -759,6 +759,32 @@ Governance checkpoints: after Chunk 01 (does the single renderer and frozen snap
 Chunk 03 (a whole-trajectory review before parity).
 
 ---
+
+## 4a. Chunk 02 implementation decisions
+
+Written before the code, because each one answers a question the blueprint leaves to the build.
+
+- **A revision needs the launch's render context, so the snapshot stores it.** Re-rendering steps
+  2–4 at a new revision calls the same collector the launch called, and that collector takes
+  launch-time-only inputs (`medusaWorkspaceId`, `continuityMode`, `operatorHost`, `healReport`) which
+  no later request can recompute. They are recorded in `source_manifest.renderContext` — the manifest
+  already answers "what was this snapshot built from", and the render context is literally that. No
+  new column, so v40 is unchanged and v41 stays Chunk 03's.
+  A sequence created before this version carries no render context: it is re-rendered from what is
+  knowable now, and the revised manifest records `renderContext: null` so the gap is visible in
+  `tc start status` rather than silent.
+- **`pasteRules=pull` drops the pasted rule text only when a sequence will actually serve it.** The
+  setting is read together with this launch's applicability: on an engine that declares no launch
+  sequence, or a launch whose prime is disabled, the rules stay pasted. A pointer to a channel the
+  session does not have is the #749 failure one engine over.
+- **The unready monitor reuses the wake monitor's idle gate rather than growing a second one.**
+  `medusaWake.assessSessionIdle` already decides whether a pane is safe to type into, and
+  `lib/sessions.js#_awaitPaneReady` already reuses it, so the nudge injects through
+  `sessions.injectCommand` behind the same verdict. A pane that is not typeable is left alone and
+  the tick retries; `nudge_count` counts nudges SENT, never ticks.
+- **The readiness panel is the settings modal's evidence surface, beside Rule deliveries.** That is
+  where the hook-channel ledger already renders, and §2.5's requirement is that the three kinds of
+  evidence be readable side by side — which means one panel, not a second place to look.
 
 ## 5. Open assumptions
 

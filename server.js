@@ -4251,6 +4251,22 @@ route('POST', '/api/tc/start/next', (req, res, _params, body) => {
   return jsonResponse(res, result.status, result.body);
 });
 
+// POST /api/tc/start/ready — record the agent's attestation that it read and
+// acknowledged its whole launch sequence (Train 21, #1582).
+//
+// The verdict in the artifact must equal the one the server recorded: it is how
+// the attestation evidences that step 3 was read, so the refusal deliberately
+// does not echo the right answer back.
+//
+// READY is initialization, NOT task authorization, and it is an unauthenticated
+// local attestation (see `lib/launch-sequence.js`). A forged one marks a
+// sequence read; it grants nothing and changes no operator confirmation rule.
+route('POST', '/api/tc/start/ready', (req, res, _params, body) => {
+  const { launchId, projectId } = _launchIdentity(req);
+  const result = launchSequence.ready({ launchId, projectId, artifact: body || null });
+  return jsonResponse(res, result.status, result.body);
+});
+
 // GET /api/tc/start/status — where the sequence stands: the cursor, and what
 // was served and acknowledged per step (Train 21, #1581).
 //
