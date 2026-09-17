@@ -257,6 +257,27 @@ describe('unready-launch monitor (Train 21, car 21.5)', () => {
       assert.match(line, /authorizes nothing/);
       assert.match(line, /say so rather than working from context you never received/);
     });
+
+    // #1599: the cursor-at-the-end case had no test, so the line could
+    // contradict its own number ("not acknowledged: 4 of 4") and send a session
+    // back to re-read steps it had already acknowledged.
+    it('does not claim the steps are unacknowledged when only the attestation is missing', () => {
+      const line = launchUnready.nudgeLine({ cursor: 4 }, 4);
+      assert.ok(!line.includes('\n'));
+      assert.doesNotMatch(line, /not acknowledged/,
+        'every step IS acknowledged; only the attestation is outstanding');
+      assert.doesNotMatch(line, /tc start next/,
+        'there is nothing left to read, so it must not send the session back');
+      assert.match(line, /Every step of your launch context is acknowledged \(4 of 4\)/);
+      assert.match(line, /tc start ready/);
+      assert.match(line, /authorizes nothing/);
+    });
+
+    it('still asks for the remaining steps when some are genuinely outstanding', () => {
+      const line = launchUnready.nudgeLine({ cursor: 0 }, 4);
+      assert.match(line, /not acknowledged: 0 of 4 step/);
+      assert.match(line, /tc start next/);
+    });
   });
 
   describe('the monitor\'s lifecycle', () => {

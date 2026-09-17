@@ -4,6 +4,10 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The launch nudge no longer tells a session to re-read steps it has already read** (#1599). When every step was acknowledged and only the attestation was outstanding, the reminder still opened "your launch context is not acknowledged: 4 of 4 step(s)" and sent the session back through `tc start next` — contradicting its own number and costing a turn. It now says every step is acknowledged and asks only for the attestation. The cursor-at-the-end case had no test; it has one now.
+
 ### Added
 
 - **A session can now be handed its context step by step, and say it read each one** (#1579, #1580, #1581 — Train 21, Chunk 01). Until now everything a session needed arrived in one push at launch, nothing confirmed it landed, and on Claude it was already at the 10,000-character cap that *replaces* an over-long payload rather than shortening it. A launched session is now also given a **launch sequence**: four steps — identity, governance, state, task — that it pulls with `tc start next` and acknowledges one at a time. The pushed prime is unchanged apart from two lines: one telling the session the sequence is there, and the list of `tc` verbs, which is generated from the verb roster that `start` joined.
@@ -30,6 +34,7 @@ All notable changes to TangleClaw are documented in this file.
   - **A document cannot claim more than the wrap knows.** A wrap reported as degraded must name every step that degraded, and one reported as complete cannot carry leftover failures — the pair is refused at construction rather than written and believed later.
   - **Reading one back reports what it found**, distinguishing a missing file from a damaged one and naming why a damaged one is damaged, instead of answering with a bare false that a caller would have to guess the meaning of.
   - **The replaced publication is never destroyed.** Publishing retires whatever was current into a `history/` directory *before* the new document takes its place, so the previous handoff survives verbatim and a crash between the two steps leaves something to reconstruct from. Staged bytes land atomically, so nothing ever reads a half-written handoff.
+  - **The wrap publishes it only if the wrap actually finished.** Eligibility is bound in the same database transaction as the session's own wrap, so an attempt cut short — an operator pressing Kill mid-wrap — is abandoned rather than published. Nothing infers this from session status: an attempt that failed can never borrow a later attempt's success. An attempt that *did* finish but was overtaken by a newer one keeps its record and steps aside instead of overwriting it.
   - **What moves underneath**: the database schema goes to version 41, adding `handoff_publications`. The migration only adds, and it refuses to advance over a table that cannot enforce one eligible final per session — the guarantee every later handoff decision rests on.
 - **TangleClaw now notices a session that never read its context, and reminds it once** (#1583 — Train 21, Chunk 02). The launch sequence is served on demand, so a session that simply never asked for its steps looked exactly like one that read everything. Ten minutes after a launch (a per-project setting), a session that has not attested is recorded as unready and nudged once, in its own pane.
   - **One nudge, counted where it survives.** The count lives on the launch record rather than in the activity log, which is pruned, so "was this session reminded" stays answerable. A session that ignores the nudge is not nudged again.

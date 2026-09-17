@@ -17,13 +17,15 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
   it('pins step id order — the order carries correctness contracts between steps', () => {
     // The changelog must be written before the version bump reads it to
     // choose a level, and both before the commit that flushes them;
-    // continuity-write runs after commit; apply-pr-resolutions last so the
+    // continuity-write runs after commit; apply-pr-resolutions after it so the
     // auto-merge it authorizes cannot fire before the wrap commit is in
-    // the PR. A failing run of this test means the order contract moved —
-    // update deliberately, never casually.
+    // the PR. handoff-stage is last (Train 21, #1585): it records what the wrap
+    // achieved, so it must see every other step's outcome. A failing run of
+    // this test means the order contract moved — update deliberately, never
+    // casually.
     assert.deepStrictEqual(
       defaultPipeline.steps().map((s) => s.id),
-      ['preflight', 'session-files', 'open-pr-check', 'changelog-update', 'release-recommendation', 'version-bump', 'learnings-capture', 'learnings-db-write', 'rule-proposal', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write', 'apply-pr-resolutions']
+      ['preflight', 'session-files', 'open-pr-check', 'changelog-update', 'release-recommendation', 'version-bump', 'learnings-capture', 'learnings-db-write', 'rule-proposal', 'next-session-prime', 'features-toc', 'project-map', 'index-describe', 'memory-update', 'commit', 'continuity-write', 'apply-pr-resolutions', 'handoff-stage']
     );
   });
 
@@ -39,8 +41,13 @@ describe('wrap-default-pipeline — the code-owned pipeline', () => {
       'the commit flush must include the staged bump');
     assert.ok(ids.indexOf('commit') < ids.indexOf('continuity-write'),
       'continuity records the wrap commit, so it must follow it');
-    assert.equal(ids[ids.length - 1], 'apply-pr-resolutions',
-      'auto-merge authorization stays last');
+    // The property is a lower bound, not a position: auto-merge must not fire
+    // before the wrap commit is in the PR. It stopped being LAST when
+    // handoff-stage joined, and the safety property is unchanged.
+    assert.ok(ids.indexOf('commit') < ids.indexOf('apply-pr-resolutions'),
+      'auto-merge authorization cannot fire before the wrap commit exists');
+    assert.equal(ids[ids.length - 1], 'handoff-stage',
+      'the handoff records what the wrap achieved, so it observes every other step');
     // #854 — the governance verdict is asked for before any step can write.
     assert.equal(ids[0], 'preflight', 'preflight runs first, ahead of open-pr-check');
     const preflight = defaultPipeline.steps()[0];

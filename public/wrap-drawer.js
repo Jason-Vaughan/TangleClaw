@@ -51,7 +51,8 @@
     'project-map': 'Refreshes the continuity Map (the feature/component index) from the files touched this session.',
     'index-describe': 'Fills in one-line descriptions for empty index stubs so the index stays readable.',
     'commit': 'Commits the wrap’s changes — and, depending on your setup, opens a wrap PR.',
-    'continuity-write': 'Writes the continuity index + a per-session wrap summary with a “Next action.” This is what the next session reads to offer “we left off at X — continue?”.'
+    'continuity-write': 'Writes the continuity index + a per-session wrap summary with a “Next action.” This is what the next session reads to offer “we left off at X — continue?”.',
+    'handoff-stage': 'Records what this wrap handed forward, as its own immutable document. Every wrap attempt gets one, so a session you keep running can record a checkpoint now and a final later without either overwriting the other. The document is frozen when it is written, and it only becomes the current handoff once this wrap actually finishes \u2014 an attempt cut short by a kill is never published. Never blocks the wrap.'
   };
 
   /**

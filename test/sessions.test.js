@@ -3258,7 +3258,7 @@ describe('sessions', () => {
         // unchanged, PLUS server-owned keys ride along — the wrap-run
         // registry's progress hook, and (#1404) the server's own record of
         // what a Retry may reuse. Nothing else.
-        const { onStepEvent, resumeFrom, ...userOptions } = receivedOptions;
+        const { onStepEvent, resumeFrom, wrapRunId, ...userOptions } = receivedOptions;
         assert.deepEqual(userOptions, opts,
           'user options must reach runWrapPipeline unchanged');
         assert.equal(typeof onStepEvent, 'function', 'has onStepEvent');
@@ -3268,8 +3268,8 @@ describe('sessions', () => {
         // keys — no user keys invented.
         receivedOptions = 'sentinel-not-set';
         await sessions.triggerWrap('prime-test');
-        assert.deepEqual(Object.keys(receivedOptions).sort(), ['onStepEvent', 'resumeFrom'],
-          'omitted options add only the #583/#185 progress hook and the #1404 resume record');
+        assert.deepEqual(Object.keys(receivedOptions).sort(), ['onStepEvent', 'resumeFrom', 'wrapRunId'],
+          'omitted options add only the #583/#185 progress hook, the #1404 resume record and the #1585 run id');
 
         // That wrap finished and ended the session (#1558); start another.
         store.sessions.start({

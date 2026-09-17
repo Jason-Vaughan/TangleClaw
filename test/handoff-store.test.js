@@ -248,3 +248,57 @@ describe('the attempt A / attempt B case the plan calls out by name', () => {
     assert.equal(store.handoffs.get(b.publicationId).eligibleVia, 'lifecycle-wrap');
   });
 });
+
+describe('binding inside the wrap lifecycle transition (#1585)', () => {
+  /**
+   * A project and an active session to wrap.
+   * @returns {{projectId: number, sessionId: number}}
+   */
+  function liveSession() {
+    const project = store.projects.create({ name: `p-${Math.random().toString(36).slice(2)}`, path: '/tmp/x', engine: 'claude' });
+    const session = store.sessions.start({ projectId: project.id, engineId: 'claude' });
+    return { projectId: project.id, sessionId: session.id };
+  }
+
+  it('binds the attempt in the SAME call that wraps the session', () => {
+    const { projectId, sessionId } = liveSession();
+    const pub = stage({ projectId, sessionId, wrapRunId: 'run-w' });
+
+    const wrapped = store.sessions.wrap(sessionId, 'done', {
+      publicationId: pub.publicationId, wrapRunId: 'run-w'
+    });
+    assert.equal(wrapped.publicationBound, true);
+    assert.equal(store.handoffs.get(pub.publicationId).eligibleVia, 'lifecycle-wrap');
+  });
+
+  it('reports publicationBound false when the attempt does not match, and still wraps', () => {
+    const { projectId, sessionId } = liveSession();
+    stage({ projectId, sessionId, wrapRunId: 'run-w' });
+
+    const wrapped = store.sessions.wrap(sessionId, 'done', {
+      publicationId: 'not-a-real-pub', wrapRunId: 'run-w'
+    });
+    assert.equal(wrapped.publicationBound, false, 'a mismatched attempt must not roll back a real wrap');
+    assert.equal(wrapped.status, 'wrapped');
+  });
+
+  it('binds NOTHING when the transition is refused — a killed session never completes an attempt', () => {
+    const { projectId, sessionId } = liveSession();
+    const pub = stage({ projectId, sessionId, wrapRunId: 'run-w' });
+    store.sessions.kill(sessionId, 'operator');
+
+    const wrapped = store.sessions.wrap(sessionId, 'done', {
+      publicationId: pub.publicationId, wrapRunId: 'run-w'
+    });
+    assert.equal(wrapped, null, 'the wrap did not happen');
+    assert.equal(store.handoffs.get(pub.publicationId).eligibleAt, null,
+      'and the attempt must not be eligible');
+  });
+
+  it('leaves the existing contract untouched for a wrap with no handoff', () => {
+    const { sessionId } = liveSession();
+    const wrapped = store.sessions.wrap(sessionId, 'done');
+    assert.equal(wrapped.status, 'wrapped');
+    assert.ok(!('publicationBound' in wrapped), 'callers that never staged one see no new field');
+  });
+});
