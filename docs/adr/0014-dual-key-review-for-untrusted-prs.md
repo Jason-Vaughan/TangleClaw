@@ -1,6 +1,6 @@
 # ADR 0014: Dual-Key Review for Untrusted PRs
 
-**Status:** Accepted (2026-09-07, operator-ratified, then corrected by its own first application the same day). Amended 2026-09-17 (operator rulings of 2026-09-16 and an architect security audit): see **Amendment 2026-09-17** below, which moves the micro filter and reconstruction to a dedicated PR Reviewer session, gives contributor replies to the Coordinator, and adds the trust-boundary, intake, injection-hold, promotion and record rules.
+**Status:** Accepted (2026-09-07, operator-ratified, then corrected by its own first application the same day). Amended 2026-09-17 (operator rulings of 2026-09-16 and an architect security audit): see **Amendment 2026-09-17** below, which moves the micro filter and reconstruction to a dedicated PR Reviewer session, gives contributor replies to the Coordinator (renamed ProjectManager on 2026-09-17, when the reply contract was tightened), and adds the trust-boundary, intake, injection-hold, promotion and record rules.
 **Source:** PR #1334 — the first external contribution to reach this repository, against #1287.
 **Decides:** How an untrusted external pull request is audited, reconstructed, credited and answered.
 **Governs:** Every pull request from outside the repository, in this repo and in any that adopts this ADR.
@@ -13,7 +13,7 @@ However, relying on a single AI session or operator to audit the raw text diff l
 
 ## Decision
 We establish a **Dual-Key (Two-Person) Review** mechanism for all untrusted external PRs.
-1. **The Coordinator (Macro Filter):** The Coordinator session performs the initial security audit by read-only inspection only: the raw text diff (`gh pr diff`) plus the immutable evidence Amendment 2026-09-17 rule 2 requires. It never checks out or runs the contributor's code, and when the evidence is incomplete it holds. It rejects on four **categories**, stated as categories because each repository's paths differ — a repo adopting this ADR enumerates its own and does not inherit the list below:
+1. **The ProjectManager (Macro Filter):** The ProjectManager session *(named Coordinator until 2026-09-17; rulings recorded before then keep that name)* performs the initial security audit by read-only inspection only: the raw text diff (`gh pr diff`) plus the immutable evidence Amendment 2026-09-17 rule 2 requires. It never checks out or runs the contributor's code, and when the evidence is incomplete it holds. It rejects on four **categories**, stated as categories because each repository's paths differ — a repo adopting this ADR enumerates its own and does not inherit the list below:
    - **Dependency manifest** — any change to a manifest or lockfile.
    - **Execute-on-our-machine** — any file that runs on a maintainer's host or in CI without anyone choosing to run it.
    - **Live-serving surface** — any file served or executed by the running product.
@@ -77,7 +77,7 @@ We establish a **Dual-Key (Two-Person) Review** mechanism for all untrusted exte
    it is never merged, auto-merged or allow-listed. The exemption does not close a tag moved
    upstream while workflows reference actions by tag; that is #1436.
 
-2. **The PR Reviewer (Micro Filter):** If the PR clears the Coordinator's macro audit, the Coordinator passes the PR details to the PR Reviewer via Medusa. The PR Reviewer performs a secondary independent raw-text audit, focusing on logical soundness, regressions, and subtle implementation flaws. *(Until 2026-09-16 this role was the Builder's; the operator moved it to a dedicated PR Reviewer session, so external-PR diff intake and reconstruction happen away from the Builder's checkout, which serves the live install. The first-application account below keeps the name of the session that actually did the work.)*
+2. **The PR Reviewer (Micro Filter):** If the PR clears the ProjectManager's macro audit, the ProjectManager passes the PR details to the PR Reviewer via Medusa. The PR Reviewer performs a secondary independent raw-text audit, focusing on logical soundness, regressions, and subtle implementation flaws. *(Until 2026-09-16 this role was the Builder's; the operator moved it to a dedicated PR Reviewer session, so external-PR diff intake and reconstruction happen away from the Builder's checkout, which serves the live install. The first-application account below keeps the name of the session that actually did the work.)*
 3. **Execution:** Only when both sessions have passed the PR does the PR Reviewer reconstruct, on a clean branch off `main`, in its own non-serving worktree (Amendment 2026-09-17, rule 5).
 
    **Reconstruct from the ISSUE, not from their diff.** This is the difference between a clean room and laundering, and it is the step most easily skipped because transcription is faster and looks identical in the final diff. Re-derive the fix from the requirement — the issue text, the code, the artifacts — and consult their diff only to confirm the audit already performed, never as the source. Two things fall out of doing it properly, both observed on this ADR's first application (#1287 / PR #1334):
@@ -104,15 +104,22 @@ With no message, that is indistinguishable from taking their work — `CONTRIBUT
 policy, but a policy page is not a reply to the person watching their own PR close. Every outcome
 therefore owes a response.
 
-- **Who drafts:** the Coordinator, for every outcome (operator ruling, 2026-09-16). It drafts from
+- **Who drafts:** the ProjectManager, for every outcome (operator ruling, 2026-09-16). It drafts from
   the reasons **recorded by the filter that reached the verdict** — the PR Reviewer's findings for a
   pass or a logic rejection, its own for a security trip — and does not invent reasons that filter
   did not record. *(This replaces the earlier rule that the verdict's own filter drafts. What that
   rule protected — a reply grounded in the actual reasons — is kept by requiring the recorded
-  findings as the source.)*
-- **Who sends:** the Operator, always. This is the project's only outward-facing channel to a
-  person outside it, and it goes out under the Operator's identity whether or not they typed it.
-  Drafting is delegated; sending is not.
+  findings as the source.)* **The ProjectManager owns every contributor reply; no other
+  session drafts one** (operator ruling, 2026-09-17). The PR Reviewer and the other filters hand
+  over their recorded findings, not reply text.
+- **Who sends:** the Operator, always (reaffirmed by operator ruling, 2026-09-17). This is the
+  project's only outward-facing channel to a person outside it, and it goes out under the
+  Operator's identity whether or not they typed it. Drafting is delegated; sending is not. **No
+  session posts to a contributor**: not the ProjectManager, not the PR Reviewer and not the
+  Builder. The ProjectManager delivers the final text to the Operator, who posts it.
+- **One reply per PR.** Before anything is posted, check that the PR has not already been answered
+  (`gh pr view <N> --json comments`). A relayed message can arrive twice, or after the reply was
+  posted.
 
 **What is owed differs by outcome, and rejection is deliberately asymmetric:**
 
@@ -141,11 +148,11 @@ yet, it says so; process holds the line until the mechanism lands.**
 | Step | Who | What |
 |---|---|---|
 | 0 | GitHub CI | Runs `test.yml`. Fork runs wait for maintainer approval (`all_external_contributors`). **Approving a fork's CI run executes its code on a GitHub runner; it is not approval to merge.** |
-| 1 | Coordinator | Macro filter (Decision item 1). |
+| 1 | ProjectManager | Macro filter (Decision item 1). |
 | 2 | PR Reviewer | Micro filter and reconstruction (Decision items 2–3). |
 | 3 | Code Reviewer | Independent review of the reconstruction (rule 5). |
 | 4 | Operator | The final go and the merge. **No auto-merge on a reconstruction.** |
-| — | Coordinator | Drafts every contributor reply; the Operator sends it and closes the original PR. |
+| — | ProjectManager | Finalizes every contributor reply from the recorded findings. The Operator posts it and closes the original PR. No session posts to a contributor. |
 
 **Interim review, until a Code Reviewer session exists** (operator rulings, 2026-09-16 and
 2026-09-17): a reconstruction is reviewed by all three of the following, and its PR says so.
