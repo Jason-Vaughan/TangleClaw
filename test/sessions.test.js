@@ -2930,7 +2930,8 @@ describe('sessions', () => {
       };
 
       try {
-        const first = sessions.triggerWrap('prime-test');
+        // Kept running (#1558), so the same session can wrap again below.
+        const first = sessions.triggerWrap('prime-test', { keepSessionRunning: true });
         // Let the first trigger claim the registry slot before racing it.
         await new Promise((resolve) => setImmediate(resolve));
 
@@ -3232,9 +3233,11 @@ describe('sessions', () => {
       };
 
       try {
+        // `keepSessionRunning` (#1558) also keeps the session for the next call.
         const opts = {
           skipTests: true,
-          prHandling: { '42': 'merge' }
+          prHandling: { '42': 'merge' },
+          keepSessionRunning: true
         };
         await sessions.triggerWrap('prime-test', opts);
         // #583 amended the threading contract: user options pass through
@@ -3253,6 +3256,14 @@ describe('sessions', () => {
         await sessions.triggerWrap('prime-test');
         assert.deepEqual(Object.keys(receivedOptions).sort(), ['onStepEvent', 'resumeFrom'],
           'omitted options add only the #583/#185 progress hook and the #1404 resume record');
+
+        // That wrap finished and ended the session (#1558); start another.
+        store.sessions.start({
+          projectId: project.id,
+          engineId: 'claude',
+          tmuxSession: 'trigger-wrap-pipeline-options-test-2'
+        });
+        receivedOptions = 'sentinel-not-set';
 
         // A caller-supplied hook (an HTTP body can only carry JSON,
         // but defend the seam) can never displace the registry hook.
@@ -3301,9 +3312,9 @@ describe('sessions', () => {
     // wrap that produced a commit ends the session record (status
     // 'wrapped'), kills tmux, releases doc locks, and clears caches —
     // symmetric with the legacy `completeWrap` teardown minus
-    // `_autoCommitIfDirty` (the pipeline's commit step already flushed). Halted /
-    // thrown / clean-session (ok + null SHA) runs leave the session
-    // active.
+    // `_autoCommitIfDirty` (the pipeline's commit step already flushed). Since
+    // #1558 a finished run ends the session whether or not it committed,
+    // unless the operator kept it; halted and thrown runs leave it active.
     describe('wrap lifecycle transition (#139 Chunk 11a)', () => {
       let wrapPipelineMod;
       let originalRun;
@@ -3425,9 +3436,12 @@ describe('sessions', () => {
         assert.equal(row.wrapSummary, null, 'a refused wrap records no summary');
       });
 
-      it('ok + null commitSha (clean session) → session stays active', async () => {
+      // #1558 changed this contract: a finished run with nothing to commit is a
+      // completed wrap (the session's work merged by PR first, or the wrap's
+      // writes are ignored), so it ends the session like a committed one.
+      it('ok + null commitSha (nothing to commit) → wraps the session and runs full teardown', async () => {
         const project = store.projects.getByName('prime-test');
-        store.sessions.start({
+        const session = store.sessions.start({
           projectId: project.id,
           engineId: 'claude',
           tmuxSession: 'wrap-pipeline-lifecycle-clean'
@@ -3444,10 +3458,31 @@ describe('sessions', () => {
 
         const result = await sessions.triggerWrap('prime-test');
         assert.equal(result.ok, true);
-        const active = store.sessions.getActive(project.id);
-        assert.ok(active, 'session must remain active on clean-session wrap');
-        assert.deepEqual(killCalls, [], 'tmux not killed on clean-session wrap');
-        assert.deepEqual(releaseCalls, [], 'doc locks not released on clean-session wrap');
+        assert.equal(result.lifecycleCompleted, true);
+        assert.equal(store.sessions.getActive(project.id), null, 'session must no longer be active');
+        assert.equal(findWrappedById(project.id, session.id).status, 'wrapped');
+        assert.deepEqual(killCalls, ['wrap-pipeline-lifecycle-clean'], 'tmux session killed');
+        assert.deepEqual(releaseCalls, [session.id], 'doc locks released for this session');
+      });
+
+      it('ok + keepSessionRunning → session stays active, with or without a commit', async () => {
+        const project = store.projects.getByName('prime-test');
+        const session = store.sessions.start({
+          projectId: project.id,
+          engineId: 'claude',
+          tmuxSession: 'wrap-pipeline-lifecycle-kept'
+        });
+
+        for (const commitSha of [null, 'abc123']) {
+          stubPipeline({ ok: true, blockedAt: null, results: [], commitSha, summary: null, error: null });
+          const result = await sessions.triggerWrap('prime-test', { keepSessionRunning: true });
+          assert.equal(result.ok, true);
+          assert.equal(result.lifecycleCompleted, false);
+          assert.equal(result.sessionKept, true);
+          assert.equal(store.sessions.getActive(project.id).id, session.id, 'session must remain active when kept');
+        }
+        assert.deepEqual(killCalls, [], 'tmux not killed when the session is kept');
+        assert.deepEqual(releaseCalls, [], 'doc locks not released when the session is kept');
       });
 
       it('halted (!ok) → session stays active', async () => {

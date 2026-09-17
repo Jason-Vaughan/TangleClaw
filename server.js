@@ -6189,7 +6189,8 @@ route('POST', '/api/sessions/:project/command', (_req, res, params, body) => {
 
 // POST /api/sessions/:project/wrap — Start the wrap pipeline
 // Body: { password?, options? } — `options` carries the per-wrap user choices
-// the drawer collected on retry after a blocked step (`{skipTests, prHandling}`).
+// the wrap modal and the drawer collected (`{skipTests, prHandling, keepSessionRunning, …}`).
+// A finished run ends the session unless `keepSessionRunning` is true (#1558).
 //
 // Answers 202 the moment the run is claimed, with its `runId`; the pipeline runs
 // on and its outcome is read from the stream (`run-done`) or `GET /wrap/status`.
@@ -6260,7 +6261,7 @@ route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => 
  *
  * @param {string} projectName - Route-level project name
  * @param {object} result - The run's recorded outcome
- * @returns {object} Result payload
+ * @returns {object} Result payload, with `sessionOutcome` (`ended`|`kept`|null)
  */
 function _wrapResultPayload(projectName, result) {
   const payload = {
@@ -6277,7 +6278,13 @@ function _wrapResultPayload(projectName, result) {
     status: result.ok ? 'wrapping' : 'blocked',
     wrapCommand: result.wrapCommand,
     wrapSteps: result.wrapSteps,
-    captureFields: result.captureFields
+    captureFields: result.captureFields,
+    // #1558 — what the run did to the session, for the drawer's banner:
+    // `ended` when it recorded the wrap and ended the session, `kept` when the
+    // operator asked to keep it running, null when the run did not finish or
+    // the session had already ended some other way (killed mid-wrap). A plain
+    // boolean would call a killed session "still running".
+    sessionOutcome: result.lifecycleCompleted === true ? 'ended' : (result.sessionKept === true ? 'kept' : null)
   };
   if (result.pipelineResult) payload.pipelineResult = result.pipelineResult;
   if (!result.ok && result.error) payload.error = result.error;

@@ -34,6 +34,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-17 — A wrap that finishes ends the session, even with nothing to commit (#1558)
+
+<!-- prawduct: type=bugfix | scope=train-20-chunk-02-5 -->
+
+Train 20 Chunk 02.5. `_runClaimedWrap` ended a session only on `ok && commitSha`, so in this project, whose work merges by PR before the wrap and whose wrap writes are gitignored, two clean wraps in a row left session 1002 running. A finished (`ok`) run now ends the session with or without a commit; stopped, failed and thrown runs still leave it open. `options.keepSessionRunning: true` keeps it; `startWrap` refuses a non-boolean with `BAD_REQUEST` before claiming a run. The result carries `sessionKept`, true only when the wrapped session is still the active one, and `server.js#_wrapResultPayload` turns that and `lifecycleCompleted` into `sessionOutcome` (`ended` / `kept` / `null`). Both wrap dialogs gained a "Keep the session running" box, reset on open; the session page replays it on Retry and restores it after a reload, and the dashboard sends it by hand because it doesn't load the drawer's collector. The no-commit banner now reads "Wrapped — nothing new to commit" and says whether the session ended. ADR 0002 is amended. The `sessions.test.js` case pinning "ok + null commitSha stays active" was changed on purpose; two cases that wrapped one fixture session repeatedly now keep it between calls. Twenty-two deliberate breakages were each caught. A scratch server driven in Chrome covered both dialogs, the ended bar, a reload-then-Retry and a relaunch. The cumulative Critic found 1 blocking (a session killed during a kept wrap was reported kept), 1 warning (source-regex page tests, converted to sandboxed runs) and notes that were accepted; verify-resolutions closed them.
+
 ## 2026-09-17 — Stranded wraps hold launches, ask before a wrap, and show on the card (#1539, #1540, #1541)
 
 <!-- prawduct: type=feature | scope=train-20-chunk-02 -->

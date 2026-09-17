@@ -149,6 +149,7 @@ function wrapGlobals(stubs, document) {
     closeWrapModal() {},
     // #1540: no stranded wraps are listed in these cases.
     wrapModalStrandedItems: null, wrapProceedPastStranded: [], lastRefusedStrandedItems: null,
+    wrapKeepRunning: false,
     wrapModalNeedsStrandedConfirm: () => false,
     syncWrapModalConfirm() {},
     showWrapModalStranded() {},

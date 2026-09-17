@@ -667,11 +667,17 @@
 .stranded-block {
   margin: 10px 0;
 }
-.stranded-confirm {
+/* A checkbox with its label beside it: the stranded "Wrap anyway" box and the
+   wrap dialogs' "Keep the session running" (#1558). */
+.stranded-confirm,
+.wrap-keep-running {
   display: flex;
   gap: 8px;
   align-items: flex-start;
   margin-top: 8px;
   font-size: 13px;
   cursor: pointer;
+}
+.wrap-keep-running-hint {
+  margin: 2px 0 0 24px;
 }

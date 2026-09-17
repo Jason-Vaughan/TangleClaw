@@ -491,6 +491,15 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
         <label class="form-label" for="wrapPassword">Password</label>
         <input type="password" class="password-input" id="wrapPassword" autocomplete="off">
       </div>
+      <!-- #1558 — a finished wrap ends the session unless this is ticked.
+           Unticked on every open. -->
+      <div class="form-group">
+        <label class="wrap-keep-running">
+          <input type="checkbox" id="wrapKeepRunning">
+          <span>Keep the session running</span>
+        </label>
+        <div class="form-hint wrap-keep-running-hint">Records everything but leaves the session open. Use it to save state mid-session.</div>
+      </div>
       <div id="wrapStranded" class="stranded-block hidden">
         <p class="modal-text" id="wrapStrandedText"></p>
         <div id="wrapStrandedList"></div>

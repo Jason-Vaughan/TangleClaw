@@ -3606,7 +3606,7 @@ function applyCapabilityGates() {
  */
 function openWrapModal() {
   document.getElementById('wrapText').innerHTML =
-    `Wrap the session for <strong>${esc(projectName)}</strong>? This sends the wrap command and ends the session.`;
+    `Wrap the session for <strong>${esc(projectName)}</strong>? This runs every wrap step, then ends the session unless you keep it running.`;
   document.getElementById('wrapError').classList.add('hidden');
   document.getElementById('wrapPassword').value = '';
   showWrapModalStranded(null);
@@ -3618,6 +3618,10 @@ function openWrapModal() {
   if (bumpEl) bumpEl.value = '';
   const releaseEl = document.getElementById('wrapRelease');
   if (releaseEl) releaseEl.value = '';
+  // #1558 — same reason: a keep-running tick from a cancelled wrap must not
+  // keep a later wrap's session open.
+  const keepEl = document.getElementById('wrapKeepRunning');
+  if (keepEl) keepEl.checked = false;
   syncWrapReleaseControls();
   // The mode read at page load may be stale: another tab can change it while
   // this one stays open. Re-read it so the controls match what the server will
@@ -3791,6 +3795,9 @@ async function confirmWrap() {
   // #1540: the stranded wraps confirmed in this modal, if any. Kept for every
   // Retry of this wrap, like the choices above.
   wrapProceedPastStranded = Array.isArray(wrapModalStrandedItems) ? tcStrandedKeys(wrapModalStrandedItems) : [];
+  // #1558: kept for every Retry of this wrap, like the choices above.
+  const keepEl = document.getElementById('wrapKeepRunning');
+  wrapKeepRunning = Boolean(keepEl && keepEl.checked);
   const pw = document.getElementById('wrapPassword').value;
   // #540 ask-mode — capture the operator's bump-level choice up front, before
   // version-bump runs. Empty string keeps the CHANGELOG heuristic. Threaded as
@@ -3811,7 +3818,8 @@ async function confirmWrap() {
   const initialOptions = window.tcWrapDrawerHelpers.collectOptionsFromAccessors({
     release: () => wrapReleaseChoice,
     bumpLevel: () => wrapBumpLevel,
-    proceedPastStranded: () => wrapProceedPastStranded
+    proceedPastStranded: () => wrapProceedPastStranded,
+    keepSessionRunning: () => wrapKeepRunning
   });
   if (Object.keys(initialOptions).length > 0) body.options = initialOptions;
 
@@ -3965,6 +3973,15 @@ let wrapUntrackState = '';
 let wrapProceedPastStranded = [];
 
 /**
+ * #1558 — "Keep the session running", chosen in the wrap modal. A finished run
+ * ends the session unless this is true. Replayed on every retry so a stopped
+ * run the operator answers still keeps the session, and reset by a new wrap
+ * from the modal.
+ * @type {boolean}
+ */
+let wrapKeepRunning = false;
+
+/**
  * #1540 — the stranded wraps named by the last refused wrap POST, or null. The
  * modal and the drawer read it to show the list instead of a bare refusal.
  * @type {object[]|null}
@@ -4023,8 +4040,10 @@ let currentWrapDisplayedStatus = null;
  * primitive: the wrap-run controller decides when it runs.
  *
  * @param {object} pipelineResult - The run result's `pipelineResult`.
+ * @param {{sessionOutcome?: (string|null)}} [runContext] - What the run did to
+ *   the session (#1558), for the banner.
  */
-function openWrapDrawer(pipelineResult) {
+function openWrapDrawer(pipelineResult, runContext) {
   currentWrapPipelineResult = pipelineResult;
   // Flag the open drawer so a concurrent session-ended poll doesn't start
   // the auto-redirect countdown and navigate the blocked report away (#268).
@@ -4033,7 +4052,7 @@ function openWrapDrawer(pipelineResult) {
   // countdown (a restored run, a late report) — the #268 rule is drawer-open ⇒
   // no auto-redirect, so a countdown already ticking is cancelled here.
   cancelEndedCountdown();
-  renderWrapDrawer(pipelineResult);
+  renderWrapDrawer(pipelineResult, runContext);
   expandWrapDrawer();
 }
 
@@ -4294,10 +4313,12 @@ function renderSkipRoll(pipelineResult) {
  * all shape-to-view-model decisions live in `tcWrapDrawerHelpers`.
  *
  * @param {object} pipelineResult
+ * @param {{sessionOutcome?: (string|null)}} [runContext] - What the run did to
+ *   the session (#1558).
  */
-function renderWrapDrawer(pipelineResult) {
+function renderWrapDrawer(pipelineResult, runContext) {
   const H = window.tcWrapDrawerHelpers;
-  const status = H.summarizePipelineStatus(pipelineResult);
+  const status = H.summarizePipelineStatus(pipelineResult, runContext);
   currentWrapBaseStatus = status;
 
   // Status banner (repaintable — the #638 release resolution repaints it).
@@ -5415,7 +5436,9 @@ async function retryWrap() {
       return box && box.checked && Array.isArray(wrapDrawerStrandedItems)
         ? tcStrandedKeys(wrapDrawerStrandedItems)
         : wrapProceedPastStranded;
-    }
+    },
+    // #1558 — the modal's keep-running choice holds for every Retry.
+    keepSessionRunning: () => wrapKeepRunning
   };
 
   const options = H.collectOptionsFromAccessors(accessors);
@@ -5845,7 +5868,7 @@ function paintWrapRun(prev, next) {
     case 'settled':
       if (!entered) return;
       if (next.result && next.result.pipelineResult) {
-        openWrapDrawer(next.result.pipelineResult);
+        openWrapDrawer(next.result.pipelineResult, { sessionOutcome: next.result.sessionOutcome });
       } else {
         // A result WITHOUT a pipelineResult: the pipeline threw, or failed
         // before it ran. Show the run's real error — not the restart notice,
@@ -5966,6 +5989,7 @@ function adoptWrapRunChoices(options) {
   wrapPathDecisions = choices.pathDecisions;
   wrapSkippedAiSteps = choices.skipAiContent;
   wrapProceedPastStranded = choices.proceedPastStranded;
+  wrapKeepRunning = choices.keepSessionRunning;
 }
 
 /**

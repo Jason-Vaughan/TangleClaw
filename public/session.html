@@ -487,6 +487,15 @@
           <option value="major">Major</option>
         </select>
       </div>
+      <!-- #1558 — a finished wrap ends the session unless this is ticked.
+           Unticked on every open. -->
+      <div class="form-group">
+        <label class="wrap-keep-running">
+          <input type="checkbox" id="wrapKeepRunning">
+          <span>Keep the session running</span>
+        </label>
+        <div class="form-hint wrap-keep-running-hint">Records everything but leaves the session open. Use it to save state mid-session.</div>
+      </div>
       <!-- #1540 — stranded wraps the server listed when it refused this wrap.
            Wrap stays disabled until the operator confirms. -->
       <div id="wrapStranded" class="stranded-block hidden">
