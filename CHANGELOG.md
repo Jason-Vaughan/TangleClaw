@@ -59,6 +59,12 @@ All notable changes to TangleClaw are documented in this file.
   - **Ownership:** the ProjectManager owns every contributor reply and writes it from the recorded findings; no other session drafts one, and the PR Reviewer hands over findings, not reply text.
   - **Posting:** the Operator posts every reply. No session posts to a contributor.
   - **One reply per PR:** before posting, check that the PR hasn't already been answered.
+- **Train 21 plan: an engine-agnostic phased launch** (#1591). The plan is at `.tangleclaw/plans/train-21-phased-launch.md`, and the Architect approved its schemas on 2026-09-17. No code changes yet.
+  - **Launch sequence:** an ordered, acknowledged `tc start` sequence replaces the single-shot prime. Engines that support pushed context keep it.
+  - **Handoff:** each wrap attempt publishes its own handoff file, and it counts only once the wrap has really finished.
+  - **Preflight:** a check at launch looks at the handoff before the task is handed over. Anything it cannot positively confirm as ok becomes a recovery case.
+  - **Cars:** #1579–#1590, in four chunks.
+  - **Pending operator rulings:** R1, whether paste-only engines fetch their rules instead of having them pasted (it amends the prime-delivery direction), and R3, the default recovery mode.
 
 ## [5.28.0] - 2026-09-16
 
