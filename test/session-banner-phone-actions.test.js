@@ -78,3 +78,56 @@ describe('#1478 Wrap and Kill wrap together on a phone', () => {
     assert.match(shared, /min-width: 30px/);
   });
 });
+
+/*
+ * #1571 — the banner cut the project name at a fixed width (160px; 100px on a
+ * phone; 200px on a desktop) whatever the row had free, so a 24-character
+ * name read as "JasonVaughanCo…" beside empty space. Measured on a scratch
+ * server before the fix: 100px of a 187px name at every width from 375 to
+ * 600, with 36px free at 412 and 224px free at 600. The name is now a flex
+ * item that grows into the row's free space and ellipsizes only when the row
+ * is genuinely short. A cap in ANY rule would bring the bug back, so every
+ * `.banner-name` rule in the file is checked, comments stripped first (a
+ * declaration named in prose must not read as present, and a stray comment
+ * closer would delete the rule after it while a substring test stayed green).
+ */
+describe('#1571 the banner name takes the row\'s free space before it truncates', () => {
+  const stripped = SESSION_CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+
+  /**
+   * Every rule body for `selector` in `css`, in source order.
+   * @param {string} css
+   * @param {string} selector - Exact selector text as written
+   * @returns {string[]}
+   */
+  function ruleBodies(css, selector) {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return [...css.matchAll(new RegExp(`(?:^|[\\s,}])${escaped}\\s*\\{([^}]*)\\}`, 'gm'))].map((m) => m[1]);
+  }
+
+  it('css: the base rule grows into free space, may shrink to zero, and still ellipsizes', () => {
+    const body = ruleBody(stripped, '.banner-name');
+    assert.ok(body, 'a .banner-name rule exists');
+    assert.match(body, /flex: 1 1 auto/);
+    assert.match(body, /min-width: 0/);
+    assert.match(body, /text-overflow: ellipsis/);
+    assert.match(body, /white-space: nowrap/);
+  });
+
+  it('css: no rule anywhere in the file caps the name\'s width', () => {
+    const bodies = ruleBodies(stripped, '.banner-name');
+    assert.ok(bodies.length >= 1, 'at least the base rule exists');
+    for (const body of bodies) {
+      assert.doesNotMatch(body, /max-width/, `a .banner-name rule caps the width: {${body.trim()}}`);
+      assert.doesNotMatch(body, /(^|[^-])width\s*:/, `a .banner-name rule fixes the width: {${body.trim()}}`);
+    }
+  });
+
+  it('css: the stylesheet still parses as a stylesheet (no orphan comment closer, balanced braces)', () => {
+    assert.doesNotMatch(stripped, /\*\//, 'an orphan */ would swallow the rule after it');
+    assert.doesNotMatch(stripped, /\/\*/, 'an unterminated /* would swallow the rest of the file');
+    const opens = (stripped.match(/\{/g) || []).length;
+    const closes = (stripped.match(/\}/g) || []).length;
+    assert.equal(opens, closes, 'braces balance');
+  });
+});

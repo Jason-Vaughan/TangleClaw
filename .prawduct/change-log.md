@@ -34,6 +34,24 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-17 — The project name gets the row's space first, in the session banner and the dashboard rows (#1571, #1569)
+
+<!-- prawduct: type=fix | scope=train-26-chunk-01 -->
+
+Train 26 chunk 01. Two CSS changes, measured before and after on a scratch server through a same-origin iframe at 320, 375, 390, 412, 600, 601, 700, 844, 900 and 1000px, both pages, both themes (layout read through `getBoundingClientRect`; screenshots from this Chrome are unreliable).
+
+What was measured before the change:
+- Session banner: `.banner-name` capped at 100px below 600, 160px to 899, 200px from 900. A 187px name got 100px at 375–600 while the row had 36px free at 412 and 224px free at 600.
+- Dashboard row: below 600 the name already had its own line and was whole. From 601 up nothing wrapped and `.card-name` was `flex: 1` (basis 0%), so with version, branch, engine and two group badges plus seven buttons it got 0px at 700, 85px at 844 and 141px at 900. The program plan's assumption (601–900) held.
+
+What shipped:
+- `public/session.css`: `.banner-name` is `flex: 1 1 auto; min-width: 0`, and the three width caps are gone. Measured after: whole from 470px up; 136px at 412 (was 100); unchanged at 375 (99px) and 320 (44px), where the row is genuinely full and the name is still the only item that shrinks. On a desktop the actions take the rest of the single row, so a 187px name shows 182px at exactly 900 and whole from 1000, as before.
+- `public/style.css`: the `@media (max-width: 900px)` block lets `.card-row` wrap with `.card-name` at `flex: 1 1 auto; min-width: 0` and the button row wrapping. Measured after: the name is whole at every width from 601 to 1000; at 700–900 the badges stay on the name's line and the buttons drop to a second line; at 601 the group badges wrap with the buttons. Buttons keep their size, no horizontal scroll, the chevron ends the last line.
+
+Decided while building: the name shares no squeeze with the engine and group pills. Letting the engine pill ellipsize would give the name about 30px more at 375 ("Claude C…" for four more characters of name); the issue asks for the available space to be used, and trading one truncation for another was not asked for. The operator-verification entry says so, in case the phone view says otherwise.
+
+Tests: `test/session-banner-phone-actions.test.js` (base rule, no cap in any rule, comment-stripped, parse sanity) and `test/mobile-toolbar-layout.test.js` (landscape rules and the cascade order against the portrait block). Eleven breakages, all caught: each declaration removed in turn, each cap restored, a fixed width added, the ellipsis removed, an orphan comment closer, the name's basis back to 0%, and the landscape block moved after the portrait one.
+
 ## 2026-09-17 — One shared child-process runner, with git/gh prompts disabled (#1561)
 
 <!-- prawduct: type=chore | scope=shared-exec-1561 -->

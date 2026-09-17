@@ -2065,6 +2065,18 @@ body {
 @media (max-width: 900px) {
   .dash-bar { flex-wrap: wrap; row-gap: 4px; }
   .dash-actions { flex-wrap: wrap; }
+  /* Card row (#1569). Between this breakpoint and the portrait block nothing
+     in the row wrapped, and the name was the only item allowed to shrink
+     (`flex: 1` is basis 0%: it got what the badges and seven buttons left,
+     which at 700px was nothing). The row now wraps with the name at its
+     natural width, growing into what is free, so the badges and the button
+     row break onto the next line before the name gives up a pixel. The
+     portrait block below stacks the name on its own line instead and must
+     stay AFTER this block to win at equal specificity
+     (test/mobile-toolbar-layout.test.js). */
+  .card-row { flex-wrap: wrap; row-gap: 4px; }
+  .card-name { flex: 1 1 auto; min-width: 0; }
+  .card-row-actions { flex-wrap: wrap; flex-shrink: 1; min-width: 0; row-gap: 4px; }
 }
 
 /* Phone-portrait layout (#1192). Below 600px the dashboard's three single-row

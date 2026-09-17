@@ -178,6 +178,27 @@ describe('phone dashboard layout (#1192)', () => {
     assert.ok(!/@media \(max-width: 480px\)/.test(STYLE), 'the 480px block is folded into the 600px one');
   });
 
+  /*
+   * #1569 — between 601 and 900px nothing in the card row wrapped, and the
+   * name was the only item allowed to shrink (`flex: 1` is basis 0%, so it got
+   * only what the badges and seven buttons left). Measured before the fix:
+   * 0px of a 24-character name at 700px, 85px at 844, 141px at 900; below
+   * 600px the portrait block already gave the name its own line. The
+   * landscape block now lets the row wrap, with the name at its natural
+   * width, so the badges and the button row break onto the next line before
+   * the name gives up a pixel. The portrait stacking rule must follow it in
+   * the cascade: both blocks match a 390px phone at equal specificity.
+   */
+  it('landscape: the card row wraps after the name, so badges and buttons break before the name shrinks (#1569)', () => {
+    L('.card-row', { 'flex-wrap': 'wrap' });
+    L('.card-name', { flex: '1 1 auto', 'min-width': '0' });
+    L('.card-row-actions', { 'flex-wrap': 'wrap', 'flex-shrink': '1', 'min-width': '0' });
+    const landscapeName = ruleIn(landscape, LANDSCAPE_QUERY, '.card-name').blockStart;
+    const portraitName = ruleIn(portrait, PORTRAIT_QUERY, '.card-name').blockStart;
+    assert.ok(landscapeName < portraitName,
+      'the portrait .card-name rule must follow the landscape one, or a phone in portrait loses its stacked name');
+  });
+
   it('portrait: the card action row may wrap and keeps the destructive × off the card edge', () => {
     const row = P('.card-row-actions', { 'flex-wrap': 'wrap', 'flex-shrink': '1', 'min-width': '0' });
     const margin = parseInt(row['margin-right'], 10);
