@@ -428,9 +428,12 @@
    * "did this wrap succeed, block, or partially succeed with warnings."
    *
    * @param {object} pipelineResult - Runner return.
+   * @param {{sessionOutcome?: ('ended'|'kept'|null)}} [runContext] - What the run
+   *   did to the session (the run result's `sessionOutcome`, #1558). Worded only
+   *   on the no-commit banners, where nothing else says the wrap did anything.
    * @returns {{label: string, tone: 'success'|'blocked'|'needs-operator'|'warning'|'error', detail: string|null}}
    */
-  function summarizePipelineStatus(pipelineResult) {
+  function summarizePipelineStatus(pipelineResult, runContext) {
     if (!pipelineResult || typeof pipelineResult !== 'object') {
       return { label: 'Wrap result unavailable', tone: 'error', detail: null };
     }
@@ -530,10 +533,37 @@
       }
       return { label: 'Wrap committed', tone: 'success', detail: pipelineResult.commitSha.slice(0, 12), pr: null };
     }
+    const sessionPhrase = sessionOutcomePhrase(runContext);
     if (warningSteps.length > 0) {
-      return { label: 'Wrap completed with warnings', tone: 'warning', detail: warningDetail(), pr: wrapPrInfo(pipelineResult) };
+      const detail = sessionPhrase ? `${warningDetail()} · ${sessionPhrase}` : warningDetail();
+      return { label: 'Wrap completed with warnings', tone: 'warning', detail, pr: wrapPrInfo(pipelineResult) };
     }
-    return { label: 'Wrap completed (no changes to commit)', tone: 'success', detail: null, pr: null };
+    // #1558 — a finished wrap with nothing to commit is the normal shape when
+    // the session's work merged by PR first, so the banner says what the wrap
+    // did rather than reading like a no-op. It can't tell merged work from a
+    // session that did nothing, so it names both.
+    const nothingNew = 'Your work was already committed or merged, or there was nothing to add.';
+    return {
+      label: 'Wrapped — nothing new to commit',
+      tone: 'success',
+      detail: sessionPhrase ? `${nothingNew} ${sessionPhrase}` : nothingNew,
+      pr: null
+    };
+  }
+
+  /**
+   * The sentence that says what a finished wrap did to the session (#1558).
+   * Nothing for an unknown outcome: the run did not finish, or the session was
+   * ended some other way, and the page's own ended bar already says so.
+   *
+   * @param {{sessionOutcome?: *}} [runContext] - From the run result.
+   * @returns {string|null}
+   */
+  function sessionOutcomePhrase(runContext) {
+    const outcome = runContext && typeof runContext === 'object' ? runContext.sessionOutcome : null;
+    if (outcome === 'ended') return 'The session has ended.';
+    if (outcome === 'kept') return 'The session is still running, as you asked.';
+    return null;
   }
 
   /**
@@ -1105,6 +1135,17 @@
       const v = accessors.untrackState();
       if (v === 'approve' || v === 'decline') options.untrackState = v;
     }
+    // #1558 — keep the session open after a finished run. Sent only as true:
+    // the server ends the session when it is absent.
+    if (accessors.keepSessionRunning && accessors.keepSessionRunning() === true) {
+      options.keepSessionRunning = true;
+    }
+    // #1540 — the stranded wraps the operator chose to wrap past. Sent as the
+    // server listed them; an empty choice sends nothing, so the wrap is gated.
+    if (accessors.proceedPastStranded) {
+      const keys = strandedKeysOf(accessors.proceedPastStranded());
+      if (keys.length > 0) options.proceedPastStranded = keys;
+    }
     // #1492 — Release: Cut or Hold, from the wrap modal or the drawer's choice
     // under a halt. Auto is the absence of both and must NOT be sent: an
     // out-of-set value makes version-bump skip rather than follow the mode.
@@ -1131,6 +1172,23 @@
   }
 
   /**
+   * Well-formed stranded-wrap keys from whatever an accessor or a recorded run
+   * holds: objects with a branch, reduced to `{remote, branch, headSha}`.
+   * @param {*} value
+   * @returns {Array<{remote: string|null, branch: string, headSha: string|null}>}
+   */
+  function strandedKeysOf(value) {
+    if (!Array.isArray(value)) return [];
+    return value
+      .filter((k) => k && typeof k === 'object' && typeof k.branch === 'string' && k.branch)
+      .map((k) => ({
+        remote: typeof k.remote === 'string' ? k.remote : null,
+        branch: k.branch,
+        headSha: typeof k.headSha === 'string' ? k.headSha : null
+      }));
+  }
+
+  /**
    * The choices a Retry replays, read back from a run's recorded `options`
    * (`/wrap/status`) after the page reloads (#1492). Page memory is where Retry
    * keeps them, and a reload wipes it. For most choices that only means being
@@ -1141,7 +1199,7 @@
    * chosen, which is what the page held before the reload taught it anything.
    *
    * @param {*} options - `status.options` for the run being followed.
-   * @returns {{release: string, bumpLevel: string, skipPreflight: boolean, pathDecisions: Object<string, string>, skipAiContent: Object<string, true>, untrackState: string}}
+   * @returns {{release: string, bumpLevel: string, skipPreflight: boolean, pathDecisions: Object<string, string>, skipAiContent: Object<string, true>, untrackState: string, proceedPastStranded: Array<object>, keepSessionRunning: boolean}}
    */
   function replayChoicesFromOptions(options) {
     const o = options && typeof options === 'object' ? options : {};
@@ -1160,7 +1218,11 @@
       }
     }
     const untrackState = o.untrackState === 'approve' || o.untrackState === 'decline' ? o.untrackState : '';
-    return { release, bumpLevel, skipPreflight: o.skipPreflight === true, pathDecisions, skipAiContent, untrackState };
+    return {
+      release, bumpLevel, skipPreflight: o.skipPreflight === true, pathDecisions, skipAiContent, untrackState,
+      proceedPastStranded: strandedKeysOf(o.proceedPastStranded),
+      keepSessionRunning: o.keepSessionRunning === true
+    };
   }
 
   /**

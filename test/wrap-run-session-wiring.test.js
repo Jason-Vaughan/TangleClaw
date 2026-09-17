@@ -110,6 +110,11 @@ function harness() {
     wrapBumpLevel: '',
     wrapReleaseChoice: '',
     wrapUntrackState: '',
+    wrapProceedPastStranded: [],
+    wrapKeepRunning: false,
+    lastRefusedStrandedItems: null,
+    wrapDrawerStrandedItems: null,
+    tcStrandedKeys: (items) => items,
     currentWrapPassword: '',
     sessionStorage: {
       getItem: (k) => (storage.has(k) ? storage.get(k) : null),
@@ -130,6 +135,7 @@ function harness() {
     openWrapDrawer: record('openWrapDrawer'),
     openWrapDrawerNotice: record('openWrapDrawerNotice'),
     renderWrapDrawerError: record('renderWrapDrawerError'),
+    renderWrapDrawerStranded: record('renderWrapDrawerStranded'),
     hideWrapDrawer: record('hideWrapDrawer'),
     collapseWrapDrawer: record('collapseWrapDrawer'),
     expandWrapDrawer: record('expandWrapDrawer'),
@@ -304,6 +310,25 @@ describe('wrap-run wiring in session.js — executed', () => {
     await h.w.retryWrap();
     assert.equal(h.w.wrapRunState().phase, 'following');
     assert.equal(h.last('renderLiveWrapDrawer')[1].retry, true);
+  });
+
+  it('#1540 — a Retry refused for stranded wraps lists them in the drawer, and a later refusal for another reason does not', async () => {
+    await wrapToBlocked(h);
+    const items = [{ remote: 'r', branch: 'wrap/1-x', headSha: 'f'.repeat(40) }];
+    h.net.post = null;
+    h.sandbox.api.lastError = 'Not starting the wrap';
+    h.sandbox.api.lastErrorCode = 'STRANDED_WRAPS';
+    h.sandbox.api.lastBody = { code: 'STRANDED_WRAPS', items };
+    h.net.status = { runId: RUN, running: false, finishedAt: 1, result: BLOCKED_RESULT };
+    await h.w.retryWrap();
+    assert.deepEqual(h.last('renderWrapDrawerError'), ['Not starting the wrap']);
+    assert.deepEqual(h.last('renderWrapDrawerStranded'), [items]);
+
+    h.sandbox.api.lastError = 'Incorrect password';
+    h.sandbox.api.lastErrorCode = 'FORBIDDEN';
+    h.sandbox.api.lastBody = { code: 'FORBIDDEN' };
+    await h.w.retryWrap();
+    assert.equal(h.count('renderWrapDrawerStranded'), 1, 'a refusal for another reason lists nothing new');
   });
 
   it('#1406 — Retry sends the Include / Leave choices and keeps an earlier answer the list no longer shows', async () => {

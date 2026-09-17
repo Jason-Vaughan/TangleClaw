@@ -701,6 +701,8 @@ describe('the dashboard actually consults the helpers (#885)', () => {
         filterProjects: () => (filtered === undefined ? projects : filtered),
         renderCard: (p) => `<card>${p.name}</card>`,
         renderRootPanel: () => '<ROOT-PANEL>',
+        openCardDetail: null,
+        ensureStrandedItems: () => {},
         state: { projects, projectsScan: scan },
         tcScanNotice: globalThis.tcScanNotice
       })();
@@ -978,6 +980,7 @@ describe('the dashboard actually consults the helpers (#885)', () => {
         esc,
         renderSessionDetail: () => 'SESSION-DELEGATED',
         renderAwarenessDetail: () => '',
+        renderStrandedDetail: () => '',
         renderGitDetail: () => 'GIT-DELEGATED',
         tcUnreadableNotice: () => ({ why: 'FOLDER-DELEGATED', remedy: '' }),
         renderNextActionRow: () => ''

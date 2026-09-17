@@ -4456,6 +4456,65 @@
     return 'This engine';
   }
 
+  /**
+   * The keys a client sends back to act on listed stranded wraps: the launch's
+   * `acknowledgeStranded` and a wrap's `options.proceedPastStranded` (#1539,
+   * #1540). The server matches remote, branch and head SHA exactly, so they
+   * are copied as listed, never rebuilt.
+   *
+   * @param {Array<object>} items - Items from a `STRANDED_WRAPS` refusal
+   * @returns {Array<{remote: string|null, branch: string, headSha: string|null}>}
+   */
+  function tcStrandedKeys(items) {
+    return (Array.isArray(items) ? items : [])
+      .filter((i) => i && typeof i.branch === 'string')
+      .map((i) => ({ remote: i.remote == null ? null : i.remote, branch: i.branch, headSha: i.headSha == null ? null : i.headSha }));
+  }
+
+  /**
+   * What a wrap held by stranded wraps means, in words: the text both pages'
+   * wrap dialogs and the drawer show above the list, so they never disagree.
+   * @param {number} n - How many items are listed
+   * @returns {string}
+   */
+  function tcStrandedWrapNotice(n) {
+    return `${n} earlier wrap branch${n === 1 ? ' was' : 'es were'} pushed with no pull request and nobody has acknowledged `
+      + `${n === 1 ? 'it' : 'them'}. Wrapping now does not acknowledge ${n === 1 ? 'it' : 'them'}: `
+      + `${n === 1 ? 'it' : 'they'} will still hold the next launch.`;
+  }
+
+  /**
+   * The list of stranded wraps shown by a launch or wrap refusal, and by a
+   * project card's detail panel. Pure: it returns HTML and touches no DOM, so
+   * every surface shows an item the same way. The full SHA is shown because
+   * acting on an item needs it.
+   *
+   * @param {Array<object>} items - Stranded-wrap items from the API
+   * @returns {string} A `<ul>`, or '' for no items
+   */
+  function tcStrandedItemsMarkup(items) {
+    const list = Array.isArray(items) ? items.filter((i) => i && typeof i.branch === 'string') : [];
+    if (list.length === 0) return '';
+    const rows = list.map((i) => {
+      const date = typeof i.recordedAt === 'string' && i.recordedAt ? i.recordedAt.slice(0, 10) : 'unknown date';
+      const sha = typeof i.headSha === 'string' && i.headSha
+        ? ` at <code class="stranded-sha">${tcEscapeHtml(i.headSha)}</code>`
+        : ' (older record, no head SHA)';
+      const remote = typeof i.remote === 'string' && i.remote
+        ? `<span class="stranded-remote">${tcEscapeHtml(i.remote)}</span>`
+        : '';
+      const acked = i.acknowledged === true
+        ? ` <span class="stranded-acked">acknowledged${typeof i.acknowledgedBy === 'string' && i.acknowledgedBy ? ` by ${tcEscapeHtml(i.acknowledgedBy)}` : ''}</span>`
+        : '';
+      return `<li class="stranded-item"><code class="stranded-branch">${tcEscapeHtml(i.branch)}</code>${sha}, `
+        + `recorded ${tcEscapeHtml(date)}${acked}${remote ? ` ${remote}` : ''}</li>`;
+    });
+    return `<ul class="stranded-list">${rows.join('')}</ul>`;
+  }
+
+  global.tcStrandedKeys = tcStrandedKeys;
+  global.tcStrandedWrapNotice = tcStrandedWrapNotice;
+  global.tcStrandedItemsMarkup = tcStrandedItemsMarkup;
   global.tcHonoredLaunchModes = tcHonoredLaunchModes;
   global.tcResolveEngineProfile = tcResolveEngineProfile;
   global.tcSettingDisposition = tcSettingDisposition;

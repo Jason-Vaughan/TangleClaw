@@ -146,7 +146,14 @@ function wrapGlobals(stubs, document) {
       tcWrapRunController: controller
     },
     sessionState: {}, projectName: 'demo',
-    closeWrapModal() {}
+    closeWrapModal() {},
+    // #1540: no stranded wraps are listed in these cases.
+    wrapModalStrandedItems: null, wrapProceedPastStranded: [], lastRefusedStrandedItems: null,
+    wrapKeepRunning: false,
+    wrapModalNeedsStrandedConfirm: () => false,
+    syncWrapModalConfirm() {},
+    showWrapModalStranded() {},
+    tcStrandedKeys: () => []
   };
 }
 
@@ -322,7 +329,8 @@ describe('#83 — form handlers render the server reason, not a guess', () => {
       const { document, el } = fakeDocument({});
       const ctx = lift(SRC.landing, ['async function confirmWrap('], {
         api, apiMutate, document,
-        wrapTarget: 'proj', wrapInFlight: false,
+        wrapTarget: 'proj', wrapInFlight: false, wrapStrandedItems: null,
+        syncWrapConfirmButton() {}, showWrapStranded() {},
         closeWrapModal() {}, loadProjects: async () => {}
       });
       await ctx.confirmWrap();

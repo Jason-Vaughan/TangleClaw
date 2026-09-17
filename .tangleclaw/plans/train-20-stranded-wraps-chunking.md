@@ -22,10 +22,10 @@ Status: PROPOSED 2026-09-15 by Builder, for the Coordinator to file as issues. D
 
 - **`wrap.auto_pr` rows carry `branch` but not the remote or the head SHA.** Acknowledgements are keyed
   on (remote, branch, headSha), so Chunk 01 starts recording both. Older rows can't carry them, which
-  matches their being grandfathered. See `train-20-chunk-01.md` D1–D2.
+  matches their being grandfathered. See `archive/train-20-chunk-01.md` D1–D2.
 - **`activity_log` keeps at most 500 rows per event type (#869).** This install has 62 `wrap.auto_pr` rows
   since August, so a stranded row would be evicted within months. Chunk 01 writes stranded wraps to
-  their own rare event type (`wrap.stranded`). See `train-20-chunk-01.md` D3.
+  their own rare event type (`wrap.stranded`). See `archive/train-20-chunk-01.md` D3.
 - **Only #868 exists as an issue.** The Coordinator is filing the other eight (requested 2026-09-16).
 
 ## Chunks

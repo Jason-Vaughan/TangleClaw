@@ -491,6 +491,23 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
         <label class="form-label" for="wrapPassword">Password</label>
         <input type="password" class="password-input" id="wrapPassword" autocomplete="off">
       </div>
+      <!-- #1558 — a finished wrap ends the session unless this is ticked.
+           Unticked on every open. -->
+      <div class="form-group">
+        <label class="wrap-keep-running">
+          <input type="checkbox" id="wrapKeepRunning">
+          <span>Keep the session running</span>
+        </label>
+        <div class="form-hint wrap-keep-running-hint">Records everything but leaves the session open. Use it to save state mid-session.</div>
+      </div>
+      <div id="wrapStranded" class="stranded-block hidden">
+        <p class="modal-text" id="wrapStrandedText"></p>
+        <div id="wrapStrandedList"></div>
+        <label class="stranded-confirm">
+          <input type="checkbox" id="wrapStrandedConfirm">
+          <span>Wrap anyway; these stay flagged</span>
+        </label>
+      </div>
       <div id="wrapError" class="form-error hidden" role="alert"></div>
       <div class="modal-actions">
         <button class="btn" id="wrapCancelBtn">Cancel</button>
@@ -509,6 +526,20 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
       <div class="modal-actions">
         <button class="btn" onclick="closeLaunchModeModal()">Cancel</button>
         <button class="btn btn-primary" id="launchModeConfirmBtn" onclick="confirmLaunchMode()">Launch</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stranded Wraps Launch Modal (#1539) -->
+  <div class="modal-backdrop" id="strandedLaunchModal">
+    <div class="modal-content" role="dialog" aria-label="Stranded wraps" aria-modal="true" style="max-width:560px">
+      <h3 class="modal-title">Stranded wraps</h3>
+      <p class="modal-text" id="strandedLaunchText"></p>
+      <div id="strandedLaunchList"></div>
+      <div id="strandedLaunchError" class="form-error hidden" role="alert"></div>
+      <div class="modal-actions">
+        <button class="btn" id="strandedLaunchCancelBtn">Cancel</button>
+        <button class="btn btn-primary" id="strandedLaunchConfirmBtn">Acknowledge and launch</button>
       </div>
     </div>
   </div>

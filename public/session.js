@@ -3606,9 +3606,10 @@ function applyCapabilityGates() {
  */
 function openWrapModal() {
   document.getElementById('wrapText').innerHTML =
-    `Wrap the session for <strong>${esc(projectName)}</strong>? This sends the wrap command and ends the session.`;
+    `Wrap the session for <strong>${esc(projectName)}</strong>? This runs every wrap step, then ends the session unless you keep it running.`;
   document.getElementById('wrapError').classList.add('hidden');
   document.getElementById('wrapPassword').value = '';
+  showWrapModalStranded(null);
   // #540 — reset the bump choice to Auto on every open. Without this a "Major"
   // picked and then cancelled silently re-arms on a later wrap in the same
   // page session, bumping a major nobody asked for this time. The release
@@ -3617,6 +3618,10 @@ function openWrapModal() {
   if (bumpEl) bumpEl.value = '';
   const releaseEl = document.getElementById('wrapRelease');
   if (releaseEl) releaseEl.value = '';
+  // #1558 — same reason: a keep-running tick from a cancelled wrap must not
+  // keep a later wrap's session open.
+  const keepEl = document.getElementById('wrapKeepRunning');
+  if (keepEl) keepEl.checked = false;
   syncWrapReleaseControls();
   // The mode read at page load may be stale: another tab can change it while
   // this one stays open. Re-read it so the controls match what the server will
@@ -3699,6 +3704,54 @@ function wrapStartInFlight() {
 }
 
 /**
+ * #1540 — stranded wraps the server listed when it refused the wrap this modal
+ * sent, or null. While set, Wrap stays disabled until "Wrap anyway" is ticked.
+ * @type {object[]|null}
+ */
+let wrapModalStrandedItems = null;
+
+/**
+ * Show (or, with null, hide and reset) the modal's stranded-wraps block. A new
+ * list always starts unticked, so the operator confirms what is on screen.
+ * @param {object[]|null} items - Items from a `STRANDED_WRAPS` refusal
+ */
+function showWrapModalStranded(items) {
+  const block = document.getElementById('wrapStranded');
+  if (!block) return;
+  document.getElementById('wrapStrandedConfirm').checked = false;
+  if (!Array.isArray(items) || items.length === 0) {
+    wrapModalStrandedItems = null;
+    block.classList.add('hidden');
+    document.getElementById('wrapStrandedList').innerHTML = '';
+  } else {
+    wrapModalStrandedItems = items;
+    document.getElementById('wrapStrandedText').textContent = tcStrandedWrapNotice(items.length);
+    document.getElementById('wrapStrandedList').innerHTML = tcStrandedItemsMarkup(items);
+    block.classList.remove('hidden');
+  }
+  syncWrapModalConfirm();
+}
+
+/**
+ * True when the modal lists stranded wraps the operator has not confirmed.
+ * @returns {boolean}
+ */
+function wrapModalNeedsStrandedConfirm() {
+  const box = document.getElementById('wrapStrandedConfirm');
+  return Array.isArray(wrapModalStrandedItems) && !(box && box.checked);
+}
+
+/**
+ * Enable Wrap only when no wrap is starting and any listed stranded wraps are
+ * confirmed.
+ */
+function syncWrapModalConfirm() {
+  const confirmBtn = document.getElementById('wrapConfirmBtn');
+  if (!confirmBtn) return;
+  confirmBtn.disabled = wrapStartInFlight() || wrapModalNeedsStrandedConfirm();
+}
+
+/**
  * Close the wrap modal. User-initiated closes (Cancel button and backdrop
  * click — neither passes an explicit `true`; the Cancel handler even passes
  * the click event, hence the strict `!== true`) are blocked while a wrap is
@@ -3721,6 +3774,7 @@ async function confirmWrap() {
   // Re-entrancy guard: a double-click must not fire two wraps. The server's
   // single-flight would refuse the second, but the modal should never ask.
   if (window.tcWrapRunController.isBusy(wrapRunState())) return;
+  if (wrapModalNeedsStrandedConfirm()) return;
 
   // Fresh wrap — drop any ai-content skips accumulated by a prior wrap's
   // retries (#328) so they don't leak into this run.
@@ -3738,6 +3792,12 @@ async function confirmWrap() {
   wrapPathDecisions = {};
   wrapSkipPreflight = false;
   wrapUntrackState = '';
+  // #1540: the stranded wraps confirmed in this modal, if any. Kept for every
+  // Retry of this wrap, like the choices above.
+  wrapProceedPastStranded = Array.isArray(wrapModalStrandedItems) ? tcStrandedKeys(wrapModalStrandedItems) : [];
+  // #1558: kept for every Retry of this wrap, like the choices above.
+  const keepEl = document.getElementById('wrapKeepRunning');
+  wrapKeepRunning = Boolean(keepEl && keepEl.checked);
   const pw = document.getElementById('wrapPassword').value;
   // #540 ask-mode — capture the operator's bump-level choice up front, before
   // version-bump runs. Empty string keeps the CHANGELOG heuristic. Threaded as
@@ -3757,7 +3817,9 @@ async function confirmWrap() {
   // out-of-set value as a reason to skip rather than following the mode).
   const initialOptions = window.tcWrapDrawerHelpers.collectOptionsFromAccessors({
     release: () => wrapReleaseChoice,
-    bumpLevel: () => wrapBumpLevel
+    bumpLevel: () => wrapBumpLevel,
+    proceedPastStranded: () => wrapProceedPastStranded,
+    keepSessionRunning: () => wrapKeepRunning
   });
   if (Object.keys(initialOptions).length > 0) body.options = initialOptions;
 
@@ -3782,6 +3844,12 @@ async function confirmWrap() {
       closeWrapModal(true);
       return;
     }
+    // #1540: stranded wraps hold the wrap. List them and wait for the
+    // operator's confirmation rather than showing a bare refusal.
+    if (lastRefusedStrandedItems) {
+      showWrapModalStranded(lastRefusedStrandedItems);
+      return;
+    }
     // Refused before any run was claimed — surface the server's reason inline
     // and let `finally` re-enable so the operator can fix and retry.
     document.getElementById('wrapError').textContent = wrapRunState().error || 'Wrap failed.';
@@ -3790,6 +3858,9 @@ async function confirmWrap() {
     confirmBtn.disabled = false;
     cancelBtn.disabled = false;
     confirmBtn.textContent = priorLabel;
+    // A refused wrap re-enables Wrap, except while listed stranded wraps
+    // still wait for the operator's confirmation.
+    if (wrapModalNeedsStrandedConfirm()) confirmBtn.disabled = true;
   }
 }
 
@@ -3814,12 +3885,16 @@ async function postWrap(body) {
     'POST',
     body
   );
+  lastRefusedStrandedItems = null;
   if (data && typeof data.runId === 'string') {
     dispatchWrapRun({ type: 'accepted', runId: data.runId });
     return true;
   }
   // Captured first: the probe below must not be able to overwrite the reason.
   const reason = api.lastError;
+  if (api.lastErrorCode === 'STRANDED_WRAPS' && api.lastBody && Array.isArray(api.lastBody.items)) {
+    lastRefusedStrandedItems = api.lastBody.items;
+  }
   const status = await _probeWrapStatus(wrapStatusUrl());
   if (status && typeof status.runId === 'string' && (status.running === true
       || (status.result && typeof status.finishedAt === 'number' && status.finishedAt >= postedAt))) {
@@ -3889,6 +3964,38 @@ let wrapSkipPreflight = false;
 let wrapUntrackState = '';
 
 /**
+ * #1540 — the stranded wraps (`{remote, branch, headSha}`) the operator chose to
+ * wrap past. Kept across retries for the same reason as `wrapSkipPreflight`,
+ * and sent as listed: the server matches each key exactly. Reset by a new wrap
+ * from the modal.
+ * @type {Array<object>}
+ */
+let wrapProceedPastStranded = [];
+
+/**
+ * #1558 — "Keep the session running", chosen in the wrap modal. A finished run
+ * ends the session unless this is true. Replayed on every retry so a stopped
+ * run the operator answers still keeps the session, and reset by a new wrap
+ * from the modal.
+ * @type {boolean}
+ */
+let wrapKeepRunning = false;
+
+/**
+ * #1540 — the stranded wraps named by the last refused wrap POST, or null. The
+ * modal and the drawer read it to show the list instead of a bare refusal.
+ * @type {object[]|null}
+ */
+let lastRefusedStrandedItems = null;
+
+/**
+ * #1540 — the stranded wraps listed in the drawer after a refused Retry, which
+ * its "Wrap anyway" box confirms. Null when the drawer shows none.
+ * @type {object[]|null}
+ */
+let wrapDrawerStrandedItems = null;
+
+/**
  * #540 ask-mode — the operator's chosen version-bump level (`patch`/`minor`/
  * `major`, or `''` for the CHANGELOG heuristic), captured from the wrap modal
  * at `confirmWrap`. Replayed on every retry because the pipeline re-runs from
@@ -3933,8 +4040,10 @@ let currentWrapDisplayedStatus = null;
  * primitive: the wrap-run controller decides when it runs.
  *
  * @param {object} pipelineResult - The run result's `pipelineResult`.
+ * @param {{sessionOutcome?: (string|null)}} [runContext] - What the run did to
+ *   the session (#1558), for the banner.
  */
-function openWrapDrawer(pipelineResult) {
+function openWrapDrawer(pipelineResult, runContext) {
   currentWrapPipelineResult = pipelineResult;
   // Flag the open drawer so a concurrent session-ended poll doesn't start
   // the auto-redirect countdown and navigate the blocked report away (#268).
@@ -3943,7 +4052,7 @@ function openWrapDrawer(pipelineResult) {
   // countdown (a restored run, a late report) — the #268 rule is drawer-open ⇒
   // no auto-redirect, so a countdown already ticking is cancelled here.
   cancelEndedCountdown();
-  renderWrapDrawer(pipelineResult);
+  renderWrapDrawer(pipelineResult, runContext);
   expandWrapDrawer();
 }
 
@@ -4204,10 +4313,12 @@ function renderSkipRoll(pipelineResult) {
  * all shape-to-view-model decisions live in `tcWrapDrawerHelpers`.
  *
  * @param {object} pipelineResult
+ * @param {{sessionOutcome?: (string|null)}} [runContext] - What the run did to
+ *   the session (#1558).
  */
-function renderWrapDrawer(pipelineResult) {
+function renderWrapDrawer(pipelineResult, runContext) {
   const H = window.tcWrapDrawerHelpers;
-  const status = H.summarizePipelineStatus(pipelineResult);
+  const status = H.summarizePipelineStatus(pipelineResult, runContext);
   currentWrapBaseStatus = status;
 
   // Status banner (repaintable — the #638 release resolution repaints it).
@@ -5224,6 +5335,42 @@ function renderWrapDrawerError(message) {
 }
 
 /**
+ * List the stranded wraps that refused a Retry (#1540) in the drawer's decision
+ * area, with a "Wrap anyway" box the next Retry reads. Replaces any earlier
+ * list, so the box always confirms what is on screen.
+ *
+ * @param {object[]} items - Items from the `STRANDED_WRAPS` refusal
+ */
+function renderWrapDrawerStranded(items) {
+  const decisionEl = document.getElementById('wrapDrawerDecision');
+  if (!decisionEl) return;
+  const old = decisionEl.querySelector('.wrap-decision--stranded');
+  if (old) old.remove();
+  wrapDrawerStrandedItems = items;
+  const block = document.createElement('div');
+  block.className = 'wrap-decision wrap-decision--stranded stranded-block';
+  const text = document.createElement('p');
+  text.className = 'wrap-decision-text';
+  text.textContent = tcStrandedWrapNotice(items.length);
+  block.appendChild(text);
+  const list = document.createElement('div');
+  list.innerHTML = tcStrandedItemsMarkup(items);
+  block.appendChild(list);
+  const label = document.createElement('label');
+  label.className = 'stranded-confirm';
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.dataset.optionsKey = 'proceedPastStranded';
+  label.appendChild(box);
+  const span = document.createElement('span');
+  span.textContent = 'Wrap anyway; these stay flagged';
+  label.appendChild(span);
+  block.appendChild(label);
+  decisionEl.appendChild(block);
+  decisionEl.classList.remove('hidden');
+}
+
+/**
  * Collect decision-widget DOM into an options object and POST a retry.
  *
  * The drawer resets the moment the server accepts: the red banner clears, every
@@ -5280,7 +5427,18 @@ async function retryWrap() {
     untrackState: () => {
       const picked = decisionEl.querySelector('.wrap-decision--untrack input[type="radio"]:checked');
       return picked ? picked.value : wrapUntrackState;
-    }
+    },
+    // #1540 — the stranded wraps confirmed under a refused Retry (the server
+    // lists every blocking one, so this list replaces the earlier choice), else
+    // the ones already confirmed for this wrap.
+    proceedPastStranded: () => {
+      const box = decisionEl.querySelector('input[data-options-key="proceedPastStranded"]');
+      return box && box.checked && Array.isArray(wrapDrawerStrandedItems)
+        ? tcStrandedKeys(wrapDrawerStrandedItems)
+        : wrapProceedPastStranded;
+    },
+    // #1558 — the modal's keep-running choice holds for every Retry.
+    keepSessionRunning: () => wrapKeepRunning
   };
 
   const options = H.collectOptionsFromAccessors(accessors);
@@ -5291,6 +5449,8 @@ async function retryWrap() {
   // #1512: the pipeline re-runs from its first step, so the answer must ride
   // every later Retry or session-files would ask again.
   if (options.untrackState) wrapUntrackState = options.untrackState;
+  // #1540: a confirmation given under a refused Retry holds for this wrap.
+  if (options.proceedPastStranded) wrapProceedPastStranded = options.proceedPastStranded;
 
   // #1406: the pipeline re-runs from its first step, so a file already answered
   // must keep its answer or the wrap would ask about it again.
@@ -5708,7 +5868,7 @@ function paintWrapRun(prev, next) {
     case 'settled':
       if (!entered) return;
       if (next.result && next.result.pipelineResult) {
-        openWrapDrawer(next.result.pipelineResult);
+        openWrapDrawer(next.result.pipelineResult, { sessionOutcome: next.result.sessionOutcome });
       } else {
         // A result WITHOUT a pipelineResult: the pipeline threw, or failed
         // before it ran. Show the run's real error — not the restart notice,
@@ -5748,7 +5908,10 @@ function paintWrapRun(prev, next) {
     case 'refused':
       // Only a refused Retry is visible: its reason goes on the report it was
       // retrying. A refused first wrap shows its reason in the wrap modal.
-      if (entered) renderWrapDrawerError(next.error);
+      if (entered) {
+        renderWrapDrawerError(next.error);
+        if (lastRefusedStrandedItems) renderWrapDrawerStranded(lastRefusedStrandedItems);
+      }
       return;
     default:
   }
@@ -5825,6 +5988,8 @@ function adoptWrapRunChoices(options) {
   wrapUntrackState = choices.untrackState;
   wrapPathDecisions = choices.pathDecisions;
   wrapSkippedAiSteps = choices.skipAiContent;
+  wrapProceedPastStranded = choices.proceedPastStranded;
+  wrapKeepRunning = choices.keepSessionRunning;
 }
 
 /**
@@ -6551,6 +6716,7 @@ function bindEvents() {
   // Wrap modal
   $('wrapCancelBtn').addEventListener('click', closeWrapModal);
   $('wrapConfirmBtn').addEventListener('click', confirmWrap);
+  $('wrapStrandedConfirm').addEventListener('change', syncWrapModalConfirm);
   $('wrapRelease').addEventListener('change', syncWrapReleaseControls);
   $('wrapModal').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) closeWrapModal();

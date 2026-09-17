@@ -623,3 +623,61 @@
   font-weight: 600;
   margin-left: 6px;
 }
+
+/* ── Stranded wraps (#1539, #1540, #1541) ──
+   The list a launch or wrap refusal shows (dashboard and session page) and a
+   card's detail row. SHAs are
+   full length because acting on an item needs them, so they wrap anywhere. */
+.stranded-list {
+  margin: 8px 0;
+  padding-left: 18px;
+  font-size: 12px;
+}
+.stranded-item {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+.stranded-sha,
+.stranded-branch {
+  font-size: 11px;
+  word-break: break-all;
+}
+.stranded-remote {
+  display: block;
+  color: var(--text-muted, #9aa0a6);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+/* A disabled dialog button must look disabled. Neither page styled it, so a
+   Wrap held for the "Wrap anyway" tick looked ready and did nothing. */
+.modal-actions .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.stranded-acked {
+  color: var(--text-muted, #9aa0a6);
+  font-style: italic;
+}
+/* A card's detail values are right-aligned, so the list follows them. */
+.detail-value .stranded-list {
+  list-style: none;
+  padding-left: 0;
+  margin: 4px 0 0;
+}
+.stranded-block {
+  margin: 10px 0;
+}
+/* A checkbox with its label beside it: the stranded "Wrap anyway" box and the
+   wrap dialogs' "Keep the session running" (#1558). */
+.stranded-confirm,
+.wrap-keep-running {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-top: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.wrap-keep-running-hint {
+  margin: 2px 0 0 24px;
+}

@@ -5255,14 +5255,9 @@ route('GET', '/api/projects/:project/stranded-wraps', (_req, res, params) => {
   jsonResponse(res, 200, {
     project: { id: project.id, name: project.name },
     items,
-    counts: {
-      total: items.length,
-      unacknowledged: items.filter((i) => !i.acknowledged).length,
-      grandfathered: items.filter((i) => i.grandfathered).length,
-      // Unacknowledged and fully recorded: what "needs attention before
-      // continuing" means. Grandfathered items are listed but never count here.
-      blocking: items.filter(strandedWraps.isBlocking).length
-    }
+    // `blocking` is what holds a launch or a wrap: unacknowledged and fully
+    // recorded. Grandfathered items are listed but never count there.
+    counts: strandedWraps.counts(items)
   });
 });
 
@@ -5569,6 +5564,8 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
     mode: body ? body.mode : undefined,
     launchMode: body ? body.launchMode : undefined,
     continuityMode: body ? body.continuityMode : undefined,
+    // #1539: stranded wraps the operator acknowledges as part of this launch.
+    acknowledgeStranded: body ? body.acknowledgeStranded : undefined,
     owner
   });
 
@@ -5599,6 +5596,7 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
           project: params.project,
           engine: webuiResult.session.engineId,
           sessionMode: 'webui',
+          strandedUnchecked: result.strandedUnchecked || null,
           tmuxSession: null,
           primePrompt: null,
           startedAt: webuiResult.session.startedAt,
@@ -5623,6 +5621,16 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
       // responsive is the remedy.
       return errorResponse(res, 503, result.error, result.code);
     }
+    // #1539: stranded wraps hold the launch. 409 with the items, so the client
+    // can show them and resend the launch acknowledging each one. The other
+    // codes are an acknowledgement in that resend that failed.
+    if (result.code === 'STRANDED_WRAPS') {
+      return errorResponse(res, 409, result.error, result.code, { items: result.items });
+    }
+    const ackStatus = { BAD_REQUEST: 400, NOT_FOUND: 404, WRITE_FAILED: 500 }[result.code];
+    if (ackStatus) {
+      return errorResponse(res, ackStatus, result.error, result.code);
+    }
     if (result.error.includes('already active')) {
       return errorResponse(res, 409, result.error, 'CONFLICT');
     }
@@ -5642,7 +5650,9 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
     primePrompt: result.primePrompt,
     startedAt: result.session.startedAt,
     iframeUrl: null,
-    ttydUrl: result.ttydUrl
+    ttydUrl: result.ttydUrl,
+    // #1539: why the stranded-wrap check was skipped, or null when it ran.
+    strandedUnchecked: result.strandedUnchecked || null
   });
 });
 
@@ -6182,7 +6192,8 @@ route('POST', '/api/sessions/:project/command', (_req, res, params, body) => {
 
 // POST /api/sessions/:project/wrap — Start the wrap pipeline
 // Body: { password?, options? } — `options` carries the per-wrap user choices
-// the drawer collected on retry after a blocked step (`{skipTests, prHandling}`).
+// the wrap modal and the drawer collected (`{skipTests, prHandling, keepSessionRunning, …}`).
+// A finished run ends the session unless `keepSessionRunning` is true (#1558).
 //
 // Answers 202 the moment the run is claimed, with its `runId`; the pipeline runs
 // on and its outcome is read from the stream (`run-done`) or `GET /wrap/status`.
@@ -6217,6 +6228,14 @@ route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => 
       return errorResponse(res, 409, started.error, 'WRAP_IN_PROGRESS',
         started.wrapRun && typeof started.wrapRun.runId === 'string' ? { runId: started.wrapRun.runId } : undefined);
     }
+    // #1540: the stranded-wrap soft block. Nothing was claimed; the client shows
+    // the items and may resend with `options.proceedPastStranded`.
+    if (started.code === 'STRANDED_WRAPS') {
+      return errorResponse(res, 409, started.error, 'STRANDED_WRAPS', { items: started.items });
+    }
+    if (started.code === 'BAD_REQUEST') {
+      return errorResponse(res, 400, started.error, 'BAD_REQUEST');
+    }
     return errorResponse(res, 404, started.error, 'NOT_FOUND');
   }
 
@@ -6230,6 +6249,8 @@ route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => 
     // `lib/wrap-run-registry.js` — NOT the `sessions.status` column, which has
     // no such value (#1034).
     status: 'wrapping',
+    // #1540: why the stranded-wrap check was skipped, or null when it ran.
+    strandedUnchecked: started.strandedUnchecked || null,
     statusUrl: `/api/sessions/${project}/wrap/status`,
     streamUrl: `/api/sessions/${project}/wrap/stream/${encodeURIComponent(started.runId)}`
   });
@@ -6243,7 +6264,7 @@ route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => 
  *
  * @param {string} projectName - Route-level project name
  * @param {object} result - The run's recorded outcome
- * @returns {object} Result payload
+ * @returns {object} Result payload, with `sessionOutcome` (`ended`|`kept`|null)
  */
 function _wrapResultPayload(projectName, result) {
   const payload = {
@@ -6260,7 +6281,13 @@ function _wrapResultPayload(projectName, result) {
     status: result.ok ? 'wrapping' : 'blocked',
     wrapCommand: result.wrapCommand,
     wrapSteps: result.wrapSteps,
-    captureFields: result.captureFields
+    captureFields: result.captureFields,
+    // #1558 — what the run did to the session, for the drawer's banner:
+    // `ended` when it recorded the wrap and ended the session, `kept` when the
+    // operator asked to keep it running, null when the run did not finish or
+    // the session had already ended some other way (killed mid-wrap). A plain
+    // boolean would call a killed session "still running".
+    sessionOutcome: result.lifecycleCompleted === true ? 'ended' : (result.sessionKept === true ? 'kept' : null)
   };
   if (result.pipelineResult) payload.pipelineResult = result.pipelineResult;
   if (!result.ok && result.error) payload.error = result.error;
