@@ -2242,6 +2242,11 @@ function renderProjectRulesSection(project) {
         <div class="form-hint">The last five launches: whether the startup-rule block reached the engine, on which channel, and why not when it did not.</div>
         <div class="session-rules-list" id="projRuleDeliveriesList" aria-live="polite"></div>
       </div>
+      <div class="form-group">
+        <div class="form-label">Launch readiness</div>
+        <div class="form-hint">The last five launches' own evidence, kept separate because the three answer different questions: which <strong>rules channel</strong> the prime used and what became of it, how much of the launch sequence was <strong>served</strong>, and how much the session <strong>acknowledged</strong> and attested.</div>
+        <div class="session-rules-list" id="projLaunchSequencesList" aria-live="polite"></div>
+      </div>
       <div id="projRulesPwGroup" class="form-group hidden">
         <label class="form-label" for="projRulesPw">Delete password (required to approve a proposed rule)</label>
         <input type="password" class="form-input" id="projRulesPw" autocomplete="current-password">
@@ -2334,6 +2339,7 @@ async function loadProjectRules(projectId) {
   }
 
   await refreshProjectRuleDeliveries(projectId);
+  await refreshProjectLaunchSequences(projectId);
 }
 
 /**
@@ -2400,6 +2406,79 @@ function renderProjectRuleDeliveries(deliveries) {
         <strong>${esc(d.sessionId)}</strong>: <span class="${outcomeClass}">${esc(d.outcome)}</span>
         ${d.skipReason ? `<br><small class="session-rule-meta">Reason: ${esc(d.skipReason)}</small>` : ''}
         <br><small class="session-rule-meta">Channel: ${esc(d.channel)} | Digest: <code>${esc(d.digest ? d.digest.slice(0, 8) : 'none')}</code> | Rules: ${d.ruleIds ? d.ruleIds.length : 0}</small>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/**
+ * Fetch this project's recent launch sequences and render their evidence — the
+ * rows, the true empty state, or the unknown. The same three-state shape as the
+ * rule-delivery ledger above (#1054, #1164): a `null` from `api()` is a read
+ * that did not happen, and a payload without a `sequences` array is not an
+ * answer, so neither renders as "no launches".
+ * @param {number} projectId - DB project id
+ * @returns {Promise<boolean|null>} `true` when rows rendered from a real read,
+ *   `false` when the read failed, `null` when the modal moved on meanwhile.
+ */
+async function refreshProjectLaunchSequences(projectId) {
+  const data = await api(`/api/launch-sequences?projectId=${encodeURIComponent(projectId)}`);
+  if (projectRulesTargetId !== projectId) return null;
+  const list = document.getElementById('projLaunchSequencesList');
+  if (!list) return null;
+  if (!data || !Array.isArray(data.sequences)) {
+    list.innerHTML = window.tcRulesUnknownHtml('Launch readiness',
+      window.tcDegradedRead(false, data ? 'the server answered without a list' : api.lastError,
+        'Close and reopen Settings to retry.'));
+    return false;
+  }
+  renderProjectLaunchSequences(data.sequences);
+  return true;
+}
+
+/**
+ * Render the launch-readiness rows.
+ *
+ * Every row says all three things, including the ones that are nothing: a
+ * session with no hook record and a session whose hook failed look identical if
+ * the absent case is left blank, and telling them apart is the whole reason
+ * these three records are kept separately (plan §2.5).
+ * @param {object[]} sequences - Rows from `GET /api/launch-sequences`, newest first
+ */
+function renderProjectLaunchSequences(sequences) {
+  const list = document.getElementById('projLaunchSequencesList');
+  if (!list) return;
+  if (sequences.length === 0) {
+    list.innerHTML = '<p class="session-rules-empty">No launch sequences recorded for this project.</p>';
+    return;
+  }
+  list.innerHTML = sequences.map((s) => {
+    const cls = window.tcLaunchReadinessClass(s);
+    if (s.applicability === 'not-applicable') {
+      return `<div class="session-rule-item">
+        <div class="session-rule-content">
+          <strong>${esc(s.sessionId)}</strong>: <span class="${cls}">no launch sequence</span>
+          <br><small class="session-rule-meta">${esc(s.notApplicableReason || 'no reason recorded')}</small>
+        </div>
+      </div>`;
+    }
+    const served = s.steps.filter((st) => st.servedAt).length;
+    const acked = s.steps.filter((st) => st.ackedAt).length;
+    const state = s.readyAt
+      ? `attested ${esc(s.readyAt)}`
+      : (s.unreadyAt ? `not attested — window passed ${esc(s.unreadyAt)}` : 'not attested yet');
+    const rules = s.rulesDelivery
+      ? `${esc(s.rulesDelivery.outcome)} (${esc(s.rulesDelivery.channel)})${s.rulesDelivery.skipReason ? `: ${esc(s.rulesDelivery.skipReason)}` : ''}`
+      : 'no record — nothing recorded a rule delivery for this launch';
+    const nudges = s.nudgeCount > 0
+      ? `nudged ${esc(s.nudgeCount)}×, last ${esc(s.lastNudgedAt)}`
+      : 'not nudged';
+    return `<div class="session-rule-item">
+      <div class="session-rule-content">
+        <strong>${esc(s.sessionId)}</strong>: <span class="${cls}">${state}</span>
+        <br><small class="session-rule-meta">Rules channel: ${rules}</small>
+        <br><small class="session-rule-meta">Served: ${esc(served)}/${esc(s.of)} step(s) | Acknowledged: ${esc(acked)}/${esc(s.of)} | ${nudges}</small>
+        <br><small class="session-rule-meta">Launched ${esc(s.createdAt)} | revision ${esc(s.revision)}</small>
       </div>
     </div>`;
   }).join('');

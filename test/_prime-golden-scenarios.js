@@ -115,6 +115,12 @@ function buildScenarios(store, baseDir) {
       options: { medusaWorkspaceId: 'golden-full-cafe0123', operatorHost: 'operator.example.test', healReport: 'Launch heal: moved one leftover file.' }
     },
     { name: 'paste-codex', project: paste, engineId: 'codex', options: { operatorHost: 'operator.example.test' } },
+    // The same paste engine WITH a launch sequence (#1584). Its rules are not
+    // pasted: the sequence serves them in full and records that they were read,
+    // so the prime carries the pointer instead. Pinned as its own scenario
+    // rather than by editing `paste-codex`, because both cases still happen —
+    // an engine that declares no sequence keeps the paste.
+    { name: 'paste-codex-pull', project: paste, engineId: 'codex', options: { operatorHost: 'operator.example.test', launchSequence: true } },
     // The heal report is a directive (it never yields), so an oversized one
     // overflows the channel after every bulk section has yielded.
     { name: 'overflow-claude', project: huge, engineId: 'claude', options: { operatorHost: null, healReport: `Heal: ${'h'.repeat(9000)}` } },

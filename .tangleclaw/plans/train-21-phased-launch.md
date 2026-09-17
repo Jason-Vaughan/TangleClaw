@@ -11,7 +11,7 @@ governed_by:
   - .tangleclaw/plans/master-startup-and-wrap.md      # Master startup — excluded here, see §2.9
   - project rule: ENGINE-AGNOSTIC BY CONSTRUCTION
 scope: train-21-phased-launch
-branch: feat/train-21-chunk-01   # the chunk in flight; the gates resolve the active plan by this claim
+branch: feat/train-21-chunk-02   # the chunk in flight; the gates resolve the active plan by this claim
 partition: serial — every chunk edits lib/sessions.js, lib/store.js and server.js; the chunks that touch public/ run in a worktree
 ---
 
@@ -651,9 +651,12 @@ engine-name branches.
 - `launch_sequences`, `launch_sequence_steps`, `handoff_publications` and `project_handoff_epoch`
   use logical references and are **kept** when a session or project is deleted, like the delivery
   ledgers.
-- Train 21 adds no DB pruning. Growth per launch is `4 + 3·(revisions − 1)` step rows (one more
-  if step 1 is re-rendered), each holding up to `page_count × page_budget` characters of frozen
-  content. It is typically ~30 KB, more under rule churn.
+- Train 21 adds no DB pruning. Growth per launch is `4 · revisions` step rows: every revision
+  writes a full set of four, because a carried step 1 is written as a row of its own at the new
+  revision (that is what carries its acknowledgement forward). Each row holds up to
+  `page_count × page_budget` characters of frozen content, so a launch is typically ~30 KB and
+  a rule-churning one is a multiple of that. Measured, not estimated: the count is what
+  `store.launchSequences.revise` inserts.
 - Growth per wrap attempt is one `handoff_publications` row plus one `history/` file.
 - `history/` files are the only thing pruned: the newest 50 per project are kept. The DB row keeps
   the digest, so pruning a file never loses the record that the publication existed.
@@ -668,8 +671,11 @@ engine-name branches.
 
 - **prime-delivery §1** (channel per concern, declared limits) — **conforms** (`toolOutput.maxChars`).
 - **§2** (cost scales with relevance) — **conforms**.
-- **§3** (presence delivered) — **conforms while `pasteRules=paste`**. The amendment is *proposed*
-  (R1) and is recorded and ratified before 21.6 changes any default.
+- **§3** (presence delivered) — **conforms**. The operator ratified R1 on 2026-09-17 and the
+  amendment ("An acknowledged pull is delivery") is written into
+  `.prawduct/artifacts/prime-delivery-direction.md` §3 in the same work cycle as the default flip
+  to `pull` (#1584). The amendment states the three conditions that bound the permission, and the
+  code honours all three.
 - **§4** (confirmed delivery) — **conforms, strengthened**, with per-channel evidence kept honest
   (§2.5).
 - **§5** (visible omission) — **conforms**: required content is paginated, never yielded; withheld
@@ -709,7 +715,7 @@ Chunks are sequential; each one merges before the next begins.
   - a restart serves identical frozen bytes
 
 ### Chunk 02 — READY, unready, rule revision
-- **21.4** (#1582) `tc start ready` + `tc.ready/1` validation (server-owned verdict, duplicate/conflict/ended cases) + snapshot revision on rule change
+- **21.4** (#1582) `tc start ready` + the tc.ready/1 artifact validated in `lib/launch-sequence.js` (server-owned verdict, duplicate/conflict/ended cases) + the route in `server.js` + the subverb in `lib/tc-verbs.js` + snapshot revision on rule change
 - **21.5** (#1583) unready window + single nudge (durable counters) + dashboard readiness/evidence panel (`public/`, worktree). **Refs #1176, does not close it.**
 - **21.6** (#1584) `launchSequence.pasteRules: paste|pull`. R1 was ratified 2026-09-17, so this PR writes the dated amendment into `prime-delivery-direction.md` §3 **and** flips the default to `pull`, together.
 - **Acceptance cases:** restart under a changed rule set → `SNAPSHOT_REVISED`; step 1 carried over only on byte-equal content; READY with a wrong verdict; duplicate vs conflicting READY; READY after the session ended. Visual change: yes → VRF entry.
@@ -760,6 +766,59 @@ Chunk 03 (a whole-trajectory review before parity).
 
 ---
 
+## 4a. Chunk 02 implementation decisions
+
+Written before the code, because each one answers a question the blueprint leaves to the build.
+
+- **A revision needs the launch's render context, so the snapshot stores it.** Re-rendering steps
+  2–4 at a new revision calls the same collector the launch called, and that collector takes
+  launch-time-only inputs (`medusaWorkspaceId`, `continuityMode`, `operatorHost`, `healReport`) which
+  no later request can recompute. They are recorded in `source_manifest.renderContext` — the manifest
+  already answers "what was this snapshot built from", and the render context is literally that. No
+  new column, so v40 is unchanged and v41 stays Chunk 03's.
+  A sequence created before this version carries no render context: it is re-rendered from what is
+  knowable now, and the revised manifest records `renderContext: null` so the gap is visible in
+  `tc start status` rather than silent.
+- **`pasteRules=pull` drops the pasted rule text only when a sequence will actually serve it.** The
+  setting is read together with this launch's applicability: on an engine that declares no launch
+  sequence, or a launch whose prime is disabled, the rules stay pasted. A pointer to a channel the
+  session does not have is the #749 failure one engine over.
+- **The reconciliation condition stays as approved: ANY revision demands one.** A revision that
+  preceded every serve was briefly narrowed out of it during the Critic pass; that narrowed a
+  ratified acceptance condition, so it was reverted. What the earlier-revision read decides now is
+  the WORDING — a session that was served nothing is told the steps it read are not the ones this
+  launch first rendered, rather than that "part of what you acknowledged has been replaced", which
+  states a proxy as a fact.
+- **A pointer paste records a rules SKIP, and the paste's own outcome is not recorded at all.**
+  The ledger's subject is rule delivery, so a prime that carried a pointer records
+  `channel: none, outcome: skipped` naming the sequence — never a `delivered` row carrying the rule
+  digest, which is what prime-delivery §4 forbids. The consequence is deliberate and is filed as
+  #1597: the paste still runs behind its readiness gate and its re-paste guard, but on a pull
+  launch nothing durable says what became of it. `projectsWithUndeliveredRules` excludes that one
+  documented skip, because whether the rules were read is answered by the launch's own record;
+  the skip stays a skip (no cross-upgrades).
+- **The §3 amendment is on disk, not in the PR diff.** `.prawduct/artifacts/` is gitignored in this
+  repo by deliberate choice (`.gitignore` publishes three migration artifacts and nothing else), so
+  the amendment cannot ride in a commit. It is written into
+  `.prawduct/artifacts/prime-delivery-direction.md` in the same work cycle as the flip, which is
+  what "the same PR" protects — the default never moves ahead of the recorded ratification — and the
+  PR body says where to read it.
+- **`pasteRules` gets no `ENGINE_CONDITIONAL_SETTINGS` row.** That table exists to explain a
+  settings-modal control that is disabled, and this setting has no control: it lives in
+  `.tangleclaw/project.json`. A row would add a browser mirror, probes and a parity loop for a
+  disposition nobody renders. The honest-absence requirement is met where the setting is
+  observable instead — the prime's "Rule sources in force" line names the carrier that actually
+  carried the rules, and a launch whose setting asked for `pull` without a sequence logs that it
+  pasted them anyway.
+- **The unready monitor reuses the wake monitor's idle gate rather than growing a second one.**
+  `medusaWake.assessSessionIdle` already decides whether a pane is safe to type into, and
+  `lib/sessions.js#_awaitPaneReady` already reuses it, so the nudge injects through
+  `sessions.injectCommand` behind the same verdict. A pane that is not typeable is left alone and
+  the tick retries; `nudge_count` counts nudges SENT, never ticks.
+- **The readiness panel is the settings modal's evidence surface, beside Rule deliveries.** That is
+  where the hook-channel ledger already renders, and §2.5's requirement is that the three kinds of
+  evidence be readable side by side — which means one panel, not a second place to look.
+
 ## 5. Open assumptions
 
 - `[ASSUMPTION: tc output reaches the model intact up to toolOutput.maxChars per engine | HIGH | Chunk 01 spike measures it; unknown engines default to a conservative 8000 and say so]`
@@ -807,6 +866,16 @@ Chunk 03 (a whole-trajectory review before parity).
     assumed. Their live `tc`-in-pane probe is car 21.11's.
   - Step 3 serves a `not-evaluated` preflight verdict that says nothing is known about the handoff —
     the real verdict is Chunk 03's.
-- [ ] Chunk 02
+- [x] Chunk 02 — built 2026-09-17 (#1582/#1583/#1584). Deltas from the blueprint, all recorded in §4a:
+  - The snapshot records the launch's **render context**, because a revision re-renders steps 2–4
+    and the collector takes launch-time-only inputs no later request can recompute.
+  - `pasteRules=pull` drops the pasted rule text **only when a sequence will actually serve it**,
+    and the prime is re-rendered with the rules pasted if the snapshot degrades after the fact.
+  - A pointer paste records a rules **skip** naming the sequence, never a `delivered` row carrying
+    the rule digest; `projectsWithUndeliveredRules` excludes that one skip. The prime paste's own
+    outcome is then unrecorded — filed as #1597.
+  - The reconciliation condition stays **unnarrowed**: every revision demands one, and only the
+    wording is derived from whether anything was served.
+  - Retention follow-up #1595 and the nudge-verdict record #1596 filed from the Critic pass.
 - [ ] Chunk 03
 - [ ] Chunk 04

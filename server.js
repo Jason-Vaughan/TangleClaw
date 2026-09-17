@@ -304,6 +304,7 @@ const ttydBind = require('./lib/ttyd-bind');
 const wrapSentinel = require('./lib/wrap-sentinel');
 const { WRAP_STREAM_EVENTS } = require('./public/wrap-stream-events');
 const medusaWake = require('./lib/medusa-wake');
+const launchUnready = require('./lib/launch-unready');
 const authIdentity = require('./lib/auth-identity');
 const authSession = require('./lib/auth-session');
 const authGate = require('./lib/auth-gate');
@@ -4159,6 +4160,66 @@ route('GET', '/api/session-rules/deliveries', (req, res) => {
   return jsonResponse(res, 200, { undelivered: store.sessionRuleDeliveries.projectsWithUndeliveredRules() });
 });
 
+// GET /api/launch-sequences?projectId= — the readiness evidence for a project's
+// recent launches (Train 21, #1583).
+//
+// Three kinds of evidence, side by side and never merged (plan §2.5): the
+// rule-delivery ledger's own row for the prime channel, what the sequence
+// SERVED, and what the session ACKNOWLEDGED and attested. They answer different
+// questions and no one of them upgrades another — a hook receipt proves a hook
+// ran in a directory, not which session's rules landed, which is why a pulled
+// sequence keeps its own record.
+route('GET', '/api/launch-sequences', (req, res) => {
+  const query = parseQuery(reqUrl(req).search);
+  const projectId = Number(query.projectId);
+  if (!Number.isInteger(projectId)) {
+    return errorResponse(res, 400, 'projectId is required (the project\'s numeric id)', 'BAD_REQUEST');
+  }
+  const limit = query.limit === undefined ? 5 : Number(query.limit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+    return errorResponse(res, 400, 'limit must be a whole number between 1 and 50', 'BAD_REQUEST');
+  }
+  const sequences = store.launchSequences.listForProject(projectId, limit).map((sequence) => {
+    const steps = store.launchSequences.listSteps(sequence.id, sequence.revision);
+    // The rule-delivery row for this same session, so the panel can put the two
+    // channels beside each other. Looked up per sequence rather than joined: the
+    // ledger is keyed by session, and a session may have no row at all, which is
+    // a fact to show rather than a row to invent.
+    const rulesRow = store.sessionRuleDeliveries.listForSession(sequence.sessionId)[0] || null;
+    return {
+      sequenceId: sequence.id,
+      sessionId: sequence.sessionId,
+      revision: sequence.revision,
+      applicability: sequence.applicability,
+      notApplicableReason: sequence.notApplicableReason,
+      createdAt: sequence.createdAt,
+      cursor: sequence.cursor,
+      of: steps.length,
+      readyAt: sequence.readyAt,
+      unreadyAt: sequence.unreadyAt,
+      nudgeCount: sequence.nudgeCount,
+      lastNudgedAt: sequence.lastNudgedAt,
+      // Named `rulesDelivery`, not `hook`: the row it comes from records
+      // whichever channel the prime used for the rule text — the startup hook,
+      // a paste, or the deliberate skip a pulled launch writes. Calling it the
+      // hook labelled three different facts with one of their names.
+      rulesDelivery: rulesRow
+        ? { outcome: rulesRow.outcome, channel: rulesRow.channel, skipReason: rulesRow.skipReason || null }
+        : null,
+      steps: steps.map((st) => ({
+        index: st.index,
+        id: st.id,
+        pageCount: st.pageCount,
+        pagesServed: st.pagesServed.length,
+        servedAt: st.servedAt,
+        ackedAt: st.ackedAt,
+        carriedFromRevision: st.carriedFromRevision
+      }))
+    };
+  });
+  return jsonResponse(res, 200, { sequences });
+});
+
 // POST /api/tc/rule-receipt — the startup-rules hook vouching that it RAN
 // (#1063).
 //
@@ -4248,6 +4309,22 @@ route('POST', '/api/tc/start/next', (req, res, _params, body) => {
     ack: sent.ack,
     page: sent.page === null || sent.page === undefined ? undefined : sent.page
   });
+  return jsonResponse(res, result.status, result.body);
+});
+
+// POST /api/tc/start/ready — record the agent's attestation that it read and
+// acknowledged its whole launch sequence (Train 21, #1582).
+//
+// The verdict in the artifact must equal the one the server recorded: it is how
+// the attestation evidences that step 3 was read, so the refusal deliberately
+// does not echo the right answer back.
+//
+// READY is initialization, NOT task authorization, and it is an unauthenticated
+// local attestation (see `lib/launch-sequence.js`). A forged one marks a
+// sequence read; it grants nothing and changes no operator confirmation rule.
+route('POST', '/api/tc/start/ready', (req, res, _params, body) => {
+  const { launchId, projectId } = _launchIdentity(req);
+  const result = launchSequence.ready({ launchId, projectId, artifact: body || null });
   return jsonResponse(res, result.status, result.body);
 });
 
@@ -10099,6 +10176,11 @@ if (require.main === module) {
     // watcher that types a fixed nudge into an opted-in (`medusaWake`) session
     // when fresh inbound mail is waiting and the pane is at a bare prompt.
     medusaWake.start();
+    // Start the unready-launch monitor (Train 21, #1583) — records the launches
+    // that have not attested READY inside their window and nudges each one once,
+    // behind the same idle gate the wake monitor uses. It records and reminds;
+    // it gates nothing.
+    launchUnready.start();
     // Re-sync Medusa listeners for live sessions (TC#550, MED-2K9P v2 T4) —
     // listeners are in-memory, so without this a server restart silently
     // deregistered every running session from the switchboard.
@@ -10143,6 +10225,7 @@ if (require.main === module) {
     tunnelMonitor.stop();
     wrapSentinel.stop();
     medusaWake.stop();
+    launchUnready.stop();
     clearInterval(_lockExpiryInterval);
     server.close();
     store.close();

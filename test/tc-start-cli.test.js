@@ -173,6 +173,24 @@ describe('tc start (car 21.3)', () => {
     assert.equal(unbound.body.retryAfterMs, launchSequence.NOT_BOUND_RETRY_MS);
   });
 
+  it('POST /api/tc/start/ready is wired to the sequence, and needs a launch id', async () => {
+    // Deliberately independent of how far the other tests have advanced this
+    // sequence: any cursor short of four is the same refusal, so the assertion
+    // is about the route being wired rather than about test order.
+    const early = await request(server, 'POST', '/api/tc/start/ready', paneHeaders(), {
+      schema: 'tc.ready/1',
+      preflightVerdict: 'not-evaluated',
+      proposedFirstAction: 'confirm the next chunk with the operator'
+    });
+    assert.equal(early.status, 409);
+    assert.equal(early.body.code, 'STEPS_UNACKED');
+
+    const legacy = await request(server, 'POST', '/api/tc/start/ready',
+      { 'x-tangleclaw-project-id': String(project.id) }, { schema: 'tc.ready/1' });
+    assert.equal(legacy.status, 409);
+    assert.equal(legacy.body.code, 'LAUNCH_ID_REQUIRED');
+  });
+
   it('records one awareness receipt per invocation, labelled by subverb', async () => {
     store.getDb().prepare('DELETE FROM awareness_receipts').run();
     await request(server, 'POST', '/api/tc/start/next', paneHeaders(), {});
@@ -212,7 +230,8 @@ describe('tc start (car 21.3)', () => {
     // The disclosure three records promise, asserted where the reader meets it:
     // drop it from the payload or the renderer and this goes red.
     assert.match(status.stdout, /Pages are sized to \d+ characters, against this engine's measured \d+-character tool-output limit\./);
-    assert.match(status.stdout, /Not in this version: ready, unready, recovery/);
+    assert.match(status.stdout, /Not in this version: recovery/);
+    assert.match(status.stdout, /READY: not attested yet\./);
 
     for (const args of [['start'], ['start', 'sideways'], ['start', 'next', '--ack', 'nope'], ['start', 'next', '--page', 'x']]) {
       const bad = await runTc(args, paneEnv);
@@ -235,14 +254,40 @@ describe('tc start (car 21.3)', () => {
       preflight: { verdict: 'not-evaluated' },
       pageBudget: 7800,
       toolOutput: { maxChars: 8000, measured: false, reason: 'the engine declares no measured tool-output limit, so 8000 characters is assumed' },
-      pending: { stages: ['ready', 'unready', 'recovery'], reason: 'later versions' },
+      pending: { stages: ['recovery'], reason: 'later versions' },
       status: { cursor: 0, ready: false, recovery: 'none', unready: false },
       steps: [{ index: 0, id: 'identity', pageCount: 1, pagesServed: [], servedAt: null, ackedAt: null }]
     });
     assert.match(printed, /against an ASSUMED 8000-character tool-output limit/);
+    assert.doesNotMatch(printed, /recorded no render context/,
+      'a snapshot WITH a render context says nothing about one');
     assert.match(printed, /no measured tool-output limit/);
     assert.match(printed, /If a page arrives cut short, say so rather than guessing/);
     assert.ok(!printed.includes('measured 8000'), 'an assumed limit is never presented as measured');
+  });
+
+  it('prints the missing render context, because a re-render can then be thinner', () => {
+    // The status payload and the printed page are two halves of one
+    // disclosure; delete either and a session loses the only warning it gets
+    // that a mid-session re-render may drop launch-time facts.
+    const printed = tcVerbs.renderStartStatus({
+      sequence: 'present',
+      sessionId: 7,
+      sequenceId: 3,
+      revision: 1,
+      applicability: 'applicable',
+      preflight: { verdict: 'not-evaluated' },
+      pageBudget: 7800,
+      toolOutput: { maxChars: 8000, measured: false, reason: 'no measured tool-output limit' },
+      renderContext: 'absent',
+      pending: { stages: ['recovery'], reason: 'later versions' },
+      readiness: { readyAt: null, unreadyAt: null, nudgeCount: 0, lastNudgedAt: null, reconciliationRequired: null },
+      status: { cursor: 0, ready: false, recovery: 'none', unready: false },
+      steps: [{ index: 0, id: 'identity', pageCount: 1, pagesServed: [], servedAt: null, ackedAt: null }]
+    });
+    assert.match(printed, /recorded no render context/);
+    assert.match(printed, /may omit launch-time facts/);
+    assert.match(printed, /Say so if a step changes shape mid-session/);
   });
 
   it('a pane with no launch id is told it has no sequence rather than refused', async () => {
@@ -304,5 +349,72 @@ describe('tc start (car 21.3)', () => {
     await assert.rejects(() => tcVerbs.VERB_ROSTER.find((v) => v.id === 'start').run(ctx),
       (err) => err.code === 'SEQUENCE_SESSION_MISMATCH');
     assert.equal(calls, 1);
+  });
+  describe('tc start ready (car 21.4)', () => {
+    /**
+     * Drive the `start` verb in-process with a stub transport.
+     * @param {string[]} argv - Arguments after `tc start`
+     * @param {(path: string, body: object) => object} post - The POST stub
+     * @returns {Promise<object>} The verb result
+     */
+    function runReady(argv, post) {
+      return tcVerbs.VERB_ROSTER.find((v) => v.id === 'start').run({
+        argv,
+        env: {},
+        postJson: (path, body) => Promise.resolve(post(path, body))
+      });
+    }
+
+    it('refuses locally when the verdict is missing, and says why it is the agent\'s to supply', async () => {
+      const out = await runReady(['ready', '--first-action', 'ask the operator'], () => {
+        throw new Error('must not reach the server');
+      });
+      assert.equal(out.code, 1);
+      assert.match(out.stderr, /--verdict is required/);
+      assert.match(out.stderr, /shows you read it/);
+      assert.match(out.stderr, /usage: tc start/);
+    });
+
+    it('refuses locally when the proposed first action is missing', async () => {
+      const out = await runReady(['ready', '--verdict', 'not-evaluated'], () => {
+        throw new Error('must not reach the server');
+      });
+      assert.equal(out.code, 1);
+      assert.match(out.stderr, /--first-action is required/);
+    });
+
+    it('sends a tc.ready\/1 artifact and prints that it authorizes nothing', async () => {
+      let sent;
+      const out = await runReady(
+        ['ready', '--verdict', 'not-evaluated', '--first-action', 'confirm the chunk', '--reconciliation', 'the rules changed under me and I re-read the governance step'],
+        (path, body) => {
+          assert.equal(path, '/api/tc/start/ready');
+          sent = body;
+          return { schema: 'tc.ready/1', accepted: true, duplicate: false, readyAt: '2026-09-17 20:00:00' };
+        }
+      );
+      assert.equal(out.code, 0);
+      assert.deepEqual(sent, {
+        schema: 'tc.ready/1',
+        preflightVerdict: 'not-evaluated',
+        proposedFirstAction: 'confirm the chunk',
+        reconciliation: 'the rules changed under me and I re-read the governance step'
+      });
+      assert.match(out.stdout, /attested READY at 2026-09-17 20:00:00/);
+      assert.match(out.stdout, /authorizes nothing/);
+    });
+
+    it('says a duplicate left the record alone', async () => {
+      const out = await runReady(['ready', '--verdict', 'ok', '--first-action', 'carry on'],
+        () => ({ schema: 'tc.ready/1', accepted: true, duplicate: true, readyAt: '2026-09-17 19:00:00' }));
+      assert.match(out.stdout, /already attested READY at 2026-09-17 19:00:00/);
+      assert.match(out.stdout, /unchanged/);
+    });
+
+    it('rejects an unknown argument rather than guessing what was meant', async () => {
+      const out = await runReady(['ready', '--verdict', 'ok', '--first-action', 'x', '--force'], () => ({}));
+      assert.equal(out.code, 1);
+      assert.match(out.stderr, /unknown argument '--force'/);
+    });
   });
 });
