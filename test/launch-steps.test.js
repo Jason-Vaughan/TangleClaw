@@ -136,9 +136,15 @@ describe('launch step contents (car 21.2)', () => {
     assert.equal(withSequence.replace(`${sessions.LAUNCH_BOOTSTRAP_LINES.join('\n')}\n`, ''), without);
   });
 
-  it('renderLaunchStep answers for one step and refuses an unknown one', () => {
-    const ctx = { project, engineProfile: engine, options: { operatorHost: 'operator.example.test' } };
-    assert.equal(sessions.renderLaunchStep('governance', ctx), render().governance);
-    assert.throws(() => sessions.renderLaunchStep('preflight', ctx), /Unknown launch step/);
+  it('a plans directory that cannot be read is never rendered as "no plans"', () => {
+    const realList = require('../lib/plan-docs').listPlans;
+    require('../lib/plan-docs').listPlans = () => { throw new Error('permission denied'); };
+    try {
+      const { task } = render();
+      assert.match(task, /could not be read \(permission denied\)/);
+      assert.ok(!task.includes('No plan files are present'), 'a failed read is not an absence');
+    } finally {
+      require('../lib/plan-docs').listPlans = realList;
+    }
   });
 });

@@ -262,7 +262,9 @@ intact. TangleClaw freezes a sequence's page boundaries against this number at l
 already served keeps its boundaries even if the declaration later changes.
 
 **Omit the field and the engine gets a conservative 8,000 characters**, and `tc start status` says
-the limit was assumed rather than measured. That is the honest default for an engine nobody has
+so in those words — it prints the page size with either "against this engine's measured N-character
+tool-output limit" or "against an ASSUMED N-character tool-output limit", and the sequence's stored
+`sourceManifest.toolOutput` carries the same fact for anything reading the record later. That is the honest default for an engine nobody has
 measured: more, smaller pages cost an extra round trip, while a page over the real cap can be
 silently truncated.
 
@@ -419,10 +421,11 @@ switch that does nothing.
 #### The ambient-awareness floor (`tc` on PATH)
 
 Independent of any config file or prime, every tmux session TangleClaw launches gets the `tc` CLI
-on its `PATH` plus `TANGLECLAW_API` / `TANGLECLAW_PROJECT_ID` (and `TANGLECLAW_WORKSPACE_ID` when
-the switchboard minted one) in the pane environment. The verbs come from a declared roster
-(`lib/tc-verbs.js`): `whoami`, `capabilities`, `sessions`, `message send|read|ack|status`, `ports`,
-`docs`, `rules`, `learnings` — each answers honestly (an empty inbox or idle fleet says so in
+on its `PATH` plus `TANGLECLAW_API` / `TANGLECLAW_PROJECT_ID`, `TANGLECLAW_LAUNCH_ID` (which
+launch this pane is, for `tc start`), and `TANGLECLAW_WORKSPACE_ID` when the switchboard minted
+one, in the pane environment. The verbs come from a declared roster — read the list from
+`lib/tc-verbs.js#VERB_ROSTER`, or run `tc` with no arguments, rather than from a copy here that
+ages every time a verb is added. Each answers honestly (an empty inbox or idle fleet says so in
 words; a disabled capability states its reason), and the server records each invocation as a
 verb-labeled **awareness receipt**, so a session that never discovered the floor is a detectable
 state. This is engine-neutral by construction: a new engine needs no adapter to reach it.

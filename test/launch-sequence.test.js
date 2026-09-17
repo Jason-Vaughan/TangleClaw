@@ -176,6 +176,56 @@ describe('launch sequence (Train 21, Chunk 01)', () => {
       assert.match(silent.reason, /does not declare launch-sequence support/);
     });
 
+    it('records whether the page size rests on a measurement or on the default', () => {
+      // The disclosure the engine guide and the changelog promise: an engine
+      // nobody has measured must not present its assumed limit as a fact.
+      const measured = makeProject('tool-measured');
+      const measuredSeq = store.launchSequences.getBySession(launch('tool-measured').session.id);
+      assert.equal(measuredSeq.sourceManifest.toolOutput.measured, true);
+      assert.equal(measuredSeq.sourceManifest.toolOutput.maxChars,
+        store.engines.get('claude').capabilities.toolOutput.maxChars);
+      const shown = launchSequence.status({ launchId: measuredSeq.launchId, projectId: measured.id }).body;
+      assert.equal(shown.toolOutput.measured, true);
+      assert.equal(shown.pageBudget, measuredSeq.pageBudget);
+
+      store.engines.save({
+        id: 'unmeasured-engine',
+        name: 'Unmeasured Engine',
+        command: 'unmeasured',
+        capabilities: { supportsPrimePrompt: true, launchSequence: { supported: true } }
+      });
+      const assumed = makeProject('tool-assumed', 'unmeasured-engine');
+      const assumedSeq = store.launchSequences.getBySession(launch('tool-assumed').session.id);
+      assert.equal(assumedSeq.sourceManifest.toolOutput.measured, false);
+      assert.equal(assumedSeq.sourceManifest.toolOutput.maxChars, launchSequence.DEFAULT_TOOL_OUTPUT_MAX_CHARS);
+      const assumedStatus = launchSequence.status({ launchId: assumedSeq.launchId, projectId: assumed.id }).body;
+      assert.equal(assumedStatus.toolOutput.measured, false);
+      assert.match(assumedStatus.toolOutput.reason, /no measured tool-output limit/);
+      assert.deepEqual(assumedStatus.pending.stages, ['ready', 'unready', 'recovery']);
+    });
+
+    it('a launch survives steps that cannot be rendered, and says why it has no sequence', () => {
+      // The documented guarantee that nothing blocks a launch. Driven by making
+      // a read the pull path depends on fail, not by stubbing the renderer.
+      const project = makeProject('render-fails');
+      const realLoad = store.globalRules.load;
+      store.globalRules.load = () => { throw new Error('global rules unreadable'); };
+      let result;
+      try {
+        result = launch('render-fails');
+      } finally {
+        store.globalRules.load = realLoad;
+      }
+      assert.equal(result.error, null, 'the launch still happened');
+      const sequence = store.launchSequences.getBySession(result.session.id);
+      assert.equal(sequence.applicability, 'not-applicable');
+      assert.match(sequence.notApplicableReason, /could not be built \(global rules unreadable\)/);
+      assert.equal(store.launchSequences.listSteps(sequence.id, 1).length, 0);
+      const refused = next({ launchId: sequence.launchId, projectId: project.id });
+      assert.equal(refused.body.code, 'SEQUENCE_NOT_APPLICABLE');
+      assert.match(refused.body.error, /could not be built/);
+    });
+
     it('a launch with its prime disabled gets no sequence either', () => {
       const out = launchSequence.resolveApplicability(
         { id: 'claude', capabilities: { launchSequence: { supported: true } } },
