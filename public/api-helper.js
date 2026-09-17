@@ -1079,8 +1079,10 @@
     const LONG_PRESS_MS = 450;
     const SLOP_PX = 12;
     let pressTimer = null;
+    // Where the current single-finger gesture started. `pressTimer` alone
+    // says whether a long-press is still armed; the point outlives it so the
+    // touchend link check (#1572) can ask what was under the finger.
     let pressPoint = null;
-    let tapPoint = null;
     let selectAnchor = null;
     let lastPoint = null;
     let pendingCopyText = '';
@@ -1161,13 +1163,12 @@
       } catch (_) { /* geometry raced a resize — next move re-selects */ }
     }
 
-    /** Cancel a pending long-press timer. */
+    /** Cancel a pending long-press timer (the press point is kept for touchend). */
     function cancelPress() {
       if (pressTimer) {
         clearTimeout(pressTimer);
         pressTimer = null;
       }
-      pressPoint = null;
     }
 
     doc.addEventListener('touchstart', (e) => {
@@ -1189,7 +1190,6 @@
       }
       const t = e.touches[0];
       pressPoint = { clientX: t.clientX, clientY: t.clientY };
-      tapPoint = pressPoint; // survives cancelPress, for the touchend link check (#1572)
       // Fresh gesture — drop the previous gesture's pill anchor so a
       // no-drag long-press can't surface a stale-positioned pill.
       lastPoint = null;
@@ -1223,7 +1223,7 @@
         return;
       }
       // Still waiting on the long-press: real movement means a scroll intent.
-      if (pressPoint &&
+      if (pressTimer && pressPoint &&
           (Math.abs(t.clientX - pressPoint.clientX) > SLOP_PX ||
            Math.abs(t.clientY - pressPoint.clientY) > SLOP_PX)) {
         gestureMovedPastSlop = true; // a scroll, not a tap (#574 RC4)
@@ -1270,13 +1270,21 @@
         // popup rules allow it; not focused, so the keyboard stays down.
         let url = null;
         try {
-          const cell = tapPoint ? cellFromTouch(tapPoint) : null;
+          const cell = pressPoint ? cellFromTouch(pressPoint) : null;
           url = cell ? tcUrlAtCell(term, cell) : null;
-        } catch (_) {
-          url = null; // a disposed terminal or a raced resize: fall through to focus
+        } catch (err) {
+          // A disposed terminal or a raced resize: fall through to focus.
+          // Logged, like the focus catch below, so a remote Web Inspector can
+          // tell "no URL under the finger" from "the check threw".
+          url = null;
+          if (iframeWin.console) iframeWin.console.debug('tc tap-to-open check skipped:', err);
         }
         if (url) {
           try {
+            // `open` returns null with 'noopener' whether or not a tab opened,
+            // so the attempt is logged: a declined popup otherwise leaves no
+            // tab, no keyboard and no trace.
+            if (iframeWin.console) iframeWin.console.debug('tc tap-to-open:', url);
             iframeWin.open(url, '_blank', 'noopener');
           } catch (err) {
             if (iframeWin.console) iframeWin.console.debug('tc tap-to-open failed:', err);
@@ -1306,9 +1314,13 @@
    * on Android does the same unless the viewport meta asks otherwise. A
    * keyboard takes 250px or more on every current phone; the collapsing
    * browser toolbar moves `innerHeight` and the visual height together, so
-   * their difference stays small. 100px tells the two apart.
+   * their difference stays small. 100px tells the two apart. Pinch-zoom also
+   * shrinks the visual viewport's height (in CSS px it is the layout height
+   * divided by the scale), so the comparison is made at layout scale:
+   * `height * scale` against the window. A zoomed page with no keyboard is
+   * not a keyboard.
    *
-   * @param {{height: number, offsetTop: number}|null} vv - `window.visualViewport`.
+   * @param {{height: number, offsetTop: number, scale?: number}|null} vv - `window.visualViewport`.
    * @param {number} innerHeight - `window.innerHeight`.
    * @returns {{height: number, top: number}|null} The visible height and the
    *   visual viewport's offset from the layout viewport's top, in whole CSS
@@ -1316,7 +1328,8 @@
    */
   function tcVisualViewportVars(vv, innerHeight) {
     if (!vv || !Number.isFinite(vv.height) || vv.height <= 0 || !Number.isFinite(innerHeight)) return null;
-    if (innerHeight - vv.height < 100) return null;
+    const scale = Number.isFinite(vv.scale) && vv.scale > 0 ? vv.scale : 1;
+    if (innerHeight - vv.height * scale < 100) return null;
     return { height: Math.round(vv.height), top: Math.round(vv.offsetTop || 0) };
   }
 

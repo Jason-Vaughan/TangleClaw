@@ -48,6 +48,17 @@ describe('tcVisualViewportVars (pure): is the keyboard up, and how tall is what 
     assert.deepEqual(tcVisualViewportVars({ height: 180, offsetTop: 0 }, 390), { height: 180, top: 0 });
   });
 
+  it('pinch-zoom shrinks the visual viewport too, and is not a keyboard: the comparison is made at layout scale', () => {
+    // Zoomed 2x on an 844px window: the visual viewport reports 422 CSS px.
+    assert.equal(tcVisualViewportVars({ height: 422, offsetTop: 0, scale: 2 }, 844), null);
+    assert.equal(tcVisualViewportVars({ height: 700, offsetTop: 0, scale: 1.2 }, 844), null);
+    // Zoomed 2x AND the keyboard up: 844 - 2*300 = 244 short, so keyboard.
+    assert.deepEqual(tcVisualViewportVars({ height: 300, offsetTop: 40, scale: 2 }, 844), { height: 300, top: 40 });
+    // No scale reported (older browsers) reads as 1.
+    assert.deepEqual(tcVisualViewportVars({ height: 420, offsetTop: 0 }, 844), { height: 420, top: 0 });
+    assert.deepEqual(tcVisualViewportVars({ height: 420, offsetTop: 0, scale: NaN }, 844), { height: 420, top: 0 });
+  });
+
   it('no visual viewport, or nonsense numbers, means no keyboard', () => {
     assert.equal(tcVisualViewportVars(null, 844), null);
     assert.equal(tcVisualViewportVars({ height: NaN, offsetTop: 0 }, 844), null);
