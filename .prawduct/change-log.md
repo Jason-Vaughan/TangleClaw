@@ -34,6 +34,13 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-17 — Stranded wraps are checked against GitHub, and a check that couldn't run says so (#1542, #1543)
+
+<!-- prawduct: type=feature | scope=train-20-chunk-03 -->
+
+Train 20 Chunk 03. The new `lib/stranded-check.js` reads `origin`, its `wrap/*` heads (`git ls-remote`), open wrap PRs (`gh pr list --search head:wrap/`) and every PR for each local item's branch (`--head=`), always with `--repo` from origin because `gh` otherwise prefers an `upstream` remote. All reads finish before anything is decided, and any failure makes the check `failed` with nothing cleared or reported. A local item whose branch merged, is gone with no open PR, or has an open PR with every check passed (`wrap-pr-status.js#allChecksPassed`) is cleared as a `wrap.strand_cleared` row, confirmed by re-listing; `stranded-wraps.js#list` drops cleared items at their head, so a clear lifts the launch and wrap holds. Red-CI and no-PR findings never block and live only in the `wrap.strand_check` row that every attempt writes (`ok`, `failed`, or `none` for no origin or a non-github.com origin, a third state added while building so local-only projects never show a failure). `status()` shows findings only from the newest `ok` row. A successful launch starts the check unawaited, skipped within five minutes of an `ok`/`none` answer; `POST …/stranded-wraps/check` runs one on request, and the GET, the project list, the prime and the card (badges, a GitHub row, Check now) all show it. Twenty-six deliberate breakages were run; the two that first went unnoticed got tests. The scratch server (a bare repo behind a `git` wrapper, a fake `gh`) driven by API and in Chrome in both themes at 390px found two gaps, both fixed: failed rows dropped the remote, and the PR link was unreadable in dark mode. Two frontend suites that stub page helpers by hand needed the new helpers added.
+
+
 ## 2026-09-17 — A wrap that finishes ends the session, even with nothing to commit (#1558)
 
 <!-- prawduct: type=bugfix | scope=train-20-chunk-02-5 -->

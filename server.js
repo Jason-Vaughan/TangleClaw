@@ -313,6 +313,7 @@ const passwordHashing = require('./lib/password');
 const sessionOwnership = require('./lib/session-ownership');
 const planDocs = require('./lib/plan-docs');
 const strandedWraps = require('./lib/stranded-wraps');
+const strandedCheck = require('./lib/stranded-check');
 const serviceToken = require('./lib/service-token');
 const medusa = require('./lib/medusa');
 
@@ -5239,23 +5240,49 @@ route('GET', '/api/projects/:project/plans', (req, res, params) => {
   });
 });
 
+/**
+ * The body both stranded-wraps reads answer with: the local items, their
+ * counts, and what the latest GitHub check said.
+ * @param {object} project - Project row
+ * @returns {object}
+ */
+function _strandedBody(project) {
+  const { items } = strandedWraps.list(project);
+  return {
+    project: { id: project.id, name: project.name },
+    items,
+    // `blocking` is what holds a launch or a wrap: unacknowledged and fully
+    // recorded. Grandfathered items are listed but never count there.
+    counts: strandedWraps.counts(items),
+    // Findings here never block, and they are as of `github.lastOkAt`.
+    github: strandedCheck.status(project)
+  };
+}
+
 // GET /api/projects/:project/stranded-wraps — the project's stranded wraps from
 // local records (#868): wrap branches that reached the remote with no pull
-// request. Accepts the numeric id or the name. Nothing here calls GitHub, so an
-// item means "the wrap recorded it stranded", not "GitHub still shows it so".
+// request, minus the ones a GitHub check has cleared (#1542). Accepts the
+// numeric id or the name. This read never calls GitHub: `github` is what the
+// latest recorded check said, with its time (#1543).
 route('GET', '/api/projects/:project/stranded-wraps', (_req, res, params) => {
   const project = _projectByIdOrName(params.project);
   if (!project) {
     return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
   }
-  const { items } = strandedWraps.list(project);
-  jsonResponse(res, 200, {
-    project: { id: project.id, name: project.name },
-    items,
-    // `blocking` is what holds a launch or a wrap: unacknowledged and fully
-    // recorded. Grandfathered items are listed but never count there.
-    counts: strandedWraps.counts(items)
-  });
+  jsonResponse(res, 200, _strandedBody(project));
+});
+
+// POST /api/projects/:project/stranded-wraps/check — run the GitHub check now
+// (#1542) and answer with its result and the refreshed list. A request made
+// while a check is running joins it. A check that could not run is still a 200:
+// it was recorded, and `check.state` is `failed` with the reason.
+route('POST', '/api/projects/:project/stranded-wraps/check', async (_req, res, params) => {
+  const project = _projectByIdOrName(params.project);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  }
+  const result = await strandedCheck.check(project);
+  jsonResponse(res, 200, { check: result, ..._strandedBody(project) });
 });
 
 // POST /api/projects/:project/stranded-wraps/ack — acknowledge one listed
@@ -5526,6 +5553,19 @@ route('POST', '/api/projects/:name/actions/:command', async (_req, res, params, 
   jsonResponse(res, 200, result);
 });
 
+/**
+ * Start the GitHub check for stranded wraps after a launch succeeded (#1542),
+ * without waiting for it: the launch has already answered, and the check
+ * records its own outcome, including a failure.
+ * @param {object} project - Project row
+ * @returns {void}
+ */
+function _checkStrandedAfterLaunch(project) {
+  strandedCheck.checkAfterLaunch(project).catch((err) => {
+    log.error('Stranded-wrap check after launch failed', { project: project.name, error: err.message });
+  });
+}
+
 // POST /api/sessions/:project — Launch session
 route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
   const project = projects.getProjectRow(params.project);
@@ -5588,6 +5628,7 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
           res.end(JSON.stringify(payload));
           return;
         }
+        _checkStrandedAfterLaunch(project);
         jsonResponse(res, 201, {
           sessionId: webuiResult.session.id,
           project: params.project,
@@ -5637,6 +5678,7 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
     return errorResponse(res, 500, result.error, 'INTERNAL_ERROR');
   }
 
+  _checkStrandedAfterLaunch(project);
   jsonResponse(res, 201, {
     sessionId: result.session.id,
     project: params.project,

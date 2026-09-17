@@ -19,6 +19,7 @@ setLevel('error');
 const store = require('../lib/store');
 const authSession = require('../lib/auth-session');
 const stranded = require('../lib/stranded-wraps');
+const strandedCheck = require('../lib/stranded-check');
 const { handleRequest } = require('../server');
 
 const PASSWORD = 'correct-horse-battery';
@@ -31,15 +32,26 @@ describe('stranded-wraps API (#868, #1538)', () => {
   let project;
   let seq = 0;
 
+  const realCheckExec = strandedCheck._internal.exec;
+
+  /**
+   * What `git` and `gh` answer for the GitHub check in this file: a project with
+   * no origin unless a case says otherwise, so no case spawns a real `git`.
+   * @type {Function}
+   */
+  let checkExec;
+
   before(() => {
     prevBase = store._getBasePath();
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-api-stranded-'));
     store.close();
     store._setBasePath(tempDir);
     store.init();
+    strandedCheck._internal.exec = (...args) => checkExec(...args);
   });
 
   after(() => {
+    strandedCheck._internal.exec = realCheckExec;
     store.close();
     store._setBasePath(prevBase);
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -57,7 +69,24 @@ describe('stranded-wraps API (#868, #1538)', () => {
     seq += 1;
     const dir = fs.mkdtempSync(path.join(tempDir, 'proj-'));
     project = store.projects.create({ name: `stranded-api-${seq}`, path: dir, engine: 'claude' });
+    checkExec = async () => ({ exitCode: 2, stdout: '', stderr: "error: No such remote 'origin'", error: new Error('exit 2') });
   });
+
+  /**
+   * A GitHub where `wrap/1-x` merged and nothing else exists.
+   * @param {Promise<void>} [hold] - Resolved when gh may answer
+   * @returns {Function}
+   */
+  const mergedGithub = (hold) => async (file, args) => {
+    const ok = (stdout) => ({ exitCode: 0, stdout, stderr: '', error: null });
+    if (file === 'git' && args[0] === 'remote') return ok(`${REMOTE}\n`);
+    if (file === 'git') return ok('');
+    if (hold) await hold;
+    if (args.includes('--head=wrap/1-x')) {
+      return ok(JSON.stringify([{ number: 7, state: 'MERGED', headRefName: 'wrap/1-x', headRefOid: SHA, url: 'https://github.com/example/sandbox/pull/7', statusCheckRollup: [] }]));
+    }
+    return ok('[]');
+  };
 
   function mockRes() {
     return {
@@ -122,6 +151,7 @@ describe('stranded-wraps API (#868, #1538)', () => {
       assert.deepEqual(body.items.map((i) => [i.branch, i.grandfathered]), [['wrap/1-x', false], ['wrap/0-old', true]]);
       assert.deepEqual(body.counts, { total: 2, unacknowledged: 2, grandfathered: 1, blocking: 1 },
         'a grandfathered item is listed and unacknowledged, but never blocking');
+      assert.equal(body.github.state, 'never', 'no GitHub check on record is said, not hidden');
     });
 
     it('answers by numeric project id as well as by name', async () => {
@@ -250,6 +280,112 @@ describe('stranded-wraps API (#868, #1538)', () => {
         body: { branch: 'wrap/1-x', headSha: SHA }
       });
       assert.equal(res.statusCode, 404);
+    });
+  });
+
+  describe('POST /check (#1542, #1543)', () => {
+    it('runs the check and answers with its result and the refreshed list', async () => {
+      stranded.record({ projectId: project.id, remote: REMOTE, branch: 'wrap/1-x', headSha: SHA });
+      checkExec = mergedGithub();
+      const res = await send('POST', `${base()}/check`, { body: {} });
+      assert.equal(res.statusCode, 200);
+      const body = json(res);
+      assert.equal(body.check.state, 'ok');
+      assert.deepEqual(body.check.cleared.map((c) => [c.branch, c.reason]), [['wrap/1-x', 'merged']]);
+      assert.deepEqual(body.items, []);
+      assert.equal(body.counts.blocking, 0);
+      assert.equal(body.github.state, 'ok');
+      assert.equal(body.github.lastOkAt, body.check.at);
+    });
+
+    it('answers 200 with the recorded failure when the check could not run', async () => {
+      checkExec = async (file, args) => (file === 'git'
+        ? { exitCode: 0, stdout: args[0] === 'remote' ? `${REMOTE}\n` : '', stderr: '', error: null }
+        : { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' }) });
+      const res = await send('POST', `${base()}/check`, { body: {} });
+      assert.equal(res.statusCode, 200);
+      const body = json(res);
+      assert.equal(body.check.state, 'failed');
+      assert.equal(body.github.state, 'failed');
+      assert.match(body.github.reason, /gh is not installed/);
+    });
+
+    it('404s for an unknown project, and checks nothing', async () => {
+      let ran = false;
+      checkExec = async () => { ran = true; return { exitCode: 1, stdout: '', stderr: '', error: null }; };
+      const res = await send('POST', '/api/projects/no-such-project/stranded-wraps/check', { body: {} });
+      assert.equal(res.statusCode, 404);
+      assert.equal(ran, false);
+    });
+
+    it('refuses a signed-in request with no CSRF token, and checks nothing', async () => {
+      store.users.create('rosie', PASSWORD);
+      const cfg = store.config.load();
+      cfg.authEnabled = true;
+      store.config.save(cfg);
+      const login = await send('POST', '/api/auth/login', { body: { username: 'rosie', password: PASSWORD } });
+      let ran = false;
+      checkExec = async () => { ran = true; return { exitCode: 1, stdout: '', stderr: '', error: null }; };
+      const res = await send('POST', `${base()}/check`, { cookie: cookieOf(login), body: {} });
+      assert.equal(res.statusCode, 403);
+      assert.equal(ran, false);
+      const anon = await send('POST', `${base()}/check`, { body: {} });
+      assert.equal(anon.statusCode, 401);
+    });
+  });
+
+  describe('the check a launch starts (#1542)', () => {
+    const sessions = require('../lib/sessions');
+    const session = { id: 99, engineId: 'claude', sessionMode: 'tmux', tmuxSession: 'x', startedAt: 'now' };
+    let realLaunch;
+
+    before(() => { realLaunch = sessions.launchSession; });
+    after(() => { sessions.launchSession = realLaunch; });
+
+    const checkRows = () => store.activity.query({ projectId: project.id, eventType: 'wrap.strand_check' });
+
+    /**
+     * Wait until the project has `n` check rows, or fail after a bound.
+     * @param {number} n
+     */
+    async function untilRows(n) {
+      for (let i = 0; i < 200 && checkRows().length < n; i += 1) {
+        await new Promise((r) => setImmediate(r));
+      }
+      assert.equal(checkRows().length, n);
+    }
+
+    it('answers 201 while the check is still waiting on GitHub, then records it', async () => {
+      stranded.record({ projectId: project.id, remote: REMOTE, branch: 'wrap/1-x', headSha: SHA });
+      let release;
+      checkExec = mergedGithub(new Promise((r) => { release = r; }));
+      sessions.launchSession = () => ({ session, primePrompt: null, ttydUrl: '/terminal/', error: null, strandedUnchecked: null });
+      const res = await send('POST', `/api/sessions/${encodeURIComponent(project.name)}`, { body: {} });
+      assert.equal(res.statusCode, 201);
+      assert.deepEqual(checkRows(), [], 'the check has not finished when the launch answers');
+      release();
+      await untilRows(1);
+      assert.equal(checkRows()[0].detail.outcome, 'ok');
+      assert.deepEqual(stranded.list(project).items, []);
+    });
+
+    it('leaves the launch response unchanged when the check fails', async () => {
+      checkExec = async () => { throw new Error('exec exploded'); };
+      sessions.launchSession = () => ({ session, primePrompt: null, ttydUrl: '/terminal/', error: null, strandedUnchecked: null });
+      const res = await send('POST', `/api/sessions/${encodeURIComponent(project.name)}`, { body: {} });
+      assert.equal(res.statusCode, 201);
+      assert.equal(json(res).sessionId, 99);
+      await untilRows(1);
+      assert.equal(checkRows()[0].detail.outcome, 'failed');
+      assert.match(checkRows()[0].detail.reason, /exec exploded/);
+    });
+
+    it('starts no check when the launch was refused', async () => {
+      sessions.launchSession = () => ({ session: null, error: 'Engine "x" is not available' });
+      const res = await send('POST', `/api/sessions/${encodeURIComponent(project.name)}`, { body: {} });
+      assert.equal(res.statusCode, 400);
+      for (let i = 0; i < 20; i += 1) await new Promise((r) => setImmediate(r));
+      assert.deepEqual(checkRows(), []);
     });
   });
 

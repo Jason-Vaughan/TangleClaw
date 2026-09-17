@@ -623,3 +623,203 @@ describe('dashboard card: stranded badge and detail row (#1541)', () => {
     assert.match(liftFunction(UI_SRC, 'function renderCardDetail('), /renderStrandedDetail\(project\)/);
   });
 });
+
+describe('dashboard card: GitHub check badges, row and Check now (#1542, #1543)', () => {
+  const AT = '2026-09-16T10:00:00.000Z';
+  const LATER = '2026-09-16T11:00:00.000Z';
+  const counts = (github, over) => ({ total: 0, unacknowledged: 0, grandfathered: 0, blocking: 0, github, ...over });
+  const gh = (over) => ({ state: 'ok', lastOkAt: AT, lastAttemptAt: AT, reason: null, redCi: 0, noPr: 0, unchecked: 0, ...over });
+
+  /**
+   * Run the card's GitHub helpers, with a controllable request.
+   * @param {Function} [mutate] - `apiMutate` stand-in
+   * @returns {object} The sandbox
+   */
+  function sandboxFor(mutate) {
+    const sandbox = {
+      requests: [],
+      renders: 0,
+      loads: 0,
+      api: { lastError: null },
+      async apiMutate(url, method, body) { sandbox.requests.push({ url, method, body }); return mutate ? mutate(sandbox) : {}; },
+      renderProjects() { sandbox.renders += 1; },
+      async loadProjects() { sandbox.loads += 1; }
+    };
+    vm.createContext(sandbox);
+    vm.runInContext([
+      escSrc,
+      liftFunction(UI_SRC, 'function strandedTime('),
+      liftFunction(UI_SRC, 'function renderStrandedGithubBadge('),
+      'const strandedItemsCache = {};',
+      'const strandedCheckState = {};',
+      liftFunction(UI_SRC, 'function strandedSig('),
+      liftFunction(UI_SRC, 'function strandedFindingsMarkup('),
+      liftFunction(UI_SRC, 'function renderStrandedGithubDetail('),
+      liftFunction(UI_SRC, 'async function checkStrandedNow('),
+      'this.badge = renderStrandedGithubBadge; this.detail = renderStrandedGithubDetail;',
+      'this.cache = strandedItemsCache; this.sig = strandedSig; this.checkNow = checkStrandedNow; this.run = strandedCheckState;',
+      'this.time = strandedTime;'
+    ].join('\n'), sandbox);
+    return sandbox;
+  }
+
+  describe('badges', () => {
+    it('shows red CI and no-PR counts, with the time of the check, and never as a launch hold', () => {
+      const sb = sandboxFor();
+      const html = sb.badge({ name: 'p', stranded: counts(gh({ redCi: 2, noPr: 1 })) });
+      assert.match(html, /badge-github-red[^>]*>&#10005; 2 red CI</);
+      assert.match(html, /badge-github-nopr[^>]*>1 no PR</);
+      assert.ok(html.includes(`as of ${sb.time(AT)}`));
+      assert.match(html, /Never holds a launch/);
+      assert.doesNotMatch(html, /GitHub \?/);
+    });
+
+    it('shows "GitHub ?" with the time and reason when the latest check failed', () => {
+      const sb = sandboxFor();
+      const html = sb.badge({ name: 'p', stranded: counts(gh({ state: 'failed', lastAttemptAt: LATER, reason: 'gh is not installed' })) });
+      assert.match(html, /badge-github-unknown[^>]*>GitHub \?</);
+      assert.ok(html.includes(`at ${sb.time(LATER)} (gh is not installed)`));
+    });
+
+    it('keeps older findings beside a failed check, marked with their own time', () => {
+      const sb = sandboxFor();
+      const html = sb.badge({ name: 'p', stranded: counts(gh({ state: 'failed', lastAttemptAt: LATER, reason: 'offline', redCi: 1 })) });
+      assert.match(html, /1 red CI/);
+      assert.match(html, /GitHub \?/);
+      assert.ok(html.includes(`as of ${sb.time(AT)}`));
+    });
+
+    it('shows nothing for a clean check, no check, or nothing to check', () => {
+      const sb = sandboxFor();
+      assert.equal(sb.badge({ name: 'p', stranded: counts(gh()) }), '');
+      assert.equal(sb.badge({ name: 'p', stranded: counts(gh({ state: 'never', lastOkAt: null, lastAttemptAt: null })) }), '');
+      assert.equal(sb.badge({ name: 'p', stranded: counts(gh({ state: 'none', reason: 'no origin remote' })) }), '');
+      assert.equal(sb.badge({ name: 'p', stranded: null }), '');
+    });
+
+    it('escapes the reason, which comes from gh', () => {
+      const sb = sandboxFor();
+      const html = sb.badge({ name: 'p', stranded: counts(gh({ state: 'failed', reason: '<img src=x>"' })) });
+      assert.doesNotMatch(html, /<img/);
+    });
+  });
+
+  describe('detail row', () => {
+    it('says when it last checked and that nothing was found, with Check now', () => {
+      const sb = sandboxFor();
+      const html = sb.detail({ name: 'p', stranded: counts(gh()) });
+      assert.ok(html.includes(`checked ${sb.time(AT)}, nothing found`));
+      assert.match(html, /onclick="event.stopPropagation\(\); checkStrandedNow\('p'\)">Check now</);
+    });
+
+    it('says a failed check failed, when and why, and when the last good one was', () => {
+      const sb = sandboxFor();
+      const html = sb.detail({ name: 'p', stranded: counts(gh({ state: 'failed', lastAttemptAt: LATER, reason: 'HTTP 502' })) });
+      assert.ok(html.includes(`couldn&#39;t check at ${sb.time(LATER)} (HTTP 502); last successful check ${sb.time(AT)}`));
+      assert.match(html, /detail-row-warn/);
+    });
+
+    it('says "not checked yet" when no check is on record', () => {
+      const sb = sandboxFor();
+      assert.match(sb.detail({ name: 'p', stranded: counts(gh({ state: 'never', lastOkAt: null, lastAttemptAt: null })) }), /not checked yet/);
+    });
+
+    it('hides the row for a project with nothing to check and nothing recorded, and has no button when a check is not possible', () => {
+      const sb = sandboxFor();
+      assert.equal(sb.detail({ name: 'p', stranded: counts(gh({ state: 'none', reason: 'no origin remote' })) }), '');
+      const html = sb.detail({ name: 'p', stranded: counts(gh({ state: 'none', reason: 'no origin remote' }), { total: 1, unacknowledged: 1, blocking: 1 }) });
+      assert.match(html, /not possible: no origin remote/);
+      assert.doesNotMatch(html, /Check now/);
+    });
+
+    it('lists the fetched findings for the same counts, with a link for a red PR', () => {
+      const sb = sandboxFor();
+      const project = { name: 'p', stranded: counts(gh({ redCi: 1, noPr: 1, unchecked: 2 })) };
+      sb.cache.p = {
+        sig: sb.sig(project), items: [], error: null, loading: false,
+        github: { findings: [
+          { kind: 'red-ci', branch: 'wrap/2-y', prNumber: 9, prUrl: 'https://github.com/example/sandbox/pull/9' },
+          { kind: 'no-pr', branch: 'wrap/<3>', prNumber: null, prUrl: null }
+        ] }
+      };
+      const html = sb.detail(project);
+      assert.match(html, /1 wrap PR with failing checks, 1 wrap branch with no PR \(never blocks\)/);
+      assert.match(html, /2 more wrap branches were not looked up/);
+      assert.match(html, /<a href="https:\/\/github.com\/example\/sandbox\/pull\/9"[^>]*>PR #9<\/a> has failing checks/);
+      assert.match(html, /wrap\/&lt;3&gt;<\/code>: on GitHub with no pull request/);
+      const stale = { name: 'p', stranded: counts(gh({ redCi: 2 })) };
+      assert.doesNotMatch(sb.detail(stale), /pull\/9/);
+    });
+
+    it('never links a PR URL that is not on github.com', () => {
+      const sb = sandboxFor();
+      const project = { name: 'p', stranded: counts(gh({ redCi: 1 })) };
+      sb.cache.p = { sig: sb.sig(project), items: [], error: null, loading: false,
+        github: { findings: [{ kind: 'red-ci', branch: 'wrap/2-y', prNumber: 9, prUrl: 'javascript:alert(1)' }] } };
+      const html = sb.detail(project);
+      assert.doesNotMatch(html, /<a /);
+      assert.match(html, /PR #9 has failing checks/);
+    });
+  });
+
+  describe('Check now', () => {
+    it('posts the check, shows "Checking…" only while it is out, then reloads the list', async () => {
+      let seenDuring = null;
+      const sb = sandboxFor((box) => {
+        seenDuring = box.detail({ name: 'p w', stranded: counts(gh()) });
+        return { check: { state: 'ok' } };
+      });
+      await sb.checkNow('p w');
+      assert.deepEqual(JSON.parse(JSON.stringify(sb.requests)), [{ url: '/api/projects/p%20w/stranded-wraps/check', method: 'POST', body: {} }]);
+      assert.match(seenDuring, /disabled[^>]*>Checking…</);
+      assert.equal(sb.loads, 1);
+      assert.match(sb.detail({ name: 'p w', stranded: counts(gh()) }), />Check now</);
+    });
+
+    it('says a failed request failed, in the row, until the next one', async () => {
+      const sb = sandboxFor((box) => { box.api.lastError = 'Connection lost.'; return null; });
+      await sb.checkNow('p');
+      assert.equal(sb.loads, 0);
+      assert.match(sb.detail({ name: 'p', stranded: counts(gh()) }), /Check now failed: Connection lost\./);
+    });
+
+    it('ignores a second press while one is out', async () => {
+      let release;
+      const sb = sandboxFor(() => new Promise((r) => { release = () => r({}); }));
+      const first = sb.checkNow('p');
+      await sb.checkNow('p');
+      release();
+      await first;
+      assert.equal(sb.requests.length, 1);
+    });
+  });
+
+  it('fetches the list for a card with findings and no local items', async () => {
+    const fetches = [];
+    const sandbox = {
+      async tcFetch(url) { fetches.push(url); return { ok: true, status: 200, json: async () => ({ items: [], github: { findings: [] } }) }; },
+      renderProjects() {}
+    };
+    vm.createContext(sandbox);
+    vm.runInContext([
+      'const strandedItemsCache = {};',
+      liftFunction(UI_SRC, 'function strandedSig('),
+      liftFunction(UI_SRC, 'async function ensureStrandedItems('),
+      'this.ensure = ensureStrandedItems; this.cache = strandedItemsCache;'
+    ].join('\n'), sandbox);
+    await sandbox.ensure({ name: 'p', stranded: counts(gh({ noPr: 1 })) });
+    assert.equal(fetches.length, 1);
+    assert.equal(JSON.stringify(sandbox.cache.p.github), '{"findings":[]}');
+    await sandbox.ensure({ name: 'q', stranded: counts(gh()) });
+    assert.equal(fetches.length, 1, 'a clean card fetches nothing');
+  });
+
+  it('is on the card and in its detail panel, and styled', () => {
+    assert.match(liftFunction(UI_SRC, 'function renderCard('), /\$\{githubBadge\}/);
+    assert.match(liftFunction(UI_SRC, 'function renderCardDetail('), /renderStrandedGithubDetail\(project\)/);
+    const css = fs.readFileSync(path.join(PUBLIC, 'style.css'), 'utf8');
+    for (const cls of ['badge-github-red', 'badge-github-nopr', 'badge-github-unknown']) {
+      assert.match(css, new RegExp(`\\.${cls}\\s*\\{`), `${cls} is styled`);
+    }
+  });
+});

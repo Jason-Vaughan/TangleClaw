@@ -173,3 +173,30 @@ describe('wrap-pr-status.resolve', () => {
     assert.match(out.reason, /threw/);
   });
 });
+
+describe('wrap-pr-status.allChecksPassed (#1542)', () => {
+  const run = (conclusion, status = 'COMPLETED') => ({ __typename: 'CheckRun', status, conclusion });
+  it('false with no checks: nothing has shown the PR will land', () => {
+    assert.equal(prStatus.allChecksPassed(undefined), false);
+    assert.equal(prStatus.allChecksPassed([]), false);
+  });
+  it('true when every check completed green', () => {
+    assert.equal(prStatus.allChecksPassed([run('SUCCESS'), { state: 'SUCCESS' }]), true);
+  });
+  it('accepts neutral and skipped beside a real success, but not on their own', () => {
+    assert.equal(prStatus.allChecksPassed([run('SUCCESS'), run('SKIPPED'), run('NEUTRAL')]), true);
+    assert.equal(prStatus.allChecksPassed([run('SKIPPED')]), false);
+  });
+  it('false while any check is still running or pending', () => {
+    assert.equal(prStatus.allChecksPassed([run('SUCCESS'), run('', 'IN_PROGRESS')]), false);
+    assert.equal(prStatus.allChecksPassed([run('SUCCESS'), { state: 'PENDING' }]), false);
+  });
+  it('false when any check failed or was cancelled', () => {
+    assert.equal(prStatus.allChecksPassed([run('SUCCESS'), run('FAILURE')]), false);
+    assert.equal(prStatus.allChecksPassed([run('SUCCESS'), run('CANCELLED')]), false);
+    assert.equal(prStatus.allChecksPassed([{ state: 'ERROR' }]), false);
+  });
+  it('false for a malformed entry', () => {
+    assert.equal(prStatus.allChecksPassed([run('SUCCESS'), null]), false);
+  });
+});
