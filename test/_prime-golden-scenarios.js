@@ -7,8 +7,12 @@
  * and the `tc start` pull path both render from. The push prime must not change
  * in the process, so these scenarios pin it: each one sets up a project whose
  * prime exercises a different set of sections, renders it, and replaces the
- * two values that differ between runs and machines: the temporary base
- * directory, and this machine's host name in the Session Ownership block.
+ * three values that differ between runs and machines: the temporary base
+ * directory, this machine's host name in the Session Ownership block, and the
+ * API origin — whose port comes from `TANGLECLAW_PORT` or the install's config
+ * and whose scheme depends on whether certificates are set up, so it differs
+ * between a developer's machine and CI. (CI caught that one: fixtures captured
+ * against a 3102 install failed on a runner defaulting to 3101.)
  *
  * The fixtures in `test/fixtures/prime-golden/` were captured from the prime
  * generator as it stood before the refactor. Regenerate them only when a prime
@@ -128,7 +132,8 @@ function buildScenarios(store, baseDir) {
 function normalize(text, baseDir) {
   const real = fs.realpathSync(baseDir);
   return text.split(real).join('<BASE>').split(baseDir).join('<BASE>')
-    .replace(/^- Host: `[^`]*`/m, '- Host: `<HOST>`');
+    .replace(/^- Host: `[^`]*`/m, '- Host: `<HOST>`')
+    .replace(/https?:\/\/localhost:\d+/g, '<API_ORIGIN>');
 }
 
 /**

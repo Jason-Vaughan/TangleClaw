@@ -26,7 +26,7 @@ Heal: hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh
 1. TangleClaw global rules — `data/global-rules.md`, carried in the managed block of `CLAUDE.md`.
 2. TangleClaw project rules — none active for this project.
 
-_(Ecosystem primer omitted for budget. TC API http://localhost:3102; numeric project id is 3; run `tc capabilities` for the live capability roster before assuming anything is missing.)_
+_(Ecosystem primer omitted for budget. TC API <API_ORIGIN>; numeric project id is 3; run `tc capabilities` for the live capability roster before assuming anything is missing.)_
 
 ## Active Learnings
 _(6 active learnings omitted here to fit the prime size budget — they remain available through the project's learnings surface.)_
