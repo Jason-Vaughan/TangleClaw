@@ -470,6 +470,55 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       }
     });
 
+    it('a query still running when state is reset cannot write into the fresh state', async () => {
+      serverInfo.__unsafeResetForTest();
+      let releaseOld;
+      serverInfo._internal.platform = () => 'linux';
+      serverInfo._internal.pid = () => 4242;
+      serverInfo._internal.now = () => 1_000_000;
+      serverInfo._internal.execFileAsync = () => new Promise((resolve) => { releaseOld = resolve; });
+      try {
+        serverInfo.detectRestartMechanism(); // an old query, left hanging
+        serverInfo.__unsafeResetForTest();
+        let releaseNew;
+        serverInfo._internal.execFileAsync = () => new Promise((resolve) => { releaseNew = resolve; });
+        serverInfo.detectRestartMechanism(); // the fresh state's own query
+        const fresh = serverInfo.refreshSystemdMechanism();
+
+        releaseOld({ stdout: 'LoadState=loaded\nMainPID=4242\nKillMode=process\nNeedDaemonReload=no\n' });
+        await settle();
+        assert.equal(serverInfo.detectRestartMechanism(), null, 'the old answer is discarded');
+        assert.strictEqual(serverInfo.refreshSystemdMechanism(), fresh,
+          'the fresh query is still the one callers share');
+
+        releaseNew({ stdout: 'LoadState=not-found\n' });
+        await fresh;
+        assert.equal(serverInfo.detectRestartMechanism(), null);
+      } finally {
+        restoreInternal();
+      }
+    });
+
+    it('a failure inside the background query is handled, not left as an unhandled rejection', async () => {
+      serverInfo.__unsafeResetForTest();
+      stubSystemd(SAFE);
+      // Output whose conversion throws makes the query itself reject, the one
+      // way the background promise can fail.
+      serverInfo._internal.execFileAsync = async () => ({ stdout: { toString() { throw new Error('boom'); } } });
+      const unhandled = [];
+      const onUnhandled = (reason) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+      try {
+        assert.equal(serverInfo.detectRestartMechanism(), null);
+        await settle();
+        await settle();
+        assert.deepEqual(unhandled, [], 'the rejection must be caught');
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+        restoreInternal();
+      }
+    });
+
     it('probeSystemdUserUnit explains why a loaded unit does not qualify, and says nothing when there is no unit', async () => {
       const cases = [
         [{ ...SAFE, KillMode: 'control-group' }, /KillMode=control-group.*set KillMode=process/],
