@@ -1068,7 +1068,15 @@ describe('lib/sessions — resyncMedusaListeners (TC#550, MED-2K9P v2 T4)', () =
 
   it('server boot actually calls the re-sync (source pin — a regression here re-opens TC#550)', () => {
     const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-    assert.match(serverSrc, /medusaWake\.start\(\);[\s\S]{0,400}sessions\.resyncMedusaListeners\(\)/);
+    // Ordered by position rather than by a character budget between the two
+    // calls. The contract is that boot re-syncs, after the wake monitor starts;
+    // a budget also asserts that nothing is ever added between them, which is
+    // not the contract and went red the first time a monitor was (Train 21).
+    const wakeAt = serverSrc.indexOf('medusaWake.start();');
+    const resyncAt = serverSrc.indexOf('sessions.resyncMedusaListeners()');
+    assert.ok(wakeAt > -1, 'boot starts the wake monitor');
+    assert.ok(resyncAt > -1, 'boot re-syncs the Medusa listeners');
+    assert.ok(resyncAt > wakeAt, 'and re-syncs after the wake monitor is armed');
   });
 });
 

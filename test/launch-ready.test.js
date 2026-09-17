@@ -62,9 +62,11 @@ describe('launch sequence attestation (Train 21, Chunk 02)', () => {
   /**
    * Launch with tmux and engine detection stubbed, so no pane is ever started.
    * @param {string} name - Project name
+   * @param {object} [opts]
+   * @param {object} [opts.launchOptions] - Passed through to `launchSession`
    * @returns {object} The launch result
    */
-  function launch(name) {
+  function launch(name, opts = {}) {
     const real = {
       create: tmux.createSession, has: tmux.hasSession, kill: tmux.killSession, detect: enginesModule.detectEngine
     };
@@ -73,7 +75,7 @@ describe('launch sequence attestation (Train 21, Chunk 02)', () => {
     tmux.killSession = () => true;
     enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/fake-engine' });
     try {
-      return sessions.launchSession(name, {});
+      return sessions.launchSession(name, opts.launchOptions || {});
     } finally {
       tmux.createSession = real.create;
       tmux.hasSession = real.has;
@@ -330,6 +332,56 @@ describe('launch sequence attestation (Train 21, Chunk 02)', () => {
       });
       assert.equal(reconciled.status, 200);
       assert.equal(reconciled.body.artifact.reconciliation.length >= launchSequence.MIN_RECONCILIATION_CHARS, true);
+    });
+
+    it('re-renders with the launch-time facts only the launch had', () => {
+      // The reason the snapshot records a render context at all: the heal
+      // report, the operator host and the workspace id are launch-time facts,
+      // and a revision that dropped them would quietly serve a thinner step 3
+      // than the one the session first read.
+      const project = makeProject('revise-render-context');
+      const session = launch('revise-render-context', {
+        launchOptions: { operatorHost: 'operator.example.test' }
+      }).session;
+      const sequence = store.launchSequences.getBySession(session.id);
+      const id = { launchId: sequence.launchId, projectId: project.id };
+      const context = sequence.sourceManifest.renderContext;
+      assert.equal(context.operatorHost, 'operator.example.test',
+        'the launch records what only it knows');
+
+      store.sessionRules.create({ projectId: project.id, content: 'A rule added after the launch.' });
+      launchSequence.next(id);
+      const revised = store.launchSequences.getByLaunchId(id.launchId);
+      assert.equal(revised.revision, 2);
+      assert.equal(revised.sourceManifest.renderContext.operatorHost, 'operator.example.test',
+        'and the new revision was built from the same context');
+      const before = store.launchSequences.listSteps(sequence.id, 1);
+      const after = store.launchSequences.listSteps(sequence.id, 2);
+      const hostLine = (steps) => steps.map((st) => st.content).join('\n').includes('operator.example.test');
+      assert.equal(hostLine(before), hostLine(after),
+        'so the re-rendered steps still carry the launch-time facts');
+    });
+
+    it('revises a sequence that carries no render context, and says so in the manifest', () => {
+      // Sequences created before render contexts were recorded. They re-render
+      // from what is knowable now; the gap is visible in the manifest rather
+      // than silent.
+      const project = makeProject('revise-legacy-context');
+      const session = launch('revise-legacy-context').session;
+      const sequence = store.launchSequences.getBySession(session.id);
+      const stripped = { ...sequence.sourceManifest };
+      delete stripped.renderContext;
+      store.getDb().prepare('UPDATE launch_sequences SET source_manifest = ? WHERE id = ?')
+        .run(JSON.stringify(stripped), sequence.id);
+
+      store.sessionRules.create({ projectId: project.id, content: 'A rule added under a legacy sequence.' });
+      const served = launchSequence.next({ launchId: sequence.launchId, projectId: project.id });
+      assert.equal(served.status, 200);
+      assert.equal(served.body.revision, 2, 'the revision still happens');
+      const revised = store.launchSequences.getByLaunchId(sequence.launchId);
+      assert.equal(revised.sourceManifest.renderContext, null,
+        'and the absent context is recorded as absent');
+      assert.equal(store.launchSequences.listSteps(sequence.id, 2).length, store.LAUNCH_STEP_IDS.length);
     });
 
     it('refuses an attestation that arrives after the revision it was written against', () => {
