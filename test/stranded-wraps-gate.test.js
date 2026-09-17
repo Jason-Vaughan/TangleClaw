@@ -560,8 +560,31 @@ describe('the project list carries stranded-wrap counts (#1541)', () => {
     stranded.record({ projectId: project.id, remote: REMOTE, branch: 'wrap/1-x', headSha: SHA_A });
     legacyStranded(project.id, 'wrap/0-old');
     const enriched = await projects.enrichProject(project, {}, { tmuxSessionNames: noSessions });
-    assert.deepEqual(enriched.stranded, { total: 2, unacknowledged: 2, grandfathered: 1, blocking: 1 });
+    assert.deepEqual(enriched.stranded, {
+      total: 2, unacknowledged: 2, grandfathered: 1, blocking: 1,
+      github: { state: 'never', lastOkAt: null, lastAttemptAt: null, reason: null, redCi: 0, noPr: 0, unchecked: 0 }
+    });
     assert.equal(enriched.strandedError, null);
+  });
+
+  it('carries the latest GitHub check as counts, with its times and reason (#1542, #1543)', async () => {
+    const strandedCheck = require('../lib/stranded-check');
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'proj-'));
+    const project = store.projects.create({ name: 'slc-github', path: dir, engine: 'claude' });
+    const at = '2026-09-16T10:00:00.000Z';
+    const log = (detail) => store.activity.log({ projectId: project.id, eventType: 'wrap.strand_check', detail });
+    log({
+      remote: REMOTE, outcome: 'ok', ok: true, reason: null, at, durationMs: 5, checked: 0, cleared: 0,
+      findings: [{ kind: 'red-ci', branch: 'wrap/2-y' }, { kind: 'no-pr', branch: 'wrap/3-z' }],
+      findingsTotal: 25, redCiTotal: 1, noPrTotal: 24, unchecked: 3
+    });
+    log({ remote: REMOTE, outcome: 'failed', ok: false, reason: 'gh is not installed', at: '2026-09-16T11:00:00.000Z' });
+    const enriched = await projects.enrichProject(project, {}, { tmuxSessionNames: noSessions });
+    assert.deepEqual(enriched.stranded.github, {
+      state: 'failed', lastOkAt: at, lastAttemptAt: '2026-09-16T11:00:00.000Z', reason: 'gh is not installed',
+      redCi: 1, noPr: 24, unchecked: 3
+    });
+    assert.deepEqual(enriched.stranded.github, strandedCheck.summary(strandedCheck.status(project)));
   });
 
   it('reports a failed read as unknown with its reason, never as zero, and still lists the project', async () => {
