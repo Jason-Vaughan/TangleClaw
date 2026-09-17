@@ -34,6 +34,12 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-17 — Stranded wraps hold launches, ask before a wrap, and show on the card (#1539, #1540, #1541)
+
+<!-- prawduct: type=feature | scope=train-20-chunk-02 -->
+
+Train 20 Chunk 02. `launchSession` now calls `stranded-wraps.js#launchGate` after the refusals that change nothing and before the first write, so a project with an unacknowledged, non-grandfathered stranded wrap is refused with `STRANDED_WRAPS` and its items (409 on the launch route) and nothing is written to it. The same request with `acknowledgeStranded` records each acknowledgement through `acknowledge` as the launching user, then re-reads the list. `startWrap` calls `wrapGate` before the run is claimed, and only when no run is in progress; `options.proceedPastStranded` covering every item lets the wrap start and acknowledges nothing, so the items still hold the next launch (plan D3, operator-accepted pending hands-on testing). Both gates let work through when the records cannot be read and say so in `strandedUnchecked` on the 201/202. `gateAppliesTo` exempts only the Master; the operator ruled #1539's Steward clause a leftover. The project list carries `stranded` counts (2.6 ms per load across 41 projects on a store copy). UI: an acknowledge-and-launch dialog on the dashboard, a "Wrap anyway" hold on both pages' wrap dialogs and under a refused Retry in the drawer (the choice is replayed on Retry and restored after a reload), and a card badge plus detail row. `tc` has no launch verb, so its coverage is through `launchSession`. A Chunk 01 test that left a stranded record on a shared fixture now settles it. Nineteen deliberate breakages were each caught by a test. A scratch server driven in Chrome found three gaps (unmarked acknowledged items, a disabled dialog button that looked enabled, refusal text naming request fields), all fixed. The cumulative Critic found 0 blocking, 3 warnings and 6 notes; five were fixed and four accepted, and two verify-resolutions passes closed the fixes, including a blocking test gap in the first.
+
 ## 2026-09-16 — Stranded wraps are surfaced at session start and can be acknowledged (#868, #1538)
 
 <!-- prawduct: type=feature | scope=train-20-chunk-01 -->
