@@ -3721,22 +3721,11 @@ function showWrapModalStranded(items) {
     document.getElementById('wrapStrandedList').innerHTML = '';
   } else {
     wrapModalStrandedItems = items;
-    document.getElementById('wrapStrandedText').textContent = strandedWrapNotice(items.length);
+    document.getElementById('wrapStrandedText').textContent = tcStrandedWrapNotice(items.length);
     document.getElementById('wrapStrandedList').innerHTML = tcStrandedItemsMarkup(items);
     block.classList.remove('hidden');
   }
   syncWrapModalConfirm();
-}
-
-/**
- * What a stranded-wraps refusal means, in words.
- * @param {number} n - How many items are listed
- * @returns {string}
- */
-function strandedWrapNotice(n) {
-  return `${n} earlier wrap branch${n === 1 ? ' was' : 'es were'} pushed with no pull request and nobody has acknowledged `
-    + `${n === 1 ? 'it' : 'them'}. Wrapping now does not acknowledge ${n === 1 ? 'it' : 'them'}: `
-    + `${n === 1 ? 'it' : 'they'} will still hold the next launch.`;
 }
 
 /**
@@ -5341,7 +5330,7 @@ function renderWrapDrawerStranded(items) {
   block.className = 'wrap-decision wrap-decision--stranded stranded-block';
   const text = document.createElement('p');
   text.className = 'wrap-decision-text';
-  text.textContent = strandedWrapNotice(items.length);
+  text.textContent = tcStrandedWrapNotice(items.length);
   block.appendChild(text);
   const list = document.createElement('div');
   list.innerHTML = tcStrandedItemsMarkup(items);

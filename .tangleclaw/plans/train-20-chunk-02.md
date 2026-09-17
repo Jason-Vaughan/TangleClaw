@@ -159,7 +159,7 @@ returns HTML and is tested by running it.
 - Hidden states use `visibility`/`pointer-events` switched instantly; nothing is timed.
 
 **D10: a store read failure lets the launch or wrap through, and says so.** *Added while building.*
-Both gates catch a failed read of the records, log a warning, and answer `ok` with `unchecked: <reason>`.
+Both gates catch a failed read of the records (including the read inside acknowledging), log a warning, and answer `ok` with `unchecked: <reason>`, which the launch's 201 and the wrap's 202 carry as `strandedUnchecked`.
 The store that failed is the one every other launch and wrap step also needs, so refusing here would only
 replace that failure's own error with a misleading "stranded wraps" one. The session prime already says
 "could not be read" in the same case, and the project list reports `stranded: null` with the reason.

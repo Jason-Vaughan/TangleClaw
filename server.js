@@ -5593,6 +5593,7 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
           project: params.project,
           engine: webuiResult.session.engineId,
           sessionMode: 'webui',
+          strandedUnchecked: result.strandedUnchecked || null,
           tmuxSession: null,
           primePrompt: null,
           startedAt: webuiResult.session.startedAt,
@@ -5646,7 +5647,9 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
     primePrompt: result.primePrompt,
     startedAt: result.session.startedAt,
     iframeUrl: null,
-    ttydUrl: result.ttydUrl
+    ttydUrl: result.ttydUrl,
+    // #1539: why the stranded-wrap check was skipped, or null when it ran.
+    strandedUnchecked: result.strandedUnchecked || null
   });
 });
 
@@ -6242,6 +6245,8 @@ route('POST', '/api/sessions/:project/wrap', async (_req, res, params, body) => 
     // `lib/wrap-run-registry.js` — NOT the `sessions.status` column, which has
     // no such value (#1034).
     status: 'wrapping',
+    // #1540: why the stranded-wrap check was skipped, or null when it ran.
+    strandedUnchecked: started.strandedUnchecked || null,
     statusUrl: `/api/sessions/${project}/wrap/status`,
     streamUrl: `/api/sessions/${project}/wrap/stream/${encodeURIComponent(started.runId)}`
   });

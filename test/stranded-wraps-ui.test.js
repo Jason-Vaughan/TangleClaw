@@ -152,6 +152,11 @@ describe('shared stranded-wrap helpers (api-helper.js)', () => {
     assert.equal(helpers.tcStrandedItemsMarkup(null), '');
   });
 
+  it('says a wrap past the items acknowledges nothing, in the singular and plural', () => {
+    assert.match(helpers.tcStrandedWrapNotice(1), /^1 earlier wrap branch was .* it will still hold the next launch\.$/);
+    assert.match(helpers.tcStrandedWrapNotice(2), /^2 earlier wrap branches were .* they will still hold the next launch\.$/);
+  });
+
   it('copies the keys exactly as listed', () => {
     assert.deepEqual(JSON.parse(JSON.stringify(helpers.tcStrandedKeys([ITEM]))), [KEY]);
     assert.deepEqual(JSON.parse(JSON.stringify(helpers.tcStrandedKeys([{ branch: 'wrap/0', remote: undefined }]))),
@@ -198,6 +203,7 @@ describe('dashboard: acknowledge and launch (#1539)', () => {
       state: { projects: [] },
       tcStrandedKeys: helpers.tcStrandedKeys,
       tcStrandedItemsMarkup: helpers.tcStrandedItemsMarkup,
+      tcStrandedWrapNotice: helpers.tcStrandedWrapNotice,
       setConnected: () => {},
       setTimeout: () => {},
       navigateToSession(name) { sandbox.navigated.push(name); },
@@ -292,6 +298,7 @@ describe('dashboard: wrap anyway (#1540)', () => {
       state: { config: {} },
       tcStrandedKeys: helpers.tcStrandedKeys,
       tcStrandedItemsMarkup: helpers.tcStrandedItemsMarkup,
+      tcStrandedWrapNotice: helpers.tcStrandedWrapNotice,
       async apiMutate(url, method, body) {
         sent.push(body);
         const answer = answers.shift();
@@ -377,6 +384,7 @@ describe('session page: wrap anyway, and Retry (#1540)', () => {
       window: { tcWrapDrawerHelpers: drawer },
       tcStrandedKeys: helpers.tcStrandedKeys,
       tcStrandedItemsMarkup: helpers.tcStrandedItemsMarkup,
+      tcStrandedWrapNotice: helpers.tcStrandedWrapNotice,
       phase: 'idle',
       wrapRunState() { return { phase: sandbox.phase }; },
       dispatchWrapRun() { return {}; },
@@ -390,7 +398,6 @@ describe('session page: wrap anyway, and Retry (#1540)', () => {
       'let lastRefusedStrandedItems = null; let wrapDrawerStrandedItems = null; let wrapModalStrandedItems = null;',
       liftFunction(SESSION_SRC, 'function wrapStartInFlight('),
       liftFunction(SESSION_SRC, 'function showWrapModalStranded('),
-      liftFunction(SESSION_SRC, 'function strandedWrapNotice('),
       liftFunction(SESSION_SRC, 'function wrapModalNeedsStrandedConfirm('),
       liftFunction(SESSION_SRC, 'function syncWrapModalConfirm('),
       liftFunction(SESSION_SRC, 'function renderWrapDrawerStranded('),
@@ -529,6 +536,85 @@ describe('dashboard card: stranded badge and detail row (#1541)', () => {
   it('shows nothing for a project with nothing recorded', () => {
     const sb = sandboxFor();
     assert.equal(sb.detail({ name: 'p', stranded: counts({}) }), '');
+  });
+
+  describe('ensureStrandedItems()', () => {
+    /**
+     * Run the fetcher with a controllable fetch.
+     * @param {Function} fetchImpl - `tcFetch` stand-in
+     * @returns {object} The sandbox, counting renders in `renders`
+     */
+    function fetcherFor(fetchImpl) {
+      const sandbox = {
+        fetches: [],
+        renders: 0,
+        async tcFetch(url) { sandbox.fetches.push(url); return fetchImpl(url); },
+        renderProjects() { sandbox.renders += 1; }
+      };
+      vm.createContext(sandbox);
+      vm.runInContext([
+        'const strandedItemsCache = {};',
+        liftFunction(UI_SRC, 'function strandedSig('),
+        liftFunction(UI_SRC, 'async function ensureStrandedItems('),
+        'this.ensure = ensureStrandedItems; this.cache = strandedItemsCache;'
+      ].join('\n'), sandbox);
+      return sandbox;
+    }
+    const project = { name: 'p w', stranded: counts({ total: 1, unacknowledged: 1, blocking: 1 }) };
+    const ok = (items) => async () => ({ ok: true, status: 200, json: async () => ({ items }) });
+
+    it('fetches the list once for the current counts, then re-renders', async () => {
+      const sb = fetcherFor(ok([ITEM]));
+      await sb.ensure(project);
+      assert.deepEqual(sb.fetches, ['/api/projects/p%20w/stranded-wraps']);
+      assert.equal(sb.cache['p w'].items.length, 1);
+      assert.equal(sb.cache['p w'].loading, false);
+      assert.equal(sb.renders, 1);
+      await sb.ensure(project);
+      assert.equal(sb.fetches.length, 1, 'the same counts do not fetch again');
+    });
+
+    it('fetches again when the counts change', async () => {
+      const sb = fetcherFor(ok([ITEM]));
+      await sb.ensure(project);
+      await sb.ensure({ ...project, stranded: counts({ total: 2, unacknowledged: 2, blocking: 2 }) });
+      assert.equal(sb.fetches.length, 2);
+    });
+
+    it('keeps a refused or failed fetch as an error, never as an empty list', async () => {
+      const refused = fetcherFor(async () => ({ ok: false, status: 404, json: async () => ({ error: 'Project "p w" not found' }) }));
+      await refused.ensure(project);
+      assert.equal(refused.cache['p w'].items, null);
+      assert.match(refused.cache['p w'].error, /not found/);
+      const thrown = fetcherFor(async () => { throw new Error('Failed to fetch'); });
+      await thrown.ensure(project);
+      assert.equal(thrown.cache['p w'].error, 'Failed to fetch');
+      assert.equal(thrown.renders, 1);
+    });
+
+    it('drops an answer for counts that changed while it was out', async () => {
+      let release;
+      const sb = fetcherFor(() => new Promise((resolve) => { release = () => resolve({ ok: true, status: 200, json: async () => ({ items: [ITEM] }) }); }));
+      const first = sb.ensure(project);
+      const moved = { ...project, stranded: counts({ total: 2, unacknowledged: 2, blocking: 2 }) };
+      const firstRelease = release;
+      const second = sb.ensure(moved);
+      firstRelease();
+      await first;
+      assert.equal(sb.cache['p w'].sig, JSON.stringify(moved.stranded), 'the older answer does not overwrite the newer fetch');
+      assert.equal(sb.cache['p w'].loading, true);
+      release();
+      await second;
+      assert.equal(sb.cache['p w'].loading, false);
+    });
+
+    it('does nothing for a project with nothing recorded, or no project', async () => {
+      const sb = fetcherFor(ok([]));
+      await sb.ensure({ name: 'p', stranded: counts({}) });
+      await sb.ensure({ name: 'p', stranded: null });
+      await sb.ensure(undefined);
+      assert.equal(sb.fetches.length, 0);
+    });
   });
 
   it('is on the card and in its detail panel', () => {

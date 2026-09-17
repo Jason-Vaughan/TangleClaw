@@ -4472,6 +4472,18 @@
   }
 
   /**
+   * What a wrap held by stranded wraps means, in words: the text both pages'
+   * wrap dialogs and the drawer show above the list, so they never disagree.
+   * @param {number} n - How many items are listed
+   * @returns {string}
+   */
+  function tcStrandedWrapNotice(n) {
+    return `${n} earlier wrap branch${n === 1 ? ' was' : 'es were'} pushed with no pull request and nobody has acknowledged `
+      + `${n === 1 ? 'it' : 'them'}. Wrapping now does not acknowledge ${n === 1 ? 'it' : 'them'}: `
+      + `${n === 1 ? 'it' : 'they'} will still hold the next launch.`;
+  }
+
+  /**
    * The list of stranded wraps shown by a launch or wrap refusal, and by a
    * project card's detail panel. Pure: it returns HTML and touches no DOM, so
    * every surface shows an item the same way. The full SHA is shown because
@@ -4501,6 +4513,7 @@
   }
 
   global.tcStrandedKeys = tcStrandedKeys;
+  global.tcStrandedWrapNotice = tcStrandedWrapNotice;
   global.tcStrandedItemsMarkup = tcStrandedItemsMarkup;
   global.tcHonoredLaunchModes = tcHonoredLaunchModes;
   global.tcResolveEngineProfile = tcResolveEngineProfile;

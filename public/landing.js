@@ -1805,11 +1805,7 @@ function showWrapStranded(items) {
     document.getElementById('wrapStrandedList').innerHTML = '';
   } else {
     wrapStrandedItems = items;
-    const n = items.length;
-    document.getElementById('wrapStrandedText').textContent =
-      `${n} earlier wrap branch${n === 1 ? ' was' : 'es were'} pushed with no pull request and nobody has acknowledged `
-      + `${n === 1 ? 'it' : 'them'}. Wrapping now does not acknowledge ${n === 1 ? 'it' : 'them'}: `
-      + `${n === 1 ? 'it' : 'they'} will still hold the next launch.`;
+    document.getElementById('wrapStrandedText').textContent = tcStrandedWrapNotice(items.length);
     document.getElementById('wrapStrandedList').innerHTML = tcStrandedItemsMarkup(items);
     block.classList.remove('hidden');
   }

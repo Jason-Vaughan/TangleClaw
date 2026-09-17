@@ -184,6 +184,25 @@ describe('stranded-wrap gate helpers (#1539, #1540)', () => {
       assert.equal(stranded.launchGate(project, { role: 'master' }).ok, true);
     });
 
+    it('accepts the key of an item listed with no remote, as the pages send it', () => {
+      stranded.record({ projectId: project.id, remote: null, branch: 'wrap/1-x', headSha: SHA_A });
+      const keys = stranded.launchGate(project, {}).items.map(keyOf);
+      assert.equal(keys[0].remote, null);
+      assert.deepEqual(stranded.launchGate(project, { acknowledge: keys, by: 'op' }), { ok: true, acknowledged: 1 });
+    });
+
+    it('lets the launch through, and says why, when the records cannot be read to acknowledge them', () => {
+      const realQuery = stranded._internal.query;
+      stranded._internal.query = () => { throw new Error('database is locked'); };
+      try {
+        const gate = stranded.launchGate(project, { acknowledge: [{ remote: REMOTE, branch: 'wrap/1-x', headSha: SHA_A }] });
+        assert.equal(gate.ok, true);
+        assert.match(gate.unchecked, /database is locked/);
+      } finally {
+        stranded._internal.query = realQuery;
+      }
+    });
+
     it('lets the launch through, and says why, when the records cannot be read', () => {
       const realQuery = stranded._internal.query;
       stranded._internal.query = () => { throw new Error('database is locked'); };

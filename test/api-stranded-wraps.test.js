@@ -300,6 +300,22 @@ describe('stranded-wraps API (#868, #1538)', () => {
       }
     });
 
+    it('says in the 201 when the check was skipped, and null when it ran', async () => {
+      const realLaunch = sessions.launchSession;
+      const session = { id: 99, engineId: 'claude', sessionMode: 'tmux', tmuxSession: 'x', startedAt: 'now' };
+      try {
+        sessions.launchSession = () => ({ session, primePrompt: null, ttydUrl: '/terminal/', error: null, strandedUnchecked: 'database is locked' });
+        let res = await send('POST', `/api/sessions/${encodeURIComponent(project.name)}`, { body: {} });
+        assert.equal(res.statusCode, 201);
+        assert.equal(json(res).strandedUnchecked, 'database is locked');
+        sessions.launchSession = () => ({ session, primePrompt: null, ttydUrl: '/terminal/', error: null, strandedUnchecked: null });
+        res = await send('POST', `/api/sessions/${encodeURIComponent(project.name)}`, { body: {} });
+        assert.equal(json(res).strandedUnchecked, null);
+      } finally {
+        sessions.launchSession = realLaunch;
+      }
+    });
+
     it('maps a malformed acknowledgeStranded to 400', async () => {
       stranded.record({ projectId: project.id, remote: REMOTE, branch: 'wrap/1-x', headSha: SHA });
       const res = await send('POST', `/api/sessions/${encodeURIComponent(project.name)}`, {
@@ -349,7 +365,20 @@ describe('stranded-wraps API (#868, #1538)', () => {
         body: { options: { proceedPastStranded: [{ remote: REMOTE, branch: 'wrap/1-x', headSha: SHA }] } }
       });
       assert.equal(res.statusCode, 202);
+      assert.equal(json(res).strandedUnchecked, null, 'the check ran');
       assert.deepEqual(store.activity.query({ projectId: project.id, eventType: 'wrap.strand_ack' }), []);
+    });
+
+    it('says in the 202 when the check was skipped because the records could not be read', async () => {
+      const realQuery = stranded._internal.query;
+      stranded._internal.query = () => { throw new Error('disk I/O error'); };
+      try {
+        const res = await send('POST', wrapUrl(), { body: {} });
+        assert.equal(res.statusCode, 202);
+        assert.match(json(res).strandedUnchecked, /disk I\/O error/);
+      } finally {
+        stranded._internal.query = realQuery;
+      }
     });
 
     it('answers 400 for a proceed list that is not an array', async () => {
