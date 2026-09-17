@@ -544,6 +544,21 @@ Print the Instance Dir explicitly as an absolute path. Prefer a pinned image tag
     </div>
   </div>
 
+  <!-- Stranded Wrap Action Modal (#1545): confirms Acknowledge / Open PR for one item -->
+  <div class="modal-backdrop" id="strandedActionModal">
+    <div class="modal-content" role="dialog" aria-labelledby="strandedActionTitle" aria-modal="true" style="max-width:560px">
+      <h3 class="modal-title" id="strandedActionTitle">Stranded wrap</h3>
+      <p class="modal-text" id="strandedActionText"></p>
+      <div id="strandedActionItem"></div>
+      <p class="modal-text stranded-action-note" id="strandedActionNote"></p>
+      <div id="strandedActionError" class="form-error hidden" role="alert"></div>
+      <div class="modal-actions">
+        <button class="btn" id="strandedActionCancelBtn">Cancel</button>
+        <button class="btn btn-primary" id="strandedActionConfirmBtn">Confirm</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Continuity Launch Modal -->
   <div class="modal-backdrop" id="continuityLaunchModal">
     <div class="modal-content" role="dialog" aria-label="Launch session" aria-modal="true" style="max-width:440px">

@@ -670,6 +670,19 @@
   color: inherit;
   text-decoration: underline;
 }
+/* A listed item's Acknowledge / Open PR buttons (#1545), on their own line. */
+.stranded-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+}
+.stranded-action-note {
+  font-size: 12px;
+  color: var(--text-muted, #9aa0a6);
+  overflow-wrap: anywhere;
+}
 /* The GitHub row's Check now button sits on its own line under the text. */
 .stranded-check-action {
   display: block;

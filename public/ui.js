@@ -406,6 +406,7 @@ function renderCard(project) {
   const awarenessBadge = renderAwarenessBadge(project);
   const strandedBadge = renderStrandedBadge(project);
   const githubBadge = renderStrandedGithubBadge(project);
+  const sessionHealthBadge = renderSessionHealthBadge(project);
 
   const statusDot = renderStatusDot(project);
 
@@ -439,6 +440,7 @@ function renderCard(project) {
       ${awarenessBadge}
       ${strandedBadge}
       ${githubBadge}
+      ${sessionHealthBadge}
       <span class="card-row-actions">
         <button class="btn btn-compact btn-launch" onclick="event.stopPropagation(); launchProject('${n}')">${hasSession ? 'Open' : 'Launch'}</button>
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openPeekFromCard('${n}')" title="Peek">&#128065;</button>` : ''}
@@ -720,7 +722,7 @@ function renderStrandedDetail(project) {
   if (cached && cached.sig === strandedSig(project)) {
     if (cached.loading) list = '<span class="detail-unknown">loading the list…</span>';
     else if (cached.error) list = `<span class="detail-unknown">list could not be loaded: ${esc(cached.error)}</span>`;
-    else list = tcStrandedItemsMarkup(cached.items);
+    else list = tcStrandedItemsMarkup(cached.items, (item) => strandedItemActions(project.name, cached.items, item));
   }
   const rowClass = c.blocking ? 'detail-row detail-row-warn' : 'detail-row';
   return `<div class="${rowClass}">${label}<span class="detail-value">${esc(parts.join(', '))}${list}</span></div>`;
@@ -812,6 +814,189 @@ async function checkStrandedNow(name) {
 }
 
 /**
+ * The per-item buttons in a card's Stranded list (#1545): Acknowledge, while
+ * the item is unacknowledged, and Open PR, until a PR has been opened for it
+ * from here. Each opens the confirmation dialog; nothing is sent on the press.
+ * Items are named by their position in the fetched list, so a branch name
+ * never has to be quoted into an attribute.
+ * @param {string} name - Project name
+ * @param {object[]} items - The fetched list the item came from
+ * @param {object} item - The item
+ * @returns {string} HTML, or '' when no action applies
+ */
+function strandedItemActions(name, items, item) {
+  const index = items.indexOf(item);
+  if (index < 0) return '';
+  const n = esc(name);
+  const buttons = [];
+  if (!item.acknowledged) {
+    buttons.push(`<button class="btn btn-compact" onclick="event.stopPropagation(); openStrandedAction('${n}', 'ack', ${index})">Acknowledge</button>`);
+  }
+  if (!item.prOpened) {
+    buttons.push(`<button class="btn btn-compact" onclick="event.stopPropagation(); openStrandedAction('${n}', 'open-pr', ${index})">Open PR</button>`);
+  }
+  return buttons.length ? `<span class="stranded-item-actions">${buttons.join('')}</span>` : '';
+}
+
+/**
+ * The stranded-item action the confirmation dialog is holding, or null.
+ * @type {{name: string, kind: 'ack'|'open-pr', item: object, busy: boolean}|null}
+ */
+let strandedAction = null;
+
+/**
+ * Open the confirmation dialog for one listed item. Says what will happen, and
+ * how to delete the branch instead, which TangleClaw never does itself.
+ * @param {string} name - Project name
+ * @param {'ack'|'open-pr'} kind
+ * @param {number} index - Position in the project's fetched list
+ */
+function openStrandedAction(name, kind, index) {
+  const cached = strandedItemsCache[name];
+  const item = cached && Array.isArray(cached.items) ? cached.items[index] : null;
+  if (!item || (kind !== 'ack' && kind !== 'open-pr')) return;
+  strandedAction = { name, kind, item, busy: false };
+  const isPr = kind === 'open-pr';
+  document.getElementById('strandedActionTitle').textContent = isPr ? 'Open a pull request' : 'Acknowledge a stranded wrap';
+  let text;
+  if (isPr) {
+    text = `Opens a pull request on GitHub for ${item.branch}, into the repository's default branch. `
+      + 'TangleClaw first checks that the branch is still on GitHub as recorded and has no open pull request. '
+      + 'The pull request is not merged, and the item stays listed until it merges or its checks pass.';
+  } else if (item.grandfathered) {
+    text = `Records that you have seen ${item.branch}. It is an older record and never held a launch; acknowledging it marks it as dealt with.`;
+  } else {
+    text = `Records that you have seen ${item.branch} at this head. It stops holding launches. `
+      + 'If the branch is stranded again at a new head, it is listed again.';
+  }
+  document.getElementById('strandedActionText').textContent = text;
+  document.getElementById('strandedActionItem').innerHTML = tcStrandedItemsMarkup([item]);
+  document.getElementById('strandedActionNote').textContent =
+    `To delete the branch instead, run: git push origin --delete ${item.branch} (TangleClaw does not delete branches).`;
+  document.getElementById('strandedActionError').classList.add('hidden');
+  const confirmBtn = document.getElementById('strandedActionConfirmBtn');
+  confirmBtn.disabled = false;
+  confirmBtn.textContent = isPr ? 'Open pull request' : 'Acknowledge';
+  document.getElementById('strandedActionModal').classList.add('open');
+}
+
+/**
+ * Close the confirmation dialog without acting. A request already sent still
+ * completes; its answer is then not shown here.
+ */
+function closeStrandedAction() {
+  document.getElementById('strandedActionModal').classList.remove('open');
+  strandedAction = null;
+}
+
+/**
+ * Send the held action. On success the dialog closes and the card reloads its
+ * list; on failure the server's reason is shown in the dialog and nothing is
+ * assumed to have happened.
+ * @returns {Promise<void>}
+ */
+async function confirmStrandedAction() {
+  const act = strandedAction;
+  if (!act || act.busy) return;
+  act.busy = true;
+  const confirmBtn = document.getElementById('strandedActionConfirmBtn');
+  const idle = confirmBtn.textContent;
+  confirmBtn.disabled = true;
+  confirmBtn.textContent = act.kind === 'open-pr' ? 'Opening…' : 'Saving…';
+  document.getElementById('strandedActionError').classList.add('hidden');
+  const [key] = tcStrandedKeys([act.item]);
+  const base = `/api/projects/${encodeURIComponent(act.name)}/stranded-wraps`;
+  const data = act.kind === 'open-pr'
+    ? await apiMutate(`${base}/open-pr`, 'POST', { ...key, confirm: true })
+    : await apiMutate(`${base}/ack`, 'POST', key);
+  act.busy = false;
+  if (strandedAction !== act) return;
+  if (!data) {
+    const el = document.getElementById('strandedActionError');
+    el.textContent = api.lastError || 'The request failed.';
+    el.classList.remove('hidden');
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = idle;
+    return;
+  }
+  closeStrandedAction();
+  // An opened PR leaves the counts unchanged, so the list is dropped by hand
+  // to be fetched again with the item's new state.
+  delete strandedItemsCache[act.name];
+  await loadProjects();
+}
+
+/**
+ * The card badge for a last session that was killed or crashed (#1544). A
+ * crashed session always shows one. A killed one shows one only when it left
+ * changes or unpushed commits in the project's checkout; one that ended clean,
+ * or whose checkout could not be compared, shows nothing here (the detail row
+ * says why).
+ * @param {object} project - Project data with `sessionHealth`
+ * @returns {string} Badge HTML, or ''
+ */
+function renderSessionHealthBadge(project) {
+  const h = project.sessionHealth;
+  if (!h || !h.status) return '';
+  const left = h.state === 'left-work';
+  if (h.status !== 'crashed' && !left) return '';
+  const what = sessionLeftoverSummary(h);
+  const ended = h.status === 'crashed' ? 'The last session crashed' : 'The last session was killed';
+  const title = `${ended}${left ? ` and left ${what} in the project folder (may be from another session)` : ''}. Open the card for details.`;
+  const label = h.status === 'crashed' ? (left ? 'crashed · work left' : 'crashed') : 'killed · work left';
+  const cls = h.status === 'crashed' ? 'badge-session-crashed' : 'badge-session-left';
+  return `<span class="badge ${cls}" title="${esc(title)}">&#9888; ${label}</span>`;
+}
+
+/**
+ * "2 changed files and 1 unpushed commit", from a session-health answer.
+ * @param {object} h - `project.sessionHealth`
+ * @returns {string}
+ */
+function sessionLeftoverSummary(h) {
+  const parts = [];
+  if (h.newPathCount) parts.push(`${h.newPathCount} changed file${h.newPathCount === 1 ? '' : 's'}`);
+  if (h.unpushed) parts.push(`${h.unpushed} unpushed commit${h.unpushed === 1 ? '' : 's'}`);
+  return parts.join(' and ');
+}
+
+/**
+ * The Last session row of a card's detail panel (#1544): how the last session
+ * ended, what it left in the project's checkout, and when that was read. Empty
+ * when a session is active or the last one wrapped.
+ * @param {object} project - Project data with `sessionHealth`
+ * @returns {string} HTML for the row, or ''
+ */
+function renderSessionHealthDetail(project) {
+  const h = project.sessionHealth;
+  if (!h) return '';
+  const label = '<span class="detail-label">Last session</span>';
+  if (!h.status) {
+    return `<div class="detail-row detail-row-warn">${label}<span class="detail-value">`
+      + `<span class="detail-unknown">could not be read: ${esc(h.reason || 'no reason given')}</span></span></div>`;
+  }
+  const ended = `${h.status}${h.endedAt ? ` ${strandedTime(h.endedAt)}` : ''}`;
+  let body;
+  if (h.state === 'checking') {
+    body = `${esc(ended)}; <span class="detail-unknown">checking the project folder…</span>`;
+  } else if (h.state === 'unknown') {
+    body = `${esc(ended)}; <span class="detail-unknown">can't tell whether it left work: ${esc(h.reason || 'no reason given')}</span>`;
+  } else if (h.state === 'clean') {
+    body = esc(`${ended}; nothing left uncommitted or unpushed (checked ${strandedTime(h.checkedAt)})`);
+  } else {
+    const notes = ['may be from another session'];
+    if (h.snapshotComplete === false) notes.push('the launch snapshot was incomplete, so some changes may predate the session');
+    if (h.unpushed === null && h.reason) notes.push(h.reason);
+    const shown = (h.newPaths || []).map((p) => `<code class="stranded-branch">${esc(p)}</code>`).join(', ');
+    const more = h.newPathCount > (h.newPaths || []).length ? `, and ${h.newPathCount - h.newPaths.length} more` : '';
+    body = `${esc(ended)}; left ${esc(sessionLeftoverSummary(h))} in the project folder (${esc(notes.join('; '))}; checked ${esc(strandedTime(h.checkedAt))})`
+      + (shown ? `<span class="stranded-remote">${shown}${esc(more)}</span>` : '');
+  }
+  const warn = h.status === 'crashed' || h.state === 'left-work';
+  return `<div class="${warn ? 'detail-row detail-row-warn' : 'detail-row'}">${label}<span class="detail-value">${body}</span></div>`;
+}
+
+/**
  * The Awareness row of a card's detail panel: the latest session's composed
  * state (confirmed / sent / unverified / no-rules / unaware) with the basis said in
  * words. Empty when the project has never launched a session — nothing
@@ -863,6 +1048,7 @@ function renderCardDetail(project) {
       <div class="detail-row"><span class="detail-label">Engine</span><span class="detail-value">${engineInfo}</span></div>
       <div class="detail-row"><span class="detail-label">Session</span><span class="detail-value">${sessionInfo}</span></div>
       ${awarenessInfo ? `<div class="detail-row"><span class="detail-label">Awareness</span><span class="detail-value">${awarenessInfo}</span></div>` : ''}
+      ${renderSessionHealthDetail(project)}
       ${renderStrandedDetail(project)}
       ${renderStrandedGithubDetail(project)}
       <div class="detail-row"><span class="detail-label">Git</span><span class="detail-value">${gitInfo}</span></div>
@@ -4898,6 +5084,9 @@ $('settingsSaveBtn').addEventListener('click', saveSettings);
 $('deleteModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeDelete(); });
 $('wrapModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeWrapModal(); });
 $('strandedLaunchModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeStrandedLaunchModal(); });
+$('strandedActionCancelBtn').addEventListener('click', closeStrandedAction);
+$('strandedActionConfirmBtn').addEventListener('click', confirmStrandedAction);
+$('strandedActionModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeStrandedAction(); });
 $('settingsModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeSettings(); });
 // CC-6 (#381): delegated Project Rules add/toggle/delete. Attached once to the
 // stable #settingsBody (its innerHTML is swapped per open, so child listeners

@@ -911,6 +911,26 @@ body {
   color: #c4c8cd;
   border: 1px dashed #6b7078;
 }
+/* The last session ended without a wrap (#1544). Crashed is red: something
+   went wrong. Killed with work left is the stranded amber: nothing is broken,
+   but work is sitting uncommitted or unpushed. Each carries a word too. */
+.badge-session-crashed,
+.badge-session-left {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+.badge-session-crashed {
+  background: #4a1414;
+  color: #f4a0a0;
+  border: 1px solid #8a2a2a;
+}
+.badge-session-left {
+  background: #4a3410;
+  color: #f0b860;
+  border: 1px solid #7a5418;
+}
 /* A project whose own folder did not answer (#885). Its git, engine and version
    detail are MISSING rather than absent, so this badge explains why the card's
    other badges are not there. Amber attention, same as the drift badge: the

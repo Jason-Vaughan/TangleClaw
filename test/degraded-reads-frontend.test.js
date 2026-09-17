@@ -982,6 +982,7 @@ describe('the dashboard actually consults the helpers (#885)', () => {
         renderAwarenessDetail: () => '',
         renderStrandedDetail: () => '',
         renderStrandedGithubDetail: () => '',
+        renderSessionHealthDetail: () => '',
         renderGitDetail: () => 'GIT-DELEGATED',
         tcUnreadableNotice: () => ({ why: 'FOLDER-DELEGATED', remedy: '' }),
         renderNextActionRow: () => ''
