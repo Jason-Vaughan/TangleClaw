@@ -336,32 +336,51 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       }
     });
 
-    function stubUserUnit(contents) {
+    const ENOENT = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+
+    // Stub a Linux host whose user unit holds `contents`. `dropins` maps a
+    // drop-in directory to either {fileName: contents} or an Error to throw
+    // when the directory is listed; an unlisted directory does not exist.
+    // A file's contents may themselves be an Error to throw on read.
+    function stubUserUnit(contents, dropins = {}) {
+      const files = new Map([[serverInfo.LINUX_SYSTEMD_USER_UNIT_PATH, contents]]);
+      for (const [dir, entries] of Object.entries(dropins)) {
+        if (entries instanceof Error) continue;
+        for (const [name, text] of Object.entries(entries)) files.set(path.join(dir, name), text);
+      }
       serverInfo._internal.platform = () => 'linux';
       serverInfo._internal.existsSync = (p) => p === serverInfo.LINUX_SYSTEMD_USER_UNIT_PATH;
       serverInfo._internal.readFileSync = (p) => {
-        if (p !== serverInfo.LINUX_SYSTEMD_USER_UNIT_PATH) throw new Error(`unexpected read: ${p}`);
-        if (contents instanceof Error) throw contents;
-        return contents;
+        if (!files.has(p)) throw new Error(`unexpected read: ${p}`);
+        const text = files.get(p);
+        if (text instanceof Error) throw text;
+        return text;
+      };
+      serverInfo._internal.readdirSync = (dir) => {
+        if (!(dir in dropins)) throw ENOENT();
+        if (dropins[dir] instanceof Error) throw dropins[dir];
+        return Object.keys(dropins[dir]);
       };
     }
 
-    it("returns 'systemctl' on Linux when the user unit exists and declares KillMode=process", () => {
-      stubUserUnit('[Service]\nExecStart=/usr/bin/node server.js\nKillMode=process\n');
+    const [HOME_DROPINS, ETC_DROPINS] = serverInfo.LINUX_SYSTEMD_USER_DROPIN_DIRS;
+
+    function detectWith(contents, dropins) {
+      serverInfo.__unsafeResetForTest();
+      stubUserUnit(contents, dropins);
       try {
-        assert.equal(serverInfo.detectRestartMechanism(), 'systemctl');
+        return serverInfo.detectRestartMechanism();
       } finally {
         restoreInternal();
       }
+    }
+
+    it("returns 'systemctl' on Linux when the user unit exists and declares KillMode=process", () => {
+      assert.equal(detectWith('[Service]\nExecStart=/usr/bin/node server.js\nKillMode=process\n'), 'systemctl');
     });
 
     it('returns null when the user unit leaves KillMode at its default — a restart would end every tmux session', () => {
-      stubUserUnit('[Service]\nExecStart=/usr/bin/node server.js\n');
-      try {
-        assert.equal(serverInfo.detectRestartMechanism(), null);
-      } finally {
-        restoreInternal();
-      }
+      assert.equal(detectWith('[Service]\nExecStart=/usr/bin/node server.js\n'), null);
     });
 
     it('returns null for a KillMode that still stops child processes, or a commented-out line', () => {
@@ -369,34 +388,81 @@ describe('lib/server-info (#199 stale-server detection)', () => {
         '[Service]\nKillMode=mixed\n',
         '[Service]\nKillMode=control-group\n',
         '[Service]\n# KillMode=process\n',
+        '[Service]\n; KillMode=process\n',
         '[Service]\nKillMode=processes\n'
       ]) {
-        serverInfo.__unsafeResetForTest();
-        stubUserUnit(unit);
-        try {
-          assert.equal(serverInfo.detectRestartMechanism(), null, `unit ${JSON.stringify(unit)}`);
-        } finally {
-          restoreInternal();
-        }
+        assert.equal(detectWith(unit), null, `unit ${JSON.stringify(unit)}`);
       }
     });
 
     it('accepts spacing around KillMode=process', () => {
-      stubUserUnit('[Service]\n  KillMode = process  \n');
-      try {
-        assert.equal(serverInfo.detectRestartMechanism(), 'systemctl');
-      } finally {
-        restoreInternal();
-      }
+      assert.equal(detectWith('[Service]\n  KillMode = process  \n'), 'systemctl');
+    });
+
+    it('accepts a unit saved with CRLF line endings', () => {
+      assert.equal(detectWith('[Service]\r\nKillMode=process\r\n'), 'systemctl');
+    });
+
+    it('the LAST KillMode line wins, as it does for systemd', () => {
+      assert.equal(detectWith('[Service]\nKillMode=process\nKillMode=control-group\n'), null);
+      assert.equal(detectWith('[Service]\nKillMode=mixed\nKillMode=process\n'), 'systemctl');
+    });
+
+    it('an empty KillMode= resets to the default, which does not keep sessions', () => {
+      assert.equal(detectWith('[Service]\nKillMode=process\nKillMode=\n'), null);
+    });
+
+    it('ignores KillMode outside the [Service] section', () => {
+      assert.equal(detectWith('[Unit]\nKillMode=process\n[Service]\nExecStart=x\n'), null);
+      assert.equal(detectWith('[Service]\nKillMode=process\n[Install]\nKillMode=control-group\n'), 'systemctl');
+    });
+
+    it('a drop-in overrides the unit file, in either direction', () => {
+      assert.equal(detectWith('[Service]\nKillMode=process\n',
+        { [HOME_DROPINS]: { 'override.conf': '[Service]\nKillMode=control-group\n' } }), null);
+      assert.equal(detectWith('[Service]\n',
+        { [HOME_DROPINS]: { 'override.conf': '[Service]\nKillMode=process\n' } }), 'systemctl');
+    });
+
+    it('drop-ins apply in file-name order across both directories, and only *.conf files count', () => {
+      // 20-late.conf sorts after 10-early.conf, so its value wins even though
+      // its directory is listed first.
+      assert.equal(detectWith('[Service]\n', {
+        [HOME_DROPINS]: { '20-late.conf': '[Service]\nKillMode=mixed\n' },
+        [ETC_DROPINS]: { '10-early.conf': '[Service]\nKillMode=process\n' }
+      }), null);
+      assert.equal(detectWith('[Service]\n', {
+        [HOME_DROPINS]: { '20-late.conf': '[Service]\nKillMode=process\n' },
+        [ETC_DROPINS]: { '10-early.conf': '[Service]\nKillMode=mixed\n' }
+      }), 'systemctl');
+      assert.equal(detectWith('[Service]\nKillMode=process\n', {
+        [HOME_DROPINS]: { 'override.conf.bak': '[Service]\nKillMode=control-group\n' }
+      }), 'systemctl');
+    });
+
+    it("a drop-in in the operator's directory masks a same-named one in /etc", () => {
+      assert.equal(detectWith('[Service]\n', {
+        [ETC_DROPINS]: { 'override.conf': '[Service]\nKillMode=control-group\n' },
+        [HOME_DROPINS]: { 'override.conf': '[Service]\nKillMode=process\n' }
+      }), 'systemctl');
+    });
+
+    it('returns null when a drop-in directory or file cannot be read — never guesses in favour of the button', () => {
+      const eacces = Object.assign(new Error('EACCES'), { code: 'EACCES' });
+      assert.equal(detectWith('[Service]\nKillMode=process\n', { [HOME_DROPINS]: eacces }), null);
+      assert.equal(detectWith('[Service]\nKillMode=process\n',
+        { [HOME_DROPINS]: { 'override.conf': eacces } }), null);
     });
 
     it('returns null when the user unit exists but cannot be read', () => {
-      stubUserUnit(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
-      try {
-        assert.equal(serverInfo.detectRestartMechanism(), null);
-      } finally {
-        restoreInternal();
-      }
+      assert.equal(detectWith(Object.assign(new Error('EACCES'), { code: 'EACCES' })), null);
+    });
+
+    it('reads the drop-in directories systemd uses for this user unit', () => {
+      assert.deepEqual(serverInfo.LINUX_SYSTEMD_USER_DROPIN_DIRS, [
+        path.join(os.homedir(), '.config', 'systemd', 'user', 'tangleclaw.service.d'),
+        '/etc/systemd/user/tangleclaw.service.d'
+      ]);
     });
 
     it('returns null on Linux when the user unit is absent (e.g. node started manually)', () => {
@@ -520,6 +586,7 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       const realRead = serverInfo._internal.readFileSync;
       serverInfo._internal.readFileSync = (p, enc) =>
         p === serverInfo.LINUX_SYSTEMD_USER_UNIT_PATH ? '[Service]\nKillMode=process\n' : realRead(p, enc);
+      serverInfo._internal.readdirSync = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
       try {
         serverInfo.captureStartup();
         const info = serverInfo.getServerInfo();
