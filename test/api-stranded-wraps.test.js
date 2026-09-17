@@ -16,6 +16,8 @@ const { setLevel } = require('../lib/logger');
 
 setLevel('error');
 
+const doubles = require('./_exec-results');
+
 const store = require('../lib/store');
 const authSession = require('../lib/auth-session');
 const stranded = require('../lib/stranded-wraps');
@@ -301,7 +303,7 @@ describe('stranded-wraps API (#868, #1538)', () => {
     it('answers 200 with the recorded failure when the check could not run', async () => {
       checkExec = async (file, args) => (file === 'git'
         ? { exitCode: 0, stdout: args[0] === 'remote' ? `${REMOTE}\n` : '', stderr: '', error: null }
-        : { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' }) });
+        : doubles.notFound('gh'));
       const res = await send('POST', `${base()}/check`, { body: {} });
       assert.equal(res.statusCode, 200);
       const body = json(res);

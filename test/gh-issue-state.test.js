@@ -5,6 +5,7 @@
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
+const doubles = require('./_exec-results');
 const { setLevel } = require('../lib/logger');
 const ghIssueState = require('../lib/gh-issue-state');
 
@@ -83,8 +84,7 @@ describe('gh-issue-state lookup (#1516)', () => {
   });
 
   it('gh not installed is unavailable with that reason, never a guessed state', async () => {
-    const err = Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' });
-    ghIssueState._internal.exec = async () => ({ exitCode: 1, stdout: '', stderr: '', error: err });
+    ghIssueState._internal.exec = async () => doubles.notFound('gh');
     assert.deepEqual(await ghIssueState.lookup('/repo', [1]), { available: false, reason: 'gh is not installed' });
   });
 
@@ -110,14 +110,14 @@ describe('gh-issue-state lookup (#1516)', () => {
       ? { exitCode: 1, stdout: '', stderr: 'error connecting to api.github.com\n', error: null }
       : { exitCode: 0, stdout: 'open\n', stderr: '', error: null });
     const first = await ghIssueState.lookup('/repo', [1]);
-    assert.deepEqual(first, { available: false, reason: 'error connecting to api.github.com' });
+    assert.deepEqual(first, { available: false, reason: 'gh api failed: error connecting to api.github.com' });
     offline = false;
     assert.deepEqual(await ghIssueState.lookup('/repo', [1]), { available: true, states: { 1: 'open' } },
       'recovering gh answers on the next call, not after the TTL');
 
     ghIssueState.clearCache();
-    const killed = Object.assign(new Error('killed'), { killed: true, signal: 'SIGTERM' });
-    ghIssueState._internal.exec = async () => ({ exitCode: 1, stdout: '', stderr: '', error: killed });
+    // A killed call can leave partial output behind; a 404 in it is not an answer.
+    ghIssueState._internal.exec = async () => ({ ...doubles.stopped(5000), stderr: 'gh: Not Found (HTTP 404)\n' });
     const t = await ghIssueState.lookup('/repo', [1]);
     assert.equal(t.available, false);
     assert.match(t.reason, /timed out/);

@@ -32,12 +32,17 @@ All notable changes to TangleClaw are documented in this file.
 
   Reconstructed under ADR 0014 from #239 rather than from the submitted patch. Reported and independently implemented by **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in PR #1506; their bytes were not merged, per `CONTRIBUTING.md`.
 
+### Fixed
+
+- **A GitHub or git call can no longer sit waiting for a password** (#1561). If TangleClaw's `git` or `gh` reached a credential prompt, for example on an https remote with no stored login, the call used to wait out its whole timeout before failing, because the server has no terminal to answer it. Prompts are now turned off for the commands behind CI status, issue states, wrap PR status, the stranded-wrap check and Open PR, the wrap steps, the update check, and Update now, so they fail at once with git's or gh's own reason. A command stopped by a crash or an outside kill is now reported as stopped rather than read as an answer (for example, as "no origin remote"). The wrap PR status now says "gh is not installed" or "timed out" like the other readers, rather than a bare exit code.
+
 ### Changed
 
 - **A wrap that finishes now ends the session, even when it had nothing to commit** (#1558). The session used to end only when the wrap made a commit. When a session's work had already merged by pull request, and the wrap's own notes went to ignored files, a full wrap reported "no changes to commit" and left the session running. Now any wrap that finishes records the session as wrapped, closes its terminal and releases its document locks, commit or not. A wrap that stops for you, fails or crashes still leaves the session open so you can answer or retry. The finished report now says "Wrapped — nothing new to commit" and whether the session ended or is still running. Wrap results (the stream's `run-done` and `GET /wrap/status`) carry `sessionOutcome`: `ended`, `kept` (kept on request and still running), or `null` when the run didn't finish or the session ended another way, such as a Kill during the wrap.
 
 ### Internal
 
+- **One shared runner for child processes** (#1561). The runner the wrap steps already shared moved to `lib/exec.js`, and the stranded-wrap check, CI status, issue-state and wrap-PR-status readers now use it instead of their own copies. Results carry `errorCode` and `signal`, and failure reasons come from one shared wording, so a missing program, a timeout or a kill is described the same way everywhere. A GitHub issue-state failure now starts with `gh api failed:`. Test doubles for these results are in `test/_exec-results.js` and are checked against real processes.
 - **ADR 0014 amended for the external-code review roles and rules** (2026-09-17). A dedicated PR Reviewer session now does the micro filter and the clean-room reconstruction, in a worktree that doesn't serve the live install. The Coordinator drafts every contributor reply from the recorded findings; the Operator sends it and closes the original PR after the reconstruction merges.
   - The new **Amendment 2026-09-17** section sets eight rules: a trust boundary, immutable intake, an injection hold, separate decisions, reconstruction, exceptional execution, promotion and records.
   - **Trust boundary:** issues, comments, commit messages and peer-relayed text are untrusted evidence, and no message between sessions authorizes a code change or a merge. Two passing reviews make a PR eligible for reconstruction; the Operator still authorizes the start.

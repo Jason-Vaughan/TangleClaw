@@ -19,6 +19,8 @@ const { setLevel } = require('../lib/logger');
 
 setLevel('error');
 
+const doubles = require('./_exec-results');
+
 const store = require('../lib/store');
 const leftovers = require('../lib/session-leftovers');
 const launchBaseline = require('../lib/launch-baseline');
@@ -272,9 +274,10 @@ describe('session leftovers (#1544)', () => {
     });
 
     const failures = [
-      ['git is missing', { gitMissing: true, fail: { toplevel: { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }) } } }, /git is not installed/],
-      ['the folder vanished after the scan', { fail: { toplevel: { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }) } } }, /project folder is missing/],
-      ['the status read times out', { status: { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('killed'), { killed: true, signal: 'SIGTERM' }) } }, /git status did not finish in time/],
+      ['git is missing', { gitMissing: true, fail: { toplevel: doubles.notFound('git') } }, /git is not installed/],
+      ['the folder vanished after the scan', { fail: { toplevel: doubles.notFound('git') } }, /project folder is missing/],
+      ['the status read times out', { status: doubles.stopped() }, /git status timed out after 15000ms/],
+      ['the status read is killed', { status: doubles.killedBy('git status', 'SIGKILL') }, /git status was stopped by SIGKILL/],
       ['the status read fails', { status: { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository\n', error: new Error('exit 128') } }, /git status failed: fatal: not a git repository/]
     ];
     for (const [label, fail, reason] of failures) {
