@@ -189,21 +189,81 @@ describe('the handoff-stage wrap step', () => {
     assert.equal(store.handoffs.listByProject(project.id).length, 0);
   });
 
+  it('writes NOTHING on a replay within one run — no orphan staged file', async () => {
+    const first = await stageStep.run(ctx());
+    const before = fs.readdirSync(lockfile.handoffDir(project)).filter((n) => n.startsWith('staged-'));
+
+    const replay = await stageStep.run(ctx());
+    const afterFiles = fs.readdirSync(lockfile.handoffDir(project)).filter((n) => n.startsWith('staged-'));
+
+    assert.equal(replay.output.replayed, true);
+    assert.equal(replay.output.publicationId, first.output.publicationId);
+    assert.deepEqual(afterFiles, before,
+      'a second mint would leave a staged file no row references, which reads as an unfinished publish');
+    assert.equal(store.handoffs.listByProject(project.id).length, 1);
+  });
+
   it('skips when there is no session to hand off from', async () => {
     const res = await stageStep.run(ctx({ session: null }));
     assert.equal(res.status, 'skipped');
   });
 
-  it('names every degraded step rather than counting them', async () => {
+  // The rows below carry EXACTLY the runner's recorded shape — `{stepId, kind,
+  // status, output, blockers}` and no `ok`. An earlier version of these tests
+  // added an `ok` field the runner never writes, which made a filter on
+  // `r.ok !== true` pass here while marking every successful step as missing
+  // evidence in production.
+  it('names the steps that fell short, reading the runner\'s real row shape', async () => {
     const res = await stageStep.run(ctx({
       previousResults: [
-        { stepId: 'test', ok: false, status: 'blocked' },
-        { stepId: 'lint', ok: true, status: 'done' },
-        { stepId: 'learnings-capture', ok: false, status: 'skipped' }
+        { stepId: 'test', kind: 'test', status: 'blocked', output: null, blockers: ['2 failed'] },
+        { stepId: 'lint', kind: 'lint', status: 'done', output: null, blockers: [] },
+        { stepId: 'commit', kind: 'commit', status: 'needs-operator', output: null, blockers: [] }
       ]
     }));
     assert.equal(res.output.wrapOutcome, 'degraded');
-    assert.deepEqual(res.output.missingEvidence, ['test: blocked', 'learnings-capture: skipped']);
+    assert.deepEqual(res.output.missingEvidence, ['test: blocked', 'commit: needs-operator']);
+  });
+
+  it('reports a clean wrap as COMPLETE — reachable only because it reads status, not a field the runner never writes', async () => {
+    const res = await stageStep.run(ctx({
+      previousResults: [
+        { stepId: 'lint', kind: 'lint', status: 'done', output: null, blockers: [] },
+        { stepId: 'commit', kind: 'commit', status: 'done', output: { commitSha: 'abc123' }, blockers: [] },
+        { stepId: 'pr-check', kind: 'pr-check', status: 'skipped', output: null, blockers: [] }
+      ]
+    }));
+    assert.equal(res.output.wrapOutcome, 'complete',
+      'a step that correctly did not apply withheld no evidence');
+    assert.deepEqual(res.output.missingEvidence, []);
+  });
+
+  it('reads the next steps from the capture field the ai-content step actually declares', async () => {
+    const res = await stageStep.run(ctx({
+      previousResults: [{
+        stepId: 'memory-update', kind: 'ai-content', status: 'done', blockers: [],
+        output: { parsedFields: { nextSteps: '- ship chunk 03', summary: 's' } }
+      }]
+    }));
+    const pid = res.output.publicationId;
+    const doc = lockfile.readHandoffFile(lockfile.stagedPath(project, pid)).doc;
+    assert.equal(doc.nextAction, '- ship chunk 03');
+  });
+
+  it('records the wrap commit as the handoff\'s head sha when the work tree is a repo', async () => {
+    const res = await stageStep.run(ctx({
+      scope: { workTree: '/abs/work', workToplevel: '/abs/work', worktreeTarget: null, trunk: { branch: 'main' }, baseline: null },
+      previousResults: [{ stepId: 'commit', kind: 'commit', status: 'done', blockers: [], output: { commitSha: 'cafe1234' } }]
+    }));
+    const doc = lockfile.readHandoffFile(lockfile.stagedPath(project, res.output.publicationId)).doc;
+    assert.equal(doc.worktree.headSha, 'cafe1234');
+    assert.equal(doc.worktree.branch, 'main');
+  });
+
+  it('records worktree null ONLY for a root with no git identity, never as a stand-in for an unread key', async () => {
+    const res = await stageStep.run(ctx({ scope: { workTree: '/abs', workToplevel: null } }));
+    const doc = lockfile.readHandoffFile(lockfile.stagedPath(project, res.output.publicationId)).doc;
+    assert.equal(doc.worktree, null);
   });
 
   it('returns a status from the runner\'s declared vocabulary', async () => {

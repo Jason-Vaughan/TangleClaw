@@ -107,6 +107,24 @@ describe('promoting a staged attempt to current', () => {
     assert.throws(() => lockfile.promoteStaged(project, 'pub-missing', null), /staged file is missing/);
   });
 
+  it('REFUSES to retire current.json under an id it does not carry', () => {
+    // The file and the DB disagreeing is evidence of a state nobody recorded.
+    // Filing it under the expected id would overwrite that publication's own
+    // history entry with a different document, destroying both records.
+    lockfile.writeStaged(project, doc('pub-a'));
+    lockfile.promoteStaged(project, 'pub-a', null);
+    lockfile.writeStaged(project, doc('pub-b'));
+
+    assert.throws(
+      () => lockfile.promoteStaged(project, 'pub-b', 'pub-WRONG'),
+      /refusing to retire current\.json as pub-WRONG: it names pub-a/
+    );
+    assert.equal(fs.existsSync(lockfile.historyPath(project, 'pub-WRONG')), false,
+      'nothing may be filed under the wrong name');
+    assert.equal(lockfile.readHandoffFile(lockfile.currentPath(project)).doc.publicationId, 'pub-a',
+      'and current.json is left intact');
+  });
+
   it('reports retiring nothing when there was no current publication', () => {
     lockfile.writeStaged(project, doc('pub-a'));
     assert.equal(lockfile.promoteStaged(project, 'pub-a', 'pub-none').retired, false);

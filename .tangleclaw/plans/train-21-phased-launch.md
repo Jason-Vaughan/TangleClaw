@@ -721,7 +721,7 @@ Chunks are sequential; each one merges before the next begins.
 - **Acceptance cases:** restart under a changed rule set → `SNAPSHOT_REVISED`; step 1 carried over only on byte-equal content; READY with a wrong verdict; duplicate vs conflicting READY; READY after the session ended. Visual change: yes → VRF entry.
 
 ### Chunk 03 — Handoff, preflight, recovery (v41)
-- **21.7** (#1585) `tc.handoff/1` + the `handoff-stage` wrap step + `publishHandoff`/`abandonHandoff` (exact-attempt) in `_runClaimedWrap` + `handoff_publications` + `history/` + an ADR 0002 contract update. `store.sessions.wrap` gains the `{publicationId}` binding (the same transaction as the lifecycle transition).
+- **21.7** (#1585) the `tc.handoff/1` document (`lib/handoff-publication.js`) + its on-disk store, `current.json`/`staged-*`/`history/` (`lib/handoff-lockfile.js`) + the `handoff-stage` wrap step (`lib/wrap-steps/handoff-stage.js`) + `publishHandoff`/`abandonHandoff` (exact-attempt, `lib/handoff-publish.js`) called from `_runClaimedWrap` + the `handoff_publications` table + an ADR 0002 contract update. `store.sessions.wrap` gains the `{publicationId}` binding (the same transaction as the lifecycle transition). Schema names (`tc.handoff/1`) and directory names (`history/`) are named beside the files that implement them so the deliverable list resolves to real paths.
 - **21.8** (#1586) `lib/launch-preflight.js` (pure, ordered verdicts, repair proposals) + `applyHandoffRepairs` (validated controller) + `project_handoff_epoch` with baseline classification
 - **21.9** (#1587) recovery columns + the step-4/READY guards + the `recovery-clear` route and its guard + the UI control (worktree)
 - **Acceptance cases:**
