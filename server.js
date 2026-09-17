@@ -1496,19 +1496,23 @@ route('POST', '/api/master/rules/restore-defaults', (_req, res) => {
 // bare-node, or Linux without a qualifying user unit) so the frontend can
 // hide the button cleanly, and 409 when a systemd unit that qualified at
 // boot no longer does.
-route('POST', '/api/server/restart', (_req, res, _params, body) => {
+route('POST', '/api/server/restart', async (_req, res, _params, body) => {
   // #583 — a restart kills any in-flight wrap pipeline (the 2026-07-16
   // incident's first domino: a restart POSTed mid-wrap 502'd the wrap and
   // orphaned its content steps). Refuse while a wrap runs unless the
   // operator explicitly forces past the guard. Checked BEFORE mechanism
-  // detection so the refusal path can never schedule an exec.
-  const wrappingProject = wrapRunRegistry.anyRunning();
-  if (wrappingProject && !(body && body.force === true)) {
-    return errorResponse(res, 409,
+  // detection so the refusal path can never schedule an exec, and again
+  // after the systemd re-check below, since a wrap can start while it runs.
+  const refuseIfWrapping = () => {
+    const wrappingProject = wrapRunRegistry.anyRunning();
+    if (!wrappingProject || (body && body.force === true)) return false;
+    errorResponse(res, 409,
       `A session wrap is running for "${wrappingProject}" — restarting now would kill it mid-pipeline. ` +
       'Wait for it to finish (GET /api/sessions/:project/wrap/status), or retry with {"force": true}.',
       'WRAP_RESTART_BLOCKED');
-  }
+    return true;
+  };
+  if (refuseIfWrapping()) return;
   const mechanism = serverInfo.detectRestartMechanism();
   if (!mechanism) {
     jsonResponse(res, 501, {
@@ -1518,11 +1522,12 @@ route('POST', '/api/server/restart', (_req, res, _params, body) => {
     return;
   }
   // The unit may have changed since boot; a restart it cannot survive would
-  // end every tmux session, so check again before acting.
-  const confirmed = serverInfo.confirmRestartMechanism(mechanism);
+  // end every tmux session, so ask systemd again (without blocking) first.
+  const confirmed = await serverInfo.confirmRestartMechanism(mechanism);
   if (!confirmed.ok) {
     return errorResponse(res, 409, `Restart not safe right now: ${confirmed.reason}`, 'RESTART_NOT_SAFE');
   }
+  if (refuseIfWrapping()) return;
   const command = serverInfo.buildRestartCommand(mechanism);
   if (!command) {
     // Defensive: detectRestartMechanism returned non-null but
@@ -9485,8 +9490,8 @@ if (require.main === module) {
   // Doing this before store.init keeps the snapshot honest — any code
   // paths the store init triggers run against the SHA we just stamped.
   serverInfo.captureStartup();
-  // Detect the restart mechanism now, not on the first /api/server-info
-  // request: on Linux it asks systemd, and that must not stall a request.
+  // Start restart-mechanism detection now, so a Linux host has systemd's
+  // answer (queried in the background) before the first page asks for it.
   serverInfo.detectRestartMechanism();
 
   // Initialize store (needed for config before PID check)

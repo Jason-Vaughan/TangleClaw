@@ -293,6 +293,30 @@ describe('api wrap-run status + single-flight (#583)', () => {
       }
     });
 
+    it('refuses when a wrap starts while the systemd re-check is running, and builds no command', async () => {
+      const realDetect = serverInfo.detectRestartMechanism;
+      const realConfirm = serverInfo.confirmRestartMechanism;
+      const realBuild = serverInfo.buildRestartCommand;
+      let built = false;
+      serverInfo.detectRestartMechanism = () => 'systemctl';
+      serverInfo.confirmRestartMechanism = async () => {
+        wrapRunRegistry.begin('wrap-run-test', 1); // a wrap begins while systemd answers
+        return { ok: true, reason: null };
+      };
+      serverInfo.buildRestartCommand = () => { built = true; return 'true'; };
+      try {
+        const res = await request(server, 'POST', '/api/server/restart', {});
+        assert.equal(res.status, 409);
+        assert.equal(res.body.code, 'WRAP_RESTART_BLOCKED');
+        assert.equal(built, false, 'no restart may be scheduled once a wrap is running');
+      } finally {
+        serverInfo.detectRestartMechanism = realDetect;
+        serverInfo.confirmRestartMechanism = realConfirm;
+        serverInfo.buildRestartCommand = realBuild;
+        wrapRunRegistry._resetForTests();
+      }
+    });
+
     it('{"force": true} bypasses the guard (proven via a stubbed null mechanism → 501, no exec)', async () => {
       wrapRunRegistry.begin('wrap-run-test', 1);
       const realDetect = serverInfo.detectRestartMechanism;

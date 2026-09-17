@@ -6,8 +6,6 @@
 
 const { describe, it, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
-const os = require('node:os');
-const path = require('node:path');
 
 const serverInfo = require('../lib/server-info');
 
@@ -337,114 +335,171 @@ describe('lib/server-info (#199 stale-server detection)', () => {
     });
 
     // Stub a Linux host whose `systemctl --user show` prints `props` (an
-    // object, rendered as key=value lines) or throws (an Error). Records each
-    // call so a test can pin what was run.
-    function stubSystemd(props, { pid = 4242 } = {}) {
+    // object, rendered as key=value lines) or fails (an Error). Records each
+    // call so a test can pin what was run. `clock.now` drives the re-query
+    // interval.
+    function stubSystemd(props, { pid = 4242, clock = { now: 1_000_000 } } = {}) {
       const calls = [];
       serverInfo._internal.platform = () => 'linux';
       serverInfo._internal.pid = () => pid;
+      serverInfo._internal.now = () => clock.now;
       serverInfo._internal.existsSync = () => { throw new Error('Linux detection must not stat files'); };
-      serverInfo._internal.execFileSync = (file, args, opts) => {
+      serverInfo._internal.execFileAsync = async (file, args, opts) => {
         calls.push({ file, args, opts });
-        if (props instanceof Error) throw props;
-        return Object.entries(props).map(([k, v]) => `${k}=${v}`).join('\n') + '\n';
+        const current = typeof props === 'function' ? props() : props;
+        if (current instanceof Error) throw current;
+        return { stdout: Object.entries(current).map(([k, v]) => `${k}=${v}`).join('\n') + '\n', stderr: '' };
       };
       return calls;
     }
 
     const SAFE = { LoadState: 'loaded', MainPID: '4242', KillMode: 'process', NeedDaemonReload: 'no' };
 
-    function detectWith(props, opts) {
+    // Let a query that a read started (the stub answers at once) land. Tests
+    // wait this way rather than starting a query themselves, so they prove
+    // the read is what asked systemd.
+    const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+    // Boot-time detection as server.js does it: start the query, let it land,
+    // then read the cached answer.
+    async function detectWith(props, opts) {
       serverInfo.__unsafeResetForTest();
       const calls = stubSystemd(props, opts);
       try {
+        serverInfo.detectRestartMechanism();
+        await settle();
         return { mechanism: serverInfo.detectRestartMechanism(), calls };
       } finally {
         restoreInternal();
       }
     }
 
-    it("returns 'systemctl' when systemd reports the unit runs this process with KillMode=process and nothing to reload", () => {
-      assert.equal(detectWith(SAFE).mechanism, 'systemctl');
+    it("returns 'systemctl' when systemd reports the unit runs this process with KillMode=process and nothing to reload", async () => {
+      assert.equal((await detectWith(SAFE)).mechanism, 'systemctl');
     });
 
-    it('asks systemd for the loaded unit without a shell, with a timeout', () => {
-      const { calls } = detectWith(SAFE);
-      assert.equal(calls.length, 1);
+    it('asks systemd for the loaded unit without a shell, with a timeout, once', async () => {
+      const { calls } = await detectWith(SAFE);
+      assert.equal(calls.length, 1, 'the boot query and the read that follows share one query');
       assert.equal(calls[0].file, 'systemctl');
       assert.deepEqual(calls[0].args, ['--user', 'show', 'tangleclaw.service',
         '-p', 'LoadState', '-p', 'MainPID', '-p', 'KillMode', '-p', 'NeedDaemonReload']);
-      assert.ok(calls[0].opts.timeout > 0, 'a hung systemctl must not hang the server');
+      assert.ok(calls[0].opts.timeout > 0, 'a hung systemctl must not hold a query open forever');
     });
 
-    it('returns null when the loaded KillMode would stop child processes — a restart would end every tmux session', () => {
+    it('never blocks: the first read returns null while systemd has not answered', () => {
+      serverInfo.__unsafeResetForTest();
+      let release;
+      serverInfo._internal.platform = () => 'linux';
+      serverInfo._internal.now = () => 1_000_000;
+      serverInfo._internal.execFileAsync = () => new Promise((resolve) => { release = resolve; });
+      try {
+        assert.equal(serverInfo.detectRestartMechanism(), null);
+        assert.equal(typeof release, 'function', 'the query was started');
+      } finally {
+        restoreInternal();
+      }
+    });
+
+    it('returns null when the loaded KillMode would stop child processes — a restart would end every tmux session', async () => {
       for (const killMode of ['control-group', 'mixed', 'none', '']) {
-        assert.equal(detectWith({ ...SAFE, KillMode: killMode }).mechanism, null, `KillMode=${killMode}`);
+        assert.equal((await detectWith({ ...SAFE, KillMode: killMode })).mechanism, null, `KillMode=${killMode}`);
       }
     });
 
-    it('returns null when the unit changed on disk and systemd has not reloaded it', () => {
-      assert.equal(detectWith({ ...SAFE, NeedDaemonReload: 'yes' }).mechanism, null);
+    it('returns null when the unit changed on disk and systemd has not reloaded it', async () => {
+      assert.equal((await detectWith({ ...SAFE, NeedDaemonReload: 'yes' })).mechanism, null);
     });
 
-    it('returns null when the unit is not what runs this server', () => {
-      assert.equal(detectWith({ ...SAFE, MainPID: '0' }).mechanism, null, 'unit stopped');
-      assert.equal(detectWith({ ...SAFE, MainPID: '9999' }).mechanism, null, 'unit runs a different process');
+    it('returns null when the unit is not what runs this server', async () => {
+      assert.equal((await detectWith({ ...SAFE, MainPID: '0' })).mechanism, null, 'unit stopped');
+      assert.equal((await detectWith({ ...SAFE, MainPID: '9999' })).mechanism, null, 'unit runs a different process');
     });
 
-    it('returns null when there is no such unit', () => {
-      assert.equal(detectWith({ LoadState: 'not-found', MainPID: '0', KillMode: 'control-group', NeedDaemonReload: 'no' }).mechanism, null);
+    it('returns null when there is no such unit', async () => {
+      assert.equal((await detectWith({ LoadState: 'not-found', MainPID: '0', KillMode: 'control-group', NeedDaemonReload: 'no' })).mechanism, null);
     });
 
-    it('returns null when a property is missing from the output', () => {
+    it('returns null when a property is missing from the output', async () => {
       const { NeedDaemonReload: _dropped, ...partial } = SAFE;
-      assert.equal(detectWith(partial).mechanism, null);
+      assert.equal((await detectWith(partial)).mechanism, null);
     });
 
-    it('returns null when systemctl is missing, fails, or times out', () => {
-      assert.equal(detectWith(Object.assign(new Error('spawn systemctl ENOENT'), { code: 'ENOENT' })).mechanism, null);
-      assert.equal(detectWith(Object.assign(new Error('Command failed'), { status: 1, stderr: 'Failed to connect to bus' })).mechanism, null);
-      assert.equal(detectWith(Object.assign(new Error('spawnSync systemctl ETIMEDOUT'), { code: 'ETIMEDOUT' })).mechanism, null);
+    it('returns null when systemctl is missing, fails, or times out', async () => {
+      assert.equal((await detectWith(Object.assign(new Error('spawn systemctl ENOENT'), { code: 'ENOENT' }))).mechanism, null);
+      assert.equal((await detectWith(Object.assign(new Error('Command failed'), { code: 1, stderr: 'Failed to connect to bus' }))).mechanism, null);
+      assert.equal((await detectWith(Object.assign(new Error('Command failed'), { killed: true, signal: 'SIGTERM' }))).mechanism, null);
     });
 
-    it('probeSystemdUserUnit explains why a loaded unit does not qualify, and says nothing when there is no unit', () => {
-      stubSystemd({ ...SAFE, KillMode: 'control-group' });
+    it('a "no" is asked again after the re-query interval, so a fixed unit brings the button back', async () => {
+      serverInfo.__unsafeResetForTest();
+      let state = { ...SAFE, NeedDaemonReload: 'yes' };
+      const clock = { now: 1_000_000 };
+      const calls = stubSystemd(() => state, { clock });
       try {
-        assert.match(serverInfo.probeSystemdUserUnit().reason, /KillMode=control-group.*set KillMode=process/);
+        serverInfo.detectRestartMechanism();
+        await settle();
+        assert.equal(serverInfo.detectRestartMechanism(), null);
+
+        state = SAFE; // the operator ran daemon-reload
+        clock.now += serverInfo.SYSTEMD_REPROBE_MS - 1;
+        assert.equal(serverInfo.detectRestartMechanism(), null);
+        assert.equal(calls.length, 1, 'no re-query before the interval has passed');
+
+        clock.now += 1;
+        serverInfo.detectRestartMechanism();
+        await settle();
+        assert.equal(serverInfo.detectRestartMechanism(), 'systemctl');
       } finally {
         restoreInternal();
       }
-      stubSystemd({ ...SAFE, NeedDaemonReload: 'yes' });
+    });
+
+    it('a "yes" is not re-queried on every read', async () => {
+      serverInfo.__unsafeResetForTest();
+      const clock = { now: 1_000_000 };
+      const calls = stubSystemd(SAFE, { clock });
       try {
-        assert.match(serverInfo.probeSystemdUserUnit().reason, /daemon-reload/);
+        serverInfo.detectRestartMechanism();
+        await settle();
+        clock.now += serverInfo.SYSTEMD_REPROBE_MS * 10;
+        assert.equal(serverInfo.detectRestartMechanism(), 'systemctl');
+        assert.equal(calls.length, 1);
       } finally {
         restoreInternal();
       }
-      stubSystemd({ ...SAFE, MainPID: '0' });
-      try {
-        assert.match(serverInfo.probeSystemdUserUnit().reason, /not running this server/);
-      } finally {
-        restoreInternal();
-      }
-      stubSystemd(Object.assign(new Error('Command failed'), { status: 1, stderr: 'Failed to connect to bus' }));
-      try {
-        assert.match(serverInfo.probeSystemdUserUnit().reason, /Failed to connect to bus/);
-      } finally {
-        restoreInternal();
+    });
+
+    it('probeSystemdUserUnit explains why a loaded unit does not qualify, and says nothing when there is no unit', async () => {
+      const cases = [
+        [{ ...SAFE, KillMode: 'control-group' }, /KillMode=control-group.*set KillMode=process/],
+        [{ ...SAFE, NeedDaemonReload: 'yes' }, /daemon-reload/],
+        [{ ...SAFE, MainPID: '0' }, /not running this server/],
+        [Object.assign(new Error('Command failed'), { code: 1, stderr: 'Failed to connect to bus' }), /Failed to connect to bus/]
+      ];
+      for (const [props, pattern] of cases) {
+        stubSystemd(props);
+        try {
+          assert.match((await serverInfo.probeSystemdUserUnit()).reason, pattern);
+        } finally {
+          restoreInternal();
+        }
       }
       stubSystemd({ LoadState: 'not-found' });
       try {
-        assert.deepEqual(serverInfo.probeSystemdUserUnit(), { ok: false, reason: null });
+        assert.deepEqual(await serverInfo.probeSystemdUserUnit(), { ok: false, reason: null });
       } finally {
         restoreInternal();
       }
     });
 
-    it('does not cross platforms — a launchd plist on Linux enables nothing, and macOS never asks systemd', () => {
+    it('does not cross platforms — a launchd plist on Linux enables nothing, and macOS never asks systemd', async () => {
       serverInfo.__unsafeResetForTest();
       stubSystemd({ LoadState: 'not-found' });
       serverInfo._internal.existsSync = (p) => p === serverInfo.MACOS_PLIST_PATH;
       try {
+        serverInfo.detectRestartMechanism();
+        await settle();
         assert.equal(serverInfo.detectRestartMechanism(), null);
       } finally {
         restoreInternal();
@@ -452,7 +507,7 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       serverInfo.__unsafeResetForTest();
       serverInfo._internal.platform = () => 'darwin';
       serverInfo._internal.existsSync = () => false;
-      serverInfo._internal.execFileSync = () => { throw new Error('macOS must not run systemctl'); };
+      serverInfo._internal.execFileAsync = () => { throw new Error('macOS must not run systemctl'); };
       try {
         assert.equal(serverInfo.detectRestartMechanism(), null);
       } finally {
@@ -461,46 +516,55 @@ describe('lib/server-info (#199 stale-server detection)', () => {
     });
 
     describe('confirmRestartMechanism — the re-check before a restart', () => {
-      it('passes launchd through without asking anything', () => {
-        serverInfo._internal.execFileSync = () => { throw new Error('launchd must not be re-probed'); };
+      it('passes launchd through without asking anything', async () => {
+        serverInfo._internal.execFileAsync = () => { throw new Error('launchd must not be re-probed'); };
         try {
-          assert.deepEqual(serverInfo.confirmRestartMechanism('launchctl'), { ok: true, reason: null });
+          assert.deepEqual(await serverInfo.confirmRestartMechanism('launchctl'), { ok: true, reason: null });
         } finally {
           restoreInternal();
         }
       });
 
-      it('asks systemd again, and passes when the unit still qualifies', () => {
+      it('asks systemd again, and passes when the unit still qualifies', async () => {
         const calls = stubSystemd(SAFE);
         try {
-          assert.deepEqual(serverInfo.confirmRestartMechanism('systemctl'), { ok: true, reason: null });
+          assert.deepEqual(await serverInfo.confirmRestartMechanism('systemctl'), { ok: true, reason: null });
           assert.equal(calls.length, 1);
         } finally {
           restoreInternal();
         }
       });
 
-      it('refuses with the reason when the unit changed since boot, and clears the cached mechanism', () => {
+      it('refuses with the reason when the unit changed since boot, and the button goes away until systemd says yes again', async () => {
         serverInfo.__unsafeResetForTest();
-        stubSystemd(SAFE);
+        let state = SAFE;
+        const clock = { now: 1_000_000 };
+        stubSystemd(() => state, { clock });
         try {
+          serverInfo.detectRestartMechanism();
+          await settle();
           assert.equal(serverInfo.detectRestartMechanism(), 'systemctl');
-          stubSystemd({ ...SAFE, NeedDaemonReload: 'yes' });
-          const result = serverInfo.confirmRestartMechanism('systemctl');
+
+          state = { ...SAFE, NeedDaemonReload: 'yes' };
+          const result = await serverInfo.confirmRestartMechanism('systemctl');
           assert.equal(result.ok, false);
           assert.match(result.reason, /daemon-reload/);
-          stubSystemd(SAFE);
-          assert.equal(serverInfo.detectRestartMechanism(), null,
-            'a failed re-check hides the button until the server restarts');
+          assert.equal(serverInfo.detectRestartMechanism(), null, 'the next poll hides the button');
+
+          state = SAFE;
+          clock.now += serverInfo.SYSTEMD_REPROBE_MS;
+          serverInfo.detectRestartMechanism();
+          await settle();
+          assert.equal(serverInfo.detectRestartMechanism(), 'systemctl', 'a transient failure is not final');
         } finally {
           restoreInternal();
         }
       });
 
-      it('refuses with a reason even when the unit has disappeared entirely', () => {
+      it('refuses with a reason even when the unit has disappeared entirely', async () => {
         stubSystemd({ LoadState: 'not-found' });
         try {
-          const result = serverInfo.confirmRestartMechanism('systemctl');
+          const result = await serverInfo.confirmRestartMechanism('systemctl');
           assert.equal(result.ok, false);
           assert.match(result.reason, /no longer loaded/);
         } finally {
@@ -577,13 +641,15 @@ describe('lib/server-info (#199 stale-server detection)', () => {
       }
     });
 
-    it("surfaces 'systemctl' on Linux when systemd confirms the unit — the frontend shows the button on this signal", () => {
+    it("surfaces 'systemctl' on Linux when systemd confirms the unit — the frontend shows the button on this signal", async () => {
       serverInfo._internal.execSync = () => 'sha-1\n';
       serverInfo._internal.platform = () => 'linux';
       serverInfo._internal.pid = () => 77;
-      serverInfo._internal.execFileSync = () => 'LoadState=loaded\nMainPID=77\nKillMode=process\nNeedDaemonReload=no\n';
+      serverInfo._internal.execFileAsync = async () => ({ stdout: 'LoadState=loaded\nMainPID=77\nKillMode=process\nNeedDaemonReload=no\n' });
       try {
         serverInfo.captureStartup();
+        serverInfo.detectRestartMechanism();
+        await new Promise((resolve) => setImmediate(resolve)); // let the boot query land
         const info = serverInfo.getServerInfo();
         assert.equal(info.restartMechanism, 'systemctl');
       } finally {
@@ -594,7 +660,7 @@ describe('lib/server-info (#199 stale-server detection)', () => {
     it("restartMechanism is null when no mechanism is available — frontend hides the button on this signal", () => {
       serverInfo._internal.execSync = () => 'sha-1\n';
       serverInfo._internal.platform = () => 'linux';
-      serverInfo._internal.execFileSync = () => 'LoadState=not-found\nMainPID=0\n';
+      serverInfo._internal.execFileAsync = async () => ({ stdout: 'LoadState=not-found\nMainPID=0\n' });
       try {
         serverInfo.captureStartup();
         const info = serverInfo.getServerInfo();
