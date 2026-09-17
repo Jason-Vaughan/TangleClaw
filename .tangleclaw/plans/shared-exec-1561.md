@@ -78,6 +78,12 @@ itself what a missing binary, a timeout or a signal means.
 - The gh-issue-state timeout test now carries a 404 in its partial output. Without it, `_isNotFound`'s
   timeout guard was covered by nothing.
 
+- Cumulative Critic (0 blocking, 7 warnings), all fixed in one pass: `signal` on results and `didNotRun` (a
+  crash or outside kill is not an answer); one `describeFailure` wording replaces four reason builders (deliberate
+  wording changes are listed in the change-log); `wrap-pr-status` names a missing gh or a timeout; the sync git sites
+  (`update-applier`, `update-checker`) and `behind-origin` use `NO_PROMPT_ENV`, which reverses the plan's first
+  out-of-scope call for the sync update-checker calls; `boundary-patterns.md` and FEATURES updated.
+
 ### Chunk 01: shared runner
 Type: cumulative-final
 

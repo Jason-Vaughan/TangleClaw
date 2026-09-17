@@ -276,7 +276,8 @@ describe('session leftovers (#1544)', () => {
     const failures = [
       ['git is missing', { gitMissing: true, fail: { toplevel: doubles.notFound('git') } }, /git is not installed/],
       ['the folder vanished after the scan', { fail: { toplevel: doubles.notFound('git') } }, /project folder is missing/],
-      ['the status read times out', { status: doubles.stopped() }, /git status did not finish in time/],
+      ['the status read times out', { status: doubles.stopped() }, /git status timed out after 15000ms/],
+      ['the status read is killed', { status: doubles.killedBy('git status', 'SIGKILL') }, /git status was stopped by SIGKILL/],
       ['the status read fails', { status: { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository\n', error: new Error('exit 128') } }, /git status failed: fatal: not a git repository/]
     ];
     for (const [label, fail, reason] of failures) {

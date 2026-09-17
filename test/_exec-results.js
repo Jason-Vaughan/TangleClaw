@@ -15,7 +15,7 @@ const { TIMEOUT_EXIT_CODE } = require('../lib/exec');
  * @returns {{exitCode: number, stdout: string, stderr: string, error: string, errorCode: string, timedOut: boolean}}
  */
 function notFound(bin) {
-  return { exitCode: 1, stdout: '', stderr: '', error: `spawn ${bin} ENOENT`, errorCode: 'ENOENT', timedOut: false };
+  return { exitCode: 1, stdout: '', stderr: '', error: `spawn ${bin} ENOENT`, errorCode: 'ENOENT', signal: null, timedOut: false };
 }
 
 /**
@@ -25,7 +25,7 @@ function notFound(bin) {
  * @returns {object}
  */
 function spawnFailed(bin, code) {
-  return { exitCode: 1, stdout: '', stderr: '', error: `spawn ${bin} ${code}`, errorCode: code, timedOut: false };
+  return { exitCode: 1, stdout: '', stderr: '', error: `spawn ${bin} ${code}`, errorCode: code, signal: null, timedOut: false };
 }
 
 /**
@@ -34,7 +34,7 @@ function spawnFailed(bin, code) {
  * @returns {object}
  */
 function stopped(ms = 15000) {
-  return { exitCode: TIMEOUT_EXIT_CODE, stdout: '', stderr: '', error: `timed out after ${ms}ms`, errorCode: null, timedOut: true };
+  return { exitCode: TIMEOUT_EXIT_CODE, stdout: '', stderr: '', error: `timed out after ${ms}ms`, errorCode: null, signal: null, timedOut: true };
 }
 
 /**
@@ -44,7 +44,18 @@ function stopped(ms = 15000) {
  * @returns {object}
  */
 function exited(stderr = '', exitCode = 1) {
-  return { exitCode, stdout: '', stderr, error: null, errorCode: null, timedOut: false };
+  return { exitCode, stdout: '', stderr, error: null, errorCode: null, signal: null, timedOut: false };
 }
 
-module.exports = { notFound, spawnFailed, stopped, exited };
+/**
+ * What the runner returns for a child stopped by a signal that was not our
+ * timeout (a crash, or a kill from outside).
+ * @param {string} command - The command line, as Node words its error message
+ * @param {string} [signal]
+ * @returns {object}
+ */
+function killedBy(command, signal = 'SIGABRT') {
+  return { exitCode: 1, stdout: '', stderr: '', error: `Command failed: ${command}`, errorCode: null, signal, timedOut: false };
+}
+
+module.exports = { notFound, spawnFailed, stopped, exited, killedBy };

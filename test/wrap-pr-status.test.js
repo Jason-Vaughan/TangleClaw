@@ -159,6 +159,16 @@ describe('wrap-pr-status.resolve', () => {
     assert.match(out.reason, /gh pr view failed/);
   });
 
+  it('names a missing gh and a timeout, like the other gh readers', async () => {
+    const doubles = require('./_exec-results');
+    prStatus._internal.exec = async () => doubles.notFound('gh');
+    assert.equal((await prStatus.resolve('/tmp/p', '9')).reason, 'gh is not installed');
+    prStatus._internal.exec = async () => doubles.stopped(15000);
+    const t = await prStatus.resolve('/tmp/p', '9');
+    assert.equal(t.outcome, 'unknown');
+    assert.equal(t.reason, 'gh pr view timed out after 15000ms');
+  });
+
   it('degrades to unknown on unparseable gh output', async () => {
     prStatus._internal.exec = async () => ({ exitCode: 0, stdout: 'not json', stderr: '' });
     const out = await prStatus.resolve('/tmp/p', '9');

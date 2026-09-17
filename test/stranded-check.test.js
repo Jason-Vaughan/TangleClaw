@@ -444,6 +444,12 @@ describe('stranded wraps — GitHub check (#1542, #1543)', () => {
       assert.equal(result.state, 'failed');
     });
 
+    it('records a failed check, not "none", when reading origin was killed', async () => {
+      const result = await runWith({ originError: doubles.killedBy('git remote get-url origin', 'SIGKILL') });
+      assert.equal(result.state, 'failed');
+      assert.match(result.reason, /git remote get-url was stopped by SIGKILL/);
+    });
+
     it('records "none", not a failure, for a project with no origin', async () => {
       const result = await runWith({ origin: null });
       assert.equal(result.state, 'none');

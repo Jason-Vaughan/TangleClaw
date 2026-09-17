@@ -110,7 +110,7 @@ describe('gh-issue-state lookup (#1516)', () => {
       ? { exitCode: 1, stdout: '', stderr: 'error connecting to api.github.com\n', error: null }
       : { exitCode: 0, stdout: 'open\n', stderr: '', error: null });
     const first = await ghIssueState.lookup('/repo', [1]);
-    assert.deepEqual(first, { available: false, reason: 'error connecting to api.github.com' });
+    assert.deepEqual(first, { available: false, reason: 'gh api failed: error connecting to api.github.com' });
     offline = false;
     assert.deepEqual(await ghIssueState.lookup('/repo', [1]), { available: true, states: { 1: 'open' } },
       'recovering gh answers on the next call, not after the TTL');

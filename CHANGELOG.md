@@ -34,7 +34,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
-- **A GitHub or git call can no longer sit waiting for a password** (#1561). If TangleClaw's `git` or `gh` reached a credential prompt, for example on an https remote with no stored login, the call used to wait out its whole timeout before failing, because the server has no terminal to answer it. Now every command TangleClaw runs this way has prompts turned off, so it fails at once with git's or gh's own reason. That covers CI status, issue states, wrap PR status, the stranded-wrap check and Open PR, the wrap steps, and the background update check.
+- **A GitHub or git call can no longer sit waiting for a password** (#1561). If TangleClaw's `git` or `gh` reached a credential prompt, for example on an https remote with no stored login, the call used to wait out its whole timeout before failing, because the server has no terminal to answer it. Prompts are now turned off for the commands behind CI status, issue states, wrap PR status, the stranded-wrap check and Open PR, the wrap steps, the update check, and Update now, so they fail at once with git's or gh's own reason. A command stopped by a crash or an outside kill is now reported as stopped rather than read as an answer (for example, as "no origin remote"). The wrap PR status now says "gh is not installed" or "timed out" like the other readers, rather than a bare exit code.
 
 ### Changed
 
@@ -42,7 +42,7 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
-- **One shared runner for child processes** (#1561). The runner the wrap steps already shared moved to `lib/exec.js`, and the stranded-wrap check, CI status, issue-state and wrap-PR-status readers now use it instead of their own copies. Results carry `errorCode`, so a missing program or folder is recognised in one place. Test doubles for these results are in `test/_exec-results.js` and are checked against real processes.
+- **One shared runner for child processes** (#1561). The runner the wrap steps already shared moved to `lib/exec.js`, and the stranded-wrap check, CI status, issue-state and wrap-PR-status readers now use it instead of their own copies. Results carry `errorCode` and `signal`, and failure reasons come from one shared wording, so a missing program, a timeout or a kill is described the same way everywhere. A GitHub issue-state failure now starts with `gh api failed:`. Test doubles for these results are in `test/_exec-results.js` and are checked against real processes.
 
 ## [5.28.0] - 2026-09-16
 

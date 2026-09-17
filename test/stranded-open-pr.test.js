@@ -228,6 +228,7 @@ describe('stranded wraps — open a PR from the cleanup path (#1545)', () => {
       ['an open PR already exists', { remoteHeads: { 'wrap/1-x': SHA_A }, openPrs: [{ number: 7, url: 'https://github.com/example/sandbox/pull/7', headRefName: 'wrap/1-x' }] }, 'PR_EXISTS', /already has an open pull request: https:\/\/github\.com\/example\/sandbox\/pull\/7/],
       ['gh pr create fails', { remoteHeads: { 'wrap/1-x': SHA_A }, create: failed('pull request create failed: GraphQL: No commits between main and wrap/1-x') }, 'CREATE_FAILED', /gh pr create failed: pull request create failed: GraphQL: No commits/],
       ['gh pr create is stopped', { remoteHeads: { 'wrap/1-x': SHA_A }, create: doubles.stopped() }, 'CREATE_FAILED', /timed out.*may have reached GitHub/],
+      ['gh pr create is killed', { remoteHeads: { 'wrap/1-x': SHA_A }, create: doubles.killedBy('gh pr create', 'SIGKILL') }, 'CREATE_FAILED', /stopped by SIGKILL.*may have reached GitHub/],
       ['gh pr create prints no URL', { remoteHeads: { 'wrap/1-x': SHA_A }, create: ok('done\n') }, 'CREATE_FAILED', /printed no pull request URL/]
     ];
     for (const [label, scenario, code, message] of cases) {

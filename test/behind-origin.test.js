@@ -201,6 +201,7 @@ describe('lib/behind-origin (#227)', () => {
       assert.ok(fetch.options.timeout > 0 && Number.isFinite(fetch.options.timeout),
         'an unbounded fetch would pin the single-flight slot forever on a hung remote');
       assert.equal(fetch.options.env.GIT_TERMINAL_PROMPT, '0');
+      assert.equal(fetch.options.env.GH_PROMPT_DISABLED, '1');
       assert.match(fetch.options.env.GIT_SSH_COMMAND, /BatchMode=yes/);
       assert.equal(fetch.options.env.PATH, process.env.PATH, 'the process env is inherited, not replaced');
     });
