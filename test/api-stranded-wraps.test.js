@@ -252,4 +252,139 @@ describe('stranded-wraps API (#868, #1538)', () => {
       assert.equal(res.statusCode, 404);
     });
   });
+
+  describe('the launch gate on POST /api/sessions/:project (#1539)', () => {
+    const engines = require('../lib/engines');
+    const sessions = require('../lib/sessions');
+    const { installTmuxGuard, removeTmuxGuard } = require('./_tmux-guard');
+    let realDetect;
+
+    before(() => {
+      installTmuxGuard();
+      realDetect = engines.detectEngine;
+      engines.detectEngine = () => ({ available: true, path: '/usr/bin/engine' });
+    });
+
+    after(() => {
+      engines.detectEngine = realDetect;
+      removeTmuxGuard();
+    });
+
+    it('answers 409 STRANDED_WRAPS with the blocking items, and starts nothing', async () => {
+      stranded.record({ projectId: project.id, remote: REMOTE, branch: 'wrap/1-x', headSha: SHA });
+      const res = await send('POST', `/api/sessions/${encodeURIComponent(project.name)}`, { body: {} });
+      assert.equal(res.statusCode, 409);
+      const body = json(res);
+      assert.equal(body.code, 'STRANDED_WRAPS');
+      assert.deepEqual(body.items.map((i) => [i.remote, i.branch, i.headSha]), [[REMOTE, 'wrap/1-x', SHA]]);
+      assert.equal(store.sessions.getActive(project.id), null);
+    });
+
+    it('hands acknowledgeStranded to the launch', async () => {
+      const keys = [{ remote: REMOTE, branch: 'wrap/1-x', headSha: SHA }];
+      const realLaunch = sessions.launchSession;
+      let seen = null;
+      sessions.launchSession = (name, options) => {
+        seen = options;
+        return { session: null, primePrompt: null, ttydUrl: null, code: 'NOT_FOUND', error: 'No stranded wrap is listed' };
+      };
+      try {
+        const res = await send('POST', `/api/sessions/${encodeURIComponent(project.name)}`, {
+          body: { acknowledgeStranded: keys }
+        });
+        assert.deepEqual(seen.acknowledgeStranded, keys);
+        assert.equal(res.statusCode, 404, 'an acknowledgement that failed keeps its own status, not a generic 500');
+        assert.equal(json(res).code, 'NOT_FOUND');
+      } finally {
+        sessions.launchSession = realLaunch;
+      }
+    });
+
+    it('says in the 201 when the check was skipped, and null when it ran', async () => {
+      const realLaunch = sessions.launchSession;
+      const session = { id: 99, engineId: 'claude', sessionMode: 'tmux', tmuxSession: 'x', startedAt: 'now' };
+      try {
+        sessions.launchSession = () => ({ session, primePrompt: null, ttydUrl: '/terminal/', error: null, strandedUnchecked: 'database is locked' });
+        let res = await send('POST', `/api/sessions/${encodeURIComponent(project.name)}`, { body: {} });
+        assert.equal(res.statusCode, 201);
+        assert.equal(json(res).strandedUnchecked, 'database is locked');
+        sessions.launchSession = () => ({ session, primePrompt: null, ttydUrl: '/terminal/', error: null, strandedUnchecked: null });
+        res = await send('POST', `/api/sessions/${encodeURIComponent(project.name)}`, { body: {} });
+        assert.equal(json(res).strandedUnchecked, null);
+      } finally {
+        sessions.launchSession = realLaunch;
+      }
+    });
+
+    it('maps a malformed acknowledgeStranded to 400', async () => {
+      stranded.record({ projectId: project.id, remote: REMOTE, branch: 'wrap/1-x', headSha: SHA });
+      const res = await send('POST', `/api/sessions/${encodeURIComponent(project.name)}`, {
+        body: { acknowledgeStranded: 'wrap/1-x' }
+      });
+      assert.equal(res.statusCode, 400);
+      assert.equal(json(res).code, 'BAD_REQUEST');
+    });
+  });
+
+  describe('the soft block on POST /api/sessions/:project/wrap (#1540)', () => {
+    const wrapRunRegistry = require('../lib/wrap-run-registry');
+    const wrapPipeline = require('../lib/wrap-pipeline');
+    let realRun;
+
+    before(() => {
+      realRun = wrapPipeline.runWrapPipeline;
+      wrapPipeline.runWrapPipeline = async () => (
+        { ok: false, blockedAt: 'test', results: [], commitSha: null, summary: null, error: null }
+      );
+    });
+
+    after(() => {
+      wrapPipeline.runWrapPipeline = realRun;
+      wrapRunRegistry._resetForTests();
+    });
+
+    beforeEach(() => {
+      wrapRunRegistry._resetForTests();
+      store.sessions.start({ projectId: project.id, engineId: 'claude', tmuxSession: `${project.name}-tmux` });
+      stranded.record({ projectId: project.id, remote: REMOTE, branch: 'wrap/1-x', headSha: SHA });
+    });
+
+    const wrapUrl = () => `/api/sessions/${encodeURIComponent(project.name)}/wrap`;
+
+    it('answers 409 STRANDED_WRAPS with the items and claims no run', async () => {
+      const res = await send('POST', wrapUrl(), { body: {} });
+      assert.equal(res.statusCode, 409);
+      assert.equal(json(res).code, 'STRANDED_WRAPS');
+      assert.deepEqual(json(res).items.map((i) => i.branch), ['wrap/1-x']);
+      assert.equal(json(res).runId, undefined, 'unlike WRAP_IN_PROGRESS, there is no run to follow');
+      assert.equal(wrapRunRegistry.get(project.name).runId, null);
+    });
+
+    it('starts the wrap when options.proceedPastStranded covers the items', async () => {
+      const res = await send('POST', wrapUrl(), {
+        body: { options: { proceedPastStranded: [{ remote: REMOTE, branch: 'wrap/1-x', headSha: SHA }] } }
+      });
+      assert.equal(res.statusCode, 202);
+      assert.equal(json(res).strandedUnchecked, null, 'the check ran');
+      assert.deepEqual(store.activity.query({ projectId: project.id, eventType: 'wrap.strand_ack' }), []);
+    });
+
+    it('says in the 202 when the check was skipped because the records could not be read', async () => {
+      const realQuery = stranded._internal.query;
+      stranded._internal.query = () => { throw new Error('disk I/O error'); };
+      try {
+        const res = await send('POST', wrapUrl(), { body: {} });
+        assert.equal(res.statusCode, 202);
+        assert.match(json(res).strandedUnchecked, /disk I\/O error/);
+      } finally {
+        stranded._internal.query = realQuery;
+      }
+    });
+
+    it('answers 400 for a proceed list that is not an array', async () => {
+      const res = await send('POST', wrapUrl(), { body: { options: { proceedPastStranded: 'wrap/1-x' } } });
+      assert.equal(res.statusCode, 400);
+      assert.equal(json(res).code, 'BAD_REQUEST');
+    });
+  });
 });

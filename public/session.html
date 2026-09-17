@@ -487,6 +487,16 @@
           <option value="major">Major</option>
         </select>
       </div>
+      <!-- #1540 — stranded wraps the server listed when it refused this wrap.
+           Wrap stays disabled until the operator confirms. -->
+      <div id="wrapStranded" class="stranded-block hidden">
+        <p class="modal-text" id="wrapStrandedText"></p>
+        <div id="wrapStrandedList"></div>
+        <label class="stranded-confirm">
+          <input type="checkbox" id="wrapStrandedConfirm">
+          <span>Wrap anyway; these stay flagged</span>
+        </label>
+      </div>
       <div id="wrapError" class="form-error hidden" role="alert"></div>
       <div class="modal-actions">
         <button class="btn" id="wrapCancelBtn">Cancel</button>

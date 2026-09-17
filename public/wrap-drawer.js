@@ -1105,6 +1105,12 @@
       const v = accessors.untrackState();
       if (v === 'approve' || v === 'decline') options.untrackState = v;
     }
+    // #1540 — the stranded wraps the operator chose to wrap past. Sent as the
+    // server listed them; an empty choice sends nothing, so the wrap is gated.
+    if (accessors.proceedPastStranded) {
+      const keys = strandedKeysOf(accessors.proceedPastStranded());
+      if (keys.length > 0) options.proceedPastStranded = keys;
+    }
     // #1492 — Release: Cut or Hold, from the wrap modal or the drawer's choice
     // under a halt. Auto is the absence of both and must NOT be sent: an
     // out-of-set value makes version-bump skip rather than follow the mode.
@@ -1131,6 +1137,23 @@
   }
 
   /**
+   * Well-formed stranded-wrap keys from whatever an accessor or a recorded run
+   * holds: objects with a branch, reduced to `{remote, branch, headSha}`.
+   * @param {*} value
+   * @returns {Array<{remote: string|null, branch: string, headSha: string|null}>}
+   */
+  function strandedKeysOf(value) {
+    if (!Array.isArray(value)) return [];
+    return value
+      .filter((k) => k && typeof k === 'object' && typeof k.branch === 'string' && k.branch)
+      .map((k) => ({
+        remote: typeof k.remote === 'string' ? k.remote : null,
+        branch: k.branch,
+        headSha: typeof k.headSha === 'string' ? k.headSha : null
+      }));
+  }
+
+  /**
    * The choices a Retry replays, read back from a run's recorded `options`
    * (`/wrap/status`) after the page reloads (#1492). Page memory is where Retry
    * keeps them, and a reload wipes it. For most choices that only means being
@@ -1141,7 +1164,7 @@
    * chosen, which is what the page held before the reload taught it anything.
    *
    * @param {*} options - `status.options` for the run being followed.
-   * @returns {{release: string, bumpLevel: string, skipPreflight: boolean, pathDecisions: Object<string, string>, skipAiContent: Object<string, true>, untrackState: string}}
+   * @returns {{release: string, bumpLevel: string, skipPreflight: boolean, pathDecisions: Object<string, string>, skipAiContent: Object<string, true>, untrackState: string, proceedPastStranded: Array<object>}}
    */
   function replayChoicesFromOptions(options) {
     const o = options && typeof options === 'object' ? options : {};
@@ -1160,7 +1183,10 @@
       }
     }
     const untrackState = o.untrackState === 'approve' || o.untrackState === 'decline' ? o.untrackState : '';
-    return { release, bumpLevel, skipPreflight: o.skipPreflight === true, pathDecisions, skipAiContent, untrackState };
+    return {
+      release, bumpLevel, skipPreflight: o.skipPreflight === true, pathDecisions, skipAiContent, untrackState,
+      proceedPastStranded: strandedKeysOf(o.proceedPastStranded)
+    };
   }
 
   /**

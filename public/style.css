@@ -871,6 +871,18 @@ body {
   border-radius: 8px;
   font-weight: 600;
 }
+/* Stranded wraps that hold the next launch (#1541): pushed wrap branches with
+   no pull request that nobody has acknowledged. Amber, like the drift badge:
+   work is waiting, nothing is broken. The glyph and the word carry it. */
+.badge-stranded {
+  background: #4a3410;
+  color: #f0b860;
+  border: 1px solid #7a5418;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 600;
+}
 /* A project whose own folder did not answer (#885). Its git, engine and version
    detail are MISSING rather than absent, so this badge explains why the card's
    other badges are not there. Amber attention, same as the drift badge: the

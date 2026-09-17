@@ -110,13 +110,16 @@ describe('collectOptionsFromAccessors — release', () => {
 
 describe('replayChoicesFromOptions', () => {
   it('takes back every choice a Retry replays', () => {
+    const stranded = [{ remote: 'https://github.com/example/r.git', branch: 'wrap/1-x', headSha: 'e'.repeat(40) }];
     const c = H.replayChoicesFromOptions({
       release: 'cut', bumpLevel: 'major', skipPreflight: true,
-      pathDecisions: { 'a.js': 'include', 'b.js': 'leave' }, skipAiContent: { 'memory-update': true }, untrackState: 'decline'
+      pathDecisions: { 'a.js': 'include', 'b.js': 'leave' }, skipAiContent: { 'memory-update': true }, untrackState: 'decline',
+      proceedPastStranded: stranded
     });
-    assert.deepEqual({ ...c, pathDecisions: { ...c.pathDecisions }, skipAiContent: { ...c.skipAiContent } }, {
+    assert.deepEqual(JSON.parse(JSON.stringify(c)), {
       release: 'cut', bumpLevel: 'major', skipPreflight: true,
-      pathDecisions: { 'a.js': 'include', 'b.js': 'leave' }, skipAiContent: { 'memory-update': true }, untrackState: 'decline'
+      pathDecisions: { 'a.js': 'include', 'b.js': 'leave' }, skipAiContent: { 'memory-update': true }, untrackState: 'decline',
+      proceedPastStranded: stranded
     });
   });
 
@@ -131,6 +134,7 @@ describe('replayChoicesFromOptions', () => {
     assert.equal(c.skipPreflight, false);
     assert.equal(Object.keys(c.pathDecisions).length, 0);
     assert.equal(Object.keys(c.skipAiContent).length, 0);
+    assert.equal(H.replayChoicesFromOptions({ proceedPastStranded: 'wrap/1-x' }).proceedPastStranded.length, 0);
   });
 
   it('drops a level recorded beside a Hold, and treats no options as none chosen', () => {
