@@ -304,6 +304,7 @@ const ttydBind = require('./lib/ttyd-bind');
 const wrapSentinel = require('./lib/wrap-sentinel');
 const { WRAP_STREAM_EVENTS } = require('./public/wrap-stream-events');
 const medusaWake = require('./lib/medusa-wake');
+const launchUnready = require('./lib/launch-unready');
 const authIdentity = require('./lib/auth-identity');
 const authSession = require('./lib/auth-session');
 const authGate = require('./lib/auth-gate');
@@ -4157,6 +4158,60 @@ route('GET', '/api/session-rules/deliveries', (req, res) => {
   // startup rules but has never had one delivered. This is #595's original
   // question, and it needs no argument to be worth asking.
   return jsonResponse(res, 200, { undelivered: store.sessionRuleDeliveries.projectsWithUndeliveredRules() });
+});
+
+// GET /api/launch-sequences?projectId= — the readiness evidence for a project's
+// recent launches (Train 21, #1583).
+//
+// Three kinds of evidence, side by side and never merged (plan §2.5): the rules
+// HOOK's own ledger row, what the sequence SERVED, and what the session
+// ACKNOWLEDGED and attested. They answer different questions and no one of them
+// upgrades another — the hook receipt proves a hook ran in a directory, not
+// which session's rules landed, which is why a pulled sequence keeps its own
+// record.
+route('GET', '/api/launch-sequences', (req, res) => {
+  const query = parseQuery(reqUrl(req).search);
+  const projectId = Number(query.projectId);
+  if (!Number.isInteger(projectId)) {
+    return errorResponse(res, 400, 'projectId is required (the project\'s numeric id)', 'BAD_REQUEST');
+  }
+  const limit = query.limit === undefined ? 5 : Number(query.limit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+    return errorResponse(res, 400, 'limit must be a whole number between 1 and 50', 'BAD_REQUEST');
+  }
+  const sequences = store.launchSequences.listForProject(projectId, limit).map((sequence) => {
+    const steps = store.launchSequences.listSteps(sequence.id, sequence.revision);
+    // The hook row for this same session, so the panel can put the two channels
+    // beside each other. Looked up per sequence rather than joined: the ledger
+    // is keyed by session and a session may have no row at all (a launch whose
+    // rules were pulled), which is a fact to show rather than a row to invent.
+    const hook = store.sessionRuleDeliveries.listForSession(sequence.sessionId)[0] || null;
+    return {
+      sequenceId: sequence.id,
+      sessionId: sequence.sessionId,
+      revision: sequence.revision,
+      applicability: sequence.applicability,
+      notApplicableReason: sequence.notApplicableReason,
+      createdAt: sequence.createdAt,
+      cursor: sequence.cursor,
+      of: steps.length,
+      readyAt: sequence.readyAt,
+      unreadyAt: sequence.unreadyAt,
+      nudgeCount: sequence.nudgeCount,
+      lastNudgedAt: sequence.lastNudgedAt,
+      hook: hook ? { outcome: hook.outcome, channel: hook.channel, skipReason: hook.skipReason || null } : null,
+      steps: steps.map((st) => ({
+        index: st.index,
+        id: st.id,
+        pageCount: st.pageCount,
+        pagesServed: st.pagesServed.length,
+        servedAt: st.servedAt,
+        ackedAt: st.ackedAt,
+        carriedFromRevision: st.carriedFromRevision
+      }))
+    };
+  });
+  return jsonResponse(res, 200, { sequences });
 });
 
 // POST /api/tc/rule-receipt — the startup-rules hook vouching that it RAN
@@ -10115,6 +10170,11 @@ if (require.main === module) {
     // watcher that types a fixed nudge into an opted-in (`medusaWake`) session
     // when fresh inbound mail is waiting and the pane is at a bare prompt.
     medusaWake.start();
+    // Start the unready-launch monitor (Train 21, #1583) — records the launches
+    // that have not attested READY inside their window and nudges each one once,
+    // behind the same idle gate the wake monitor uses. It records and reminds;
+    // it gates nothing.
+    launchUnready.start();
     // Re-sync Medusa listeners for live sessions (TC#550, MED-2K9P v2 T4) —
     // listeners are in-memory, so without this a server restart silently
     // deregistered every running session from the switchboard.

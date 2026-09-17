@@ -4271,6 +4271,27 @@
   }
 
   /**
+   * CSS class for one launch sequence's readiness, in the readiness panel.
+   *
+   * A named function beside `tcDeliveryOutcomeClass`, and for the same reason:
+   * the default must be the cautious one. A sequence that has not attested is
+   * not a pass, and a sequence whose window has passed is the one the operator
+   * opened this panel to find.
+   *
+   * @param {{readyAt: (string|null), unreadyAt: (string|null), applicability: string}} sequence -
+   *   A row from `GET /api/launch-sequences`.
+   * @returns {string} A `rules-status-*` class, or '' while the launch is still
+   *   inside its window, where nothing is owed yet.
+   */
+  function tcLaunchReadinessClass(sequence) {
+    if (!sequence) return 'rules-status-warn';
+    if (sequence.applicability === 'not-applicable') return '';
+    if (sequence.readyAt) return 'rules-status-ok';
+    if (sequence.unreadyAt) return 'rules-status-err';
+    return '';
+  }
+
+  /**
    * The launch modes an engine will actually run, in declaration order.
    *
    * Every browser surface that offers a launch mode reads this: the landing
@@ -4723,6 +4744,7 @@
   global.tcRenderSettingsWarnings = tcRenderSettingsWarnings;
   global.tcSetRulesStatus = tcSetRulesStatus;
   global.tcDeliveryOutcomeClass = tcDeliveryOutcomeClass;
+  global.tcLaunchReadinessClass = tcLaunchReadinessClass;
   global.tcCreateMasterSettings = tcCreateMasterSettings;
   global.tcMasterPendingReasons = TC_MASTER_PENDING;
   global.tcMasterAccessSegments = TC_MASTER_ACCESS_SEGMENTS;
