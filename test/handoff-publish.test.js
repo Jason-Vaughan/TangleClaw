@@ -252,12 +252,17 @@ describe('the handoff-stage wrap step', () => {
 
   it('records the wrap commit as the handoff\'s head sha when the work tree is a repo', async () => {
     const res = await stageStep.run(ctx({
-      scope: { workTree: '/abs/work', workToplevel: '/abs/work', worktreeTarget: null, trunk: { branch: 'main' }, baseline: null },
+      scope: {
+        workTree: '/abs/work', workToplevel: '/abs/work', workGitDir: '/abs/work/.git',
+        worktreeTarget: false, trunk: { branch: 'main' }, baseline: null
+      },
       previousResults: [{ stepId: 'commit', kind: 'commit', status: 'done', blockers: [], output: { commitSha: 'cafe1234' } }]
     }));
     const doc = lockfile.readHandoffFile(lockfile.stagedPath(project, res.output.publicationId)).doc;
     assert.equal(doc.worktree.headSha, 'cafe1234');
     assert.equal(doc.worktree.branch, 'main');
+    assert.equal(doc.worktree.gitDir, '/abs/work/.git',
+      'gitDir is a path; worktreeTarget is a boolean and was never one');
   });
 
   it('records worktree null ONLY for a root with no git identity, never as a stand-in for an unread key', async () => {

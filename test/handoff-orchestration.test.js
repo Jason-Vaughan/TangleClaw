@@ -184,3 +184,40 @@ describe('deciding what happens to the staged attempt', () => {
     }
   });
 });
+
+describe('the step reads only what wrap-scope actually produces', () => {
+  // This guard exists because the same defect landed three times: a field read
+  // off a foreign object by a name its producer never emits, with a hand-built
+  // fixture supplying the invented name so the tests agreed. The document's
+  // bytes are frozen at staging, so a wrong value here can never be repaired.
+  // Assert against a REAL resolved scope, never a literal.
+  it('every scope key the handoff reads exists on a real resolved scope, with the type it is used as', async () => {
+    const wrapScope = require('../lib/wrap-scope.js');
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-handoff-scope-'));
+    tmpDirs.push(repo);
+    const { execFileSync } = require('node:child_process');
+    const run = (args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
+    run(['init', '-q', '-b', 'main']);
+    run(['config', 'user.email', 't@example.com']);
+    run(['config', 'user.name', 'Test']);
+    fs.writeFileSync(path.join(repo, 'f.txt'), 'x\n');
+    run(['add', '.']);
+    run(['commit', '-q', '-m', 'init']);
+
+    const proj = { id: project.id, name: project.name, path: repo, configPath: repo };
+    const scope = await wrapScope.resolve(proj, null, {});
+
+    for (const key of ['workTree', 'workToplevel', 'workGitDir', 'trunk', 'baseline']) {
+      assert.ok(key in scope, `handoff-stage reads scope.${key}, which wrap-scope does not produce`);
+    }
+    // The two fields that were silently wrong, pinned by TYPE rather than presence.
+    assert.equal(typeof scope.workGitDir, 'string', 'gitDir must come from a path, not a flag');
+    assert.equal(typeof scope.worktreeTarget, 'boolean',
+      'worktreeTarget is a boolean — it must never be used as gitDir');
+
+    const facts = stageStep._worktreeFacts(scope, 'abc123');
+    assert.equal(typeof facts.gitDir, 'string');
+    assert.ok(facts.dirty === true || facts.dirty === false || facts.dirty === null,
+      'dirty is measured at handoff and may be null when it could not be established');
+  });
+});
