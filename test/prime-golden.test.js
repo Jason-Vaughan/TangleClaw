@@ -60,7 +60,10 @@ describe('pushed prime byte identity (car 21.2)', () => {
     assert.deepEqual(Object.keys(rendered).sort(), fixtures);
   });
 
-  for (const name of ['full-silent-claude', 'paste-codex', 'overflow-claude', 'fresh-antigravity', 'audit-openclaw']) {
+  // Derived from the fixtures on disk rather than listed here: a scenario added
+  // without a case would otherwise be pinned by nothing, and the membership test
+  // above already holds the two sets equal.
+  for (const name of fs.readdirSync(FIXTURE_DIR).filter((f) => f.endsWith('.txt')).map((f) => f.slice(0, -4)).sort()) {
     it(`renders ${name} byte for byte as before`, () => {
       const expected = fs.readFileSync(path.join(FIXTURE_DIR, `${name}.txt`), 'utf8');
       assert.equal(rendered[name], expected);
@@ -73,7 +76,12 @@ describe('pushed prime byte identity (car 21.2)', () => {
       '## Active Learnings', '## Resume', '## Feature Index', '## Project Map', '## Wrapping this session', 'Launch heal: moved one leftover file.']) {
       assert.ok(full.includes(heading), `full scenario carries ${heading}`);
     }
-    assert.ok(rendered['paste-codex'].includes('## Project Rules'), 'paste engines get inline rules');
+    assert.ok(rendered['paste-codex'].includes('## Project Rules'), 'a paste engine with no sequence gets inline rules');
+    const pulled = rendered['paste-codex-pull'];
+    assert.ok(!pulled.includes('## Project Rules'), 'a paste engine that pulls does not also get them pasted');
+    assert.ok(pulled.includes('they are NOT in this prime'), 'and is told where they are instead');
+    assert.ok(pulled.includes('in the governance step of this session\'s launch sequence'),
+      'the rule-sources section names the carrier that actually carries them');
     assert.ok(rendered['paste-codex'].includes('## Last Session Summary'));
     const overflow = rendered['overflow-claude'];
     assert.ok(overflow.includes('exceeds the 10000-character budget'), 'the overflow note is pinned');

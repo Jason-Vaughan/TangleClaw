@@ -668,8 +668,11 @@ engine-name branches.
 
 - **prime-delivery §1** (channel per concern, declared limits) — **conforms** (`toolOutput.maxChars`).
 - **§2** (cost scales with relevance) — **conforms**.
-- **§3** (presence delivered) — **conforms while `pasteRules=paste`**. The amendment is *proposed*
-  (R1) and is recorded and ratified before 21.6 changes any default.
+- **§3** (presence delivered) — **conforms**. The operator ratified R1 on 2026-09-17 and the
+  amendment ("An acknowledged pull is delivery") is written into
+  `.prawduct/artifacts/prime-delivery-direction.md` §3 in the same work cycle as the default flip
+  to `pull` (#1584). The amendment states the three conditions that bound the permission, and the
+  code honours all three.
 - **§4** (confirmed delivery) — **conforms, strengthened**, with per-channel evidence kept honest
   (§2.5).
 - **§5** (visible omission) — **conforms**: required content is paginated, never yielded; withheld
@@ -777,6 +780,19 @@ Written before the code, because each one answers a question the blueprint leave
   setting is read together with this launch's applicability: on an engine that declares no launch
   sequence, or a launch whose prime is disabled, the rules stay pasted. A pointer to a channel the
   session does not have is the #749 failure one engine over.
+- **The §3 amendment is on disk, not in the PR diff.** `.prawduct/artifacts/` is gitignored in this
+  repo by deliberate choice (`.gitignore` publishes three migration artifacts and nothing else), so
+  the amendment cannot ride in a commit. It is written into
+  `.prawduct/artifacts/prime-delivery-direction.md` in the same work cycle as the flip, which is
+  what "the same PR" protects — the default never moves ahead of the recorded ratification — and the
+  PR body says where to read it.
+- **`pasteRules` gets no `ENGINE_CONDITIONAL_SETTINGS` row.** That table exists to explain a
+  settings-modal control that is disabled, and this setting has no control: it lives in
+  `.tangleclaw/project.json`. A row would add a browser mirror, probes and a parity loop for a
+  disposition nobody renders. The honest-absence requirement is met where the setting is
+  observable instead — the prime's "Rule sources in force" line names the carrier that actually
+  carried the rules, and a launch whose setting asked for `pull` without a sequence logs that it
+  pasted them anyway.
 - **The unready monitor reuses the wake monitor's idle gate rather than growing a second one.**
   `medusaWake.assessSessionIdle` already decides whether a pane is safe to type into, and
   `lib/sessions.js#_awaitPaneReady` already reuses it, so the nudge injects through
