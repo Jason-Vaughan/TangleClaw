@@ -134,12 +134,13 @@ function exists to make the rule a stated, tested policy rather than a code path
 missing. When multi-role adds roles, each one is gated unless this function says otherwise.
 
 **D6: one function answers "what blocks now".** `strandedWraps.blockingItems(project)` returns
-`list(project).items.filter(isBlocking)`. Both gates and the project-list count use it, so all three
-agree by construction. `strandedWraps.covers(items, keys)` returns the items the given keys do not cover
-(matched on remote, branch and headSha), and both gates use it.
+`list(project).items.filter(isBlocking)`, and both gates use it. The project-list count is
+`counts(list(project).items)`, whose `blocking` is the same `isBlocking` filter, so all three agree.
+`strandedWraps.uncovered(items, keys)` returns the items the given keys do not cover (matched on remote,
+branch and headSha). *Names settled while building:* `covers` shipped as `uncovered`.
 
 **D7: the project list carries a small count, not the items.** Each project in `GET /api/projects` gets
-`stranded: {blocking, unacknowledged, grandfathered}`, or `stranded: null` with `strandedError` when the
+`stranded: {total, unacknowledged, grandfathered, blocking}`, or `stranded: null` with `strandedError` when the
 read failed. A read failure never breaks the list. The card badge reads `blocking`. The detail panel
 fetches `GET /api/projects/:project/stranded-wraps` when opened, for the items.
 - Cost: three indexed-by-type activity queries per project, per list load, and the list is polled every
@@ -184,7 +185,7 @@ Type: cumulative-final
    `.tangleclaw/plans`, `change-log.md`, `backlog.md` or the artifacts directory as a whole.
 1. Tests first. Every test uses a temp store (`store._setBasePath`), never the live one.
    - `test/stranded-wraps.test.js`: `blockingItems` (grandfathered and acknowledged excluded),
-     `covers` (remote mismatch is not covered), `gateAppliesTo` (master false, no role true, any other
+     `uncovered` (remote mismatch is not covered), `gateAppliesTo` (master false, no role true, any other
      role true).
    - The launch gate: a blocking item → `STRANDED_WRAPS` with the items, and no baseline, prime file or
      version file written. A grandfathered-only project launches. `acknowledgeStranded` covering all
@@ -200,7 +201,7 @@ Type: cumulative-final
    - The UI helpers: `renderStrandedItems` escapes branch names and shows the full SHA.
      `collectOptionsFromAccessors` carries `proceedPastStranded` and drops it when the accessor
      returns nothing.
-2. Implement `lib/stranded-wraps.js` (`blockingItems`, `covers`, `gateAppliesTo`), the gate in
+2. Implement `lib/stranded-wraps.js` (`blockingItems`, `uncovered`, `gateAppliesTo`, `counts`), the gate in
    `launchSession`, the soft block in `startWrap`, the two route mappings, and the `stranded` count in
    `lib/projects.js`.
 3. Implement the UI: the launch dialog (`public/landing.js`, `public/index.html`), the dashboard wrap
