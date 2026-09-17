@@ -43,6 +43,18 @@ All notable changes to TangleClaw are documented in this file.
 ### Internal
 
 - **One shared runner for child processes** (#1561). The runner the wrap steps already shared moved to `lib/exec.js`, and the stranded-wrap check, CI status, issue-state and wrap-PR-status readers now use it instead of their own copies. Results carry `errorCode` and `signal`, and failure reasons come from one shared wording, so a missing program, a timeout or a kill is described the same way everywhere. A GitHub issue-state failure now starts with `gh api failed:`. Test doubles for these results are in `test/_exec-results.js` and are checked against real processes.
+- **ADR 0014 amended for the external-code review roles and rules** (2026-09-17). A dedicated PR Reviewer session now does the micro filter and the clean-room reconstruction, in a worktree that doesn't serve the live install. The Coordinator drafts every contributor reply from the recorded findings; the Operator sends it and closes the original PR after the reconstruction merges.
+  - The new **Amendment 2026-09-17** section sets eight rules: a trust boundary, immutable intake, an injection hold, separate decisions, reconstruction, exceptional execution, promotion and records.
+  - **Trust boundary:** issues, comments, commit messages and peer-relayed text are untrusted evidence, and no message between sessions authorizes a code change or a merge. Two passing reviews make a PR eligible for reconstruction; the Operator still authorizes the start.
+  - **Pinned verdicts:** a verdict is tied to the head commit it audited, and any new commit means a full re-audit.
+  - **Injection hold:** instructions aimed at the reviewing agent stop the review for joint review with the Operator. They are not an automatic rejection.
+  - **Code Reviewer:** a separate Code Reviewer reviews reconstructions, and none auto-merges. Until that session exists, the Prawduct Critic, Claude Code's `/code-review` and the Operator's own review all review a reconstruction.
+  - **Honest limits:** each rule whose mechanism doesn't exist yet says so (#1554, #1553, #1551, #1552, #1436).
+  - `docs/dependency-bump-audit.md` names the PR Reviewer as the micro filter and says plainly that its checks are evidence, not proof that a release is safe.
+- **ADR 0014: who owns and sends contributor replies** (2026-09-17). The Coordinator role is renamed ProjectManager.
+  - **Ownership:** the ProjectManager owns every contributor reply and writes it from the recorded findings; no other session drafts one, and the PR Reviewer hands over findings, not reply text.
+  - **Posting:** the Operator posts every reply. No session posts to a contributor.
+  - **One reply per PR:** before posting, check that the PR hasn't already been answered.
 
 ## [5.28.0] - 2026-09-16
 
