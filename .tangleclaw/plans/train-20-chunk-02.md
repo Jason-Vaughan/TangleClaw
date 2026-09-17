@@ -181,7 +181,7 @@ fixed. The wrap override lives in the run registry's existing options record.
 Type: cumulative-final
 
 0. In the worktree, symlink only the untracked `.prawduct/*` state back to the primary. Do not symlink
-   `.tangleclaw/plans`, `change-log.md`, `backlog.md` or `artifacts/` as a whole.
+   `.tangleclaw/plans`, `change-log.md`, `backlog.md` or the artifacts directory as a whole.
 1. Tests first. Every test uses a temp store (`store._setBasePath`), never the live one.
    - `test/stranded-wraps.test.js`: `blockingItems` (grandfathered and acknowledged excluded),
      `covers` (remote mismatch is not covered), `gateAppliesTo` (master false, no role true, any other
@@ -211,7 +211,7 @@ Type: cumulative-final
    confirm a test fails.
 5. Docs: CHANGELOG `[Unreleased]` `### Added`, FEATURES.md, the API reference (the two 409 contracts,
    `acknowledgeStranded`, `proceedPastStranded`, the `stranded` project field). Move
-   `.tangleclaw/plans/train-20-chunk-01.md` to `.tangleclaw/plans/archive/` (#868 and #1538 are closed).
+   the Chunk 01 plan into the plans archive (now `.tangleclaw/plans/archive/train-20-chunk-01.md`; #868 and #1538 are closed).
 6. Verify on a scratch server (temp store, temp repo, never the live install), served by tailnet IP:
    seed a stranded record, launch → 409, acknowledge-and-launch → 201; seed another, wrap → 409,
    wrap with the override → 202 and no ack row; list the projects and time it against a copy of the
@@ -268,4 +268,4 @@ Type: cumulative-final
 
 ## Status
 
-- [ ] Chunk 02: launch gate, wrap soft block, dashboard badge
+- [x] Chunk 02: launch gate, wrap soft block, dashboard badge
