@@ -16,6 +16,8 @@ const { setLevel, setConsoleStream } = require('../lib/logger');
 
 setLevel('error');
 
+const doubles = require('./_exec-results');
+
 const store = require('../lib/store');
 const stranded = require('../lib/stranded-wraps');
 const check = require('../lib/stranded-check');
@@ -215,9 +217,9 @@ describe('stranded wraps — open a PR from the cleanup path (#1545)', () => {
     const cases = [
       ['origin is missing', { origin: null }, 'NOT_GITHUB', /no origin remote/],
       ['origin is not on GitHub', { origin: 'https://gitlab.com/example/sandbox.git' }, 'NOT_GITHUB', /not a GitHub repository \(https:\/\/gitlab\.com/],
-      ['git cannot run', { gitMissing: true, fail: { origin: { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }) } } }, 'READ_FAILED', /git is not installed/],
+      ['git cannot run', { gitMissing: true, fail: { origin: doubles.notFound('git') } }, 'READ_FAILED', /git is not installed/],
       ['git refuses the folder as a repository', { fail: { origin: failed('fatal: not a git repository (or any of the parent directories): .git', 128) } }, 'READ_FAILED', /git remote get-url failed: fatal: not a git repository/],
-      ['the folder is gone', { fail: { origin: { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }) } } }, 'READ_FAILED', /project folder is missing/],
+      ['the folder is gone', { fail: { origin: doubles.notFound('git') } }, 'READ_FAILED', /project folder is missing/],
       ['origin moved to another repository', { origin: 'https://github.com/example/other.git' }, 'REMOTE_MISMATCH', /recorded on https:\/\/github\.com\/example\/sandbox\.git/],
       ['the branch is gone', { remoteHeads: {} }, 'BRANCH_GONE', /no longer on origin/],
       ['the branch moved', { remoteHeads: { 'wrap/1-x': SHA_B } }, 'BRANCH_MOVED', new RegExp(`at ${SHA_B} on origin, not ${SHA_A}`)],
@@ -225,7 +227,7 @@ describe('stranded wraps — open a PR from the cleanup path (#1545)', () => {
       ['the PR lookup fails', { remoteHeads: { 'wrap/1-x': SHA_A }, fail: { prList: failed('gh: To get started with GitHub CLI, please run:  gh auth login') } }, 'READ_FAILED', /gh auth login/],
       ['an open PR already exists', { remoteHeads: { 'wrap/1-x': SHA_A }, openPrs: [{ number: 7, url: 'https://github.com/example/sandbox/pull/7', headRefName: 'wrap/1-x' }] }, 'PR_EXISTS', /already has an open pull request: https:\/\/github\.com\/example\/sandbox\/pull\/7/],
       ['gh pr create fails', { remoteHeads: { 'wrap/1-x': SHA_A }, create: failed('pull request create failed: GraphQL: No commits between main and wrap/1-x') }, 'CREATE_FAILED', /gh pr create failed: pull request create failed: GraphQL: No commits/],
-      ['gh pr create is stopped', { remoteHeads: { 'wrap/1-x': SHA_A }, create: { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('killed'), { killed: true, signal: 'SIGTERM' }) } }, 'CREATE_FAILED', /timed out.*may have reached GitHub/],
+      ['gh pr create is stopped', { remoteHeads: { 'wrap/1-x': SHA_A }, create: doubles.stopped() }, 'CREATE_FAILED', /timed out.*may have reached GitHub/],
       ['gh pr create prints no URL', { remoteHeads: { 'wrap/1-x': SHA_A }, create: ok('done\n') }, 'CREATE_FAILED', /printed no pull request URL/]
     ];
     for (const [label, scenario, code, message] of cases) {

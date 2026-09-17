@@ -13,6 +13,7 @@
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
+const doubles = require('./_exec-results');
 const ci = require('../lib/ci-status');
 
 const RUN = {
@@ -23,15 +24,15 @@ const RUN = {
 /**
  * Install an exec that answers the probe's three commands from a spec.
  * @param {object} spec - `{remote, head, repoView, runs, listError}`; each of
- *   `remote`/`head`/`repoView` is a `{exitCode, stdout, stderr, error}` or
+ *   `remote`/`head`/`repoView` is a `lib/exec.js` result (see `test/_exec-results.js`) or
  *   omitted for a clean default; `runs` is the JSON body; `listError` an exec
  *   result to answer `gh run list` with instead.
  * @returns {string[][]} The command log.
  */
 function install(spec) {
   const calls = [];
-  const ok = (stdout) => ({ exitCode: 0, stdout, stderr: '', error: null });
-  const fail = (stderr = '', extra = {}) => ({ exitCode: 1, stdout: '', stderr, error: Object.assign(new Error('exit 1'), extra) });
+  const ok = (stdout) => ({ exitCode: 0, stdout, stderr: '', error: null, errorCode: null, timedOut: false });
+  const fail = (stderr = '') => doubles.exited(stderr);
   ci._internal.exec = async (file, args) => {
     calls.push([file, ...args]);
     const key = `${file} ${args.slice(0, 2).join(' ')}`;
@@ -120,14 +121,14 @@ describe('#991 ci-status.refresh', () => {
   });
 
   it('reads a missing gh as UNKNOWN with the reason, never as passing', async () => {
-    install({ listError: install.fail('', { code: 'ENOENT' }) });
+    install({ listError: doubles.notFound('gh') });
     const r = await ci.refresh('/p/i', { now: 0 });
     assert.equal(r.state, 'unknown');
     assert.equal(r.reason, 'gh is not installed');
   });
 
   it('reads a missing git as UNKNOWN, not as "no origin"', async () => {
-    install({ remote: install.fail('', { code: 'ENOENT' }) });
+    install({ remote: doubles.notFound('git') });
     const r = await ci.refresh('/p/j', { now: 0 });
     assert.equal(r.state, 'unknown');
     assert.equal(r.reason, 'git is not installed');
@@ -141,7 +142,7 @@ describe('#991 ci-status.refresh', () => {
   });
 
   it('reads a timed-out gh as UNKNOWN naming the timeout', async () => {
-    install({ listError: install.fail('', { killed: true, signal: 'SIGTERM' }) });
+    install({ listError: doubles.stopped(5000) });
     const r = await ci.refresh('/p/l', { now: 0 });
     assert.equal(r.state, 'unknown');
     assert.match(r.reason, /timed out/);

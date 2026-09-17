@@ -11,7 +11,7 @@
  * it never measured is the false-report class the wrap drawer exists to end,
  * and it is invisible in the UI precisely when it is wrong.
  *
- * The two `_exec-shell` options this step introduced are exercised against
+ * The two `lib/exec.js` options this step introduced are exercised against
  * REAL child processes rather than a double, because both are about what the
  * OS does: `closeStdin` fixes a child that reads stdin to EOF hanging to the
  * timeout (prawduct's Stop hook reads its harness payload that way), and `env`
@@ -26,7 +26,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const preflight = require('../lib/wrap-steps/preflight');
-const execShellLib = require('../lib/wrap-steps/_exec-shell');
+const execShellLib = require('../lib/exec');
 
 /**
  * Run `fn` with `preflight._internal` overridden, restoring every key after.
@@ -467,7 +467,7 @@ describe('preflight "Wrap anyway" override (#1229)', () => {
   });
 });
 
-describe('_exec-shell options the preflight probe needs (#854)', () => {
+describe('lib/exec options the preflight probe needs (#854)', () => {
   /** Long enough not to race a spawn, short enough to keep the suite fast. */
   const TIMEOUT_MS = 4000;
 

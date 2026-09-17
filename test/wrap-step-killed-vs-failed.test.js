@@ -20,7 +20,7 @@ const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
 const os = require('node:os');
 
-const { execShell, execFileArgs, TIMEOUT_EXIT_CODE } = require('../lib/wrap-steps/_exec-shell');
+const { execShell, execFileArgs, TIMEOUT_EXIT_CODE } = require('../lib/exec');
 const commitStep = require('../lib/wrap-steps/commit');
 const prMergeStep = require('../lib/wrap-steps/pr-merge');
 const prCheckStep = require('../lib/wrap-steps/pr-check');
@@ -61,7 +61,7 @@ async function captureWarnings(fn) {
   return lines;
 }
 
-describe('_exec-shell.execFileArgs — the argv-style runner (#897)', () => {
+describe('lib/exec execFileArgs — the argv-style runner (#897)', () => {
   it('maps a real timeout to the timeout exit code and timedOut', async () => {
     const result = await execFileArgs('sleep', ['30'], {
       cwd: os.tmpdir(), timeoutMs: SHORT_TIMEOUT_MS, maxBufferBytes: 1024 * 1024

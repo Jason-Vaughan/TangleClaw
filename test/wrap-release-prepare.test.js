@@ -24,7 +24,7 @@ setLevel('error');
 const commitStep = require('../lib/wrap-steps/commit');
 const launchBaseline = require('../lib/launch-baseline');
 const wrapScope = require('../lib/wrap-scope');
-const { execFileArgs } = require('../lib/wrap-steps/_exec-shell');
+const { execFileArgs } = require('../lib/exec');
 const { initRepo } = require('./_temp-repo');
 
 const dirs = [];

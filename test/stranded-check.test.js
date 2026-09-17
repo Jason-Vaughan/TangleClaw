@@ -19,6 +19,8 @@ const { setLevel } = require('../lib/logger');
 
 setLevel('error');
 
+const doubles = require('./_exec-results');
+
 const store = require('../lib/store');
 const stranded = require('../lib/stranded-wraps');
 const check = require('../lib/stranded-check');
@@ -69,7 +71,7 @@ function fakeExec(scenario) {
     if (file === 'git' && args[0] === '--version') {
       // A git that would not start in the folder (ENOENT) is modelled as missing everywhere.
       const e = scenario.originError;
-      return e && e.error && e.error.code === 'ENOENT' ? e : ok('git version 2.x\n');
+      return e && e.errorCode === 'ENOENT' ? e : ok('git version 2.x\n');
     }
     if (file === 'git' && args[0] === 'remote') {
       if (scenario.originError) return scenario.originError;
@@ -356,13 +358,13 @@ describe('stranded wraps — GitHub check (#1542, #1543)', () => {
 
   describe('a check that could not run', () => {
     const failures = [
-      ['gh is not installed', { openFail: { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' }) } }, /gh is not installed/],
+      ['gh is not installed', { openFail: doubles.notFound('gh') }, /gh is not installed/],
       ['gh is not signed in', { openFail: { exitCode: 4, stdout: '', stderr: 'To get started with GitHub CLI, please run:  gh auth login', error: new Error('exit 4') } }, /gh auth login/],
-      ['gh timed out', { openFail: { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('killed'), { killed: true, signal: 'SIGTERM' }) } }, /timed out/],
+      ['gh timed out', { openFail: doubles.stopped() }, /timed out/],
       ['gh printed something unparseable', { openRaw: 'not json' }, /could not parse/],
       ['the per-branch read failed', { headFail: { exitCode: 1, stdout: '', stderr: 'error connecting to api.github.com', error: new Error('exit 1') } }, /error connecting/],
       ['ls-remote failed', { branches: { fail: { exitCode: 128, stdout: '', stderr: 'fatal: unable to access \'https://ghp_abcdefghijklmnopqrstuvwxyz0123456789@github.com/x\': Could not resolve host', error: new Error('exit 128') } } }, /Could not resolve host/],
-      ['git is not installed', { originError: { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }) } }, /git is not installed/]
+      ['git is not installed', { originError: doubles.notFound('git') }, /git is not installed/]
     ];
     for (const [label, extra, reasonRe] of failures) {
       it(`records a failed check with the reason when ${label}, and clears and reports nothing`, async () => {
@@ -398,7 +400,7 @@ describe('stranded wraps — GitHub check (#1542, #1543)', () => {
 
     it('records a failed check, not "none", when reading origin timed out', async () => {
       const result = await runWith({
-        originError: { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('killed'), { killed: true, signal: 'SIGTERM' }) }
+        originError: doubles.stopped()
       });
       assert.equal(result.state, 'failed');
       assert.match(result.reason, /git remote get-url timed out/);
@@ -406,7 +408,7 @@ describe('stranded wraps — GitHub check (#1542, #1543)', () => {
       assert.notEqual(await check.checkAfterLaunch(project), null, 'a timeout never lets a launch skip the next check');
     });
 
-    const enoent = () => ({ exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }) });
+    const enoent = () => (doubles.notFound('git'));
 
     it('records a failed check naming the folder when a git spawn cannot start but git itself runs', async () => {
       const calls = [];
@@ -437,7 +439,7 @@ describe('stranded wraps — GitHub check (#1542, #1543)', () => {
 
     it('records a failed check when git could not be started for another reason', async () => {
       const result = await runWith({
-        originError: { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('spawn git EACCES'), { code: 'EACCES' }) }
+        originError: doubles.spawnFailed('git', 'EACCES')
       });
       assert.equal(result.state, 'failed');
     });

@@ -24,7 +24,7 @@ const sessionFiles = require('../lib/wrap-steps/session-files');
 const commitStep = require('../lib/wrap-steps/commit');
 const launchBaseline = require('../lib/launch-baseline');
 const wrapScope = require('../lib/wrap-scope');
-const { execFileArgs } = require('../lib/wrap-steps/_exec-shell');
+const { execFileArgs } = require('../lib/exec');
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 const dirs = [];

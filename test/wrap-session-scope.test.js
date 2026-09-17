@@ -25,7 +25,7 @@ const coverage = require('../lib/wrap-steps/changelog-coverage');
 const featuresToc = require('../lib/wrap-steps/features-toc');
 const continuityWrite = require('../lib/wrap-steps/continuity-write');
 const wrapScope = require('../lib/wrap-scope');
-const { execFileArgs } = require('../lib/wrap-steps/_exec-shell');
+const { execFileArgs } = require('../lib/exec');
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 const dirs = [];

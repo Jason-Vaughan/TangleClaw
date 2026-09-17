@@ -900,7 +900,7 @@ describe('wrap-step test (#139 Chunk 4)', () => {
   // The literal `124` these timeout cases assert on is the runner's own
   // constant. Importing it means a change to the convention updates the guards
   // rather than silently leaving them asserting a number nothing produces.
-  const { TIMEOUT_EXIT_CODE } = require('../lib/wrap-steps/_exec-shell');
+  const { TIMEOUT_EXIT_CODE } = require('../lib/exec');
   let tmpDir;
   let projectPath;
   let originalExec;
@@ -1070,7 +1070,7 @@ describe('wrap-step test (#139 Chunk 4)', () => {
 
 describe('wrap-step lint (#139 Chunk 4)', () => {
   const lintStep = require('../lib/wrap-steps/lint');
-  const { TIMEOUT_EXIT_CODE } = require('../lib/wrap-steps/_exec-shell');
+  const { TIMEOUT_EXIT_CODE } = require('../lib/exec');
   let tmpDir;
   let projectPath;
   let originalExec;

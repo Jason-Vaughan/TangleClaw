@@ -32,9 +32,17 @@ All notable changes to TangleClaw are documented in this file.
 
   Reconstructed under ADR 0014 from #239 rather than from the submitted patch. Reported and independently implemented by **[@madhavanms2803-ui](https://github.com/madhavanms2803-ui)** in PR #1506; their bytes were not merged, per `CONTRIBUTING.md`.
 
+### Fixed
+
+- **A GitHub or git call can no longer sit waiting for a password** (#1561). If TangleClaw's `git` or `gh` reached a credential prompt, for example on an https remote with no stored login, the call used to wait out its whole timeout before failing, because the server has no terminal to answer it. Now every command TangleClaw runs this way has prompts turned off, so it fails at once with git's or gh's own reason. That covers CI status, issue states, wrap PR status, the stranded-wrap check and Open PR, the wrap steps, and the background update check.
+
 ### Changed
 
 - **A wrap that finishes now ends the session, even when it had nothing to commit** (#1558). The session used to end only when the wrap made a commit. When a session's work had already merged by pull request, and the wrap's own notes went to ignored files, a full wrap reported "no changes to commit" and left the session running. Now any wrap that finishes records the session as wrapped, closes its terminal and releases its document locks, commit or not. A wrap that stops for you, fails or crashes still leaves the session open so you can answer or retry. The finished report now says "Wrapped — nothing new to commit" and whether the session ended or is still running. Wrap results (the stream's `run-done` and `GET /wrap/status`) carry `sessionOutcome`: `ended`, `kept` (kept on request and still running), or `null` when the run didn't finish or the session ended another way, such as a Kill during the wrap.
+
+### Internal
+
+- **One shared runner for child processes** (#1561). The runner the wrap steps already shared moved to `lib/exec.js`, and the stranded-wrap check, CI status, issue-state and wrap-PR-status readers now use it instead of their own copies. Results carry `errorCode`, so a missing program or folder is recognised in one place. Test doubles for these results are in `test/_exec-results.js` and are checked against real processes.
 
 ## [5.28.0] - 2026-09-16
 

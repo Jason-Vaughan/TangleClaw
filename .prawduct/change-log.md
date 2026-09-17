@@ -34,6 +34,23 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-17 — One shared child-process runner, with git/gh prompts disabled (#1561)
+
+<!-- prawduct: type=chore | scope=shared-exec-1561 -->
+
+Train 20 quick win.
+
+What shipped:
+- `lib/wrap-steps/_exec-shell.js` moved to `lib/exec.js` (every require updated; no shim left behind). Results gain `errorCode`, the non-numeric `err.code` such as `ENOENT`, `EACCES` or `ERR_CHILD_PROCESS_STDIO_MAXBUFFER`. Both runners layer `NO_PROMPT_ENV` (`GIT_TERMINAL_PROMPT=0`, `GH_PROMPT_DISABLED=1`) over the caller's env, without modifying the caller's object.
+- `lib/stranded-check.js`, `lib/ci-status.js`, `lib/gh-issue-state.js` and `lib/wrap-pr-status.js` replaced their own `execFile` wrappers with `execFileArgs`, keeping each module's timeout, output cap and `_internal.exec` seam. Their reasons read `errorCode` / `timedOut` instead of the raw `Error`; the wording is unchanged. `lib/session-leftovers.js` follows `stranded-check`.
+- `lib/update-checker.js`'s async `git ls-remote origin` runs with the prompt variables (`_lsRemoteOptions`). The sync `execSync` git calls are out of scope.
+- `lib/session-leftovers.js#_iso` was replaced by `lib/stranded-wraps.js#isoFromSqlite` (PR #1566 reviewer note), which now answers null for an empty value.
+- The shipped Train 20 plans (chunk 04 and the program plan) were archived.
+
+Not done, on purpose: the wrap steps' own `defaultExec` functions already call the shared runner and only set per-step timeouts and seams. `execFile` users that never run git or gh were left alone.
+
+Tests: `test/exec.test.js` (real spawns: errorCode, timeouts, overflow, prompt env in both forms, caller env kept, every caller's real runner, and the update-check options). `test/_exec-results.js` holds doubles checked against real spawns; six suites switched to them. Mutation checks: 21 breakages, all caught, after two tests were added for the three first missed.
+
 ## 2026-09-17 — Project cards flag a killed or crashed session that left work, and stranded wraps get a cleanup path (#1544, #1545)
 
 <!-- prawduct: type=feature | scope=train-20-chunk-04 -->
