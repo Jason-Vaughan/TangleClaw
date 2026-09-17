@@ -107,4 +107,4 @@ Type: cumulative-final
 
 ## Status
 
-- [ ] Chunk 01: shared runner
+- [x] Chunk 01: shared runner
