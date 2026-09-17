@@ -34,6 +34,28 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-17 — A session pulls its context in four acknowledged steps (#1579, #1580, #1581)
+
+<!-- prawduct: type=feature | scope=train-21-phased-launch -->
+
+Train 21 Chunk 01. Authorized by the ProjectManager under the delegation rule; the blueprint is the Architect-approved rev 4.
+
+What was read first (2026-09-17):
+- `launchSession` allocates the session id AFTER tmux starts (`store.sessions.start`), and a running process never sees a later tmux env change — so `TANGLECLAW_SESSION_ID` cannot be exported and the blueprint's launch-id handshake is the answer, not a workaround.
+- Claude Code's 10,000-character hook cap REPLACES an over-long payload with a preview, which is why the prime is at a ceiling rather than merely long. Tool output is a different channel: measured in a live session at 24,000 characters intact, with 51.8 KB replaced by a 2 KB preview, so `toolOutput.maxChars` is declared at 20,000 with that evidence and the other engines stay honestly unmeasured at an assumed 8,000.
+
+What shipped:
+- `lib/launch-sequence.js`: the frozen snapshot (four steps rendered once, paged against the engine's tool-output limit, stored with their page offsets), the ack rules in one `BEGIN IMMEDIATE` (first match wins: wrong revision, already acked, wrong digest, not the cursor, pages unserved, advance), and the `TANGLECLAW_LAUNCH_ID` handshake.
+- `lib/store.js` v40: `launch_sequences` + `launch_sequence_steps`, logical references like the delivery ledgers. `sessions.start` binds the sequence in the SAME transaction as the session row, so a sequence exists only for a session that does; a bind that fails after tmux started kills the pane or names the orphan.
+- `lib/sessions.js`: one collector tags every prime section with its launch step, so the push prime and the pull steps render from one source. Push keeps its historical order and its bytes.
+- `lib/tc-verbs.js`, `bin/tc`, `server.js`: `tc start next|status`, `POST /api/tc/start/next`, `GET /api/tc/start/status`, `start.*` receipt labels, and retrying only `LAUNCH_NOT_BOUND` before reporting `LAUNCH_UNKNOWN`.
+
+Decided while building: §2.4 asks the push prime to compose from the step renderer AND to stay byte-identical, which cannot both hold literally (push interleaves the four steps), so sections are tagged and both paths render from the tagging — recorded in the plan's Status. Step 2 serves the full rule text on every engine, Claude included, per §2.5's honest-evidence decision. Two push deltas, not one: the bootstrap line, and the ecosystem primer's verb list, which is generated from the roster `start` joined.
+
+Critic (cumulative `rev-20260917T181732Z-340eebbc`, 3 blocking → fixed; `rev-20260917T183442Z-1b8ce5ca`, 1 blocking → fixed; `rev-20260917T184508Z-629fa3bb`, 0 findings): the measured-vs-assumed tool-output limit reached no reader although four records promised it, so it is stored on the snapshot manifest, published by `start/status` and printed by `tc start status` — with both branches asserted at the layer that prints them. Every refusal now logs; the launch log says whether a session got a sequence; the shared-doc traversal and the engine config filename each have one home; the plan declares `branch:`/`scope:` so chunk 01's deliverable check runs. Accepted: unbounded retention for these tables (plan §2.10, with the retention setting filed to car 21.11) and the CLAUDE.md line count (the bulk is a guard-pinned mirror of `data/global-rules.md`).
+
+Tests: `test/launch-sequence.test.js`, `test/launch-steps.test.js`, `test/tc-start-cli.test.js`, `test/prime-golden.test.js` (five primes captured BEFORE the refactor, committed first, so byte identity is checkable rather than claimed). The golden fixtures and the printed-disclosure assertions were both mutation-checked.
+
 ## 2026-09-17 — The terminal on a phone: the prompt stays above the keyboard, and a tapped URL opens (#1570, #1572)
 
 <!-- prawduct: type=fix | scope=train-26-chunk-02 -->
