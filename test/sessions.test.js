@@ -114,6 +114,20 @@ describe('sessions', () => {
       }
     });
 
+    it('includes the latest GitHub check of stranded wraps, on every engine (#1543)', () => {
+      const project = store.projects.getByName('prime-test');
+      store.activity.log({
+        projectId: project.id, eventType: 'wrap.strand_check',
+        detail: { remote: null, outcome: 'failed', ok: false, reason: 'gh is not installed', at: '2026-09-16T11:00:00.000Z' }
+      });
+      for (const engineId of ['claude', 'codex', 'gemini']) {
+        const engine = store.engines.get(engineId);
+        if (!engine) continue;
+        const prompt = sessions.generatePrimePrompt(project, engine);
+        assert.match(prompt, /GitHub check: couldn't check at 2026-09-16 11:00 UTC \(gh is not installed\)/, engineId);
+      }
+    });
+
     it('names every rule source in force, in the engine\'s own config filename — never a hard-coded CLAUDE.md (#796)', () => {
       const project = store.projects.getByName('prime-test');
       const claude = store.engines.get('claude');

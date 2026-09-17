@@ -103,6 +103,8 @@ describe('stranded wraps — GitHub check (#1542, #1543)', () => {
   let seq = 0;
   const realExec = check._internal.exec;
   const realNow = check._internal.now;
+  const realQuery = check._internal.query;
+  const realDirExists = check._internal.dirExists;
 
   before(() => {
     prevBase = store._getBasePath();
@@ -127,6 +129,8 @@ describe('stranded wraps — GitHub check (#1542, #1543)', () => {
   afterEach(() => {
     check._internal.exec = realExec;
     check._internal.now = realNow;
+    check._internal.query = realQuery;
+    check._internal.dirExists = realDirExists;
   });
 
   /**
@@ -389,6 +393,41 @@ describe('stranded wraps — GitHub check (#1542, #1543)', () => {
       assert.deepEqual(listed(), ['wrap/1-x']);
     });
 
+    it('records a failed check, not "none", when reading origin timed out', async () => {
+      const result = await runWith({
+        originError: { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('killed'), { killed: true, signal: 'SIGTERM' }) }
+      });
+      assert.equal(result.state, 'failed');
+      assert.match(result.reason, /git remote get-url timed out/);
+      assert.equal(check.status(project).state, 'failed');
+      assert.notEqual(await check.checkAfterLaunch(project), null, 'a timeout never lets a launch skip the next check');
+    });
+
+    it('records a failed check naming the folder when the project folder is missing', async () => {
+      const fake = fakeExec({ origin: ORIGIN });
+      check._internal.exec = fake.exec;
+      check._internal.dirExists = () => false;
+      const result = await check.check(project);
+      assert.equal(result.state, 'failed');
+      assert.match(result.reason, /project folder is missing/);
+      assert.doesNotMatch(result.reason, /git is not installed/);
+      assert.deepEqual(fake.calls, [], 'nothing is spawned in a folder that is not there');
+    });
+
+    it('checks the real folder: a project whose path was removed fails with that reason', async () => {
+      check._internal.exec = fakeExec({ origin: ORIGIN }).exec;
+      fs.rmSync(project.path, { recursive: true, force: true });
+      const result = await check.check(project);
+      assert.match(result.reason, /project folder is missing/);
+    });
+
+    it('records a failed check when git could not be started for another reason', async () => {
+      const result = await runWith({
+        originError: { exitCode: 1, stdout: '', stderr: '', error: Object.assign(new Error('spawn git EACCES'), { code: 'EACCES' }) }
+      });
+      assert.equal(result.state, 'failed');
+    });
+
     it('records "none", not a failure, for a project with no origin', async () => {
       const result = await runWith({ origin: null });
       assert.equal(result.state, 'none');
@@ -513,16 +552,18 @@ describe('stranded wraps — GitHub check (#1542, #1543)', () => {
 
     it('never rejects, even when the store cannot be read', async () => {
       check._internal.exec = fakeExec({ origin: ORIGIN, branches: {}, prs: [] }).exec;
-      const realQuery = stranded._internal.query;
+      const realListQuery = stranded._internal.query;
       stranded._internal.query = () => { throw new Error('database is locked'); };
+      check._internal.query = () => { throw new Error('database is locked'); };
       try {
         const result = await check.check(project);
         assert.equal(result.ok, false);
         assert.match(result.reason, /database is locked/);
         assert.equal(await check.checkAfterLaunch(project).then(() => 'resolved'), 'resolved');
       } finally {
-        stranded._internal.query = realQuery;
+        stranded._internal.query = realListQuery;
       }
+      assert.equal(rowsOf('wrap.strand_check').length, 2, 'the launch check ran even though the last check could not be read');
     });
 
     it('records one row per attempt with what the check looked at', async () => {
@@ -608,7 +649,13 @@ describe('stranded wraps — GitHub check (#1542, #1543)', () => {
     it('includes the latest failed check', async () => {
       recordAt('wrap/1-x', SHA_A);
       await runWith({ origin: ORIGIN, openFail: { exitCode: 1, stdout: '', stderr: 'HTTP 502', error: new Error('x') } });
-      assert.match(stranded.primeSection(project).join('\n'), /couldn't check at .*HTTP 502/);
+      assert.match(stranded.primeSection(project, () => check.status(project)).join('\n'), /couldn't check at .*HTTP 502/);
+    });
+
+    it('renders "could not be read" when the status read throws', () => {
+      recordAt('wrap/1-x', SHA_A);
+      const text = stranded.primeSection(project, () => { throw new Error('database is locked'); }).join('\n');
+      assert.match(text, /could not be read \(database is locked\)/);
     });
   });
 });

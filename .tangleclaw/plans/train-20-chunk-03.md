@@ -247,4 +247,4 @@ Type: cumulative-final
 
 ## Status
 
-- [ ] Chunk 03: GitHub check, offline state, auto-clear
+- [x] Chunk 03: GitHub check, offline state, auto-clear
