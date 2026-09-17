@@ -19,6 +19,7 @@ merged by PR)
 **Worktree:** `.claude/worktrees/wrap-ends-session-1558`. This chunk edits `public/`, and the primary
 clone is the live install.
 **Critic mode:** cumulative (Type: cumulative-final — one chunk, one PR)
+**Critic:** cumulative `rev-20260917T031850Z-49597a14` (1 blocking, fixed in `4945dc47`; notes accepted), verify-resolutions clean.
 **Visual change:** yes (a checkbox in both wrap dialogs, the finished-drawer banner)
 **Size:** medium (a lifecycle contract change, one option across four hops, one result field, docs)
 **Authorized:** operator "build #1558" and "Yes, let's do it." in the Builder pane, 2026-09-16. The
@@ -243,4 +244,4 @@ Type: cumulative-final
 
 ## Status
 
-- [ ] Chunk 02.5: a finished wrap ends the session
+- [x] Chunk 02.5: a finished wrap ends the session
