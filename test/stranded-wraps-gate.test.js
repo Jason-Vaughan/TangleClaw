@@ -376,6 +376,45 @@ describe('launchSession honours the stranded-wrap gate (#1539)', () => {
     store.sessions.kill(result.session.id, 'test cleanup');
   });
 
+  it('says the stranded-wrap check ran, and says why when it was skipped', () => {
+    makeProject('slg-checked');
+    const checked = sessions.launchSession('slg-checked');
+    assert.ok(checked.session, `launch must succeed: ${checked.error}`);
+    assert.equal(checked.strandedUnchecked, null);
+    store.sessions.kill(checked.session.id, 'test cleanup');
+
+    makeProject('slg-unread');
+    const realQuery = stranded._internal.query;
+    stranded._internal.query = () => { throw new Error('database is locked'); };
+    let skipped;
+    try {
+      skipped = sessions.launchSession('slg-unread');
+    } finally {
+      stranded._internal.query = realQuery;
+    }
+    assert.ok(skipped.session, `a skipped check lets the launch through: ${skipped.error}`);
+    assert.match(skipped.strandedUnchecked, /database is locked/);
+    store.sessions.kill(skipped.session.id, 'test cleanup');
+  });
+
+  it('hands the web-UI launch path the same skipped-check reason', () => {
+    makeProject('slg-webui');
+    const conn = store.openclawConnections.create({ name: 'slg-webui-conn', host: '10.0.0.9', sshUser: 'u', sshKeyPath: '~/.ssh/k', defaultMode: 'webui' });
+    const realQuery = stranded._internal.query;
+    stranded._internal.query = () => { throw new Error('database is locked'); };
+    let result;
+    try {
+      result = sessions.launchSession('slg-webui', { engineOverride: `openclaw:${conn.id}`, mode: 'webui' });
+    } finally {
+      stranded._internal.query = realQuery;
+    }
+    assert.equal(result.webui, true, `the web-UI branch must be reached: ${result.error}`);
+    assert.match(result.strandedUnchecked, /database is locked/);
+    const checked = sessions.launchSession('slg-webui', { engineOverride: `openclaw:${conn.id}`, mode: 'webui' });
+    assert.equal(checked.webui, true);
+    assert.equal(checked.strandedUnchecked, null);
+  });
+
   it('passes an acknowledgement failure through as its own code', () => {
     const project = makeProject('slg-badkey');
     stranded.record({ projectId: project.id, remote: REMOTE, branch: 'wrap/1-x', headSha: SHA_A });
