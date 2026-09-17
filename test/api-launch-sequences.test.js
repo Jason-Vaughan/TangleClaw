@@ -91,8 +91,8 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
     fs.mkdirSync(otherDir, { recursive: true });
     other = store.projects.create({ name: 'elsewhere', path: otherDir, engine: 'claude' });
 
-    // One launch whose rules were pulled (no hook row at all), and one with a
-    // hook row recorded beside it.
+    // One launch with no ledger row at all, and one with a rules-hook row
+    // recorded beside it.
     pulled = bind(project);
     hooked = bind(project);
     store.sessionRuleDeliveries.record({
@@ -127,12 +127,12 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
     assert.ok(!theirs.body.sequences.some((s) => ids.includes(s.sequenceId)));
   });
 
-  it('keeps the hook record separate, and says when there is none', async () => {
+  it('keeps the rule-delivery record separate, and says when there is none', async () => {
     const res = await get(server, `/api/launch-sequences?projectId=${project.id}`);
     const byId = new Map(res.body.sequences.map((s) => [s.sequenceId, s]));
-    assert.equal(byId.get(pulled.sequence.id).hook, null,
-      'a launch whose rules were pulled has no hook row, and that is reported as null');
-    assert.deepEqual(byId.get(hooked.sequence.id).hook,
+    assert.equal(byId.get(pulled.sequence.id).rulesDelivery, null,
+      'a launch with no ledger row at all is reported as null, not omitted');
+    assert.deepEqual(byId.get(hooked.sequence.id).rulesDelivery,
       { outcome: 'written', channel: 'rules-hook', skipReason: null });
   });
 

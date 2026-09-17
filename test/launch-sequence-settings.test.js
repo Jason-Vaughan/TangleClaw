@@ -123,6 +123,101 @@ describe('launch-sequence settings (Train 21, Chunk 02)', () => {
     });
   });
 
+  describe('what the delivery ledger records', () => {
+    /**
+     * Launch with tmux and engine detection stubbed, so no pane is started.
+     * @param {string} name - Project name
+     * @param {object} [launchOptions] - Passed to `launchSession`
+     * @returns {object} The launch result
+     */
+    function launch(name, launchOptions = {}) {
+      const tmux = require('../lib/tmux');
+      const enginesModule = require('../lib/engines');
+      const real = {
+        create: tmux.createSession, has: tmux.hasSession, kill: tmux.killSession, detect: enginesModule.detectEngine
+      };
+      tmux.createSession = () => true;
+      tmux.hasSession = () => false;
+      tmux.killSession = () => true;
+      enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/fake-engine' });
+      try {
+        return sessions.launchSession(name, launchOptions);
+      } finally {
+        tmux.createSession = real.create;
+        tmux.hasSession = real.has;
+        tmux.killSession = real.kill;
+        enginesModule.detectEngine = real.detect;
+      }
+    }
+
+    it('records a pointer paste as a skip, never as a rule delivery', () => {
+      // The row must not put the rule digest on a `delivered` outcome for a
+      // prime that carried a pointer: that is the claim prime-delivery §4
+      // forbids, and it is what this ledger exists to catch (#759, #1063).
+      const project = makeProject('ledger-pull', 'codex');
+      const session = launch('ledger-pull').session;
+      const rows = store.sessionRuleDeliveries.listForSession(session.id);
+      assert.equal(rows.length, 1, 'one row per launch, from the launch path');
+      assert.equal(rows[0].outcome, 'skipped');
+      assert.equal(rows[0].channel, 'none');
+      assert.equal(rows[0].skipReason, store.RULES_SERVED_BY_LAUNCH_SEQUENCE);
+      assert.ok(store.launchSequences.getBySession(session.id), 'the pull channel has its own record');
+    });
+
+    it('does not report a pulled project as one whose rules never arrived', () => {
+      // The fleet-health list asks "this project has rules and nothing
+      // delivered them". For a pulled project the prime deliberately carried
+      // none, and the answer lives in that launch's own record — so the list
+      // must not raise it, while the skip stays a skip.
+      const project = makeProject('ledger-pull-health', 'codex');
+      launch('ledger-pull-health');
+      const flagged = store.sessionRuleDeliveries.projectsWithUndeliveredRules()
+        .map((p) => p.projectName);
+      assert.ok(!flagged.includes(project.name));
+    });
+
+    it('still records a real paste as a delivery when the rules were pasted', () => {
+      const project = makeProject('ledger-paste', 'codex');
+      store.projectConfig.save(project.path, { launchSequence: { pasteRules: 'paste' } });
+      const session = launch('ledger-paste').session;
+      const rows = store.sessionRuleDeliveries.listForSession(session.id);
+      // The paste itself is recorded later, by the deferred init; what matters
+      // here is that the launch path did NOT pre-empt it with a skip.
+      assert.ok(!rows.some((r) => r.skipReason === store.RULES_SERVED_BY_LAUNCH_SEQUENCE),
+        'a pasted launch records no pull skip');
+    });
+
+    it('pastes the rules when the sequence could not be built after all', () => {
+      // The prime is rendered before the snapshot exists, so it commits to the
+      // pull carrier on an assumption. If the snapshot then degrades, a prime
+      // still pointing at the sequence would leave the rules on no channel.
+      const project = makeProject('ledger-degraded', 'codex');
+      const realLoad = store.globalRules.load;
+      let launched;
+      try {
+        // The pull path renders the global rules; a failing read is how a
+        // snapshot degrades without stubbing the renderer.
+        let calls = 0;
+        store.globalRules.load = () => {
+          calls += 1;
+          if (calls > 1) throw new Error('global rules unreadable');
+          return '';
+        };
+        launched = launch('ledger-degraded');
+      } finally {
+        store.globalRules.load = realLoad;
+      }
+      const sequence = store.launchSequences.getBySession(launched.session.id);
+      assert.equal(sequence.applicability, 'not-applicable', 'the snapshot degraded');
+      assert.ok(launched.primePrompt.includes('## Project Rules'),
+        'so the prime carries the rule text after all');
+      assert.ok(launched.primePrompt.includes('Keep the diff small.'));
+      const rows = store.sessionRuleDeliveries.listForSession(launched.session.id);
+      assert.ok(!rows.some((r) => r.skipReason === store.RULES_SERVED_BY_LAUNCH_SEQUENCE),
+        'and the ledger does not claim the rules went to a sequence that does not exist');
+    });
+  });
+
   describe('what the prime carries', () => {
     /**
      * Render a push prime for a project.

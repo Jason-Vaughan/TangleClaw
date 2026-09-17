@@ -259,9 +259,35 @@ describe('tc start (car 21.3)', () => {
       steps: [{ index: 0, id: 'identity', pageCount: 1, pagesServed: [], servedAt: null, ackedAt: null }]
     });
     assert.match(printed, /against an ASSUMED 8000-character tool-output limit/);
+    assert.doesNotMatch(printed, /recorded no render context/,
+      'a snapshot WITH a render context says nothing about one');
     assert.match(printed, /no measured tool-output limit/);
     assert.match(printed, /If a page arrives cut short, say so rather than guessing/);
     assert.ok(!printed.includes('measured 8000'), 'an assumed limit is never presented as measured');
+  });
+
+  it('prints the missing render context, because a re-render can then be thinner', () => {
+    // The status payload and the printed page are two halves of one
+    // disclosure; delete either and a session loses the only warning it gets
+    // that a mid-session re-render may drop launch-time facts.
+    const printed = tcVerbs.renderStartStatus({
+      sequence: 'present',
+      sessionId: 7,
+      sequenceId: 3,
+      revision: 1,
+      applicability: 'applicable',
+      preflight: { verdict: 'not-evaluated' },
+      pageBudget: 7800,
+      toolOutput: { maxChars: 8000, measured: false, reason: 'no measured tool-output limit' },
+      renderContext: 'absent',
+      pending: { stages: ['recovery'], reason: 'later versions' },
+      readiness: { readyAt: null, unreadyAt: null, nudgeCount: 0, lastNudgedAt: null, reconciliationRequired: null },
+      status: { cursor: 0, ready: false, recovery: 'none', unready: false },
+      steps: [{ index: 0, id: 'identity', pageCount: 1, pagesServed: [], servedAt: null, ackedAt: null }]
+    });
+    assert.match(printed, /recorded no render context/);
+    assert.match(printed, /may omit launch-time facts/);
+    assert.match(printed, /Say so if a step changes shape mid-session/);
   });
 
   it('a pane with no launch id is told it has no sequence rather than refused', async () => {

@@ -9,9 +9,9 @@
  * live install the moment the file is saved.
  *
  * What the assertions are about is the one property the panel exists for: the
- * three records stay three. A session with no hook row and a session whose hook
- * failed must not read the same, because telling them apart is why the records
- * are kept separately at all (plan §2.5).
+ * three records stay three. A session with no rule-delivery row and a session
+ * whose delivery failed must not read the same, because telling them apart is
+ * why the records are kept separately at all (plan §2.5).
  */
 
 const { describe, it } = require('node:test');
@@ -84,7 +84,7 @@ function row(overrides = {}) {
     unreadyAt: null,
     nudgeCount: 0,
     lastNudgedAt: null,
-    hook: null,
+    rulesDelivery: null,
     steps: [
       { index: 0, id: 'identity', pageCount: 1, pagesServed: 1, servedAt: '2026-09-17 19:00:05', ackedAt: '2026-09-17 19:00:10', carriedFromRevision: null },
       { index: 1, id: 'governance', pageCount: 2, pagesServed: 2, servedAt: '2026-09-17 19:00:20', ackedAt: '2026-09-17 19:00:30', carriedFromRevision: null },
@@ -103,12 +103,12 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
     assert.match(html, /not attested yet/);
   });
 
-  it('tells a missing hook record apart from a hook that failed', () => {
-    const absent = render([row({ hook: null })]);
-    assert.match(absent, /no record — these rules were not sent on the hook channel/);
+  it('tells a missing rule-delivery record apart from one that failed', () => {
+    const absent = render([row({ rulesDelivery: null })]);
+    assert.match(absent, /no record — nothing recorded a rule delivery for this launch/);
 
-    const failed = render([row({ hook: { outcome: 'skipped', channel: 'none', skipReason: 'no prime channel' } })]);
-    assert.match(failed, /Hook: skipped \(none\): no prime channel/);
+    const failed = render([row({ rulesDelivery: { outcome: 'skipped', channel: 'none', skipReason: 'no prime channel' } })]);
+    assert.match(failed, /Rules channel: skipped \(none\): no prime channel/);
     assert.doesNotMatch(failed, /no record/);
   });
 
@@ -151,7 +151,7 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
   });
 
   it('escapes what it prints', () => {
-    const html = render([row({ hook: { outcome: '<img>', channel: 'none', skipReason: null } })]);
+    const html = render([row({ rulesDelivery: { outcome: '<img>', channel: 'none', skipReason: null } })]);
     assert.doesNotMatch(html, /<img>/);
     assert.match(html, /&lt;img&gt;/);
   });

@@ -4163,12 +4163,12 @@ route('GET', '/api/session-rules/deliveries', (req, res) => {
 // GET /api/launch-sequences?projectId= — the readiness evidence for a project's
 // recent launches (Train 21, #1583).
 //
-// Three kinds of evidence, side by side and never merged (plan §2.5): the rules
-// HOOK's own ledger row, what the sequence SERVED, and what the session
-// ACKNOWLEDGED and attested. They answer different questions and no one of them
-// upgrades another — the hook receipt proves a hook ran in a directory, not
-// which session's rules landed, which is why a pulled sequence keeps its own
-// record.
+// Three kinds of evidence, side by side and never merged (plan §2.5): the
+// rule-delivery ledger's own row for the prime channel, what the sequence
+// SERVED, and what the session ACKNOWLEDGED and attested. They answer different
+// questions and no one of them upgrades another — a hook receipt proves a hook
+// ran in a directory, not which session's rules landed, which is why a pulled
+// sequence keeps its own record.
 route('GET', '/api/launch-sequences', (req, res) => {
   const query = parseQuery(reqUrl(req).search);
   const projectId = Number(query.projectId);
@@ -4181,11 +4181,11 @@ route('GET', '/api/launch-sequences', (req, res) => {
   }
   const sequences = store.launchSequences.listForProject(projectId, limit).map((sequence) => {
     const steps = store.launchSequences.listSteps(sequence.id, sequence.revision);
-    // The hook row for this same session, so the panel can put the two channels
-    // beside each other. Looked up per sequence rather than joined: the ledger
-    // is keyed by session and a session may have no row at all (a launch whose
-    // rules were pulled), which is a fact to show rather than a row to invent.
-    const hook = store.sessionRuleDeliveries.listForSession(sequence.sessionId)[0] || null;
+    // The rule-delivery row for this same session, so the panel can put the two
+    // channels beside each other. Looked up per sequence rather than joined: the
+    // ledger is keyed by session, and a session may have no row at all, which is
+    // a fact to show rather than a row to invent.
+    const rulesRow = store.sessionRuleDeliveries.listForSession(sequence.sessionId)[0] || null;
     return {
       sequenceId: sequence.id,
       sessionId: sequence.sessionId,
@@ -4199,7 +4199,13 @@ route('GET', '/api/launch-sequences', (req, res) => {
       unreadyAt: sequence.unreadyAt,
       nudgeCount: sequence.nudgeCount,
       lastNudgedAt: sequence.lastNudgedAt,
-      hook: hook ? { outcome: hook.outcome, channel: hook.channel, skipReason: hook.skipReason || null } : null,
+      // Named `rulesDelivery`, not `hook`: the row it comes from records
+      // whichever channel the prime used for the rule text — the startup hook,
+      // a paste, or the deliberate skip a pulled launch writes. Calling it the
+      // hook labelled three different facts with one of their names.
+      rulesDelivery: rulesRow
+        ? { outcome: rulesRow.outcome, channel: rulesRow.channel, skipReason: rulesRow.skipReason || null }
+        : null,
       steps: steps.map((st) => ({
         index: st.index,
         id: st.id,
@@ -10219,6 +10225,7 @@ if (require.main === module) {
     tunnelMonitor.stop();
     wrapSentinel.stop();
     medusaWake.stop();
+    launchUnready.stop();
     clearInterval(_lockExpiryInterval);
     server.close();
     store.close();

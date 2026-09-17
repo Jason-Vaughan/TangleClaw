@@ -194,7 +194,7 @@ was retired in the Phase A settings cleanup: harness posture is now the structur
 
 | kind | When it applies | Injected? |
 |---|---|---|
-| `startup` (default) | session start — custom priming | **yes** — on engines with a silent-prime channel, on their own SessionStart hook (`## Project Rules`), sharded when they outgrow one channel, with a `## Rules delivery` manifest in the prime pointing at them; on engines without one, inline in the prime as before (#749) |
+| `startup` (default) | session start — custom priming | **yes** — on engines with a silent-prime channel, on their own SessionStart hook (`## Project Rules`), sharded when they outgrow one channel, with a `## Rules delivery` manifest in the prime pointing at them; on engines without one, in the **governance step of the launch sequence**, which serves them in full and records that they were read, with a `## Rules delivery` pointer in the prime (#1584 — `launchSequence.pasteRules`, default `pull`). A launch with no sequence still gets them inline in the prime, as before (#749) |
 | `wrap` | wrap time — custom wrap behavior + the self-learning sink | **yes**, into the wrap pipeline's ai-content prompts (`## Project wrap rules`) |
 
 - The launch-injection query (`listActiveForProject`) filters to `kind='startup'`. Rows
@@ -205,8 +205,10 @@ was retired in the Phase A settings cleanup: harness posture is now the structur
   generation can be skipped. (The *transport* still differs afterwards: the startup
   prime reaches Claude via `.tangleclaw/session-prime.md` + the SessionStart hook, while the
   RULES themselves ride a separate SessionStart hook reading
-  `.tangleclaw/session-rules-<n>.json` (#749) so neither payload can displace the other; or
-  via tmux paste on other engines. What changed is that assembly no longer depends on
+  `.tangleclaw/session-rules-<n>.json` (#749) so neither payload can displace the other; on
+  other engines they are pulled with `tc start next` as the launch sequence's governance step,
+  or pasted into the pane when that project set `launchSequence.pasteRules` to `paste` or the
+  launch has no sequence (#1584). What changed is that assembly no longer depends on
   owning the engine's config file.) Startup rules previously
   travelled inside the generated engine config file, which `writeEngineConfig` then skipped
   wholesale for plugin-governed projects (#1021 has since narrowed that skip to an

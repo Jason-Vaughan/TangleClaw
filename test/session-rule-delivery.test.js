@@ -59,6 +59,16 @@ describe('startup session-rule delivery (#595)', () => {
   function makeProject(name, opts = {}) {
     const projDir = path.join(projectsDir, name);
     fs.mkdirSync(projDir, { recursive: true });
+    // `pasteRules: 'paste'` where a test is about the PASTE channel carrying the
+    // rules (#1584 made `pull` the default, so on a paste engine with a launch
+    // sequence the prime carries a pointer and the paste has no rules to
+    // report). Stating the carrier is what makes these tests measure the thing
+    // they name.
+    if (opts.pasteRules) {
+      const cfg = JSON.parse(JSON.stringify(store.DEFAULT_PROJECT_CONFIG));
+      cfg.launchSequence = { ...cfg.launchSequence, pasteRules: opts.pasteRules };
+      store.projectConfig.save(projDir, cfg);
+    }
     if (opts.pluginGoverned) {
       const claudeDir = path.join(projDir, '.claude');
       fs.mkdirSync(claudeDir, { recursive: true });
@@ -510,6 +520,9 @@ describe('startup session-rule delivery (#595)', () => {
       // Force the visible-paste channel instead of the silent prime file.
       const projConfig = store.projectConfig.load(launched.path);
       projConfig.silentPrime = false;
+      // The rules must ride the PASTE for this test to be about the paste at
+      // all; the shipped default now serves them through the launch sequence.
+      projConfig.launchSequence = { ...(projConfig.launchSequence || {}), pasteRules: 'paste' };
       store.projectConfig.save(launched.path, projConfig);
 
       try {
@@ -573,7 +586,7 @@ describe('startup session-rule delivery (#595)', () => {
       stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/agy' }));
       t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
 
-      const launched = makeProject(`agy-${uid()}`, { engine: 'antigravity' });
+      const launched = makeProject(`agy-${uid()}`, { engine: 'antigravity', pasteRules: 'paste' });
       store.sessionRules.create({ content: 'gated directive', projectId: launched.id });
 
       try {
@@ -624,7 +637,7 @@ describe('startup session-rule delivery (#595)', () => {
       stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/agy' }));
       t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
 
-      const launched = makeProject(`agytimeout-${uid()}`, { engine: 'antigravity' });
+      const launched = makeProject(`agytimeout-${uid()}`, { engine: 'antigravity', pasteRules: 'paste' });
       store.sessionRules.create({ content: 'timed-out directive', projectId: launched.id });
 
       try {
@@ -680,7 +693,7 @@ describe('startup session-rule delivery (#595)', () => {
       stub(enginesModule, 'detectEngine', () => ({ available: true, path: '/usr/bin/agy' }));
       t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
 
-      const launched = makeProject(`agythrow-${uid()}`, { engine: 'antigravity' });
+      const launched = makeProject(`agythrow-${uid()}`, { engine: 'antigravity', pasteRules: 'paste' });
       store.sessionRules.create({ content: 'survives the throw', projectId: launched.id });
 
       try {
@@ -729,6 +742,9 @@ describe('startup session-rule delivery (#595)', () => {
       store.sessionRules.create({ content: 'never arrives', projectId: launched.id });
       const projConfig = store.projectConfig.load(launched.path);
       projConfig.silentPrime = false;
+      // The rules must ride the PASTE for this test to be about the paste at
+      // all; the shipped default now serves them through the launch sequence.
+      projConfig.launchSequence = { ...(projConfig.launchSequence || {}), pasteRules: 'paste' };
       store.projectConfig.save(launched.path, projConfig);
 
       try {
@@ -768,6 +784,9 @@ describe('startup session-rule delivery (#595)', () => {
       store.sessionRules.create({ content: 'never arrives', projectId: launched.id });
       const projConfig = store.projectConfig.load(launched.path);
       projConfig.silentPrime = false;
+      // The rules must ride the PASTE for this test to be about the paste at
+      // all; the shipped default now serves them through the launch sequence.
+      projConfig.launchSequence = { ...(projConfig.launchSequence || {}), pasteRules: 'paste' };
       store.projectConfig.save(launched.path, projConfig);
 
       try {
@@ -807,6 +826,9 @@ describe('startup session-rule delivery (#595)', () => {
       store.sessionRules.create({ content: 'never arrives', projectId: launched.id });
       const projConfig = store.projectConfig.load(launched.path);
       projConfig.silentPrime = false;
+      // The rules must ride the PASTE for this test to be about the paste at
+      // all; the shipped default now serves them through the launch sequence.
+      projConfig.launchSequence = { ...(projConfig.launchSequence || {}), pasteRules: 'paste' };
       store.projectConfig.save(launched.path, projConfig);
 
       try {

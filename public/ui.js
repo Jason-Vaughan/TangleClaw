@@ -2244,7 +2244,7 @@ function renderProjectRulesSection(project) {
       </div>
       <div class="form-group">
         <div class="form-label">Launch readiness</div>
-        <div class="form-hint">The last five launches' own evidence, kept separate because the three answer different questions: what the rules <strong>hook</strong> recorded, how much of the launch sequence was <strong>served</strong>, and how much the session <strong>acknowledged</strong> and attested.</div>
+        <div class="form-hint">The last five launches' own evidence, kept separate because the three answer different questions: which <strong>rules channel</strong> the prime used and what became of it, how much of the launch sequence was <strong>served</strong>, and how much the session <strong>acknowledged</strong> and attested.</div>
         <div class="session-rules-list" id="projLaunchSequencesList" aria-live="polite"></div>
       </div>
       <div id="projRulesPwGroup" class="form-group hidden">
@@ -2467,16 +2467,16 @@ function renderProjectLaunchSequences(sequences) {
     const state = s.readyAt
       ? `attested ${esc(s.readyAt)}`
       : (s.unreadyAt ? `not attested — window passed ${esc(s.unreadyAt)}` : 'not attested yet');
-    const hook = s.hook
-      ? `${esc(s.hook.outcome)} (${esc(s.hook.channel)})${s.hook.skipReason ? `: ${esc(s.hook.skipReason)}` : ''}`
-      : 'no record — these rules were not sent on the hook channel';
+    const rules = s.rulesDelivery
+      ? `${esc(s.rulesDelivery.outcome)} (${esc(s.rulesDelivery.channel)})${s.rulesDelivery.skipReason ? `: ${esc(s.rulesDelivery.skipReason)}` : ''}`
+      : 'no record — nothing recorded a rule delivery for this launch';
     const nudges = s.nudgeCount > 0
       ? `nudged ${esc(s.nudgeCount)}×, last ${esc(s.lastNudgedAt)}`
       : 'not nudged';
     return `<div class="session-rule-item">
       <div class="session-rule-content">
         <strong>${esc(s.sessionId)}</strong>: <span class="${cls}">${state}</span>
-        <br><small class="session-rule-meta">Hook: ${hook}</small>
+        <br><small class="session-rule-meta">Rules channel: ${rules}</small>
         <br><small class="session-rule-meta">Served: ${esc(served)}/${esc(s.of)} step(s) | Acknowledged: ${esc(acked)}/${esc(s.of)} | ${nudges}</small>
         <br><small class="session-rule-meta">Launched ${esc(s.createdAt)} | revision ${esc(s.revision)}</small>
       </div>

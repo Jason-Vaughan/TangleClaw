@@ -651,9 +651,12 @@ engine-name branches.
 - `launch_sequences`, `launch_sequence_steps`, `handoff_publications` and `project_handoff_epoch`
   use logical references and are **kept** when a session or project is deleted, like the delivery
   ledgers.
-- Train 21 adds no DB pruning. Growth per launch is `4 + 3·(revisions − 1)` step rows (one more
-  if step 1 is re-rendered), each holding up to `page_count × page_budget` characters of frozen
-  content. It is typically ~30 KB, more under rule churn.
+- Train 21 adds no DB pruning. Growth per launch is `4 · revisions` step rows: every revision
+  writes a full set of four, because a carried step 1 is written as a row of its own at the new
+  revision (that is what carries its acknowledgement forward). Each row holds up to
+  `page_count × page_budget` characters of frozen content, so a launch is typically ~30 KB and
+  a rule-churning one is a multiple of that. Measured, not estimated: the count is what
+  `store.launchSequences.revise` inserts.
 - Growth per wrap attempt is one `handoff_publications` row plus one `history/` file.
 - `history/` files are the only thing pruned: the newest 50 per project are kept. The DB row keeps
   the digest, so pruning a file never loses the record that the publication existed.
@@ -712,7 +715,7 @@ Chunks are sequential; each one merges before the next begins.
   - a restart serves identical frozen bytes
 
 ### Chunk 02 — READY, unready, rule revision
-- **21.4** (#1582) `tc start ready` + `tc.ready/1` validation (server-owned verdict, duplicate/conflict/ended cases) + snapshot revision on rule change
+- **21.4** (#1582) `tc start ready` + the tc.ready/1 artifact validated in `lib/launch-sequence.js` (server-owned verdict, duplicate/conflict/ended cases) + the route in `server.js` + the subverb in `lib/tc-verbs.js` + snapshot revision on rule change
 - **21.5** (#1583) unready window + single nudge (durable counters) + dashboard readiness/evidence panel (`public/`, worktree). **Refs #1176, does not close it.**
 - **21.6** (#1584) `launchSequence.pasteRules: paste|pull`. R1 was ratified 2026-09-17, so this PR writes the dated amendment into `prime-delivery-direction.md` §3 **and** flips the default to `pull`, together.
 - **Acceptance cases:** restart under a changed rule set → `SNAPSHOT_REVISED`; step 1 carried over only on byte-equal content; READY with a wrong verdict; duplicate vs conflicting READY; READY after the session ended. Visual change: yes → VRF entry.
@@ -780,6 +783,20 @@ Written before the code, because each one answers a question the blueprint leave
   setting is read together with this launch's applicability: on an engine that declares no launch
   sequence, or a launch whose prime is disabled, the rules stay pasted. A pointer to a channel the
   session does not have is the #749 failure one engine over.
+- **The reconciliation condition stays as approved: ANY revision demands one.** A revision that
+  preceded every serve was briefly narrowed out of it during the Critic pass; that narrowed a
+  ratified acceptance condition, so it was reverted. What the earlier-revision read decides now is
+  the WORDING — a session that was served nothing is told the steps it read are not the ones this
+  launch first rendered, rather than that "part of what you acknowledged has been replaced", which
+  states a proxy as a fact.
+- **A pointer paste records a rules SKIP, and the paste's own outcome is not recorded at all.**
+  The ledger's subject is rule delivery, so a prime that carried a pointer records
+  `channel: none, outcome: skipped` naming the sequence — never a `delivered` row carrying the rule
+  digest, which is what prime-delivery §4 forbids. The consequence is deliberate and is filed as
+  #1597: the paste still runs behind its readiness gate and its re-paste guard, but on a pull
+  launch nothing durable says what became of it. `projectsWithUndeliveredRules` excludes that one
+  documented skip, because whether the rules were read is answered by the launch's own record;
+  the skip stays a skip (no cross-upgrades).
 - **The §3 amendment is on disk, not in the PR diff.** `.prawduct/artifacts/` is gitignored in this
   repo by deliberate choice (`.gitignore` publishes three migration artifacts and nothing else), so
   the amendment cannot ride in a commit. It is written into
@@ -849,6 +866,16 @@ Written before the code, because each one answers a question the blueprint leave
     assumed. Their live `tc`-in-pane probe is car 21.11's.
   - Step 3 serves a `not-evaluated` preflight verdict that says nothing is known about the handoff —
     the real verdict is Chunk 03's.
-- [ ] Chunk 02
+- [x] Chunk 02 — built 2026-09-17 (#1582/#1583/#1584). Deltas from the blueprint, all recorded in §4a:
+  - The snapshot records the launch's **render context**, because a revision re-renders steps 2–4
+    and the collector takes launch-time-only inputs no later request can recompute.
+  - `pasteRules=pull` drops the pasted rule text **only when a sequence will actually serve it**,
+    and the prime is re-rendered with the rules pasted if the snapshot degrades after the fact.
+  - A pointer paste records a rules **skip** naming the sequence, never a `delivered` row carrying
+    the rule digest; `projectsWithUndeliveredRules` excludes that one skip. The prime paste's own
+    outcome is then unrecorded — filed as #1597.
+  - The reconciliation condition stays **unnarrowed**: every revision demands one, and only the
+    wording is derived from whether anything was served.
+  - Retention follow-up #1595 and the nudge-verdict record #1596 filed from the Critic pass.
 - [ ] Chunk 03
 - [ ] Chunk 04
