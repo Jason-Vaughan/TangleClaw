@@ -4490,9 +4490,11 @@
    * acting on an item needs it.
    *
    * @param {Array<object>} items - Stranded-wrap items from the API
+   * @param {(item: object) => string} [actionsFor] - HTML appended to each
+   *   item, for the one surface that acts on items (the card's detail panel)
    * @returns {string} A `<ul>`, or '' for no items
    */
-  function tcStrandedItemsMarkup(items) {
+  function tcStrandedItemsMarkup(items, actionsFor) {
     const list = Array.isArray(items) ? items.filter((i) => i && typeof i.branch === 'string') : [];
     if (list.length === 0) return '';
     const rows = list.map((i) => {
@@ -4506,8 +4508,16 @@
       const acked = i.acknowledged === true
         ? ` <span class="stranded-acked">acknowledged${typeof i.acknowledgedBy === 'string' && i.acknowledgedBy ? ` by ${tcEscapeHtml(i.acknowledgedBy)}` : ''}</span>`
         : '';
+      // A PR opened from the cleanup path (#1545). Linked only when it is a
+      // github.com URL: the value came back from `gh` and is shown as a link.
+      const pr = i.prOpened && typeof i.prOpened.url === 'string' && i.prOpened.url
+        ? ` <span class="stranded-acked">PR opened${/^https:\/\/github\.com\//.test(i.prOpened.url)
+          ? ` (<a href="${tcEscapeHtml(i.prOpened.url)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${tcEscapeHtml(i.prOpened.url.replace(/^.*\/pull\//, '#'))}</a>)`
+          : ''}${typeof i.prOpened.by === 'string' && i.prOpened.by ? ` by ${tcEscapeHtml(i.prOpened.by)}` : ''}</span>`
+        : '';
+      const actions = typeof actionsFor === 'function' ? actionsFor(i) : '';
       return `<li class="stranded-item"><code class="stranded-branch">${tcEscapeHtml(i.branch)}</code>${sha}, `
-        + `recorded ${tcEscapeHtml(date)}${acked}${remote ? ` ${remote}` : ''}</li>`;
+        + `recorded ${tcEscapeHtml(date)}${acked}${pr}${remote ? ` ${remote}` : ''}${actions}</li>`;
     });
     return `<ul class="stranded-list">${rows.join('')}</ul>`;
   }

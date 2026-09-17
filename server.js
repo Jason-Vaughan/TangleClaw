@@ -5323,6 +5323,41 @@ route('POST', '/api/projects/:project/stranded-wraps/ack', (req, res, params, bo
   jsonResponse(res, result.created ? 201 : 200, { ok: true, created: result.created, item: result.item });
 });
 
+// POST /api/projects/:project/stranded-wraps/open-pr — open a pull request for
+// one listed stranded wrap (#1545): { branch, headSha, remote?, confirm: true }.
+// GitHub is read first (origin, the branch and its head, any open PR) and
+// nothing is recorded unless `gh pr create` printed a PR URL. The PR targets
+// the repository's default branch. Who opened it is the signed-in user, never
+// a name from the body. Deleting a remote branch is deliberately not offered.
+const OPEN_PR_STATUS = {
+  NOT_FOUND: 404,
+  IN_PROGRESS: 409,
+  REMOTE_MISMATCH: 409,
+  BRANCH_GONE: 409,
+  BRANCH_MOVED: 409,
+  PR_EXISTS: 409,
+  NOT_GITHUB: 422,
+  READ_FAILED: 502,
+  CREATE_FAILED: 502,
+  WRITE_FAILED: 500
+};
+route('POST', '/api/projects/:project/stranded-wraps/open-pr', async (req, res, params, body) => {
+  const project = _projectByIdOrName(params.project);
+  if (!project) {
+    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return errorResponse(res, 400, 'Request body must be a JSON object', 'BAD_REQUEST');
+  }
+  const by = (req.tcSession && req.tcSession.username) || null;
+  const result = await strandedCheck.openPr(project, body, by);
+  if (!result.ok) {
+    const status = OPEN_PR_STATUS[result.code] || 400;
+    return errorResponse(res, status, result.error, result.code, { prUrl: result.prUrl || null });
+  }
+  jsonResponse(res, 201, { ok: true, prUrl: result.prUrl, item: result.item });
+});
+
 // POST /api/projects
 route('POST', '/api/projects', (_req, res, _params, body) => {
   if (!body || !body.name) {

@@ -2,7 +2,7 @@
 
 /*
  * GET /api/projects/:project/stranded-wraps (#868) and
- * POST /api/projects/:project/stranded-wraps/ack (#1538), driven through the
+ * POST /api/projects/:project/stranded-wraps/ack (#1538) and /open-pr (#1545), driven through the
  * REAL request handler so the auth gate, the CSRF check and the signed-in
  * identity the acknowledgement records are exercised with the routes.
  */
@@ -331,6 +331,116 @@ describe('stranded-wraps API (#868, #1538)', () => {
       assert.equal(ran, false);
       const anon = await send('POST', `${base()}/check`, { body: {} });
       assert.equal(anon.statusCode, 401);
+    });
+  });
+
+  describe('POST /open-pr (#1545)', () => {
+    const PR_URL = 'https://github.com/example/sandbox/pull/42';
+
+    /**
+     * A GitHub where `wrap/1-x` is on origin at SHA with no PR, and
+     * `gh pr create` answers as given.
+     * @param {object} [create] - exec result for `gh pr create`
+     * @returns {{exec: Function, creates: string[][]}}
+     */
+    const openableGithub = (create) => {
+      const creates = [];
+      const ok = (stdout) => ({ exitCode: 0, stdout, stderr: '', error: null });
+      const exec = async (file, args) => {
+        if (file === 'git' && args[0] === 'remote') return ok(`${REMOTE}\n`);
+        if (file === 'git' && args[0] === 'ls-remote') return ok(`${SHA}\trefs/heads/wrap/1-x\n`);
+        if (args[1] === 'list') return ok('[]');
+        if (args[1] === 'create') {
+          creates.push(args);
+          return create || ok(`${PR_URL}\n`);
+        }
+        throw new Error(`unexpected ${file} ${args.join(' ')}`);
+      };
+      return { exec, creates };
+    };
+
+    it('opens the PR and answers 201 with the item', async () => {
+      stranded.record({ projectId: project.id, remote: REMOTE, branch: 'wrap/1-x', headSha: SHA });
+      const gh = openableGithub();
+      checkExec = gh.exec;
+      const res = await send('POST', `${base()}/open-pr`, { body: { branch: 'wrap/1-x', headSha: SHA, confirm: true } });
+      assert.equal(res.statusCode, 201);
+      const body = json(res);
+      assert.equal(body.prUrl, PR_URL);
+      assert.equal(body.item.prOpened.url, PR_URL);
+      assert.equal(body.item.prOpened.by, null, 'nobody is signed in');
+      assert.equal(gh.creates.length, 1);
+    });
+
+    it('records the signed-in user as the opener, never a name from the body', async () => {
+      stranded.record({ projectId: project.id, remote: REMOTE, branch: 'wrap/1-x', headSha: SHA });
+      store.users.create('rosie', PASSWORD);
+      const cfg = store.config.load();
+      cfg.authEnabled = true;
+      store.config.save(cfg);
+      const login = await send('POST', '/api/auth/login', { body: { username: 'rosie', password: PASSWORD } });
+      const session = { cookie: cookieOf(login), csrf: json(login).csrfToken };
+      checkExec = openableGithub().exec;
+      const res = await send('POST', `${base()}/open-pr`, {
+        ...session, body: { branch: 'wrap/1-x', headSha: SHA, confirm: true, by: 'mallory' }
+      });
+      assert.equal(res.statusCode, 201);
+      const [row] = store.activity.query({ projectId: project.id, eventType: 'wrap.strand_pr_opened' });
+      assert.equal(row.detail.by, 'rosie');
+    });
+
+    it('refuses a signed-in request with no CSRF token, and opens nothing', async () => {
+      stranded.record({ projectId: project.id, remote: REMOTE, branch: 'wrap/1-x', headSha: SHA });
+      store.users.create('rosie', PASSWORD);
+      const cfg = store.config.load();
+      cfg.authEnabled = true;
+      store.config.save(cfg);
+      const login = await send('POST', '/api/auth/login', { body: { username: 'rosie', password: PASSWORD } });
+      const gh = openableGithub();
+      checkExec = gh.exec;
+      const res = await send('POST', `${base()}/open-pr`, {
+        cookie: cookieOf(login), body: { branch: 'wrap/1-x', headSha: SHA, confirm: true }
+      });
+      assert.equal(res.statusCode, 403);
+      assert.equal(gh.creates.length, 0);
+    });
+
+    const statuses = [
+      ['400 without confirm', {}, { branch: 'wrap/1-x', headSha: SHA }, 400, 'BAD_REQUEST'],
+      ['404 for an unlisted item', {}, { branch: 'wrap/9-none', headSha: SHA, confirm: true }, 404, 'NOT_FOUND'],
+      ['409 for a moved branch', { moved: true }, { branch: 'wrap/1-x', headSha: SHA, confirm: true }, 409, 'BRANCH_MOVED'],
+      ['422 for a remote not on GitHub', { gitlab: true }, { branch: 'wrap/1-x', headSha: SHA, confirm: true }, 422, 'NOT_GITHUB'],
+      ['502 for a failed create', { createFails: true }, { branch: 'wrap/1-x', headSha: SHA, confirm: true }, 502, 'CREATE_FAILED']
+    ];
+    for (const [label, how, body, status, code] of statuses) {
+      it(`answers ${label}, and records nothing`, async () => {
+        stranded.record({ projectId: project.id, remote: REMOTE, branch: 'wrap/1-x', headSha: SHA });
+        const gh = openableGithub(how.createFails
+          ? { exitCode: 1, stdout: '', stderr: 'GraphQL: Resource not accessible by integration\n', error: new Error('exit 1') }
+          : undefined);
+        checkExec = async (file, args) => {
+          if (how.gitlab && args[0] === 'remote') return { exitCode: 0, stdout: 'https://gitlab.com/example/sandbox.git\n', stderr: '', error: null };
+          if (how.moved && args[0] === 'ls-remote') return { exitCode: 0, stdout: `${'d'.repeat(40)}\trefs/heads/wrap/1-x\n`, stderr: '', error: null };
+          return gh.exec(file, args);
+        };
+        const res = await send('POST', `${base()}/open-pr`, { body });
+        assert.equal(res.statusCode, status);
+        assert.equal(json(res).code, code);
+        assert.equal(typeof json(res).error, 'string');
+        assert.deepEqual(store.activity.query({ projectId: project.id, eventType: 'wrap.strand_pr_opened' }), []);
+      });
+    }
+
+    it('404s for an unknown project', async () => {
+      const res = await send('POST', '/api/projects/no-such-project/stranded-wraps/open-pr', {
+        body: { branch: 'wrap/1-x', headSha: SHA, confirm: true }
+      });
+      assert.equal(res.statusCode, 404);
+    });
+
+    it('400s for a body that is not a JSON object', async () => {
+      const res = await send('POST', `${base()}/open-pr`, { body: ['wrap/1-x'] });
+      assert.equal(res.statusCode, 400);
     });
   });
 
