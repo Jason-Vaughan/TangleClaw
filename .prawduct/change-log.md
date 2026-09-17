@@ -34,6 +34,22 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-17 — Project cards flag a killed or crashed session that left work, and stranded wraps get a cleanup path (#1544, #1545)
+
+<!-- prawduct: type=feature | scope=train-20-chunk-04 -->
+
+Train 20 Chunk 04, the train's last chunk.
+
+What shipped:
+- `lib/session-leftovers.js` compares the project's own checkout with a killed or crashed session's launch baseline: `git rev-parse --show-toplevel`, the baseline's own status listing minus the paths dirty at launch, and `git rev-list --count <launch_sha>..HEAD --not --remotes`. The answer (`left-work`, `clean`, `unknown`, `checking`) is cached per session id. `GET /api/projects` serves it as `sessionHealth` without spawning, and refreshes it in the background every 30 s. The card shows a crashed badge (always) or a killed-with-work badge, and a Last session row.
+- `lib/stranded-check.js#openPr` and `POST /api/projects/:project/stranded-wraps/open-pr` need `confirm: true` and a listed item. Before `gh pr create --repo <origin> --head=<branch>` (no `--base`), they read `origin`, the branch head and open PRs. A PR is recorded as `wrap.strand_pr_opened` only after a PR URL is printed and the record reads back. Items carry `prOpened`. The card lists Acknowledge / Open PR per item behind one confirmation dialog, which also gives the manual branch-deletion command. Nothing deletes branches.
+
+Review: the cumulative Critic (rev-20260917T050507Z-9663966e) had one blocking finding. A synchronous `statSync` of the project folder was reachable from the project-list poll, and chunk 03's check had the same guard. All three were removed in favour of the scanner's folder facts and a no-cwd `git --version` spawn that tells a missing folder from a missing git. Two warnings (a shared origin read, logging failed PR opens) and three notes were fixed. Four notes were accepted with reasons. verify-resolutions (rev-20260917T051430Z-6654e8a5) closed the round.
+
+Tests changed on purpose: chunk 03's missing-folder tests now reach the reason through a failed spawn and the `git --version` probe instead of a stubbed `dirExists`, because that stub's subject no longer exists. Both still assert the reason names the folder and not a missing git.
+
+Mutation checks: 31 breakages on the first commit and 11 on the fix commit, all caught. Two concurrency guards first showed as "cancelled" rather than failed. Their tests now race the second call against a timer.
+
 ## 2026-09-17 — The Restart button works on Linux hosts with a qualifying systemd user unit (#1506, refs #239)
 
 <!-- prawduct: type=feature | scope=linux-systemd-restart-1506 -->
