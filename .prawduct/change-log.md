@@ -34,6 +34,27 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-17 — The Restart button works on Linux hosts with a qualifying systemd user unit (#1506, refs #239)
+
+<!-- prawduct: type=feature | scope=linux-systemd-restart-1506 -->
+
+A clean-room reconstruction under ADR 0014 of external PR #1506 (@madhavanms2803-ui), re-derived from #239. The PR was audited as text at head `9e309bae`, and none of the contributor's code was merged. Their patch detected `/etc/systemd/system/tangleclaw.service` and ran a plain `systemctl restart`: a system unit, which an unprivileged server cannot restart.
+
+What shipped:
+- `lib/server-info.js#probeSystemdUserUnit` runs `systemctl --user show tangleclaw.service` asynchronously, with no shell and a 3 s timeout. The unit qualifies only when `LoadState=loaded`, `MainPID` is this process, `KillMode=process` and `NeedDaemonReload=no`.
+- The probe runs asynchronously (`execFile`, not `execFileSync`). `server.js` starts it at boot. `detectRestartMechanism` stays synchronous: it returns the cached answer, and while that answer is not "yes" it starts a new query at most every 30 s, deduped across concurrent callers. A fixed unit therefore brings the button back without a restart, and a transient failure is not final. A reason is logged when it first appears or changes.
+- `POST /api/server/restart` awaits `confirmRestartMechanism`, which re-queries without blocking the event loop. On a failed re-check it answers 409 `RESTART_NOT_SAFE` with the reason, and the cached answer becomes "no". The wrap guard runs again after the await, because a wrap can start while systemd answers.
+- The command is `systemctl --user --no-block restart tangleclaw.service`; the route runs it with `execSync`, and a blocking restart would wait on its own process.
+- A failed restart command now logs its stderr, and a loaded unit that doesn't qualify is logged once with its reason.
+
+How it got here:
+1. The first version checked that the unit file existed.
+2. The cumulative Critic found that systemd's default KillMode would end every tmux session, so the check required `KillMode=process` in the file.
+3. `/code-review` found that systemd applies the last line plus drop-ins, so the check computed the effective value from the files.
+4. A second `/code-review` and the next cumulative Critic (R-2) independently found that files cannot show what systemd has loaded: a pending daemon-reload, unread directories, and line continuations. The file parser was deleted in favour of asking systemd. The same query also closes the Linux half of #1555: the button now requires that the unit is running this server.
+5. A third `/code-review` found that a cached "no" was final (a fixed unit never brought the button back) and that the click-time re-check blocked the event loop for up to 3 s. The probe became asynchronous, with a rate-limited re-query. A fourth `/code-review` found no bugs. Its one test-only note (a query left over from a state reset could write into the next test's state) was fixed with a generation counter, and the background query now has an error handler that logs, as the Critic had noted.
+
+Mutation checks: removing each of the four conditions, the confirm dispatch, the timeout, the route re-check, the rate limit, the re-query of a "no", the "yes"-stands rule, the dedupe, the cache update on a failed confirm, or the post-await wrap guard turns a test red. The restart-flow client already shows a refused request's error, so the 409 reaches the operator without a UI change.
 ## 2026-09-17 — Stranded wraps are checked against GitHub, and a check that couldn't run says so (#1542, #1543)
 
 <!-- prawduct: type=feature | scope=train-20-chunk-03 -->

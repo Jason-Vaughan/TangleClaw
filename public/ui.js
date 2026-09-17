@@ -3080,7 +3080,7 @@ function openGlobalSettings() {
       <div class="form-hint">
         ${state.restartMechanism
           ? 'Restarts the TC server process via the platform process manager. Active tmux sessions survive; the browser reconnects when the server returns (~3s).'
-          : 'Disabled: no restart mechanism detected on this host (macOS launchd plist not present; Linux support is a follow-up — see GitHub issue #235).'}
+          : 'Disabled: no restart mechanism detected on this host. On macOS this needs the launchd plist. On Linux it needs a systemd user unit, tangleclaw.service, that runs this server and sets KillMode=process so tmux sessions survive (then run systemctl --user daemon-reload). The server log says which condition failed.'}
       </div>
     </div>
   `;

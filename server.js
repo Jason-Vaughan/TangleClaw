@@ -1490,32 +1490,45 @@ route('POST', '/api/master/rules/restore-defaults', (_req, res) => {
 
 // POST /api/server/restart — kick the TC server via the platform's
 // process manager (#235). 202 Accepted is sent BEFORE the exec so the
-// browser sees a clean response, then ~80ms later the launchctl
-// kickstart kills this process. The browser polls /api/server-info to
-// detect when the new process is up and reloads. Returns 501 when no
-// restart mechanism is available (e.g. bare-node, Linux today) so the
-// frontend can hide the button cleanly.
-route('POST', '/api/server/restart', (_req, res, _params, body) => {
+// browser sees a clean response, then ~300ms later the process manager
+// (launchd or a systemd user unit) replaces this process. The browser
+// polls /api/server-info to detect when the new process is up and
+// reloads. Returns 501 when no restart mechanism is available (e.g.
+// bare-node, or Linux without a qualifying user unit) so the frontend can
+// hide the button cleanly, and 409 when a systemd unit that qualified at
+// boot no longer does.
+route('POST', '/api/server/restart', async (_req, res, _params, body) => {
   // #583 — a restart kills any in-flight wrap pipeline (the 2026-07-16
   // incident's first domino: a restart POSTed mid-wrap 502'd the wrap and
   // orphaned its content steps). Refuse while a wrap runs unless the
   // operator explicitly forces past the guard. Checked BEFORE mechanism
-  // detection so the refusal path can never schedule an exec.
-  const wrappingProject = wrapRunRegistry.anyRunning();
-  if (wrappingProject && !(body && body.force === true)) {
-    return errorResponse(res, 409,
+  // detection so the refusal path can never schedule an exec, and again
+  // after the systemd re-check below, since a wrap can start while it runs.
+  const refuseIfWrapping = () => {
+    const wrappingProject = wrapRunRegistry.anyRunning();
+    if (!wrappingProject || (body && body.force === true)) return false;
+    errorResponse(res, 409,
       `A session wrap is running for "${wrappingProject}" — restarting now would kill it mid-pipeline. ` +
       'Wait for it to finish (GET /api/sessions/:project/wrap/status), or retry with {"force": true}.',
       'WRAP_RESTART_BLOCKED');
-  }
+    return true;
+  };
+  if (refuseIfWrapping()) return;
   const mechanism = serverInfo.detectRestartMechanism();
   if (!mechanism) {
     jsonResponse(res, 501, {
       ok: false,
-      error: 'no restart mechanism available on this host (macOS launchd plist not detected; Linux support is a follow-up)'
+      error: 'no restart mechanism available on this host (no macOS launchd plist, and no systemd user unit tangleclaw.service that runs this server with KillMode=process)'
     });
     return;
   }
+  // The unit may have changed since boot; a restart it cannot survive would
+  // end every tmux session, so ask systemd again (without blocking) first.
+  const confirmed = await serverInfo.confirmRestartMechanism(mechanism);
+  if (!confirmed.ok) {
+    return errorResponse(res, 409, `Restart not safe right now: ${confirmed.reason}`, 'RESTART_NOT_SAFE');
+  }
+  if (refuseIfWrapping()) return;
   const command = serverInfo.buildRestartCommand(mechanism);
   if (!command) {
     // Defensive: detectRestartMechanism returned non-null but
@@ -1545,12 +1558,14 @@ route('POST', '/api/server/restart', (_req, res, _params, body) => {
   // remote-truncation risk on #235.
   setTimeout(() => {
     try {
-      require('node:child_process').execSync(command, { stdio: ['ignore', 'ignore', 'ignore'], timeout: 5000 });
+      require('node:child_process').execSync(command, { stdio: ['ignore', 'ignore', 'pipe'], timeout: 5000 });
     } catch (err) {
-      // We're about to be killed anyway; log for the next process to
-      // notice on tail, but don't crash before SIGKILL arrives.
+      // No process manager took the restart, so this process lives on:
+      // log the command's own reason (a missing unit, no user bus) rather
+      // than just its exit status, and don't crash.
+      const reason = err && err.stderr ? String(err.stderr).trim() : '';
       // eslint-disable-next-line no-console
-      console.error('[server-restart] exec failed:', err && err.message);
+      console.error('[server-restart] exec failed:', err && err.message, reason ? `— ${reason}` : '');
     }
   }, 300);
 });
@@ -9517,6 +9532,9 @@ if (require.main === module) {
   // Doing this before store.init keeps the snapshot honest — any code
   // paths the store init triggers run against the SHA we just stamped.
   serverInfo.captureStartup();
+  // Start restart-mechanism detection now, so a Linux host has systemd's
+  // answer (queried in the background) before the first page asks for it.
+  serverInfo.detectRestartMechanism();
 
   // Initialize store (needed for config before PID check)
   store.init();
