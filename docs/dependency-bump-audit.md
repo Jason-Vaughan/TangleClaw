@@ -89,7 +89,7 @@ The audit has two parts, split between the two ADR 0014 roles.
   untrusted PR. A passing PR is still never merged: the rebuilt change is a maintainer's own edit,
   and `CONTRIBUTING.md` §4 allows that.
 
-### 2. Micro filter (Builder): is the upstream release what it claims to be?
+### 2. Micro filter (PR Reviewer): is the upstream release what it claims to be?
 
 Record each answer. They go into the rebuild's PR body.
 
@@ -120,6 +120,14 @@ Record each answer. They go into the rebuild's PR body.
 6. **Blast radius.** Run `grep -n '<owner>/<repo>@' .github/workflows/*.yml` to list every
    workflow that uses the action and its `permissions:`. A bump that reaches `release.yml` runs
    with `contents: write`.
+
+**What these checks prove, and what they don't.** They are evidence, not proof that a release is
+benign. The cooling-off period and default-branch ancestry are heuristics: a malicious release can
+survive a week on a default branch, and a legitimate one can live on a maintenance branch (which
+these checks refuse until the Operator approves a documented alternative). A one-line ref change
+can import far more code than its diff shows. The verdict records what was **not** reviewed (for
+example, a bundled `dist/` file or transitive downloads) as residual risk for the Operator to
+accept, per ADR 0014 Amendment 2026-09-17.
 
 ## The rebuild
 

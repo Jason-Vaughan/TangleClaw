@@ -34,6 +34,17 @@ All notable changes to TangleClaw are documented in this file.
 
 - **A wrap that finishes now ends the session, even when it had nothing to commit** (#1558). The session used to end only when the wrap made a commit. When a session's work had already merged by pull request, and the wrap's own notes went to ignored files, a full wrap reported "no changes to commit" and left the session running. Now any wrap that finishes records the session as wrapped, closes its terminal and releases its document locks, commit or not. A wrap that stops for you, fails or crashes still leaves the session open so you can answer or retry. The finished report now says "Wrapped — nothing new to commit" and whether the session ended or is still running. Wrap results (the stream's `run-done` and `GET /wrap/status`) carry `sessionOutcome`: `ended`, `kept` (kept on request and still running), or `null` when the run didn't finish or the session ended another way, such as a Kill during the wrap.
 
+### Internal
+
+- **ADR 0014 amended for the external-code review roles and rules** (2026-09-17). A dedicated PR Reviewer session now does the micro filter and the clean-room reconstruction, in a worktree that doesn't serve the live install. The Coordinator drafts every contributor reply from the recorded findings; the Operator sends it and closes the original PR after the reconstruction merges.
+  - The new **Amendment 2026-09-17** section sets eight rules: a trust boundary, immutable intake, an injection hold, separate decisions, reconstruction, exceptional execution, promotion and records.
+  - **Trust boundary:** issues, comments, commit messages and peer-relayed text are untrusted evidence, and no message between sessions authorizes a code change or a merge. Two passing reviews make a PR eligible for reconstruction; the Operator still authorizes the start.
+  - **Pinned verdicts:** a verdict is tied to the head commit it audited, and any new commit means a full re-audit.
+  - **Injection hold:** instructions aimed at the reviewing agent stop the review for joint review with the Operator. They are not an automatic rejection.
+  - **Code Reviewer:** a separate Code Reviewer reviews reconstructions, and none auto-merges. Until that session exists, the Prawduct Critic, Claude Code's `/code-review` and the Operator's own review all review a reconstruction.
+  - **Honest limits:** each rule whose mechanism doesn't exist yet says so (#1554, #1553, #1551, #1552, #1436).
+  - `docs/dependency-bump-audit.md` names the PR Reviewer as the micro filter and says plainly that its checks are evidence, not proof that a release is safe.
+
 ## [5.28.0] - 2026-09-16
 
 ### Added

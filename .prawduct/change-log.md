@@ -34,6 +34,15 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-17 — ADR 0014 amended: PR Reviewer role, trust boundary, intake, injection hold, promotion
+
+<!-- prawduct: type=docs | scope=adr-0014-amendment -->
+
+Folds in the operator's 2026-09-16 rulings and the architect's security audit (proposed ADR language, clauses 1–8). The architect's review of the first draft led to four more changes: two source passes now make a PR *eligible* for reconstruction, with the Operator still authorizing the start; the macro filter's evidence is widened to the rule-2 inventory; the "never handles untrusted text" overclaim is narrowed to external-PR intake; and a mis-attributed issue reference is removed. The interim review until a Code Reviewer session exists is the Critic, `/code-review` and the Operator's review together (operator ruling, 2026-09-17).
+- **Roles:** the micro filter and reconstruction move from the Builder to a dedicated PR Reviewer working in a non-serving worktree. The Coordinator drafts all contributor replies, from the recorded findings of the filter that reached the verdict. There is a Code Reviewer step, with the interim substitute being the Critic plus the operator's review, and no auto-merge on reconstructions.
+- **New Amendment section:** eight rules, and each one whose mechanism is missing names the tracking issue (#1554 containment, #1553 enforced review, #1551 tag target, #1552 cleanroom, #1436 SHA pinning).
+- **Corrections:** the earlier claim that reconstruction satisfies the live-install protection "completely" now points at the promotion rule, since a reconstruction's own bytes need a deployment boundary. `docs/dependency-bump-audit.md` names the PR Reviewer, and states that cooling-off and ancestry checks are heuristics, not proof.
+
 ## 2026-09-17 — The Restart button works on Linux hosts with a qualifying systemd user unit (#1506, refs #239)
 
 <!-- prawduct: type=feature | scope=linux-systemd-restart-1506 -->
