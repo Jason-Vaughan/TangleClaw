@@ -37,6 +37,7 @@
   "defaultLaunchMode": "default",
   "persistent": null,
   "capabilities": {
+    "launchSequence": { "supported": true },
     "supportsSlashCommands": false,
     "supportsPrimePrompt": true,
     "supportsConfigFile": true,

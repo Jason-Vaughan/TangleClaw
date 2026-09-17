@@ -10,6 +10,8 @@ governed_by:
   - .prawduct/artifacts/security-model.md
   - .tangleclaw/plans/master-startup-and-wrap.md      # Master startup — excluded here, see §2.9
   - project rule: ENGINE-AGNOSTIC BY CONSTRUCTION
+scope: train-21-phased-launch
+branch: feat/train-21-chunk-01   # the chunk in flight; the gates resolve the active plan by this claim
 partition: serial — every chunk edits lib/sessions.js, lib/store.js and server.js; the chunks that touch public/ run in a worktree
 ---
 
@@ -779,7 +781,32 @@ Chunk 03 (a whole-trajectory review before parity).
 - [x] Operator ruling R3: operator mode (2026-09-17)
 - [x] Operator ratification R1 (2026-09-17); the amendment text lands with #1584
 - [x] Issues filed: #1579–#1590, tracking #1591 (no milestone; trains are tracked by the tracking issue)
-- [ ] Chunk 01
+- [x] Chunk 01 — built 2026-09-17 (#1579/#1580/#1581). Deltas from the blueprint, all recorded in the PR:
+  - The **push prime composes from the same tagged sections** the pull serves, rather than from
+    `renderLaunchStep` itself. §2.4's byte-identity requirement and "compose from the step renderer"
+    cannot both hold literally: the push order interleaves the four steps, so composing push out of
+    whole steps would reorder it. One collector tags every section with its step; push renders all
+    of them in the historical order, pull keeps one step's. Byte identity is pinned by
+    `test/prime-golden.test.js` against fixtures captured before the refactor.
+  - **Two push deltas, not one.** The bootstrap line is the declared one. The second is derived: the
+    ecosystem primer lists `tc`'s verbs from the roster, so adding `start` changes that line by
+    construction. It also took the primer's size cap from 2600 to 2700 characters, recorded in
+    `test/ecosystem-primer.test.js` as the deliberate budget decision that test asks for.
+  - **What the golden fixtures hold, precisely.** They were captured from the generator BEFORE the
+    refactor and committed first (`Pin the pushed prime before the launch-step refactor`), which is
+    what makes the byte-identity claim checkable. The committed files then moved by exactly one line
+    each when `start` joined the verb roster — that one-line diff IS the second delta's evidence, so
+    the current fixtures are post-verb by design, not pre-refactor captures.
+  - **The blueprint's `renderLaunchStep(step, ctx)` is realized as `renderLaunchSteps`**, which
+    returns all four steps from one set of reads — the launch path needs all four at once, and a
+    single-step form re-rendered the other three to throw them away. Not a dropped requirement: the
+    step renderer §2.4 asks for exists; only its arity changed.
+  - `toolOutput.maxChars` for claude is **20,000**, measured in a live session (24,000 characters of
+    tool output arrived intact; 51.8 KB was replaced by a preview). codex, aider and antigravity are
+    **unmeasured** and take the conservative 8,000 default, which `tc start status` reports as
+    assumed. Their live `tc`-in-pane probe is car 21.11's.
+  - Step 3 serves a `not-evaluated` preflight verdict that says nothing is known about the handoff —
+    the real verdict is Chunk 03's.
 - [ ] Chunk 02
 - [ ] Chunk 03
 - [ ] Chunk 04

@@ -1537,9 +1537,14 @@ describe('engines', () => {
           `${profile.id}: carrier is missing the tc bootstrap line`);
         assert.match(content, /fabricate/,
           `${profile.id}: the line must carry its stated consequence, not just name the verb`);
-        // Wrap-tolerant: the comment form may break the phrase across
-        // #-prefixed lines.
-        assert.match(content, /not launched by\s+(# )?TangleClaw/,
+        // The comment form wraps to a width, so where a line breaks is an
+        // accident of the text's length — it moved when the verb roster grew
+        // (Train 21). Unwrap first and assert the WHOLE sentence: stricter than
+        // matching around one tolerated break, and immune to the next one. The
+        // backticks are optional because the markdown carriers code-quote `tc`
+        // and the comment carriers cannot.
+        const unwrapped = content.replace(/\n#\s*/g, ' ').replace(/\s+/g, ' ');
+        assert.match(unwrapped, /If `?tc`? is not found, this pane was not launched by TangleClaw — say so rather than guessing/,
           `${profile.id}: the honest-absence case must ride every carrier`);
       }
     });

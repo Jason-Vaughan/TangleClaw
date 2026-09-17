@@ -188,7 +188,8 @@ describe('#1178 the value is actually FORWARDED to the generator', () => {
     // bare `resolveOperatorHost().host` kills the feature while staying green —
     // the request's measurement is silently discarded and the box is probed
     // again. Pin the decision, not just the argument list.
-    const decision = src.slice(src.indexOf('const primerCtx = {'), src.indexOf('sections.push(_yieldable(0,'));
+    const decision = src.slice(src.indexOf('const primerCtx = {'), src.indexOf('ecosystemPrimer.buildEcosystemPrimerSection(primerCtx)'));
+    assert.ok(decision.length > 0 && decision.length < 2000, 'the primerCtx block moved — re-point this guard');
     assert.match(decision, /options\.operatorHost !== undefined/,
       'the primerCtx must prefer the request-measured host over a fresh probe');
     assert.match(decision, /options\.operatorHost\s*$/m);
@@ -197,11 +198,17 @@ describe('#1178 the value is actually FORWARDED to the generator', () => {
   it('launchSession passes operatorHost into generatePrimePrompt', () => {
     // The defect this pins: the option was set on the way in and the generator
     // call was never touched, so the feature could not run at all and the suite
-    // could not tell. Assert the option reaches the ONE call that builds a prime.
+    // could not tell. Both halves are pinned, because Train 21 put an object
+    // between them — the options the launch builds must NAME it, and the one
+    // call that builds a prime must spread those options.
+    const built = src.match(/const primeOptions = \{[^}]*\}/);
+    assert.ok(built, 'the prime options object moved — re-point this guard');
+    assert.match(built[0], /operatorHost/,
+      'operatorHost is not forwarded, so the whole path is dead code');
     const call = src.match(/generatePrimePrompt\(project, engineProfile, \{[^}]*\}/);
     assert.ok(call, 'the prime generation call moved — re-point this guard');
-    assert.match(call[0], /operatorHost/,
-      'operatorHost is not forwarded, so the whole path is dead code');
+    assert.match(call[0], /\.\.\.primeOptions/,
+      'the prime call does not spread the options that carry operatorHost');
   });
 
   it('the launch route resolves it from the request, beside the owner', () => {

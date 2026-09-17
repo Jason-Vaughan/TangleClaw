@@ -76,14 +76,18 @@ describe('lib/ecosystem-primer (#1122)', () => {
       'per the engine-agnostic rule, prompt text must not bake in one engine\'s filename');
   });
 
-  it('stays within the prime budget it claims (~1KB order, hard cap 2600 chars)', () => {
+  it('stays within the prime budget it claims (~1KB order, hard cap 2700 chars)', () => {
     // Cap raised 2000 → 2600 for the tc bootstrap line (ambient-awareness
     // Chunk 04) — a deliberate budget decision, not drift: the live probe
     // proved PATH presence alone creates zero discovery intent, so the one
     // roster entry that names the discovery surface is the load-bearing one.
+    // Raised again 2600 → 2700 on 2026-09-17 (Train 21): the bootstrap line
+    // lists the verb roster, so `tc start` cost it seven characters. The list
+    // grows with the roster by design — one source, every carrier — and this
+    // headroom is for the next verb or two, not for prose.
     const text = primer.buildEcosystemPrimerSection(CTX).join('\n');
-    assert.ok(text.length < 2600,
-      `section is ${text.length} chars — growing past 2600 needs a deliberate budget decision, not drift`);
+    assert.ok(text.length < 2700,
+      `section is ${text.length} chars — growing past 2700 needs a deliberate budget decision, not drift`);
   });
 
   it('carries the tc bootstrap line as an instruction with a stated consequence', () => {

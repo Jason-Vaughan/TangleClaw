@@ -264,6 +264,7 @@ const gitTemplate = require('./lib/git-template');
 const tmux = require('./lib/tmux');
 const projects = require('./lib/projects');
 const sessions = require('./lib/sessions');
+const launchSequence = require('./lib/launch-sequence');
 const ciStatus = require('./lib/ci-status');
 const master = require('./lib/master');
 const actions = require('./lib/actions');
@@ -4209,6 +4210,58 @@ route('POST', '/api/tc/rule-receipt', (req, res, _params, body) => {
   return jsonResponse(res, 200, { upgraded: true, delivery: upgraded });
 });
 
+/**
+ * The identity a pane presents to the launch-sequence routes: the launch id
+ * TangleClaw exported into it, and the project id it already carries. Both are
+ * claims, and the sequence lookup validates them against each other — neither
+ * is a credential (see `lib/launch-sequence.js`).
+ * @param {object} req - The request
+ * @returns {{launchId: string|null, projectId: number|null}}
+ */
+function _launchIdentity(req) {
+  const raw = req.headers['x-tangleclaw-launch-id'];
+  const projectRaw = req.headers['x-tangleclaw-project-id'];
+  const projectId = Number(projectRaw);
+  return {
+    launchId: typeof raw === 'string' && raw ? raw : null,
+    projectId: Number.isInteger(projectId) ? projectId : null
+  };
+}
+
+// POST /api/tc/start/next — serve the next page of the launch sequence, after
+// applying an acknowledgement when one is sent (Train 21, #1581).
+//
+// The whole exchange is one transaction in `lib/launch-sequence.js`: two
+// identical acks cannot both advance the cursor, and a lost response is safe to
+// replay because a repeat of an ack already applied is idempotent rather than a
+// second advance.
+//
+// Under the same loopback machine-client trust as `/api/tc/rule-receipt`. A
+// local process can forge an acknowledgement; doing so grants nothing — the
+// sequence records what was delivered and read, not authorization.
+route('POST', '/api/tc/start/next', (req, res, _params, body) => {
+  const { launchId, projectId } = _launchIdentity(req);
+  const sent = body || {};
+  const result = launchSequence.next({
+    launchId,
+    projectId,
+    ack: sent.ack,
+    page: sent.page === null || sent.page === undefined ? undefined : sent.page
+  });
+  return jsonResponse(res, result.status, result.body);
+});
+
+// GET /api/tc/start/status — where the sequence stands: the cursor, and what
+// was served and acknowledged per step (Train 21, #1581).
+//
+// Read-only, and it answers a pane launched before phased launch too, saying
+// that it has no sequence rather than refusing it.
+route('GET', '/api/tc/start/status', (req, res) => {
+  const { launchId, projectId } = _launchIdentity(req);
+  const result = launchSequence.status({ launchId, projectId });
+  return jsonResponse(res, result.status, result.body);
+});
+
 // GET /api/tc/whoami — the `tc` CLI's one verb (ambient-awareness Chunk 02).
 // Answers "who am I, where is TangleClaw, and what can I do through it" for the
 // pane that asks, and the GET itself IS the awareness receipt: recording
@@ -5714,6 +5767,11 @@ route('POST', '/api/sessions/:project', async (_req, res, params, body) => {
     // codes are an acknowledgement in that resend that failed.
     if (result.code === 'STRANDED_WRAPS') {
       return errorResponse(res, 409, result.error, result.code, { items: result.items });
+    }
+    // Train 21: the pane started and its session row did not. The code travels
+    // so the dashboard can say whether a pane was left running.
+    if (result.code === 'ORPHANED_LAUNCH' || result.code === 'LAUNCH_BIND_FAILED') {
+      return errorResponse(res, 500, result.error, result.code);
     }
     const ackStatus = { BAD_REQUEST: 400, NOT_FOUND: 404, WRITE_FAILED: 500 }[result.code];
     if (ackStatus) {

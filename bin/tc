@@ -14,6 +14,7 @@
  *   TANGLECLAW_API          - the API origin for this instance (required)
  *   TANGLECLAW_PROJECT_ID   - this project's numeric store id
  *   TANGLECLAW_WORKSPACE_ID - switchboard workspace id (only when minted)
+ *   TANGLECLAW_LAUNCH_ID    - this launch's id, bound to its session row (`tc start`)
  *
  * Every failure is LOUD and names what happened — a missing environment says
  * this pane was not launched under TangleClaw, an unreachable server names
@@ -64,6 +65,9 @@ async function main() {
   };
   if (process.env.TANGLECLAW_PROJECT_ID) headers['x-tangleclaw-project-id'] = process.env.TANGLECLAW_PROJECT_ID;
   if (process.env.TANGLECLAW_WORKSPACE_ID) headers['x-tangleclaw-workspace-id'] = process.env.TANGLECLAW_WORKSPACE_ID;
+  // Train 21: which launch this pane is. The server binds it to a session row,
+  // so `tc start` never has to guess which session is asking.
+  if (process.env.TANGLECLAW_LAUNCH_ID) headers['x-tangleclaw-launch-id'] = process.env.TANGLECLAW_LAUNCH_ID;
   if (process.env.TANGLECLAW_ROLE) headers['x-tangleclaw-role'] = process.env.TANGLECLAW_ROLE;
 
   /**
@@ -127,7 +131,14 @@ async function main() {
         err.code = parsed.code;
         throw err;
       }
-      throw new Error(`the TangleClaw API answered ${res.status} for ${url}${detail}`);
+      // The parsed body rides on the error: a verb that must tell two refusals
+      // apart (`tc start` retrying only LAUNCH_NOT_BOUND) branches on the code,
+      // never on the sentence.
+      const failed = new Error(`the TangleClaw API answered ${res.status} for ${url}${detail}`);
+      failed.status = res.status;
+      if (parsed && parsed.code) failed.code = parsed.code;
+      if (parsed) failed.body = parsed;
+      throw failed;
     }
     return res.json();
   }

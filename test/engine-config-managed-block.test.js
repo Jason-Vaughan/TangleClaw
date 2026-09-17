@@ -493,26 +493,32 @@ describe('engine profiles: upstream facts carry evidence; the paste path is neve
   // naming one engine repeats the defect it fixes.
   for (const { file, profile } of profiles) {
     const caps = profile.capabilities || {};
-    const injection = caps.startupInjection;
+    // Every capability whose maxChars is a fact about the ENGINE rather than a
+    // TangleClaw preference. One guard for the family, not for its first
+    // member: `toolOutput` (Train 21) caps `tc start` pages the same way
+    // `startupInjection` caps the prime, and goes stale the same way.
+    for (const capability of ['startupInjection', 'toolOutput']) {
+      const declared = caps[capability];
 
-    test(`${file}: a declared startupInjection.maxChars carries evidence`, () => {
-      if (!injection || injection.maxChars === undefined) return;
-      // #1057: maxChars is an UPSTREAM fact — an engine's own channel cap. An
-      // assertion with both sides in this repo stays green forever after the
-      // upstream changes (the codex --full-auto learning), so the claim must
-      // name where and when it was measured; same evidence shape as the
-      // carrier's `discovery` block.
-      assert.ok(
-        injection.evidence,
-        `${file} declares maxChars=${injection.maxChars} with no evidence of where that number was measured`
-      );
-      assert.match(injection.evidence.verifiedOn, /^\d{4}-\d{2}-\d{2}$/, 'verifiedOn is an ISO date');
-      assert.ok(!Number.isNaN(Date.parse(injection.evidence.verifiedOn)), 'verifiedOn parses as a real date');
-      assert.ok(
-        typeof injection.evidence.source === 'string' && injection.evidence.source.length > 0,
-        'a source is named'
-      );
-    });
+      test(`${file}: a declared ${capability}.maxChars carries evidence`, () => {
+        if (!declared || declared.maxChars === undefined) return;
+        // #1057: maxChars is an UPSTREAM fact — a cap belonging to the engine's
+        // own harness. An assertion with both sides in this repo stays green
+        // forever after the upstream changes (the codex --full-auto learning),
+        // so the claim must name where and when it was measured; same evidence
+        // shape as the carrier's `discovery` block.
+        assert.ok(
+          declared.evidence,
+          `${file} declares ${capability}.maxChars=${declared.maxChars} with no evidence of where that number was measured`
+        );
+        assert.match(declared.evidence.verifiedOn, /^\d{4}-\d{2}-\d{2}$/, 'verifiedOn is an ISO date');
+        assert.ok(!Number.isNaN(Date.parse(declared.evidence.verifiedOn)), 'verifiedOn parses as a real date');
+        assert.ok(
+          typeof declared.evidence.source === 'string' && declared.evidence.source.length > 0,
+          'a source is named'
+        );
+      });
+    }
 
     test(`${file}: a paste-path engine declares a readiness marker or an explicit startupDelay`, () => {
       // The paste path is taken when the engine supports a prime prompt and has
