@@ -21,6 +21,10 @@
   },
   "persistent": null,
   "capabilities": {
+    "launchSequence": {
+      "supported": false,
+      "reason": "OpenClaw drives an engine on a remote host over SSH or its web UI. That side does not run `tc` under TangleClaw's environment, so there is nothing to serve a launch sequence to."
+    },
     "supportsSlashCommands": false,
     "supportsPrimePrompt": false,
     "supportsConfigFile": false,

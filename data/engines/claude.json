@@ -83,6 +83,14 @@
   "defaultLaunchMode": "default",
   "persistent": null,
   "capabilities": {
+    "toolOutput": {
+      "maxChars": 20000,
+      "evidence": {
+        "verifiedOn": "2026-09-17",
+        "source": "Measured from inside a live Claude Code session (Train 21 Chunk 01 spike): a 24,000-character Bash tool result reached the model intact, and a 51.8 KB result in the same session was replaced by a 2 KB preview plus a saved file. The cap lies between the two, so 20,000 is declared with headroom. This is the tool-result channel `tc start` output travels on; the SessionStart hook has its own, smaller cap, declared as `startupInjection`."
+      }
+    },
+    "launchSequence": { "supported": true },
     "supportsSlashCommands": true,
     "supportsPrimePrompt": true,
     "supportsConfigFile": true,

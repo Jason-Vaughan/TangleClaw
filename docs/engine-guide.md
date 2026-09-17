@@ -188,6 +188,8 @@ cache, so an engine you have just installed is never refused.
 | `supportsRemote` | declared only | Engine drives a machine other than this one |
 | `supportsModes` | declared only | The connection modes an engine offers |
 | `startupInjection.maxChars` | **read** | How many characters this engine's startup channel can carry before *it* truncates — see below |
+| `toolOutput.maxChars` | **read** | How many characters of a tool result reach this engine's model intact, which is what a launch sequence pages `tc start` output against — see below |
+| `launchSequence` | **read** | Whether a session on this engine is served its context as an acknowledged `tc start` sequence — see below |
 | `readOnlyModeMarker` | **read** | How this engine's TUI says the session is in a read-only mode, so a wrap refuses instead of timing out — see below |
 | `wake` | **read** | The live-probed pane signature that lets TangleClaw tell a busy pane from a resting one on this engine — see below |
 | `awareness` | declared only | OpenClaw only. Its own `reason` text records why no context carrier can be placed on the remote side — a documented gap rather than an oversight |
@@ -248,6 +250,37 @@ and when in a sibling `evidence` block** — `"startupInjection": { "maxChars": 
 this repo stays green forever after the upstream changes. Re-verify if directives start going
 missing — a value copied from another engine, or left stale after the harness changes, fails
 silently and in the one place nothing else is watching.
+
+#### `toolOutput.maxChars`
+
+An object, not a boolean: `"toolOutput": { "maxChars": 20000 }`.
+
+The startup channel's cap (`startupInjection.maxChars`) and this one are different channels. A
+launch sequence is not pushed at startup; it is pulled with `tc start next`, so its pages arrive as
+a **tool result**, and what bounds them is how much tool output the engine passes to its model
+intact. TangleClaw freezes a sequence's page boundaries against this number at launch, so a page
+already served keeps its boundaries even if the declaration later changes.
+
+**Omit the field and the engine gets a conservative 8,000 characters**, and `tc start status` says
+the limit was assumed rather than measured. That is the honest default for an engine nobody has
+measured: more, smaller pages cost an extra round trip, while a page over the real cap can be
+silently truncated.
+
+Same evidence rule as `startupInjection.maxChars`, and the same guard enforces it: declare the
+number only with a sibling `evidence` block naming where and when it was measured. Measure it by
+emitting output of a known size in a live session on that engine and checking what arrives.
+
+#### `launchSequence`
+
+`"launchSequence": { "supported": true }`, or `{ "supported": false, "reason": "…" }`.
+
+Whether TangleClaw serves this engine's sessions their context in acknowledged steps over
+`tc start`. Support means only that the engine runs in a pane where `tc` is on PATH — no
+engine-specific behaviour is assumed beyond that.
+
+**An engine that declares nothing is treated as unsupported**, and the reason says so. A launch
+without a sequence still gets the pushed prime; `tc start next` in such a pane answers with why
+there is nothing to serve, rather than an empty success.
 
 #### `readOnlyModeMarker`
 
