@@ -6755,6 +6755,9 @@ async function initSession() {
     sessionState.launchGraceRemaining = 3;
   }
 
+  // Keep the terminal's prompt above the soft keyboard (#1570): the shared
+  // listener publishes the visible area while the keyboard is up.
+  window.tcWireVisualViewport(window, document);
   bindEvents();
   // Not awaited: who is signed in has nothing to do with loading the session.
   loadBannerUser();

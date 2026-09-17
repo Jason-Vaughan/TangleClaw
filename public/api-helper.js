@@ -723,6 +723,90 @@
   }
 
   /**
+   * The URL shape ttyd's bundled xterm WebLinksAddon recognises, verbatim,
+   * so a tap opens exactly what a desktop click underlines (#1572). `https?`
+   * only: `file:`, `javascript:` and `mailto:` never match.
+   */
+  const TC_URL_REGEX = /(https?|HTTPS?):[/]{2}[^\s"'!*(){}|\\^<>`]*[^\s"':,.!?{}|\\^~[\]`()<>]/g;
+
+  /**
+   * The URL span that contains a column of a line of terminal text (#1572,
+   * pure).
+   *
+   * @param {string} text - One logical line of the buffer.
+   * @param {number} col - A 0-based column into `text`.
+   * @returns {{url: string, start: number, end: number}|null} The span
+   *   (`end` exclusive), or null when the column is not inside a URL.
+   */
+  function tcUrlAtColumn(text, col) {
+    if (typeof text !== 'string' || !text || !Number.isInteger(col) || col < 0) return null;
+    TC_URL_REGEX.lastIndex = 0;
+    let m;
+    while ((m = TC_URL_REGEX.exec(text)) !== null) {
+      const start = m.index;
+      const end = start + m[0].length;
+      if (col < start) return null; // matches are in order; past the column now
+      if (col < end) return { url: m[0], start, end };
+    }
+    return null;
+  }
+
+  /**
+   * The logical line a buffer row belongs to (#1572, pure over a buffer-like
+   * object). xterm marks a row that continues the previous one with
+   * `isWrapped`; a URL that wrapped is one URL, so the rows before and after
+   * the tapped one are joined, and the tapped row's columns are offset into
+   * the joined text. Rows before the tapped one are taken untrimmed (they are
+   * full width, and the offset must count every cell); the last row is
+   * trimmed.
+   *
+   * @param {{getLine: Function}|null} buffer - An xterm buffer (`term.buffer.active`).
+   * @param {number} row - The tapped buffer row.
+   * @returns {{text: string, colOffset: number}} The joined line and the
+   *   offset of the tapped row's column 0 inside it. Empty when the row is
+   *   missing.
+   */
+  function tcLineTextAround(buffer, row) {
+    const empty = { text: '', colOffset: 0 };
+    if (!buffer || typeof buffer.getLine !== 'function' || !buffer.getLine(row)) return empty;
+    let first = row;
+    while (first > 0) {
+      const line = buffer.getLine(first);
+      if (!line || !line.isWrapped) break;
+      first -= 1;
+    }
+    let last = row;
+    for (;;) {
+      const next = buffer.getLine(last + 1);
+      if (!next || !next.isWrapped) break;
+      last += 1;
+    }
+    let text = '';
+    let colOffset = 0;
+    for (let r = first; r <= last; r++) {
+      const line = buffer.getLine(r);
+      const part = line.translateToString(r === last);
+      if (r < row) colOffset += part.length;
+      text += part;
+    }
+    return { text, colOffset };
+  }
+
+  /**
+   * The URL under a buffer cell, or null (#1572).
+   *
+   * @param {object} term - The xterm.js Terminal (only `buffer.active` is read).
+   * @param {{col: number, row: number}|null} cell - A buffer cell.
+   * @returns {string|null}
+   */
+  function tcUrlAtCell(term, cell) {
+    if (!term || !cell || !term.buffer || !term.buffer.active) return null;
+    const line = tcLineTextAround(term.buffer.active, cell.row);
+    const hit = tcUrlAtColumn(line.text, line.colOffset + cell.col);
+    return hit ? hit.url : null;
+  }
+
+  /**
    * Wire one-finger touch scrolling for a ttyd terminal iframe (#443).
    *
    * The previous per-page shims listened on `.xterm-viewport` — but xterm's
@@ -996,6 +1080,7 @@
     const SLOP_PX = 12;
     let pressTimer = null;
     let pressPoint = null;
+    let tapPoint = null;
     let selectAnchor = null;
     let lastPoint = null;
     let pendingCopyText = '';
@@ -1104,6 +1189,7 @@
       }
       const t = e.touches[0];
       pressPoint = { clientX: t.clientX, clientY: t.clientY };
+      tapPoint = pressPoint; // survives cancelPress, for the touchend link check (#1572)
       // Fresh gesture — drop the previous gesture's pill anchor so a
       // no-drag long-press can't surface a stale-positioned pill.
       lastPoint = null;
@@ -1177,6 +1263,26 @@
         selectActivated: gestureSelectActivated,
         movedPastSlop: gestureMovedPastSlop
       })) {
+        // A clean tap on a URL opens it instead of focusing (#1572). xterm's
+        // own link handling needs the mouse events the ghost-mouse guard
+        // above swallows on touch, so the answer comes from the buffer text
+        // under the finger. Opened here, inside the gesture, so the browser's
+        // popup rules allow it; not focused, so the keyboard stays down.
+        let url = null;
+        try {
+          const cell = tapPoint ? cellFromTouch(tapPoint) : null;
+          url = cell ? tcUrlAtCell(term, cell) : null;
+        } catch (_) {
+          url = null; // a disposed terminal or a raced resize: fall through to focus
+        }
+        if (url) {
+          try {
+            iframeWin.open(url, '_blank', 'noopener');
+          } catch (err) {
+            if (iframeWin.console) iframeWin.console.debug('tc tap-to-open failed:', err);
+          }
+          return;
+        }
         try {
           term.focus();
         } catch (err) {
@@ -1188,6 +1294,65 @@
     }, { passive: true });
     doc.addEventListener('touchcancel', endSelect, { passive: true });
 
+    return true;
+  }
+
+  /**
+   * Is the soft keyboard up, and how much of the page is still visible
+   * (#1570, pure)?
+   *
+   * iOS Safari shrinks only the VISUAL viewport when the keyboard opens: the
+   * layout viewport, and with it `100dvh`, stays under the keyboard. Chrome
+   * on Android does the same unless the viewport meta asks otherwise. A
+   * keyboard takes 250px or more on every current phone; the collapsing
+   * browser toolbar moves `innerHeight` and the visual height together, so
+   * their difference stays small. 100px tells the two apart.
+   *
+   * @param {{height: number, offsetTop: number}|null} vv - `window.visualViewport`.
+   * @param {number} innerHeight - `window.innerHeight`.
+   * @returns {{height: number, top: number}|null} The visible height and the
+   *   visual viewport's offset from the layout viewport's top, in whole CSS
+   *   px, while the keyboard is up; null otherwise.
+   */
+  function tcVisualViewportVars(vv, innerHeight) {
+    if (!vv || !Number.isFinite(vv.height) || vv.height <= 0 || !Number.isFinite(innerHeight)) return null;
+    if (innerHeight - vv.height < 100) return null;
+    return { height: Math.round(vv.height), top: Math.round(vv.offsetTop || 0) };
+  }
+
+  /**
+   * Publish the visible area on the root while the soft keyboard is up
+   * (#1570): `--tc-visual-height`, `--tc-visual-top` and
+   * `data-tc-keyboard="open"`, all removed when it closes. The stylesheets
+   * read them only under that attribute, so a page with no keyboard is
+   * untouched. Follows `visualViewport`'s own resize and scroll events;
+   * no timers.
+   *
+   * @param {Window} win - The page window.
+   * @param {Document} doc - Its document.
+   * @returns {boolean} true when wired (or already wired), false when the
+   *   browser has no `visualViewport`.
+   */
+  function tcWireVisualViewport(win, doc) {
+    if (!win || !doc || !win.visualViewport || !doc.documentElement) return false;
+    if (win.tcVisualViewportWired) return true;
+    win.tcVisualViewportWired = true;
+    const root = doc.documentElement;
+    const apply = () => {
+      const vars = tcVisualViewportVars(win.visualViewport, win.innerHeight);
+      if (vars) {
+        root.style.setProperty('--tc-visual-height', vars.height + 'px');
+        root.style.setProperty('--tc-visual-top', vars.top + 'px');
+        root.setAttribute('data-tc-keyboard', 'open');
+      } else {
+        root.style.removeProperty('--tc-visual-height');
+        root.style.removeProperty('--tc-visual-top');
+        root.removeAttribute('data-tc-keyboard');
+      }
+    };
+    win.visualViewport.addEventListener('resize', apply);
+    win.visualViewport.addEventListener('scroll', apply);
+    apply();
     return true;
   }
 
@@ -1464,6 +1629,10 @@
   global.tcParseSelectMarker = tcParseSelectMarker;
   global.tcPastePath = tcPastePath;
   global.tcIsFocusTap = tcIsFocusTap;
+  global.tcUrlAtColumn = tcUrlAtColumn;
+  global.tcLineTextAround = tcLineTextAround;
+  global.tcUrlAtCell = tcUrlAtCell;
+  global.tcVisualViewportVars = tcVisualViewportVars;
   /**
    * Build <option> HTML for an engine dropdown — the ONE implementation.
    *
@@ -2702,6 +2871,7 @@
   global.tcWireTerminalTouchScroll = tcWireTerminalTouchScroll;
   global.tcWireTerminalDragCopy = tcWireTerminalDragCopy;
   global.tcWireTerminalFrame = tcWireTerminalFrame;
+  global.tcWireVisualViewport = tcWireVisualViewport;
   /*
    * ── The Master control bar (#768 chunk 2) ────────────────────────────────
    *

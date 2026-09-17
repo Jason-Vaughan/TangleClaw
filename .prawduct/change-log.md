@@ -34,6 +34,25 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-17 — The terminal on a phone: the prompt stays above the keyboard, and a tapped URL opens (#1570, #1572)
+
+<!-- prawduct: type=fix | scope=train-26-chunk-02 -->
+
+Train 26 chunk 02, the last chunk. Built while the operator was resting, at the ProjectManager's direction, with the design decisions made here and recorded in the chunk plan; the on-device answers (iPhone Safari, Pixel Fold 9) are owed through `VRF-1570-terminal-phone`.
+
+What was read first (2026-09-17):
+- ttyd 1.7.7 bundles xterm's WebLinksAddon, which opens a link on a plain click (hover marks it, mousedown + mouseup activate it). On touch, TangleClaw's own #445 ghost-mouse suppression swallows the synthesized mouse events, and the clean tap is owned by #574's tap-to-focus. That is why links were dead on a phone; ttyd never asked for a modifier.
+- The session page is `body { height: 100dvh }` with the terminal iframe filling the flexing viewport, and ttyd refits xterm on its window's resize. iOS Safari shrinks only the visual viewport for the keyboard (no shipped Safari reads `interactive-widget`; WebKit merged it 2026-08); Chrome on Android does the same by default since 108 and honours `interactive-widget=resizes-content`.
+
+What shipped:
+- `public/api-helper.js`: `tcVisualViewportVars` (pure: keyboard up when the visual viewport is ≥100px shorter than the window; returns rounded height and offset) and `tcWireVisualViewport` (listens to `visualViewport` resize/scroll, publishes `--tc-visual-height`, `--tc-visual-top` and `data-tc-keyboard="open"` on the root, clears all three when the keyboard closes; idempotent; no timers). Called at boot by `session.js` and `landing.js`.
+- `public/session.css`, `public/style.css`: `html[data-tc-keyboard] body { height: var(--tc-visual-height); transform: translateY(var(--tc-visual-top)) }`, gated on the attribute because even `translateY(0)` makes body the containing block for every fixed element; the two Master frames are `calc(var(--tc-visual-height, 100dvh) * 0.6)` instead of `60vh`. Both viewport metas gain `interactive-widget=resizes-content`.
+- `public/api-helper.js`: `tcUrlAtColumn` (the WebLinksAddon regex verbatim, `https?` only, span end exclusive), `tcLineTextAround` (joins `isWrapped` rows and offsets the column), `tcUrlAtCell`, and a branch in `tcWireTerminalDragCopy`'s touchend: on a clean tap, the cell under the finger is checked for a URL first; a hit opens `iframeWin.open(url, '_blank', 'noopener')` inside the gesture and skips `term.focus()`, so the keyboard stays down; anything else focuses as before. The tap point is captured at touchstart because `cancelPress` clears the press point before the classifier runs.
+
+Decided while building: a link tap never also focuses (the keyboard is what a link tap should not summon); the body is translated by the visual offset rather than repositioned, so the fixed Master drawer lands inside the visible area; 100px is the keyboard threshold (a keyboard is 250px+ on every current phone, and the collapsing toolbar moves `innerHeight` and the visual height together).
+
+Tests: `test/terminal-tap-link.test.js`, `test/visual-viewport-layout.test.js`. Twenty breakages: nineteen caught on the first pass; the twentieth (the span end made inclusive) passed a test that never asked about the character after a URL, so the test now does, and the breakage is caught. Chrome check on a scratch server: see the chunk plan's step 4 record.
+
 ## 2026-09-17 — The project name gets the row's space first, in the session banner and the dashboard rows (#1571, #1569)
 
 <!-- prawduct: type=fix | scope=train-26-chunk-01 -->
