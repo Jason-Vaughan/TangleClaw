@@ -883,6 +883,34 @@ body {
   border-radius: 8px;
   font-weight: 600;
 }
+/* What the latest GitHub check of stranded wraps said (#1542, #1543). None of
+   these holds a launch. A wrap PR with failing checks is red: something is
+   broken. A wrap branch with no PR is the stranded amber. A check that could
+   not run is muted: nothing is known to be wrong, only unknown. Each carries a
+   word as well as a colour. */
+.badge-github-red,
+.badge-github-nopr,
+.badge-github-unknown {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+.badge-github-red {
+  background: #4a1414;
+  color: #f4a0a0;
+  border: 1px solid #8a2a2a;
+}
+.badge-github-nopr {
+  background: #4a3410;
+  color: #f0b860;
+  border: 1px solid #7a5418;
+}
+.badge-github-unknown {
+  background: #2e3136;
+  color: #c4c8cd;
+  border: 1px dashed #6b7078;
+}
 /* A project whose own folder did not answer (#885). Its git, engine and version
    detail are MISSING rather than absent, so this badge explains why the card's
    other badges are not there. Amber attention, same as the drift badge: the

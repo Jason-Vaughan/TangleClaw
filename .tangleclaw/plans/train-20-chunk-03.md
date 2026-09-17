@@ -180,6 +180,27 @@ its request is out.
 **D9: no schema change.** Two new activity event types, `wrap.strand_check` and `wrap.strand_cleared`,
 through the existing `store.activity.log`.
 
+## Decisions made while building (2026-09-16)
+
+- `[DECISION: a third outcome, "none", for a project with no origin or an origin not on github.com | recorded
+  as failed, every local-only or GitLab project would carry a permanent "GitHub ?" badge and a "couldn't
+  check" line on every launch, which teaches the reader to ignore the real one | operator can veto: record
+  them as failed]` The launch skip treats `none` like `ok`. GitHub Enterprise hosts are `none` too.
+- `[DECISION: every gh read passes --repo built from origin | gh picks among remotes itself and prefers
+  "upstream", which is not where wrap branches are pushed | none]`
+- Local items are always looked up with `gh pr list --head=<branch> --state all`, not only when missing from
+  the search list: the search index lags a just-opened PR, and the items are few.
+- Open wrap PRs come from `gh pr list --state open --search head:wrap/` (prefix match, confirmed on gh
+  2.74.0). Unrecorded remote wrap branches are each looked up with `--head` before being called no-PR, at most
+  `NO_PR_LOOKUP_CAP` (30) per check; the rest are counted as `unchecked` and shown.
+- The check row also stores `redCiTotal` and `noPrTotal`, so the card counts stay right past the 20-finding cap.
+- A failed check row keeps the remote it was checking once origin was read.
+- The prime's item lines now fill whatever the fixed lines leave of the 1200-character budget.
+- `git remote get-url` applies `insteadOf` rewrites, so the check sees the rewritten URL, as the wrap's record
+  does.
+- Not done on the scratch server: a real launch (it would start a real engine session). The launch hook is
+  covered by API tests with `launchSession` stubbed.
+
 ---
 
 ### Chunk 03: GitHub check, offline state, auto-clear
@@ -226,4 +247,4 @@ Type: cumulative-final
 
 ## Status
 
-- [ ] Chunk 03: GitHub check, offline state, auto-clear
+- [x] Chunk 03: GitHub check, offline state, auto-clear

@@ -405,6 +405,7 @@ function renderCard(project) {
 
   const awarenessBadge = renderAwarenessBadge(project);
   const strandedBadge = renderStrandedBadge(project);
+  const githubBadge = renderStrandedGithubBadge(project);
 
   const statusDot = renderStatusDot(project);
 
@@ -437,6 +438,7 @@ function renderCard(project) {
       ${driftBadge}
       ${awarenessBadge}
       ${strandedBadge}
+      ${githubBadge}
       <span class="card-row-actions">
         <button class="btn btn-compact btn-launch" onclick="event.stopPropagation(); launchProject('${n}')">${hasSession ? 'Open' : 'Launch'}</button>
         ${hasSession ? `<button class="btn btn-compact btn-icon-tiny" onclick="event.stopPropagation(); openPeekFromCard('${n}')" title="Peek">&#128065;</button>` : ''}
@@ -599,11 +601,58 @@ function renderStrandedBadge(project) {
 }
 
 /**
+ * A check time for the card, in the viewer's own clock.
+ * @param {string|null} iso
+ * @returns {string}
+ */
+function strandedTime(iso) {
+  const d = iso ? new Date(iso) : null;
+  return d && !Number.isNaN(d.getTime()) ? d.toLocaleString() : 'an unknown time';
+}
+
+/**
+ * The card badges for what the latest GitHub check of stranded wraps said
+ * (#1542, #1543): wrap PRs with failing checks, wrap branches with no PR, and
+ * a check that could not run. None of them holds a launch. Findings are from
+ * the latest successful check, and their titles say when that was.
+ * @param {object} project - Project data with `stranded.github`
+ * @returns {string} Badge HTML, or ''
+ */
+function renderStrandedGithubBadge(project) {
+  const g = project.stranded && project.stranded.github;
+  if (!g) return '';
+  const asOf = `as of ${strandedTime(g.lastOkAt)}. Never holds a launch; open the card for the list.`;
+  const out = [];
+  if (g.redCi) {
+    const title = `${g.redCi} wrap PR${g.redCi === 1 ? '' : 's'} with failing checks, ${asOf}`;
+    out.push(`<span class="badge badge-github-red" title="${esc(title)}">&#10005; ${g.redCi} red CI</span>`);
+  }
+  if (g.noPr) {
+    const title = `${g.noPr} wrap branch${g.noPr === 1 ? '' : 'es'} on GitHub with no pull request, ${asOf}`;
+    out.push(`<span class="badge badge-github-nopr" title="${esc(title)}">${g.noPr} no PR</span>`);
+  }
+  if (g.state === 'failed') {
+    const title = `Couldn't check GitHub at ${strandedTime(g.lastAttemptAt)} (${g.reason || 'no reason given'}). `
+      + 'Stranded status may be out of date.';
+    out.push(`<span class="badge badge-github-unknown" title="${esc(title)}">GitHub ?</span>`);
+  }
+  return out.join('');
+}
+
+/**
  * The stranded-wraps items shown in an open card, fetched on demand and kept
  * with the counts they were fetched for, so a changed count fetches again.
- * @type {Object<string, {sig: string, items: object[]|null, error: string|null, loading: boolean}>}
+ * `github` is the check status that came with them, for its findings.
+ * @type {Object<string, {sig: string, items: object[]|null, github: object|null, error: string|null, loading: boolean}>}
  */
 const strandedItemsCache = {};
+
+/**
+ * "Check now" requests in flight or failed, by project name. A failure stays
+ * in the row until the next request; nothing clears it on a timer.
+ * @type {Object<string, {busy: boolean, error: string|null}>}
+ */
+const strandedCheckState = {};
 
 /**
  * The counts an item list was fetched for.
@@ -621,20 +670,22 @@ function strandedSig(project) {
  * @param {object|undefined} project
  */
 async function ensureStrandedItems(project) {
-  if (!project || !project.stranded || project.stranded.total === 0) return;
+  if (!project || !project.stranded) return;
+  const g = project.stranded.github;
+  if (project.stranded.total === 0 && !(g && (g.redCi || g.noPr))) return;
   const sig = strandedSig(project);
   const cached = strandedItemsCache[project.name];
   if (cached && cached.sig === sig) return;
-  strandedItemsCache[project.name] = { sig, items: null, error: null, loading: true };
+  strandedItemsCache[project.name] = { sig, items: null, github: null, error: null, loading: true };
   let entry;
   try {
     const res = await tcFetch(`/api/projects/${encodeURIComponent(project.name)}/stranded-wraps`);
     const data = await res.json();
     entry = res.ok && Array.isArray(data.items)
-      ? { sig, items: data.items, error: null, loading: false }
-      : { sig, items: null, error: data.error || `HTTP ${res.status}`, loading: false };
+      ? { sig, items: data.items, github: data.github || null, error: null, loading: false }
+      : { sig, items: null, github: null, error: data.error || `HTTP ${res.status}`, loading: false };
   } catch (err) { // a failed fetch is shown in the row, never as an empty list
-    entry = { sig, items: null, error: err.message || 'request failed', loading: false };
+    entry = { sig, items: null, github: null, error: err.message || 'request failed', loading: false };
   }
   if (strandedItemsCache[project.name] && strandedItemsCache[project.name].sig === sig) {
     strandedItemsCache[project.name] = entry;
@@ -673,6 +724,91 @@ function renderStrandedDetail(project) {
   }
   const rowClass = c.blocking ? 'detail-row detail-row-warn' : 'detail-row';
   return `<div class="${rowClass}">${label}<span class="detail-value">${esc(parts.join(', '))}${list}</span></div>`;
+}
+
+/**
+ * The findings of the latest successful GitHub check, as a list.
+ * @param {object[]} findings - `github.findings` from the stranded-wraps route
+ * @returns {string} HTML, or '' for none
+ */
+function strandedFindingsMarkup(findings) {
+  if (!Array.isArray(findings) || findings.length === 0) return '';
+  const rows = findings.map((f) => {
+    const branch = `<code class="stranded-branch">${esc(f.branch)}</code>`;
+    if (f.kind === 'red-ci') {
+      const pr = typeof f.prUrl === 'string' && /^https:\/\/github\.com\//.test(f.prUrl)
+        ? `<a href="${esc(f.prUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">PR #${esc(String(f.prNumber))}</a>`
+        : `PR #${esc(String(f.prNumber))}`;
+      return `<li class="stranded-item">${branch}: ${pr} has failing checks</li>`;
+    }
+    return `<li class="stranded-item">${branch}: on GitHub with no pull request</li>`;
+  });
+  return `<ul class="stranded-list">${rows.join('')}</ul>`;
+}
+
+/**
+ * The GitHub row of a card's detail panel (#1542, #1543): when stranded wraps
+ * were last checked against GitHub, what that check found, why the latest one
+ * could not run, and a Check now button. Hidden only for a project with nothing
+ * to check and nothing recorded.
+ * @param {object} project - Project data with `stranded.github`
+ * @returns {string} HTML for the row, or ''
+ */
+function renderStrandedGithubDetail(project) {
+  const c = project.stranded;
+  const g = c && c.github;
+  if (!g) return '';
+  if (g.state === 'none' && !c.total) return '';
+  const parts = [];
+  if (g.state === 'ok') {
+    parts.push(`checked ${strandedTime(g.lastOkAt)}${g.redCi || g.noPr ? '' : ', nothing found'}`);
+  } else if (g.state === 'failed') {
+    parts.push(`couldn't check at ${strandedTime(g.lastAttemptAt)} (${g.reason || 'no reason given'})`);
+    if (g.lastOkAt) parts.push(`last successful check ${strandedTime(g.lastOkAt)}`);
+  } else if (g.state === 'none') {
+    parts.push(`not possible: ${g.reason || 'no reason given'}`);
+  } else {
+    parts.push('not checked yet');
+  }
+  const found = [];
+  if (g.redCi) found.push(`${g.redCi} wrap PR${g.redCi === 1 ? '' : 's'} with failing checks`);
+  if (g.noPr) found.push(`${g.noPr} wrap branch${g.noPr === 1 ? '' : 'es'} with no PR`);
+  if (found.length) parts.push(`${found.join(', ')} (never blocks)`);
+  if (g.unchecked) parts.push(`${g.unchecked} more wrap branch${g.unchecked === 1 ? ' was' : 'es were'} not looked up`);
+
+  const cached = strandedItemsCache[project.name];
+  let list = '';
+  if ((g.redCi || g.noPr) && cached && cached.sig === strandedSig(project)) {
+    if (cached.loading) list = '<span class="detail-unknown">loading the list…</span>';
+    else if (cached.error) list = `<span class="detail-unknown">list could not be loaded: ${esc(cached.error)}</span>`;
+    else if (cached.github) list = strandedFindingsMarkup(cached.github.findings);
+  }
+  const run = strandedCheckState[project.name] || { busy: false, error: null };
+  const n = esc(project.name);
+  const button = g.state === 'none' ? ''
+    : `<button class="btn btn-compact stranded-check-btn" ${run.busy ? 'disabled' : ''} `
+      + `onclick="event.stopPropagation(); checkStrandedNow('${n}')">${run.busy ? 'Checking…' : 'Check now'}</button>`;
+  const runError = run.error ? `<span class="detail-unknown">Check now failed: ${esc(run.error)}</span>` : '';
+  const rowClass = g.state === 'failed' || g.redCi ? 'detail-row detail-row-warn' : 'detail-row';
+  return `<div class="${rowClass}"><span class="detail-label">GitHub</span><span class="detail-value">`
+    + `${esc(parts.join('; '))}${list}${runError}${button ? `<span class="stranded-check-action">${button}</span>` : ''}</span></div>`;
+}
+
+/**
+ * Run the GitHub check for one project now, then reload the project list so
+ * the card shows what it found. The button reads "Checking…" only while the
+ * request is out; a request that fails says so in the row.
+ * @param {string} name - Project name
+ * @returns {Promise<void>}
+ */
+async function checkStrandedNow(name) {
+  if (strandedCheckState[name] && strandedCheckState[name].busy) return;
+  strandedCheckState[name] = { busy: true, error: null };
+  renderProjects();
+  const data = await apiMutate(`/api/projects/${encodeURIComponent(name)}/stranded-wraps/check`, 'POST', {});
+  strandedCheckState[name] = { busy: false, error: data ? null : (api.lastError || 'request failed') };
+  if (data) await loadProjects();
+  else renderProjects();
 }
 
 /**
@@ -728,6 +864,7 @@ function renderCardDetail(project) {
       <div class="detail-row"><span class="detail-label">Session</span><span class="detail-value">${sessionInfo}</span></div>
       ${awarenessInfo ? `<div class="detail-row"><span class="detail-label">Awareness</span><span class="detail-value">${awarenessInfo}</span></div>` : ''}
       ${renderStrandedDetail(project)}
+      ${renderStrandedGithubDetail(project)}
       <div class="detail-row"><span class="detail-label">Git</span><span class="detail-value">${gitInfo}</span></div>
       <div class="detail-row"><span class="detail-label">Tags</span><span class="detail-value">${tagsInfo}</span></div>
       <div class="detail-row"><span class="detail-label">Groups</span><span class="detail-value">${groupsInfo}</span></div>

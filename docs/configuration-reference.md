@@ -534,14 +534,15 @@ TangleClaw's HTTP API lives under `/api/`; the tables below are the reference. A
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/projects` | GET | List projects (filterable). Each project carries `stranded` — `{total, unacknowledged, grandfathered, blocking}` — or `stranded: null` with `strandedError` when the records could not be read (#1541) |
+| `/api/projects` | GET | List projects (filterable). Each project carries `stranded` — `{total, unacknowledged, grandfathered, blocking, github}` — or `stranded: null` with `strandedError` when the records could not be read (#1541). `github` is the latest GitHub check's counts: `{state, lastOkAt, lastAttemptAt, reason, redCi, noPr, unchecked}` (#1542, #1543) |
 | `/api/projects/:name` | GET | Single project detail |
 | `/api/projects` | POST | Create project |
 | `/api/projects/attach` | POST | Attach existing directory as project |
 | `/api/projects/import` | POST | Import project from external source |
 | `/api/projects/:name` | PATCH | Update project |
 | `/api/projects/:name` | DELETE | Delete project |
-| `/api/projects/:project/stranded-wraps` | GET | Stranded wraps from local records (id or name): `items`, and `counts` with `total`, `unacknowledged`, `grandfathered` and `blocking` (unacknowledged and not grandfathered) |
+| `/api/projects/:project/stranded-wraps` | GET | Stranded wraps from local records (id or name), minus those a GitHub check cleared: `items`, and `counts` with `total`, `unacknowledged`, `grandfathered` and `blocking` (unacknowledged and not grandfathered). `github` is what the latest recorded check said, without calling GitHub: `state` (`ok`, `failed` — the latest check could not run, `never` — none on record, `none` — no origin or not a github.com remote), `lastOkAt`, `lastAttemptAt`, `reason` (for `failed`/`none`), `findings` (`[{kind: 'red-ci'\|'no-pr', scope, branch, headSha, prNumber, prUrl}]`, from the latest `ok` check only, at most 20), `findingsTotal`, `redCiTotal`, `noPrTotal`, `unchecked` (wrap branches not looked up). Findings never block |
+| `/api/projects/:project/stranded-wraps/check` | POST | Run the GitHub check now (#1542): clears items whose branch merged, was deleted, or has an open PR with every check passed, and records the attempt as `wrap.strand_check`. **200** with `check` (`{ok, state, reason, at, remote, cleared: [{remote, branch, headSha, reason, prUrl}], findings, unchecked}`) and the GET's body; a check that could not run is still **200** with `check.state: 'failed'`. A request while one is running joins it. A successful launch starts the same check without waiting (skipped within five minutes of an `ok` or `none` check) |
 | `/api/projects/:project/stranded-wraps/ack` | POST | Acknowledge one listed item at its current head: `{branch, headSha, remote?}` with the full SHA (`null` only for an older record) and the remote as listed (`null` for an item listed with none). **201** recorded, **200** already acknowledged, **404** not listed at that head, **500** not saved. Records the signed-in user |
 
 ### Sessions

@@ -664,6 +664,17 @@
   padding-left: 0;
   margin: 4px 0 0;
 }
+/* A PR link in the list takes the text colour, underlined: the browser's default
+   blue is unreadable on the dark card, and the accent green is on the light one. */
+.stranded-list a {
+  color: inherit;
+  text-decoration: underline;
+}
+/* The GitHub row's Check now button sits on its own line under the text. */
+.stranded-check-action {
+  display: block;
+  margin-top: 4px;
+}
 .stranded-block {
   margin: 10px 0;
 }
