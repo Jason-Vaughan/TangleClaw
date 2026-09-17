@@ -114,12 +114,12 @@ describe('replayChoicesFromOptions', () => {
     const c = H.replayChoicesFromOptions({
       release: 'cut', bumpLevel: 'major', skipPreflight: true,
       pathDecisions: { 'a.js': 'include', 'b.js': 'leave' }, skipAiContent: { 'memory-update': true }, untrackState: 'decline',
-      proceedPastStranded: stranded
+      proceedPastStranded: stranded, keepSessionRunning: true
     });
     assert.deepEqual(JSON.parse(JSON.stringify(c)), {
       release: 'cut', bumpLevel: 'major', skipPreflight: true,
       pathDecisions: { 'a.js': 'include', 'b.js': 'leave' }, skipAiContent: { 'memory-update': true }, untrackState: 'decline',
-      proceedPastStranded: stranded
+      proceedPastStranded: stranded, keepSessionRunning: true
     });
   });
 

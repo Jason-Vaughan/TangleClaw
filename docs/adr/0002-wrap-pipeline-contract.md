@@ -325,3 +325,32 @@ they were never snapshotted. A command that succeeds followed by a later `commit
 rolled back either. The companions are then uncommitted session changes, and the Retry commits them.
 
 **Engine-agnostic.** A shell command and git: the same inputs produce the same commit on every engine.
+
+
+## Amended 2026-09-16 — a finished wrap ends the session, commit or not (#1558)
+
+Chunk 11a ended the session only on `pipelineResult.ok && pipelineResult.commitSha`, and treated a
+finished run with nothing to commit as a no-op that leaves the session active. That no longer holds.
+A project that ships its work by pull request before the wrap has nothing left to commit, and on a
+clone that ignores `.tangleclaw/` the wrap's own writes aren't committable either. So a full wrap
+reported `no changes to commit` and the session stayed open after the operator pressed Wrap to finish.
+
+**The rule is now: a run that finishes (`ok`) ends the session**, with the same teardown as before
+(record the wrap, kill tmux, release doc locks, clear caches), whether or not it committed.
+Stopped (`needs-operator`, blocked), failed and thrown runs still leave the session active, because
+those are the runs where the terminal is still needed.
+
+**The operator can keep the session** with `options.keepSessionRunning: true`, chosen in the wrap
+dialog before the run and replayed on Retry. It is validated before a run is claimed: anything but a
+boolean is refused, so a malformed value can't end a session the operator meant to keep.
+
+**The result says what happened to the session.** `sessionOutcome` on the run's result payload is
+`ended`, `kept`, or `null`. It is not a boolean because a session killed during the wrap is neither
+ended by the wrap nor still running.
+
+**Alternative rejected:** asking "Kill session?" after a no-commit wrap. The answer is almost always
+yes, and the question would have left the wrong server rule in place for every other client.
+
+**Engine-agnostic.** The rule reads only the pipeline's `ok` and the request's option, so every
+engine gets the same lifecycle.
+

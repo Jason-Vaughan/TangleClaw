@@ -439,7 +439,8 @@ describe('wrap-drawer helpers — summarizePipelineStatus', () => {
       error: null
     });
     assert.equal(s.tone, 'success');
-    assert.equal(s.label, 'Wrap completed (no changes to commit)');
+    // #1558 reworded this banner: it now says the wrap happened.
+    assert.equal(s.label, 'Wrapped — nothing new to commit');
   });
 
   it('returns blocked + reason when blockedAt is set', () => {

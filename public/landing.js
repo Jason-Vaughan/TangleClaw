@@ -1768,10 +1768,13 @@ let wrapInFlight = false;
 function openWrapModal(name) {
   wrapTarget = name;
   document.getElementById('wrapText').innerHTML =
-    `Wrap the session for <strong>${esc(name)}</strong>? This sends the wrap command and ends the session.`;
+    `Wrap the session for <strong>${esc(name)}</strong>? This runs every wrap step, then ends the session unless you keep it running.`;
   document.getElementById('wrapError').classList.add('hidden');
   document.getElementById('wrapPassword').value = '';
   showWrapStranded(null);
+  // #1558 — unticked on every open, so an earlier tick can't keep a later
+  // wrap's session open.
+  document.getElementById('wrapKeepRunning').checked = false;
   const pwGroup = document.getElementById('wrapPasswordGroup');
   if (state.config && state.config.deleteProtected) {
     pwGroup.classList.remove('hidden');
@@ -1855,9 +1858,17 @@ async function confirmWrap() {
   const pw = document.getElementById('wrapPassword').value;
   const body = {};
   if (pw) body.password = pw;
+  // Built by hand: the dashboard doesn't load the drawer's shared collector.
+  // Each choice is sent only when made, as the collector sends it.
+  const options = {};
   if (Array.isArray(wrapStrandedItems)) {
-    body.options = { proceedPastStranded: tcStrandedKeys(wrapStrandedItems) };
+    options.proceedPastStranded = tcStrandedKeys(wrapStrandedItems);
   }
+  // #1558 — a finished wrap ends the session unless the operator keeps it.
+  if (document.getElementById('wrapKeepRunning').checked) {
+    options.keepSessionRunning = true;
+  }
+  if (Object.keys(options).length > 0) body.options = options;
 
   const confirmBtn = document.getElementById('wrapConfirmBtn');
   const cancelBtn = document.getElementById('wrapCancelBtn');

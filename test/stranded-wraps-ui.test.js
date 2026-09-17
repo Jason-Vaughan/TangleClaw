@@ -395,6 +395,7 @@ describe('session page: wrap anyway, and Retry (#1540)', () => {
     vm.runInContext([
       'let wrapReleaseChoice = ""; let wrapBumpLevel = ""; let wrapUntrackState = ""; let wrapSkipPreflight = false;',
       'let wrapPathDecisions = {}; let wrapSkippedAiSteps = {}; let wrapProceedPastStranded = [];',
+      'let wrapKeepRunning = false;',
       'let lastRefusedStrandedItems = null; let wrapDrawerStrandedItems = null; let wrapModalStrandedItems = null;',
       liftFunction(SESSION_SRC, 'function wrapStartInFlight('),
       liftFunction(SESSION_SRC, 'function showWrapModalStranded('),

@@ -111,6 +111,7 @@ function harness() {
     wrapReleaseChoice: '',
     wrapUntrackState: '',
     wrapProceedPastStranded: [],
+    wrapKeepRunning: false,
     lastRefusedStrandedItems: null,
     wrapDrawerStrandedItems: null,
     tcStrandedKeys: (items) => items,
