@@ -156,7 +156,13 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 160px;
+  /* The name is what the row is about, so it takes whatever the row has free
+     and gives it back last: it grows into the space the pills leave and
+     ellipsizes only once the row is genuinely short (#1571). A fixed cap here
+     cut a long name to "JasonVaughanCo…" beside empty space; no rule in this
+     file may cap it (test/session-banner-phone-actions.test.js). */
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .banner-version {
   font-size: 11px;
@@ -755,7 +761,6 @@ body {
   }
   .banner-actions,
   .banner-end-actions { gap: 3px; }
-  .banner-name { max-width: 100px; }
 }
 
 /* Desktop banner: single row */
@@ -780,7 +785,6 @@ body {
     min-height: 26px;
     min-width: 26px;
   }
-  .banner-name { max-width: 200px; }
 }
 
 /* ── Unreachable API banner ──
