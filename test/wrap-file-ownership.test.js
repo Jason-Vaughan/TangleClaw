@@ -819,14 +819,22 @@ describe('#1619 — the refusal survives every route into a null verdict', () =>
     assert.equal(c.foreign.find((f) => f.path === 'CLAUDE.md').reason, 'carries-identity');
   });
 
-  it('a compound change with a NEUTRAL block still stages', () => {
+  it('a compound change with a NEUTRAL block still stages, as the session\'s own file', () => {
     // The counter-case, kept adjacent on purpose: widening the refusal must not
-    // turn every compound edit into a question. This one is refused for the
-    // ordinary reason (it changed outside the block), so it is not staged —
-    // but it must NOT be refused as carrying identity.
+    // turn an ordinary edit into a question. The operator changed their own
+    // prose this session, so the file is theirs and is staged — which is the
+    // behaviour that existed before this guard and must survive it.
+    //
+    // I wrote this assertion twice before getting it right. The first version
+    // guarded its only check behind `if (asked)`, so it would have passed
+    // silently the day the path stopped reaching `foreign`. The second asserted
+    // the carrier WAS put to the operator, which is simply not what happens —
+    // I asserted my assumption instead of measuring first. It stages.
     const root = repo(NEUTRAL, carrier(NEUTRAL, 'Operator notes, edited.'));
     const c = ownership.classify(scopeFor(root), [{ path: 'CLAUDE.md', deleted: false }], {});
-    const asked = c.foreign.find((f) => f.path === 'CLAUDE.md');
-    if (asked) assert.notEqual(asked.reason, 'carries-identity', 'a neutral block is not an identity refusal');
+    assert.ok(c.stageable.includes('CLAUDE.md'), 'an ordinary compound edit must still stage');
+    assert.ok(c.owned.includes('CLAUDE.md'), 'as the session\'s own file');
+    assert.ok(!c.foreign.some((f) => f.path === 'CLAUDE.md'),
+      'and the operator is not asked about their own edit');
   });
 });

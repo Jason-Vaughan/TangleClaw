@@ -12,6 +12,12 @@ referred to, so the claim cannot drift onto a later commit:
 | `2d393bc` | Deletes the reasoning R1 retracted, from `CHANGELOG.md` |
 | `9a8b92f` | Deletes the same reasoning from the plan's discharge record |
 | `2842fee` | The wrap refusal reaches the staging decision; the same reasoning removed from two `lib/engines.js` comments |
+| `c858016` | The refusal is asked of the file rather than of the diff, closing two routes that bypassed it |
+| `c2b0f1a`* | This row, defect 5 below, and the counter-case test corrected to assert measured behaviour |
+
+\* The commit carrying these record edits; it names itself only in the sense
+that the row describes the change it ships, which is the self-reference the
+Architect said is unnecessary to avoid for a docs commit.
 
 The Architect's independent recheck of R1 and R2 was performed at `9a8b92f`, and
 closed both. `2842fee` lands after that check; its own content is described in
@@ -118,9 +124,10 @@ Recorded because the review history is part of the evidence.
 
 Reviewed by the Architect against the brief, with changes requested and
 addressed. **No final approval has been given**, and nothing in this document
-should be read as one. Six independent Critic rounds including a three-reviewer
-cumulative; the coverage gate is satisfied over the whole branch with 0
-unresolved blocking Critic findings.
+should be read as one. Eleven Critic rounds including a three-reviewer cumulative. Each blocking
+finding was fixed and re-verified; the coverage gate's state at any moment is
+whatever `prawduct-hook check-cumulative-critic` reports, which is the only
+claim about it worth making in a document that outlives the tree it describes.
 
 The Architect's review of the merged HEAD reproduced two blockers that every
 targeted suite had passed:
@@ -154,6 +161,24 @@ A third defect followed, from the cumulative review and fixed at `2842fee`:
    case it is named after. My own tests asserted against `judge` alone, where
    that half was correct. The refusal now carries its reason, the ownership rules
    act on it, and the carrier reaches the operator; pinned at the composition.
+
+4. **The refusal was reachable only where the head-vs-work comparison
+   succeeded.** Every other exit from the carrier branch returned a bare null
+   verdict — the file also differs outside the block, a malformed block, no
+   comment form, no HEAD copy at all — and a bare null falls through to the
+   mtime rule and is staged from `owned`. Same outcome as defect 3, by a second
+   route, and neither input is exotic: an operator editing their own prose in
+   the session the block acquired identity, or a previously-ignored carrier
+   being tracked for the first time. The question is now asked of the work copy
+   alone, before the comparison and again on the throw path. Three cases pinned,
+   each mutation-checked, including the counter-case that an ordinary compound
+   edit still stages.
+5. **My own counter-case test proved less than it claimed.** Its single
+   assertion was guarded by `if (asked)`, so it would have passed silently the
+   day that path stopped reaching `foreign` — the outcome it existed to detect.
+   Corrected, and I got it wrong once more on the way: my first correction
+   asserted the carrier was put to the operator, which is not what happens. It
+   stages, as the session's own file. Measured, then asserted.
 
 **Still open, and for the Architect to rule on rather than for me to decide:**
 the wrap-side detector matches three of the six identity classes generation
