@@ -14,6 +14,9 @@ referred to, so the claim cannot drift onto a later commit:
 | `2842fee` | The wrap refusal reaches the staging decision; the same reasoning removed from two `lib/engines.js` comments |
 | `c858016` | The refusal is asked of the file rather than of the diff, closing two routes that bypassed it |
 | `55ae5b4` | The `c858016` row, defects 4 and 5, the counter-case test corrected to assert measured behaviour, and the coverage-gate sentence narrowed to point at the command rather than assert a moment |
+| `279644b` | The Architect's ruling: all six runtime-data classes, malformed regions treated as unverifiable, legacy whole-file carriers judged whole, and the bounded matrix |
+| `eabd718` | The inline-body check re-keyed on the rendering after it misfired on this repo's own carrier, and the matrix counter-case rebuilt from the assembled block |
+| `02390b7` | A superseded rule deleted from a comment, a misdirecting export comment, and a document name containing an asterisk no longer letting its body escape |
 
 Rows are added as implementation lands. The table is not a log of its own
 edits: a row naming the commit that wrote the row needs a successor to name
@@ -181,12 +184,28 @@ A third defect followed, from the cumulative review and fixed at `2842fee`:
    asserted the carrier was put to the operator, which is not what happens. It
    stages, as the session's own file. Measured, then asserted.
 
-**Still open, and for the Architect to rule on rather than for me to decide:**
-the wrap-side detector matches three of the six identity classes generation
-withholds, and its patterns are hand-typed rather than derived from the
-generator, so a reword could disable it with the suite green. Neither is
-exploitable today — generation no longer emits those values into a committed
-carrier, and the detector exists for the pre-fix-server and hand-edit cases.
+6. **The detector covered three of the six classes, and my defence of that was
+   wrong.** I argued the other three were "not exploitable today because current
+   generation omits them". The Architect ruled that is not a discharge: this
+   guard exists precisely for the two cases where generation is NOT current — an
+   older server regenerating a carrier, and a carrier migrating from private to
+   shared — and rollout has not happened, so both are ahead of us. All six are
+   covered now, each matched against the shape the private renderer writes.
+7. **The check I added for the sixth class misfired on this repo's own
+   carrier.** It keyed on the `## Shared Documents` heading, and the shared-docs
+   GUIDE is such a section, ships fenced examples, and is injected into every
+   carrier whether or not the project has any documents — so it asked on every
+   ordinary wrap of the common case. Re-keyed on the shape the private renderer
+   writes. The matrix missed it because its counter-case was assembled from
+   three emitter line-sets rather than being the block generation actually
+   writes; it now builds from `_generateOperationalBlock`. **A counter-case
+   assembled from parts cannot prove a whole is silent.**
+
+**Nothing is left open for the Architect to rule on.** The encoding question
+they ruled on is closed: patterns stay hand-written, and what is coupled to the
+generator is behaviour — the matrix builds every body by calling the real
+emitters, so an emitter change fails the guard's tests without anyone
+remembering to update copied prose.
 
 ## Not fixed here, deliberately
 
