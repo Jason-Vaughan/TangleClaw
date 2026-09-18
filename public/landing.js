@@ -1982,13 +1982,31 @@ function applyTheme() {
 // ── Utilities ──
 
 /**
- * Escape HTML special characters to prevent XSS.
- * @param {string} str
+ * Escape HTML special characters to prevent XSS, rendering the value as text.
+ *
+ * Accepts every value with a text form — strings, numbers, booleans, bigints —
+ * because the panels build markup straight from API rows, where ids, counts
+ * and revisions arrive as JSON numbers.
+ *
+ * `null` and `undefined` give '': callers pass fields that are legitimately
+ * absent and want the empty cell. So does anything else with no useful text
+ * form, rather than putting '[object Object]' in front of the operator.
+ *
+ * `'` is escaped alongside `"` because call sites interpolate the result into
+ * single-quoted JS strings inside double-quoted attributes.
+ *
+ * `api-helper.js` renders shared markup with whichever escaper its host page
+ * supplies, so this has to agree with `tcEscapeHtml` there on every value a
+ * caller passes. The two still diverge on objects and arrays, which no call
+ * site passes; converging them is #1605.
+ *
+ * @param {*} str - Value to render as escaped HTML text
  * @returns {string}
  */
 function esc(str) {
-  if (typeof str !== 'string') return '';
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const kind = typeof str;
+  if (kind !== 'string' && kind !== 'number' && kind !== 'boolean' && kind !== 'bigint') return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
