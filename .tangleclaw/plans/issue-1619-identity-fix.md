@@ -84,13 +84,22 @@ hatch.
 ## Chunks
 
 ### Chunk 01 — generation: tracked carriers stop carrying identity
-`lib/engines.js`. Route rows 1, 2, 4 and 6 above through the committed-carrier
-path. **Rows 3 and 5 are deliberately NOT routed** — the doc path and the inline
-contents are group configuration, identical across every checkout of one
-repository, so they are not what this fix is about, and stripping them would
-disable inline shared docs on the one carrier Claude reads. Row 4 is the churn
-mechanism: the lock line names the holding project and carries a wall-clock
-expiry, so one locked doc rewrites the shared bytes on every regeneration.
+`lib/engines.js`. Route **all six rows** through the committed-carrier path.
+
+I argued once that rows 3 and 5 — the doc path and its inline contents — were
+group configuration, identical everywhere, and left them in. The Architect
+disproved it with two same-policy fixtures differing only in a document
+reference path, whose tracked carriers differed and contained that path. A path
+is install state: it moves with the machine, the group's shared directory and
+the operator's layout. Inline contents are that file's bytes at generation
+time. Both are out of the committed carrier now.
+
+**Access is preserved, not dropped** (brief, point 4): the committed carrier
+names every doc and its group and points at
+`$TANGLECLAW_API/api/shared-docs?groupId=<group>`, which serves the path and
+the content to whoever asks. What leaves the shared bytes is the value, never
+the capability. The engine-private carrier keeps path, contents, existence
+check and lock holder, where each is actionable.
 Tracked carriers get one discovery block; engine-private carriers keep inline
 values. **Done when:** five synthetic projects differing in name, root and
 origin produce byte-identical tracked carriers, and a sixth differing only in
@@ -128,9 +137,15 @@ goes to the Architect.
 
 ## Assumptions to re-check as code reveals facts
 
-- `[ASSUMPTION]` Engine-private carriers (`.codex.yaml`, `.aider.conf.yml`) are
-  reliably gitignored in practice, so they may keep inline values. Verify per
-  engine before relying on it; the brief's point 7 warns against assuming one
-  convention fits all engines.
+- `[ASSUMPTION — NOT YET DISCHARGED, chunk 04 gate]` Engine-private carriers
+  (`.codex.yaml`, `.aider.conf.yml`) are gitignored in every managed project.
+  **This repo's `.gitignore` proves it only for this repo.** A project that
+  tracks its `.codex.yaml` would have this fix's classifier call it private and
+  keep inlining the live bearer token into a tracked file — the same defect
+  class, one carrier over. The Architect has made accidentally-tracked local
+  carriers a required chunk 04 gate. The durable answer is to ask git for the
+  carrier's actual tracked/ignored state at the write boundary rather than
+  consult a hardcoded list; until then the list is a default, not a guarantee,
+  and `_isCommittedCarrier` is documented as such.
 - `[ASSUMPTION]` No consumer parses the switchboard rows out of a carrier file
   expecting a literal URL. Grep before changing the shape.

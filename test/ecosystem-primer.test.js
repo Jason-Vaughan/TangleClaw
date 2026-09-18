@@ -85,9 +85,24 @@ describe('lib/ecosystem-primer (#1122)', () => {
     // lists the verb roster, so `tc start` cost it seven characters. The list
     // grows with the roster by design — one source, every carrier — and this
     // headroom is for the next verb or two, not for prose.
+    //
+    // Raised again 2700 → 2800 on 2026-09-18 (#1619), and this one IS prose —
+    // so it is recorded rather than absorbed. The bootstrap line used to tell a
+    // session that a missing `tc` proved the pane was unmanaged. That is false:
+    // the PATH floor is derived from the running installation directory, so
+    // renaming it under a live server drops `tc` from PATH in a managed pane. A
+    // session read the old wording, concluded its pane was unmanaged, and
+    // reported that to two others. The replacement has to say three things the
+    // old sentence did not — check the launch env, act only on verified
+    // identity, and STOP rather than guess when the context is missing or
+    // inconsistent — and it costs 28 characters more than the cap allowed.
+    // ~150 characters of filler were cut from the same line first; the rest of
+    // the increase buys the instruction that prevents the failure. Trimming the
+    // stop-and-report clause to hit a round number would restore the defect in
+    // a shorter sentence.
     const text = primer.buildEcosystemPrimerSection(CTX).join('\n');
-    assert.ok(text.length < 2700,
-      `section is ${text.length} chars — growing past 2700 needs a deliberate budget decision, not drift`);
+    assert.ok(text.length < 2800,
+      `section is ${text.length} chars — growing past 2800 needs a deliberate budget decision, not drift`);
   });
 
   it('carries the tc bootstrap line as an instruction with a stated consequence', () => {

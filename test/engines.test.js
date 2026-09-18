@@ -1449,7 +1449,7 @@ describe('engines', () => {
       // Assert on the injected line itself — the static guide prose may mention
       // https://localhost:3102 as documentation, only the injected URL is live.
       assert.ok(
-        content.includes('http://localhost:3102'),
+        content.includes('**TangleClaw API base URL**: `http://localhost:3102`'),
         'injected base URL must be http in caddy mode'
       );
       assert.ok(
@@ -1474,7 +1474,7 @@ describe('engines', () => {
         // #1619: origin lives in the engine-private carrier now.
         const content = engines._generateCodexYaml(proj);
         assert.ok(
-          content.includes('http://localhost:3102'),
+          content.includes('**TangleClaw API base URL**: `http://localhost:3102`'),
           'injected base URL must name the bound port'
         );
         assert.ok(
@@ -1494,10 +1494,10 @@ describe('engines', () => {
       });
       // #1619: asserted on the engine-private carrier, the only one that still
       // writes an origin.
-      assert.ok(engines._generateCodexYaml(proj).includes('https://localhost:3102'));
+      assert.ok(engines._generateCodexYaml(proj).includes('**TangleClaw API base URL**: `https://localhost:3102`'));
       // httpsEnabled defaults to true — a no-cert install serves HTTP.
       patchConfig({ httpsCertPath: null, httpsKeyPath: null });
-      assert.ok(engines._generateCodexYaml(proj).includes('http://localhost:3102'));
+      assert.ok(engines._generateCodexYaml(proj).includes('**TangleClaw API base URL**: `http://localhost:3102`'));
     });
   });
 
@@ -1613,10 +1613,10 @@ describe('engines', () => {
         // carrier is the honest version: check the launch context first.
         // The comment carriers cannot render emphasis, so they shout the
         // negation instead of bolding it; accept either spelling.
-        assert.match(unwrapped, /If `?tc`? is missing, check `?TANGLECLAW_API`? first/,
+        assert.match(unwrapped, /If `?tc`? is missing, check `?TANGLECLAW_API`?;/,
           `${profile.id}: the honest-absence case must ride every carrier`);
-        assert.match(unwrapped, /in a pane that IS managed/,
-          `${profile.id}: it must say why a missing tc proves nothing on its own`);
+        assert.match(unwrapped, /stop identity-dependent/,
+          `${profile.id}: it must say to STOP, not to conclude, when context is unavailable`);
       }
     });
 
@@ -2764,10 +2764,19 @@ describe('engines', () => {
         description: 'REST API reference'
       });
 
+      // #1619: the PATH is install state — it moves with the machine, the
+      // group's shared directory and the operator's layout — so it stays in the
+      // engine-private carrier and leaves the committed one. The doc is still
+      // NAMED there, and the section points at the shared-docs API, so access
+      // is preserved rather than dropped.
+      const priv = engines._generateCodexYaml({ id: projectId, rules: { core: {} } }, null);
+      assert.ok(priv.includes('/docs/api-ref.md'), 'Should include file path');
+
       const content = engines._generateClaudeMd({ id: projectId, rules: { core: {} } }, null);
       assert.ok(content.includes('Shared Documents'), 'Should include Shared Documents section');
       assert.ok(content.includes('API Reference'), 'Should include doc name');
-      assert.ok(content.includes('/docs/api-ref.md'), 'Should include file path');
+      assert.ok(!content.includes('/docs/api-ref.md'), 'a committed carrier must not carry the install path');
+      assert.match(content, /api\/shared-docs/, 'and must say where to read it instead');
       assert.ok(content.includes('REST API reference'), 'Should include description');
 
       // Clean up
@@ -2784,10 +2793,17 @@ describe('engines', () => {
         description: 'Full API specification'
       });
 
+      // Inline contents are the shared file's bytes AT GENERATION TIME, so they
+      // change the committed carrier whenever that file changes. Private carrier
+      // keeps the embed; the committed one names the doc and points at the API.
+      const priv = engines._generateCodexYaml({ id: projectId, rules: { core: {} } }, null);
+      assert.ok(priv.includes('GET /api/health'), 'Should include inlined file content');
+      assert.ok(priv.includes('POST /api/data'), 'Should include all file content');
+
       const content = engines._generateClaudeMd({ id: projectId, rules: { core: {} } }, null);
       assert.ok(content.includes('Inline API Spec'), 'Should include doc name');
-      assert.ok(content.includes('GET /api/health'), 'Should include inlined file content');
-      assert.ok(content.includes('POST /api/data'), 'Should include all file content');
+      assert.ok(!content.includes('GET /api/health'), 'a committed carrier must not embed the doc body');
+      assert.match(content, /api\/shared-docs/, 'and must say where to read it instead');
 
       store.sharedDocs.delete(doc.id);
     });
@@ -2801,8 +2817,16 @@ describe('engines', () => {
         injectMode: 'reference'
       });
 
+      // A per-machine existence check: present on the machine that generated
+      // it, absent on the next. It belongs to the private carrier; the
+      // committed one still names the doc so nothing is hidden (#1619).
+      const priv = engines._generateCodexYaml({ id: projectId, rules: { core: {} } }, null);
+      assert.ok(priv.includes('file not found'), 'Should warn about missing file');
+
       const content = engines._generateClaudeMd({ id: projectId, rules: { core: {} } }, null);
-      assert.ok(content.includes('file not found'), 'Should warn about missing file');
+      assert.ok(content.includes('Missing Doc'), 'the committed carrier still names the doc');
+      assert.ok(!content.includes('file not found'), 'but carries no per-machine existence check');
+      assert.ok(!content.includes('/nonexistent/path/doc.md'), 'and no install path');
 
       store.sharedDocs.delete(doc.id);
     });
@@ -2816,8 +2840,12 @@ describe('engines', () => {
         injectMode: 'inline'
       });
 
+      const priv = engines._generateCodexYaml({ id: projectId, rules: { core: {} } }, null);
+      assert.ok(priv.includes('File not found'), 'Should warn about missing inline file');
+
       const content = engines._generateClaudeMd({ id: projectId, rules: { core: {} } }, null);
-      assert.ok(content.includes('File not found'), 'Should warn about missing inline file');
+      assert.ok(content.includes('Missing Inline'), 'the committed carrier still names the doc');
+      assert.ok(!content.includes('/nonexistent/inline.md'), 'and carries no install path');
 
       store.sharedDocs.delete(doc.id);
     });
@@ -2926,10 +2954,17 @@ describe('engines', () => {
         injectMode: 'reference'
       });
 
-      const content = engines._generateClaudeMd({ id: projectId, rules: { core: {} } }, null);
-      // Should only appear once (deduplicated by file path)
-      const occurrences = content.split('/docs/shared.md').length - 1;
+      // Dedup is BY FILE PATH, so it is asserted where the path is written —
+      // the engine-private carrier (#1619).
+      const priv = engines._generateCodexYaml({ id: projectId, rules: { core: {} } }, null);
+      const occurrences = priv.split('/docs/shared.md').length - 1;
       assert.equal(occurrences, 1, 'Should deduplicate shared docs by file path');
+
+      // The committed carrier names it, and must name it exactly once — the
+      // same dedup, observed through what that carrier actually contains.
+      const content = engines._generateClaudeMd({ id: projectId, rules: { core: {} } }, null);
+      const named = content.split('Shared File').length - 1;
+      assert.equal(named, 1, 'the committed carrier lists the deduplicated doc once');
 
       // Clean up
       store.sharedDocs.delete(doc1.id);

@@ -124,6 +124,45 @@ describe('#1619 — five checkouts, identical tracked bytes', () => {
     assert.equal(engines._isCommittedCarrier('.aider.conf.yml'), false);
   });
 
+  it('stays byte-identical when the API ORIGIN varies too', () => {
+    // The Architect's gap: varying name and root proves less than it looks,
+    // because the origin is read from config rather than from the project. A
+    // carrier that embedded the origin would pass a name/root-only test and
+    // still differ between two installs.
+    const renderAll = () => Object.fromEntries(
+      Object.entries(TRACKED).map(([k, render]) => [k, render(checkouts[0])])
+    );
+    const before = renderAll();
+    const saved = store.config.load();
+    try {
+      store.config.save({ ...saved, ingressMode: 'direct', httpsEnabled: false, httpsCertPath: null, httpsKeyPath: null, serverPort: 3999 });
+      const afterPort = renderAll();
+      store.config.save({ ...saved, ingressMode: 'direct', httpsEnabled: true, httpsCertPath: '/c.pem', httpsKeyPath: '/k.pem', serverPort: 4567 });
+      const afterScheme = renderAll();
+      for (const carrier of Object.keys(TRACKED)) {
+        assert.equal(afterPort[carrier], before[carrier], `${carrier} changed when the port changed`);
+        assert.equal(afterScheme[carrier], before[carrier], `${carrier} changed when the scheme and port changed`);
+      }
+    } finally {
+      store.config.save(saved);
+    }
+  });
+
+  it('the governed write path produces the same neutral bytes end to end', () => {
+    // Not the generator in isolation: writeEngineConfig is what actually put
+    // TangleClaw-Builder1 into main, through the managed-block splice.
+    const claudeProfile = store.engines.get('claude');
+    const written = checkouts.slice(0, 2).map((c) => {
+      const res = engines.writeEngineConfig('claude', c.path, { ...on, id: c.id }, claudeProfile);
+      assert.equal(res.written, true, 'the carrier should be written');
+      return fs.readFileSync(res.configFilePath, 'utf8');
+    });
+    assert.equal(written[1], written[0], 'two checkouts wrote different bytes');
+    for (const c of checkouts.slice(0, 2)) {
+      assert.ok(!written[0].includes(c.name), `the written carrier names ${c.name}`);
+    }
+  });
+
   it('the capability survives the identity removal', () => {
     const md = engines._generateClaudeMd(on, checkouts[0].path);
     for (const route of ['/medusa/messages', '/medusa/read', '/medusa/send', '/medusa/roster', '/medusa/peers/']) {
