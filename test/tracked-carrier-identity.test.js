@@ -106,12 +106,28 @@ describe('#1619 — five checkouts, identical tracked bytes', () => {
     // inlined the live bearer token into a tracked file. The carrier now
     // decides.
     const c = checkouts[0];
-    const asPrivate = engines._generateCodexYaml(on, c.path, '.codex.yaml');
-    const asShared = engines._generateCodexYaml(on, c.path, 'CONVENTIONS.md');
+    // With the project id, so the shared-docs section is actually rendered —
+    // without it the shared-doc assertions below would pass on an empty section.
+    const asPrivate = engines._generateCodexYaml(cfg(c), c.path, '.codex.yaml');
+    const asShared = engines._generateCodexYaml(cfg(c), c.path, 'CONVENTIONS.md');
     assert.ok(asPrivate.includes(encodeURIComponent(c.name)) || asPrivate.includes(c.name),
       'the genuinely private carrier still addresses its own project');
     assert.ok(!asShared.includes(c.name) && !asShared.includes(encodeURIComponent(c.name)),
       'the same generator writing a SHARED carrier must not name the project');
+    // Checking only the NAME let four other leaks through the same door: three
+    // reviewers found that this generator's origin and shared-docs sinks never
+    // consulted the classifier at all, so those assertions passed vacuously.
+    // Assert every value the classifier is supposed to withhold.
+    assert.doesNotMatch(asShared, /https?:\/\/localhost:\d+/,
+      'a shared carrier must not carry this install origin, whatever generator writes it');
+    assert.ok(!asShared.includes('/docs/fixture.md'),
+      'nor a shared-doc install path');
+    assert.doesNotMatch(asShared, /LOCKED by /,
+      'nor the project holding a shared-doc lock');
+    assert.ok(asPrivate.includes('/docs/fixture.md'),
+      'while the genuinely private carrier keeps the path it is entitled to');
+    assert.match(asPrivate, /https?:\/\/localhost:\d+/,
+      'and the literal origin');
   });
 
   it('an unclassified carrier fails toward shared', () => {

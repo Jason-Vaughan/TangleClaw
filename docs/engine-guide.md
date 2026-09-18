@@ -499,7 +499,11 @@ content: where to read the API base URL, the service-token *pointer* (never the 
 governed `CLAUDE.md` is a committed file), the Medusa switchboard section, and the PortHub /
 shared-docs / session-memory guides. Since #1619 none of that content is checkout-specific: the
 block names no project and no origin, and the session resolves both at run time from
-`TANGLECLAW_API` and `tc whoami`, so every checkout of a repository generates the same bytes. The
+`TANGLECLAW_API` and `tc whoami`, so every checkout of a repository generates the same bytes — from
+the point each one regenerates. A carrier committed before the fix keeps whatever it was given until
+then. Sections whose source is absent (no shared-docs group, no PortHub registration) are omitted
+entirely rather than emitted empty, so "the same bytes" means for checkouts with the same
+configuration. The
 same rule now covers the whole-file `CLAUDE.md` path and the shared-convention carriers, because
 those are committed too — `.gitignore:85` is explicit that `CLAUDE.md` is tracked. Rules tiers (core, extension, global) stay out of the block: governance is
 the plugin's side of the line, and per-project session rules ride the prime (#595). Governed
