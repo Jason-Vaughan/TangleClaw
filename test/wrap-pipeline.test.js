@@ -200,10 +200,12 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       // every step. We capture the live reference each stub sees and
       // assert the post-run state.
       const capturedStaged = [];
-      // Patch every kind the pipeline actually uses (incl. `continuity-write`, CC-1, and
-      // `project-map`, PIDX slice 3) so the inertness check captures all ten
-      // steps rather than letting a real handler run mid-test.
-      const wrapKinds = ['preflight', 'session-files', 'pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
+      // Patch every kind the pipeline actually uses (incl. `continuity-write`, CC-1,
+      // `project-map`, PIDX slice 3, and `handoff-stage`, Train 21 #1585) so the
+      // inertness check captures every step rather than letting a real handler run
+      // mid-test. This roster is hand-maintained: a kind missing here runs for real,
+      // and the count assertion below is what catches that.
+      const wrapKinds = ['preflight', 'session-files', 'pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write', 'handoff-stage'];
       const originals = {};
       for (const kind of wrapKinds) {
         originals[kind] = wrapPipeline.STEP_DISPATCH[kind];
@@ -238,7 +240,7 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
   // #185 — `options.onStepEvent` is the richer feed behind the live wrap
   // drawer: the run's shape first, then each step's start and settle.
   describe('runWrapPipeline — onStepEvent (#185)', () => {
-    const wrapKinds = ['preflight', 'session-files', 'pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write'];
+    const wrapKinds = ['preflight', 'session-files', 'pr-check', 'pr-merge', 'lint', 'test', 'ai-content', 'learnings-db-write', 'rule-proposal', 'priming-roll', 'version-bump', 'features-toc', 'project-map', 'index-describe', 'commit', 'continuity-write', 'handoff-stage'];
 
     /**
      * Stub every dispatch handler with `decide(stepId)` and run the pipeline

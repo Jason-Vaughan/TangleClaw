@@ -101,7 +101,11 @@ describe('TangleClaw machine state is recognised by name', () => {
   }
 
   it('every writer\'s name loads, so no state file silently falls back to being asked about', () => {
-    assert.equal(tcOwned._statePathMatchers().length, 6);
+    // 7 since Train 21 #1585 added the handoff store (`.tangleclaw/handoff/`).
+    // The count is the point: a new state writer that is NOT registered here
+    // falls back to being offered to the operator as an uncommitted file to
+    // decide about, which is the silent failure this number exists to catch.
+    assert.equal(tcOwned._statePathMatchers().length, 7);
   });
 
   it('the names come from the writers, so a writer\'s own path is state', () => {

@@ -354,3 +354,47 @@ yes, and the question would have left the wrong server rule in place for every o
 **Engine-agnostic.** The rule reads only the pipeline's `ok` and the request's option, so every
 engine gets the same lifecycle.
 
+
+## Amendment (Train 21, #1585) — the wrap publishes a per-attempt handoff
+
+The pipeline gains a final step, `handoff-stage`, and the lifecycle gains one write.
+
+**A publication belongs to a wrap ATTEMPT, not a session.** Every wrap run mints a new run id, so a
+Retry or a resume is a new attempt with its own publication. A kept session therefore publishes
+checkpoint, checkpoint, final — each an immutable document. `UNIQUE (session_id, wrap_run_id)` makes
+a replayed stage *within one run* return the first attempt rather than mint a second.
+
+**`handoff-stage` runs last and never blocks.** It is placed after `apply-pr-resolutions` because the
+document records what the wrap achieved; staged earlier it would describe a wrap that had not
+finished happening. A failure is recorded in the run result and the wrap still completes — this is
+wrap-direction §3, a gate blocks only where failure would otherwise be silent or destructive, and a
+missing handoff is neither. Preflight reports the absent publication later.
+
+**The bytes are frozen at staging.** Publication time lives only in the database, precisely so that
+publishing never rewrites the document: an edited document cannot be what its digest attests to. The
+digest recorded at staging is therefore the digest of what is published, by construction.
+
+**Eligibility is attempt-exact, and it is bound inside the lifecycle transition.**
+`store.sessions.wrap(id, summary, {publicationId, wrapRunId})` performs the `active → wrapped` UPDATE
+and the eligibility binding in ONE transaction. If the transition is refused — an operator pressed
+Kill and won the race — nothing is bound, and the attempt is abandoned rather than published. A
+checkpoint has no lifecycle transition, so `markCheckpointComplete` is its single equivalent write.
+
+**Nothing infers eligibility from session status.** This is the rule the whole design rests on. Take
+attempt A, which staged a final and died before its lifecycle completed, and attempt B, which later
+wrapped the same session: A's `eligible_at` is NULL, so A is never repaired and never published,
+regardless of what B did. Session status would have said "wrapped" for both.
+
+**An attempt that completed but lost the race is superseded, not abandoned.** Abandoning it would
+erase the record that it finished. It keeps `eligible_at`, gains `superseded_by`, and never touches
+`current.json`.
+
+**A rename is never trusted to prove the database was updated.** Publishing retires the current
+document into `history/` and only then renames the new one into place, so a crash between the file
+move and the DB write leaves both the old bytes and enough evidence to reconcile. That split is
+unavoidable — a filesystem rename cannot join a SQL transaction — and it is the reason
+reconciliation exists rather than an oversight.
+
+**`wrapRunId` reaches the step server-side only.** It is set after the request options are spread,
+the same guarantee `onStepEvent` and `resumeFrom` already carry, because it is the identity a
+publication is bound to and a request body must never be able to name another run.

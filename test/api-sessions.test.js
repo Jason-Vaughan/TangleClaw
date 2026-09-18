@@ -290,10 +290,12 @@ describe('api-sessions', () => {
         // here rather than swept into `userOptions`, which would let a
         // future hook land in the user-options assertion unnoticed.
         // #1404 adds a second server-owned key, `resumeFrom` — never the body's.
-        const { onStepEvent, resumeFrom, ...userOptions } = receivedOptions;
+        // #1585 adds a third, `wrapRunId`: the identity a handoff publication binds to.
+        const { onStepEvent, resumeFrom, wrapRunId, ...userOptions } = receivedOptions;
         assert.deepEqual(userOptions, { skipTests: true, prHandling: { 42: 'defer' } });
         assert.equal(typeof onStepEvent, 'function', '#583/#185 progress hook threaded to the runner');
         assert.equal(resumeFrom, null, '#1404 resume record is server-set; no blocked predecessor here');
+        assert.match(wrapRunId, /^[0-9a-f]{32}$/, '#1585 run id is server-set, never from the body');
         assert.ok(result.pipelineResult, 'the run\'s result must surface pipelineResult');
         assert.equal(result.pipelineResult.commitSha, 'deadbeef');
         assert.equal(result.status, 'wrapping');
@@ -389,7 +391,7 @@ describe('api-sessions', () => {
         await settledWrapResult(server, res);
         // #583: user options unchanged + the registry progress hook, and
         // #1404's server-set resume record.
-        const { onStepEvent, resumeFrom, ...userOptions } = receivedOptions;
+        const { onStepEvent, resumeFrom, wrapRunId, ...userOptions } = receivedOptions;
         assert.deepEqual(userOptions, { prHandling: { '42': 'merge', '43': 'defer' } });
         assert.equal(typeof onStepEvent, 'function');
         assert.equal(resumeFrom, null);
@@ -429,7 +431,7 @@ describe('api-sessions', () => {
         // ONLY server-owned keys — the registry progress hook (onStepEvent)
         // and #1404's resume record — and no user keys invented from the
         // malformed body.
-        assert.deepEqual(Object.keys(received).sort(), ['onStepEvent', 'resumeFrom'],
+        assert.deepEqual(Object.keys(received).sort(), ['onStepEvent', 'resumeFrom', 'wrapRunId'],
           'non-object options bodies must be discarded before reaching the runner (only server-owned keys remain)');
         assert.equal(received.resumeFrom, null);
       } finally {
