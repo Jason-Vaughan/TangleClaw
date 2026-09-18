@@ -279,8 +279,8 @@ describe('#1619 matrix — six data classes × four routes, judge → classify �
           root = repoWith({ head: null, work: carrier(body) });
         } else {
           // A BEGIN with no END: the region cannot be extracted at all, so the
-          // contents cannot be verified. The Architect reproduced this one
-          // reaching `owned` and being staged.
+          // contents cannot be verified. This route reached `owned` and was
+          // staged before the guard covered it.
           root = repoWith({ head: carrier('neutral'), work: `# Project\n\n${MARK.begin}\n${body}\n` });
         }
         const c = classifyOne(root);
@@ -421,10 +421,12 @@ describe('#1619 — actual final generated files, across every supported syntax'
       store.sharedDocs.create({ groupId: group.id, name: 'Inline Doc', filePath: f, injectIntoConfig: true, injectMode: 'inline' });
     }
 
-    // Deliberately WITHOUT the values that would mask a document-field miss:
-    // no medusa (no project name, no routes), no PortHub guide (no origin), and
-    // the service-token gate is off in this store. If a case passes here, it
-    // passes because the document field itself was recognised.
+    // Medusa off, so no project name and no routes. PortHub is left at its
+    // DEFAULT, which is on — `core: {}` does not disable it — so these fixtures
+    // DO carry the API origin, and each case strips it before asserting the
+    // document field alone. The case that turns PortHub explicitly off, and so
+    // needs no strip, is `the document field alone, with no masking field
+    // present at all`.
     return { root, config: { id: project.id, medusaEnabled: false, rules: { core: {} } } };
   }
 
@@ -487,8 +489,8 @@ describe('#1619 — actual final generated files, across every supported syntax'
 
   for (const carrier of ['.codex.yaml', '.aider.conf.yml']) {
     it(`${carrier}: the document field alone, with no masking field present at all`, () => {
-      // The Architect's fixture, kept as they asked. Turning PortHub
-      // registration explicitly OFF — `core: {}` leaves it on by default —
+      // Turning PortHub registration explicitly OFF — `core: {}` leaves it on
+      // by default —
       // removes the API origin from the generated file entirely, so this is the
       // direct form of the property the stripped-line assertions approximate:
       // no origin, no route, no token, no lock anywhere in the file, and the
@@ -510,8 +512,8 @@ describe('#1619 — actual final generated files, across every supported syntax'
         ? engines._generateCodexYaml(cfg, root, carrier)
         : engines._generateAiderConf(cfg, root, carrier);
 
-      // The precondition IS the point of this case: assert it rather than
-      // assume it, since assuming it is how the weaker version got written.
+      // The precondition IS the point of this case, so it is asserted rather
+      // than assumed.
       assert.doesNotMatch(body, /https?:\/\/localhost:\d+/, 'no origin may be present');
       assert.doesNotMatch(body, /\/api\/sessions\/[^/\s<`]+\/medusa/, 'no session route may be present');
       // A LIVE token, not the word: the shared-docs guide legitimately documents
@@ -524,8 +526,8 @@ describe('#1619 — actual final generated files, across every supported syntax'
       assert.equal(tcOwned._carriesIdentity(body), 'a shared-document install path',
         `${carrier}: with nothing to mask it, the document field alone must be recognised`);
 
-      // Classified unedited, as the Architect did: written while ignored, then
-      // force-added, with no later edit.
+      // Classified unedited: written while ignored, then force-added, with no
+      // later edit.
       fs.writeFileSync(path.join(root, carrier), body);
       execFileSync('git', ['-C', root, 'add', '-f', carrier]);
       const c = ownership.classify(

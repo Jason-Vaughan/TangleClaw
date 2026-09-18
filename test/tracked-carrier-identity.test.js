@@ -178,10 +178,9 @@ describe('#1619 — five checkouts, identical tracked bytes', () => {
   });
 
   it('stays byte-identical when the API ORIGIN varies too', () => {
-    // The Architect's gap: varying name and root proves less than it looks,
-    // because the origin is read from config rather than from the project. A
-    // carrier that embedded the origin would pass a name/root-only test and
-    // still differ between two installs.
+    // Varying name and root proves less than it looks: the origin is read from
+    // config rather than from the project, so a carrier that embedded it would
+    // pass a name/root-only test and still differ between two installs.
     const renderAll = () => Object.fromEntries(
       Object.entries(TRACKED).map(([k, render]) => [k, render(checkouts[0])])
     );
@@ -365,8 +364,8 @@ describe('#1619 chunk 04 — the carrier a project actually tracks', () => {
   });
 
   it('a carrier that is INDEXED and then ignored is still committed', () => {
-    // The fixture gap the Architect named: writing a .gitignore proves nothing
-    // about a file already in the index. Git does not apply ignore rules to a
+    // Writing a .gitignore proves nothing about a file already in the index.
+    // Git does not apply ignore rules to a
     // tracked file, so `check-ignore` answers "not ignored" and the carrier
     // lands on committed — verified here rather than assumed, because the
     // whole classifier rests on that behaviour.
@@ -535,8 +534,8 @@ describe('#1619 — a locked shared doc must not change the committed carrier', 
   const store2 = require('../lib/store');
 
   it('is byte-identical across unlocked → locked → unlocked', () => {
-    // Independently reproduced by the Architect. Emitting a warning only WHILE
-    // a lock exists still makes the shared bytes depend on live state: the same
+    // Emitting a warning only WHILE a lock exists makes the shared bytes depend
+    // on live state: the same
     // document unlocked and then locked produces two different files. That is
     // the churn this fix removes, one step quieter than naming the holder —
     // and a carrier that changes when someone else takes a lock is a carrier
