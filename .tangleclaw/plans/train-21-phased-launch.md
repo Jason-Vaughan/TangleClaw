@@ -940,7 +940,8 @@ Written before the code, because each one answers a question the blueprint leave
   - The reconciliation condition stays **unnarrowed**: every revision demands one, and only the
     wording is derived from whether anything was served.
   - Retention follow-up #1595 and the nudge-verdict record #1596 filed from the Critic pass.
-- [ ] Chunk 03 — 21.7 (#1585) done, PR #1608; 21.8 (#1586) and 21.9 (#1587) unbuilt
+- [ ] Chunk 03 — 21.7 (#1585) done, PR #1608; 21.8 (#1586) part-built (verdict engine + v42 epoch
+  migration; `applyHandoffRepairs` and the `launchSession` wiring still owed); 21.9 (#1587) unbuilt
   - The branch's recurring defect, worth reading before touching `lib/wrap-steps/handoff-stage.js`:
     four findings were one class — the step read a foreign object for a value that does not mean
     what the field says (`session.workspaceId`, a column that does not exist; `scope.worktreeTarget`,
