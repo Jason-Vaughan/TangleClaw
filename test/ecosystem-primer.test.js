@@ -98,8 +98,17 @@ describe('lib/ecosystem-primer (#1122)', () => {
       'an instruction, not a footnote — a line the agent skims is a vacuum too');
     assert.match(text, /fabricate/,
       'the consequence of skipping the check is stated, not implied');
-    assert.match(text, /not launched by TangleClaw/,
-      'the one honest absence case: tc missing means the pane is not TangleClaw-launched');
+    // #1619: this used to pin the opposite claim — that a missing `tc` MEANS
+    // the pane is not TangleClaw-launched. It does not. The PATH floor is
+    // derived from the running installation directory, so renaming that
+    // directory under a live server drops `tc` from PATH in a pane that is
+    // fully managed. A real session read the old wording, concluded its pane
+    // was unmanaged, and reported that to two other sessions. What the line
+    // must carry is the check that settles it.
+    assert.match(text, /TANGLECLAW_API/,
+      'the absence case must send the session to the launch context, not to a conclusion');
+    assert.doesNotMatch(text, /is not found, this pane was not launched by TangleClaw/,
+      'the false inference must not come back');
   });
 
   it('says a failed localhost tc/curl is not proof of outage, in both forms (#1150)', () => {

@@ -1240,17 +1240,47 @@ describe('engines', () => {
       }
     });
 
-    it('states a reachable origin, not a pointer to a guide', () => {
-      const content = engines._generateClaudeMd(on, projPath);
-      assert.match(content, /https?:\/\/localhost:\d+\/api\/sessions\//);
+    it('states a reachable origin in the engine-private carriers', () => {
+      // #1619 moved this property. A tracked carrier may not state this
+      // machine's origin, so the "reachable, not a pointer to a guide"
+      // guarantee now lives where the file is engine-private and gitignored.
+      for (const content of [engines._generateCodexYaml(on, projPath), engines._generateAiderConf(on, projPath)]) {
+        assert.match(content, /https?:\/\/localhost:\d+\/api\/sessions\//);
+      }
     });
 
-    it('scopes the endpoints to the project NAME, not its folder', () => {
-      const content = engines._generateClaudeMd(on, projPath);
-      assert.ok(content.includes(encodeURIComponent(projName)),
-        'the routes are name-scoped; a folder-derived guess would hand the session a 404');
-      assert.ok(!content.includes(`/api/sessions/${path.basename(projPath)}/medusa`),
-        'must not address the project by its directory basename');
+    it('keeps this checkout\'s origin and name OUT of the tracked carriers (#1619)', () => {
+      // The defect: CLAUDE.md and AGENTS.md are tracked, so a per-checkout name
+      // or origin makes every checkout diff a shared file — and the wrap
+      // committed it silently. A stale name that 404s is the benign case; once
+      // it resolves it addresses a DIFFERENT live project.
+      for (const [label, content] of Object.entries({
+        claude: engines._generateClaudeMd(on, projPath),
+        gemini: engines._generateGeminiMd(on, undefined, projPath)
+      })) {
+        assert.ok(!content.includes(encodeURIComponent(projName)) && !content.includes(projName),
+          `${label}: a tracked carrier must not name this checkout's project`);
+        assert.doesNotMatch(content, /https?:\/\/localhost:\d+/,
+          `${label}: a tracked carrier must not carry this machine's origin`);
+        assert.match(content, /TANGLECLAW_API/,
+          `${label}: it must say where the origin comes from at run time`);
+        assert.match(content, /tc whoami|\/api\/tc\/whoami/,
+          `${label}: it must say how to resolve the project name at run time`);
+        assert.ok(content.includes('/medusa/send'),
+          `${label}: dropping identity must not drop the capability`);
+      }
+    });
+
+    it('scopes the endpoints to the project NAME, not its folder, in the private carriers', () => {
+      // Still the rule wherever the name is written at all: a folder-derived
+      // guess hands the session a 404. After #1619 that is the engine-private
+      // carriers only; the tracked ones resolve the name at run time instead.
+      for (const content of [engines._generateCodexYaml(on, projPath), engines._generateAiderConf(on, projPath)]) {
+        assert.ok(content.includes(encodeURIComponent(projName)) || content.includes(projName),
+          'the routes are name-scoped; a folder-derived guess would hand the session a 404');
+        assert.ok(!content.includes(`/api/sessions/${path.basename(projPath)}/medusa`),
+          'must not address the project by its directory basename');
+      }
     });
 
     it('says nothing to a project that has not opted in', () => {
@@ -1320,18 +1350,32 @@ describe('engines', () => {
 
     it('injects the bearer header into the engine-private configs when enabled', () => {
       enableGate();
-      // Contract narrowed deliberately 2026-08-31, not weakened: these three
-      // carriers are engine-private files that TangleClaw gitignores, so the
-      // live token may be inlined. The gemini/antigravity carrier is not —
-      // see the test below.
+      // Contract narrowed deliberately 2026-08-31, narrowed again 2026-09-18
+      // (#1619) — not weakened either time. These two carriers really are
+      // engine-private: `.gitignore:96-97` lists them. CLAUDE.md was in this
+      // list on the stated premise that TangleClaw gitignores it, and that
+      // premise was false — `.gitignore:85` says the opposite in so many
+      // words, "CLAUDE.md is deliberately NOT listed: it is tracked (#833)".
+      // So the live M2M bearer was being written into a tracked file. It now
+      // takes the same fetch pointer as AGENTS.md; see the two tests below.
       const generated = {
-        claude: engines._generateClaudeMd(proj),
         codex: engines._generateCodexYaml(proj),
         aider: engines._generateAiderConf(proj)
       };
       for (const [name, content] of Object.entries(generated)) {
         assert.ok(content.includes(`Authorization: Bearer ${TOKEN}`), `${name} config must carry the bearer header`);
       }
+    });
+
+    it('never writes the live token into the tracked CLAUDE.md carrier (#1619)', () => {
+      enableGate();
+      const content = engines._generateClaudeMd(proj);
+      assert.ok(!content.includes(TOKEN),
+        'CLAUDE.md is tracked (.gitignore:85) — inlining the bearer publishes it to the repo');
+      assert.match(content, /\/api\/service-token/,
+        'it must still say where to fetch the token');
+      assert.match(content, /TANGLECLAW_API/,
+        'and must name the origin as a runtime fact, not a committed one');
     });
 
     it('never writes the live token into the committed AGENTS.md carrier', () => {
@@ -1388,11 +1432,14 @@ describe('engines', () => {
         httpsCertPath: '/c.pem', httpsKeyPath: '/k.pem', serverPort: 3102
       });
       assert.equal(engines._getRulesContent(proj).serverProtocol, 'http');
-      const content = engines._generateClaudeMd(proj);
+      // #1619: the tracked carrier no longer states an origin, so this
+      // property is asserted where the origin is still written — the
+      // engine-private, gitignored carrier.
+      const content = engines._generateCodexYaml(proj);
       // Assert on the injected line itself — the static guide prose may mention
       // https://localhost:3102 as documentation, only the injected URL is live.
       assert.ok(
-        content.includes('**TangleClaw API base URL**: `http://localhost:3102`'),
+        content.includes('http://localhost:3102'),
         'injected base URL must be http in caddy mode'
       );
       assert.ok(
@@ -1414,9 +1461,10 @@ describe('engines', () => {
       const prev = process.env.TANGLECLAW_PORT;
       try {
         process.env.TANGLECLAW_PORT = '3102';
-        const content = engines._generateClaudeMd(proj);
+        // #1619: origin lives in the engine-private carrier now.
+        const content = engines._generateCodexYaml(proj);
         assert.ok(
-          content.includes('**TangleClaw API base URL**: `http://localhost:3102`'),
+          content.includes('http://localhost:3102'),
           'injected base URL must name the bound port'
         );
         assert.ok(
@@ -1434,10 +1482,12 @@ describe('engines', () => {
         ingressMode: 'direct', httpsEnabled: true,
         httpsCertPath: '/c.pem', httpsKeyPath: '/k.pem', serverPort: 3102
       });
-      assert.ok(engines._generateClaudeMd(proj).includes('https://localhost:3102'));
+      // #1619: asserted on the engine-private carrier, the only one that still
+      // writes an origin.
+      assert.ok(engines._generateCodexYaml(proj).includes('https://localhost:3102'));
       // httpsEnabled defaults to true — a no-cert install serves HTTP.
       patchConfig({ httpsCertPath: null, httpsKeyPath: null });
-      assert.ok(engines._generateClaudeMd(proj).includes('http://localhost:3102'));
+      assert.ok(engines._generateCodexYaml(proj).includes('http://localhost:3102'));
     });
   });
 
@@ -1544,8 +1594,19 @@ describe('engines', () => {
         // backticks are optional because the markdown carriers code-quote `tc`
         // and the comment carriers cannot.
         const unwrapped = content.replace(/\n#\s*/g, ' ').replace(/\s+/g, ' ');
-        assert.match(unwrapped, /If `?tc`? is not found, this pane was not launched by TangleClaw — say so rather than guessing/,
+        // #1619: the sentence this used to pin told a session that a missing
+        // `tc` PROVED the pane was unmanaged. It does not — the PATH floor is
+        // derived from the running installation directory, so renaming that
+        // directory under a live server leaves `tc` off PATH in a pane that is
+        // managed. A real session followed the old wording to a false
+        // conclusion and reported it to two others. What must ride every
+        // carrier is the honest version: check the launch context first.
+        // The comment carriers cannot render emphasis, so they shout the
+        // negation instead of bolding it; accept either spelling.
+        assert.match(unwrapped, /If `?tc`? is missing, check `?TANGLECLAW_API`? first/,
           `${profile.id}: the honest-absence case must ride every carrier`);
+        assert.match(unwrapped, /in a pane that IS managed/,
+          `${profile.id}: it must say why a missing tc proves nothing on its own`);
       }
     });
 

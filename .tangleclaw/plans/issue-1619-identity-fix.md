@@ -1,0 +1,130 @@
+# #1619 — keep session identity out of tracked instruction files
+
+Branch `fix/issue-1619-identity`, cut from `main` @ `65fe15b`. Implements the
+Architect's brief at
+`/Users/jasonvaughan/Documents/Projects/TangleClaw-Architect/.tangleclaw/plans/tracked-instructions-identity-fix.md`.
+
+## The defect is live, not hypothetical
+
+PR #1618 (Builder1's wrap, merged at `65fe15b`) committed Builder1's identity
+into tracked `CLAUDE.md` on `main`:
+
+```
+-| inbox | GET .../api/sessions/TangleClaw-Builder/medusa/messages |
++| inbox | GET .../api/sessions/TangleClaw-Builder1/medusa/messages |
+```
+
+Measured: `/api/sessions/TangleClaw-Builder1/medusa/roster` → **200**. The name
+on `main` resolves, so committed instructions currently point any reader who
+does not regenerate locally at Builder1's live queue. This is the resolving-name
+case, not the benign 404 the issue was first filed as.
+
+## Confidence check
+
+- **Problem:** tracked instruction carriers are generated with per-checkout and
+  per-machine values, so every checkout produces a real diff on shared bytes —
+  and the wrap commits it silently.
+- **Success:** five simulated checkouts with different names, roots and API
+  origins generate **byte-identical** tracked carriers; each session still
+  addresses its own project, resolved at runtime; a wrap never silently stages
+  identity data; the already-committed Builder1 name is gone from `main`.
+- **Out of scope:** a new identity schema, rewriting route shapes, engine-private
+  carriers that are gitignored, Train 21 chunks, and the merge/rollout itself.
+
+## What actually leaks into tracked carriers
+
+From a full read of `lib/engines.js` generation. Tracked carriers are the
+governed `CLAUDE.md` operational block (`_generateOperationalBlock:2209`) and the
+shared-convention carriers `AGENTS.md` / `GEMINI.md` / `CONVENTIONS.md`
+(`SHARED_CONVENTION_CARRIERS:37`, `_generateGeminiMd:2421`). Engine-private
+`.codex.yaml` / `.aider.conf.yml` are gitignored and out of scope.
+
+| # | Leak | Source | Emitted by |
+|---|---|---|---|
+| 1 | Project **name** in the Medusa route | `store.projects.getByPath()` `:1963-1972` | `_medusaSwitchboardLines:2051` |
+| 2 | `serverProtocol` + `serverPort` in the API base URL | `:1945-1946` | operational block `:2213`, gemini `:2454` |
+| 3 | Shared-docs **absolute machine paths** (`~/…`) | `:2531,2534,2546` | `_buildSharedDocsSection:2497` |
+| 4 | Shared-docs **lock holder — another project's name** | `:2517` | same |
+| 5 | Shared-docs **inline file contents** of machine-local docs | `:2528-2529` | same |
+| 6 | The `committedCarrier` service-token pointer still inlines protocol+port | `:2000-2012` | the precedent itself |
+
+Rows 3-5 are a larger surface than the name that triggered the issue, and the
+same argument condemns them: they differ per machine and land in shared bytes.
+
+## The shape of the fix
+
+The repo already contains the doctrine, at `_serviceTokenAuthLines(..., {
+committedCarrier: true })` (`:1991-2012`), whose comment reads "a pointer costs
+one call, a committed secret costs a rotation." Generalise it from *secrets* to
+*identity*: a tracked carrier carries a **stable discovery instruction**; the
+value arrives at runtime.
+
+The runtime side already exists and needs no new schema (brief, point 2):
+`lib/sessions.js:526-539` injects `TANGLECLAW_PROJECT_ID` (numeric),
+`TANGLECLAW_WORKSPACE_ID`, `TANGLECLAW_LAUNCH_ID` and `TANGLECLAW_API`, and
+`tc whoami` (`lib/tc-verbs.js:666`, `server.js:4483`) returns project id + name,
+session id, workspace id and the API origin.
+
+**The discovery instruction must not assume `tc` is on PATH.** Verified on this
+host: `PATH` carries `/Users/.../TangleClaw-Builder/bin`, the pre-rename install
+directory, which no longer exists — the running server was started before the
+rename and `lib/sessions.js:527` prepends its own `__dirname`-derived path. So a
+stale PATH is a live failure mode, and the brief's "a pointer to unavailable
+tooling is not a fix" is a real constraint, not a precaution. The instruction
+therefore names `tc` **and** the `TANGLECLAW_API` + endpoint fallback, and says
+to refuse identity-dependent actions when neither resolves rather than guess.
+
+Per the Architect's 2026-09-18 addendum, the recovery path for an
+already-running session with a stale PATH must itself be checkout-neutral: the
+shared bytes may name `$TANGLECLAW_API` and documented endpoints, but **never**
+a checkout-specific fallback such as a literal `./bin/tc` or an install path.
+That is the same rule the fix exists to enforce, applied to its own escape
+hatch.
+
+## Chunks
+
+### Chunk 01 — generation: tracked carriers stop carrying identity
+`lib/engines.js`. Route rows 1-6 above through the committed-carrier path.
+Tracked carriers get one discovery block; engine-private carriers keep inline
+values. **Done when:** five synthetic projects differing in name, root and
+origin produce byte-identical tracked carriers, and a sixth differing only in
+engine still gets its own correct private config. Critic per chunk.
+
+### Chunk 02 — migration: clean what is already committed
+One reviewed change removing the Builder1 name and any other stale TC-owned
+identity text from tracked carriers, preserving the `data/global-rules.md`
+mirror (pinned by `test/repo-governance-reference.test.js`) and every
+operator-authored line. No blanket deletion; no `.gitignore`-based "untracking",
+which does not untrack.
+
+### Chunk 03 — wrap ownership: a managed block is not proof of safety
+`lib/wrap-steps/_tc-owned-paths.js:410-443`. Today `judge` returns `MAINTENANCE`
+for any carrier diff confined to the managed block, and
+`_file-ownership.js:183` stages maintenance **silently**. Add the missing
+question — is the diff free of identity-shaped content — so a carrier diff that
+still carries identity is surfaced rather than committed. Must not prompt on an
+ordinary wrap (brief, point 6): after Chunk 01 the ordinary diff is empty, so
+the guard fires only on the anomaly.
+
+### Chunk 04 — regression fixtures
+Five simulated checkouts sharing one committed baseline; generate/sync/wrap
+repeatedly; assert no tracked diff, no silent staging, no loss of authored
+edits. Include a nested-worktree case and an accidentally-tracked local carrier.
+
+## Verification ceiling
+
+Targeted: `test/engines.test.js`, `test/engine-config-managed-block.test.js`,
+`test/managed-block.test.js`, `test/wrap-tc-owned-paths.test.js`,
+`test/wrap-file-ownership.test.js`, `test/tc-cli.test.js`,
+`test/tc-verbs.test.js`, `test/antigravity-engine.test.js`,
+`test/repo-governance-reference.test.js`. Then the full suite before the diff
+goes to the Architect.
+
+## Assumptions to re-check as code reveals facts
+
+- `[ASSUMPTION]` Engine-private carriers (`.codex.yaml`, `.aider.conf.yml`) are
+  reliably gitignored in practice, so they may keep inline values. Verify per
+  engine before relying on it; the brief's point 7 warns against assuming one
+  convention fits all engines.
+- `[ASSUMPTION]` No consumer parses the switchboard rows out of a carrier file
+  expecting a literal URL. Grep before changing the shape.
