@@ -558,9 +558,11 @@ Row 2 compares the handoff's `projectId` with the launching project's numeric id
 in the same TangleClaw store. The handoff's `workspaceId` describes the PRODUCING
 session's Medusa identity and is **not** compared with the next session's. Rev 4
 conflated session routing identity with project identity: `medusa.mintWorkspaceId`
-draws fresh random bytes on every launch, so the two can never be equal and the
-check as written returned `identity-mismatch` — a recovery verdict — on every
-launch of every Medusa project that had ever written a handoff.
+draws fresh random bytes on every launch, so the launching id differs from the
+recorded one in the normal case. Wired to that fresh id, the check **would**
+return `identity-mismatch` — a recovery verdict — for any Medusa project that had
+written a handoff. It never did so on a deployed launch: 21.8's caller passes
+`null`, which is what prevented it.
 
 A changed, absent or null Medusa identity is **never on its own** a recovery
 condition. The field stays in the frozen document and stays covered by the digest:
