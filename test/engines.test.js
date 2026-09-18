@@ -2850,7 +2850,13 @@ describe('engines', () => {
       // The engine-private carrier keeps the full, actionable detail.
       const priv = engines._generateCodexYaml({ id: projectId, rules: { core: {} } }, null);
       assert.ok(priv.includes('LOCKED by other-project'), 'the private carrier keeps the holder');
-      assert.ok(content.includes('other-project'), 'Should show who locked it');
+      // The old `content.includes('other-project')` assertion is deliberately
+      // gone, not merely relaxed: it asserted the opposite of the contract two
+      // lines above, and passed only because `data/porthub-guide.md`'s example
+      // conflict JSON happens to contain that string and is injected into the
+      // same carrier. Left in place it would have failed the day that example
+      // changed, with a message inviting the next reader to put the holder's
+      // name back into a committed file.
 
       // Clean up
       store.documentLocks.release(doc.id);

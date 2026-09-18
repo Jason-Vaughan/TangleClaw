@@ -84,7 +84,13 @@ hatch.
 ## Chunks
 
 ### Chunk 01 — generation: tracked carriers stop carrying identity
-`lib/engines.js`. Route rows 1-6 above through the committed-carrier path.
+`lib/engines.js`. Route rows 1, 2, 4 and 6 above through the committed-carrier
+path. **Rows 3 and 5 are deliberately NOT routed** — the doc path and the inline
+contents are group configuration, identical across every checkout of one
+repository, so they are not what this fix is about, and stripping them would
+disable inline shared docs on the one carrier Claude reads. Row 4 is the churn
+mechanism: the lock line names the holding project and carries a wall-clock
+expiry, so one locked doc rewrites the shared bytes on every regeneration.
 Tracked carriers get one discovery block; engine-private carriers keep inline
 values. **Done when:** five synthetic projects differing in name, root and
 origin produce byte-identical tracked carriers, and a sixth differing only in
