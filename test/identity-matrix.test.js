@@ -192,10 +192,25 @@ describe('#1619 matrix — six data classes × four routes, judge → classify �
       'inline, file missing': { id: 'm', name: 'Missing', groupName: 'G', filePath: '/nope/gone.md', injectMode: 'inline' },
       'inline, unreadable': { id: 'u', name: 'Unreadable', groupName: 'G', filePath: unreadable, injectMode: 'inline' }
     };
+    // Each case asserts the branch it MEANT to reach, not just that something
+    // was caught. The unreadable fixture relies on `readFileSync` throwing on a
+    // directory; where that does not throw, the contents land inside a fence
+    // and the embedded-body check would satisfy the assertion for the wrong
+    // reason — the trap this file's own comment above records, and one I would
+    // otherwise have walked into while quoting it.
+    const expectedMarker = {
+      'reference line': '](',
+      'inline, file missing': 'File not found',
+      'inline, unreadable': 'Failed to read'
+    };
     for (const [label, doc] of Object.entries(cases)) {
       const body = engines._buildSharedDocsSection([doc], { committedCarrier: false });
       assert.ok(body.includes(doc.filePath) || body.includes('~/'),
         `${label}: fixture should actually render a path, or it proves nothing`);
+      if (label !== 'reference line') {
+        assert.ok(body.includes(expectedMarker[label]),
+          `${label}: fixture did not reach the branch it names — it proves nothing about that branch`);
+      }
       assert.ok(tcOwned._carriesIdentity(body), `${label}: renders a machine path the guard does not catch`);
     }
   });
