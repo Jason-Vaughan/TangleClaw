@@ -490,20 +490,17 @@ describe('#1619 — actual final generated files, across every supported syntax'
 
   for (const carrier of ['.codex.yaml', '.aider.conf.yml']) {
     it(`a complete NEUTRAL ${carrier} still stages — the property the widening threatens`, () => {
-      // The counter-case for the carriers the serialization work widened. Every
-      // previous time I widened this guard I broke the silent-wrap property and
-      // pinned it only for markdown; the two carriers whose matching changed
-      // had no such test. A project that TRACKS its engine-private carrier gets
-      // the committed rendering, and that rendering must stage without asking.
+      // A project that TRACKS its engine-private carrier gets the committed
+      // rendering, and that rendering must stage without asking. This is the
+      // silent-wrap property, pinned for the two carriers whose matching the
+      // serialization work widened.
       //
-      // WHAT THIS DOES NOT PROVE, stated because a counter-case that looks
+      // WHAT IT DOES NOT PROVE, stated because a counter-case that looks
       // stronger than it is, is worse than none: it cannot detect an
       // over-widened wrapper prefix. Replacing `[#\s]*` with `.*` leaves it
       // green, because no line in any shipped guide or neutral rendering has
-      // the shape a doc pattern looks for — so there is nothing for an
-      // over-wide prefix to catch hold of. It pins that the guard stays quiet
-      // on real neutral output, which is the property that has actually broken
-      // three times; it does not pin the regex's tightness.
+      // the shape a doc pattern looks for. It pins that the guard stays quiet
+      // on real neutral output; it does not pin the regex's tightness.
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ser-neutral2-'));
       OWN_TEMP.push(root);
       execFileSync('git', ['-C', root, 'init', '-q']);
