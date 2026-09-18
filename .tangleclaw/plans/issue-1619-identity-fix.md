@@ -171,6 +171,16 @@ Two sentences the reviewer needs and the diff does not show:
    to do with the commit — which is how `fbdeaa6` came to contain the very
    defect its title says it ends.
 
+## Known, recorded rather than fixed
+
+- **`_carrierCommitted` still falls back to the conventional list when
+  `projectPath` is falsy**, and `validateParity()` calls `generateConfig` with no
+  project path — so an engine-private carrier classifies private there. Chased
+  rather than assumed: `validateParity` only string-matches generated content in
+  memory and returns `{valid, engines}`; the content is never written to disk or
+  returned, and the one write path always holds a real project path. Not
+  exploitable today. It matters if a fourth caller ever appears without a path.
+
 ## Verification ceiling
 
 Targeted: `test/engines.test.js`, `test/engine-config-managed-block.test.js`,
