@@ -75,6 +75,25 @@ describe('launch-sequence settings (Train 21, Chunk 02)', () => {
     });
   });
 
+  describe('resolveRecoveryMode', () => {
+    it('ships operator, per the operator\'s R3 ruling', () => {
+      assert.equal(projectConfig.DEFAULT_PROJECT_CONFIG.launchSequence.recoveryMode, 'operator');
+      assert.deepEqual(projectConfig.resolveRecoveryMode({}), { mode: 'operator', source: 'default' });
+      assert.deepEqual(projectConfig.resolveRecoveryMode(null), { mode: 'operator', source: 'default' });
+    });
+
+    it('takes an explicit value and falls back to the BLOCKING side on a bad one', () => {
+      // The mirror of `resolvePasteRules`, and deliberately not the same word.
+      // A typo there must not drop rule text; a typo here must not let a launch
+      // with a bad handoff walk through unattended.
+      assert.equal(projectConfig.resolveRecoveryMode({ launchSequence: { recoveryMode: 'advisory' } }).mode, 'advisory');
+      const bad = projectConfig.resolveRecoveryMode({ launchSequence: { recoveryMode: 'Advisory' } });
+      assert.equal(bad.mode, 'operator', 'a value nobody recognises must not open the gate');
+      assert.equal(bad.source, 'invalid');
+      assert.match(bad.warning, /is not one of operator, advisory/);
+    });
+  });
+
   describe('resolveUnreadyWindow', () => {
     it('defaults to the shipped window and reports where the answer came from', () => {
       const shipped = projectConfig.DEFAULT_PROJECT_CONFIG.launchSequence.unreadyWindowMinutes;
@@ -101,14 +120,15 @@ describe('launch-sequence settings (Train 21, Chunk 02)', () => {
       const second = await projects.updateProject(project.name, { launchSequence: { unreadyWindowMinutes: 2 } });
       assert.deepEqual(second.errors, []);
       const saved = store.projectConfig.load(project.path).launchSequence;
-      assert.deepEqual(saved, { pasteRules: 'paste', unreadyWindowMinutes: 2 },
-        'a save that sends one key does not reset the other');
+      assert.deepEqual(saved, { pasteRules: 'paste', unreadyWindowMinutes: 2, recoveryMode: 'operator' },
+        'a save that sends one key does not reset the others');
     });
 
     it('refuses a bad mode, a bad window and an unknown key', async () => {
       const project = makeProject('settings-refuse', 'codex');
       const cases = [
         [{ pasteRules: 'both' }, /pasteRules must be one of paste, pull/],
+        [{ recoveryMode: 'nobody' }, /recoveryMode must be one of operator, advisory/],
         [{ unreadyWindowMinutes: 0 }, /unreadyWindowMinutes must be a number of minutes between/],
         [{ pastRules: 'pull' }, /has no setting pastRules/],
         ['pull', /launchSequence must be an object/]

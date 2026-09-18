@@ -1757,7 +1757,7 @@ function openSettings(name) {
   );
   // CC-6 (#381): populate the per-project rule lists (async) once the
   // modal markup is in the DOM. project.id is the DB id the API scopes on.
-  loadProjectRules(project.id);
+  loadProjectRules(project.id, project.name);
 
   // Re-render on engine dropdown change (chunk 3 polish — Critic Mn5). Without
   // this, switching the dropdown to an engine that lacks supportsSilentPrime
@@ -2173,6 +2173,7 @@ function closeSettings() {
   document.getElementById('settingsModal').classList.remove('open');
   settingsTarget = null;
   projectRulesTargetId = null;
+  projectRulesTargetName = null;
 }
 
 // ── Project Rules (CC-6, #381) ──
@@ -2182,6 +2183,12 @@ function closeSettings() {
 // posture is now the structured Launch settings above the rules grid.)
 // Scoped to this project's id + a kind. The DB project id of the open modal.
 let projectRulesTargetId = null;
+
+// The same project's NAME, kept beside its id because the two APIs this modal
+// talks to are keyed differently: the rule and launch-sequence reads take the
+// numeric id, and the session routes — including the recovery clear — take the
+// name. Reading it back out of a row would be guessing which one a row means.
+let projectRulesTargetName = null;
 
 // The fixed wrap-summary section vocabulary (mirrors lib/continuity.js
 // WRAP_SECTIONS). `Next action` is the mandatory keystone — always rendered, so
@@ -2331,9 +2338,11 @@ function renderProjectRulesUnknown(kind, why) {
  * Fetch this project's rules for each kind and render its list, then the
  * rule-delivery ledger (#1164).
  * @param {number} projectId - DB project id
+ * @param {string} [projectName] - The same project's name, for the session routes
  */
-async function loadProjectRules(projectId) {
+async function loadProjectRules(projectId, projectName) {
   projectRulesTargetId = projectId;
+  projectRulesTargetName = projectName || null;
   for (const { kind } of PROJECT_RULE_KINDS) {
     if ((await refreshProjectRulesList(projectId, kind)) === null) return;
   }
@@ -2433,7 +2442,65 @@ async function refreshProjectLaunchSequences(projectId) {
     return false;
   }
   renderProjectLaunchSequences(data.sequences);
+  // Wired here rather than inside the renderer, so the renderer stays a pure
+  // markup function: this cycle is what owns fetch → render → wire, and a
+  // renderer that also attached listeners could not be rendered anywhere that
+  // is not a live document.
+  wireLaunchRecoveryClears(list);
   return true;
+}
+
+/**
+ * How one clearance is named to the operator.
+ *
+ * `open-install-unverified` is never worded as an operator's. The three are kept
+ * apart everywhere else in this car precisely so this line can tell the truth:
+ * an install with no login proved that the click came from its own dashboard and
+ * nothing more, and an operator reading a recovery log has to be able to see
+ * which of their clears actually identified anybody.
+ * @param {object} s - A sequence row from `GET /api/launch-sequences`
+ * @returns {string} A phrase, already escaped
+ */
+function launchClearanceLabel(s) {
+  if (s.recoveryClearance === 'operator-verified') {
+    return `cleared by ${esc(s.recoveryClearedBy || 'an operator')}`;
+  }
+  if (s.recoveryClearance === 'open-install-unverified') {
+    return 'cleared from the dashboard of an install with no login — nobody was identified';
+  }
+  if (s.recoveryClearance === 'agent-reconciled') {
+    return 'cleared by the session\'s written reconciliation (advisory mode)';
+  }
+  return 'cleared';
+}
+
+/**
+ * The recovery line for one launch, and the operator's control when it is theirs.
+ *
+ * The button appears for exactly one state: a recovery still `required` on a
+ * launch in `operator` mode. An `advisory` launch clears its own by reconciling,
+ * so offering a button there would offer a decision the route refuses
+ * (`RECOVERY_MODE_ADVISORY`) — a control that cannot work is worse than none.
+ * @param {object} s - A sequence row from `GET /api/launch-sequences`
+ * @returns {string} Markup, or an empty string when there is nothing to say
+ */
+function launchRecoveryHtml(s) {
+  if (!s.recovery || s.recovery === 'none') return '';
+  const verdict = s.preflightVerdict ? `<code>${esc(s.preflightVerdict)}</code>` : 'an unrecorded verdict';
+  if (s.recovery === 'cleared') {
+    return `<br><small class="session-rule-meta">Recovery: ${verdict} — ${launchClearanceLabel(s)}`
+      + `${s.recoveryClearedAt ? ` at ${esc(s.recoveryClearedAt)}` : ''}</small>`;
+  }
+  if (s.recoveryMode === 'advisory') {
+    return `<br><small class="session-rule-meta rules-status-err">Recovery required: ${verdict}. `
+      + 'This project is in advisory mode, so the session clears it by attesting with a written '
+      + 'reconciliation — there is nothing here for you to clear.</small>';
+  }
+  return `<br><small class="session-rule-meta rules-status-err">Recovery required: ${verdict}. `
+    + 'The task step is withheld and this session cannot attest until you clear it.</small>'
+    + `<br><button type="button" class="btn btn-sm" data-launch-recovery-clear="${esc(s.sequenceId)}" `
+    + `data-session-id="${esc(s.sessionId)}" data-recovery-revision="${esc(s.recoveryRevision)}">`
+    + 'Clear recovery</button>';
 }
 
 /**
@@ -2479,9 +2546,70 @@ function renderProjectLaunchSequences(sequences) {
         <br><small class="session-rule-meta">Rules channel: ${rules}</small>
         <br><small class="session-rule-meta">Served: ${esc(served)}/${esc(s.of)} step(s) | Acknowledged: ${esc(acked)}/${esc(s.of)} | ${nudges}</small>
         <br><small class="session-rule-meta">Launched ${esc(s.createdAt)} | revision ${esc(s.revision)}</small>
+        ${launchRecoveryHtml(s)}
       </div>
     </div>`;
   }).join('');
+}
+
+/**
+ * Wire every Clear-recovery button the panel just rendered.
+ *
+ * Called by `refreshProjectLaunchSequences` after each render rather than
+ * delegated once: the panel replaces its own `innerHTML` on every refresh, so a
+ * listener attached to a button goes with it and cannot fire again for a row
+ * that no longer exists.
+ *
+ * Each button carries the launch it was rendered for. The server re-checks that
+ * binding and refuses a stale one (`STALE_RECOVERY`); this is not the guard, it
+ * is what lets the guard be asked about the launch the operator was looking at.
+ * @param {HTMLElement} list - The panel's container element
+ * @returns {void}
+ */
+function wireLaunchRecoveryClears(list) {
+  for (const btn of list.querySelectorAll('[data-launch-recovery-clear]')) {
+    btn.addEventListener('click', async () => {
+      const projectId = projectRulesTargetId;
+      const projectName = projectRulesTargetName;
+      if (!projectName) return;
+      btn.disabled = true;
+      // An open install has no session and therefore no CSRF token, so the
+      // route takes a page token instead. Fetched per click rather than kept on
+      // the page: it is needed nowhere else, and one held across a gate that
+      // has since been armed would be sent to a route that is right to ignore
+      // it. On an armed install `openInstallToken` is null and `api()`'s own
+      // CSRF header is what the route reads.
+      const me = await api('/api/auth/me');
+      // `Content-Type` is not optional here: a body sent without it is labelled
+      // `text/plain` by the browser, and the perimeter refuses an undeclared
+      // browser body on `/api/` with 415 before any route runs (#860). Every
+      // other body-carrying write on this page sets it for the same reason.
+      const headers = { 'Content-Type': 'application/json' };
+      if (me && me.openInstallToken) headers['X-TC-Open-Token'] = me.openInstallToken;
+      const answer = await api(
+        `/api/sessions/${encodeURIComponent(projectName)}/launch/recovery-clear`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            sessionId: Number(btn.dataset.sessionId),
+            sequenceId: Number(btn.dataset.launchRecoveryClear),
+            recoveryRevision: Number(btn.dataset.recoveryRevision)
+          })
+        }
+      );
+      if (answer) {
+        _setProjectRulesStatus('Recovery cleared — the session can read its task step and attest', true);
+      } else {
+        btn.disabled = false;
+        _setProjectRulesStatus(api.lastError || 'The recovery could not be cleared', false);
+      }
+      // Re-read either way. A refusal usually means the launch moved under the
+      // click, and the panel must then show what is true now rather than the row
+      // the operator was looking at when they pressed it.
+      if (projectRulesTargetId === projectId) await refreshProjectLaunchSequences(projectId);
+    });
+  }
 }
 
 /**

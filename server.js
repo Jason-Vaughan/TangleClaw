@@ -311,6 +311,7 @@ const authGate = require('./lib/auth-gate');
 const gateFallback = require('./lib/gate-fallback');
 const ingressDoor = require('./lib/ingress-door');
 const recoveryCodes = require('./lib/recovery-codes');
+const openInstallToken = require('./lib/open-install-token');
 const passwordHashing = require('./lib/password');
 const sessionOwnership = require('./lib/session-ownership');
 const planDocs = require('./lib/plan-docs');
@@ -2536,6 +2537,66 @@ function _recoveryClient(req) {
 }
 
 /**
+ * Whether a browser request positively vouches for being same-origin.
+ *
+ * The perimeter's cross-site guard refuses `Sec-Fetch-Site: cross-site` and lets
+ * `same-site` and an absent header through, which is right for the whole API: a
+ * non-browser caller sends neither header and is not a forgery vector. This is
+ * the POSITIVE form, for the one route that runs with no login behind it — there
+ * the absence of a refusal is not the same as evidence, so `same-site` (a
+ * sibling subdomain) and a missing `Origin` are both refused rather than assumed
+ * friendly.
+ *
+ * The `Origin`-vs-`Host` comparison itself is `_isSameOriginUpgrade`'s, not a
+ * second one: it parses both sides rather than splitting on `':'` (an IPv6
+ * literal `Host` is bracketed) and compares HOSTNAMES, deliberately dropping
+ * the port, because this dashboard is reached over https through Caddy on one
+ * port and over http directly on another. A private copy comparing `host` would
+ * have answered differently for the same request — an operator behind an
+ * ingress that rewrites the port would have had the terminal socket connect and
+ * this button refuse.
+ *
+ * @param {http.IncomingMessage} req - The request
+ * @returns {{ok: true}|{ok: false, error: string, code: string}}
+ */
+function _isSameOriginClear(req) {
+  const site = req.headers['sec-fetch-site'];
+  if (site !== undefined && site !== 'same-origin') {
+    return {
+      ok: false,
+      code: 'CROSS_SITE_FORBIDDEN',
+      error: `A recovery clear must come from this server's own dashboard; this request reported itself as "${site}".`
+    };
+  }
+  const origin = req.headers.origin;
+  if (!origin) {
+    return {
+      ok: false,
+      code: 'CROSS_SITE_FORBIDDEN',
+      error: 'A recovery clear must come from this server\'s own dashboard, and this request carried no Origin.'
+    };
+  }
+  if (!req.headers.host || !_isSameOriginUpgrade(origin, req.headers.host)) {
+    return {
+      ok: false,
+      code: 'CROSS_SITE_FORBIDDEN',
+      error: `A recovery clear must come from this server's own dashboard; that Origin is not `
+        + `"${req.headers.host || 'this host'}".`
+    };
+  }
+  // The independent check (#864): the two headers above agree with each other
+  // even when an attacker controls DNS, because both describe the same name.
+  if (!_hostIsAllowed(req.headers.host)) {
+    return {
+      ok: false,
+      code: 'HOST_NOT_ALLOWED',
+      error: 'That host is not a name this install serves.'
+    };
+  }
+  return { ok: true };
+}
+
+/**
  * Refuse a login-management request while TangleClaw's login is stood down
  * behind Caddy's gate. Every such request would act on a login that is not in
  * force, and the operator's next step is at the terminal, not here.
@@ -2829,7 +2890,17 @@ route('GET', '/api/auth/me', (req, res) => {
   const gateState = req.tcGateState;
   if (!session) {
     return jsonResponse(res, 200, {
-      authenticated: false, gateActive, gateState, username: null, csrfToken: null
+      authenticated: false,
+      gateActive,
+      gateState,
+      username: null,
+      csrfToken: null,
+      // An OPEN install has no session and therefore no CSRF token, which left
+      // its dashboard with nothing to prove it was this server's page. One is
+      // minted here, for the one route that needs it. `null` everywhere else,
+      // including `armed` signed out: a token that means "this page came from
+      // this server" is worth nothing where a session token already says more.
+      openInstallToken: authGate.isOpen(gateState) ? openInstallToken.mint() : null
     });
   }
   jsonResponse(res, 200, {
@@ -2837,7 +2908,8 @@ route('GET', '/api/auth/me', (req, res) => {
     gateActive,
     gateState,
     username: session.username,
-    csrfToken: session.csrfToken
+    csrfToken: session.csrfToken,
+    openInstallToken: null
   });
 });
 
@@ -4199,6 +4271,18 @@ route('GET', '/api/launch-sequences', (req, res) => {
       unreadyAt: sequence.unreadyAt,
       nudgeCount: sequence.nudgeCount,
       lastNudgedAt: sequence.lastNudgedAt,
+      // Recovery, as five separate facts rather than one word. The panel has to
+      // say which of the three clearances it was — an open install's clear is
+      // never shown as an operator's — and it has to know the mode, because a
+      // `required` advisory launch clears itself and offers the operator
+      // nothing to do, while a `required` operator launch is waiting on them.
+      recovery: sequence.recovery,
+      recoveryMode: sequence.recoveryMode,
+      recoveryRevision: sequence.recoveryRevision,
+      recoveryClearance: sequence.recoveryClearance,
+      recoveryClearedAt: sequence.recoveryClearedAt,
+      recoveryClearedBy: sequence.recoveryClearedBy,
+      preflightVerdict: (sequence.preflight && sequence.preflight.verdict) || null,
       // Named `rulesDelivery`, not `hook`: the row it comes from records
       // whichever channel the prime used for the rule text — the startup hook,
       // a paste, or the deliberate skip a pulled launch writes. Calling it the
@@ -6378,6 +6462,180 @@ registerMedusaRoutes('/api/sessions/:project/medusa', resolveProjectMedusaTarget
 // the outbound gate, not a missing route, is what a read-only Master meets.
 registerMedusaRoutes('/api/master/medusa', resolveMasterMedusaTarget);
 
+
+// POST /api/sessions/:project/launch/recovery-clear — an operator clears a launch's
+// required recovery (Train 21, #1587).
+// Body: {sessionId, sequenceId, recoveryRevision}
+//
+// The branches key on the GATE STATE first, never on "is there a session". An
+// `armed` install with a failed authentication has no `req.tcSession`, and the
+// order below is what keeps that request from falling through to the open-install
+// branch and being honoured as an anonymous browser: each state is answered by
+// its own branch, and anything unrecognised is refused rather than defaulted.
+route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params, body) => {
+  const gateState = req.tcGateState;
+  // 1. Fallback — TangleClaw's own login is stood down behind Caddy's, so it
+  //    cannot say who this is and must not record that anyone verified it.
+  if (gateState === authGate.GATE_STATES.FALLBACK) {
+    return _refuseDuringFallback(res, 'clear a launch recovery');
+  }
+
+  let clearance = null;
+  let clearedBy = null;
+  if (gateState === authGate.GATE_STATES.ARMED) {
+    // 2. Armed — a login is in force, so an operator's session is the only
+    //    thing that clears. Machine clients and failed authentication end here
+    //    with a 401 and never reach step 3.
+    if (!req.tcSession) {
+      // Logged, like every other refusal on this route. On an install with no
+      // login these checks are the ONLY barrier on a state-changing write, so a
+      // rejected attempt that left no trace would make "did anything try to
+      // clear a recovery here" answerable only for the attempts that worked.
+      log.warn('Refused a recovery clear', { code: 'UNAUTHENTICATED', project: params.project, gateState });
+      return errorResponse(res, 401,
+        'Sign in to clear a launch recovery: this install requires a login, and a recovery clear is an '
+        + "operator's decision.", 'UNAUTHENTICATED');
+    }
+    // The perimeter already refused this write without a valid CSRF token. It
+    // is asserted again here rather than inherited: this route records a
+    // decision as an operator's, and a guard it does not own is a guard that
+    // can move out from under it without this file changing. Through the SAME
+    // `csrfTokenMatches` the perimeter uses, though — a hand-rolled `!==` would
+    // be a copy that inherits none of its type-, length- and timing-safety, so
+    // a later hardening of that function would silently skip the one write that
+    // records who an operator is.
+    if (!authSession.csrfTokenMatches(authSession.csrfTokenFromRequest(req), req.tcSession.csrfToken)) {
+      log.warn('Refused a recovery clear', {
+        code: 'CSRF_TOKEN_INVALID', project: params.project, username: req.tcSession.username
+      });
+      return errorResponse(res, 403, 'This request is missing a valid CSRF token.', 'CSRF_TOKEN_INVALID');
+    }
+    clearance = 'operator-verified';
+    clearedBy = req.tcSession.username;
+  } else if (authGate.isOpen(gateState)) {
+    // 3. Open — the login is explicitly disabled, so nothing here can prove a
+    //    person. The checks stop a CROSS-SITE browser and nothing more, and the
+    //    clearance word records exactly that.
+    //
+    //    The gate stands down in `open`, so `handleRequest` resolved no
+    //    identity: this branch asks for one itself rather than reading a field
+    //    that is null for two different reasons.
+    const identity = _gateIdentity(req, req.socket, reqUrl(req).pathname);
+    if (identity.machineClient) {
+      log.warn('Refused a recovery clear', { code: 'OPERATOR_REQUIRED', project: params.project, gateState });
+      return errorResponse(res, 403,
+        'A recovery clear is an operator\'s decision, and a local process is not one. Clear it from the '
+        + 'dashboard, or put this launch\'s project in advisory recovery mode so the session can reconcile '
+        + 'its own.', 'OPERATOR_REQUIRED');
+    }
+    const sameOrigin = _isSameOriginClear(req);
+    if (!sameOrigin.ok) {
+      log.warn('Refused a recovery clear', { code: sameOrigin.code, project: params.project, gateState });
+      return errorResponse(res, 403, sameOrigin.error, sameOrigin.code);
+    }
+    if (!openInstallToken.verify(req.headers['x-tc-open-token'])) {
+      log.warn('Refused a recovery clear', {
+        code: 'OPEN_INSTALL_TOKEN_INVALID', project: params.project, gateState
+      });
+      return errorResponse(res, 403,
+        'This install has no login, so a recovery clear must carry the anti-forgery token its dashboard was '
+        + 'issued. Reload the dashboard and try again.', 'OPEN_INSTALL_TOKEN_INVALID');
+    }
+    // Never `operator-verified`. Same-origin plus a page token proves the click
+    // came from this server's own dashboard; it does not prove a human, and it
+    // cannot exclude a local process that fetched a token of its own.
+    clearance = 'open-install-unverified';
+    clearedBy = null;
+  } else {
+    // 4. Anything else — `account-required`, `locked`, `unreadable`. There is
+    //    no fall-through to the open branch, by construction.
+    log.warn('Refused a recovery clear', { code: 'GATE_STATE_UNSUPPORTED', project: params.project, gateState });
+    return errorResponse(res, 409,
+      `A launch recovery cannot be cleared while the login gate is "${gateState}". Resolve the gate first.`,
+      'GATE_STATE_UNSUPPORTED');
+  }
+
+  const sessionId = Number(body && body.sessionId);
+  const sequenceId = Number(body && body.sequenceId);
+  const recoveryRevision = Number(body && body.recoveryRevision);
+  if (![sessionId, sequenceId, recoveryRevision].every(Number.isInteger)) {
+    log.warn('Refused a recovery clear', { code: 'BAD_REQUEST', project: params.project });
+    return errorResponse(res, 400,
+      'sessionId, sequenceId and recoveryRevision are required, and name the launch you are clearing.',
+      'BAD_REQUEST');
+  }
+
+  const project = store.projects.getByName(params.project);
+  if (!project) {
+    log.warn('Refused a recovery clear', { code: 'NOT_FOUND', project: params.project, reason: 'no such project' });
+    return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
+  }
+  const sequence = store.launchSequences.getBySession(sessionId);
+  // Project-scoped on purpose: the path names a project, and a sequence id from
+  // another one must not be clearable through it.
+  if (!sequence || sequence.id !== sequenceId || sequence.projectId !== project.id) {
+    // Logged like the rest, and for a sharper reason than tidiness: on an open
+    // install a page-token holder can walk `sequenceId` values against another
+    // project's launches, and every probe answers 404. Silent, that sweep leaves
+    // no trace at all; logged, it is a run of refusals somebody can find.
+    log.warn('Refused a recovery clear', {
+      code: 'NOT_FOUND', project: params.project, askedSession: sessionId, askedSequence: sequenceId
+    });
+    return errorResponse(res, 404,
+      'That launch sequence does not belong to this project, or no longer exists.', 'NOT_FOUND');
+  }
+  if (sequence.recoveryMode === 'advisory') {
+    log.warn('Refused a recovery clear', {
+      code: 'RECOVERY_MODE_ADVISORY', project: params.project, sequence: sequence.id
+    });
+    return errorResponse(res, 409,
+      'This launch clears recovery by reconciliation: the session writes one into its READY attestation. The '
+      + 'two paths never cross, so there is nothing here for an operator to clear.', 'RECOVERY_MODE_ADVISORY');
+  }
+  if (sequence.recovery !== 'required') {
+    log.warn('Refused a recovery clear', {
+      code: 'STALE_RECOVERY', project: params.project, sequence: sequence.id, recovery: sequence.recovery
+    });
+    return errorResponse(res, 409,
+      `This launch's recovery is "${sequence.recovery}", not "required"; nothing was changed.`,
+      'STALE_RECOVERY');
+  }
+
+  const cleared = store.launchSequences.clearRecovery(sequence.id, {
+    sessionId, recoveryRevision, clearance, clearedBy
+  });
+  if (!cleared) {
+    log.warn('Refused a recovery clear', {
+      code: 'STALE_RECOVERY', project: params.project, sequence: sequence.id,
+      asked: recoveryRevision, current: sequence.recoveryRevision
+    });
+    // The binding did not match: the launch moved under the click. Told as
+    // `STALE_RECOVERY` with the CURRENT revision, so the dashboard can re-read
+    // and offer the decision again against what is true now.
+    return errorResponse(res, 409,
+      `That clear names recovery revision ${recoveryRevision}, and this launch is at `
+      + `${sequence.recoveryRevision}. Re-read the launch and clear it again if it still needs one.`,
+      'STALE_RECOVERY');
+  }
+  store.activity.log({
+    projectId: project.id,
+    sessionId: cleared.sessionId,
+    eventType: 'launch.recovery-cleared',
+    detail: { sequenceId: cleared.id, clearance, clearedBy, recoveryRevision }
+  });
+  log.info('Launch recovery cleared', {
+    project: project.name, sequence: cleared.id, clearance, clearedBy
+  });
+  jsonResponse(res, 200, {
+    ok: true,
+    sequenceId: cleared.id,
+    sessionId: cleared.sessionId,
+    recovery: cleared.recovery,
+    recoveryClearance: cleared.recoveryClearance,
+    recoveryClearedAt: cleared.recoveryClearedAt,
+    recoveryClearedBy: cleared.recoveryClearedBy
+  });
+});
 
 // POST /api/sessions/:project/wrap-sentinel/ack — Clear a pending typed-wrap
 // request once the session view has opened the wrap drawer, so the poll won't
