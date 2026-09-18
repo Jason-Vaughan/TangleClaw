@@ -558,6 +558,58 @@ session produces an eligible, published final. The newest prior session is then 
 
 **Non-git project.** `worktree: null`, so 13–14 are recorded as `skipped: no-git`, and 15 accepts them only with that recorded skip.
 
+**Migration boundary — amended 2026-09-17 (Architect ruling); rev-4's approval history is preserved
+above, this supersedes only the version number and the already-v41 case.**
+
+`project_handoff_epoch` ships in **v42**, not v41. v41 shipped with car 21.7 (#1585, merged
+`70c78c60`) carrying `handoff_publications` only, and its gate runs only for `currentVersion < 41` —
+so initialization added inside it would never run on a store that already took v41. v41 and its
+postconditions stay exactly as shipped; v42 adds its own. A chunk does not owe one schema version
+when its cars ship separately, and #1587 must likewise take the next unshipped number.
+
+**A new version fixes reachability, not the missing boundary.** The epoch is
+`MAX(sessions.id) AT THE MOMENT handoffs began`. Taking today's maximum on a store that has already
+been at v41 for a while does not recover that instant — it draws the line too late and sweeps
+post-epoch sessions into the legacy window, turning what should be `handoff-never-published`
+(recovery) into `legacy` (no recovery). So the cutoff is recorded per case:
+
+| Store/project case | Result |
+|---|---|
+| Enters this startup **below v41** | Snapshot the project's max session id in the controlled v42 upgrade, before sessions are admitted, and classify `clean`/`unclean`/`empty` per the values below. This startup crosses into publication support, so the boundary is real. |
+| Enters **already at v41** with history and no trustworthy epoch | Record today's cutoff once, but `baseline = 'unclean'` with a reason such as `epoch-boundary-unknown-from-v41`. It is a v42 **observation**, never a recovered v41 boundary, and it must never enable the clean-legacy exception. |
+| A valid epoch already present (partial or retried upgrade) | Preserve cutoff, baseline and `recorded_at` exactly. Never recompute from newer sessions. An invalid or conflicting row fails validation rather than being silently replaced. |
+| No session history | `epoch_session_id = 0`, `baseline = 'empty'`. |
+| Project created after the migration | Its empty epoch is created with the project, before its first session. |
+| Store claims v42+ but the epoch evidence is missing | An integrity / unknown-boundary outcome. **Never** a late `MAX(id)` backfill that grants legacy acceptance. |
+
+**Honest uncertainty beats an unearned pass.** A genuinely old project on an already-v41 store may
+land in recovery because its exact boundary was never recorded. That is the intended outcome, and the
+reason is recorded so the operator is told the boundary is unknown rather than that a failure was
+proven. Never infer the cutoff from `schema_version.applied_at`, session timestamps, deployment
+timing, or the absence of publication rows.
+
+**The unclean compatibility baseline is not a veto.** A valid current eligible publication still
+satisfies the positive `ok` predicate (row 15) — the unclean baseline only withholds the unproved
+clean-legacy bypass, and never resets good publication state. Where there are no publications, an
+unknown baseline must reach recovery (`legacy-unclean` with its reason, or the catch-all), never
+`legacy` and never `ok`. Integrity-first ordering is unchanged. Clearing recovery is bound to a
+launch and revision; it never rewrites the historical baseline, and a later successful publication is
+the normal forward path — not an edit to the past.
+
+**Atomicity.** Epoch rows are initialized, validated and the v42 marker advanced in one transaction.
+A failed initialization advertises no v42 and admits no session, and must not write a second version
+stamp outside the transaction via the shared stamping code. `_createTables()` runs before migrations
+and stamps a fresh database at the current version, bypassing the upgrade blocks entirely — so the
+fresh-database and project-creation paths need their own coverage, not just the upgrade path. The v42
+path also validates the v41 prerequisites it depends on, because an already-v41 store skips the old
+gate.
+
+Ruling: `/Users/jasonvaughan/Documents/Projects/TangleClaw-Architect/.tangleclaw/plans/train-21-epoch-migration-ruling.md`
+(hosted: https://cursatory.tail123678.ts.net:8443/plans/81/train-21-epoch-migration-ruling.md).
+Carry it into ADR 0017 (21.12) so the contract does not live only in a plan and a chat.
+
+The table below is rev 4's, unchanged apart from the version it runs at:
+
 **Migration boundary.** When v41 runs, it writes one `project_handoff_epoch` row per project:
 
 ```sql
