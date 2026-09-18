@@ -760,3 +760,73 @@ describe('#1619 — an identity-carrying carrier is asked about, not staged', ()
     assert.match(verdicts.identityRefusals.get('CLAUDE.md'), /session route|origin|token/);
   });
 });
+
+describe('#1619 — the refusal survives every route into a null verdict', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { execFileSync } = require('node:child_process');
+
+  const MARK = { begin: '<!-- BEGIN:tangleclaw -->', end: '<!-- END:tangleclaw -->' };
+  const carrier = (body, prose = 'Operator notes.') =>
+    `# Project\n\n${prose}\n\n${MARK.begin}\n${body}\n${MARK.end}\n`;
+  const IDENTITY = '**TangleClaw API base URL**: `http://localhost:3102`';
+  const NEUTRAL = 'Routes: `<api>/api/sessions/<project-name>/medusa/send` — resolve at run time.';
+
+  const scopeFor = (root) => ({
+    snapshotApplies: true,
+    baseline: { dirty: { paths: [], truncated: false } },
+    startedAtMs: 1000,
+    workToplevel: root
+  });
+
+  /**
+   * @param {string|null} head - committed carrier body, or null to leave the file untracked
+   * @param {string} workFile - the work-tree carrier content
+   * @returns {string} repo root
+   */
+  function repo(head, workFile) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-route-'));
+    execFileSync('git', ['-C', dir, 'init', '-q']);
+    fs.writeFileSync(path.join(dir, 'seed.txt'), 'seed\n');
+    if (head !== null) fs.writeFileSync(path.join(dir, 'CLAUDE.md'), carrier(head));
+    execFileSync('git', ['-C', dir, 'add', '-A']);
+    execFileSync('git', ['-C', dir, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'seed']);
+    fs.writeFileSync(path.join(dir, 'CLAUDE.md'), workFile);
+    return dir;
+  }
+
+  it('a COMPOUND change — block acquires identity while the operator edits their own prose', () => {
+    // The route the previous fix missed. `differsOnlyInsideManagedBlock` returns
+    // false, the carrier branch returned a bare null, and a bare null falls
+    // through to the mtime rule and is staged from `owned`. Nothing exotic: an
+    // operator editing the top of their own CLAUDE.md in the session the server
+    // regenerated the block underneath them.
+    const root = repo(NEUTRAL, carrier(IDENTITY, 'Operator notes, now with a new line I added.'));
+    const c = ownership.classify(scopeFor(root), [{ path: 'CLAUDE.md', deleted: false }], {});
+    assert.ok(!c.stageable.includes('CLAUDE.md'), 'a compound change must not stage an identity-carrying block');
+    assert.ok(!c.owned.includes('CLAUDE.md'));
+    assert.equal(c.foreign.find((f) => f.path === 'CLAUDE.md').reason, 'carries-identity');
+  });
+
+  it('a carrier with NO HEAD copy — newly tracked this session', () => {
+    // Generation had classified it private (it was ignored) and wrote an origin
+    // into it; tracking it now means `git show HEAD:CLAUDE.md` has nothing to
+    // show, so the comparison throws before anything reads the file.
+    const root = repo(null, carrier(IDENTITY));
+    const c = ownership.classify(scopeFor(root), [{ path: 'CLAUDE.md', deleted: false }], {});
+    assert.ok(!c.stageable.includes('CLAUDE.md'), 'no HEAD copy is not a reason to stage identity');
+    assert.equal(c.foreign.find((f) => f.path === 'CLAUDE.md').reason, 'carries-identity');
+  });
+
+  it('a compound change with a NEUTRAL block still stages', () => {
+    // The counter-case, kept adjacent on purpose: widening the refusal must not
+    // turn every compound edit into a question. This one is refused for the
+    // ordinary reason (it changed outside the block), so it is not staged —
+    // but it must NOT be refused as carrying identity.
+    const root = repo(NEUTRAL, carrier(NEUTRAL, 'Operator notes, edited.'));
+    const c = ownership.classify(scopeFor(root), [{ path: 'CLAUDE.md', deleted: false }], {});
+    const asked = c.foreign.find((f) => f.path === 'CLAUDE.md');
+    if (asked) assert.notEqual(asked.reason, 'carries-identity', 'a neutral block is not an identity refusal');
+  });
+});
