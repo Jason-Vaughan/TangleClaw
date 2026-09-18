@@ -13,7 +13,7 @@ referred to, so the claim cannot drift onto a later commit:
 | `9a8b92f` | Deletes the same reasoning from the plan's discharge record |
 | `2842fee` | The wrap refusal reaches the staging decision; the same reasoning removed from two `lib/engines.js` comments |
 | `c858016` | The refusal is asked of the file rather than of the diff, closing two routes that bypassed it |
-| `55ae5b4` | This row, defect 5 below, and the counter-case test corrected to assert measured behaviour |
+| `55ae5b4` | The `c858016` row, defects 4 and 5, the counter-case test corrected to assert measured behaviour, and the coverage-gate sentence narrowed to point at the command rather than assert a moment |
 
 The last row is the commit that carried these record edits; its own SHA was
 filled in immediately afterwards, since a docs commit may name the work it
@@ -124,7 +124,7 @@ Recorded because the review history is part of the evidence.
 
 Reviewed by the Architect against the brief, with changes requested and
 addressed. **No final approval has been given**, and nothing in this document
-should be read as one. Eleven Critic rounds including a three-reviewer cumulative. Each blocking
+should be read as one. Critic rounds throughout, including a three-reviewer cumulative; the governance ledger holds the count, which is where a number belongs rather than in prose that ages. Each blocking
 finding was fixed and re-verified; the coverage gate's state at any moment is
 whatever `prawduct-hook check-cumulative-critic` reports, which is the only
 claim about it worth making in a document that outlives the tree it describes.

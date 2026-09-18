@@ -128,6 +128,9 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- **Two tests that could not fail for the reason they were written** (#1619). The wrap-ownership counter-case guarded its only assertion behind a conditional, so it would have passed silently the day the path it watches stopped being reached; and the five-checkout and switchboard fixtures built bare temp directories, so their engine-private assertions were exercising a hardcoded convention rather than any project's real git state. Both now assert unconditionally against real repositories.
+
+
 - **The active plan docs point at the project's own directory again** (2026-09-18). The project directory was renamed `TangleClaw-Builder` → `TangleClaw-Builder1`, which left the absolute paths inside `.tangleclaw/plans/sprint-v5.24.md`, `next-session-plan.md` and `train-21-phased-launch.md` naming a directory that no longer exists. Plans reference each other by absolute path precisely so that a session can open one it was handed, so every one of those pointers was dead rather than merely untidy.
   - **`.tangleclaw/priming/roadmap-triage.md` is repointed too**, for the same reason: a priming prompt is pasted verbatim into a fresh session, which has no way to repair a stale path in it.
   - **The CHANGELOG, `.prawduct/` artifacts and the archived plans deliberately keep the old path.** They record where the work actually happened, and rewriting them would falsify the history rather than fix anything.

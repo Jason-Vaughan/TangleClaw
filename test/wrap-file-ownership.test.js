@@ -824,12 +824,6 @@ describe('#1619 — the refusal survives every route into a null verdict', () =>
     // turn an ordinary edit into a question. The operator changed their own
     // prose this session, so the file is theirs and is staged — which is the
     // behaviour that existed before this guard and must survive it.
-    //
-    // I wrote this assertion twice before getting it right. The first version
-    // guarded its only check behind `if (asked)`, so it would have passed
-    // silently the day the path stopped reaching `foreign`. The second asserted
-    // the carrier WAS put to the operator, which is simply not what happens —
-    // I asserted my assumption instead of measuring first. It stages.
     const root = repo(NEUTRAL, carrier(NEUTRAL, 'Operator notes, edited.'));
     const c = ownership.classify(scopeFor(root), [{ path: 'CLAUDE.md', deleted: false }], {});
     assert.ok(c.stageable.includes('CLAUDE.md'), 'an ordinary compound edit must still stage');
