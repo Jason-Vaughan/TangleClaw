@@ -277,9 +277,13 @@ the envelope):
    - `recovery=required` and `recovery_mode=operator` → step 4 is **withheld**:
      `200 {withheld:true, reason, recoveryRevision}`, and nothing is marked served. Only a
      recovery-clear (§2.8) opens it.
-   - `recovery=required` and `recovery_mode=advisory` → step 4 **is served**, prefixed with a
-     recovery warning block naming the verdict and the reconciliation READY will demand. Recovery
-     stays `required` until READY (below).
+   - `recovery=required` and `recovery_mode=advisory` → step 4 **is served**, carrying a
+     `recovery: {verdict, recoveryRevision}` field beside `revised` in the envelope. The renderer
+     prints a warning block above the content from it, on **every** page of the step, and
+     `pageOverhead` budgets for the widest one — a warning built into the served bytes at serve time
+     would be a decoration nothing budgeted for (§4b deltas). The step's frozen content and its
+     digest are untouched, so the ack is still the snapshot's. Recovery stays `required` until READY
+     (below).
    - `recovery` is `none` or `cleared` → served normally.
 5. **Final task ack**: acking step 4 moves the cursor to 4 (`next:"ready"`). It is an ordinary ack
    under rules (a)–(e).
@@ -969,8 +973,11 @@ and the column set. The two open points are named as decisions below, not as gue
   `recovery='none'` / `recovery_mode='operator'` / `recovery_revision=1`: a launch that predates
   the gate was never told to recover, and defaulting it to `required` would strand every live
   pane. `_rowToLaunchSequence` maps all six.
-  Tests: `test/store.test.js` (fresh-database shape), a new `test/launch-recovery-migration.test.js`
-  (upgrade from a v42 fixture, the refusal on a half-applied upgrade, and idempotent re-run).
+  Tests: `test/launch-recovery-migration.test.js` — the fresh-database shape lives there beside the
+  upgrade rather than in `test/store.test.js`, because the two paths are only meaningful compared
+  with each other (a fresh store never runs the migration, so its CHECKs have no other reader).
+  It covers the upgrade from a v42 fixture, the fresh-vs-upgraded comparison including CHECK text,
+  the refusal over a column that lost its constraint, and an idempotent re-run.
 
 - [x] **2. `recoveryMode` project setting.** `lib/project-config.js`: `launchSequence.recoveryMode`
   with `RECOVERY_MODES = ['operator','advisory']` and `resolveRecoveryMode`, **default `operator`**
@@ -986,7 +993,10 @@ and the column set. The two open points are named as decisions below, not as gue
   `store.launchSequences.create` writes them. `_statusBlock` reports the row's real `recovery`
   instead of today's hardcoded `'none'`, and the `PENDING_STAGES` note that named this gate as the
   missing piece goes with it.
-  Tests: `test/launch-sequence.test.js`, `test/launch-preflight-context.test.js`.
+  Tests: `test/launch-sequence.test.js` (the not-applicable and render-failure records) and
+  `test/launch-recovery-gate.test.js` (what a launch in recovery records, and the mode it froze).
+  `test/launch-preflight-context.test.js` is untouched: this step consumes the predicate that module
+  already answered rather than changing it.
 
 - [x] **4. The step-4 gate (§2.3 rule 4).** `_serve` withholds step 4 — and only step 4 — when
   `recovery === 'required'`:

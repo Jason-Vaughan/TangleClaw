@@ -6559,6 +6559,7 @@ route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params,
   const sequenceId = Number(body && body.sequenceId);
   const recoveryRevision = Number(body && body.recoveryRevision);
   if (![sessionId, sequenceId, recoveryRevision].every(Number.isInteger)) {
+    log.warn('Refused a recovery clear', { code: 'BAD_REQUEST', project: params.project });
     return errorResponse(res, 400,
       'sessionId, sequenceId and recoveryRevision are required, and name the launch you are clearing.',
       'BAD_REQUEST');
@@ -6566,16 +6567,27 @@ route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params,
 
   const project = store.projects.getByName(params.project);
   if (!project) {
+    log.warn('Refused a recovery clear', { code: 'NOT_FOUND', project: params.project, reason: 'no such project' });
     return errorResponse(res, 404, `Project "${params.project}" not found`, 'NOT_FOUND');
   }
   const sequence = store.launchSequences.getBySession(sessionId);
   // Project-scoped on purpose: the path names a project, and a sequence id from
   // another one must not be clearable through it.
   if (!sequence || sequence.id !== sequenceId || sequence.projectId !== project.id) {
+    // Logged like the rest, and for a sharper reason than tidiness: on an open
+    // install a page-token holder can walk `sequenceId` values against another
+    // project's launches, and every probe answers 404. Silent, that sweep leaves
+    // no trace at all; logged, it is a run of refusals somebody can find.
+    log.warn('Refused a recovery clear', {
+      code: 'NOT_FOUND', project: params.project, askedSession: sessionId, askedSequence: sequenceId
+    });
     return errorResponse(res, 404,
       'That launch sequence does not belong to this project, or no longer exists.', 'NOT_FOUND');
   }
   if (sequence.recoveryMode === 'advisory') {
+    log.warn('Refused a recovery clear', {
+      code: 'RECOVERY_MODE_ADVISORY', project: params.project, sequence: sequence.id
+    });
     return errorResponse(res, 409,
       'This launch clears recovery by reconciliation: the session writes one into its READY attestation. The '
       + 'two paths never cross, so there is nothing here for an operator to clear.', 'RECOVERY_MODE_ADVISORY');

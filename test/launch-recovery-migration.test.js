@@ -122,16 +122,41 @@ describe('v42→43 launch recovery columns (Train 21, #1587)', () => {
     assert.equal(row.recovery_clearance, null);
   });
 
-  it('gives an upgraded store the same shape as a fresh one', () => {
+  it('gives an upgraded store the same shape as a fresh one, CHECKs included', () => {
     // The two paths are written from one list of columns precisely so this can
     // be asserted: a column added to the fresh-database DDL and forgotten in the
     // upgrade is a difference no test of either path alone can see.
+    //
+    // Column names are not enough. A fresh store seeds `schema_version` at the
+    // current version, so it never enters `_migrateLaunchRecovery` and its DDL
+    // postcondition — the only reader that can see a CHECK — never runs on it.
+    // A fresh database whose inline DDL lost a CHECK would therefore pass a
+    // name-only comparison while admitting clearance words that mean nothing.
+    // So the constraint text is compared too, normalised for whitespace because
+    // SQLite stores an ALTER-added column on one line and the inline DDL
+    // wrapped.
+    /**
+     * Each recovery column's CHECK clause as the live DDL spells it.
+     * @returns {object} column name → its normalised CHECK text, or null
+     */
+    const checks = () => {
+      const sql = ddl().replace(/\s+/g, ' ');
+      const out = {};
+      for (const col of ADDED) {
+        const m = new RegExp(`${col} [^,]*?(CHECK \\(${col} IN \\([^)]*\\)\\))`).exec(sql);
+        out[col] = m ? m[1] : null;
+      }
+      return out;
+    };
     open(seedV42(IN_FLIGHT_ROW));
-    const upgraded = [...columns()].sort();
+    const upgraded = { columns: [...columns()].sort(), checks: checks() };
     const fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-recovery-fresh-'));
     tmpDirs.push(fresh);
     open(fresh);
-    assert.deepEqual([...columns()].sort(), upgraded);
+    assert.deepEqual({ columns: [...columns()].sort(), checks: checks() }, upgraded);
+    // And the comparison is worth something only if it found constraints at all.
+    assert.ok(upgraded.checks.recovery, 'the fixture must actually carry the CHECKs being compared');
+    assert.ok(upgraded.checks.recovery_clearance);
   });
 
   it('keeps every CHECK, so the three clearances stay apart', () => {

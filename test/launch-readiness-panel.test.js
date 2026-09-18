@@ -348,4 +348,45 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
       assert.match(status[0].text, /Recovery cleared/);
     });
   });
+
+  describe('the refresh cycle wires the buttons it just rendered (Train 21, #1587)', () => {
+    it('renders and then wires, so a re-rendered panel is never inert', () => {
+      // The hop between the two halves. `renderProjectLaunchSequences` replaces
+      // the panel's innerHTML, which discards every listener on it, so a render
+      // that is not followed by a wire leaves an operator pressing a button that
+      // does nothing — the same shape of silent break as the missing
+      // Content-Type, and the reason that one shipped was a hop no test read.
+      const { doc } = makeDocument(['projLaunchSequencesList']);
+      const ctx = { document: doc, window: {} };
+      vm.createContext(ctx);
+      const order = [];
+      ctx.api = async () => ({ sequences: [row({ recovery: 'required', recoveryMode: 'operator' })] });
+      ctx.projectRulesTargetId = 7;
+      ctx.renderProjectLaunchSequences = () => order.push('render');
+      ctx.wireLaunchRecoveryClears = () => order.push('wire');
+      vm.runInContext(liftFunction(UI_SRC, 'async function refreshProjectLaunchSequences'), ctx);
+      return ctx.refreshProjectLaunchSequences(7).then((answer) => {
+        assert.equal(answer, true);
+        assert.deepEqual(order, ['render', 'wire'],
+          'wiring runs after the render that produced the buttons, and runs at all');
+      });
+    });
+
+    it('does not wire when the read failed and no buttons were rendered', () => {
+      const { doc } = makeDocument(['projLaunchSequencesList']);
+      const ctx = { document: doc, window: { tcRulesUnknownHtml: () => '', tcDegradedRead: () => '' } };
+      vm.createContext(ctx);
+      const order = [];
+      ctx.api = async () => null;
+      ctx.api.lastError = 'Connection lost.';
+      ctx.projectRulesTargetId = 7;
+      ctx.renderProjectLaunchSequences = () => order.push('render');
+      ctx.wireLaunchRecoveryClears = () => order.push('wire');
+      vm.runInContext(liftFunction(UI_SRC, 'async function refreshProjectLaunchSequences'), ctx);
+      return ctx.refreshProjectLaunchSequences(7).then((answer) => {
+        assert.equal(answer, false);
+        assert.deepEqual(order, [], 'a degraded read wires nothing, because it rendered nothing');
+      });
+    });
+  });
 });

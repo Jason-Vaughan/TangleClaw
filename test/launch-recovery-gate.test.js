@@ -258,13 +258,18 @@ describe('launch recovery gate (Train 21, #1587)', () => {
       assert.equal(body.recovery.verdict, 'handoff-corrupt');
       assert.equal(body.recovery.recoveryRevision, 1);
       const task = store.launchSequences.listSteps(sequence.id, 1)[3];
-      const page = body.page.of === 1 ? body : null;
-      if (page) {
-        assert.equal(body.ack.digest, task.digest,
-          'the warning is framing around the snapshot, so the ack is still the snapshot\'s');
-      }
       assert.equal(body.content, task.content.slice(...task.pageOffsets[body.page.index]),
         'the served content is the frozen content, byte for byte');
+      // The digest assertion used to sit behind `page.of === 1`, which made it
+      // skippable — and this car narrowed the page budget, so a paginated task
+      // step is likelier than it was. Serve to the last page instead, where the
+      // ack actually rides, so the assertion always runs.
+      let last = body;
+      while (!last.ack) last = launchSequence.next({ ...id, page: last.page.index + 1 }).body;
+      assert.equal(last.ack.digest, task.digest,
+        'the warning is framing around the snapshot, so the ack is still the snapshot\'s');
+      assert.equal(last.recovery.verdict, 'handoff-corrupt',
+        'and the notice rides every page, not only the first');
     });
 
     it('leaves recovery required until READY clears it', () => {
@@ -417,6 +422,41 @@ describe('launch recovery gate (Train 21, #1587)', () => {
         sessionId: sequence.sessionId, recoveryRevision: 2, clearance: 'operator-verified', clearedBy: 'jason'
       }), null);
       assert.equal(store.launchSequences.getBySession(sequence.sessionId).recovery, 'required');
+    });
+
+    it('a real snapshot revision moves the recovery revision, voiding an outstanding clear', () => {
+      // The mechanism under test is `revise`'s `recovery_revision + 1`, and it
+      // is the whole reason a clear is bindable: a revision re-renders step 3,
+      // which is the verdict the operator read before deciding. Every other
+      // test here hands `clearRecovery` a hand-made wrong number, which proves
+      // the compare-and-set and says nothing about what MOVES the value it
+      // compares — delete that clause and those tests all still pass.
+      //
+      // So this drives a real revision, the way one actually happens: a project
+      // rule the launch never saw.
+      const { project, id, sequence } = launchInRecovery('operator');
+      assert.equal(sequence.recoveryRevision, 1);
+      const clearArgs = {
+        sessionId: sequence.sessionId,
+        recoveryRevision: sequence.recoveryRevision,
+        clearance: 'operator-verified',
+        clearedBy: 'jason'
+      };
+
+      store.sessionRules.create({ projectId: project.id, content: 'A rule the launch never saw.' });
+      const served = launchSequence.next(id);
+      assert.equal(served.body.revision, 2, 'the snapshot really was re-rendered');
+
+      const after = store.launchSequences.getBySession(sequence.sessionId);
+      assert.equal(after.recoveryRevision, 2,
+        'the recovery revision moved with the snapshot, because step 3 was re-rendered');
+      assert.equal(store.launchSequences.clearRecovery(sequence.id, clearArgs), null,
+        'a clear granted against the verdict the operator READ does not apply to the one replacing it');
+      assert.equal(store.launchSequences.getBySession(sequence.sessionId).recovery, 'required');
+
+      // And the clear against the CURRENT revision still works, so the binding
+      // voids the stale decision without stranding the operator.
+      assert.ok(store.launchSequences.clearRecovery(sequence.id, { ...clearArgs, recoveryRevision: 2 }));
     });
 
     it('refuses a clear naming a different session', () => {

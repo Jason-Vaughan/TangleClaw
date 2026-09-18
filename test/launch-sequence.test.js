@@ -148,17 +148,28 @@ describe('launch sequence (Train 21, Chunk 01)', () => {
       assert.match(undeclared.reason, /no measured tool-output limit/);
     });
 
-    it('a printed page never exceeds the engine\'s limit', () => {
+    it('a printed page never exceeds the engine\'s limit, decorations included', () => {
+      // Rendered with EVERY decoration the envelope can carry at once, because
+      // the budget is `maxChars - pageOverhead()` and `pageOverhead` measures
+      // exactly that worst case. A decoration added to the renderer and not to
+      // this fixture is a decoration nothing measures: the budget would still be
+      // computed from it, but no test would prove a page carrying it fits. That
+      // is how the recovery notice (#1587) — 668 characters of overhead, up from
+      // ~300 — could have shipped unmeasured.
       const maxChars = 2000;
       const budget = launchSequence.pageBudgetFor(maxChars);
       const content = 'word '.repeat(2000);
+      const longestVerdict = Object.values(require('../lib/launch-preflight').VERDICTS)
+        .reduce((longest, v) => (v.length > longest.length ? v : longest), '');
       for (const [start, end] of launchSequence.paginate(content, budget)) {
         const printed = launchPage.renderPage({
           step: { index: 1, id: 'governance', of: 4 },
           page: { index: 0, of: 9, continued: true },
-          revision: 1,
+          revision: 999999,
           content: content.slice(start, end),
-          ack: { command: launchPage.ackCommand('governance', 1, 'a'.repeat(16)) }
+          ack: { command: launchPage.ackCommand('governance', 999999, 'a'.repeat(16)) },
+          revised: { code: 'SNAPSHOT_REVISED', reason: launchPage.REVISION_REASONS.RULES_CHANGED, revision: 999999 },
+          recovery: { verdict: longestVerdict, recoveryRevision: 999999 }
         });
         assert.ok(printed.length <= maxChars, `a printed page fits: ${printed.length} <= ${maxChars}`);
       }
