@@ -162,6 +162,16 @@ describe('#1619 matrix — six data classes × four routes, judge → classify �
     }
   });
 
+  it('a document name containing an asterisk does not let its body escape', () => {
+    // Narrow, and closed while the regex was open anyway: `**a*b**` is what the
+    // renderer writes for a document named `a*b`, and a no-asterisk character
+    // class rejects it — so the body beneath would have gone unnoticed.
+    assert.equal(
+      tcOwned._carriesIdentity('## Shared Documents\n\n### G\n\n**a*b**\n\n```\nbody\n```\n'),
+      'an embedded shared-document body'
+    );
+  });
+
   it('each pattern earns its place — including the two real output never emits alone', () => {
     // Four of the six classes are independently reachable from generator
     // output: removing any one of their patterns fails the matrix above.
