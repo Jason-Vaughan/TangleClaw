@@ -13,11 +13,11 @@ referred to, so the claim cannot drift onto a later commit:
 | `9a8b92f` | Deletes the same reasoning from the plan's discharge record |
 | `2842fee` | The wrap refusal reaches the staging decision; the same reasoning removed from two `lib/engines.js` comments |
 | `c858016` | The refusal is asked of the file rather than of the diff, closing two routes that bypassed it |
-| `c2b0f1a`* | This row, defect 5 below, and the counter-case test corrected to assert measured behaviour |
+| `55ae5b4` | This row, defect 5 below, and the counter-case test corrected to assert measured behaviour |
 
-\* The commit carrying these record edits; it names itself only in the sense
-that the row describes the change it ships, which is the self-reference the
-Architect said is unnecessary to avoid for a docs commit.
+The last row is the commit that carried these record edits; its own SHA was
+filled in immediately afterwards, since a docs commit may name the work it
+documents.
 
 The Architect's independent recheck of R1 and R2 was performed at `9a8b92f`, and
 closed both. `2842fee` lands after that check; its own content is described in
