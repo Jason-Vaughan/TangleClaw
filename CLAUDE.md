@@ -78,8 +78,6 @@ Some engines store plans in their own global directory (Claude Code uses `~/.cla
 - When a plan's issue closes / PR merges, **move it to `<project-root>/.tangleclaw/plans/archive/`** (or the legacy `.claude/plans/archive/` if that is where the project's plans still live) rather than deleting — preserves the rationale without polluting the active listing.
 - Before treating any plan as canonical, verify its issue is still **OPEN** (`gh issue view <N> --json state -q .state`), even for non-archived files. Archiving is convention; the issue-state check is the contract (it protects across fresh clones, which have no local archive).
 
-**Rule: Rule Authoring Policy.** The ProjectManager (PM) does NOT author, edit, or rewrite global or session rules. The Builders author and maintain the rules for themselves and the rest of the fleet. If questions arise about rule structure or policy, the Builders consult the Architect directly.
-
 ## Memory Hygiene
 
 Bridge memos — entries that exist only to span a specific gap (chat-ratified decisions not yet in the plan, in-progress migration context, open-incident notes) — turn into stale canon and mislead future sessions.
@@ -107,6 +105,10 @@ When two sessions work related-but-distinct repos (advisor/builder, coordinator/
 - Either session may edit shared infrastructure (TangleClaw config, ports) — neither owns it.
 
 This avoids merge conflicts, surprise git-log entries, and ambiguity over who owns which commit.
+
+**Rule: Rule Authoring Policy.** The ProjectManager (PM) does NOT author, edit, or rewrite global or session rules. The Builders author and maintain the rules for themselves and the rest of the fleet. If questions arise about rule structure or policy, the Builders consult the Architect directly.
+- Any session that finds a missing, incorrect or conflicting rule reports it to a Builder. The PM may coordinate the assignment.
+- The shared-infrastructure allowance above excludes rule authoring. Its allowance for ports and other TangleClaw config is unchanged.
 
 ## Issues & Feature Requests
 
