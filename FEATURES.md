@@ -633,3 +633,16 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/launch-ready.test.js` — the launch sequence's attestation half (Chunk 02): `tc start ready`, the snapshot revision a mid-launch rule change forces, and the unready window. The acceptance cases a happy path never reaches are the point — a rule edit between the first step and the attestation, and a step-1 acknowledgement carried onto content that is only similar.
 - `test/launch-sequence-settings.test.js` — the launch sequence's project settings (Chunk 02): where a paste-only engine's rules come from, and how long a session has to attest. The load-bearing case is the setting that cannot be honoured — a project asking for `pull` on a launch with no sequence must still get its rules, because a pointer to a channel the session does not have delivers nothing.
 - `test/launch-unready.test.js` — the unready-launch monitor (car 21.5). The store half is real — the stamp and the nudge count are the durable facts the monitor exists to write — and only the pane is stubbed, because capturing tmux and typing into it are the two things a test must not do for real.
+
+## TODO (auto-stubbed 2026-09-17)
+
+- **TBD** — touched in this session: `lib/handoff-lockfile.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/handoff-publication.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/handoff-publish.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/wrap-steps/handoff-stage.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/esc-contract.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/handoff-lockfile.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/handoff-orchestration.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/handoff-publication.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/handoff-publish.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/handoff-store.test.js`. <!-- describe -->
