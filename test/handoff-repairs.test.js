@@ -456,3 +456,74 @@ describe('the repair vocabulary exists in two places and must stay one list', ()
       'add the action to BOTH the proposer and REPAIR_APPLIERS, or it can be proposed and never applied');
   });
 });
+
+describe('a batch holding both actions', () => {
+  it('records the promoted attempt before renaming another document over it', () => {
+    // The two actions contend for ONE `current.json`. A `record-published`
+    // proposal exists only because the file already holds its bytes, and a
+    // `publish` renames over that file. Ordered by `seq` alone, the rename goes
+    // first whenever the promoted attempt has the lower seq — and then either
+    // `promoteStaged` refuses to retire a `current.json` naming someone else, or
+    // with no published row to retire it destroys the promoted document.
+    const promoted = stageAttempt({ wrapRunId: 'run-promoted' });
+    lockfile.promoteStaged(project, promoted, null);
+    const newer = stageAttempt({ sessionId: 2, wrapRunId: 'run-newer' });
+    assert.ok(store.handoffs.get(newer).seq > store.handoffs.get(promoted).seq,
+      'precondition: the promoted attempt has the LOWER seq');
+
+    const detected = runPreflight(preflightCtx());
+    assert.deepEqual(
+      [...detected.repairs].map((r) => r.action).sort(),
+      ['publish', 'record-published'],
+      'precondition: the detector proposes both in one pass'
+    );
+
+    // Handed seq-descending, which is the order that breaks it.
+    const seqDescending = [...detected.repairs].sort((a, b) => b.seq - a.seq);
+    const { outcomes } = applyHandoffRepairs(project, seqDescending);
+
+    assert.equal(currentPublicationId(), newer, 'the newest attempt ends up current');
+    assert.equal(store.handoffs.get(newer).state, 'published');
+
+    // The ROW state alone cannot tell the two orderings apart: in the broken
+    // order the promoted attempt still ends `superseded`, because the publish
+    // that destroyed its document also made it the newer publication. What
+    // differs is whether the document survived, so that is what is asserted.
+    assert.equal(store.handoffs.get(promoted).state, 'superseded');
+    assert.equal(store.handoffs.get(promoted).supersededBy, newer);
+    const retired = lockfile.readHandoffFile(lockfile.historyPath(project, promoted));
+    assert.equal(retired.outcome, 'ok', 'the promoted document was filed, not overwritten');
+    assert.equal(retired.doc.publicationId, promoted);
+    assert.ok(outcomes.every((o) => typeof o.reason === 'string' || o.applied),
+      'every proposal is answered for');
+  });
+
+  it('files the promoted document in history rather than destroying it', () => {
+    // The concrete loss the ordering prevents: with no published row to retire,
+    // `promoteStaged` skips the retire branch entirely and renames straight over
+    // whatever `current.json` holds.
+    const promoted = stageAttempt({ wrapRunId: 'run-promoted' });
+    lockfile.promoteStaged(project, promoted, null);
+    const newer = stageAttempt({ sessionId: 2, wrapRunId: 'run-newer' });
+
+    applyHandoffRepairs(project, runPreflight(preflightCtx()).repairs);
+
+    const retired = lockfile.readHandoffFile(lockfile.historyPath(project, promoted));
+    assert.equal(retired.outcome, 'ok', 'the replaced document survives in history/');
+    assert.equal(retired.doc.publicationId, promoted);
+    assert.equal(currentPublicationId(), newer);
+  });
+
+  it('applies record-published first whatever order the batch arrives in', () => {
+    const promoted = stageAttempt({ wrapRunId: 'run-promoted' });
+    lockfile.promoteStaged(project, promoted, null);
+    const newer = stageAttempt({ sessionId: 2, wrapRunId: 'run-newer' });
+
+    const { outcomes } = applyHandoffRepairs(project, [
+      { action: 'publish', publicationId: newer },
+      { action: 'record-published', publicationId: promoted }
+    ]);
+    assert.deepEqual(outcomes.map((o) => o.action), ['record-published', 'publish'],
+      'the applier orders the batch; it does not follow the order it was given');
+  });
+});
