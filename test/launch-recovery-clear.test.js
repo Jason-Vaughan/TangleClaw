@@ -391,4 +391,76 @@ describe('the recovery-clear route (Train 21, #1587)', () => {
       assert.equal(store.launchSequences.getBySession(sequence.sessionId).recovery, 'required');
     });
   });
+
+  describe('what the perimeter demands of the button', () => {
+    it('refuses a browser body that is not declared JSON, which is why the client sets the header', async () => {
+      // This is the contract the Clear-recovery button has to satisfy, pinned
+      // from the server side: `/api/` answers 415 before any route runs when a
+      // browser-shaped request carries an undeclared body (#860). The button
+      // once sent none, and every test around it passed — the route test sets
+      // the header in its own helper, and the UI test stubs `api()`. Neither
+      // could see the hop between them, so the contract is asserted here.
+      const { project, sequence, body } = launchInRecovery('operator');
+      const token = await pageToken();
+      const raw = JSON.stringify(body);
+      const req = {
+        url: clearUrl(project),
+        method: 'POST',
+        headers: {
+          host: HOST,
+          origin: `http://${HOST}`,
+          'sec-fetch-site': 'same-origin',
+          'x-tc-open-token': token,
+          // What a browser labels a body sent with no Content-Type.
+          'content-type': 'text/plain;charset=UTF-8',
+          'content-length': String(Buffer.byteLength(raw))
+        },
+        socket: { remoteAddress: '127.0.0.1', server: listener() },
+        on(event, cb) {
+          if (event === 'data') cb(Buffer.from(raw));
+          if (event === 'end') cb();
+        }
+      };
+      const res = mockRes();
+      await handleRequest(req, res);
+      assert.equal(res.statusCode, 415);
+      assert.equal(json(res).code, 'JSON_BODY_REQUIRED');
+      assert.equal(store.launchSequences.getBySession(sequence.sessionId).recovery, 'required',
+        'the request never reached the route');
+    });
+  });
+
+  describe('an unsupported gate state', () => {
+    it('refuses rather than falling through to the open-install branch', async () => {
+      // The fourth branch. `account-required` is a real state — an install whose
+      // login is on with no account yet — and the property is that it is
+      // answered by its OWN branch: there is no fall-through, so a machine
+      // client and a browser are refused identically and neither is honoured.
+      const { project, sequence, body } = launchInRecovery('operator');
+      // Taken while the install is still open, then the gate is moved to
+      // `account-required`. A caller holding a token minted under a different
+      // gate state is the realistic shape of this request, and it must be
+      // refused for the state the install is in NOW.
+      const token = await pageToken();
+      patchConfig({ authEnabled: true });
+      // A machine client is the one caller that reaches the route here: the
+      // fleet carve-out waves it past the perimeter, so the route's own fourth
+      // branch is what answers it.
+      const machine = await send('POST', clearUrl(project), {
+        body, browser: false, headers: { 'x-tc-open-token': token }
+      });
+      assert.equal(machine.statusCode, 409);
+      assert.equal(json(machine).code, 'GATE_STATE_UNSUPPORTED');
+      // A browser never gets that far — the perimeter challenges it for the
+      // account that does not exist yet. Asserted so the two refusals are on
+      // the record as different, rather than one being assumed to cover both.
+      const browser = await send('POST', clearUrl(project), {
+        body, headers: { 'x-tc-open-token': token }
+      });
+      assert.equal(browser.statusCode, 401);
+      assert.equal(json(browser).code, 'ACCOUNT_REQUIRED');
+      assert.equal(store.launchSequences.getBySession(sequence.sessionId).recovery, 'required',
+        'neither reached the open-install branch');
+    });
+  });
 });

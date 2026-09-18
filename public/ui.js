@@ -2580,7 +2580,12 @@ function wireLaunchRecoveryClears(list) {
       // it. On an armed install `openInstallToken` is null and `api()`'s own
       // CSRF header is what the route reads.
       const me = await api('/api/auth/me');
-      const headers = me && me.openInstallToken ? { 'X-TC-Open-Token': me.openInstallToken } : undefined;
+      // `Content-Type` is not optional here: a body sent without it is labelled
+      // `text/plain` by the browser, and the perimeter refuses an undeclared
+      // browser body on `/api/` with 415 before any route runs (#860). Every
+      // other body-carrying write on this page sets it for the same reason.
+      const headers = { 'Content-Type': 'application/json' };
+      if (me && me.openInstallToken) headers['X-TC-Open-Token'] = me.openInstallToken;
       const answer = await api(
         `/api/sessions/${encodeURIComponent(projectName)}/launch/recovery-clear`,
         {

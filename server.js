@@ -2547,9 +2547,14 @@ function _recoveryClient(req) {
  * sibling subdomain) and a missing `Origin` are both refused rather than assumed
  * friendly.
  *
- * `Origin` is compared by parsed host, never by string: a browser sends the
- * scheme and `Host` does not carry one, and an IPv6 literal is bracketed in
- * both, which a split on `':'` would mangle (`_hostIsAllowed` says more).
+ * The `Origin`-vs-`Host` comparison itself is `_isSameOriginUpgrade`'s, not a
+ * second one: it parses both sides rather than splitting on `':'` (an IPv6
+ * literal `Host` is bracketed) and compares HOSTNAMES, deliberately dropping
+ * the port, because this dashboard is reached over https through Caddy on one
+ * port and over http directly on another. A private copy comparing `host` would
+ * have answered differently for the same request — an operator behind an
+ * ingress that rewrites the port would have had the terminal socket connect and
+ * this button refuse.
  *
  * @param {http.IncomingMessage} req - The request
  * @returns {{ok: true}|{ok: false, error: string, code: string}}
@@ -2571,18 +2576,12 @@ function _isSameOriginClear(req) {
       error: 'A recovery clear must come from this server\'s own dashboard, and this request carried no Origin.'
     };
   }
-  let originHost;
-  try {
-    originHost = new URL(origin).host.toLowerCase();
-  } catch {
-    return { ok: false, code: 'CROSS_SITE_FORBIDDEN', error: 'That Origin is not a URL.' };
-  }
-  const host = String(req.headers.host || '').toLowerCase();
-  if (!host || originHost !== host) {
+  if (!req.headers.host || !_isSameOriginUpgrade(origin, req.headers.host)) {
     return {
       ok: false,
       code: 'CROSS_SITE_FORBIDDEN',
-      error: `A recovery clear must come from this server's own dashboard; that Origin is not "${host || 'this host'}".`
+      error: `A recovery clear must come from this server's own dashboard; that Origin is not `
+        + `"${req.headers.host || 'this host'}".`
     };
   }
   // The independent check (#864): the two headers above agree with each other
@@ -6464,9 +6463,6 @@ registerMedusaRoutes('/api/sessions/:project/medusa', resolveProjectMedusaTarget
 registerMedusaRoutes('/api/master/medusa', resolveMasterMedusaTarget);
 
 
-// POST /api/sessions/:project/wrap-sentinel/ack — Clear a pending typed-wrap
-// request once the session view has opened the wrap drawer, so the poll won't
-// reopen it (CC-7 Slice C). Idempotent: acking with nothing pending is a no-op.
 // POST /api/sessions/:project/launch/recovery-clear — an operator clears a launch's
 // required recovery (Train 21, #1587).
 // Body: {sessionId, sequenceId, recoveryRevision}
@@ -6491,6 +6487,11 @@ route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params,
     //    thing that clears. Machine clients and failed authentication end here
     //    with a 401 and never reach step 3.
     if (!req.tcSession) {
+      // Logged, like every other refusal on this route. On an install with no
+      // login these checks are the ONLY barrier on a state-changing write, so a
+      // rejected attempt that left no trace would make "did anything try to
+      // clear a recovery here" answerable only for the attempts that worked.
+      log.warn('Refused a recovery clear', { code: 'UNAUTHENTICATED', project: params.project, gateState });
       return errorResponse(res, 401,
         'Sign in to clear a launch recovery: this install requires a login, and a recovery clear is an '
         + "operator's decision.", 'UNAUTHENTICATED');
@@ -6498,8 +6499,15 @@ route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params,
     // The perimeter already refused this write without a valid CSRF token. It
     // is asserted again here rather than inherited: this route records a
     // decision as an operator's, and a guard it does not own is a guard that
-    // can move out from under it without this file changing.
-    if (authSession.csrfTokenFromRequest(req) !== req.tcSession.csrfToken) {
+    // can move out from under it without this file changing. Through the SAME
+    // `csrfTokenMatches` the perimeter uses, though — a hand-rolled `!==` would
+    // be a copy that inherits none of its type-, length- and timing-safety, so
+    // a later hardening of that function would silently skip the one write that
+    // records who an operator is.
+    if (!authSession.csrfTokenMatches(authSession.csrfTokenFromRequest(req), req.tcSession.csrfToken)) {
+      log.warn('Refused a recovery clear', {
+        code: 'CSRF_TOKEN_INVALID', project: params.project, username: req.tcSession.username
+      });
       return errorResponse(res, 403, 'This request is missing a valid CSRF token.', 'CSRF_TOKEN_INVALID');
     }
     clearance = 'operator-verified';
@@ -6514,14 +6522,21 @@ route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params,
     //    that is null for two different reasons.
     const identity = _gateIdentity(req, req.socket, reqUrl(req).pathname);
     if (identity.machineClient) {
+      log.warn('Refused a recovery clear', { code: 'OPERATOR_REQUIRED', project: params.project, gateState });
       return errorResponse(res, 403,
         'A recovery clear is an operator\'s decision, and a local process is not one. Clear it from the '
         + 'dashboard, or put this launch\'s project in advisory recovery mode so the session can reconcile '
         + 'its own.', 'OPERATOR_REQUIRED');
     }
     const sameOrigin = _isSameOriginClear(req);
-    if (!sameOrigin.ok) return errorResponse(res, 403, sameOrigin.error, sameOrigin.code);
+    if (!sameOrigin.ok) {
+      log.warn('Refused a recovery clear', { code: sameOrigin.code, project: params.project, gateState });
+      return errorResponse(res, 403, sameOrigin.error, sameOrigin.code);
+    }
     if (!openInstallToken.verify(req.headers['x-tc-open-token'])) {
+      log.warn('Refused a recovery clear', {
+        code: 'OPEN_INSTALL_TOKEN_INVALID', project: params.project, gateState
+      });
       return errorResponse(res, 403,
         'This install has no login, so a recovery clear must carry the anti-forgery token its dashboard was '
         + 'issued. Reload the dashboard and try again.', 'OPEN_INSTALL_TOKEN_INVALID');
@@ -6534,6 +6549,7 @@ route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params,
   } else {
     // 4. Anything else — `account-required`, `locked`, `unreadable`. There is
     //    no fall-through to the open branch, by construction.
+    log.warn('Refused a recovery clear', { code: 'GATE_STATE_UNSUPPORTED', project: params.project, gateState });
     return errorResponse(res, 409,
       `A launch recovery cannot be cleared while the login gate is "${gateState}". Resolve the gate first.`,
       'GATE_STATE_UNSUPPORTED');
@@ -6565,6 +6581,9 @@ route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params,
       + 'two paths never cross, so there is nothing here for an operator to clear.', 'RECOVERY_MODE_ADVISORY');
   }
   if (sequence.recovery !== 'required') {
+    log.warn('Refused a recovery clear', {
+      code: 'STALE_RECOVERY', project: params.project, sequence: sequence.id, recovery: sequence.recovery
+    });
     return errorResponse(res, 409,
       `This launch's recovery is "${sequence.recovery}", not "required"; nothing was changed.`,
       'STALE_RECOVERY');
@@ -6574,6 +6593,10 @@ route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params,
     sessionId, recoveryRevision, clearance, clearedBy
   });
   if (!cleared) {
+    log.warn('Refused a recovery clear', {
+      code: 'STALE_RECOVERY', project: params.project, sequence: sequence.id,
+      asked: recoveryRevision, current: sequence.recoveryRevision
+    });
     // The binding did not match: the launch moved under the click. Told as
     // `STALE_RECOVERY` with the CURRENT revision, so the dashboard can re-read
     // and offer the decision again against what is true now.
@@ -6602,6 +6625,9 @@ route('POST', '/api/sessions/:project/launch/recovery-clear', (req, res, params,
   });
 });
 
+// POST /api/sessions/:project/wrap-sentinel/ack — Clear a pending typed-wrap
+// request once the session view has opened the wrap drawer, so the poll won't
+// reopen it (CC-7 Slice C). Idempotent: acking with nothing pending is a no-op.
 route('POST', '/api/sessions/:project/wrap-sentinel/ack', (_req, res, params) => {
   const cleared = wrapSentinel.ackWrapRequest(params.project);
   jsonResponse(res, 200, { ok: true, project: params.project, cleared });

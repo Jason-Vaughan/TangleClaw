@@ -307,6 +307,18 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
         'the dataset strings reach the server as the numbers it validates');
     });
 
+    it('declares the body as JSON, which the perimeter requires of a browser', async () => {
+      // Not cosmetic: `/api/` refuses an undeclared browser body with 415
+      // before any route runs (#860), so a clear sent without this header never
+      // reaches the route at all and the button silently does nothing.
+      for (const openInstallToken of ['page-token', null]) {
+        const { calls } = await (click({ openInstallToken }).run());
+        const post = calls.find((c) => c.url.includes('recovery-clear'));
+        assert.equal(post.fetchOpts.headers['Content-Type'], 'application/json',
+          `openInstallToken: ${JSON.stringify(openInstallToken)}`);
+      }
+    });
+
     it('carries the page token an open install issued', async () => {
       const { calls } = await (click({ openInstallToken: 'page-token' }).run());
       const post = calls.find((c) => c.url.includes('recovery-clear'));
@@ -319,7 +331,7 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
       // would be sending a claim with nothing behind it.
       const { calls } = await (click({ openInstallToken: null }).run());
       const post = calls.find((c) => c.url.includes('recovery-clear'));
-      assert.equal(post.fetchOpts.headers, undefined);
+      assert.equal(post.fetchOpts.headers['X-TC-Open-Token'], undefined);
     });
 
     it('re-enables the button and says why when the clear is refused', async () => {

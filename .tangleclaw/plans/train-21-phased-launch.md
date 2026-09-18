@@ -1064,6 +1064,46 @@ and the column set. The two open points are named as decisions below, not as gue
   either change the digest the agent must ack or make the digest stop describing what was served.
   It is prepended to the served slice, and the ack stays the snapshot's.
 
+### Deltas from the blueprint, as built
+
+- **The advisory warning is a sibling envelope field, not a prefix on the page-0 slice.** §2.3 and
+  step 4 above described prepending a warning block to the served content. `lib/launch-page.js`
+  sizes every page against `pageOverhead()`, the widest decoration a page can carry, and its own
+  comment warns that "a reason added without this constant is a reason nothing budgeted for" — a
+  prefix built at serve time is exactly that. So the envelope carries
+  `recovery: {verdict, recoveryRevision}` beside the existing `revised`, the renderer prints it
+  above the content, and `pageOverhead` measures it against the longest verdict in the preflight's
+  own vocabulary. Two consequences: the notice rides **every** page of the task step rather than
+  page 0 alone (a step read from page 1 onwards would otherwise show no sign of recovery at all),
+  and the decoration budget grew from ~300 to 668 characters, which narrows every step's pages by
+  that much. Harmless at Claude's measured 20,000 and at the assumed 8,000 default.
+
+- **A binding mismatch can answer 404 as well as `STALE_RECOVERY`.** §2.8 named one code. The route
+  resolves the sequence project-scoped first, so a `sequenceId` belonging to another project — or
+  to nothing — is `404` before any recovery state is read; `STALE_RECOVERY` is reserved for a launch
+  that IS this project's and whose recovery state or revision has moved. Reporting "stale" for a
+  launch the caller never had is a different fact stated with the same word.
+
+- **The READY recovery refusal precedes the unacked-steps check.** Written after it first, which
+  produced a loop: in `operator` mode the task step is withheld, so the cursor can never reach the
+  end, and `STEPS_UNACKED` sent the agent back to acknowledge a step nothing would ever serve it. A
+  test caught it. The recovery refusal is the actionable truth and it names who can act.
+
+- **A not-applicable launch records `recovery: 'none'`, whatever its verdict.** It has no steps to
+  withhold and can never attest — both `next` and `ready` refuse it with `SEQUENCE_NOT_APPLICABLE`
+  first, and the readiness panel returns from its not-applicable branch before any recovery line
+  renders. Recording `required` would be a demand no gate enforces and no surface shows, and the
+  clear route would then write a clearance for a launch that gated nothing. The verdict itself is
+  still recorded in `preflight`, which is where a reader asking about the handoff should look.
+  **Left open:** on an engine that declares no launch-sequence support, a session launching against
+  a damaged handoff is therefore gated by nothing at all. That is the pre-existing shape of a
+  not-applicable launch, not something this car narrowed, and closing it needs a surface that does
+  not exist yet (Critic R-9, #1587).
+
+- **`tc start status` reports the recovery state.** Not in §2.3's status block, which listed
+  `recovery` alone; the renderer now prints the mode, the revision and what opens the gate, because
+  a session told its task step is withheld looks to `status` to find out whether anything changed.
+
 ### Acceptance cases (from §4 Chunk 03, the recovery subset)
 
 - advisory recovery reaches READY only with a reconciliation, atomically `cleared`
