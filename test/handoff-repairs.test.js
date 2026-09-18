@@ -328,7 +328,7 @@ describe('re-running a repair', () => {
   });
 });
 
-describe('the crash that landed AFTER the rename (#1586, Critic R-2)', () => {
+describe('the crash that landed AFTER the rename (#1586)', () => {
   /**
    * Promote a staged attempt's file without writing the DB record — the exact
    * state a crash between `promoteStaged` and `recordPublished` leaves behind.
@@ -419,7 +419,7 @@ describe('the crash that landed AFTER the rename (#1586, Critic R-2)', () => {
   });
 });
 
-describe('a repair is a fact about the store, not about the verdict (Critic R-8)', () => {
+describe('a repair is a fact about the store, not about the verdict', () => {
   it('is proposed even when an earlier check wins the chain', () => {
     // A kept session bound a checkpoint eligible and then crashed. The chain
     // stops at row 5 (`crash-recovery`), and the completed attempt that would
@@ -439,5 +439,20 @@ describe('a repair is a fact about the store, not about the verdict (Critic R-8)
     const result = runPreflight(preflightCtx({ file: { state: 'invalid' } }));
     assert.equal(result.verdict, VERDICTS.HANDOFF_CORRUPT);
     assert.deepEqual(result.repairs.map((r) => r.publicationId), [pid]);
+  });
+});
+
+describe('the repair vocabulary exists in two places and must stay one list', () => {
+  it('every action the detector can propose has an applier', () => {
+    // `lib/launch-preflight.js` declares the actions it may mint; this module
+    // derives its list from the appliers it actually has. The detector's copy is
+    // the one that can grow an action nothing can carry out — and the failure is
+    // quiet in the wrong direction: the proposal is refused as "not a repair
+    // this can apply", which reads as a malformed caller rather than a missing
+    // applier. Same pin, and the same reason, as the baseline vocabulary's.
+    const { REPAIR_ACTIONS: proposable } = require('../lib/launch-preflight.js');
+    const { REPAIR_ACTIONS: appliable } = require('../lib/handoff-publish.js');
+    assert.deepEqual([...proposable].sort(), [...appliable].sort(),
+      'add the action to BOTH the proposer and REPAIR_APPLIERS, or it can be proposed and never applied');
   });
 });

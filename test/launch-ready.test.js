@@ -444,6 +444,48 @@ describe('launch sequence attestation (Train 21, Chunk 02)', () => {
         'so ready and the cursor can never disagree');
     });
 
+    it('demands a reconciliation when the preflight verdict asks for one, without a revision', () => {
+      // The CHANGELOG claims a `stale` or `workspace-unavailable` launch now
+      // asks the session to reconcile in writing. The demand existed before
+      // 21.8 and nothing could set it, so until the verdict was wired this
+      // branch of `_reconciliationRequired` was unreachable — which is exactly
+      // the shape of a guard that cannot fire. This pins the field the launch
+      // record stores, not the engine predicate that produced it.
+      const { id } = launched('preflight-demands-reconciliation');
+      const sequence = store.launchSequences.getByLaunchId(id.launchId);
+      assert.equal(sequence.revision, 1, 'no revision — the demand comes from the verdict alone');
+
+      // Written directly, because what is under test is the demand the STORED
+      // record produces — a launch that reached `stale` for real would need a
+      // published handoff and a moved worktree, which is `launch-preflight`'s
+      // own test, not this one's.
+      store.getDb().prepare('UPDATE launch_sequences SET preflight = ? WHERE id = ?').run(
+        JSON.stringify({
+          verdict: 'stale',
+          reason: 'HEAD is moved, the handoff recorded recorded-sha',
+          requiresReconciliation: true
+        }),
+        sequence.id
+      );
+      const revised = store.launchSequences.getByLaunchId(id.launchId);
+      const why = launchSequence._reconciliationRequired(revised);
+      assert.ok(why, 'the verdict demands one');
+      assert.match(why, /stale/);
+      assert.match(why, /HEAD is moved/, 'and the reason travels with it');
+
+      ackEverything(id);
+      const current = store.launchSequences.getByLaunchId(id.launchId);
+      assert.equal(launchSequence.ready({ ...id, artifact: artifactFor(current) }).body.code,
+        'RECONCILIATION_REQUIRED');
+      const reconciled = launchSequence.ready({
+        ...id,
+        artifact: artifactFor(current, {
+          reconciliation: 'The worktree the previous handoff recorded has moved to a different commit; I checked the branch and nothing I had planned depends on the commit it recorded.'
+        })
+      });
+      assert.equal(reconciled.status, 200, 'and a written reconciliation clears it');
+    });
+
     it('still demands a reconciliation when the revision preceded any serve, and says so accurately', () => {
       // Every revision demands one (§2.3's acceptance condition). What changes
       // with an unserved revision is the WORDING: telling an agent that part of

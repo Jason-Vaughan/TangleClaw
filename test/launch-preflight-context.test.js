@@ -278,3 +278,72 @@ describe('what the launch record keeps', () => {
     assert.equal(needsReconciliation(result), true);
   });
 });
+
+describe('what the launch path actually produces', () => {
+  it('probes the registered root only when the recorded worktree is gone', () => {
+    // §2.7 promises this as the diagnosis an operator gets for
+    // `workspace-unavailable`. It was plumbed end to end and hardcoded null in
+    // the first cut, so the test that mattered was never the pure module's
+    // pass-through — it was whether anything produces a value at all.
+    const session = addSession('wrapped');
+    const pid = stageAttempt({
+      sessionId: session.id,
+      worktree: { path: '/nonexistent/tc-gone', toplevel: '/nonexistent/tc-gone', gitDir: null, branch: 'main', headSha: 'recorded', dirty: false }
+    });
+    const { publishHandoff } = require('../lib/handoff-publish.js');
+    assert.equal(publishHandoff(project, pid).published, true);
+
+    const exec = () => 'root-head-sha\n';
+    const ctx = buildContext(project, { exec });
+    assert.equal(ctx.worktreeProbe.toplevelExists, false, 'precondition: the recorded worktree is gone');
+    assert.equal(ctx.fallbackRootHead, 'root-head-sha', 'the registered root IS probed');
+
+    const result = evaluate(project, { exec });
+    assert.equal(result.verdict, VERDICTS.WORKSPACE_UNAVAILABLE);
+    assert.equal(result.evidence.fallbackRootHead, 'root-head-sha',
+      'and it reaches the evidence an operator reads');
+  });
+
+  it('does not probe the registered root when the worktree is still there', () => {
+    // A probe nobody will read is a git call on every launch for nothing.
+    const session = addSession('wrapped');
+    const pid = stageAttempt({
+      sessionId: session.id,
+      worktree: { path: project.path, toplevel: project.path, gitDir: null, branch: 'main', headSha: 'recorded', dirty: false }
+    });
+    const { publishHandoff } = require('../lib/handoff-publish.js');
+    publishHandoff(project, pid);
+
+    const calls = [];
+    const exec = (bin, args, opts) => { calls.push(opts.cwd); return args.includes('--abbrev-ref') ? 'main\n' : 'recorded\n'; };
+    const ctx = buildContext(project, { exec });
+    assert.equal(ctx.fallbackRootHead, null);
+    assert.ok(calls.every((cwd) => cwd === project.path), 'only the recorded worktree was probed');
+  });
+
+  it('answers both predicates so a caller need not know which applies', () => {
+    // `requiresRecovery` has no production consumer until #1587's recovery gate.
+    // It is answered anyway: the predicate a caller has to go and find is the
+    // one that gets forgotten.
+    const session = addSession('wrapped');
+    const pid = stageAttempt({
+      sessionId: session.id,
+      worktree: { path: project.path, toplevel: project.path, gitDir: null, branch: 'main', headSha: 'recorded-sha', dirty: false }
+    });
+    const { publishHandoff } = require('../lib/handoff-publish.js');
+    publishHandoff(project, pid);
+
+    const exec = (bin, args) => (args.includes('--abbrev-ref') ? 'main\n' : 'a-different-sha\n');
+    const result = evaluate(project, { exec });
+    assert.equal(result.verdict, VERDICTS.STALE);
+    assert.equal(result.requiresReconciliation, true, 'stale is reconciliation, not recovery');
+    assert.equal(result.requiresRecovery, false);
+  });
+
+  it('claims neither predicate when it could not decide at all', () => {
+    const result = evaluate({ id: project.id, name: project.name, path: 42 });
+    assert.equal(result.evaluationFailed, true);
+    assert.equal(result.requiresRecovery, false, 'nothing is owed on the strength of a decision nobody reached');
+    assert.equal(result.requiresReconciliation, false);
+  });
+});

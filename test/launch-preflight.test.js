@@ -447,11 +447,15 @@ describe('runPreflight — the catch-all', () => {
     assert.equal(needsRecovery(r), true);
   });
 
-  it('reports unclassified for an active session past the epoch with no checkpoint', () => {
-    // §2.7 row 16's second named example, which had no fixture of its own. The
-    // session is live and POST-epoch, so the legacy rows cannot claim it; it has
-    // published nothing, so no publication row claims it; and it has not ended,
-    // so the crash row does not either. Nothing matched, which is the point.
+  it('reports handoff-never-published for an active session past the epoch', () => {
+    // §2.7 names "an `active` newest session with no checkpoint" as a row-16
+    // example. It is not one: a post-epoch session with no publications matches
+    // row 9 first, and row 9 is the more specific and more useful answer — it
+    // names what went missing rather than listing what failed. Recorded here
+    // because the plan's example is the thing that is wrong, and the plan's
+    // Chunk 03 notes say so.
+    //
+    // Row 16's reachable example is the continuity-index one, pinned below.
     const r = runPreflight(ctx({
       sessions: [{ id: 9, status: 'active' }],
       publications: [],
@@ -573,6 +577,23 @@ describe('ok is a positive predicate, proven by exhaustion', () => {
         }));
         assert.notEqual(r.verdict, VERDICTS.OK, `baseline ${baseline} epoch ${epochSessionId} reached ok with no publication`);
       }
+    }
+  });
+
+  it('never returns not-evaluated — the verdict the launch records when it could not ask', () => {
+    // This is the property the exhaustiveness exemption below rests on. If this
+    // module could ever return it, the exemption would be hiding a verdict that
+    // belongs to no bucket rather than one that is not a decision at all.
+    const shapes = [
+      {},
+      { file: { state: FILE_STATES.UNREADABLE, doc: null, digest: null } },
+      { sessions: [], publications: [], continuityIndexPresent: false, file: { state: FILE_STATES.ABSENT, doc: null, digest: null } },
+      { sessions: [{ id: 1, status: 'crashed' }], publications: [] },
+      { sessions: [{ id: 9, status: 'active' }], publications: [], continuityIndexPresent: true,
+        file: { state: FILE_STATES.ABSENT, doc: null, digest: null } }
+    ];
+    for (const shape of shapes) {
+      assert.notEqual(runPreflight(ctx(shape)).verdict, VERDICTS.NOT_EVALUATED);
     }
   });
 
