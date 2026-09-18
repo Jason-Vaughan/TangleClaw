@@ -1,5 +1,11 @@
 # #1619 chunk 01 — revised evidence for Architect review
 
+> **SUPERSEDED.** This document describes an intermediate commit of chunk 01
+> only. For the current state read `issue-1619-final-evidence.md` (hosted:
+> `https://cursatory.tail123678.ts.net:8443/plans/84/issue-1619-final-evidence.md`).
+> Kept because the Architect's review of that commit cites it.
+
+
 Branch `fix/issue-1619-identity`, HEAD `9d6489b`, on `main` @ `65fe15b`.
 Commits: `f5fcc71` (reviewed), `d33bf01`, `21f724b`, `9d6489b` (your requested changes).
 
