@@ -173,10 +173,10 @@ describe('#1619 matrix — six data classes × four routes, judge → classify �
   });
 
   it('every renderer that writes a machine path is covered — and a new one fails here', () => {
-    // The sixth time on this change that a fix closed the site it was shown and
-    // left the class. `tildeHomePath` is the only way a machine path reaches a
-    // carrier, so its call sites in the renderer ARE the class — enumerate them
-    // and the guard's coverage becomes checkable instead of remembered.
+    // `tildeHomePath` is the only way a machine path reaches a carrier, so its
+    // call sites in the renderer ARE the class of places that can leak one.
+    // Enumerating them makes the guard's coverage checkable rather than
+    // remembered: a new call site fails here and says what to do.
     const enginesSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'engines.js'), 'utf8');
     const callSites = (enginesSrc.match(/tildeHomePath\(/g) || []).length;
     assert.equal(callSites, 3,
@@ -191,7 +191,7 @@ describe('#1619 matrix — six data classes × four routes, judge → classify �
     // rendering also carries `(⚠️ file not found)`, so two patterns could
     // satisfy the assertion and the case would be right only by the order they
     // happen to sit in — the same trap `generatedBodies()` above was corrected
-    // for, and the one this test was written to close.
+    // for.
     const refFile = path.join(os.tmpdir(), `tc-cover-ref-${process.pid}.md`);
     fs.writeFileSync(refFile, '# Ref\n');
     TEMP_ROOTS.push(refFile);

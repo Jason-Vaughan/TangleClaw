@@ -440,7 +440,7 @@ describe('#1619 — the committed carrier may only point at routes that answer',
 
   it('the route check rejects a route the server does not serve', () => {
     // Guard against the pin passing vacuously: the regex must actually fail on
-    // the route the blocking finding was about.
+    // the route that bypassed the guard.
     const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
     assert.doesNotMatch(server, /['`"]\/api\/projects\/[^'"`]*\/group['"`]/,
       'if this ever starts matching, the check below proves less than it claims');
