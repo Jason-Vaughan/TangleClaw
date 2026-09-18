@@ -337,9 +337,77 @@ describe('classify', () => {
 
   it('parses renames as the new path plus the old path deleted', () => {
     assert.deepEqual(ownership.parseStatus('R  new.js\0old.js\0?? u.js\0 D d.js\0'), [
-      { path: 'new.js', deleted: false }, { path: 'old.js', deleted: true },
-      { path: 'u.js', deleted: false }, { path: 'd.js', deleted: true }
+      { path: 'new.js', deleted: false, indexRemoved: false, renamePair: 1 },
+      { path: 'old.js', deleted: true, indexRemoved: true, renamePair: 1 },
+      { path: 'u.js', deleted: false, indexRemoved: false, renamePair: null },
+      { path: 'd.js', deleted: true, indexRemoved: false, renamePair: null }
     ]);
+  });
+
+  it('tells an already-staged removal from an unstaged one, which git add treats differently', () => {
+    // The distinction #1629 turned on, and it is NOT "is the file on disk":
+    // both are absent. `D ` and a rename source are already out of the INDEX, so
+    // `git add` matches nothing and exits 128; ` D` is still in the index and
+    // `git add` stages its removal. Measured against real git in
+    // `test/wrap-rename-pathspec.test.js`.
+    const parsed = ownership.parseStatus('D  staged-del.js\0 D unstaged-del.js\0R  to.js\0from.js\0C  copy.js\0src.js\0');
+    const byPath = Object.fromEntries(parsed.map((f) => [f.path, f]));
+
+    assert.equal(byPath['staged-del.js'].indexRemoved, true);
+    assert.equal(byPath['unstaged-del.js'].indexRemoved, false, 'still in the index — git add can stage it');
+    assert.equal(byPath['unstaged-del.js'].deleted, true, 'and it IS gone from disk; the two fields differ');
+    assert.equal(byPath['from.js'].indexRemoved, true, 'a rename source is removed by the rename itself');
+    assert.equal(byPath['to.js'].indexRemoved, false);
+    assert.equal(byPath['src.js'].indexRemoved, false, 'a COPY leaves its source alone');
+    assert.equal(byPath['src.js'].deleted, false);
+  });
+
+  it('links a rename\'s two halves so a split decision is visible', () => {
+    const parsed = ownership.parseStatus('R  a-new.js\0a-old.js\0R  b-new.js\0b-old.js\0 M plain.js\0');
+    const byPath = Object.fromEntries(parsed.map((f) => [f.path, f]));
+    assert.equal(byPath['a-new.js'].renamePair, byPath['a-old.js'].renamePair);
+    assert.equal(byPath['b-new.js'].renamePair, byPath['b-old.js'].renamePair);
+    assert.notEqual(byPath['a-new.js'].renamePair, byPath['b-new.js'].renamePair,
+      'two renames are two pairs, not one');
+    assert.equal(byPath['plain.js'].renamePair, null);
+  });
+
+  it('keeps the commit selection whole while withholding what git add cannot resolve', () => {
+    const dirty = ownership.parseStatus('R  new.js\0old.js\0D  sd.js\0 D ud.js\0 M plain.js\0');
+    const buckets = { owned: ['new.js', 'old.js', 'sd.js', 'ud.js', 'plain.js'], included: [], tangleclawMaintenance: [] };
+    const sel = ownership.selectionOf(buckets, dirty);
+    assert.deepEqual(sel.stageable, ['new.js', 'old.js', 'sd.js', 'ud.js', 'plain.js'],
+      'the commit selection keeps the removals — that is how the rename and the deletion land');
+    assert.deepEqual(sel.addable, ['new.js', 'ud.js', 'plain.js'],
+      'git add gets only what it can resolve');
+    assert.deepEqual(sel.splitRenames, [], 'both halves authorized, so nothing is split');
+  });
+
+  it('reports a rename whose halves got different answers, rather than publishing half of it', () => {
+    const dirty = ownership.parseStatus('R  new.js\0old.js\0');
+    const split = ownership.selectionOf(
+      { owned: ['new.js'], included: [], tangleclawMaintenance: [] }, dirty
+    ).splitRenames;
+    assert.equal(split.length, 1);
+    assert.deepEqual(split[0].staged, ['new.js']);
+    assert.deepEqual(split[0].left, ['old.js']);
+  });
+
+  it('rebuilds every selection when a caller narrows the buckets', () => {
+    // `_secret-check` filters buckets and must not leave `addable` or
+    // `splitRenames` describing the selection it just replaced — the #1513
+    // failure shape, which is silent.
+    const dirty = ownership.parseStatus('R  new.js\0old.js\0 M plain.js\0');
+    const buckets = { owned: ['new.js', 'old.js', 'plain.js'], included: [], tangleclawMaintenance: [] };
+    const full = { ...buckets, indexRemoved: ['old.js'], renamePairs: ownership.renamePairsOf(dirty), ...ownership.selectionOf(buckets, dirty) };
+    assert.deepEqual(full.splitRenames, []);
+
+    const narrowed = ownership.reclassify(full, { owned: ['new.js', 'plain.js'], included: [], tangleclawMaintenance: [] });
+    assert.deepEqual(narrowed.stageable, ['new.js', 'plain.js']);
+    assert.deepEqual(narrowed.addable, ['new.js', 'plain.js'], 'nothing unresolvable survives the narrowing');
+    assert.equal(narrowed.splitRenames.length, 1,
+      'withholding one half of a rename is a split, and the rebuild has to see it');
+    assert.deepEqual(narrowed.splitRenames[0].left, ['old.js']);
   });
 });
 
