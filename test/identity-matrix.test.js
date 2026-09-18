@@ -172,6 +172,23 @@ describe('#1619 matrix — six data classes × four routes, judge → classify �
     );
   });
 
+  it('an asterisk in a document name defeats neither name-matching pattern', () => {
+    // Two patterns match a bold document name, and I widened one and left the
+    // other — the same partial sweep that has cost this branch more than any
+    // other mistake. Both are asserted here, together, so the pair cannot drift
+    // apart again.
+    assert.equal(
+      tcOwned._carriesIdentity('- **a*b**: `/Users/someone/Docs/ref.md` — d'),
+      'a shared-document install path',
+      'the reference line: an asterisk in the name must not hide the install path'
+    );
+    assert.equal(
+      tcOwned._carriesIdentity('## Shared Documents\n\n### G\n\n**a*b**\n\n```\nbody\n```\n'),
+      'an embedded shared-document body',
+      'the inline body: same name, same requirement'
+    );
+  });
+
   it('each pattern earns its place — including the two real output never emits alone', () => {
     // Four of the six classes are independently reachable from generator
     // output: removing any one of their patterns fails the matrix above.
