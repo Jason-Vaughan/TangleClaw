@@ -69,13 +69,16 @@ Some engines store plans in their own global directory (Claude Code uses `~/.cla
 - Don't rely on an engine's global plans directory as the cross-session source of truth.
 
 **Rule: Make plans and design docs openable from anywhere, not just as a local file path.** A local file path can't be opened from another machine, and the operator often reads on a different device.
-- When you present a substantial plan, design doc, or reference deliverable, also make it available at a **shareable hosted link** the operator can open from any device — using whatever publishing capability your engine or harness provides.
+- **To the OPERATOR:** When you present a substantial plan, design doc, or reference deliverable to the operator, hand them the **shareable hosted link**, never a bare local file path. Published links must use the MagicDNS format (e.g. `https://cursatory.tail123678.ts.net:8443/plans/<projectId>/<file>.md`). Never use engine-hosted artifact links (like claude.ai artifacts); if the operator clicks it, it must be MagicDNS.
+- **AGENT to AGENT:** When handing off plans or documents to a peer agent on this host, send **BOTH the hosted link AND the canonical absolute local file path**. Peer sessions cannot read the hosted link because it sits behind an authentication gate; they need the local path to read the contents.
 - Keep the **same** link updated in place as the document evolves; don't mint a new link on each edit.
 - The project-local file stays the canonical source; the shared link mirrors it.
 
 **Rule: Archive plans whose chunk has shipped.** A plan outlives its purpose the moment its PR merges; leaving it beside active plans makes future sessions treat closed work as ready (the 2026-05-23 failure: recommended a chunk whose issue had closed 18 days earlier).
 - When a plan's issue closes / PR merges, **move it to `<project-root>/.tangleclaw/plans/archive/`** (or the legacy `.claude/plans/archive/` if that is where the project's plans still live) rather than deleting — preserves the rationale without polluting the active listing.
 - Before treating any plan as canonical, verify its issue is still **OPEN** (`gh issue view <N> --json state -q .state`), even for non-archived files. Archiving is convention; the issue-state check is the contract (it protects across fresh clones, which have no local archive).
+
+**Rule: Rule Authoring Policy.** The ProjectManager (PM) does NOT author, edit, or rewrite global or session rules. The Builders author and maintain the rules for themselves and the rest of the fleet. If questions arise about rule structure or policy, the Builders consult the Architect directly.
 
 ## Memory Hygiene
 
