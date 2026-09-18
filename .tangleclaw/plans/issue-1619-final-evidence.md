@@ -15,15 +15,16 @@ referred to, so the claim cannot drift onto a later commit:
 | `c858016` | The refusal is asked of the file rather than of the diff, closing two routes that bypassed it |
 | `55ae5b4` | The `c858016` row, defects 4 and 5, the counter-case test corrected to assert measured behaviour, and the coverage-gate sentence narrowed to point at the command rather than assert a moment |
 
-The last row is the commit that carried these record edits; its own SHA was
-filled in immediately afterwards, since a docs commit may name the work it
-documents.
+Rows are added as implementation lands. The table is not a log of its own
+edits: a row naming the commit that wrote the row needs a successor to name
+that one, and the sentence that tried to do it has already been stale twice.
 
 The Architect's independent recheck of R1 and R2 was performed at `9a8b92f`, and
 closed both. `2842fee` lands after that check; its own content is described in
 the Review-status section below.
-All four chunks of the fix brief are implemented. Coverage gate: **satisfied**
-(composed review spans the whole branch, 0 unresolved blocking findings).
+All four chunks of the fix brief are implemented. For the coverage gate's
+state, run `prawduct-hook check-cumulative-critic` — it answers for the tree in
+front of you, which a sentence written here cannot.
 
 Supersedes `issue-1619-chunk01-diff.md` and `issue-1619-chunk01-evidence.md`,
 which describe earlier commits.
