@@ -187,8 +187,16 @@ describe('#1619 matrix — six data classes × four routes, judge → classify �
     // All three, as the renderer actually writes them.
     const unreadable = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-unreadable-'));
     TEMP_ROOTS.push(unreadable);
+    // The reference fixture points at a file that EXISTS. With a missing one the
+    // rendering also carries `(⚠️ file not found)`, so two patterns could
+    // satisfy the assertion and the case would be right only by the order they
+    // happen to sit in — the same trap `generatedBodies()` above was corrected
+    // for, and the one this test was written to close.
+    const refFile = path.join(os.tmpdir(), `tc-cover-ref-${process.pid}.md`);
+    fs.writeFileSync(refFile, '# Ref\n');
+    TEMP_ROOTS.push(refFile);
     const cases = {
-      'reference line': { id: 'r', name: 'Ref', groupName: 'G', filePath: '/Users/someone/ref.md', injectMode: 'reference' },
+      'reference line': { id: 'r', name: 'Ref', groupName: 'G', filePath: refFile, injectMode: 'reference' },
       'inline, file missing': { id: 'm', name: 'Missing', groupName: 'G', filePath: '/nope/gone.md', injectMode: 'inline' },
       'inline, unreadable': { id: 'u', name: 'Unreadable', groupName: 'G', filePath: unreadable, injectMode: 'inline' }
     };
@@ -198,20 +206,23 @@ describe('#1619 matrix — six data classes × four routes, judge → classify �
     // and the embedded-body check would satisfy the assertion for the wrong
     // reason — the trap this file's own comment above records, and one I would
     // otherwise have walked into while quoting it.
-    const expectedMarker = {
-      'reference line': '](',
-      'inline, file missing': 'File not found',
-      'inline, unreadable': 'Failed to read'
+    // Each case names the marker that proves it reached ITS branch, and the
+    // exact class the guard must return — `assert.ok` would accept any pattern
+    // matching for any reason, which is how a case comes to be right by
+    // accident.
+    const expected = {
+      'reference line': { marker: '`', klass: 'a shared-document install path' },
+      'inline, file missing': { marker: 'File not found', klass: 'a shared-document path in a read-failure notice' },
+      'inline, unreadable': { marker: 'Failed to read', klass: 'a shared-document path in a read-failure notice' }
     };
     for (const [label, doc] of Object.entries(cases)) {
       const body = engines._buildSharedDocsSection([doc], { committedCarrier: false });
       assert.ok(body.includes(doc.filePath) || body.includes('~/'),
         `${label}: fixture should actually render a path, or it proves nothing`);
-      if (label !== 'reference line') {
-        assert.ok(body.includes(expectedMarker[label]),
-          `${label}: fixture did not reach the branch it names — it proves nothing about that branch`);
-      }
-      assert.ok(tcOwned._carriesIdentity(body), `${label}: renders a machine path the guard does not catch`);
+      assert.ok(body.includes(expected[label].marker),
+        `${label}: fixture did not reach the branch it names — it proves nothing about that branch`);
+      assert.equal(tcOwned._carriesIdentity(body), expected[label].klass,
+        `${label}: the guard must catch this for the reason this case exists`);
     }
   });
 
