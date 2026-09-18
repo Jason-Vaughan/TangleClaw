@@ -181,7 +181,7 @@ verify every named issue/PR state live; `git worktree list` and `git -C <primary
 before starting anything. The handoff notes carry "where I stopped, what is next, what will bite".
 
 If the Coordinator's resume message does not arrive, the operator can paste:
-`Resume Sprint v5.24 per /Users/jasonvaughan/Documents/Projects/TangleClaw-Builder/.tangleclaw/plans/sprint-v5.24.md`
+`Resume Sprint v5.24 per /Users/jasonvaughan/Documents/Projects/TangleClaw-Builder1/.tangleclaw/plans/sprint-v5.24.md`
 
 ---
 
