@@ -1983,12 +1983,30 @@ function applyTheme() {
 
 /**
  * Escape HTML special characters to prevent XSS.
- * @param {string} str
+ *
+ * Renders the values that HAVE a text form — numbers, booleans, bigints —
+ * instead of blanking them. The panels build their markup straight from API
+ * rows, where ids, counts and revisions arrive as JSON numbers; a helper that
+ * only accepted strings emptied every numeric field on the launch-readiness
+ * and rule-delivery panels while the string fields beside them rendered fine,
+ * so the panels looked laid out and were unreadable (#1601).
+ *
+ * `null` and `undefined` still render as '' — many callers pass a field that
+ * is legitimately absent and want the empty cell. So do values with no useful
+ * text form (objects, functions, symbols): '[object Object]' in front of the
+ * operator is not an improvement on a blank.
+ *
+ * This is the same contract as `tcEscapeHtml` in api-helper.js, which that
+ * file falls back to when a page passes it no `esc` — the two must agree,
+ * because the same api-helper code runs on pages that supply either one.
+ *
+ * @param {*} str - Value to render as escaped HTML text
  * @returns {string}
  */
 function esc(str) {
-  if (typeof str !== 'string') return '';
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const kind = typeof str;
+  if (kind !== 'string' && kind !== 'number' && kind !== 'boolean' && kind !== 'bigint') return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 

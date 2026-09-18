@@ -24,6 +24,7 @@ const { makeDocument } = require('./_mini-dom');
 const PUB = path.join(__dirname, '..', 'public');
 const UI_SRC = fs.readFileSync(path.join(PUB, 'ui.js'), 'utf8');
 const API_HELPER_SRC = fs.readFileSync(path.join(PUB, 'api-helper.js'), 'utf8');
+const LANDING_SRC = fs.readFileSync(path.join(PUB, 'landing.js'), 'utf8');
 
 /**
  * Slice a top-level function out of source text by brace-matching, so the
@@ -51,13 +52,14 @@ function liftFunction(src, decl) {
  */
 function render(sequences) {
   const { doc } = makeDocument(['projLaunchSequencesList']);
-  const ctx = {
-    document: doc,
-    window: {},
-    esc: (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-  };
+  const ctx = { document: doc, window: {} };
   vm.createContext(ctx);
+  // The page's OWN `esc`, lifted from landing.js — index.html is where this
+  // panel renders, and landing.js is what defines `esc` there. A hand-written
+  // stub is what let #1601 ship: one that coerced with String() printed the
+  // numbers the shipped helper blanked, so the assertions below passed against
+  // markup the panel could not produce.
+  vm.runInContext(liftFunction(LANDING_SRC, 'function esc(str)'), ctx);
   vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcLaunchReadinessClass'), ctx);
   ctx.window.tcLaunchReadinessClass = ctx.tcLaunchReadinessClass;
   vm.runInContext(liftFunction(UI_SRC, 'function renderProjectLaunchSequences'), ctx);

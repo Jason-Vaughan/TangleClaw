@@ -125,12 +125,25 @@ const updateBeacon = window.tcCreateUpdateBeacon({
 
 /**
  * Escape HTML special characters.
- * @param {string} str
+ *
+ * Renders numbers, booleans and bigints rather than blanking them: markup here
+ * is built from API rows where ids and counts arrive as JSON numbers, and a
+ * string-only helper drops them silently, leaving a laid-out but unreadable
+ * panel (#1601). `null`/`undefined` and values with no useful text form still
+ * render as '' — the empty cell is what a caller passing an absent field
+ * means, and '[object Object]' is not an improvement on a blank.
+ *
+ * Kept identical to `esc` in landing.js and to `tcEscapeHtml` in
+ * api-helper.js: api-helper takes whichever the host page defines, so a page
+ * that escaped differently would escape the same shared markup differently.
+ *
+ * @param {*} str - Value to render as escaped HTML text
  * @returns {string}
  */
 function esc(str) {
-  if (typeof str !== 'string') return '';
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const kind = typeof str;
+  if (kind !== 'string' && kind !== 'number' && kind !== 'boolean' && kind !== 'bigint') return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
