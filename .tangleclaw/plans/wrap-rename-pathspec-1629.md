@@ -6,6 +6,8 @@ issue: https://github.com/Jason-Vaughan/TangleClaw/issues/1629
 branch: fix/wrap-rename-pathspec-1629
 scope: wrap-rename-pathspec-1629
 Critic mode: chunk
+governed_by:
+  - .prawduct/artifacts/wrap-direction.md   # its ## Direction binds all wrap work, and this adds a hard gate
 ---
 
 # #1629 — a staged rename blocks the wrap commit
@@ -22,6 +24,11 @@ Critic mode: chunk
   whose halves straddle the include/leave boundary is refused in words rather than half-published.
 - **Out of scope.** The separate triage observation in the issue (content steps completing via file
   detection while the agent reported follow-on work). Unrelated cleanup. Any release.
+- **Explicitly descoped, filed not dropped:** `session-files` builds the same classification and
+  collects the Include/Leave decisions, but does not read `splitRenames` — so an operator making a
+  split decision is told at `commit`, one step after the drawer closed. The commit step refuses
+  safely and leaves no residue, so this is a timing-of-feedback gap and not a correctness one.
+  Filed as #1630 rather than folded in late (Critic R-11).
 
 **Requirements confidence: High.** The issue specifies the contract, and I reproduced the failure
 and the fix shape against real git before writing this.
