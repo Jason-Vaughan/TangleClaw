@@ -230,6 +230,38 @@ describe('launch sequence (Train 21, Chunk 01)', () => {
       assert.match(refused.body.error, /could not be built/);
     });
 
+    it('a launch whose steps could not be rendered records no recovery either', () => {
+      // The SECOND site of the not-applicable flip. `buildSnapshot`'s own
+      // not-applicable branch is covered in launch-recovery-gate.test.js; this
+      // is `_buildLaunchSnapshot`'s render-failure catch, which builds its
+      // record by hand and so could drift from the branch beside it.
+      //
+      // `preflight` is computed before the try, so a damaged handoff reaches
+      // this branch with `requiresRecovery` true — which is what makes the flip
+      // observable at all. With a sound handoff both the old code and the new
+      // write `none`, and an assertion here would pass either way.
+      const project = makeProject('render-fails-in-recovery');
+      const lockfile = require('../lib/handoff-lockfile');
+      fs.mkdirSync(lockfile.handoffDir(project), { recursive: true });
+      fs.writeFileSync(lockfile.currentPath(project), '{"schema":"not-a-handoff"}\n', 'utf8');
+      const realLoad = store.globalRules.load;
+      store.globalRules.load = () => { throw new Error('global rules unreadable'); };
+      let result;
+      try {
+        result = launch('render-fails-in-recovery');
+      } finally {
+        store.globalRules.load = realLoad;
+      }
+      const sequence = store.launchSequences.getBySession(result.session.id);
+      assert.equal(sequence.applicability, 'not-applicable');
+      assert.equal(sequence.preflight.requiresRecovery, true,
+        'the preflight ran before the render failed, and it found the damaged handoff');
+      assert.equal(sequence.recovery, 'none',
+        'a launch with no steps has nothing to withhold, so it records no demand');
+      assert.equal(sequence.preflight.verdict, 'handoff-corrupt',
+        'the verdict is still recorded — it is where the handoff\'s soundness lives');
+    });
+
     it('a launch with its prime disabled gets no sequence either', () => {
       const out = launchSequence.resolveApplicability(
         { id: 'claude', capabilities: { launchSequence: { supported: true } } },

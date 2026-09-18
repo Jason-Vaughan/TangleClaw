@@ -364,16 +364,14 @@ describe('launch recovery gate (Train 21, #1587)', () => {
       // clearances, so it has to cover all three of them — an operator reading
       // the log for `launch.recovery-cleared` would otherwise see a history
       // missing every clear an advisory session gave itself.
-      const events = store.activity.list
-        ? store.activity.list({ projectId: sequence.projectId, limit: 50 })
-        : store.getDb().prepare(
-          'SELECT event_type AS eventType, detail FROM activity_log WHERE project_id = ? ORDER BY id DESC LIMIT 50'
-        ).all(sequence.projectId).map((r) => ({ eventType: r.eventType, detail: JSON.parse(r.detail || '{}') }));
-      const cleared = events.find((e) => e.eventType === 'launch.recovery-cleared');
+      const [cleared] = store.activity.query({
+        projectId: sequence.projectId, eventType: 'launch.recovery-cleared', limit: 50
+      });
       assert.ok(cleared, 'an advisory clear writes the same event the operator path writes');
-      assert.equal(cleared.detail.clearance, 'agent-reconciled');
-      assert.equal(cleared.detail.clearedBy, null);
-      assert.equal(cleared.detail.sequenceId, sequence.id);
+      const detail = typeof cleared.detail === 'string' ? JSON.parse(cleared.detail) : cleared.detail;
+      assert.equal(detail.clearance, 'agent-reconciled');
+      assert.equal(detail.clearedBy, null);
+      assert.equal(detail.sequenceId, sequence.id);
     });
 
     it('writes no clearance event for a launch that owed no recovery', () => {
@@ -388,10 +386,10 @@ describe('launch recovery gate (Train 21, #1587)', () => {
           proposedFirstAction: 'start the chunk'
         }
       });
-      const rows = store.getDb().prepare(
-        "SELECT COUNT(*) AS n FROM activity_log WHERE project_id = ? AND event_type = 'launch.recovery-cleared'"
-      ).get(sequence.projectId);
-      assert.equal(rows.n, 0, 'nothing was cleared, so nothing claims a clearance');
+      assert.deepEqual(
+        store.activity.query({ projectId: sequence.projectId, eventType: 'launch.recovery-cleared' }), [],
+        'nothing was cleared, so nothing claims a clearance'
+      );
     });
 
     it('a launch with no recovery attests without any of this', () => {
