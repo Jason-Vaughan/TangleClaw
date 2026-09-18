@@ -18,6 +18,34 @@ referred to, so the claim cannot drift onto a later commit:
 | `eabd718` | The inline-body check re-keyed on the rendering after it misfired on this repo's own carrier, and the matrix counter-case rebuilt from the assembled block |
 | `02390b7` | A superseded rule deleted from a comment, a misdirecting export comment, and a document name containing an asterisk no longer letting its body escape |
 
+The table above stops there ON PURPOSE. Rows were added while implementation
+was landing; continuing one per commit made the table a log of its own edits,
+and every fill-in row needed a successor to name it. What follows replaces it
+for the candidate as a whole.
+
+## Final candidate
+
+| | |
+|---|---|
+| **HEAD** | `7da31fdca5687482a87683385c30855e1a4da3fa` |
+| **Tree** | `5689247500cd2e25ead21309dbffe529118097e2` |
+| **Branch** | `fix/issue-1619-identity`, on `main` @ `f4d0d20` |
+| **Architectural approval** | granted at `f0b3af1`. Commits after it are `5d5f725` (the direct no-masking fixture the Architect asked be retained, plus the corrected origin explanation) and `7da31fd` (comment sweep, no behaviour). |
+| **Test evidence** | recorded against this tree by `prawduct-hook test-evidence record --from-junit`; `test-status` exits 0 with the working tree identical to the recorded run. |
+| **Critic** | coverage gate satisfied over `69fcb7db..` this tree, 0 unresolved blocking. The newest fact is a `verify-resolutions` round with 0 findings. |
+| **CI** | GitHub Tests SUCCESS at `f0b3af1`, independently confirmed by the Architect; re-run in flight for later commits. |
+
+Figures are deliberately not copied into this table: `prawduct-hook
+test-status` and `check-cumulative-critic` answer for the tree in front of the
+reader, and a number written here ages the moment anything lands.
+
+**The origin is not emitted unconditionally.** `rules.core.porthubRegistration:
+false` removes the PortHub guide, and with it the API origin, the Medusa routes
+and the bearer line; `rules.core: {}` leaves registration at its default, which
+is ON. An earlier revision of this document said the opposite and used that to
+explain why a no-masking fixture was impossible. It was not impossible: that
+fixture is now regression coverage for both private carriers.
+
 Rows are added as implementation lands. The table is not a log of its own
 edits: a row naming the commit that wrote the row needs a successor to name
 that one, and the sentence that tried to do it has already been stale twice.
