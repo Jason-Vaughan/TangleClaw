@@ -29,6 +29,9 @@ const tcOwned = require('../lib/wrap-steps/_tc-owned-paths');
 
 const MARK = { begin: '<!-- BEGIN:tangleclaw -->', end: '<!-- END:tangleclaw -->' };
 
+/** Everything this file creates under the system temp directory, removed in `after`. */
+const TEMP_ROOTS = [];
+
 /** Bodies a legacy or older-server carrier holds, each from the code that writes it. */
 function generatedBodies() {
   const rules = {
@@ -41,12 +44,14 @@ function generatedBodies() {
   };
   const inlineFile = path.join(os.tmpdir(), `tc-matrix-inline-${process.pid}.md`);
   fs.writeFileSync(inlineFile, '# Doc\nGET /api/health\n');
+  TEMP_ROOTS.push(inlineFile);
   // A file that EXISTS on disk, so the rendering carries the install PATH and
   // not the "(file not found)" marker. Without that, the path class is caught
   // by the existence-check pattern instead and this fixture proves nothing
   // about the path — which a mutation check found it doing.
   const refFile = path.join(os.tmpdir(), `tc-matrix-ref-${process.pid}.md`);
   fs.writeFileSync(refFile, '# Ref\n');
+  TEMP_ROOTS.push(refFile);
   const docs = [
     { id: 'r', name: 'Ref Doc', groupName: 'G', filePath: refFile, injectMode: 'reference' }
   ];
@@ -77,13 +82,23 @@ function generatedBodies() {
   };
 }
 
-/** What current generation writes into a committed carrier — the silent case. */
-function neutralBody(rules) {
-  return [
-    engines._apiOriginDiscoveryLines('md', null).join('\n'),
-    engines._medusaSwitchboardLines(rules, 'md', { committedCarrier: true }).join('\n'),
-    engines._serviceTokenAuthLines(rules, 'md', { committedCarrier: true }).join('\n')
-  ].join('\n');
+/**
+ * What current generation writes into a committed carrier — the silent case.
+ *
+ * This is the ASSEMBLED operational block, not a hand-picked set of emitter
+ * line-sets. The distinction is not cosmetic: the assembled block also carries
+ * the PortHub and shared-docs guides, and the inline-body check fired on the
+ * shared-docs guide's own fenced examples — a defect that reached this repo's
+ * live carrier and would have asked on every wrap, while a three-emitter
+ * fixture stayed green. A counter-case that is not what generation writes
+ * cannot prove generation is silent.
+ *
+ * @param {string} projectPath - A registered project's root.
+ * @param {object} projectConfig - Its config.
+ * @returns {string}
+ */
+function neutralBody(projectPath, projectConfig) {
+  return engines._generateOperationalBlock(projectConfig, projectPath, 'CLAUDE.md');
 }
 
 const carrier = (body, prose = 'Operator notes.') =>
@@ -96,6 +111,7 @@ const carrier = (body, prose = 'Operator notes.') =>
 function repoWith(spec) {
   const file = spec.file || 'CLAUDE.md';
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-matrix-'));
+  TEMP_ROOTS.push(dir);
   execFileSync('git', ['-C', dir, 'init', '-q']);
   fs.writeFileSync(path.join(dir, 'seed.txt'), 'seed\n');
   if (spec.head !== null) fs.writeFileSync(path.join(dir, file), spec.head);
@@ -117,15 +133,24 @@ const classifyOne = (root, file = 'CLAUDE.md') =>
 
 describe('#1619 matrix — six data classes × four routes, judge → classify → stageable', () => {
   let BODIES;
-  let RULES;
+  let NEUTRAL;
+  let neutralRoot;
+  let neutralConfig;
   let tmpStore;
 
   before(() => {
     tmpStore = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-matrix-store-'));
+    TEMP_ROOTS.push(tmpStore);
     store._setBasePath(tmpStore);
     store.init();
     BODIES = generatedBodies();
-    RULES = { serverProtocol: 'http', serverPort: 3102, medusaEnabled: true, medusaProjectName: 'P', serviceTokenEnabled: false, serviceToken: null };
+    // A real registered project, so the assembled block is the one a real
+    // carrier receives — guides included.
+    neutralRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-matrix-proj-'));
+    TEMP_ROOTS.push(neutralRoot);
+    const project = store.projects.create({ name: `Matrix ${Date.now() % 100000}`, path: neutralRoot, engine: 'claude' });
+    neutralConfig = { id: project.id, medusaEnabled: true, rules: { core: { porthubRegistration: true } } };
+    NEUTRAL = neutralBody(neutralRoot, neutralConfig);
   });
 
   it('every class is recognised in output the generator itself produced', () => {
@@ -194,7 +219,7 @@ describe('#1619 matrix — six data classes × four routes, judge → classify �
     // The counter-property, and the one the brief is strictest about: a guard
     // that asks on an ordinary wrap is a failed guard.
     for (const file of ['CLAUDE.md', 'AGENTS.md', 'GEMINI.md', 'CONVENTIONS.md']) {
-      const root = repoWith({ file, head: carrier('older neutral text'), work: carrier(neutralBody(RULES)) });
+      const root = repoWith({ file, head: carrier('older neutral text'), work: carrier(NEUTRAL) });
       const c = classifyOne(root, file);
       assert.ok(c.stageable.includes(file), `${file}: a neutral regenerated block must stage without asking`);
       assert.ok(!c.foreign.some((f) => f.path === file), `${file}: and must not be put to the operator`);
@@ -208,7 +233,7 @@ describe('#1619 matrix — six data classes × four routes, judge → classify �
     const authored = 'Publish plans at `https://example.tail1234.ts.net:8443/plans/<id>/f.md`, never a local path.';
     const root = repoWith({
       head: carrier(`older text\n${authored}`),
-      work: carrier(`${neutralBody(RULES)}\n${authored}`)
+      work: carrier(`${NEUTRAL}\n${authored}`)
     });
     const c = classifyOne(root);
     assert.ok(c.stageable.includes('CLAUDE.md'), 'an authored example must not block the wrap');
@@ -254,6 +279,10 @@ describe('#1619 matrix — six data classes × four routes, judge → classify �
   });
 
   after(() => {
-    try { fs.rmSync(tmpStore, { recursive: true, force: true }); } catch { /* best effort */ }
+    // Every temp root this file created, not just the store: each case builds a
+    // git repo, and two fixture documents live in the system temp directory.
+    for (const dir of TEMP_ROOTS) {
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
   });
 });
