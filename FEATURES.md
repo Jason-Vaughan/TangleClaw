@@ -646,3 +646,12 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - **TBD** — touched in this session: `test/handoff-publication.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/handoff-publish.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/handoff-store.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-09-18)
+
+- **TBD** — touched in this session: `lib/launch-preflight-context.js`. <!-- describe -->
+- **TBD** — touched in this session: `lib/launch-preflight.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/handoff-epoch.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/handoff-repairs.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/launch-preflight-context.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/launch-preflight.test.js`. <!-- describe -->
