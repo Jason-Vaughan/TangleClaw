@@ -85,11 +85,11 @@
 # CLAUDE.md is deliberately NOT listed: it is tracked (#833). TangleClaw does
 # write to it — since #1021 it splices its own BEGIN/END:tangleclaw block on
 # every launch — but only inside those markers, so the hand-authored content
-# around them survives. Expect it to show as modified: the generated block is
-# rendered from this machine's state (the API base URL carries the live port,
-# the Medusa routes carry the project name), so a clone on a different port
-# dirties it at first launch exactly as settings.json does. Same follow-up,
-# #1242. A regenerated CLAUDE.md used to strand the self-updater too; #1241
+# around them survives. Since #1619 the generated block is checkout-neutral —
+# it names no project and no origin, resolving both at run time — so a clone on
+# a different port no longer dirties it at first launch. Before that fix it did,
+# exactly as settings.json does, and the wrap committed the result unasked; PR
+# #1618 put one checkout's Medusa routes on main that way. Follow-up #1242. A regenerated CLAUDE.md used to strand the self-updater too; #1241
 # fixed that WITHOUT widening the discard set — the updater discards this file
 # only when it differs from the committed copy solely inside those markers, so a
 # hand edit outside them still blocks the update, exactly as before.

@@ -43,16 +43,27 @@ describe('#1619 — five checkouts, identical tracked bytes', () => {
 
   const on = { medusaEnabled: true, rules: { core: { porthubRegistration: true } } };
 
+  // Every generator that writes a COMMITTED carrier. `_generateOperationalBlock`
+  // is the one that produced the shipped defect — a plugin-governed project's
+  // tracked CLAUDE.md is spliced from it, not from `_generateClaudeMd` — so a
+  // pin that reaches only the other two would leave the actual culprit free.
+  const TRACKED = {
+    'CLAUDE.md (ungoverned)': (c) => engines._generateClaudeMd(on, c.path),
+    'CLAUDE.md (plugin-governed block)': (c) => engines._generateOperationalBlock(on, c.path),
+    'AGENTS.md': (c) => engines._generateGeminiMd(on, undefined, c.path)
+  };
+
   it('tracked carriers are byte-identical across all five', () => {
-    const claude = checkouts.map((c) => engines._generateClaudeMd(on, c.path));
-    const agents = checkouts.map((c) => engines._generateGeminiMd(on, undefined, c.path));
-    for (let i = 1; i < 5; i++) {
-      assert.equal(claude[i], claude[0], `CLAUDE.md differs between checkout 1 and ${i + 1}`);
-      assert.equal(agents[i], agents[0], `AGENTS.md differs between checkout 1 and ${i + 1}`);
-    }
-    for (const c of checkouts) {
-      assert.ok(!claude[0].includes(c.name), `CLAUDE.md still names ${c.name}`);
-      assert.ok(!agents[0].includes(c.name), `AGENTS.md still names ${c.name}`);
+    for (const [carrier, render] of Object.entries(TRACKED)) {
+      const rendered = checkouts.map(render);
+      for (let i = 1; i < 5; i++) {
+        assert.equal(rendered[i], rendered[0], `${carrier} differs between checkout 1 and ${i + 1}`);
+      }
+      for (const c of checkouts) {
+        assert.ok(!rendered[0].includes(c.name), `${carrier} still names ${c.name}`);
+      }
+      assert.doesNotMatch(rendered[0], /https?:\/\/localhost:\d+/,
+        `${carrier} still carries this machine's origin`);
     }
   });
 

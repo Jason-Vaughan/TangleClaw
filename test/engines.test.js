@@ -1296,9 +1296,19 @@ describe('engines', () => {
       }
     });
 
-    it('drops the section rather than guessing when no path is given', () => {
+    it('never guesses a name when no path is given — and no longer needs one', () => {
+      // #1619 changed what "not guessing" looks like for a COMMITTED carrier.
+      // It used to mean dropping the section, because the section could not be
+      // written without a name. The section now contains no name at all, so it
+      // is emitted and instructs the session to resolve its own identity at run
+      // time. That is strictly better here: gating shared bytes on whether THIS
+      // machine has the project registered would make an unregistered clone
+      // regenerate the file with the section deleted — per-checkout variation
+      // of exactly the kind this fix removes.
       const content = engines._generateClaudeMd(on);
-      assert.ok(!/medusa/i.test(content), 'no project path means no resolvable name — omit, never guess');
+      assert.match(content, /## Medusa Switchboard/, 'the checkout-neutral section still ships');
+      assert.match(content, /tc whoami|\/api\/tc\/whoami/, 'and tells the session to resolve its own name');
+      assert.doesNotMatch(content, /https?:\/\/localhost:\d+/, 'still no guessed origin');
     });
 
     it('renders the aider form as comments so the config stays parseable', () => {
@@ -2825,7 +2835,21 @@ describe('engines', () => {
       store.documentLocks.acquire(doc.id, 999, 'other-project');
 
       const content = engines._generateClaudeMd({ id: projectId, rules: { core: {} } }, null);
-      assert.ok(content.includes('LOCKED'), 'Should show lock warning');
+      // #1619: a committed carrier still WARNS about the lock, but names
+      // neither the holder nor the wall-clock expiry — `other-project` is
+      // another project's name, and `expiresAt` would change the shared bytes
+      // on every regeneration.
+      assert.match(content, /may be locked by another project/, 'Should show lock warning');
+      // Scoped to the lock phrasing on purpose: the PortHub guide's static
+      // example JSON mentions `other-project` as documentation, and a bare
+      // substring check would read that as a leak.
+      assert.doesNotMatch(content, /LOCKED by other-project/,
+        'must not name the lock holder in a committed carrier');
+      assert.doesNotMatch(content, /expires \d{4}-/,
+        'must not carry a wall-clock expiry that rewrites the shared bytes');
+      // The engine-private carrier keeps the full, actionable detail.
+      const priv = engines._generateCodexYaml({ id: projectId, rules: { core: {} } }, null);
+      assert.ok(priv.includes('LOCKED by other-project'), 'the private carrier keeps the holder');
       assert.ok(content.includes('other-project'), 'Should show who locked it');
 
       // Clean up
