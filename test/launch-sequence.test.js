@@ -254,6 +254,8 @@ describe('launch sequence (Train 21, Chunk 01)', () => {
       }
       const sequence = store.launchSequences.getBySession(result.session.id);
       assert.equal(sequence.applicability, 'not-applicable');
+      assert.match(sequence.notApplicableReason, /could not be built/,
+        'stated, not assumed: this is the CATCH branch and not buildSnapshot\'s own not-applicable one');
       assert.equal(sequence.preflight.requiresRecovery, true,
         'the preflight ran before the render failed, and it found the damaged handoff');
       assert.equal(sequence.recovery, 'none',

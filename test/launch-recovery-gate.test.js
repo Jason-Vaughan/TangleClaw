@@ -368,10 +368,11 @@ describe('launch recovery gate (Train 21, #1587)', () => {
         projectId: sequence.projectId, eventType: 'launch.recovery-cleared', limit: 50
       });
       assert.ok(cleared, 'an advisory clear writes the same event the operator path writes');
-      const detail = typeof cleared.detail === 'string' ? JSON.parse(cleared.detail) : cleared.detail;
-      assert.equal(detail.clearance, 'agent-reconciled');
-      assert.equal(detail.clearedBy, null);
-      assert.equal(detail.sequenceId, sequence.id);
+      // `query` maps rows through `_rowToActivity`, which parses `detail`, so
+      // there is nothing left to decode here.
+      assert.equal(cleared.detail.clearance, 'agent-reconciled');
+      assert.equal(cleared.detail.clearedBy, null);
+      assert.equal(cleared.detail.sequenceId, sequence.id);
     });
 
     it('writes no clearance event for a launch that owed no recovery', () => {
