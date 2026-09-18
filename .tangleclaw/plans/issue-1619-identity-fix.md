@@ -194,10 +194,14 @@ goes to the Architect.
 
 - `[DISCHARGED 2026-09-18, chunk 04]` Engine-private carriers are gitignored in
   every managed project. They are not, and the answer is no longer assumed:
-  generation asks `git check-ignore` in the project itself, falling back to the
-  conventional list only where git cannot answer (a non-repository commits
-  nothing). Fixtures build real repositories for both directions plus a nested
-  worktree. Original wording follows.
+  generation asks `git check-ignore` in the project itself, and a state git does
+  not positively report as ignored is treated as COMMITTED — a status that is
+  neither 0 nor 1 (outside a repository, a timeout, a thrown ENOENT) returns
+  committed and never consults the conventional list. The list is reached only
+  when there is no project to ask about at all, which is git never being asked
+  rather than git failing to answer. Fixtures build real repositories for both
+  directions, plus an indexed-then-ignored carrier and a nested worktree.
+  Original wording follows.
 
 - `[SUPERSEDED — was: ASSUMPTION, NOT YET DISCHARGED, chunk 04 gate]` Engine-private carriers
   (`.codex.yaml`, `.aider.conf.yml`) are gitignored in every managed project.
