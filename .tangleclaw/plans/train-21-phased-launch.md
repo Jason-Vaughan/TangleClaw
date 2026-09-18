@@ -1195,9 +1195,11 @@ blocking findings, the VRF entry is enqueued, and the PR closes #1587.
   - The reconciliation condition stays **unnarrowed**: every revision demands one, and only the
     wording is derived from whether anything was served.
   - Retention follow-up #1595 and the nudge-verdict record #1596 filed from the Critic pass.
-- [ ] Chunk 03 — 21.7 (#1585) shipped (PR #1608, merged); 21.8 (#1586) shipped (issue closed, v42 live
-  on main); 21.9 (#1587) in flight on `feat/train-21-car-21-9`, planned in §4b
-  - [ ] Car 21.9 — recovery gate, clear route, UI control (#1587). Steps and Done-when: §4b
+- [x] Chunk 03 — COMPLETE 2026-09-18. 21.7 (#1585) shipped (PR #1608); 21.8 (#1586) shipped (v42);
+  21.9 (#1587) shipped (PR #1624, `8832e8bd`, v43). All three issues closed.
+  - [x] Car 21.9 — recovery gate, clear route, UI control (#1587). Steps, as-built deltas and
+    Done-when: §4b. Seven Critic rounds; #1623 filed for the one gap left open (a launch with no
+    sequence is gated by nothing). VRF-1587-recovery-clear is PENDING with the operator.
   - 21.8's deltas from the blueprint:
   - The context-gathering half lives in its own module, `lib/launch-preflight-context.js`, rather
     than in `lib/sessions.js`. §2.7 says the preflight runs beside the stranded `launchGate`, and it
