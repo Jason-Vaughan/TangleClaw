@@ -211,6 +211,18 @@ A third defect followed, from the cumulative review and fixed at `2842fee`:
    checkable rather than remembered: a test enumerates `tildeHomePath`'s call
    sites and fails if a fourth appears, naming what to do about it.
 
+9. **I reported a fixture as impossible without checking.** The Architect asked
+   that masking values — origin, route, token, lock — be absent, so a
+   document-field miss could not hide behind them. I reported that the origin
+   rides with the PortHub guide unconditionally, and substituted a
+   strip-the-lines approximation. It is not unconditional: `rules.core: {}`
+   leaves PortHub registration on by DEFAULT, and setting it explicitly false
+   produces output with no origin at all. They verified it; I reproduced it. The
+   direct fixture now sits in regression coverage beside the approximation — and
+   writing it caught a second imprecision of mine, a precondition that forbade
+   the words `Authorization: Bearer` rather than a live value, which the
+   shared-docs guide legitimately documents as a placeholder.
+
 **This was the same mistake six times.** Fix the instance shown, leave the
 class. It cost more of this branch's review rounds than every other defect
 together, and the Critic found each one by re-running the finding's own reason

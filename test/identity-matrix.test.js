@@ -451,12 +451,12 @@ describe('#1619 — actual final generated files, across every supported syntax'
         assert.ok(tcOwned._carriesIdentity(body),
           `${carrier}/${spec.label}: the final serialized file is not recognised`);
 
-        // The Architect's requirement, and the reason this suite exists: the
-        // origin rides along with the PortHub guide in every private carrier,
-        // so a document-field miss hides behind it. Strip the values that could
-        // mask one and the document field must still be recognised ON ITS OWN,
-        // in this carrier's final serialization — indented for YAML, comment
-        // -prefixed for aider.
+        // A document-field miss can hide behind the origin, which this fixture
+        // carries because PortHub registration is on. Strip the values that
+        // could mask one and the document field must still be recognised ON ITS
+        // OWN, in this carrier's final serialization — indented for YAML,
+        // comment-prefixed for aider. The case above does the same thing
+        // directly, by generating with PortHub off so no origin exists to strip.
         const unmasked = body
           .split('\n')
           .filter((l) => !/TangleClaw API base URL/.test(l))
@@ -486,6 +486,57 @@ describe('#1619 — actual final generated files, across every supported syntax'
   }
 
   for (const carrier of ['.codex.yaml', '.aider.conf.yml']) {
+    it(`${carrier}: the document field alone, with no masking field present at all`, () => {
+      // The Architect's fixture, kept as they asked. Turning PortHub
+      // registration explicitly OFF — `core: {}` leaves it on by default —
+      // removes the API origin from the generated file entirely, so this is the
+      // direct form of the property the stripped-line assertions approximate:
+      // no origin, no route, no token, no lock anywhere in the file, and the
+      // guard must still recognise the document path on its own.
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-direct-'));
+      OWN_TEMP.push(root);
+      execFileSync('git', ['-C', root, 'init', '-q']);
+      fs.writeFileSync(path.join(root, '.gitignore'), '.codex.yaml\n.aider.conf.yml\n');
+      seq += 1;
+      const project = store.projects.create({ name: `Direct ${Date.now() % 100000} ${seq}`, path: root, engine: 'codex' });
+      const group = store.projectGroups.create({ name: `DirectG ${Date.now() % 100000} ${seq}` });
+      store.projectGroups.addMember(group.id, project.id);
+      const doc = path.join(root, 'ref.md');
+      fs.writeFileSync(doc, '# Ref\n');
+      store.sharedDocs.create({ groupId: group.id, name: 'Ref Doc', filePath: doc, injectIntoConfig: true, injectMode: 'reference' });
+
+      const cfg = { id: project.id, medusaEnabled: false, rules: { core: { porthubRegistration: false } } };
+      const body = carrier === '.codex.yaml'
+        ? engines._generateCodexYaml(cfg, root, carrier)
+        : engines._generateAiderConf(cfg, root, carrier);
+
+      // The precondition IS the point of this case: assert it rather than
+      // assume it, since assuming it is how the weaker version got written.
+      assert.doesNotMatch(body, /https?:\/\/localhost:\d+/, 'no origin may be present');
+      assert.doesNotMatch(body, /\/api\/sessions\/[^/\s<`]+\/medusa/, 'no session route may be present');
+      // A LIVE token, not the word: the shared-docs guide legitimately documents
+      // `Authorization: Bearer <token>` as prose, and the guard's own pattern
+      // excludes the placeholder for exactly that reason.
+      assert.doesNotMatch(body, /Authorization:\s*Bearer\s+(?!<)[A-Za-z0-9._-]{8,}/, 'no live token may be present');
+      assert.doesNotMatch(body, /LOCKED by /, 'no lock holder may be present');
+      assert.ok(body.includes(doc), 'and the document path must actually be there');
+
+      assert.equal(tcOwned._carriesIdentity(body), 'a shared-document install path',
+        `${carrier}: with nothing to mask it, the document field alone must be recognised`);
+
+      // Classified unedited, as the Architect did: written while ignored, then
+      // force-added, with no later edit.
+      fs.writeFileSync(path.join(root, carrier), body);
+      execFileSync('git', ['-C', root, 'add', '-f', carrier]);
+      const c = ownership.classify(
+        { snapshotApplies: true, baseline: { dirty: { paths: [], truncated: false } }, startedAtMs: 1000, workToplevel: root },
+        [{ path: carrier, deleted: false }],
+        {}
+      );
+      assert.ok(!c.stageable.includes(carrier), `${carrier}: must not be stageable`);
+      assert.equal(c.foreign.find((f) => f.path === carrier).reason, 'carries-identity');
+    });
+
     it(`a complete NEUTRAL ${carrier} still stages — the property the widening threatens`, () => {
       // A project that TRACKS its engine-private carrier gets the committed
       // rendering, and that rendering must stage without asking. This is the
