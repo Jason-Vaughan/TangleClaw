@@ -369,15 +369,26 @@ describe('#1619 matrix — six data classes × four routes, judge → classify �
 });
 
 describe('#1619 — actual final generated files, across every supported syntax', () => {
-  const { execFileSync } = require('node:child_process');
 
   // Its own store: the block above removes every temp root it created in its
   // `after`, including the store's, so sharing one leaves this suite writing to
   // a directory that no longer exists.
+  const OWN_TEMP = [];
+
   before(() => {
     const ownStore = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ser-store-'));
+    OWN_TEMP.push(ownStore);
     store._setBasePath(ownStore);
     store.init();
+  });
+
+  // This suite's own cleanup: `TEMP_ROOTS` belongs to the block above, whose
+  // `after` has already run by the time these tests execute, so anything pushed
+  // there from here is never removed.
+  after(() => {
+    for (const dir of OWN_TEMP) {
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
   });
 
   /**
@@ -393,7 +404,7 @@ describe('#1619 — actual final generated files, across every supported syntax'
   function privateProject(docSpec) {
     seq += 1;
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ser-'));
-    TEMP_ROOTS.push(root);
+    OWN_TEMP.push(root);
     execFileSync('git', ['-C', root, 'init', '-q']);
     fs.writeFileSync(path.join(root, '.gitignore'), '.codex.yaml\n.aider.conf.yml\n');
     const project = store.projects.create({ name: `Ser ${Date.now() % 100000} ${seq}`, path: root, engine: 'codex' });
@@ -477,11 +488,63 @@ describe('#1619 — actual final generated files, across every supported syntax'
     }
   }
 
+  for (const carrier of ['.codex.yaml', '.aider.conf.yml']) {
+    it(`a complete NEUTRAL ${carrier} still stages — the property the widening threatens`, () => {
+      // The counter-case for the carriers the serialization work widened. Every
+      // previous time I widened this guard I broke the silent-wrap property and
+      // pinned it only for markdown; the two carriers whose matching changed
+      // had no such test. A project that TRACKS its engine-private carrier gets
+      // the committed rendering, and that rendering must stage without asking.
+      //
+      // WHAT THIS DOES NOT PROVE, stated because a counter-case that looks
+      // stronger than it is, is worse than none: it cannot detect an
+      // over-widened wrapper prefix. Replacing `[#\s]*` with `.*` leaves it
+      // green, because no line in any shipped guide or neutral rendering has
+      // the shape a doc pattern looks for — so there is nothing for an
+      // over-wide prefix to catch hold of. It pins that the guard stays quiet
+      // on real neutral output, which is the property that has actually broken
+      // three times; it does not pin the regex's tightness.
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ser-neutral2-'));
+      OWN_TEMP.push(root);
+      execFileSync('git', ['-C', root, 'init', '-q']);
+      seq += 1;
+      const project = store.projects.create({ name: `SerNeutral ${Date.now() % 100000} ${seq}`, path: root, engine: 'codex' });
+      const group = store.projectGroups.create({ name: `SerNeutralG ${Date.now() % 100000} ${seq}` });
+      store.projectGroups.addMember(group.id, project.id);
+      const doc = path.join(root, 'shared.md');
+      fs.writeFileSync(doc, '# Shared\nbody\n');
+      store.sharedDocs.create({ groupId: group.id, name: 'Shared Doc', filePath: doc, injectIntoConfig: true, injectMode: 'inline' });
+
+      const cfg = { id: project.id, medusaEnabled: true, rules: { core: { porthubRegistration: true } } };
+      // No .gitignore: git reports the carrier as not ignored, so it classifies
+      // as COMMITTED and the generator writes the neutral rendering.
+      const body = carrier === '.codex.yaml'
+        ? engines._generateCodexYaml(cfg, root, carrier)
+        : engines._generateAiderConf(cfg, root, carrier);
+
+      assert.ok(!tcOwned._carriesIdentity(body),
+        `${carrier}: the neutral rendering must not read as identity — `
+        + `got ${tcOwned._carriesIdentity(body)}`);
+
+      fs.writeFileSync(path.join(root, carrier), body);
+      execFileSync('git', ['-C', root, 'add', '-A']);
+      execFileSync('git', ['-C', root, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'seed']);
+      fs.writeFileSync(path.join(root, carrier), `${body}\n# regenerated\n`);
+
+      const c = ownership.classify(
+        { snapshotApplies: true, baseline: { dirty: { paths: [], truncated: false } }, startedAtMs: 1000, workToplevel: root },
+        [{ path: carrier, deleted: false }],
+        {}
+      );
+      assert.ok(c.stageable.includes(carrier), `${carrier}: a neutral carrier must stage without asking`);
+    });
+  }
+
   it('a complete NEUTRAL markdown carrier, guides and all, still stages', () => {
     // Both sides coupled to final files, as the ruling requires: the withheld
     // side above is real private output, and this is the real committed block.
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ser-neutral-'));
-    TEMP_ROOTS.push(root);
+    OWN_TEMP.push(root);
     execFileSync('git', ['-C', root, 'init', '-q']);
     const project = store.projects.create({ name: `SerN ${Date.now() % 100000}`, path: root, engine: 'claude' });
     const cfg = { id: project.id, medusaEnabled: true, rules: { core: { porthubRegistration: true } } };
