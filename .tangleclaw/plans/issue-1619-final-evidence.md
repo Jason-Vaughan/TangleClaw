@@ -3,8 +3,11 @@
 Branch `fix/issue-1619-identity`, on `main` @ `f4d0d20` (which added #1624 and
 #1625 after this branch was cut, merged in at `eef19e7`).
 
-**Implementation and test revisions this document describes**, named rather than
-referred to, so the claim cannot drift onto a later commit:
+**A partial log of implementation revisions, kept for the narrative below.** It
+is NOT the candidate and NOT every revision — it stops at `02390b7`, and the
+Final Candidate section further down is what pins the reviewed state. The
+Architect's own pinned approval summary is the authority for the handoff:
+https://github.com/Jason-Vaughan/TangleClaw/pull/1627#issuecomment-5735349117
 
 | SHA | What it carries |
 |---|---|
