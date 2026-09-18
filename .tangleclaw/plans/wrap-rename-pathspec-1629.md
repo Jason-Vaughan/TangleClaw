@@ -50,7 +50,13 @@ add-vs-commit, exactly as the issue's proposed contract says.
 deletion is also absent from disk and MUST stay addable, or the wrap stops committing ordinary
 file removals.
 
-## Steps
+## Chunks
+
+### Chunk 01: Split staging from the commit selection
+
+Deliverables: `lib/wrap-steps/_file-ownership.js`, `lib/wrap-steps/commit.js`,
+`lib/wrap-steps/_secret-check.js`, `test/wrap-rename-pathspec.test.js`,
+`test/wrap-file-ownership.test.js`.
 
 - [x] **1. `parseStatus` carries index state and rename pairing.** Today it returns
   `{path, deleted}` and discards XY, so no caller can tell an already-staged removal from an
@@ -86,3 +92,10 @@ file removals.
 Every box ticked, suite green, Critic clean, and the issue's reproduction — `git mv` then wrap —
 produces a commit containing the rename. PR is NOT opened: the push/rebase/merge freeze is still in
 force, so this lands as local commits until the operator or the PM lifts it.
+
+## Status
+
+- [x] Chunk 01 — Split staging from the commit selection. Built 2026-09-18;
+  `git add` and `git commit` take separate path lists, a split rename is refused
+  before the wrap branch is created, and the acceptance suite drives the real
+  `commitStep.run` against real git. #1630 filed for the descoped drawer half.

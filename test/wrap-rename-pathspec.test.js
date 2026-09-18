@@ -185,14 +185,20 @@ describe('#1629 — a staged rename reaches the commit', () => {
     const repo = makeRepo();
     const weird = 'a*b?[c].md';
     fs.writeFileSync(path.join(repo, weird), 'literal name\n');
-    git(repo, 'add', '--', weird);
-    git(repo, 'commit', '-q', '-m', 'add the odd name');
+    // A decoy the glob `a*b?[c].md` WOULD match if the pathspec were not
+    // literal. Without it this case cannot tell a literal pathspec from a
+    // globbed one, which is the only thing it exists to check.
+    fs.writeFileSync(path.join(repo, 'axbyc.md'), 'must not be swept in\n');
+    git(repo, 'add', '--', weird, 'axbyc.md');
+    git(repo, 'commit', '-q', '-m', 'add the odd name and a decoy');
     const baseline = launchBaseline.capture(repo);
     git(repo, 'mv', weird, 'renamed-odd.md');
+    fs.appendFileSync(path.join(repo, 'axbyc.md'), 'edited after launch\n');
 
     const r = await runCommit(repo, await scopeFor(repo, baseline));
     assert.notEqual(r.status, 'blocked', `blocked: ${JSON.stringify(r.blockers || [])}`);
-    assert.deepEqual(committedPaths(repo), [`R100\t${weird}\trenamed-odd.md`]);
+    assert.deepEqual(committedPaths(repo).sort(), ['M\taxbyc.md', `R100\t${weird}\trenamed-odd.md`],
+      'the rename landed literally; the decoy landed because it changed, not because a glob caught it');
   });
 
   it('leaves the operator\'s own staged work staged and uncommitted', async () => {
@@ -235,18 +241,34 @@ describe('#1629 — a staged rename reaches the commit', () => {
     assert.equal(git(repo, 'rev-parse', 'HEAD').trim(), headBefore, 'nothing was committed');
   });
 
-  it('names a remedy the operator can actually carry out', () => {
-    const decidable = ownership.selectionOf(
-      { owned: ['new.md'], included: [], tangleclawMaintenance: [], left: ['old.md'], undecided: [] },
-      ownership.parseStatus('R  new.md\0old.md\0')
-    ).splitRenames;
-    assert.equal(decidable[0].reason, 'decision', 'the operator chose Leave and can choose again');
+  it('names a remedy the operator can actually carry out, through the real step', async () => {
+    // Driven through `commitStep.run`, not `selectionOf` with a hand-built
+    // bucket object. The first version of this test passed against a shape
+    // production never produces: the commit step refuses on
+    // `secrets.classified`, and `_secret-check` rebuilds it through
+    // `reclassify` with three bucket keys and no decisions — so every half
+    // looked undecidable and an operator who chose Leave was told Leave could
+    // not be changed. The fixture hid it; the real step does not.
+    const repo = makeRepo();
+    fs.writeFileSync(path.join(repo, 'old.md'), 'operator touched this before launch\n');
+    const baseline = launchBaseline.capture(repo);
+    git(repo, 'mv', 'old.md', 'new.md');
 
-    const withheld = ownership.selectionOf(
-      { owned: ['new.md'], included: [], tangleclawMaintenance: [], left: [], undecided: [] },
-      ownership.parseStatus('R  new.md\0old.md\0')
-    ).splitRenames;
-    assert.equal(withheld[0].reason, 'not-committable',
+    const r = await runCommit(repo, await scopeFor(repo, baseline), { pathDecisions: { 'old.md': 'leave' } });
+    assert.equal(r.status, 'blocked');
+    assert.equal(r.output.splitRenames[0].reason, 'decision',
+      'the operator chose Leave and can choose again — that is the remedy to offer');
+    assert.match(r.output.remediation, /include both to commit the move/);
+    assert.doesNotMatch(r.output.remediation, /no Include\/Leave choice can resolve this/,
+      'and they must NOT be told their own decision is beyond their control');
+  });
+
+  it('offers the undoable remedy when no decision could include the other half', () => {
+    const dirty = ownership.parseStatus('R  new.md\0old.md\0');
+    const buckets = { owned: ['new.md'], included: [], tangleclawMaintenance: [] };
+    // Nothing decidable: the other half was withheld, not left by choice.
+    const withheld = ownership.selectionOf(buckets, dirty, ownership.decidablePathsOf({ left: [], undecided: [] }));
+    assert.equal(withheld.splitRenames[0].reason, 'not-committable',
       'a half no decision can include must not be described as one they can include');
   });
 
@@ -274,5 +296,36 @@ describe('#1629 — a staged rename reaches the commit', () => {
     const tracked = git(repo, 'ls-tree', '-r', '--name-only', 'HEAD').trim().split('\n').sort();
     assert.deepEqual(tracked, ['new.md', 'old.md', 'other.md'],
       'committed under both names — this is what the blocker prevents');
+  });
+
+  it('commits a rename AND stops tracking state in one commit', async () => {
+    // The temp-index path, which nothing reached. `_commitWithUntrack` builds an
+    // index from HEAD and commits it whole with NO pathspec, so a rename source
+    // is still present there and has to be removed explicitly. Every existing
+    // untrack test runs over a tree with no rename, where that removal is a
+    // no-op — delete the line and they all stay green while a wrap that
+    // untracks state and renames a file commits the source beside its
+    // destination.
+    const repo = makeRepo();
+    fs.mkdirSync(path.join(repo, '.tangleclaw', 'medusa'), { recursive: true });
+    fs.writeFileSync(path.join(repo, '.tangleclaw', 'medusa', 'registry.json'), '{}\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'tracked state');
+    const baseline = launchBaseline.capture(repo);
+    git(repo, 'mv', 'old.md', 'new.md');
+
+    const r = await runCommit(repo, await scopeFor(repo, baseline), { untrackState: 'approve' });
+    assert.notEqual(r.status, 'blocked', `blocked: ${JSON.stringify(r.blockers || [])}`);
+
+    const changed = committedPaths(repo).sort();
+    assert.deepEqual(changed, ['D\t.tangleclaw/medusa/registry.json', 'R100\told.md\tnew.md'],
+      'the rename is a rename, and the state file is untracked, in the one commit');
+
+    const tracked = git(repo, 'ls-tree', '-r', '--name-only', 'HEAD').trim().split('\n').sort();
+    assert.ok(!tracked.includes('old.md'),
+      'the rename source did NOT survive in the temp index — this is the line under test');
+    assert.ok(tracked.includes('new.md'));
+    assert.equal(fs.existsSync(path.join(repo, '.tangleclaw', 'medusa', 'registry.json')), true,
+      'and the untracked state file is still on disk');
   });
 });
