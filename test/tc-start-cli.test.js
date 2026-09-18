@@ -269,6 +269,52 @@ describe('tc start (car 21.3)', () => {
     assert.ok(!printed.includes('measured 8000'), 'an assumed limit is never presented as measured');
   });
 
+  it('tells a session in recovery what is blocking it, and who can open it', () => {
+    // A session in OPERATOR recovery has just been told by `tc start next` that
+    // its task step is withheld, and `status` is where it looks to find out
+    // whether anything changed. Printing nothing left it reading a status that
+    // mentioned no obstacle at all, which reads as "carry on".
+    /**
+     * Render a status whose recovery block is the variable under test.
+     * @param {object} status - The status block to render
+     * @returns {string} The printed page
+     */
+    const render = (status) => tcVerbs.renderStartStatus({
+      sequence: 'present',
+      sessionId: 7,
+      sequenceId: 3,
+      revision: 1,
+      applicability: 'applicable',
+      preflight: { verdict: 'handoff-behind' },
+      pageBudget: 19332,
+      toolOutput: { maxChars: 20000, measured: true },
+      pending: { stages: [], reason: 'every stage ships' },
+      renderContext: 'recorded',
+      status,
+      steps: [{ index: 0, id: 'identity', pageCount: 1, pagesServed: [], servedAt: null, ackedAt: null }]
+    });
+
+    const withheld = render({ cursor: 3, ready: false, recovery: 'required', recoveryMode: 'operator', recoveryRevision: 4, unready: false });
+    assert.match(withheld, /Recovery required \(handoff-behind\), operator-cleared/);
+    assert.match(withheld, /the task step is withheld and READY is refused/);
+    assert.match(withheld, /recovery revision 4/);
+    assert.match(withheld, /nothing you can run opens it/i,
+      'the session is told not to keep trying, because retrying is what it would otherwise do');
+
+    const advisory = render({ cursor: 3, ready: false, recovery: 'required', recoveryMode: 'advisory', recoveryRevision: 1, unready: false });
+    assert.match(advisory, /Recovery required \(handoff-behind\), advisory/);
+    assert.match(advisory, /--reconciliation/, 'advisory recovery names the flag that clears it');
+    assert.doesNotMatch(advisory, /withheld/, 'the advisory task step IS served');
+
+    const cleared = render({ cursor: 4, ready: false, recovery: 'cleared', recoveryMode: 'operator', recoveryRevision: 4, unready: false });
+    assert.match(cleared, /Recovery: cleared/);
+    assert.doesNotMatch(cleared, /withheld|--reconciliation/);
+
+    const none = render({ cursor: 1, ready: false, recovery: 'none', recoveryMode: 'operator', recoveryRevision: 1, unready: false });
+    assert.doesNotMatch(none, /Recovery/,
+      'a launch that owes none is not told about a gate it will never meet');
+  });
+
   it('prints the missing render context, because a re-render can then be thinner', () => {
     // The status payload and the printed page are two halves of one
     // disclosure; delete either and a session loses the only warning it gets

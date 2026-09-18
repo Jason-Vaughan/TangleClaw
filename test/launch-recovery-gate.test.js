@@ -54,9 +54,10 @@ describe('launch recovery gate (Train 21, #1587)', () => {
   /**
    * Launch with tmux and engine detection stubbed, so no pane is ever started.
    * @param {string} name - Project name
+   * @param {object} [launchOptions] - Passed through to `launchSession`
    * @returns {object} The launch result
    */
-  function launch(name) {
+  function launch(name, launchOptions = {}) {
     const real = {
       create: tmux.createSession, has: tmux.hasSession, kill: tmux.killSession, detect: enginesModule.detectEngine
     };
@@ -65,7 +66,7 @@ describe('launch recovery gate (Train 21, #1587)', () => {
     tmux.killSession = () => true;
     enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/fake-engine' });
     try {
-      return sessions.launchSession(name, {});
+      return sessions.launchSession(name, launchOptions);
     } finally {
       tmux.createSession = real.create;
       tmux.hasSession = real.has;
@@ -166,6 +167,31 @@ describe('launch recovery gate (Train 21, #1587)', () => {
     it('defaults an unset setting to operator, the blocking side', () => {
       const { sequence } = launchInRecovery(null);
       assert.equal(sequence.recoveryMode, 'operator');
+    });
+
+    it('records no recovery on a launch that has no steps to withhold', () => {
+      // A not-applicable launch gates nothing: `_serve` has no step to withhold
+      // and `ready` refuses it with SEQUENCE_NOT_APPLICABLE before any recovery
+      // check. Recording `required` would be a demand nothing enforces and no
+      // panel renders — and the clear route would then write a clearance for a
+      // launch that blocked nobody. The verdict still rides `preflight`, which
+      // is where the handoff's soundness is actually recorded.
+      const name = `no-sequence-${counter}`;
+      const dir = path.join(projectsDir, name);
+      fs.mkdirSync(dir, { recursive: true });
+      const project = store.projects.create({ name, path: dir, engine: 'claude' });
+      fs.mkdirSync(lockfile.handoffDir(project), { recursive: true });
+      fs.writeFileSync(lockfile.currentPath(project), '{"schema":"not-a-handoff"}\n', 'utf8');
+      // `primePrompt: false` is the supported way to reach a not-applicable
+      // launch on an engine that DOES support sequences: a launch that asked
+      // for no startup context gets none by pull either.
+      const session = launch(name, { primePrompt: false }).session;
+      const sequence = store.launchSequences.getBySession(session.id);
+      assert.equal(sequence.applicability, 'not-applicable', 'the fixture must actually have no sequence');
+      assert.equal(sequence.preflight.requiresRecovery, true,
+        'the preflight still found the damaged handoff');
+      assert.equal(sequence.recovery, 'none',
+        'and the launch records no demand, because nothing here can enforce one');
     });
   });
 
@@ -334,6 +360,38 @@ describe('launch recovery gate (Train 21, #1587)', () => {
       assert.equal(after.recoveryClearedBy, null,
         'no operator was involved, and the row must not imply one');
       assert.equal(answer.body.status.recovery, 'cleared');
+      // The activity row, not just the column. One event type is named for
+      // clearances, so it has to cover all three of them — an operator reading
+      // the log for `launch.recovery-cleared` would otherwise see a history
+      // missing every clear an advisory session gave itself.
+      const events = store.activity.list
+        ? store.activity.list({ projectId: sequence.projectId, limit: 50 })
+        : store.getDb().prepare(
+          'SELECT event_type AS eventType, detail FROM activity_log WHERE project_id = ? ORDER BY id DESC LIMIT 50'
+        ).all(sequence.projectId).map((r) => ({ eventType: r.eventType, detail: JSON.parse(r.detail || '{}') }));
+      const cleared = events.find((e) => e.eventType === 'launch.recovery-cleared');
+      assert.ok(cleared, 'an advisory clear writes the same event the operator path writes');
+      assert.equal(cleared.detail.clearance, 'agent-reconciled');
+      assert.equal(cleared.detail.clearedBy, null);
+      assert.equal(cleared.detail.sequenceId, sequence.id);
+    });
+
+    it('writes no clearance event for a launch that owed no recovery', () => {
+      const { id, sequence } = launchClean();
+      ackThroughState(id);
+      ackCursorStep(id);
+      launchSequence.ready({
+        ...id,
+        artifact: {
+          schema: 'tc.ready/1',
+          preflightVerdict: sequence.preflight.verdict,
+          proposedFirstAction: 'start the chunk'
+        }
+      });
+      const rows = store.getDb().prepare(
+        "SELECT COUNT(*) AS n FROM activity_log WHERE project_id = ? AND event_type = 'launch.recovery-cleared'"
+      ).get(sequence.projectId);
+      assert.equal(rows.n, 0, 'nothing was cleared, so nothing claims a clearance');
     });
 
     it('a launch with no recovery attests without any of this', () => {

@@ -247,8 +247,12 @@ the envelope):
   "content": "…",
   "ack": null,                                      // present only on the last page:
   // "ack": {"digest": "…", "command": "tc start next --ack governance:1:<digest>"}
-  "status": {"cursor": 1, "ready": false, "recovery": "none|required|cleared", "unready": false},
-  "next": "page|step|ready" }
+  "status": {"cursor": 1, "ready": false, "recovery": "none|required|cleared",
+             "recoveryMode": "operator|advisory", "recoveryRevision": 1, "unready": false},
+  // Present only on a task step served under ADVISORY recovery; the renderer
+  // prints it above the content and `pageOverhead` budgets for it (§4b deltas).
+  "recovery": {"verdict": "…", "recoveryRevision": 1},
+  "next": "page|step|ready|done|recovery-clear" }
 ```
 
 **`POST /api/tc/start/next`**, body `{ack?: {step, revision, digest}, page?: n}`:
@@ -268,7 +272,7 @@ the envelope):
      return the next step's page 0 (or the recovery gate response, see 4).
 3. No `ack` → serve the requested page (default: the next unserved page) of the cursor step.
    Record it in `pages_served`. Serving is idempotent.
-4. **Recovery gate on step 4 (v41).** The gate depends on `recovery_mode` and has **no**
+4. **Recovery gate on step 4 (v43 — see §2.8).** The gate depends on `recovery_mode` and has **no**
    `unready_at` input:
    - `recovery=required` and `recovery_mode=operator` → step 4 is **withheld**:
      `200 {withheld:true, reason, recoveryRevision}`, and nothing is marked served. Only a
@@ -727,7 +731,8 @@ clear a newer launch.
 `operator-verified`, and the dashboard labels it. An open install **never** silently switches to
 advisory: `recovery_mode` is whatever the project setting says.
 
-**v41 columns on `launch_sequences`:**
+**v43 columns on `launch_sequences`** (rev 4 wrote v41; the cars of chunk 03 shipped separately and
+each took the next unshipped number, so 21.7 took v41, 21.8 took v42 and 21.9 took v43):
 - `recovery TEXT CHECK (recovery IN ('none','required','cleared'))`
 - `recovery_mode TEXT CHECK (recovery_mode IN ('operator','advisory'))` — from the project setting,
   **default `operator`**
