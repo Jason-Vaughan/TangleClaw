@@ -610,7 +610,10 @@ Carry it into ADR 0017 (21.12) so the contract does not live only in a plan and 
 
 The table below is rev 4's, unchanged apart from the version it runs at:
 
-**Migration boundary.** When v41 runs, it writes one `project_handoff_epoch` row per project:
+**Migration boundary — rev 4's original text, superseded on the version it names.** It read "when
+v41 runs"; the migration is **v42**, per the amendment directly above, and the already-v41 case it
+did not anticipate is handled there. The table and the baseline definitions below are unchanged and
+still govern. One row per project:
 
 ```sql
 CREATE TABLE project_handoff_epoch (
@@ -632,8 +635,16 @@ Only `clean` satisfies check 7. An `unclean` baseline is recovery: 5 if the newe
 crashed, otherwise 8. An `empty` baseline with continuity present is 16. Nothing reaches `ok`
 without a current publication.
 
+Note what that last sentence does and does not mean, since the amendment makes `unclean` far more
+common: baseline is read ONLY by checks 7 and 8, both of which require `file absent AND no
+publication rows`. A project holding a current eligible publication never reaches a baseline test at
+all, so an `unclean` compatibility baseline withholds the clean-legacy bypass without ever standing
+between a good publication and `ok`.
+
 Legacy acceptance ends permanently at the first session after the epoch: from then on a lost
-handoff is 9 or 10, never 7.
+handoff is 9 or 10, never 7. On a store whose epoch is a v42 observation rather than a recovered v41
+boundary, check 7 is unreachable regardless, because that store's baseline is `unclean` by
+construction.
 
 ### 2.8 Recovery clear — route-level operator guard (B5)
 
