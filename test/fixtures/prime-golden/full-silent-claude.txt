@@ -48,8 +48,8 @@ This project opted into Medusa session-to-session messaging. You are a Medusa pa
 - **How to interact:** TangleClaw already runs your WebSocket listener — do NOT register your own WS connection for this workspace id (two consumers on one id fight over the queue). Use the TangleClaw API at <API_ORIGIN>: inbox `GET /api/sessions/golden-full/medusa/messages`, mark read `POST /api/sessions/golden-full/medusa/read`, send `POST /api/sessions/golden-full/medusa/send` (`{"to","message"}`), peers `GET /api/sessions/golden-full/medusa/roster`. The full consumer contract is appended at the end of this prime.
 
 ## Active Learnings
-- The store opens SQLite at require time.
 - tmux targets need an exact-match prefix.
+- The store opens SQLite at require time.
 
 ## Resume — emit this as your FIRST visible message
 This prime is hidden context; the operator does not see it. Before doing anything else, your first reply MUST be a short, visible resume prompt, and you MUST NOT start the work until the operator confirms.
