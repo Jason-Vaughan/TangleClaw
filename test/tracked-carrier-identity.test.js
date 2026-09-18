@@ -216,3 +216,64 @@ describe('#1619 — five checkouts, identical tracked bytes', () => {
     }
   });
 });
+
+describe('#1619 — a managed block is not proof that a diff is safe maintenance', () => {
+  const owned = require('../lib/wrap-steps/_tc-owned-paths');
+
+  describe('_carriesIdentity', () => {
+    it('is silent on a block generated after the fix', () => {
+      // The property the fix brief requires: the guard must not turn every
+      // ordinary wrap into a question. A post-#1619 block carries placeholders,
+      // not values, so it matches nothing.
+      const neutral = [
+        'Routes, with `<base>` = `<api>/api/sessions/<project-name>`:',
+        'send `POST <base>/medusa/send` with `{"to": "<workspace-id>", "message": "..."}`',
+        '`<api>` — the `TANGLECLAW_API` your launch exported.',
+        'Fetch it from `$TANGLECLAW_API/api/service-token` and send it as `Authorization: Bearer <token>`.'
+      ].join('\n');
+      assert.equal(owned._carriesIdentity(neutral), null);
+    });
+
+    it('names each value a committed carrier must not hold', () => {
+      assert.match(owned._carriesIdentity('base URL: http://localhost:3102'), /origin/);
+      assert.match(owned._carriesIdentity('GET http://h/api/sessions/TangleClaw-Builder1/medusa/roster'), /route/);
+      assert.match(owned._carriesIdentity('Authorization: Bearer tc_live_abcdef123456'), /token/);
+    });
+
+    it('does not read the token PLACEHOLDER as a live credential', () => {
+      // The pointer the committed carrier is supposed to contain says
+      // `Authorization: Bearer <token>`. Flagging it would fire on the fixed
+      // state, which is the opposite of the intent.
+      assert.equal(owned._carriesIdentity('send it as `Authorization: Bearer <token>`'), null);
+    });
+
+    it('tolerates a missing or non-string block', () => {
+      assert.equal(owned._carriesIdentity(null), null);
+      assert.equal(owned._carriesIdentity(''), null);
+      assert.equal(owned._carriesIdentity(42), null);
+    });
+  });
+
+  it('judges the BLOCK, not the whole carrier', () => {
+    // Caught in development, and it would have fired on every wrap in this very
+    // repo: the hand-maintained half of CLAUDE.md documents a MagicDNS link
+    // with a host and a port, as an example, in the global-rules mirror. That
+    // half is the operator's. Scanning it would make the guard permanent noise.
+    const markers = engines.managedBlockMarkers('markdown');
+    const carrier = [
+      '# CLAUDE.md',
+      '',
+      'Hand-authored: publish plans at `https://example.tail1234.ts.net:8443/plans/<id>/f.md`.',
+      '',
+      markers.begin,
+      'Routes: `<api>/api/sessions/<project-name>/medusa/send` — resolve at run time.',
+      markers.end,
+      ''
+    ].join('\n');
+    const block = require('../lib/managed-block').extractManagedBlock(carrier, markers);
+    assert.equal(owned._carriesIdentity(carrier), 'a machine-specific API origin',
+      'the whole-file read sees the operator\'s example — which is why it is not what we judge');
+    assert.equal(owned._carriesIdentity(block), null,
+      'the block is what TangleClaw owns, and it is clean');
+  });
+});

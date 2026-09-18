@@ -121,6 +121,34 @@ still carries identity is surfaced rather than committed. Must not prompt on an
 ordinary wrap (brief, point 6): after Chunk 01 the ordinary diff is empty, so
 the guard fires only on the anomaly.
 
+### Chunk 03 design (decided 2026-09-18)
+
+`judge()` returns `MAINTENANCE` for any carrier diff confined to the managed
+block, and `_file-ownership.js` stages maintenance **silently**. The brief says a
+managed block is not proof that a diff is safe, and that the guard must not
+prompt on an ordinary wrap.
+
+Both hold if the guard asks one more question: *does the new block contain
+identity?* After chunk 01 the ordinary regenerated block contains none, so the
+guard is silent on every normal wrap and fires only on the anomaly — a carrier
+written by a pre-fix server, an override, or a hand edit.
+
+`_carriesIdentity(text)` returns the first pattern that matches, or null:
+
+| Pattern | Why |
+|---|---|
+| `https?://<host>:<port>` | a machine origin; the neutral block names none |
+| `/api/sessions/<name>/medusa` | a name-scoped route — the #1619 defect verbatim |
+| `Authorization: Bearer` followed by anything but the `<token>` placeholder | a live credential |
+
+A match downgrades `MAINTENANCE` to `null` — "not provably ours" — which is the
+existing path for a diff TangleClaw cannot vouch for, so the operator is asked
+rather than the change being staged. No new status, no new prompt shape.
+
+Deliberately a **detector, not a fixer**: it must not rewrite the carrier, because
+the correct content depends on the generator, and a wrap is the wrong place to
+regenerate. It reports and hands the decision over.
+
 ### Chunk 04 — regression fixtures
 Five simulated checkouts sharing one committed baseline; generate/sync/wrap
 repeatedly; assert no tracked diff, no silent staging, no loss of authored
