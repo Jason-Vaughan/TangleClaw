@@ -588,8 +588,8 @@ describe('launch sequence attestation (Train 21, Chunk 02)', () => {
       assert.ok(shown.readiness.unreadyAt);
       assert.equal(shown.readiness.nudgeCount, 1);
       assert.equal(shown.readiness.reconciliationRequired, null);
-      assert.deepEqual(shown.pending.stages, ['recovery'],
-        'READY and the window are built, so only recovery is still declared pending');
+      assert.deepEqual(shown.pending.stages, [],
+        'the recovery gate (#1587) was the last stage, so nothing is declared pending');
     });
   });
 

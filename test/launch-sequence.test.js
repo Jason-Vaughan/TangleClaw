@@ -148,17 +148,28 @@ describe('launch sequence (Train 21, Chunk 01)', () => {
       assert.match(undeclared.reason, /no measured tool-output limit/);
     });
 
-    it('a printed page never exceeds the engine\'s limit', () => {
+    it('a printed page never exceeds the engine\'s limit, decorations included', () => {
+      // Rendered with EVERY decoration the envelope can carry at once, because
+      // the budget is `maxChars - pageOverhead()` and `pageOverhead` measures
+      // exactly that worst case. A decoration added to the renderer and not to
+      // this fixture is a decoration nothing measures: the budget would still be
+      // computed from it, but no test would prove a page carrying it fits. That
+      // is how the recovery notice (#1587) — 668 characters of overhead, up from
+      // ~300 — could have shipped unmeasured.
       const maxChars = 2000;
       const budget = launchSequence.pageBudgetFor(maxChars);
       const content = 'word '.repeat(2000);
+      const longestVerdict = Object.values(require('../lib/launch-preflight').VERDICTS)
+        .reduce((longest, v) => (v.length > longest.length ? v : longest), '');
       for (const [start, end] of launchSequence.paginate(content, budget)) {
         const printed = launchPage.renderPage({
           step: { index: 1, id: 'governance', of: 4 },
           page: { index: 0, of: 9, continued: true },
-          revision: 1,
+          revision: 999999,
           content: content.slice(start, end),
-          ack: { command: launchPage.ackCommand('governance', 1, 'a'.repeat(16)) }
+          ack: { command: launchPage.ackCommand('governance', 999999, 'a'.repeat(16)) },
+          revised: { code: 'SNAPSHOT_REVISED', reason: launchPage.REVISION_REASONS.RULES_CHANGED, revision: 999999 },
+          recovery: { verdict: longestVerdict, recoveryRevision: 999999 }
         });
         assert.ok(printed.length <= maxChars, `a printed page fits: ${printed.length} <= ${maxChars}`);
       }
@@ -202,10 +213,10 @@ describe('launch sequence (Train 21, Chunk 01)', () => {
       const assumedStatus = launchSequence.status({ launchId: assumedSeq.launchId, projectId: assumed.id }).body;
       assert.equal(assumedStatus.toolOutput.measured, false);
       assert.match(assumedStatus.toolOutput.reason, /no measured tool-output limit/);
-      // Chunk 02 built READY and the unready window, so only recovery is still
-      // declared pending. The list is the honest "not built yet" statement, so it
-      // shrinks as each stage ships rather than describing what it once was.
-      assert.deepEqual(assumedStatus.pending.stages, ['recovery']);
+      // The list is the honest "not built yet" statement, so it shrinks as each
+      // stage ships rather than describing what it once was. It is empty now:
+      // the recovery gate was the last stage this protocol served without.
+      assert.deepEqual(assumedStatus.pending.stages, []);
     });
 
     it('a launch survives steps that cannot be rendered, and says why it has no sequence', () => {
@@ -228,6 +239,40 @@ describe('launch sequence (Train 21, Chunk 01)', () => {
       const refused = next({ launchId: sequence.launchId, projectId: project.id });
       assert.equal(refused.body.code, 'SEQUENCE_NOT_APPLICABLE');
       assert.match(refused.body.error, /could not be built/);
+    });
+
+    it('a launch whose steps could not be rendered records no recovery either', () => {
+      // The SECOND site of the not-applicable flip. `buildSnapshot`'s own
+      // not-applicable branch is covered in launch-recovery-gate.test.js; this
+      // is `_buildLaunchSnapshot`'s render-failure catch, which builds its
+      // record by hand and so could drift from the branch beside it.
+      //
+      // `preflight` is computed before the try, so a damaged handoff reaches
+      // this branch with `requiresRecovery` true — which is what makes the flip
+      // observable at all. With a sound handoff both the old code and the new
+      // write `none`, and an assertion here would pass either way.
+      const project = makeProject('render-fails-in-recovery');
+      const lockfile = require('../lib/handoff-lockfile');
+      fs.mkdirSync(lockfile.handoffDir(project), { recursive: true });
+      fs.writeFileSync(lockfile.currentPath(project), '{"schema":"not-a-handoff"}\n', 'utf8');
+      const realLoad = store.globalRules.load;
+      store.globalRules.load = () => { throw new Error('global rules unreadable'); };
+      let result;
+      try {
+        result = launch('render-fails-in-recovery');
+      } finally {
+        store.globalRules.load = realLoad;
+      }
+      const sequence = store.launchSequences.getBySession(result.session.id);
+      assert.equal(sequence.applicability, 'not-applicable');
+      assert.match(sequence.notApplicableReason, /could not be built/,
+        'stated, not assumed: this is the CATCH branch and not buildSnapshot\'s own not-applicable one');
+      assert.equal(sequence.preflight.requiresRecovery, true,
+        'the preflight ran before the render failed, and it found the damaged handoff');
+      assert.equal(sequence.recovery, 'none',
+        'a launch with no steps has nothing to withhold, so it records no demand');
+      assert.equal(sequence.preflight.verdict, 'handoff-corrupt',
+        'the verdict is still recorded — it is where the handoff\'s soundness lives');
     });
 
     it('a launch with its prime disabled gets no sequence either', () => {

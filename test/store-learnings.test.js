@@ -124,6 +124,35 @@ describe('store.learnings', () => {
       }
       assert.ok(active.length >= 1);
     });
+
+    it('orders learnings written in the same second deterministically', () => {
+      // `created_at` is `datetime('now')`, which has one-second resolution, so
+      // several learnings written together all carry the SAME timestamp and
+      // `ORDER BY created_at DESC` alone leaves SQLite free to return them in
+      // any order. It really does vary by machine: the pushed prime's Active
+      // Learnings section rendered one way locally and the other way on CI,
+      // failing the byte-identity fixture there and passing here.
+      //
+      // Asserted against insertion order rather than against a recorded
+      // sequence, so the test says what the ordering MEANS — newest first —
+      // instead of pinning whatever came back the day it was written.
+      const project = store.projects.create({
+        name: `order-${Date.now()}`, path: `/tmp/tc-learning-order-${Date.now()}`, engine: 'claude'
+      });
+      const contents = ['first', 'second', 'third', 'fourth', 'fifth'];
+      for (const content of contents) {
+        store.learnings.create({ projectId: project.id, content, tier: 'active' });
+      }
+      const newestFirst = [...contents].reverse();
+      assert.deepEqual(store.learnings.getActive(project.id).map((l) => l.content), newestFirst,
+        'newest first, and total — every one of these shares a created_at');
+      assert.deepEqual(store.learnings.list(project.id, { tier: 'active' }).map((l) => l.content), newestFirst,
+        'list orders the same way; two readers of one table must not disagree');
+      // Stable across repeated reads, which is the property the fixture needs.
+      for (let i = 0; i < 5; i++) {
+        assert.deepEqual(store.learnings.getActive(project.id).map((l) => l.content), newestFirst);
+      }
+    });
   });
 
   describe('confirm', () => {

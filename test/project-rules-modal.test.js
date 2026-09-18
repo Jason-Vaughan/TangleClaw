@@ -70,9 +70,9 @@ describe('Project Rules modal (CC-6, #381)', () => {
 
   describe('ui.js — wiring', () => {
     it('loads per-project rules scoped by projectId + kind', () => {
-      assert.match(ui, /async function loadProjectRules\(projectId\)/);
+      assert.match(ui, /async function loadProjectRules\(projectId, projectName\)/);
       assert.match(ui, /\/api\/session-rules\?projectId=\$\{encodeURIComponent\(projectId\)\}&kind=\$\{kind\}/);
-      assert.match(ui, /loadProjectRules\(project\.id\)/);
+      assert.match(ui, /loadProjectRules\(project\.id, project\.name\)/);
     });
 
     it('creates rules via POST with kind, toggles via PUT, deletes via DELETE', () => {

@@ -938,7 +938,15 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
     it('reports not-authenticated and not-gated on an open install', async () => {
       const res = await send('GET', '/api/auth/me');
       assert.equal(res.statusCode, 200, 'no login required IS a successful answer');
-      assert.deepEqual(JSON.parse(res.body), {
+      const me = JSON.parse(res.body);
+      // The page token is fresh bytes per call, so it is checked for shape and
+      // then removed: an open install issues one because it has no session and
+      // therefore no CSRF token (#1587), and asserting the value would only
+      // pin the random.
+      assert.match(me.openInstallToken, /^[A-Za-z0-9_-]{43}$/,
+        'an open install issues its dashboard an anti-forgery token');
+      delete me.openInstallToken;
+      assert.deepEqual(me, {
         authenticated: false, gateActive: false, gateState: 'open', username: null, csrfToken: null
       });
     });
@@ -948,7 +956,10 @@ describe('TangleClaw\'s own front door, end to end (#1418)', () => {
       const { cookie, csrf } = await login();
       const res = await send('GET', '/api/auth/me', { cookie });
       assert.deepEqual(JSON.parse(res.body), {
-        authenticated: true, gateActive: true, gateState: 'armed', username: 'rosie', csrfToken: csrf
+        authenticated: true, gateActive: true, gateState: 'armed', username: 'rosie', csrfToken: csrf,
+        // Null where a session exists: a token saying "this page came from this
+        // server" is worth nothing beside one that says who is holding it.
+        openInstallToken: null
       });
     });
 
