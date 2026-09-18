@@ -877,5 +877,17 @@ Written before the code, because each one answers a question the blueprint leave
   - The reconciliation condition stays **unnarrowed**: every revision demands one, and only the
     wording is derived from whether anything was served.
   - Retention follow-up #1595 and the nudge-verdict record #1596 filed from the Critic pass.
-- [ ] Chunk 03
+- [ ] Chunk 03 — 21.7 (#1585) done, PR #1608; 21.8 (#1586) and 21.9 (#1587) unbuilt
+  - The branch's recurring defect, worth reading before touching `lib/wrap-steps/handoff-stage.js`:
+    four findings were one class — the step read a foreign object for a value that does not mean
+    what the field says (`session.workspaceId`, a column that does not exist; `scope.worktreeTarget`,
+    a boolean in a field the schema declares `/abs`; `scope.baseline.dirty`, the launch tree rather
+    than the handoff tree; then `git.getInfo`, a 120s cache answering a question the comment claimed
+    was measured now). The bytes are frozen at staging, so none of it was repairable afterwards, and
+    `dirty` drives §2.7's recovery verdict.
+  - Closed by a guard shaped like the class, in `test/handoff-orchestration.test.js`: resolve a REAL
+    scope and assert every key the step reads BY TYPE, not by presence. Extend that test rather than
+    building a fixture — an earlier hand-built one passed `worktreeTarget: null`, a value no producer
+    emits, which is how it hid the bug.
+  - `git.getInfo` now takes `{ fresh: true }`, for anything recorded into a frozen document.
 - [ ] Chunk 04
