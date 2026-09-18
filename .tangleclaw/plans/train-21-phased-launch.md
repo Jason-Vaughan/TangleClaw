@@ -750,7 +750,7 @@ advisory reconciliation; that grants nothing and is stated as the attestation bo
 | claude | silent prime hook | `tc` pull (full content) | rules hook remains (§3 target) |
 | codex / aider / antigravity | paste | `tc` pull | `pasteRules=paste` until R1 is ratified; a live probe per engine confirms `tc` resolves in the pane (#1140 PATH floor) |
 | openclaw | — | — | `not-applicable`: no TangleClaw-owned delivery/CLI substrate on the remote side (the profile's SSH/webui modes do not run `tc` under TangleClaw's env) |
-| Master pane | unchanged | — | `not-applicable`: governed by `/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder/.tangleclaw/plans/master-startup-and-wrap.md`; follow-up filed |
+| Master pane | unchanged | — | `not-applicable`: governed by `/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder1/.tangleclaw/plans/master-startup-and-wrap.md`; follow-up filed |
 
 Behaviour is chosen from declared capabilities (`supportsSilentPrime`, `startupInjection`, new
 `toolOutput.maxChars`, new `launchSequence: supported|unsupported` with a reason). There are no
