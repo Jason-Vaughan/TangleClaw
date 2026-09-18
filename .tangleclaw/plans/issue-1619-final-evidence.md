@@ -1,9 +1,21 @@
 # #1619 — final evidence for Architect review
 
-Branch `fix/issue-1619-identity`. Reviewed and tested revision: the latest commit
-on the branch — the one carrying the fixes for the Architect's R1 and R2, on top
-of the `origin/main` merge (`main` @ `f4d0d20`, which added #1624 and #1625
-after this branch was cut).
+Branch `fix/issue-1619-identity`, on `main` @ `f4d0d20` (which added #1624 and
+#1625 after this branch was cut, merged in at `eef19e7`).
+
+**Implementation and test revisions this document describes**, named rather than
+referred to, so the claim cannot drift onto a later commit:
+
+| SHA | What it carries |
+|---|---|
+| `fa38535` | The Architect's R1 (unknown tracking state → committed) and R2 (lock status out of the committed carrier) |
+| `2d393bc` | Deletes the reasoning R1 retracted, from `CHANGELOG.md` |
+| `9a8b92f` | Deletes the same reasoning from the plan's discharge record |
+| `2842fee` | The wrap refusal reaches the staging decision; the same reasoning removed from two `lib/engines.js` comments |
+
+The Architect's independent recheck of R1 and R2 was performed at `9a8b92f`, and
+closed both. `2842fee` lands after that check; its own content is described in
+the Review-status section below.
 All four chunks of the fix brief are implemented. Coverage gate: **satisfied**
 (composed review spans the whole branch, 0 unresolved blocking findings).
 
@@ -126,7 +138,29 @@ targeted suite had passed:
    no longer reaches a committed carrier at all; the instruction survives as
    unconditional prose, and the private carrier keeps the live holder.
 
-Both are pinned, and each was verified to fail the suite when reinstated.
+Both are pinned, and each was verified to fail the suite when reinstated. The
+Architect rechecked them at `9a8b92f` and closed both, reproducing the
+indexed-then-ignored and injected-ENOENT cases independently.
+
+A third defect followed, from the cumulative review and fixed at `2842fee`:
+
+3. **The wrap's refusal did not reach the staging decision three records said it
+   controlled.** The guard downgraded an identity-carrying carrier from
+   `MAINTENANCE` to "not provably TangleClaw's", and a null verdict falls
+   through to the ordinary ownership rules — a carrier the running server
+   regenerated mid-session is not dirty at launch and carries this session's
+   mtime, so it landed in `owned`, which is staged exactly like maintenance. The
+   guard changed which bucket the file was staged from and nothing else, for the
+   case it is named after. My own tests asserted against `judge` alone, where
+   that half was correct. The refusal now carries its reason, the ownership rules
+   act on it, and the carrier reaches the operator; pinned at the composition.
+
+**Still open, and for the Architect to rule on rather than for me to decide:**
+the wrap-side detector matches three of the six identity classes generation
+withholds, and its patterns are hand-typed rather than derived from the
+generator, so a reword could disable it with the suite green. Neither is
+exploitable today — generation no longer emits those values into a committed
+carrier, and the detector exists for the pre-fix-server and hand-edit cases.
 
 ## Not fixed here, deliberately
 
