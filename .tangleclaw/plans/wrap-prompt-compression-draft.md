@@ -24,9 +24,9 @@ Same counting method as the audit: whitespace-separated words in the template, b
 |---|---:|---:|---:|
 | changelog-update | 407 | 312 | −23% |
 | release-recommendation | 358 | 311 | −13% |
-| learnings-capture | 344 | 246 | −28% |
+| learnings-capture | 344 | 253 | −26% |
 | memory-update | 555 | 434 | −22% |
-| **Four standard prompts** | **1664** | **1303** | **−22%** |
+| **Four standard prompts** | **1664** | **1310** | **−21%** |
 | index-describe (conditional, both modes rendered) | 442 | 381 | −14% |
 
 No fixed quota was targeted. These templates are mostly instruction rather than explanation, so the honest reduction is moderate. What came out: the repeated “You are at the end of a development session” openers (the generated step header already names the step), incident history (PR #166, #287, #571, #1309), source paths (`lib/wrap-steps/ai-content.js`, `lib/sessions.js`) and parser-implementation narration.
@@ -174,7 +174,7 @@ When done, reply with a single `## Result` heading followed by a one-line summar
 ```
 Capture this session's learnings to `.tangleclaw/memories/learnings.md`: non-obvious behaviors, validated patterns, failure modes, anti-patterns. Skip the obvious, skip routine bug fixes — capture only what would change how you'd approach a similar task next time.
 
-1. Read `.tangleclaw/memories/learnings.md` to match its style, or create it with a top-level heading like `# Cross-Session Learnings — <project name>`.
+1. Read `.tangleclaw/memories/learnings.md` if it exists, to match its style. If it does not exist, create it with a top-level heading like `# Cross-Session Learnings — <project name>`.
 2. Ask what surprised you, what broke in an unexpected way, what pattern got validated by shipping.
 3. Append an entry in the file's convention — `## YYYY-MM-DD — <one-line title>` followed by 2-5 sentences, linking issues / PRs / commits where relevant.
 4. If nothing this session was novel, append exactly one line: `- YYYY-MM-DD: no novel learnings (routine work).` A session with nothing to learn is honest; fabricated signal is not.
