@@ -35,6 +35,13 @@ describe('#1619 — five checkouts, identical tracked bytes', () => {
     store.init();
     for (let i = 1; i <= 5; i++) {
       const p = fs.mkdtempSync(path.join(os.tmpdir(), `tc-b${i}-`));
+      // A real repository that ignores its engine-private carriers, which is
+      // what a managed project actually looks like. Before the git-backed
+      // classifier these were bare directories, and the private-carrier
+      // assertions below passed on the conventional list rather than on any
+      // project's real state.
+      require('node:child_process').execFileSync('git', ['-C', p, 'init', '-q']);
+      fs.writeFileSync(path.join(p, '.gitignore'), '.codex.yaml\n.aider.conf.yml\n');
       const name = `TangleClaw-Builder${i}-${Date.now() % 100000}`;
       const project = store.projects.create({ name, path: p, engine: 'claude' });
       checkouts.push({ name, path: p, id: project.id });
@@ -339,16 +346,38 @@ describe('#1619 chunk 04 — the carrier a project actually tracks', () => {
       'a project that tracks it must have it treated as committed');
   });
 
-  it('falls back to the convention where git cannot answer, and never inverts it', () => {
-    // A directory that is not a repository cannot commit anything, so the
-    // conventional list is the right answer there — blanket-withholding would
-    // break every non-repo project's private carrier for no safety gain.
+  it('treats an unknown tracking state as committed — missing git is not a non-repository', () => {
+    // This replaces a test that pinned the opposite, and the reasoning it
+    // pinned was wrong. I argued a directory git cannot answer for "cannot
+    // commit anything". A project that TRACKS its .codex.yaml is a repository
+    // whose git is merely unavailable — break PATH and the old fallback called
+    // that tracked file private and inlined the live token into it. The two
+    // error directions are not comparable: one costs an API call, the other
+    // puts a credential in a repository.
     const notARepo = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-norepo-'));
-    assert.equal(engines._carrierIsCommitted(notARepo, '.codex.yaml'), false);
+    assert.equal(engines._carrierIsCommitted(notARepo, '.codex.yaml'), true,
+      'git cannot answer here, so the carrier is treated as committed');
     assert.equal(engines._carrierIsCommitted(notARepo, 'CLAUDE.md'), true);
-    // And an unknown name still fails toward committed, wherever it is asked.
     assert.equal(engines._carrierIsCommitted(notARepo, 'SOMETHING-NEW.md'), true);
+    // Only a positive "yes, ignored" makes a carrier private. The convention
+    // still answers when there is no project to ask about at all.
     assert.equal(engines._carrierIsCommitted(null, '.codex.yaml'), false);
+  });
+
+  it('a carrier that is INDEXED and then ignored is still committed', () => {
+    // The fixture gap the Architect named: writing a .gitignore proves nothing
+    // about a file already in the index. Git does not apply ignore rules to a
+    // tracked file, so `check-ignore` answers "not ignored" and the carrier
+    // lands on committed — verified here rather than assumed, because the
+    // whole classifier rests on that behaviour.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-indexed-'));
+    execFileSync('git', ['-C', dir, 'init', '-q']);
+    fs.writeFileSync(path.join(dir, '.codex.yaml'), 'seed\n');
+    execFileSync('git', ['-C', dir, 'add', '.codex.yaml']);
+    execFileSync('git', ['-C', dir, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'seed']);
+    fs.writeFileSync(path.join(dir, '.gitignore'), '.codex.yaml\n');
+    assert.equal(engines._carrierIsCommitted(dir, '.codex.yaml'), true,
+      'a tracked carrier stays committed however the ignore file reads');
   });
 });
 
@@ -475,12 +504,12 @@ describe('#1619 — the git probe is bounded and its failure is visible', () => 
     const saved = engines._internal.checkIgnore;
     try {
       engines._internal.checkIgnore = () => { throw Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }); };
-      assert.equal(engines._carrierIsCommitted('/anywhere', '.codex.yaml'), false,
-        'the convention still answers for a known private carrier');
-      assert.equal(engines._carrierIsCommitted('/anywhere', 'CLAUDE.md'), true,
-        'and for a known committed one');
-      assert.equal(engines._carrierIsCommitted('/anywhere', 'SOMETHING-NEW.md'), true,
-        'and an unknown name still fails toward committed');
+      // Every carrier, including the conventionally-private one: a repository
+      // whose git is missing is still a repository.
+      assert.equal(engines._carrierIsCommitted('/repo', '.codex.yaml'), true,
+        'an unavailable git must not be read as "this file is private"');
+      assert.equal(engines._carrierIsCommitted('/repo', 'CLAUDE.md'), true);
+      assert.equal(engines._carrierIsCommitted('/repo', 'SOMETHING-NEW.md'), true);
     } finally {
       engines._internal.checkIgnore = saved;
     }
@@ -493,10 +522,48 @@ describe('#1619 — the git probe is bounded and its failure is visible', () => 
     const saved = engines._internal.checkIgnore;
     try {
       engines._internal.checkIgnore = () => null;
-      assert.equal(engines._carrierIsCommitted('/anywhere', '.codex.yaml'), false);
-      assert.equal(engines._carrierIsCommitted('/anywhere', 'CLAUDE.md'), true);
+      assert.equal(engines._carrierIsCommitted('/repo', '.codex.yaml'), true,
+        'a timed-out probe is an unknown state, and unknown means committed');
+      assert.equal(engines._carrierIsCommitted('/repo', 'CLAUDE.md'), true);
     } finally {
       engines._internal.checkIgnore = saved;
+    }
+  });
+});
+
+describe('#1619 — a locked shared doc must not change the committed carrier', () => {
+  const store2 = require('../lib/store');
+
+  it('is byte-identical across unlocked → locked → unlocked', () => {
+    // Independently reproduced by the Architect. Emitting a warning only WHILE
+    // a lock exists still makes the shared bytes depend on live state: the same
+    // document unlocked and then locked produces two different files. That is
+    // the churn this fix removes, one step quieter than naming the holder —
+    // and a carrier that changes when someone else takes a lock is a carrier
+    // the wrap can be asked to commit for a reason that is not the project's.
+    const doc = { id: 'lk1', name: 'Locked Fixture', groupName: 'G', filePath: '/p/lk.md', injectMode: 'reference' };
+    const realCheck = store2.documentLocks.check;
+    try {
+      store2.documentLocks.check = () => null;
+      const unlockedBefore = engines._buildSharedDocsSection([doc], { committedCarrier: true });
+      store2.documentLocks.check = () => ({ lockedByProject: 'another-project', expiresAt: '2026-09-18T23:00:00Z' });
+      const whileLocked = engines._buildSharedDocsSection([doc], { committedCarrier: true });
+      store2.documentLocks.check = () => null;
+      const unlockedAfter = engines._buildSharedDocsSection([doc], { committedCarrier: true });
+
+      assert.equal(whileLocked, unlockedBefore, 'taking a lock changed the committed carrier');
+      assert.equal(unlockedAfter, unlockedBefore, 'releasing it changed the committed carrier');
+      assert.doesNotMatch(unlockedBefore, /another-project/, 'and the holder is never named');
+      assert.match(unlockedBefore, /Lock before editing/,
+        'the instruction survives as unconditional prose, since it is always true');
+
+      // The private carrier keeps live, actionable detail — that is the point
+      // of the split, and a fix that blanked both sides would be a loss.
+      store2.documentLocks.check = () => ({ lockedByProject: 'another-project', expiresAt: '2026-09-18T23:00:00Z' });
+      const priv = engines._buildSharedDocsSection([doc], { committedCarrier: false });
+      assert.match(priv, /LOCKED by another-project/, 'the private carrier still reports the live holder');
+    } finally {
+      store2.documentLocks.check = realCheck;
     }
   });
 });

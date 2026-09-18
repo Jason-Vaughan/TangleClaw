@@ -1,6 +1,9 @@
 # #1619 — final evidence for Architect review
 
-Branch `fix/issue-1619-identity`, HEAD `09706a5`, on `main` @ `65fe15b`.
+Branch `fix/issue-1619-identity`. Reviewed and tested revision: the latest commit
+on the branch — the one carrying the fixes for the Architect's R1 and R2, on top
+of the `origin/main` merge (`main` @ `f4d0d20`, which added #1624 and #1625
+after this branch was cut).
 All four chunks of the fix brief are implemented. Coverage gate: **satisfied**
 (composed review spans the whole branch, 0 unresolved blocking findings).
 
@@ -31,14 +34,25 @@ which describe earlier commits.
   changes no committed byte. The stale-PATH case your addendum asked about is
   handled in the bootstrap line, with the recovery routed through
   `TANGLECLAW_API` and no checkout-specific fallback.
-- **Missing/mismatched context fails visibly.** The discovery block says `whoami`
-  ECHOES the workspace rather than validating it, and to stop on a mismatch with
-  the launch env.
+- **Missing/mismatched context.** The discovery block says `whoami` ECHOES the
+  workspace rather than validating it, and to stop on a mismatch with the launch
+  env. **Residual limitation, stated rather than claimed as coverage:** that is
+  generated PROSE instructing a session to compare — not an independent
+  validation of the current launch. Nothing here proves a session obeys it, and
+  no mechanism in this change verifies a claimed workspace against the live
+  launch record. Closing that needs a server-side check, which is not in this
+  change.
 - **Repeat launch/sync/wrap.** The committed carrier is migrated, so a
   regenerated block is byte-identical; a block that still carries identity is no
   longer staged silently but returned as "not provably ours".
-- **Nested worktree and accidentally-tracked local carrier.** Both fixtures build
-  real git repositories. The tracked-`.codex.yaml` case is the gate you required.
+- **Accidentally-tracked local carrier.** Real git repositories: one ignoring its
+  `.codex.yaml`, one with the file INDEXED and then ignored, and an unknown
+  tracking state. The gate you required.
+- **Nested worktree — what it does and does not show.** The fixture proves a
+  linked worktree is classified by its OWN ignore rules, because `git -C
+  <worktree>` answers there. It is **not** evidence about parent-directory
+  instruction loading: nothing in it exercises an engine reading a `CLAUDE.md`
+  from an enclosing checkout. That case is unaddressed by this change.
 - **Global rules and operator content preserved.** The migration refused to write
   unless nothing outside the managed block changed;
   `test/repo-governance-reference.test.js` still pins the mirror equal to its
@@ -87,6 +101,32 @@ Recorded because the review history is part of the evidence.
 7. **I committed the drift myself.** `fbdeaa6` swept the regenerated `CLAUDE.md`
    in via `git add -A`. Reverted in the next commit; the plan now carries the
    staging rule.
+
+## Review status — no final approval
+
+Reviewed by the Architect against the brief, with changes requested and
+addressed. **No final approval has been given**, and nothing in this document
+should be read as one. Six independent Critic rounds including a three-reviewer
+cumulative; the coverage gate is satisfied over the whole branch with 0
+unresolved blocking Critic findings.
+
+The Architect's review of the merged HEAD reproduced two blockers that every
+targeted suite had passed:
+
+1. **`_carrierIsCommitted` fell back to the filename convention when git could
+   not answer.** Reproduced by tracking a `.codex.yaml` in a real repository and
+   making the probe throw ENOENT: the carrier became private and the generator
+   inlined a token. My reasoning — "a directory git cannot answer for commits
+   nothing" — conflated a missing git with a missing repository. An unknown
+   tracking state now means committed, and the tests that pinned the old
+   fallback are replaced rather than relaxed.
+2. **The committed shared-docs rendering still moved with live lock state.** A
+   generic warning emitted only while a lock existed still meant the same
+   document, unlocked and then locked, produced two different files. Lock status
+   no longer reaches a committed carrier at all; the instruction survives as
+   unconditional prose, and the private carrier keeps the live holder.
+
+Both are pinned, and each was verified to fail the suite when reinstated.
 
 ## Not fixed here, deliberately
 

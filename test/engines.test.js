@@ -1216,6 +1216,12 @@ describe('engines', () => {
       // comes from the store rather than the folder basename because a project
       // may be named differently from its directory.
       projPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-guide-'));
+      // A real repository that ignores its engine-private carriers — since
+      // #1619 the classifier asks git, and an unknown tracking state means
+      // COMMITTED, so a bare temp dir would classify every carrier as shared
+      // and these assertions would be testing the wrong branch.
+      require('node:child_process').execFileSync('git', ['-C', projPath, 'init', '-q']);
+      fs.writeFileSync(path.join(projPath, '.gitignore'), '.codex.yaml\n.aider.conf.yml\n');
       projName = `Switchboard Guide ${Date.now() % 100000}`;
       store.projects.create({ name: projName, path: projPath, engine: 'claude' });
     });
