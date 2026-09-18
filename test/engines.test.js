@@ -1351,9 +1351,11 @@ describe('engines', () => {
     it('_serviceTokenAuthLines: [] when off/null, an Authorization block when on', () => {
       assert.deepEqual(engines._serviceTokenAuthLines({ serviceTokenEnabled: false, serviceToken: null }), []);
       assert.deepEqual(engines._serviceTokenAuthLines({ serviceTokenEnabled: true, serviceToken: null }), []);
-      const md = engines._serviceTokenAuthLines({ serviceTokenEnabled: true, serviceToken: TOKEN });
+      // Explicit since #1619: an omitted classification means COMMITTED, and
+      // this case is about the inline form a private carrier gets.
+      const md = engines._serviceTokenAuthLines({ serviceTokenEnabled: true, serviceToken: TOKEN }, 'md', { committedCarrier: false });
       assert.ok(md.some((l) => l.includes(`Authorization: Bearer ${TOKEN}`)));
-      const comment = engines._serviceTokenAuthLines({ serviceTokenEnabled: true, serviceToken: TOKEN }, 'comment');
+      const comment = engines._serviceTokenAuthLines({ serviceTokenEnabled: true, serviceToken: TOKEN }, 'comment', { committedCarrier: false });
       assert.ok(comment.length > 0 && comment.every((l) => l.startsWith('#')), 'comment form must be all #-prefixed');
       assert.ok(comment.some((l) => l.includes(`Authorization: Bearer ${TOKEN}`)));
     });
@@ -3363,7 +3365,7 @@ describe('engines', () => {
       const md = engines._buildSharedDocsSection([
         { name: 'NETWORK', groupName: 'infra', injectMode: 'reference',
           filePath: path.join(home, 'Documents/Shared/NETWORK.md') }
-      ]);
+      ], { committedCarrier: false });
       assert.ok(md.includes('`~/Documents/Shared/NETWORK.md`'), md);
       assert.ok(!md.includes(home), 'must not contain the absolute home path');
     });
@@ -3372,7 +3374,7 @@ describe('engines', () => {
       const missing = path.join(home, 'Documents/Shared/GONE.md');
       const md = engines._buildSharedDocsSection([
         { name: 'GONE', groupName: 'infra', injectMode: 'inline', filePath: missing }
-      ]);
+      ], { committedCarrier: false });
       assert.match(md, /File not found/);
       assert.ok(!md.includes(home), 'the error branch must not leak the absolute path either');
     });
@@ -3380,7 +3382,7 @@ describe('engines', () => {
     it('leaves a path outside $HOME untouched', () => {
       const md = engines._buildSharedDocsSection([
         { name: 'OPS', groupName: 'infra', injectMode: 'reference', filePath: '/opt/shared/OPS.md' }
-      ]);
+      ], { committedCarrier: false });
       assert.ok(md.includes('`/opt/shared/OPS.md`'), md);
     });
   });

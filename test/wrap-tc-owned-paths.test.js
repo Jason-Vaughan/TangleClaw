@@ -159,6 +159,68 @@ describe('managed-block carriers', () => {
     });
   }
 
+  for (const file of ['CLAUDE.md', 'AGENTS.md']) {
+    it(`${file} whose block carries identity is NOT staged as maintenance (#1619)`, () => {
+      // Chunk 03's whole point, asserted where the wrap actually reads it. The
+      // block being TangleClaw's to rewrite is not proof the diff is safe to
+      // commit: generation used to put this checkout's name and this machine's
+      // origin in there, and this path staged it without asking. PR #1618 put
+      // one checkout's Medusa routes on main exactly that way.
+      const origin = repoWith(
+        { [file]: withBlock('old guide') },
+        { [file]: withBlock('**TangleClaw API base URL**: `http://localhost:3102`') }
+      );
+      assert.equal(tcOwned.judge(origin.root, origin.dirty).has(file), false,
+        'a generated origin in the block must not be staged silently');
+
+      const route = repoWith(
+        { [file]: withBlock('old guide') },
+        { [file]: withBlock('inbox `GET http://h/api/sessions/TangleClaw-Builder1/medusa/messages`') }
+      );
+      assert.equal(tcOwned.judge(route.root, route.dirty).has(file), false,
+        'a name-scoped session route in the block must not be staged silently');
+    });
+
+    it(`${file} keeps its maintenance verdict when the block is neutral (#1619)`, () => {
+      // The other half, and the one that decides whether this guard is usable:
+      // it must stay silent on an ordinary wrap. A post-fix block carries
+      // placeholders, and the operator's own prose — here a MagicDNS example of
+      // the kind `data/global-rules.md` really contains, which for AGENTS.md is
+      // spliced INSIDE the block — must not read as a leak either.
+      const { root, dirty } = repoWith(
+        { [file]: withBlock('old guide') },
+        { [file]: withBlock(
+          'Routes: `<api>/api/sessions/<project-name>/medusa/send` — resolve at run time.\n'
+          + 'Publish plans at `https://example.tail1234.ts.net:8443/plans/<projectId>/<file>.md`.'
+        ) }
+      );
+      assert.equal(tcOwned.judge(root, dirty).get(file), 'maintenance',
+        'an ordinary regenerated block must still pass without asking the operator');
+    });
+
+    it(`${file} is judged by its BLOCK, not the whole file (#1619)`, () => {
+      // The scoping itself, pinned with the one shape that can tell the two
+      // apart: a line in the generated SHAPE sitting in the operator's half.
+      // A carrier may legitimately document the old format above the markers —
+      // `docs/engine-guide.md` quotes it — and a whole-file read would report
+      // the operator's own documentation as a leak on every wrap.
+      // The prose sits in BOTH trees: an outside-the-block CHANGE is already
+      // "not TangleClaw's" for a different reason, which would mask what this
+      // case is about. Here only the block moves.
+      const operatorHalf = '# Project\n\nBefore #1619 this block read '
+        + '**TangleClaw API base URL**: `http://localhost:3102` — it no longer does.\n\n';
+      const { root, dirty } = repoWith(
+        { [file]: withBlock('old guide', operatorHalf) },
+        { [file]: withBlock(
+          'Routes: `<api>/api/sessions/<project-name>/medusa/send` — resolve at run time.',
+          operatorHalf
+        ) }
+      );
+      assert.equal(tcOwned.judge(root, dirty).get(file), 'maintenance',
+        'identity-shaped text OUTSIDE the block is the operator\'s, and must not block the wrap');
+    });
+  }
+
   it('a carrier absent from HEAD is not TangleClaw\'s', () => {
     const { root, dirty } = repoWith({ 'README.md': 'x\n' }, { 'AGENTS.md': withBlock('fresh') });
     assert.equal(tcOwned.judge(root, dirty).has('AGENTS.md'), false);

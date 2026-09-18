@@ -501,7 +501,8 @@ shared-docs / session-memory guides. Since #1619 none of that content is checkou
 block names no project and no origin, and the session resolves both at run time from
 `TANGLECLAW_API` and `tc whoami`, so every checkout of a repository generates the same bytes — from
 the point each one regenerates. A carrier committed before the fix keeps whatever it was given until
-then. Sections whose source is absent (no shared-docs group, no PortHub registration) are omitted
+then; this repo's own was migrated on the #1619 branch, and the wrap's ownership judge now refuses to
+stage a block that still carries identity rather than committing it unasked. Sections whose source is absent (no shared-docs group, no PortHub registration) are omitted
 entirely rather than emitted empty, so "the same bytes" means for checkouts with the same
 configuration. The
 same rule now covers the whole-file `CLAUDE.md` path and the shared-convention carriers, because

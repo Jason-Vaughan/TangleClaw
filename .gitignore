@@ -85,13 +85,13 @@
 # CLAUDE.md is deliberately NOT listed: it is tracked (#833). TangleClaw does
 # write to it — since #1021 it splices its own BEGIN/END:tangleclaw block on
 # every launch — but only inside those markers, so the hand-authored content
-# around them survives. Since #1619 GENERATION is checkout-neutral — the block
-# names no project and no origin, resolving both at run time — so once a
-# checkout has regenerated, a clone on a different port stops dirtying it.
-# Until then expect it to show as modified, and note that the committed copy
-# still carries one checkout's Medusa routes: PR #1618 put them on main through
-# the wrap's silent-maintenance path, and removing them is a separate migration
-# on the #1619 branch. Follow-up #1242. A regenerated CLAUDE.md used to strand the self-updater too; #1241
+# around them survives. Since #1619 the block is checkout-neutral — it names no
+# project and no origin, resolving both at run time — and the copy committed
+# here has been migrated to that form, so a clone on a different port no longer
+# dirties it once it regenerates. A checkout still running a pre-fix server will
+# re-dirty it until that server is updated; a wrap will no longer stage such a
+# change silently, because the ownership judge now refuses a block that carries
+# identity. Follow-up #1242. A regenerated CLAUDE.md used to strand the self-updater too; #1241
 # fixed that WITHOUT widening the discard set — the updater discards this file
 # only when it differs from the committed copy solely inside those markers, so a
 # hand edit outside them still blocks the update, exactly as before.

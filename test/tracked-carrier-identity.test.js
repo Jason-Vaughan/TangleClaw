@@ -235,9 +235,29 @@ describe('#1619 — a managed block is not proof that a diff is safe maintenance
     });
 
     it('names each value a committed carrier must not hold', () => {
-      assert.match(owned._carriesIdentity('base URL: http://localhost:3102'), /origin/);
+      // The origin is matched on the LABELLED line generation writes, in both
+      // its markdown and comment forms — not on "a URL appears somewhere".
+      assert.match(owned._carriesIdentity('**TangleClaw API base URL**: `http://localhost:3102`'), /origin/);
+      assert.match(owned._carriesIdentity('# TangleClaw API base URL: http://localhost:3102'), /origin/);
       assert.match(owned._carriesIdentity('GET http://h/api/sessions/TangleClaw-Builder1/medusa/roster'), /route/);
       assert.match(owned._carriesIdentity('Authorization: Bearer tc_live_abcdef123456'), /token/);
+    });
+
+    it('does not read a documentation URL as a leak', () => {
+      // The reason the patterns are shaped rather than broad. The Gemini
+      // generator pushes the operator's global rules INSIDE the AGENTS.md
+      // managed block, and this install's rules document a MagicDNS link with a
+      // host and a port as an example. A bare origin pattern reads that as a
+      // leak and fires on every ordinary wrap of every antigravity project —
+      // the outcome the fix brief forbids. Scoping to the block does not save
+      // it, because for THIS carrier the prose is inside the block.
+      const globalRulesExample = 'Published links must use the MagicDNS format '
+        + '(e.g. `https://cursatory.tail123678.ts.net:8443/plans/<projectId>/<file>.md`).';
+      assert.equal(owned._carriesIdentity(globalRulesExample), null);
+      // And the neutral pointer the fixed carrier actually contains.
+      assert.equal(owned._carriesIdentity(
+        '**TangleClaw API base URL**: read it from the `TANGLECLAW_API` environment variable'
+      ), null);
     });
 
     it('does not read the token PLACEHOLDER as a live credential', () => {
@@ -271,10 +291,21 @@ describe('#1619 — a managed block is not proof that a diff is safe maintenance
       ''
     ].join('\n');
     const block = require('../lib/managed-block').extractManagedBlock(carrier, markers);
-    assert.equal(owned._carriesIdentity(carrier), 'a machine-specific API origin',
-      'the whole-file read sees the operator\'s example — which is why it is not what we judge');
     assert.equal(owned._carriesIdentity(block), null,
       'the block is what TangleClaw owns, and it is clean');
+    // Both defences are needed and neither is sufficient alone: scoping keeps
+    // the operator's half of CLAUDE.md out of scope, and the shaped patterns
+    // keep their prose out of scope where it sits INSIDE the block, as the
+    // global rules do for AGENTS.md.
+    const withGeneratedOrigin = carrier.replace(
+      'Routes: `<api>/api/sessions/<project-name>/medusa/send` — resolve at run time.',
+      '**TangleClaw API base URL**: `http://localhost:3102`'
+    );
+    assert.equal(
+      owned._carriesIdentity(require('../lib/managed-block').extractManagedBlock(withGeneratedOrigin, markers)),
+      'a machine-specific API origin',
+      'a real generated origin inside the block is still caught'
+    );
   });
 });
 
