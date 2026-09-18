@@ -179,6 +179,12 @@ describe('managed-block carriers', () => {
       );
       assert.equal(tcOwned.judge(route.root, route.dirty).has(file), false,
         'a name-scoped session route in the block must not be staged silently');
+      // The refusal's REASON ("managed block carries a machine-specific API
+      // origin — regenerate it rather than commit this") is logged, not
+      // returned: `judge` answers with kinds and puts the why in the log, by
+      // design, so both answers are explainable afterwards. The phrasing is
+      // pinned where it is produced, on `_carriesIdentity`, rather than by
+      // giving `judge` a return shape it does not otherwise need.
     });
 
     it(`${file} keeps its maintenance verdict when the block is neutral (#1619)`, () => {

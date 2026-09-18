@@ -375,3 +375,128 @@ describe('#1619 chunk 04 — a nested worktree', () => {
       'and its tracked carrier is still treated as committed');
   });
 });
+
+describe('#1619 — the committed carrier may only point at routes that answer', () => {
+  /**
+   * Every `$TANGLECLAW_API/...` path the generated section names.
+   * @param {string} text
+   * @returns {string[]}
+   */
+  function routesNamed(text) {
+    return [...text.matchAll(/\$TANGLECLAW_API(\/api\/[A-Za-z0-9/_<>$-]*)/g)]
+      .map((m) => m[1])
+      .map((r) => r.replace(/<[^>]+>|\$TANGLECLAW_PROJECT_ID/g, ':p'))
+      .filter((r, i, a) => a.indexOf(r) === i);
+  }
+
+  it('names no route the server does not serve', () => {
+    // A pointer is an instruction, and an instruction to a 404 is worse than
+    // no instruction: the natural fallback from a 404 here was the BARE
+    // `/api/shared-docs`, which is unfiltered and answers with every group's
+    // documents and absolute paths across the install. The fix's own prose
+    // sent the reader there, which is how a redirect became a leak.
+    const section = engines._buildSharedDocsSection(
+      [{ id: 'x', name: 'D', groupName: 'G', filePath: '/p/d.md', injectMode: 'reference' }],
+      { committedCarrier: true }
+    );
+    const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    for (const route of routesNamed(section)) {
+      // `/api/groups/:p/members` is registered as `/api/groups/:id/members`;
+      // compare on the literal segments, which is what decides the match.
+      const literal = route.split('/').filter((seg) => seg && !seg.startsWith(':'));
+      const registered = new RegExp(`['\`"]/${literal.map((x) => x.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')).join('/[^\'"\`]*')}`);
+      assert.match(server, registered, `the carrier names ${route}, which server.js does not serve`);
+    }
+  });
+
+  it('the route check rejects a route the server does not serve', () => {
+    // Guard against the pin passing vacuously: the regex must actually fail on
+    // the route the blocking finding was about.
+    const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+    assert.doesNotMatch(server, /['`"]\/api\/projects\/[^'"`]*\/group['"`]/,
+      'if this ever starts matching, the check below proves less than it claims');
+    assert.match(server, /['`"]\/api\/groups['"`]/, 'and the route we DO name is served');
+  });
+
+  it('tells the reader to stop rather than issue the unfiltered request', () => {
+    const section = engines._buildSharedDocsSection(
+      [{ id: 'x', name: 'D', groupName: 'G', filePath: '/p/d.md', injectMode: 'reference' }],
+      { committedCarrier: true }
+    );
+    assert.match(section, /ALWAYS send `groupId`/);
+    assert.match(section, /say so and stop rather than issuing the bare request/);
+  });
+});
+
+describe('#1619 — "unclassified fails toward shared" is a property, not a construction', () => {
+  const rules = {
+    serviceTokenEnabled: true,
+    serviceToken: 'tc_live_secret_for_test',
+    serverProtocol: 'http',
+    serverPort: 3102,
+    medusaEnabled: true,
+    medusaProjectName: 'Some Project'
+  };
+
+  // The module states this rule in its own comment, and until now it held by
+  // construction — every caller happened to pass the flag. An object-shaped
+  // default (`options = { committedCarrier: true }`) does not cover `{}`, which
+  // is the shape a future caller is most likely to reach for.
+  for (const [label, args] of [
+    ['omitted', []],
+    ['empty object', [{}]],
+    ['explicit true', [{ committedCarrier: true }]]
+  ]) {
+    it(`withholds the live token when the classification is ${label}`, () => {
+      const out = engines._serviceTokenAuthLines(rules, 'md', ...args).join('\n');
+      assert.ok(!out.includes(rules.serviceToken), 'a live credential must not reach an unclassified carrier');
+      assert.match(out, /\/api\/service-token/, 'and the fetch pointer takes its place');
+    });
+
+    it(`withholds the project name when the classification is ${label}`, () => {
+      const out = engines._medusaSwitchboardLines(rules, 'md', ...args).join('\n');
+      assert.ok(!out.includes(rules.medusaProjectName), 'an unclassified carrier must not be named at');
+      assert.doesNotMatch(out, /https?:\/\/localhost:\d+/, 'nor carry the install origin');
+    });
+  }
+
+  it('still inlines for a carrier explicitly classified private', () => {
+    const out = engines._serviceTokenAuthLines(rules, 'md', { committedCarrier: false }).join('\n');
+    assert.ok(out.includes(rules.serviceToken), 'the private carrier keeps what it is entitled to');
+  });
+});
+
+describe('#1619 — the git probe is bounded and its failure is visible', () => {
+  it('falls back to the convention when git cannot be run, rather than throwing', () => {
+    // `spawnSync` REPORTS ENOENT on `error` instead of throwing, which is how a
+    // host without git on PATH would have fallen back to the pre-fix hardcoded
+    // list in silence. The seam lets the failure be exercised rather than
+    // assumed — this host's PATH really is stale, so it is not hypothetical.
+    const saved = engines._internal.checkIgnore;
+    try {
+      engines._internal.checkIgnore = () => { throw Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }); };
+      assert.equal(engines._carrierIsCommitted('/anywhere', '.codex.yaml'), false,
+        'the convention still answers for a known private carrier');
+      assert.equal(engines._carrierIsCommitted('/anywhere', 'CLAUDE.md'), true,
+        'and for a known committed one');
+      assert.equal(engines._carrierIsCommitted('/anywhere', 'SOMETHING-NEW.md'), true,
+        'and an unknown name still fails toward committed');
+    } finally {
+      engines._internal.checkIgnore = saved;
+    }
+  });
+
+  it('treats a timed-out probe as "git did not answer", not as "not ignored"', () => {
+    // spawnSync returns status null on timeout. Reading that as 1 would call
+    // every private carrier committed; reading it as 0 would call every
+    // committed carrier private. It is neither — it is unknown.
+    const saved = engines._internal.checkIgnore;
+    try {
+      engines._internal.checkIgnore = () => null;
+      assert.equal(engines._carrierIsCommitted('/anywhere', '.codex.yaml'), false);
+      assert.equal(engines._carrierIsCommitted('/anywhere', 'CLAUDE.md'), true);
+    } finally {
+      engines._internal.checkIgnore = saved;
+    }
+  });
+});
