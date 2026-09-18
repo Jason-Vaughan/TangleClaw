@@ -124,18 +124,22 @@ const updateBeacon = window.tcCreateUpdateBeacon({
 // ── HTML Escaping ──
 
 /**
- * Escape HTML special characters.
+ * Escape HTML special characters, rendering the value as text.
  *
- * Renders numbers, booleans and bigints rather than blanking them: markup here
- * is built from API rows where ids and counts arrive as JSON numbers, and a
- * string-only helper drops them silently, leaving a laid-out but unreadable
- * panel (#1601). `null`/`undefined` and values with no useful text form still
- * render as '' — the empty cell is what a caller passing an absent field
- * means, and '[object Object]' is not an improvement on a blank.
+ * Accepts every value with a text form — strings, numbers, booleans, bigints —
+ * because markup here is built from API rows, where ids and counts arrive as
+ * JSON numbers. `null`, `undefined` and anything else with no useful text form
+ * give '', which is what a caller passing an absent field means.
  *
- * Kept identical to `esc` in landing.js and to `tcEscapeHtml` in
- * api-helper.js: api-helper takes whichever the host page defines, so a page
- * that escaped differently would escape the same shared markup differently.
+ * `'` is escaped alongside `"` because call sites interpolate the result into
+ * single-quoted JS strings inside double-quoted attributes.
+ *
+ * Must stay identical to `esc` in landing.js, and must agree with
+ * `tcEscapeHtml` in api-helper.js on every value a caller passes: api-helper
+ * takes whichever the host page defines, so a page escaping differently would
+ * escape the same shared markup differently. `esc` and `tcEscapeHtml` still
+ * diverge on objects and arrays, which no call site passes; #1605 converges
+ * them.
  *
  * @param {*} str - Value to render as escaped HTML text
  * @returns {string}

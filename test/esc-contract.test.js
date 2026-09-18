@@ -1,19 +1,20 @@
 'use strict';
 
 /*
- * The HTML-escape helper's contract, asserted against the REAL functions.
+ * The escape helpers' contract, asserted against the REAL shipped functions.
  *
- * The bug this file exists to stop (#1601) survived a green suite because the
- * panel test stubbed `esc` with a coercing one-liner: the stub printed numbers
- * the shipped helper blanked, so an assertion on `Served: 3/4 step(s)` passed
- * against markup production could not produce. Every case below lifts the
- * shipped source out of the page files, so a stub can never stand in for it.
+ * Every case lifts its subject out of the page source, so a test-local stub
+ * can never stand in for one. That substitution is what lets an escaping
+ * change ship green: a stub with a different contract than the shipped helper
+ * makes assertions pass against markup the product cannot emit.
  *
- * Three pages define or default this helper independently — `esc` in
- * landing.js, `esc` in session.js, `tcEscapeHtml` in api-helper.js — and
- * api-helper renders shared markup with whichever one its host page hands it.
- * That makes their agreement a contract, not a coincidence, so it is asserted
- * here rather than left to review.
+ * `esc` in landing.js, `esc` in session.js and `tcEscapeHtml` in api-helper.js
+ * are pinned together here because api-helper renders shared markup with
+ * whichever one its host page hands it, which makes their agreement a
+ * contract rather than a coincidence. Three more escapers exist and are NOT
+ * covered — `escapeHtml` in session.js, openclaw-view.js and health-panel.js,
+ * which serve their own files and share no caller with these. Collapsing all
+ * six onto one owner is #1605.
  */
 
 const { describe, it } = require('node:test');
@@ -71,6 +72,17 @@ describe('the page escape helpers', () => {
         assert.equal(escape('say "hi"'), 'say &quot;hi&quot;');
         assert.equal(escape('<img src=x onerror=alert(1)>'),
           '&lt;img src=x onerror=alert(1)&gt;');
+      });
+
+      it("escapes the apostrophe, which a double-quoted attribute alone does not force", () => {
+        // Call sites interpolate this into a single-quoted JS string INSIDE a
+        // double-quoted attribute — `onclick="f(this, '${esc(id)}')"` at
+        // public/session.js:694 is one. There `"` escaping is not enough: a
+        // bare `'` closes the JS string and the rest of the value is parsed as
+        // code. Asserted per-escaper rather than only across them, because
+        // three helpers that drop it together still agree with each other.
+        assert.equal(escape("it's"), 'it&#39;s');
+        assert.equal(escape("');alert(1);//"), '&#39;);alert(1);//');
       });
 
       it('escapes & first, so an escape is never double-escaped into a literal entity', () => {

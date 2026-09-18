@@ -55,10 +55,9 @@ function render(sequences) {
   const ctx = { document: doc, window: {} };
   vm.createContext(ctx);
   // The page's OWN `esc`, lifted from landing.js — index.html is where this
-  // panel renders, and landing.js is what defines `esc` there. A hand-written
-  // stub is what let #1601 ship: one that coerced with String() printed the
-  // numbers the shipped helper blanked, so the assertions below passed against
-  // markup the panel could not produce.
+  // panel renders, and landing.js is what defines `esc` there. A stub with a
+  // different contract than the shipped helper makes the assertions below pass
+  // against markup the panel cannot produce, which is worse than no test.
   vm.runInContext(liftFunction(LANDING_SRC, 'function esc(str)'), ctx);
   vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcLaunchReadinessClass'), ctx);
   ctx.window.tcLaunchReadinessClass = ctx.tcLaunchReadinessClass;

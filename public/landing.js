@@ -1982,23 +1982,23 @@ function applyTheme() {
 // ── Utilities ──
 
 /**
- * Escape HTML special characters to prevent XSS.
+ * Escape HTML special characters to prevent XSS, rendering the value as text.
  *
- * Renders the values that HAVE a text form — numbers, booleans, bigints —
- * instead of blanking them. The panels build their markup straight from API
- * rows, where ids, counts and revisions arrive as JSON numbers; a helper that
- * only accepted strings emptied every numeric field on the launch-readiness
- * and rule-delivery panels while the string fields beside them rendered fine,
- * so the panels looked laid out and were unreadable (#1601).
+ * Accepts every value with a text form — strings, numbers, booleans, bigints —
+ * because the panels build markup straight from API rows, where ids, counts
+ * and revisions arrive as JSON numbers.
  *
- * `null` and `undefined` still render as '' — many callers pass a field that
- * is legitimately absent and want the empty cell. So do values with no useful
- * text form (objects, functions, symbols): '[object Object]' in front of the
- * operator is not an improvement on a blank.
+ * `null` and `undefined` give '': callers pass fields that are legitimately
+ * absent and want the empty cell. So does anything else with no useful text
+ * form, rather than putting '[object Object]' in front of the operator.
  *
- * This is the same contract as `tcEscapeHtml` in api-helper.js, which that
- * file falls back to when a page passes it no `esc` — the two must agree,
- * because the same api-helper code runs on pages that supply either one.
+ * `'` is escaped alongside `"` because call sites interpolate the result into
+ * single-quoted JS strings inside double-quoted attributes.
+ *
+ * `api-helper.js` renders shared markup with whichever escaper its host page
+ * supplies, so this has to agree with `tcEscapeHtml` there on every value a
+ * caller passes. The two still diverge on objects and arrays, which no call
+ * site passes; converging them is #1605.
  *
  * @param {*} str - Value to render as escaped HTML text
  * @returns {string}
