@@ -1216,6 +1216,12 @@ describe('engines', () => {
       // comes from the store rather than the folder basename because a project
       // may be named differently from its directory.
       projPath = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-medusa-guide-'));
+      // A real repository that ignores its engine-private carriers — since
+      // #1619 the classifier asks git, and an unknown tracking state means
+      // COMMITTED, so a bare temp dir would classify every carrier as shared
+      // and these assertions would be testing the wrong branch.
+      require('node:child_process').execFileSync('git', ['-C', projPath, 'init', '-q']);
+      fs.writeFileSync(path.join(projPath, '.gitignore'), '.codex.yaml\n.aider.conf.yml\n');
       projName = `Switchboard Guide ${Date.now() % 100000}`;
       store.projects.create({ name: projName, path: projPath, engine: 'claude' });
     });
@@ -1240,17 +1246,47 @@ describe('engines', () => {
       }
     });
 
-    it('states a reachable origin, not a pointer to a guide', () => {
-      const content = engines._generateClaudeMd(on, projPath);
-      assert.match(content, /https?:\/\/localhost:\d+\/api\/sessions\//);
+    it('states a reachable origin in the engine-private carriers', () => {
+      // #1619 moved this property. A tracked carrier may not state this
+      // machine's origin, so the "reachable, not a pointer to a guide"
+      // guarantee now lives where the file is engine-private and gitignored.
+      for (const content of [engines._generateCodexYaml(on, projPath), engines._generateAiderConf(on, projPath)]) {
+        assert.match(content, /https?:\/\/localhost:\d+\/api\/sessions\//);
+      }
     });
 
-    it('scopes the endpoints to the project NAME, not its folder', () => {
-      const content = engines._generateClaudeMd(on, projPath);
-      assert.ok(content.includes(encodeURIComponent(projName)),
-        'the routes are name-scoped; a folder-derived guess would hand the session a 404');
-      assert.ok(!content.includes(`/api/sessions/${path.basename(projPath)}/medusa`),
-        'must not address the project by its directory basename');
+    it('keeps this checkout\'s origin and name OUT of the tracked carriers (#1619)', () => {
+      // The defect: CLAUDE.md and AGENTS.md are tracked, so a per-checkout name
+      // or origin makes every checkout diff a shared file — and the wrap
+      // committed it silently. A stale name that 404s is the benign case; once
+      // it resolves it addresses a DIFFERENT live project.
+      for (const [label, content] of Object.entries({
+        claude: engines._generateClaudeMd(on, projPath),
+        gemini: engines._generateGeminiMd(on, undefined, projPath)
+      })) {
+        assert.ok(!content.includes(encodeURIComponent(projName)) && !content.includes(projName),
+          `${label}: a tracked carrier must not name this checkout's project`);
+        assert.doesNotMatch(content, /https?:\/\/localhost:\d+/,
+          `${label}: a tracked carrier must not carry this machine's origin`);
+        assert.match(content, /TANGLECLAW_API/,
+          `${label}: it must say where the origin comes from at run time`);
+        assert.match(content, /tc whoami|\/api\/tc\/whoami/,
+          `${label}: it must say how to resolve the project name at run time`);
+        assert.ok(content.includes('/medusa/send'),
+          `${label}: dropping identity must not drop the capability`);
+      }
+    });
+
+    it('scopes the endpoints to the project NAME, not its folder, in the private carriers', () => {
+      // Still the rule wherever the name is written at all: a folder-derived
+      // guess hands the session a 404. After #1619 that is the engine-private
+      // carriers only; the tracked ones resolve the name at run time instead.
+      for (const content of [engines._generateCodexYaml(on, projPath), engines._generateAiderConf(on, projPath)]) {
+        assert.ok(content.includes(encodeURIComponent(projName)) || content.includes(projName),
+          'the routes are name-scoped; a folder-derived guess would hand the session a 404');
+        assert.ok(!content.includes(`/api/sessions/${path.basename(projPath)}/medusa`),
+          'must not address the project by its directory basename');
+      }
     });
 
     it('says nothing to a project that has not opted in', () => {
@@ -1266,9 +1302,19 @@ describe('engines', () => {
       }
     });
 
-    it('drops the section rather than guessing when no path is given', () => {
+    it('never guesses a name when no path is given — and no longer needs one', () => {
+      // #1619 changed what "not guessing" looks like for a COMMITTED carrier.
+      // It used to mean dropping the section, because the section could not be
+      // written without a name. The section now contains no name at all, so it
+      // is emitted and instructs the session to resolve its own identity at run
+      // time. That is strictly better here: gating shared bytes on whether THIS
+      // machine has the project registered would make an unregistered clone
+      // regenerate the file with the section deleted — per-checkout variation
+      // of exactly the kind this fix removes.
       const content = engines._generateClaudeMd(on);
-      assert.ok(!/medusa/i.test(content), 'no project path means no resolvable name — omit, never guess');
+      assert.match(content, /## Medusa Switchboard/, 'the checkout-neutral section still ships');
+      assert.match(content, /tc whoami|\/api\/tc\/whoami/, 'and tells the session to resolve its own name');
+      assert.doesNotMatch(content, /https?:\/\/localhost:\d+/, 'still no guessed origin');
     });
 
     it('renders the aider form as comments so the config stays parseable', () => {
@@ -1311,27 +1357,43 @@ describe('engines', () => {
     it('_serviceTokenAuthLines: [] when off/null, an Authorization block when on', () => {
       assert.deepEqual(engines._serviceTokenAuthLines({ serviceTokenEnabled: false, serviceToken: null }), []);
       assert.deepEqual(engines._serviceTokenAuthLines({ serviceTokenEnabled: true, serviceToken: null }), []);
-      const md = engines._serviceTokenAuthLines({ serviceTokenEnabled: true, serviceToken: TOKEN });
+      // Explicit since #1619: an omitted classification means COMMITTED, and
+      // this case is about the inline form a private carrier gets.
+      const md = engines._serviceTokenAuthLines({ serviceTokenEnabled: true, serviceToken: TOKEN }, 'md', { committedCarrier: false });
       assert.ok(md.some((l) => l.includes(`Authorization: Bearer ${TOKEN}`)));
-      const comment = engines._serviceTokenAuthLines({ serviceTokenEnabled: true, serviceToken: TOKEN }, 'comment');
+      const comment = engines._serviceTokenAuthLines({ serviceTokenEnabled: true, serviceToken: TOKEN }, 'comment', { committedCarrier: false });
       assert.ok(comment.length > 0 && comment.every((l) => l.startsWith('#')), 'comment form must be all #-prefixed');
       assert.ok(comment.some((l) => l.includes(`Authorization: Bearer ${TOKEN}`)));
     });
 
     it('injects the bearer header into the engine-private configs when enabled', () => {
       enableGate();
-      // Contract narrowed deliberately 2026-08-31, not weakened: these three
-      // carriers are engine-private files that TangleClaw gitignores, so the
-      // live token may be inlined. The gemini/antigravity carrier is not —
-      // see the test below.
+      // Contract narrowed deliberately 2026-08-31, narrowed again 2026-09-18
+      // (#1619) — not weakened either time. These two carriers really are
+      // engine-private: `.gitignore:96-97` lists them. CLAUDE.md was in this
+      // list on the stated premise that TangleClaw gitignores it, and that
+      // premise was false — `.gitignore:85` says the opposite in so many
+      // words, "CLAUDE.md is deliberately NOT listed: it is tracked (#833)".
+      // So the live M2M bearer was being written into a tracked file. It now
+      // takes the same fetch pointer as AGENTS.md; see the two tests below.
       const generated = {
-        claude: engines._generateClaudeMd(proj),
         codex: engines._generateCodexYaml(proj),
         aider: engines._generateAiderConf(proj)
       };
       for (const [name, content] of Object.entries(generated)) {
         assert.ok(content.includes(`Authorization: Bearer ${TOKEN}`), `${name} config must carry the bearer header`);
       }
+    });
+
+    it('never writes the live token into the tracked CLAUDE.md carrier (#1619)', () => {
+      enableGate();
+      const content = engines._generateClaudeMd(proj);
+      assert.ok(!content.includes(TOKEN),
+        'CLAUDE.md is tracked (.gitignore:85) — inlining the bearer publishes it to the repo');
+      assert.match(content, /\/api\/service-token/,
+        'it must still say where to fetch the token');
+      assert.match(content, /TANGLECLAW_API/,
+        'and must name the origin as a runtime fact, not a committed one');
     });
 
     it('never writes the live token into the committed AGENTS.md carrier', () => {
@@ -1388,7 +1450,10 @@ describe('engines', () => {
         httpsCertPath: '/c.pem', httpsKeyPath: '/k.pem', serverPort: 3102
       });
       assert.equal(engines._getRulesContent(proj).serverProtocol, 'http');
-      const content = engines._generateClaudeMd(proj);
+      // #1619: the tracked carrier no longer states an origin, so this
+      // property is asserted where the origin is still written — the
+      // engine-private, gitignored carrier.
+      const content = engines._generateCodexYaml(proj);
       // Assert on the injected line itself — the static guide prose may mention
       // https://localhost:3102 as documentation, only the injected URL is live.
       assert.ok(
@@ -1414,7 +1479,8 @@ describe('engines', () => {
       const prev = process.env.TANGLECLAW_PORT;
       try {
         process.env.TANGLECLAW_PORT = '3102';
-        const content = engines._generateClaudeMd(proj);
+        // #1619: origin lives in the engine-private carrier now.
+        const content = engines._generateCodexYaml(proj);
         assert.ok(
           content.includes('**TangleClaw API base URL**: `http://localhost:3102`'),
           'injected base URL must name the bound port'
@@ -1434,10 +1500,12 @@ describe('engines', () => {
         ingressMode: 'direct', httpsEnabled: true,
         httpsCertPath: '/c.pem', httpsKeyPath: '/k.pem', serverPort: 3102
       });
-      assert.ok(engines._generateClaudeMd(proj).includes('https://localhost:3102'));
+      // #1619: asserted on the engine-private carrier, the only one that still
+      // writes an origin.
+      assert.ok(engines._generateCodexYaml(proj).includes('**TangleClaw API base URL**: `https://localhost:3102`'));
       // httpsEnabled defaults to true — a no-cert install serves HTTP.
       patchConfig({ httpsCertPath: null, httpsKeyPath: null });
-      assert.ok(engines._generateClaudeMd(proj).includes('http://localhost:3102'));
+      assert.ok(engines._generateCodexYaml(proj).includes('**TangleClaw API base URL**: `http://localhost:3102`'));
     });
   });
 
@@ -1544,8 +1612,19 @@ describe('engines', () => {
         // backticks are optional because the markdown carriers code-quote `tc`
         // and the comment carriers cannot.
         const unwrapped = content.replace(/\n#\s*/g, ' ').replace(/\s+/g, ' ');
-        assert.match(unwrapped, /If `?tc`? is not found, this pane was not launched by TangleClaw — say so rather than guessing/,
+        // #1619: the sentence this used to pin told a session that a missing
+        // `tc` PROVED the pane was unmanaged. It does not — the PATH floor is
+        // derived from the running installation directory, so renaming that
+        // directory under a live server leaves `tc` off PATH in a pane that is
+        // managed. A real session followed the old wording to a false
+        // conclusion and reported it to two others. What must ride every
+        // carrier is the honest version: check the launch context first.
+        // The comment carriers cannot render emphasis, so they shout the
+        // negation instead of bolding it; accept either spelling.
+        assert.match(unwrapped, /If `?tc`? is missing, check `?TANGLECLAW_API`?;/,
           `${profile.id}: the honest-absence case must ride every carrier`);
+        assert.match(unwrapped, /stop identity-dependent/,
+          `${profile.id}: it must say to STOP, not to conclude, when context is unavailable`);
       }
     });
 
@@ -2693,10 +2772,19 @@ describe('engines', () => {
         description: 'REST API reference'
       });
 
+      // #1619: the PATH is install state — it moves with the machine, the
+      // group's shared directory and the operator's layout — so it stays in the
+      // engine-private carrier and leaves the committed one. The doc is still
+      // NAMED there, and the section points at the shared-docs API, so access
+      // is preserved rather than dropped.
+      const priv = engines._generateCodexYaml({ id: projectId, rules: { core: {} } }, null);
+      assert.ok(priv.includes('/docs/api-ref.md'), 'Should include file path');
+
       const content = engines._generateClaudeMd({ id: projectId, rules: { core: {} } }, null);
       assert.ok(content.includes('Shared Documents'), 'Should include Shared Documents section');
       assert.ok(content.includes('API Reference'), 'Should include doc name');
-      assert.ok(content.includes('/docs/api-ref.md'), 'Should include file path');
+      assert.ok(!content.includes('/docs/api-ref.md'), 'a committed carrier must not carry the install path');
+      assert.match(content, /api\/shared-docs/, 'and must say where to read it instead');
       assert.ok(content.includes('REST API reference'), 'Should include description');
 
       // Clean up
@@ -2713,10 +2801,17 @@ describe('engines', () => {
         description: 'Full API specification'
       });
 
+      // Inline contents are the shared file's bytes AT GENERATION TIME, so they
+      // change the committed carrier whenever that file changes. Private carrier
+      // keeps the embed; the committed one names the doc and points at the API.
+      const priv = engines._generateCodexYaml({ id: projectId, rules: { core: {} } }, null);
+      assert.ok(priv.includes('GET /api/health'), 'Should include inlined file content');
+      assert.ok(priv.includes('POST /api/data'), 'Should include all file content');
+
       const content = engines._generateClaudeMd({ id: projectId, rules: { core: {} } }, null);
       assert.ok(content.includes('Inline API Spec'), 'Should include doc name');
-      assert.ok(content.includes('GET /api/health'), 'Should include inlined file content');
-      assert.ok(content.includes('POST /api/data'), 'Should include all file content');
+      assert.ok(!content.includes('GET /api/health'), 'a committed carrier must not embed the doc body');
+      assert.match(content, /api\/shared-docs/, 'and must say where to read it instead');
 
       store.sharedDocs.delete(doc.id);
     });
@@ -2730,8 +2825,16 @@ describe('engines', () => {
         injectMode: 'reference'
       });
 
+      // A per-machine existence check: present on the machine that generated
+      // it, absent on the next. It belongs to the private carrier; the
+      // committed one still names the doc so nothing is hidden (#1619).
+      const priv = engines._generateCodexYaml({ id: projectId, rules: { core: {} } }, null);
+      assert.ok(priv.includes('file not found'), 'Should warn about missing file');
+
       const content = engines._generateClaudeMd({ id: projectId, rules: { core: {} } }, null);
-      assert.ok(content.includes('file not found'), 'Should warn about missing file');
+      assert.ok(content.includes('Missing Doc'), 'the committed carrier still names the doc');
+      assert.ok(!content.includes('file not found'), 'but carries no per-machine existence check');
+      assert.ok(!content.includes('/nonexistent/path/doc.md'), 'and no install path');
 
       store.sharedDocs.delete(doc.id);
     });
@@ -2745,8 +2848,12 @@ describe('engines', () => {
         injectMode: 'inline'
       });
 
+      const priv = engines._generateCodexYaml({ id: projectId, rules: { core: {} } }, null);
+      assert.ok(priv.includes('File not found'), 'Should warn about missing inline file');
+
       const content = engines._generateClaudeMd({ id: projectId, rules: { core: {} } }, null);
-      assert.ok(content.includes('File not found'), 'Should warn about missing inline file');
+      assert.ok(content.includes('Missing Inline'), 'the committed carrier still names the doc');
+      assert.ok(!content.includes('/nonexistent/inline.md'), 'and carries no install path');
 
       store.sharedDocs.delete(doc.id);
     });
@@ -2764,8 +2871,28 @@ describe('engines', () => {
       store.documentLocks.acquire(doc.id, 999, 'other-project');
 
       const content = engines._generateClaudeMd({ id: projectId, rules: { core: {} } }, null);
-      assert.ok(content.includes('LOCKED'), 'Should show lock warning');
-      assert.ok(content.includes('other-project'), 'Should show who locked it');
+      // #1619: a committed carrier still WARNS about the lock, but names
+      // neither the holder nor the wall-clock expiry — `other-project` is
+      // another project's name, and `expiresAt` would change the shared bytes
+      // on every regeneration.
+      assert.match(content, /may be locked by another project/, 'Should show lock warning');
+      // Scoped to the lock phrasing on purpose: the PortHub guide's static
+      // example JSON mentions `other-project` as documentation, and a bare
+      // substring check would read that as a leak.
+      assert.doesNotMatch(content, /LOCKED by other-project/,
+        'must not name the lock holder in a committed carrier');
+      assert.doesNotMatch(content, /expires \d{4}-/,
+        'must not carry a wall-clock expiry that rewrites the shared bytes');
+      // The engine-private carrier keeps the full, actionable detail.
+      const priv = engines._generateCodexYaml({ id: projectId, rules: { core: {} } }, null);
+      assert.ok(priv.includes('LOCKED by other-project'), 'the private carrier keeps the holder');
+      // The old `content.includes('other-project')` assertion is deliberately
+      // gone, not merely relaxed: it asserted the opposite of the contract two
+      // lines above, and passed only because `data/porthub-guide.md`'s example
+      // conflict JSON happens to contain that string and is injected into the
+      // same carrier. Left in place it would have failed the day that example
+      // changed, with a message inviting the next reader to put the holder's
+      // name back into a committed file.
 
       // Clean up
       store.documentLocks.release(doc.id);
@@ -2835,10 +2962,17 @@ describe('engines', () => {
         injectMode: 'reference'
       });
 
-      const content = engines._generateClaudeMd({ id: projectId, rules: { core: {} } }, null);
-      // Should only appear once (deduplicated by file path)
-      const occurrences = content.split('/docs/shared.md').length - 1;
+      // Dedup is BY FILE PATH, so it is asserted where the path is written —
+      // the engine-private carrier (#1619).
+      const priv = engines._generateCodexYaml({ id: projectId, rules: { core: {} } }, null);
+      const occurrences = priv.split('/docs/shared.md').length - 1;
       assert.equal(occurrences, 1, 'Should deduplicate shared docs by file path');
+
+      // The committed carrier names it, and must name it exactly once — the
+      // same dedup, observed through what that carrier actually contains.
+      const content = engines._generateClaudeMd({ id: projectId, rules: { core: {} } }, null);
+      const named = content.split('Shared File').length - 1;
+      assert.equal(named, 1, 'the committed carrier lists the deduplicated doc once');
 
       // Clean up
       store.sharedDocs.delete(doc1.id);
@@ -3237,7 +3371,7 @@ describe('engines', () => {
       const md = engines._buildSharedDocsSection([
         { name: 'NETWORK', groupName: 'infra', injectMode: 'reference',
           filePath: path.join(home, 'Documents/Shared/NETWORK.md') }
-      ]);
+      ], { committedCarrier: false });
       assert.ok(md.includes('`~/Documents/Shared/NETWORK.md`'), md);
       assert.ok(!md.includes(home), 'must not contain the absolute home path');
     });
@@ -3246,7 +3380,7 @@ describe('engines', () => {
       const missing = path.join(home, 'Documents/Shared/GONE.md');
       const md = engines._buildSharedDocsSection([
         { name: 'GONE', groupName: 'infra', injectMode: 'inline', filePath: missing }
-      ]);
+      ], { committedCarrier: false });
       assert.match(md, /File not found/);
       assert.ok(!md.includes(home), 'the error branch must not leak the absolute path either');
     });
@@ -3254,7 +3388,7 @@ describe('engines', () => {
     it('leaves a path outside $HOME untouched', () => {
       const md = engines._buildSharedDocsSection([
         { name: 'OPS', groupName: 'infra', injectMode: 'reference', filePath: '/opt/shared/OPS.md' }
-      ]);
+      ], { committedCarrier: false });
       assert.ok(md.includes('`/opt/shared/OPS.md`'), md);
     });
   });

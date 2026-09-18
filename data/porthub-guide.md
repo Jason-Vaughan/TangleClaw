@@ -23,11 +23,11 @@ TangleClaw is the central port registry for every project on this machine — re
 
 ### Authentication
 
-When the operator has enabled the M2M service-token gate (AUTH-4), every `/api/ports*` call needs `Authorization: Bearer <token>` (else `401`). TC injects the header with the live token below this guide — copy it onto each request. Off by default (no token needed). Rotating the token invalidates the old one — relaunch to pick up the new value.
+When the operator has enabled the M2M service-token gate (AUTH-4), every `/api/ports*` call needs `Authorization: Bearer <token>` (else `401`). Where this guide sits in a file the project COMMITS, the live token is deliberately not beside it — fetch it from `$TANGLECLAW_API/api/service-token` (#1619). In an engine-private config TC still injects the header with the live token below this guide. Off by default (no token needed). Rotating the token invalidates the old one — relaunch to pick up the new value.
 
 ### API Operations
 
-All calls are JSON. The API base URL is injected **below this guide**; use it as-is — its scheme already reflects what the server serves (plain `http://` under `ingressMode: caddy` or with no certificates, else `https://`; don't "upgrade" it). For a mkcert `https://` URL, pass `curl -k` or trust the mkcert root CA.
+All calls are JSON. In an engine-private config the API base URL is injected **below this guide**; in a committed carrier it is not written at all — read `$TANGLECLAW_API`, which your launch exported (#1619). Either way use it as-is: its scheme already reflects what the server serves (plain `http://` under `ingressMode: caddy` or with no certificates, else `https://`; don't "upgrade" it). For a mkcert `https://` URL, pass `curl -k` or trust the mkcert root CA.
 
 ```
 # Check what's taken (before picking a port)

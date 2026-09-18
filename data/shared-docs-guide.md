@@ -8,11 +8,11 @@ A **group** links related projects (e.g. "backend services"). Each group can hav
 
 ### Authentication
 
-When the M2M service-token gate (AUTH-4) is on, every `/api/shared-docs*` call and a group's `/sync` need `Authorization: Bearer <token>` (else `401`); TC injects the header with the live token below this guide. Off by default. Rotating the token invalidates the old one — relaunch to refresh.
+When the M2M service-token gate (AUTH-4) is on, every `/api/shared-docs*` call and a group's `/sync` need `Authorization: Bearer <token>` (else `401`). In a committed carrier the live token is deliberately absent — fetch it from `$TANGLECLAW_API/api/service-token` (#1619); in an engine-private config TC injects it below this guide. Off by default. Rotating the token invalidates the old one — relaunch to refresh.
 
 ### API Operations
 
-All calls are JSON; the API base URL is injected **below this guide**.
+All calls are JSON. In an engine-private config the API base URL is injected **below this guide**; in a committed carrier read `$TANGLECLAW_API` instead (#1619).
 
 ```
 # List docs available to your project

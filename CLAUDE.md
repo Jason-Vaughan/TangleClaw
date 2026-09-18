@@ -206,27 +206,27 @@ stays version-free.
 <!-- BEGIN:tangleclaw -->
 ## TangleClaw Operational Guide — generated; edits inside the markers are overwritten
 
-**TangleClaw API base URL**: `http://localhost:3102`
+**TangleClaw API base URL**: read it from the `TANGLECLAW_API` environment variable your launch exported (`tc whoami` prints it too). It is deliberately not written here: this file is tracked in git and shared by every checkout, while the origin is per install.
 
-- **Run `tc capabilities` BEFORE concluding a TangleClaw capability is missing — never improvise one.** The `tc` CLI is on PATH in every TangleClaw-launched pane (verbs: `whoami`, `capabilities`, `sessions`, `message`, `start`, `ports`, `docs`, `rules`, `learnings`) and reports absence honestly. A capability assumed instead of checked is how sessions fabricate outcomes. If `tc` is not found, this pane was not launched by TangleClaw — say so rather than guessing. A failed localhost `tc`/`curl` is **not proof of outage** — sandboxes block loopback; get a host-context check before reporting the server down.
+- **Run `tc capabilities` BEFORE concluding a capability is missing — never improvise one.** `tc` is normally on PATH in a launched pane (verbs: `whoami`, `capabilities`, `sessions`, `message`, `start`, `ports`, `docs`, `rules`, `learnings`) and reports absence honestly; a capability assumed not checked is how sessions fabricate outcomes. If `tc` is missing, check `TANGLECLAW_API`; a renamed install can break PATH. Use the API with verified launch identity. If context is missing or inconsistent, report it and stop identity-dependent actions — absence of both is unavailable context, not proof of being unmanaged. A failed localhost `tc`/`curl` is **not proof of outage** — sandboxes block loopback; get a host-context check first.
 
 - **Plans are served at a shareable URL.** .tangleclaw/plans/ are served at a shareable URL: GET /api/projects/<projectId>/plans lists each one with the link to hand the operator (tc capabilities shows it with your project id) — hand back that link, never a local file path.
 
 ## Medusa Switchboard
 
-You can exchange messages with other TangleClaw sessions. TangleClaw already runs your WebSocket listener — do NOT register your own for this workspace (two consumers on one id fight over the queue).
-
-**This is context, not a task.** Do not check the inbox or explore the switchboard unprompted — participate when a message actually arrives (TangleClaw nudges you), or when the operator asks.
-
-| | |
-|---|---|
-| inbox | `GET http://localhost:3102/api/sessions/TangleClaw-Builder1/medusa/messages` |
-| mark handled | `POST http://localhost:3102/api/sessions/TangleClaw-Builder1/medusa/read` — `{"ids": ["<id>", ...]}`; they leave the inbox |
-| send (initiate or respond) | `POST http://localhost:3102/api/sessions/TangleClaw-Builder1/medusa/send` — `{"to": "<workspace-id>", "message": "..."}` |
-| peers | `GET http://localhost:3102/api/sessions/TangleClaw-Builder1/medusa/roster` |
-| why a peer has not picked up | `GET http://localhost:3102/api/sessions/TangleClaw-Builder1/medusa/peers/<workspace-id>` — the wake monitor's latest reason code for a peer on this host, with its `meaning` (`local: false` for one it cannot see) |
-
-**The initiator closes an exchange**, so a message you do not answer leaves the sender blocked. Reply over the same channel rather than printing into your own pane — the sender cannot see your pane.
+- TangleClaw runs your listener — do NOT open your own. Context, not a task: participate when a message arrives or when asked.
+- Routes, with `<base>` = `<api>/api/sessions/<project-name>`:
+- inbox `GET <base>/medusa/messages`; mark handled `POST <base>/medusa/read` with `{"ids": ["<id>", ...]}`;
+- send (initiate or respond) `POST <base>/medusa/send` with `{"to": "<workspace-id>", "message": "..."}`;
+- peers `GET <base>/medusa/roster`; why a peer has not picked up `GET <base>/medusa/peers/<workspace-id>`.
+- Resolve both placeholders at run time — they are launch facts, not repository facts, and this file is shared by every checkout:
+- `<api>` — the `TANGLECLAW_API` your launch exported.
+- `<project-name>` — `tc whoami`, or GET `$TANGLECLAW_API/api/tc/whoami?projectId=<id>&workspaceId=<workspace>` with BOTH values from your launch env, URL-encoded. Sending only `projectId` makes the switchboard capability report itself disabled for a session that has it.
+- URL-encode the name into the path too: names may contain spaces.
+- whoami ECHOES the workspace you claim — it does not validate it. Check that what comes back is the identity you were launched with (`TANGLECLAW_PROJECT_ID`, `TANGLECLAW_WORKSPACE_ID`); if the project id, name or workspace disagrees with your launch env, stop and report it rather than acting on either.
+- Never substitute a name read from a committed file, inferred from the directory, or remembered from another session: if it resolves it addresses someone else's queue. If the launch context is missing or inconsistent, say so and refuse rather than guess.
+- The INITIATOR closes an exchange, so a message you do not answer leaves the sender blocked. Reply over the same channel rather than printing into your own pane — the sender cannot see it.
+- The peer route returns the wake monitor's latest reason code for a peer on this host, with its `meaning` (`local: false` for one it cannot see).
 
 ## Port Management (PortHub)
 
@@ -253,11 +253,11 @@ TangleClaw is the central port registry for every project on this machine — re
 
 ### Authentication
 
-When the operator has enabled the M2M service-token gate (AUTH-4), every `/api/ports*` call needs `Authorization: Bearer <token>` (else `401`). TC injects the header with the live token below this guide — copy it onto each request. Off by default (no token needed). Rotating the token invalidates the old one — relaunch to pick up the new value.
+When the operator has enabled the M2M service-token gate (AUTH-4), every `/api/ports*` call needs `Authorization: Bearer <token>` (else `401`). Where this guide sits in a file the project COMMITS, the live token is deliberately not beside it — fetch it from `$TANGLECLAW_API/api/service-token` (#1619). In an engine-private config TC still injects the header with the live token below this guide. Off by default (no token needed). Rotating the token invalidates the old one — relaunch to pick up the new value.
 
 ### API Operations
 
-All calls are JSON. The API base URL is injected **below this guide**; use it as-is — its scheme already reflects what the server serves (plain `http://` under `ingressMode: caddy` or with no certificates, else `https://`; don't "upgrade" it). For a mkcert `https://` URL, pass `curl -k` or trust the mkcert root CA.
+All calls are JSON. In an engine-private config the API base URL is injected **below this guide**; in a committed carrier it is not written at all — read `$TANGLECLAW_API`, which your launch exported (#1619). Either way use it as-is: its scheme already reflects what the server serves (plain `http://` under `ingressMode: caddy` or with no certificates, else `https://`; don't "upgrade" it). For a mkcert `https://` URL, pass `curl -k` or trust the mkcert root CA.
 
 ```
 # Check what's taken (before picking a port)
@@ -334,11 +334,11 @@ A **group** links related projects (e.g. "backend services"). Each group can hav
 
 ### Authentication
 
-When the M2M service-token gate (AUTH-4) is on, every `/api/shared-docs*` call and a group's `/sync` need `Authorization: Bearer <token>` (else `401`); TC injects the header with the live token below this guide. Off by default. Rotating the token invalidates the old one — relaunch to refresh.
+When the M2M service-token gate (AUTH-4) is on, every `/api/shared-docs*` call and a group's `/sync` need `Authorization: Bearer <token>` (else `401`). In a committed carrier the live token is deliberately absent — fetch it from `$TANGLECLAW_API/api/service-token` (#1619); in an engine-private config TC injects it below this guide. Off by default. Rotating the token invalidates the old one — relaunch to refresh.
 
 ### API Operations
 
-All calls are JSON; the API base URL is injected **below this guide**.
+All calls are JSON. In an engine-private config the API base URL is injected **below this guide**; in a committed carrier read `$TANGLECLAW_API` instead (#1619).
 
 ```
 # List docs available to your project

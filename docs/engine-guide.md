@@ -495,9 +495,18 @@ This translation is automatic — rules are written once, and TangleClaw handles
 governance is owned by the Prawduct V2 plugin (`isPluginGoverned`), the plugin owns `CLAUDE.md`'s
 governance content, so TangleClaw does not regenerate the file — it splices a **managed block**
 (same `BEGIN:tangleclaw` / `END:tangleclaw` mechanism as `AGENTS.md`) carrying only operational
-content: the API base URL, the service-token *pointer* (never the inline token — a governed
-`CLAUDE.md` is a committed file), the Medusa switchboard section, and the PortHub / shared-docs /
-session-memory guides. Rules tiers (core, extension, global) stay out of the block: governance is
+content: where to read the API base URL, the service-token *pointer* (never the inline token — a
+governed `CLAUDE.md` is a committed file), the Medusa switchboard section, and the PortHub /
+shared-docs / session-memory guides. Since #1619 none of that content is checkout-specific: the
+block names no project and no origin, and the session resolves both at run time from
+`TANGLECLAW_API` and `tc whoami`, so every checkout of a repository generates the same bytes — from
+the point each one regenerates. A carrier committed before the fix keeps whatever it was given until
+then; this repo's own was migrated on the #1619 branch, and the wrap's ownership judge now refuses to
+stage a block that still carries identity rather than committing it unasked. Sections whose source is absent (no shared-docs group, no PortHub registration) are omitted
+entirely rather than emitted empty, so "the same bytes" means for checkouts with the same
+configuration. The
+same rule now covers the whole-file `CLAUDE.md` path and the shared-convention carriers, because
+those are committed too — `.gitignore:85` is explicit that `CLAUDE.md` is tracked. Rules tiers (core, extension, global) stay out of the block: governance is
 the plugin's side of the line, and per-project session rules ride the prime (#595). Governed
 projects on a non-`claude-md` carrier keep the full skip — writing a file TC has never owned on
 those projects is a separate decision.

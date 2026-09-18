@@ -680,3 +680,155 @@ describe('#1512: the one-time offer to stop tracking TangleClaw state', () => {
     }
   });
 });
+
+describe('#1619 — an identity-carrying carrier is asked about, not staged', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { execFileSync } = require('node:child_process');
+  const tcOwned = require('../lib/wrap-steps/_tc-owned-paths');
+
+  const MARK = { begin: '<!-- BEGIN:tangleclaw -->', end: '<!-- END:tangleclaw -->' };
+  const carrier = (body) => `# Project\n\nOperator notes.\n\n${MARK.begin}\n${body}\n${MARK.end}\n`;
+
+  /**
+   * A repo whose CLAUDE.md is committed with `head` and then rewritten to
+   * `work` — the shape the running server produces mid-session.
+   * @param {string} head
+   * @param {string} work
+   * @returns {string} repo root
+   */
+  function repoWithCarrier(head, work) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-own-id-'));
+    execFileSync('git', ['-C', dir, 'init', '-q']);
+    fs.writeFileSync(path.join(dir, 'CLAUDE.md'), carrier(head));
+    execFileSync('git', ['-C', dir, 'add', 'CLAUDE.md']);
+    execFileSync('git', ['-C', dir, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'seed']);
+    fs.writeFileSync(path.join(dir, 'CLAUDE.md'), carrier(work));
+    return dir;
+  }
+
+  // The dominant case, and the one the fix is named for: the carrier was clean
+  // at launch and the running server regenerated it DURING the session, so its
+  // mtime is this session's. Before the refusal reached this decision, `judge`
+  // returning `{kind: null}` only moved the file from `tangleclawMaintenance`
+  // to `owned` — and `stageableOf` stages both. The guard changed which bucket
+  // it was staged from, and nothing else.
+  const scopeFor = (root) => ({
+    snapshotApplies: true,
+    baseline: { dirty: { paths: [], truncated: false } },
+    startedAtMs: 1000,
+    workToplevel: root
+  });
+
+  it('is NOT stageable, and is surfaced with a reason the operator can act on', () => {
+    const root = repoWithCarrier(
+      'Routes: `<api>/api/sessions/<project-name>/medusa/send` — resolve at run time.',
+      '**TangleClaw API base URL**: `http://localhost:3102`'
+    );
+    const dirty = [{ path: 'CLAUDE.md', deleted: false }];
+    const c = ownership.classify(scopeFor(root), dirty, {});
+
+    assert.ok(!c.stageable.includes('CLAUDE.md'),
+      'a block carrying an origin must not be staged, from any bucket');
+    assert.ok(!c.tangleclawMaintenance.includes('CLAUDE.md'));
+    assert.ok(!c.owned.includes('CLAUDE.md'),
+      'and must not fall through to owned, which is where it used to land');
+    const asked = c.foreign.find((f) => f.path === 'CLAUDE.md');
+    assert.ok(asked, 'it must reach the operator');
+    assert.equal(asked.reason, 'carries-identity');
+    assert.match(asked.why, /must not be committed/);
+  });
+
+  it('an ordinary regenerated block is still staged silently', () => {
+    // The other half. If this fires, every wrap becomes a question.
+    const root = repoWithCarrier(
+      'Routes: `<api>/api/sessions/<project-name>/medusa/send` — old wording.',
+      'Routes: `<api>/api/sessions/<project-name>/medusa/send` — resolve at run time.'
+    );
+    const c = ownership.classify(scopeFor(root), [{ path: 'CLAUDE.md', deleted: false }], {});
+    assert.ok(c.stageable.includes('CLAUDE.md'), 'an ordinary block refresh must still stage without asking');
+    assert.ok(c.tangleclawMaintenance.includes('CLAUDE.md'));
+    assert.ok(!c.foreign.some((f) => f.path === 'CLAUDE.md'));
+  });
+
+  it('judge reports the refusal so the ownership rules can act on it', () => {
+    const root = repoWithCarrier('neutral', 'inbox `GET http://h/api/sessions/TangleClaw-Builder1/medusa/messages`');
+    const verdicts = tcOwned.judge(root, [{ path: 'CLAUDE.md', deleted: false }]);
+    assert.equal(verdicts.has('CLAUDE.md'), false, 'still not maintenance');
+    assert.ok(verdicts.identityRefusals.has('CLAUDE.md'), 'and the reason survives the call');
+    assert.match(verdicts.identityRefusals.get('CLAUDE.md'), /session route|origin|token/);
+  });
+});
+
+describe('#1619 — the refusal survives every route into a null verdict', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { execFileSync } = require('node:child_process');
+
+  const MARK = { begin: '<!-- BEGIN:tangleclaw -->', end: '<!-- END:tangleclaw -->' };
+  const carrier = (body, prose = 'Operator notes.') =>
+    `# Project\n\n${prose}\n\n${MARK.begin}\n${body}\n${MARK.end}\n`;
+  const IDENTITY = '**TangleClaw API base URL**: `http://localhost:3102`';
+  const NEUTRAL = 'Routes: `<api>/api/sessions/<project-name>/medusa/send` — resolve at run time.';
+
+  const scopeFor = (root) => ({
+    snapshotApplies: true,
+    baseline: { dirty: { paths: [], truncated: false } },
+    startedAtMs: 1000,
+    workToplevel: root
+  });
+
+  /**
+   * @param {string|null} head - committed carrier body, or null to leave the file untracked
+   * @param {string} workFile - the work-tree carrier content
+   * @returns {string} repo root
+   */
+  function repo(head, workFile) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-route-'));
+    execFileSync('git', ['-C', dir, 'init', '-q']);
+    fs.writeFileSync(path.join(dir, 'seed.txt'), 'seed\n');
+    if (head !== null) fs.writeFileSync(path.join(dir, 'CLAUDE.md'), carrier(head));
+    execFileSync('git', ['-C', dir, 'add', '-A']);
+    execFileSync('git', ['-C', dir, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'seed']);
+    fs.writeFileSync(path.join(dir, 'CLAUDE.md'), workFile);
+    return dir;
+  }
+
+  it('a COMPOUND change — block acquires identity while the operator edits their own prose', () => {
+    // The route the previous fix missed. `differsOnlyInsideManagedBlock` returns
+    // false, the carrier branch returned a bare null, and a bare null falls
+    // through to the mtime rule and is staged from `owned`. Nothing exotic: an
+    // operator editing the top of their own CLAUDE.md in the session the server
+    // regenerated the block underneath them.
+    const root = repo(NEUTRAL, carrier(IDENTITY, 'Operator notes, with a line the operator added.'));
+    const c = ownership.classify(scopeFor(root), [{ path: 'CLAUDE.md', deleted: false }], {});
+    assert.ok(!c.stageable.includes('CLAUDE.md'), 'a compound change must not stage an identity-carrying block');
+    assert.ok(!c.owned.includes('CLAUDE.md'));
+    assert.equal(c.foreign.find((f) => f.path === 'CLAUDE.md').reason, 'carries-identity');
+  });
+
+  it('a carrier with NO HEAD copy — newly tracked this session', () => {
+    // Generation had classified it private (it was ignored) and wrote an origin
+    // into it; tracking it now means `git show HEAD:CLAUDE.md` has nothing to
+    // show, so the comparison throws before anything reads the file.
+    const root = repo(null, carrier(IDENTITY));
+    const c = ownership.classify(scopeFor(root), [{ path: 'CLAUDE.md', deleted: false }], {});
+    assert.ok(!c.stageable.includes('CLAUDE.md'), 'no HEAD copy is not a reason to stage identity');
+    assert.equal(c.foreign.find((f) => f.path === 'CLAUDE.md').reason, 'carries-identity');
+  });
+
+  it('a compound change with a NEUTRAL block still stages, as the session\'s own file', () => {
+    // The counter-case, kept adjacent on purpose: widening the refusal must not
+    // turn an ordinary edit into a question. The operator changed their own
+    // prose this session, so the file is theirs and is staged — which is the
+    // behaviour that existed before this guard and must survive it.
+    const root = repo(NEUTRAL, carrier(NEUTRAL, 'Operator notes, edited.'));
+    const c = ownership.classify(scopeFor(root), [{ path: 'CLAUDE.md', deleted: false }], {});
+    assert.ok(c.stageable.includes('CLAUDE.md'), 'an ordinary compound edit must still stage');
+    assert.ok(c.owned.includes('CLAUDE.md'), 'as the session\'s own file');
+    assert.ok(!c.foreign.some((f) => f.path === 'CLAUDE.md'),
+      'and the operator is not asked about their own edit');
+  });
+});
