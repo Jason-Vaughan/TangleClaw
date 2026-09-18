@@ -370,6 +370,33 @@ describe('runPreflight — the workspace moved', () => {
     assert.equal(needsRecovery(dirty), true, 'uncommitted work in a vanished worktree is lost work');
   });
 
+  it('owes recovery when the dirtiness was never measured, and says so', () => {
+    // `handoff-stage.js#_worktreeFacts` records `dirty: null` when it could not
+    // establish the state — "we did not find out" is not "there is nothing
+    // uncommitted". Flattening the null to false told the operator the tree was
+    // clean and withheld recovery on a measurement nobody took.
+    const unknown = runPreflight(ctx({
+      file: { state: FILE_STATES.VALID, doc: doc({ worktree: worktree({ dirty: null }) }), digest: DIGEST },
+      worktreeProbe: { toplevelExists: false, headSha: null, branch: null }
+    }));
+    assert.equal(unknown.verdict, VERDICTS.WORKSPACE_UNAVAILABLE);
+    assert.equal(unknown.evidence.worktreeDirty, null, 'the third value survives to the exit');
+    assert.equal(needsRecovery(unknown), true, 'an unverifiable loss is not a proven non-loss');
+    assert.ok(
+      unknown.reasons.some((r) => /could not be measured/.test(r)),
+      'the operator is told it was not measured, never that it was clean'
+    );
+  });
+
+  it('records the measured values as themselves, not as a two-way flag', () => {
+    const measuredClean = runPreflight(ctx({
+      file: { state: FILE_STATES.VALID, doc: doc({ worktree: worktree({ dirty: false }) }), digest: DIGEST },
+      worktreeProbe: { toplevelExists: false, headSha: null, branch: null }
+    }));
+    assert.equal(measuredClean.evidence.worktreeDirty, false);
+    assert.equal(needsRecovery(measuredClean), false, 'only a MEASURED clean tree withholds recovery');
+  });
+
   it('never lets the registered root\'s HEAD promote a vanished worktree to ok', () => {
     // Diagnosis only. Knowing some other tree is healthy says nothing about the
     // one the handoff named.
@@ -405,9 +432,11 @@ describe('runPreflight — the catch-all', () => {
     assert.equal(needsRecovery(r), true);
   });
 
-  it('reports unclassified for an active session with no checkpoint', () => {
-    // §2.7's second named example. The session is live and pre-epoch, so no
-    // "ran after the epoch" row claims it, and there is nothing to hand over.
+  it('reports legacy-unclean for a pre-epoch active session — row 8 claims it before row 16', () => {
+    // Named for what it asserts. The fixture is entirely pre-epoch with an
+    // unclean baseline and no handoff, which is row 8's shape, so row 16 never
+    // sees it — §2.7's "active newest session with no checkpoint" example needs
+    // a session PAST the epoch to reach the catch-all, which the next test does.
     const r = runPreflight(ctx({
       sessions: [{ id: 3, status: 'active' }],
       publications: [],
@@ -415,6 +444,23 @@ describe('runPreflight — the catch-all', () => {
       file: { state: FILE_STATES.ABSENT, doc: null, digest: null }
     }));
     assert.equal(r.verdict, VERDICTS.LEGACY_UNCLEAN);
+    assert.equal(needsRecovery(r), true);
+  });
+
+  it('reports unclassified for an active session past the epoch with no checkpoint', () => {
+    // §2.7 row 16's second named example, which had no fixture of its own. The
+    // session is live and POST-epoch, so the legacy rows cannot claim it; it has
+    // published nothing, so no publication row claims it; and it has not ended,
+    // so the crash row does not either. Nothing matched, which is the point.
+    const r = runPreflight(ctx({
+      sessions: [{ id: 9, status: 'active' }],
+      publications: [],
+      continuityIndexPresent: true,
+      handoffEpoch: { epochSessionId: 5, baseline: BASELINES.UNCLEAN, baselineReason: 'session still active' },
+      file: { state: FILE_STATES.ABSENT, doc: null, digest: null }
+    }));
+    assert.equal(r.verdict, VERDICTS.HANDOFF_NEVER_PUBLISHED,
+      'a post-epoch session that published nothing is row 9, not the catch-all');
     assert.equal(needsRecovery(r), true);
   });
 
@@ -535,6 +581,11 @@ describe('ok is a positive predicate, proven by exhaustion', () => {
     // be a pass nobody decided to grant.
     const exceptions = new Set([VERDICTS.FIRST_LAUNCH, VERDICTS.LEGACY, VERDICTS.OK]);
     for (const verdict of Object.values(VERDICTS)) {
+      // `not-evaluated` is the one member this module never returns: it is what
+      // the launch records when it could not gather a context at all, so it is
+      // neither a decision nor a bucket. It is in the enum so that every reader
+      // matching on a verdict can name it.
+      if (verdict === VERDICTS.NOT_EVALUATED) continue;
       const covered = preflight.RECOVERY_VERDICTS.has(verdict)
         || preflight.RECONCILIATION_VERDICTS.has(verdict)
         || exceptions.has(verdict);

@@ -617,3 +617,24 @@ describe('case 6 — missing evidence is reported, never backfilled', () => {
     assert.deepEqual(after2, before, 're-deriving a recorded boundary is the one thing this must never do');
   });
 });
+
+describe('the baseline vocabulary exists in two places and must stay one list', () => {
+  it('the store\'s constant and the preflight\'s are the same set', () => {
+    // `lib/store.js` writes the SQL CHECK from its list; `lib/launch-preflight.js`
+    // branches rows 7 and 8 on its own copy, and it keeps a copy on purpose —
+    // importing the store would give a module whose whole contract is "reads
+    // nothing" a database dependency.
+    //
+    // The cost of that separation is that nothing stops them drifting, and the
+    // drift is silent in the worst direction: a baseline the store can write but
+    // the preflight matches in neither branch falls out of both and every legacy
+    // project degrades to the catch-all. This is the assertion that makes the
+    // duplication safe, so it is the thing to fix rather than delete if it reds.
+    const { BASELINES } = require('../lib/launch-preflight.js');
+    assert.deepEqual(
+      [...store.HANDOFF_BASELINE_VALUES].sort(),
+      Object.values(BASELINES).sort(),
+      'add the value to BOTH lists, or the preflight cannot classify what the store can store'
+    );
+  });
+});

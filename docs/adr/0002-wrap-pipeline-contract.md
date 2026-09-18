@@ -398,3 +398,31 @@ reconciliation exists rather than an oversight.
 **`wrapRunId` reaches the step server-side only.** It is set after the request options are spread,
 the same guarantee `onStepEvent` and `resumeFrom` already carry, because it is the identity a
 publication is bound to and a request body must never be able to name another run.
+
+## Amendment (Train 21, #1586) — the launch path is the second writer
+
+The amendment above says "preflight reports the absent publication later", which was true while
+preflight did not exist. It now does, and it does more than report: **`applyHandoffRepairs`, called
+from `lib/sessions.js`'s launch path, publishes.** The wrap is no longer the sole writer of
+`current.json`, `history/` and `handoff_publications`.
+
+**What the launch path may write, and only this.** It finishes a publication the wrap had already
+earned — one whose `eligible_at` was bound in the lifecycle or checkpoint transaction — and which a
+crash left half-applied across the rename that cannot join a SQL transaction. It never stages, never
+binds eligibility, and never creates an attempt. Every rule above still holds over it unchanged:
+nothing infers eligibility from session status, an attempt that completed but lost the race is
+superseded rather than abandoned, and a mismatched file is never published.
+
+**Two repairs, because the crash lands in two places.** `publish` promotes a staged file whose rename
+never happened. `record-published` records a row whose rename DID happen — the bytes are already
+`current.json` and only the database is behind. The second is invisible to a scan of the staged
+files, since after the rename no staged file remains, which is why it needs its own action rather
+than falling out of the first.
+
+**The repair re-validates; it never trusts the proposal.** Detection is pure (`lib/launch-preflight.js`
+writes nothing), so every condition is re-established against the live row and the live file inside
+the transaction that acts. A refusal is an outcome, not an exception: a launch must not fail because
+a repair could not be applied.
+
+**Ordering on the launch path.** The repair runs before `launchBaseline.capture`, so the file it
+moves is not counted as the new session's own change and put in front of the operator at wrap.

@@ -953,10 +953,49 @@ Written before the code, because each one answers a question the blueprint leave
     `identity-mismatch` — a recovery verdict — on every launch of every Medusa project. The
     `projectId` half is exact and unaffected. Filed as **#1611**: either the check compares something
     that can match, or the contract says identity is `projectId` alone.
-  - `SESSION_WINDOW` (200) is a diagnostic breadth, not a correctness threshold. The decision reads
-    sessions for the newest one, the epoch comparison, and the producer of the newest published
-    attempt; the first two are answered correctly by any newest-first slice, and the third is
-    answered by fetching producers by id regardless of the slice.
+  - `SESSION_WINDOW` / `PUBLICATION_WINDOW` (200 each) are diagnostic breadths, not correctness
+    thresholds. The decision reads sessions for the newest one, the epoch comparison, and the
+    producer of the newest published attempt; the first two are answered correctly by any
+    newest-first slice, and the third is answered by fetching producers by id regardless of the
+    slice. Publications are bounded on the same argument — every question asked of them is about the
+    highest `seq`.
+  - **Repair proposals are computed BEFORE the verdict chain**, not at row 6. A proposal is a fact
+    about the store, not about which word won; inside the chain it inherited the early exits, so
+    rows 1-5 returned none — and `crash-recovery` (row 5) is reachable with a completed, eligible,
+    unpublished attempt sitting there. Once a later publication's higher `seq` passed it,
+    `_repairable` could never return true for it again. Critic R-8.
+  - **A second repair action, `record-published`.** §2.6's reconciliation table opens with a crash
+    that landed AFTER `promoteStaged`'s rename and before `recordPublished` — the bytes are already
+    `current.json` and only the row is behind. That case had no implementation: a scan of the staged
+    files cannot see it, because after the rename no staged file remains. Its applier validates the
+    promoted file against the row exactly as a staged file would be, and decides the lost race
+    BEFORE reading the file, because `current.json` is shared and a newer winner's bytes would
+    otherwise fail the identity check and strand a completed attempt at `staged`. Critic R-2.
+  - **`worktree.dirty` stays three-valued.** The producer records `null` when it could not measure;
+    row 13 flattened it with `=== true`, which told the operator the tree was clean and withheld
+    recovery on a measurement nobody took. `evidence.worktreeDirty` is true/false/null and only a
+    MEASURED clean tree withholds recovery. Critic R-1.
+  - `evidence.fallbackRootHead` IS now populated, on exactly the condition §2.7 names — a recorded
+    worktree that is gone. It was plumbed end to end and hardcoded null in the first cut. Critic
+    R-4/R-10/R-17.
+  - `handoffEpoch.present` survives `_normalize` and reaches `evidence.epochPresent`, and a missing
+    boundary row is stated on EVERY verdict rather than only where `baselineReason` happens to
+    print. A tri-state that dies at the last hop is not a tri-state. Critic R-16.
+  - Every launch logs its verdict (warn for a recovery-class answer, info otherwise). Step 3 is not
+    a channel that always exists — an engine declaring no launch sequence would have recorded
+    `handoff-corrupt` and told nobody. Critic R-15.
+  - The baseline vocabulary is still declared twice on purpose (importing the store would give the
+    pure module a database dependency); `test/handoff-epoch.test.js` now pins the two lists equal,
+    which is what makes the duplication safe. Critic R-9.
+  - ADR 0002 carries a #1586 amendment: the launch path is a second writer of `current.json`, and
+    what it may write. Critic R-18.
+  - Retention (#1602) still did not land, and its enabling condition IS now satisfied. Recorded as a
+    comment on that issue rather than left in a review — a deferral with no named home is a drop.
+    Critic R-14.
+  - **The Critic's record lint could not grade this chunk** and cannot grade any chunk in this repo:
+    it reads `.prawduct/artifacts/build-plan.md`, and this repo keeps plans in `.tangleclaw/plans/`.
+    A gitignored symlink now mirrors the governing plan there, in this worktree and in the primary
+    checkout — the same mirror pattern the other gates already read. Critic R-3.
   - `applyHandoffRepairs` lives in `lib/handoff-publish.js`, not the pure preflight module, and
     delegates its re-checks to `publishHandoff` rather than restating them. `publishHandoff` already
     re-establishes exactly `_repairable`'s conditions inside its own transaction, against the live

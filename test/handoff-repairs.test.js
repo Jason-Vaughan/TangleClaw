@@ -327,3 +327,117 @@ describe('re-running a repair', () => {
     assert.equal(currentPublicationId(), pid);
   });
 });
+
+describe('the crash that landed AFTER the rename (#1586, Critic R-2)', () => {
+  /**
+   * Promote a staged attempt's file without writing the DB record — the exact
+   * state a crash between `promoteStaged` and `recordPublished` leaves behind.
+   * @param {string} publicationId - The attempt
+   * @returns {void}
+   */
+  function promoteWithoutRecording(publicationId) {
+    lockfile.promoteStaged(project, publicationId, null);
+  }
+
+  it('is proposed at all — a scan of the staged files alone cannot see it', () => {
+    // After the rename there is no `staged-<pid>.json` left to find, which is
+    // why this case needs its own proposal rather than falling out of the
+    // staged-file loop.
+    const pid = stageAttempt();
+    promoteWithoutRecording(pid);
+    assert.equal(fs.existsSync(lockfile.stagedPath(project, pid)), false, 'precondition: the staged file is gone');
+    assert.equal(currentPublicationId(), pid, 'precondition: the bytes are already current');
+    assert.equal(store.handoffs.get(pid).state, 'staged', 'precondition: the record is behind its bytes');
+
+    const detected = runPreflight(preflightCtx());
+    assert.deepEqual(
+      detected.repairs.map((r) => r.action),
+      ['record-published'],
+      'the promoted case is proposed, and the staged-file case is not'
+    );
+  });
+
+  it('is applied by recording the row, and the next pass reads ok', () => {
+    const pid = stageAttempt();
+    promoteWithoutRecording(pid);
+
+    const { outcomes, appliedCount } = applyHandoffRepairs(project, runPreflight(preflightCtx()).repairs);
+    assert.equal(appliedCount, 1);
+    assert.equal(outcomes[0].action, 'record-published');
+    assert.equal(store.handoffs.get(pid).state, 'published');
+    assert.equal(currentPublicationId(), pid, 'no file moved — the rename had already happened');
+    assert.equal(runPreflight(preflightCtx()).verdict, VERDICTS.OK);
+  });
+
+  it('refuses when the already-current bytes do not match the row', () => {
+    // A promoted file earns no weaker check for having been moved.
+    const pid = stageAttempt();
+    promoteWithoutRecording(pid);
+    fs.writeFileSync(lockfile.currentPath(project), '{"schema":"tc.handoff/1","publicationId":"' + pid + '","kind":"final"}\n', 'utf8');
+
+    const { appliedCount, outcomes } = applyHandoffRepairs(project, [
+      { action: 'record-published', publicationId: pid }
+    ]);
+    assert.equal(appliedCount, 0);
+    assert.match(outcomes[0].reason, /digest does not match/);
+    assert.equal(store.handoffs.get(pid).state, 'staged', 'the row stays behind rather than recording bytes it cannot vouch for');
+  });
+
+  it('refuses when the attempt never became eligible', () => {
+    const pid = stageAttempt({ bind: false });
+    promoteWithoutRecording(pid);
+    const { appliedCount, outcomes } = applyHandoffRepairs(project, [
+      { action: 'record-published', publicationId: pid }
+    ]);
+    assert.equal(appliedCount, 0);
+    assert.match(outcomes[0].reason, /not eligible/);
+  });
+
+  it('supersedes rather than recording over a newer publication', () => {
+    const older = stageAttempt({ wrapRunId: 'run-older' });
+    promoteWithoutRecording(older);
+    const newer = stageAttempt({ sessionId: 2, wrapRunId: 'run-newer' });
+    applyHandoffRepairs(project, [{ action: 'publish', publicationId: newer }]);
+    assert.equal(currentPublicationId(), newer, 'precondition: the newer attempt is current');
+
+    const { appliedCount } = applyHandoffRepairs(project, [
+      { action: 'record-published', publicationId: older }
+    ]);
+    assert.equal(appliedCount, 0);
+    assert.equal(store.handoffs.get(older).state, 'superseded');
+    assert.equal(currentPublicationId(), newer);
+  });
+
+  it('re-running it is a no-op success', () => {
+    const pid = stageAttempt();
+    promoteWithoutRecording(pid);
+    const proposals = [{ action: 'record-published', publicationId: pid }];
+    assert.equal(applyHandoffRepairs(project, proposals).appliedCount, 1);
+    const second = applyHandoffRepairs(project, proposals);
+    assert.equal(second.appliedCount, 1);
+    assert.match(second.outcomes[0].reason, /already published/);
+  });
+});
+
+describe('a repair is a fact about the store, not about the verdict (Critic R-8)', () => {
+  it('is proposed even when an earlier check wins the chain', () => {
+    // A kept session bound a checkpoint eligible and then crashed. The chain
+    // stops at row 5 (`crash-recovery`), and the completed attempt that would
+    // recover it must still be proposed — when the scan sat at row 6 it was not,
+    // and a later publication's higher seq made it permanently unrepairable.
+    const pid = stageAttempt({ kind: 'checkpoint', wrapRunId: 'run-cp' });
+    const ctx = preflightCtx({ sessions: [{ id: 1, status: 'crashed' }] });
+
+    const result = runPreflight(ctx);
+    assert.equal(result.verdict, VERDICTS.CRASH_RECOVERY, 'precondition: an early row wins');
+    assert.deepEqual(result.repairs.map((r) => r.publicationId), [pid],
+      'the proposal survives the early exit');
+  });
+
+  it('is proposed under a corrupt handoff too — row 1 exits first of all', () => {
+    const pid = stageAttempt();
+    const result = runPreflight(preflightCtx({ file: { state: 'invalid' } }));
+    assert.equal(result.verdict, VERDICTS.HANDOFF_CORRUPT);
+    assert.deepEqual(result.repairs.map((r) => r.publicationId), [pid]);
+  });
+});
