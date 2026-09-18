@@ -534,7 +534,7 @@ Definitions used below:
 | # | Verdict | Condition | Recovery? |
 |---|---|---|---|
 | 1 | `handoff-corrupt` | `current.json` is `unreadable`/`invalid` (bad JSON, schema-invalid, unknown major), **regardless** of first-launch or legacy status | yes |
-| 2 | `identity-mismatch` | file `valid` but `projectId`/`workspaceId` ≠ the launching project | yes |
+| 2 | `identity-mismatch` | file `valid` but `projectId` ≠ the launching project. **`workspaceId` is NOT compared** — amended 2026-09-18, see *Identity* below | yes |
 | 3 | `handoff-unexpected` | file `valid` but the project has no sessions and no publication rows | yes |
 | 4 | **`first-launch`** (explicit exception) | no prior sessions **and** no publication rows **and** no continuity index **and** file `absent` | no |
 | 5 | `crash-recovery` | the newest prior session is `crashed`/`killed` | yes |
@@ -547,8 +547,53 @@ Definitions used below:
 | 12 | `handoff-behind` | a current publication exists, but the newest prior session id > its producing `sessionId`: a later session ended `wrapped` without an eligible publication (a crash is already 5) | yes |
 | 13 | `workspace-unavailable` | current publication with non-null `worktree` whose `toplevel` no longer exists | **reconciliation required**; recovery **yes** if `worktree.dirty` was true, else no |
 | 14 | `stale` | current publication, and `worktree.headSha` ≠ the live HEAD of `worktree.toplevel` (or the branch moved) | no; reconciliation required |
-| 15 | **`ok`** (positive) | all of: a **current publication** exists; its identity matches; its `sessionId` **is** the newest prior session; that session is `wrapped` (final) or still-kept `active` (checkpoint); `worktree` is null (no-git, recorded) or its HEAD and branch match | no |
-| 16 | `unclassified` | nothing above matched. Examples: a continuity index with no session history and no publications (`baseline = 'empty'`); an `active` newest session with no checkpoint. `reasons[]` lists every predicate that failed | yes |
+| 15 | **`ok`** (positive) | all of: a **current publication** exists; its identity matches (`projectId` only — see *Identity*); its `sessionId` **is** the newest prior session; that session is `wrapped` (final) or still-kept `active` (checkpoint); `worktree` is null (no-git, recorded) or its HEAD and branch match | no |
+| 16 | `unclassified` | nothing above matched. Example: a continuity index with no session history and no publications (`baseline = 'empty'`). `reasons[]` lists every predicate that failed | yes |
+
+**Identity — amended 2026-09-18 (Architect ruling). Rev 4's rows 2 and 15 said
+`projectId`/`workspaceId`; this supersedes the workspace half only, and rev 4's
+approval history above stands as history.**
+
+Row 2 compares the handoff's `projectId` with the launching project's numeric id,
+in the same TangleClaw store. The handoff's `workspaceId` describes the PRODUCING
+session's Medusa identity and is **not** compared with the next session's. Rev 4
+conflated session routing identity with project identity: `medusa.mintWorkspaceId`
+draws fresh random bytes on every launch, so the two can never be equal and the
+check as written returned `identity-mismatch` — a recovery verdict — on every
+launch of every Medusa project that had ever written a handoff.
+
+A changed, absent or null Medusa identity is **never on its own** a recovery
+condition. The field stays in the frozen document and stays covered by the digest:
+diagnostic does not mean editable after publication.
+
+**Project identity alone does not authorize acceptance.** Every other acceptance
+check stands unchanged — artifact validation, project-scoped publication lookup,
+attempt-exact eligibility (ADR 0002, binding), digest matching, publication
+ordering, producing-session state, and worktree reconciliation. `projectId`
+equality never means `ok` by itself. This contract is within ONE store; it does
+not define trust for importing handoffs between installations.
+
+21.8 shipped `workspaceId: null` at the launch caller, which avoids the false
+mismatch but leaves the wrong contract available to a future caller. **#1611 stays
+open** for a focused follow-up: remove the launching-workspace equality predicate
+from the pure evaluator, remove or explicitly deprecate the context/API option,
+and update comments and tests so a stale optional argument cannot restore it. No
+document-schema migration, and no removal of historical workspace values.
+
+**Row 16 — amended 2026-09-18 (same ruling).** Rev 4's second example, "an
+`active` newest session with no checkpoint", is removed: it does not specify
+enough state to determine a verdict. With an absent handoff file and no
+publication rows, a prior session AFTER the epoch reaches row 9
+(`handoff-never-published`) and an all-pre-epoch history with an unclean baseline
+reaches row 8 (`legacy-unclean`), each unless an earlier check wins. The
+continuity-index example remains reachable and is the row's fixture. **The check
+order is not changed to make the old example true**, and no active-session
+exception is added.
+
+Ruling: `/Users/jasonvaughan/Documents/Projects/TangleClaw-Architect/.tangleclaw/plans/train-21-handoff-identity-ruling.md`
+(hosted: https://cursatory.tail123678.ts.net:8443/plans/81/train-21-handoff-identity-ruling.md).
+Carry it into ADR 0017 (21.12) with the v42 migration decision; the Architect
+reviews that draft before it merges.
 
 **Pivot for 5, 6 and 12.** A crash, or a publication-less wrap, is recovered only when a *later*
 session produces an eligible, published final. The newest prior session is then that session.
