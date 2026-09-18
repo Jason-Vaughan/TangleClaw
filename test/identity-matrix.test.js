@@ -367,3 +367,137 @@ describe('#1619 matrix — six data classes × four routes, judge → classify �
     }
   });
 });
+
+describe('#1619 — actual final generated files, across every supported syntax', () => {
+  const { execFileSync } = require('node:child_process');
+
+  // Its own store: the block above removes every temp root it created in its
+  // `after`, including the store's, so sharing one leaves this suite writing to
+  // a directory that no longer exists.
+  before(() => {
+    const ownStore = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ser-store-'));
+    store._setBasePath(ownStore);
+    store.init();
+  });
+
+  /**
+   * A project whose engine-private carriers are gitignored, so generation
+   * produces the PRIVATE rendering — the state a carrier is in before someone
+   * force-adds it to the index.
+   *
+   * @param {{inline?:'ok'|'missing'|'unreadable', reference?:boolean}} docSpec
+   * @returns {{root:string, config:object}}
+   */
+  let seq = 0;
+
+  function privateProject(docSpec) {
+    seq += 1;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ser-'));
+    TEMP_ROOTS.push(root);
+    execFileSync('git', ['-C', root, 'init', '-q']);
+    fs.writeFileSync(path.join(root, '.gitignore'), '.codex.yaml\n.aider.conf.yml\n');
+    const project = store.projects.create({ name: `Ser ${Date.now() % 100000} ${seq}`, path: root, engine: 'codex' });
+    const group = store.projectGroups.create({ name: `SerG ${Date.now() % 100000} ${seq}` });
+    store.projectGroups.addMember(group.id, project.id);
+
+    if (docSpec.reference) {
+      const f = path.join(root, 'ref.md');
+      fs.writeFileSync(f, '# Ref\n');
+      store.sharedDocs.create({ groupId: group.id, name: 'Ref Doc', filePath: f, injectIntoConfig: true, injectMode: 'reference' });
+    }
+    if (docSpec.inline) {
+      const f = docSpec.inline === 'ok' ? path.join(root, 'inline.md')
+        : docSpec.inline === 'unreadable' ? root
+          : path.join(root, 'absent.md');
+      if (docSpec.inline === 'ok') fs.writeFileSync(f, '# Inline\nbody\n');
+      store.sharedDocs.create({ groupId: group.id, name: 'Inline Doc', filePath: f, injectIntoConfig: true, injectMode: 'inline' });
+    }
+
+    // Deliberately WITHOUT the values that would mask a document-field miss:
+    // no medusa (no project name, no routes), no PortHub guide (no origin), and
+    // the service-token gate is off in this store. If a case passes here, it
+    // passes because the document field itself was recognised.
+    return { root, config: { id: project.id, medusaEnabled: false, rules: { core: {} } } };
+  }
+
+  const CARRIERS = {
+    '.codex.yaml': (cfg, root) => engines._generateCodexYaml(cfg, root, '.codex.yaml'),
+    '.aider.conf.yml': (cfg, root) => engines._generateAiderConf(cfg, root, '.aider.conf.yml')
+  };
+
+  for (const [carrier, render] of Object.entries(CARRIERS)) {
+    for (const spec of [
+      { label: 'reference doc', docs: { reference: true } },
+      { label: 'inline doc, readable', docs: { inline: 'ok' } },
+      { label: 'inline doc, missing', docs: { inline: 'missing' } },
+      { label: 'inline doc, unreadable', docs: { inline: 'unreadable' } }
+    ]) {
+      it(`${carrier}: ${spec.label} — the final file is withheld once force-indexed`, () => {
+        const { root, config } = privateProject(spec.docs);
+        const body = render(config, root);
+
+        // Sanity: this really is the private rendering, and really does carry a
+        // machine path — otherwise the assertion below proves nothing.
+        assert.ok(/`[~/][^`]*`/.test(body) || /⚠️/.test(body),
+          `${carrier}/${spec.label}: fixture rendered no path at all`);
+        assert.ok(tcOwned._carriesIdentity(body),
+          `${carrier}/${spec.label}: the final serialized file is not recognised`);
+
+        // The Architect's requirement, and the reason this suite exists: the
+        // origin rides along with the PortHub guide in every private carrier,
+        // so a document-field miss hides behind it. Strip the values that could
+        // mask one and the document field must still be recognised ON ITS OWN,
+        // in this carrier's final serialization — indented for YAML, comment
+        // -prefixed for aider.
+        const unmasked = body
+          .split('\n')
+          .filter((l) => !/TangleClaw API base URL/.test(l))
+          .filter((l) => !/\/api\/sessions\/[^/\s<`]+\/medusa/.test(l))
+          .filter((l) => !/Authorization:\s*Bearer/.test(l))
+          .join('\n');
+        assert.doesNotMatch(unmasked, /https?:\/\/localhost:\d+/, 'the strip must actually remove the origin');
+        assert.ok(tcOwned._carriesIdentity(unmasked),
+          `${carrier}/${spec.label}: the document field alone is not recognised in this serialization`);
+
+        // The real transition: written while ignored, then force-added.
+        fs.writeFileSync(path.join(root, carrier), body);
+        execFileSync('git', ['-C', root, 'add', '-f', carrier]);
+        execFileSync('git', ['-C', root, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'force-add']);
+        fs.writeFileSync(path.join(root, carrier), `${body}\n# operator note\n`);
+
+        const c = ownership.classify(
+          { snapshotApplies: true, baseline: { dirty: { paths: [], truncated: false } }, startedAtMs: 1000, workToplevel: root },
+          [{ path: carrier, deleted: false }],
+          {}
+        );
+        assert.ok(!c.stageable.includes(carrier),
+          `${carrier}/${spec.label}: a force-indexed private carrier was stageable`);
+        assert.equal(c.foreign.find((f) => f.path === carrier).reason, 'carries-identity');
+      });
+    }
+  }
+
+  it('a complete NEUTRAL markdown carrier, guides and all, still stages', () => {
+    // Both sides coupled to final files, as the ruling requires: the withheld
+    // side above is real private output, and this is the real committed block.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-ser-neutral-'));
+    TEMP_ROOTS.push(root);
+    execFileSync('git', ['-C', root, 'init', '-q']);
+    const project = store.projects.create({ name: `SerN ${Date.now() % 100000}`, path: root, engine: 'claude' });
+    const cfg = { id: project.id, medusaEnabled: true, rules: { core: { porthubRegistration: true } } };
+    const block = engines._generateOperationalBlock(cfg, root, 'CLAUDE.md');
+    const file = (body) => `# Project\n\nOperator notes.\n\n<!-- BEGIN:tangleclaw -->\n${body}\n<!-- END:tangleclaw -->\n`;
+
+    fs.writeFileSync(path.join(root, 'CLAUDE.md'), file('older neutral text'));
+    execFileSync('git', ['-C', root, 'add', '-A']);
+    execFileSync('git', ['-C', root, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'seed']);
+    fs.writeFileSync(path.join(root, 'CLAUDE.md'), file(block));
+
+    const c = ownership.classify(
+      { snapshotApplies: true, baseline: { dirty: { paths: [], truncated: false } }, startedAtMs: 1000, workToplevel: root },
+      [{ path: 'CLAUDE.md', deleted: false }],
+      {}
+    );
+    assert.ok(c.stageable.includes('CLAUDE.md'), 'a complete neutral carrier must stage without asking');
+  });
+});
