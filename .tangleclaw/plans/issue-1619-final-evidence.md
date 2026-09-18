@@ -201,6 +201,23 @@ A third defect followed, from the cumulative review and fixed at `2842fee`:
    writes; it now builds from `_generateOperationalBlock`. **A counter-case
    assembled from parts cannot prove a whole is silent.**
 
+8. **The machine-path sweep stopped one renderer short, twice.** `tildeHomePath`
+   is the only way an install path reaches a carrier, and it is called at three
+   places in the renderer: the reference line, and the two fallbacks written
+   when an inline document is missing or unreadable at generation time. I
+   covered the first, then widened the first again, and left the other two both
+   times — so a private carrier whose inline document could not be read held the
+   operator's path while the guard stayed silent. Covered now, and the class is
+   checkable rather than remembered: a test enumerates `tildeHomePath`'s call
+   sites and fails if a fourth appears, naming what to do about it.
+
+**This was the same mistake six times.** Fix the instance shown, leave the
+class. It cost more of this branch's review rounds than every other defect
+together, and the Critic found each one by re-running the finding's own reason
+as a search rather than trusting the sites it named. Where a fix could be made
+checkable instead of remembered — the emitter-derived matrix, the
+`tildeHomePath` call-site count — it now is.
+
 **Nothing is left open for the Architect to rule on.** The encoding question
 they ruled on is closed: patterns stay hand-written, and what is coupled to the
 generator is behaviour — the matrix builds every body by calling the real

@@ -172,6 +172,34 @@ describe('#1619 matrix — six data classes × four routes, judge → classify �
     );
   });
 
+  it('every renderer that writes a machine path is covered — and a new one fails here', () => {
+    // The sixth time on this change that a fix closed the site it was shown and
+    // left the class. `tildeHomePath` is the only way a machine path reaches a
+    // carrier, so its call sites in the renderer ARE the class — enumerate them
+    // and the guard's coverage becomes checkable instead of remembered.
+    const enginesSrc = fs.readFileSync(path.join(__dirname, '..', 'lib', 'engines.js'), 'utf8');
+    const callSites = (enginesSrc.match(/tildeHomePath\(/g) || []).length;
+    assert.equal(callSites, 3,
+      `lib/engines.js has ${callSites} tildeHomePath call sites; this test knows 3. `
+      + 'A new one renders a machine path into a carrier: add a fixture below and a '
+      + 'pattern in _IDENTITY_PATTERNS, then update this count.');
+
+    // All three, as the renderer actually writes them.
+    const unreadable = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-unreadable-'));
+    TEMP_ROOTS.push(unreadable);
+    const cases = {
+      'reference line': { id: 'r', name: 'Ref', groupName: 'G', filePath: '/Users/someone/ref.md', injectMode: 'reference' },
+      'inline, file missing': { id: 'm', name: 'Missing', groupName: 'G', filePath: '/nope/gone.md', injectMode: 'inline' },
+      'inline, unreadable': { id: 'u', name: 'Unreadable', groupName: 'G', filePath: unreadable, injectMode: 'inline' }
+    };
+    for (const [label, doc] of Object.entries(cases)) {
+      const body = engines._buildSharedDocsSection([doc], { committedCarrier: false });
+      assert.ok(body.includes(doc.filePath) || body.includes('~/'),
+        `${label}: fixture should actually render a path, or it proves nothing`);
+      assert.ok(tcOwned._carriesIdentity(body), `${label}: renders a machine path the guard does not catch`);
+    }
+  });
+
   it('an asterisk in a document name defeats neither name-matching pattern', () => {
     // Two patterns match a bold document name, and I widened one and left the
     // other — the same partial sweep that has cost this branch more than any
