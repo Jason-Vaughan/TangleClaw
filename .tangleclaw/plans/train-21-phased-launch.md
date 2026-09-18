@@ -558,7 +558,62 @@ session produces an eligible, published final. The newest prior session is then 
 
 **Non-git project.** `worktree: null`, so 13–14 are recorded as `skipped: no-git`, and 15 accepts them only with that recorded skip.
 
-**Migration boundary.** When v41 runs, it writes one `project_handoff_epoch` row per project:
+**Migration boundary — amended 2026-09-17 (Architect ruling); rev-4's approval history is preserved
+above, this supersedes only the version number and the already-v41 case.**
+
+`project_handoff_epoch` ships in **v42**, not v41. v41 shipped with car 21.7 (#1585, merged
+`70c78c60`) carrying `handoff_publications` only, and its gate runs only for `currentVersion < 41` —
+so initialization added inside it would never run on a store that already took v41. v41 and its
+postconditions stay exactly as shipped; v42 adds its own. A chunk does not owe one schema version
+when its cars ship separately, and #1587 must likewise take the next unshipped number.
+
+**A new version fixes reachability, not the missing boundary.** The epoch is
+`MAX(sessions.id) AT THE MOMENT handoffs began`. Taking today's maximum on a store that has already
+been at v41 for a while does not recover that instant — it draws the line too late and sweeps
+post-epoch sessions into the legacy window, turning what should be `handoff-never-published`
+(recovery) into `legacy` (no recovery). So the cutoff is recorded per case:
+
+| Store/project case | Result |
+|---|---|
+| Enters this startup **below v41** | Snapshot the project's max session id in the controlled v42 upgrade, before sessions are admitted, and classify `clean`/`unclean`/`empty` per the values below. This startup crosses into publication support, so the boundary is real. |
+| Enters **already at v41** with history and no trustworthy epoch | Record today's cutoff once, but `baseline = 'unclean'` with a reason such as `epoch-boundary-unknown-from-v41`. It is a v42 **observation**, never a recovered v41 boundary, and it must never enable the clean-legacy exception. |
+| A valid epoch already present (partial or retried upgrade) | Preserve cutoff, baseline and `recorded_at` exactly. Never recompute from newer sessions. An invalid or conflicting row fails validation rather than being silently replaced. |
+| No session history | `epoch_session_id = 0`, `baseline = 'empty'`. |
+| Project created after the migration | Its empty epoch is created with the project, before its first session. |
+| Store claims v42+ but the epoch evidence is missing | An integrity / unknown-boundary outcome. **Never** a late `MAX(id)` backfill that grants legacy acceptance. |
+
+**Honest uncertainty beats an unearned pass.** A genuinely old project on an already-v41 store may
+land in recovery because its exact boundary was never recorded. That is the intended outcome, and the
+reason is recorded so the operator is told the boundary is unknown rather than that a failure was
+proven. Never infer the cutoff from `schema_version.applied_at`, session timestamps, deployment
+timing, or the absence of publication rows.
+
+**The unclean compatibility baseline is not a veto.** A valid current eligible publication still
+satisfies the positive `ok` predicate (row 15) — the unclean baseline only withholds the unproved
+clean-legacy bypass, and never resets good publication state. Where there are no publications, an
+unknown baseline must reach recovery (`legacy-unclean` with its reason, or the catch-all), never
+`legacy` and never `ok`. Integrity-first ordering is unchanged. Clearing recovery is bound to a
+launch and revision; it never rewrites the historical baseline, and a later successful publication is
+the normal forward path — not an edit to the past.
+
+**Atomicity.** Epoch rows are initialized, validated and the v42 marker advanced in one transaction.
+A failed initialization advertises no v42 and admits no session, and must not write a second version
+stamp outside the transaction via the shared stamping code. `_createTables()` runs before migrations
+and stamps a fresh database at the current version, bypassing the upgrade blocks entirely — so the
+fresh-database and project-creation paths need their own coverage, not just the upgrade path. The v42
+path also validates the v41 prerequisites it depends on, because an already-v41 store skips the old
+gate.
+
+Ruling: `/Users/jasonvaughan/Documents/Projects/TangleClaw-Architect/.tangleclaw/plans/train-21-epoch-migration-ruling.md`
+(hosted: https://cursatory.tail123678.ts.net:8443/plans/81/train-21-epoch-migration-ruling.md).
+Carry it into ADR 0017 (21.12) so the contract does not live only in a plan and a chat.
+
+The table below is rev 4's, unchanged apart from the version it runs at:
+
+**Migration boundary — rev 4's original text, superseded on the version it names.** It read "when
+v41 runs"; the migration is **v42**, per the amendment directly above, and the already-v41 case it
+did not anticipate is handled there. The table and the baseline definitions below are unchanged and
+still govern. One row per project:
 
 ```sql
 CREATE TABLE project_handoff_epoch (
@@ -580,8 +635,16 @@ Only `clean` satisfies check 7. An `unclean` baseline is recovery: 5 if the newe
 crashed, otherwise 8. An `empty` baseline with continuity present is 16. Nothing reaches `ok`
 without a current publication.
 
+Note what that last sentence does and does not mean, since the amendment makes `unclean` far more
+common: baseline is read ONLY by checks 7 and 8, both of which require `file absent AND no
+publication rows`. A project holding a current eligible publication never reaches a baseline test at
+all, so an `unclean` compatibility baseline withholds the clean-legacy bypass without ever standing
+between a good publication and `ok`.
+
 Legacy acceptance ends permanently at the first session after the epoch: from then on a lost
-handoff is 9 or 10, never 7.
+handoff is 9 or 10, never 7. On a store whose epoch is a v42 observation rather than a recovered v41
+boundary, check 7 is unreachable regardless, because that store's baseline is `unclean` by
+construction.
 
 ### 2.8 Recovery clear — route-level operator guard (B5)
 
@@ -721,7 +784,7 @@ Chunks are sequential; each one merges before the next begins.
 - **Acceptance cases:** restart under a changed rule set → `SNAPSHOT_REVISED`; step 1 carried over only on byte-equal content; READY with a wrong verdict; duplicate vs conflicting READY; READY after the session ended. Visual change: yes → VRF entry.
 
 ### Chunk 03 — Handoff, preflight, recovery (v41)
-- **21.7** (#1585) the `tc.handoff/1` document (`lib/handoff-publication.js`) + its on-disk store, `current.json`/`staged-*`/`history/` (`lib/handoff-lockfile.js`) + the `handoff-stage` wrap step (`lib/wrap-steps/handoff-stage.js`) + `publishHandoff`/`abandonHandoff` (exact-attempt, `lib/handoff-publish.js`) called from `_runClaimedWrap` + the `handoff_publications` table + an ADR 0002 contract update. `store.sessions.wrap` gains the `{publicationId}` binding (the same transaction as the lifecycle transition). Schema names (`tc.handoff/1`) and directory names (`history/`) are named beside the files that implement them so the deliverable list resolves to real paths.
+- **21.7** (#1585) the tc.handoff/1 document (`lib/handoff-publication.js`) + its on-disk store, `current.json`/`staged-*`/history/ (`lib/handoff-lockfile.js`) + the `handoff-stage` wrap step (`lib/wrap-steps/handoff-stage.js`) + `publishHandoff`/`abandonHandoff` (exact-attempt, `lib/handoff-publish.js`) called from `_runClaimedWrap` + the `handoff_publications` table + an ADR 0002 contract update. `store.sessions.wrap` gains the `{publicationId}` binding (the same transaction as the lifecycle transition). Two tokens here are NOT paths and the record lint reads them as paths anyway: the schema id tc.handoff/1 and the directory name history/. Both are left unbackticked for that reason — the lint keys on backticked tokens containing a slash. What implements them is `lib/handoff-publication.js` and `lib/handoff-lockfile.js` (`historyPath`), both named above.
 - **21.8** (#1586) `lib/launch-preflight.js` (pure, ordered verdicts, repair proposals) + `applyHandoffRepairs` (validated controller) + `project_handoff_epoch` with baseline classification
 - **21.9** (#1587) recovery columns + the step-4/READY guards + the `recovery-clear` route and its guard + the UI control (worktree)
 - **Acceptance cases:**
@@ -877,7 +940,99 @@ Written before the code, because each one answers a question the blueprint leave
   - The reconciliation condition stays **unnarrowed**: every revision demands one, and only the
     wording is derived from whether anything was served.
   - Retention follow-up #1595 and the nudge-verdict record #1596 filed from the Critic pass.
-- [ ] Chunk 03 — 21.7 (#1585) done, PR #1608; 21.8 (#1586) and 21.9 (#1587) unbuilt
+- [ ] Chunk 03 — 21.7 (#1585) done, PR #1608; 21.8 (#1586) BUILT, PR owed; 21.9 (#1587) unbuilt
+  - 21.8's deltas from the blueprint:
+  - The context-gathering half lives in its own module, `lib/launch-preflight-context.js`, rather
+    than in `lib/sessions.js`. §2.7 says the preflight runs beside the stranded `launchGate`, and it
+    does — but the reads it needs (store, handoff directory, git) are what `runPreflight`'s purity
+    exists to keep out, and putting them in `sessions.js` would have made them untestable without
+    launching a session.
+  - **The identity check's workspace half is deliberately not wired**, and this is the one place
+    21.8 does not do what §2.7 says. `medusa.mintWorkspaceId` draws fresh random bytes every launch,
+    so the launching id can never equal the one a previous session recorded; passing it would report
+    `identity-mismatch` — a recovery verdict — on every launch of every Medusa project. The
+    `projectId` half is exact and unaffected. Filed as **#1611**: either the check compares something
+    that can match, or the contract says identity is `projectId` alone.
+  - `SESSION_WINDOW` / `PUBLICATION_WINDOW` (200 each) are diagnostic breadths, not correctness
+    thresholds. The decision reads sessions for the newest one, the epoch comparison, and the
+    producer of the newest published attempt; the first two are answered correctly by any
+    newest-first slice, and the third is answered by fetching producers by id regardless of the
+    slice. Publications are bounded on the same argument — every question asked of them is about the
+    highest `seq`.
+  - **A mixed repair batch applies `record-published` before `publish`**, seq-descending within
+    each action. The two actions contend for ONE `current.json` — a `record-published` proposal
+    exists only because the file already holds its bytes, and a `publish` renames over it. Ordered
+    by seq alone, the rename goes first whenever the promoted attempt has the lower seq, and then
+    either `promoteStaged` refuses to retire a `current.json` naming someone else (the launch
+    reports `unfinished`, a recovery verdict, for a fully repairable state) or, with no published
+    row to retire, the rename destroys the promoted document outright. An action with no declared
+    rank sorts LAST rather than first, which is the fail-safe direction, and a test pins that every
+    action has an explicit rank.
+  - **`requiresRecovery` is stored on the launch record, not recomputed.** It is not a function of
+    the verdict: `needsRecovery` reads `evidence.worktreeDirty` for `workspace-unavailable`, because
+    a vanished worktree measured clean has nothing to recover while one never measured does. #1587's
+    gate reading only the verdict would answer `false` for the unmeasured case — the unsafe
+    direction. `worktreeDirty` is stored beside it so the answer stays auditable.
+  - **Repair proposals are computed BEFORE the verdict chain**, not at row 6. A proposal is a fact
+    about the store, not about which word won; inside the chain it inherited the early exits, so
+    rows 1-5 returned none — and `crash-recovery` (row 5) is reachable with a completed, eligible,
+    unpublished attempt sitting there. Once a later publication's higher `seq` passed it,
+    `_repairable` could never return true for it again. Critic R-8.
+  - **A second repair action, `record-published`.** §2.6's reconciliation table opens with a crash
+    that landed AFTER `promoteStaged`'s rename and before `recordPublished` — the bytes are already
+    `current.json` and only the row is behind. That case had no implementation: a scan of the staged
+    files cannot see it, because after the rename no staged file remains. Its applier validates the
+    promoted file against the row exactly as a staged file would be, and decides the lost race
+    BEFORE reading the file, because `current.json` is shared and a newer winner's bytes would
+    otherwise fail the identity check and strand a completed attempt at `staged`. Critic R-2.
+  - **`worktree.dirty` stays three-valued.** The producer records `null` when it could not measure;
+    row 13 flattened it with `=== true`, which told the operator the tree was clean and withheld
+    recovery on a measurement nobody took. `evidence.worktreeDirty` is true/false/null and only a
+    MEASURED clean tree withholds recovery. Critic R-1.
+  - `evidence.fallbackRootHead` IS now populated, on exactly the condition §2.7 names — a recorded
+    worktree that is gone. It was plumbed end to end and hardcoded null in the first cut. Critic
+    R-4/R-10/R-17.
+  - `handoffEpoch.present` survives `_normalize` and reaches `evidence.epochPresent`, and a missing
+    boundary row is stated on EVERY verdict rather than only where `baselineReason` happens to
+    print. A tri-state that dies at the last hop is not a tri-state. Critic R-16.
+  - Every launch logs its verdict (warn for a recovery-class answer, info otherwise). Step 3 is not
+    a channel that always exists — an engine declaring no launch sequence would have recorded
+    `handoff-corrupt` and told nobody. Critic R-15.
+  - The baseline vocabulary is still declared twice on purpose (importing the store would give the
+    pure module a database dependency); `test/handoff-epoch.test.js` now pins the two lists equal,
+    which is what makes the duplication safe. Critic R-9.
+  - ADR 0002 carries a #1586 amendment: the launch path is a second writer of `current.json`, and
+    what it may write. Critic R-18.
+  - Retention (#1602) still did not land, and its enabling condition IS now satisfied. Recorded as a
+    comment on that issue rather than left in a review — a deferral with no named home is a drop.
+    Critic R-14.
+  - Two `chunk-ref-missing` entries in the record lint were false positives: 21.7's deliverable bullet
+    backticked the schema id tc.handoff/1 and the directory name history/, and the lint reads a
+    backticked token containing a slash as a path. Both are unbackticked in that bullet now — and
+    note that the first attempt unbackticked them only in the explanatory sentence it appended,
+    leaving the real occurrences intact while three records claimed the fix had taken. Verified by
+    re-running `prawduct-hook verify-records`, which now reports `chunk-ref-missing=0`. Claim a lint
+    fix only from the lint's own output.
+  - **§2.7's row 16 names an example that does not reach row 16.** "An `active` newest session with no
+    checkpoint" matches row 9 (`handoff-never-published`) first, whenever that session is past the
+    epoch — and row 9 is the better answer anyway, because it names what went missing rather than
+    listing what failed. A pre-epoch active session reaches row 8 (`legacy-unclean`), not row 16
+    either. Row 16's reachable named example is the continuity-index one, which is the one with a
+    fixture. The row-16 text is left as rev 4 wrote it and corrected here rather than edited in
+    place, so the approval history stays readable; `test/launch-preflight.test.js` pins what the code
+    actually returns.
+  - **The Critic's record lint could not grade this chunk** and cannot grade any chunk in this repo:
+    it reads `.prawduct/artifacts/build-plan.md`, and this repo keeps plans in `.tangleclaw/plans/`.
+    A gitignored symlink now mirrors the governing plan there, in this worktree and in the primary
+    checkout — the same mirror pattern the other gates already read. Critic R-3.
+  - `applyHandoffRepairs` lives in `lib/handoff-publish.js`, not the pure preflight module, and
+    delegates its re-checks to `publishHandoff` rather than restating them. `publishHandoff` already
+    re-establishes exactly `_repairable`'s conditions inside its own transaction, against the live
+    row and file; a second copy of the eligibility rules would be a second copy free to drift from
+    the one the wrap path uses.
+  - It applies highest `seq` first. Two eligible attempts can both sit ahead of the published row (a
+    kept session that staged a checkpoint and then a final, crashing before either published), and
+    the other order briefly makes an older attempt current — which §2.6 forbids.
   - The branch's recurring defect, worth reading before touching `lib/wrap-steps/handoff-stage.js`:
     four findings were one class — the step read a foreign object for a value that does not mean
     what the field says (`session.workspaceId`, a column that does not exist; `scope.worktreeTarget`,

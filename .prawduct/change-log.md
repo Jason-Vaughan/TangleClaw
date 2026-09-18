@@ -34,6 +34,31 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-18 — Each session is told what the last one left behind (#1586)
+
+<!-- prawduct: type=feature | scope=train-21-phased-launch -->
+
+Train 21 Chunk 03, car 21.8. Authorized by the ProjectManager under the delegation rule. The migration contract is the Architect's ruling of 2026-09-17, amended into §2.7 of the plan.
+
+What was read first:
+- v41 has shipped, and its gate runs only for `currentVersion < 41`. Epoch initialization added inside it would never reach an install that already took 41 — which is every install running the shipped build. That is why the epoch is v42 and not part of v41.
+- `medusa.mintWorkspaceId` draws fresh random bytes on every launch (`medusa-registry._mintId`). The launching workspace id therefore cannot equal the one a previous session recorded, so the identity check's workspace half is unwirable as specified. Filed as #1611; the `projectId` half is exact and does the real work.
+- `store.sessions.abandon` moves a row only while `eligible_at` is NULL, so a proposed (eligible) attempt can never be abandoned. A test written for that state could not reach it; the reachable shape of losing a race is `superseded`.
+
+What shipped:
+- `lib/store.js` v42: `project_handoff_epoch`, one row per project recording the newest session that existed when the project crossed into handoff support. Rows, validation and the version marker advance in ONE transaction; a failed initialization advertises no v42 and admits no session. A store entering below v41 records a real clean/unclean/empty baseline; a store already at v41 records its cutoff as an observation with `baseline='unclean'` and reason `epoch-boundary-unknown-from-v41`, never clean — a cutoff taken late sweeps post-epoch sessions into the legacy window and downgrades a lost handoff to "predates handoffs". `projects.create` writes each new project's epoch in the same transaction as the project row.
+- `lib/handoff-publish.js`: `applyHandoffRepairs`, the only thing that acts on a repair proposal, and it trusts none of it — every condition is re-established against the live row and the live file inside the transaction that acts. Two actions, because the crash lands in two places: `publish` promotes a staged file whose rename never happened, `recordPromotedHandoff` records a row whose rename DID happen.
+- `lib/launch-preflight-context.js`: the store, handoff-directory and git reads that `runPreflight`'s purity keeps out. Applies repairs once, re-runs once. Nothing here throws to the launcher; a context that cannot be gathered degrades to `not-evaluated` naming the reason.
+- `lib/sessions.js`: the preflight runs beside the stranded-wrap gate and ahead of `launchBaseline.capture`, so a repair's file move is not counted as the new session's own change. Step 3 of every launch sequence now states a real verdict instead of `not-evaluated`.
+
+Decided while building: the context-gathering is its own module rather than living in `sessions.js`, so it can be tested without launching a session. `SESSION_WINDOW`/`PUBLICATION_WINDOW` are diagnostic breadths, not correctness thresholds — every question asked of either list is about its high end, and producing sessions are fetched by id regardless of the slice.
+
+Critic (cumulative `rev-20260918T055149Z-5952d8c2`, 4 blocking → fixed; `verify-resolutions` `rev-20260918T061327Z-ffb1b96a`, 0 findings): repair proposals sat INSIDE the ordered verdict chain, so rows 1-5 returned none and a crashed kept session's completed attempt was stranded until a later publication's higher `seq` made it permanently unrepairable — they are now computed before the chain. §2.6's first reconciliation row (crash after the rename) had no implementation at all. `worktree.dirty` is three-valued at the producer and was flattened with `=== true`, reporting an unmeasured tree as clean and withholding recovery on it. The record lint could not grade ANY chunk in this repo — it reads `.prawduct/artifacts/build-plan.md` and this repo keeps plans in `.tangleclaw/plans/`; a gitignored symlink now mirrors it in both checkouts. Accepted: retention (#1602, whose enabling condition this car satisfies — recorded as a comment there), and `needsRecovery`'s consumer being #1587's gate.
+
+Writing the R-2 fix found a defect the review could not have seen: `recordPromotedHandoff` read `current.json` before checking for a newer winner, and since that file is SHARED (unlike per-attempt staged files) a newer attempt's bytes made the older one fail the identity check and strand at `staged` forever. The lost race is now decided first. Caught by the test written for the finding, not by the finding.
+
+Tests: `test/handoff-epoch.test.js` (the Architect's six required cases), `test/handoff-repairs.test.js` (each repairable condition broken AFTER the proposal is minted, which is the only way to tell a real re-check from one that trusts what it was handed), `test/launch-preflight-context.test.js`. Two vocabularies that live apart on purpose — the baselines and the repair actions — are pinned equal by tests, which is what makes keeping them apart safe.
+
 ## 2026-09-17 — A session pulls its context in four acknowledged steps (#1579, #1580, #1581)
 
 <!-- prawduct: type=feature | scope=train-21-phased-launch -->
