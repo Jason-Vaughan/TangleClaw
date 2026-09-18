@@ -940,8 +940,16 @@ Written before the code, because each one answers a question the blueprint leave
   - The reconciliation condition stays **unnarrowed**: every revision demands one, and only the
     wording is derived from whether anything was served.
   - Retention follow-up #1595 and the nudge-verdict record #1596 filed from the Critic pass.
-- [ ] Chunk 03 — 21.7 (#1585) done, PR #1608; 21.8 (#1586) part-built (verdict engine + v42 epoch
-  migration; `applyHandoffRepairs` and the `launchSession` wiring still owed); 21.9 (#1587) unbuilt
+- [ ] Chunk 03 — 21.7 (#1585) done, PR #1608; 21.8 (#1586) part-built (verdict engine, v42 epoch
+  migration, `applyHandoffRepairs`; the `launchSession` wiring still owed); 21.9 (#1587) unbuilt
+  - `applyHandoffRepairs` lives in `lib/handoff-publish.js`, not the pure preflight module, and
+    delegates its re-checks to `publishHandoff` rather than restating them. `publishHandoff` already
+    re-establishes exactly `_repairable`'s conditions inside its own transaction, against the live
+    row and file; a second copy of the eligibility rules would be a second copy free to drift from
+    the one the wrap path uses.
+  - It applies highest `seq` first. Two eligible attempts can both sit ahead of the published row (a
+    kept session that staged a checkpoint and then a final, crashing before either published), and
+    the other order briefly makes an older attempt current — which §2.6 forbids.
   - The branch's recurring defect, worth reading before touching `lib/wrap-steps/handoff-stage.js`:
     four findings were one class — the step read a foreign object for a value that does not mean
     what the field says (`session.workspaceId`, a column that does not exist; `scope.worktreeTarget`,
