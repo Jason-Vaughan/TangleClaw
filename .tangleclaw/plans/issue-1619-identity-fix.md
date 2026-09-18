@@ -182,7 +182,14 @@ goes to the Architect.
 
 ## Assumptions to re-check as code reveals facts
 
-- `[ASSUMPTION — NOT YET DISCHARGED, chunk 04 gate]` Engine-private carriers
+- `[DISCHARGED 2026-09-18, chunk 04]` Engine-private carriers are gitignored in
+  every managed project. They are not, and the answer is no longer assumed:
+  generation asks `git check-ignore` in the project itself, falling back to the
+  conventional list only where git cannot answer (a non-repository commits
+  nothing). Fixtures build real repositories for both directions plus a nested
+  worktree. Original wording follows.
+
+- `[SUPERSEDED — was: ASSUMPTION, NOT YET DISCHARGED, chunk 04 gate]` Engine-private carriers
   (`.codex.yaml`, `.aider.conf.yml`) are gitignored in every managed project.
   **This repo's `.gitignore` proves it only for this repo.** A project that
   tracks its `.codex.yaml` would have this fix's classifier call it private and

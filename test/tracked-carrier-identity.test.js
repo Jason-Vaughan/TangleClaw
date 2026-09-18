@@ -277,3 +277,70 @@ describe('#1619 — a managed block is not proof that a diff is safe maintenance
       'the block is what TangleClaw owns, and it is clean');
   });
 });
+
+describe('#1619 chunk 04 — the carrier a project actually tracks', () => {
+  const { execFileSync } = require('node:child_process');
+
+  /**
+   * A real git repo whose `.gitignore` is the argument.
+   * @param {string} ignoreBody
+   * @returns {string} repo path
+   */
+  function repoWithIgnore(ignoreBody) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-carrier-'));
+    execFileSync('git', ['-C', dir, 'init', '-q']);
+    fs.writeFileSync(path.join(dir, '.gitignore'), ignoreBody);
+    return dir;
+  }
+
+  it('a project that TRACKS its .codex.yaml gets no identity in it', () => {
+    // The gate. `PRIVATE_ENGINE_CARRIERS` encodes THIS repo's convention, and
+    // for a project that departs from it the list is simply wrong: it would
+    // call a tracked file private and keep writing the project name, the
+    // machine origin and — where the gate is on — a live bearer token into a
+    // file destined for the repository. Only the project's own git knows.
+    const tracking = repoWithIgnore('node_modules/\n');
+    const ignoring = repoWithIgnore('.codex.yaml\n');
+
+    assert.equal(engines._carrierIsCommitted(ignoring, '.codex.yaml'), false,
+      'a project that ignores it keeps its private carrier private');
+    assert.equal(engines._carrierIsCommitted(tracking, '.codex.yaml'), true,
+      'a project that tracks it must have it treated as committed');
+  });
+
+  it('falls back to the convention where git cannot answer, and never inverts it', () => {
+    // A directory that is not a repository cannot commit anything, so the
+    // conventional list is the right answer there — blanket-withholding would
+    // break every non-repo project's private carrier for no safety gain.
+    const notARepo = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-norepo-'));
+    assert.equal(engines._carrierIsCommitted(notARepo, '.codex.yaml'), false);
+    assert.equal(engines._carrierIsCommitted(notARepo, 'CLAUDE.md'), true);
+    // And an unknown name still fails toward committed, wherever it is asked.
+    assert.equal(engines._carrierIsCommitted(notARepo, 'SOMETHING-NEW.md'), true);
+    assert.equal(engines._carrierIsCommitted(null, '.codex.yaml'), false);
+  });
+});
+
+describe('#1619 chunk 04 — a nested worktree', () => {
+  const { execFileSync } = require('node:child_process');
+
+  it('classifies by the carrier inside a linked worktree the same way', () => {
+    // Parent-directory instruction loading means a worktree can sit inside
+    // another checkout, and `git -C <worktree> check-ignore` must answer for
+    // the worktree's own ignore rules rather than the parent's.
+    const main = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-wt-main-'));
+    execFileSync('git', ['-C', main, 'init', '-q']);
+    fs.writeFileSync(path.join(main, '.gitignore'), '.codex.yaml\n');
+    fs.writeFileSync(path.join(main, 'seed.txt'), 'seed\n');
+    execFileSync('git', ['-C', main, 'add', '-A']);
+    execFileSync('git', ['-C', main, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'seed']);
+
+    const wt = path.join(main, 'nested-wt');
+    execFileSync('git', ['-C', main, 'worktree', 'add', '-q', '-b', 'wt', wt]);
+
+    assert.equal(engines._carrierIsCommitted(wt, '.codex.yaml'), false,
+      'the worktree inherits the ignore rule, so its private carrier stays private');
+    assert.equal(engines._carrierIsCommitted(wt, 'CLAUDE.md'), true,
+      'and its tracked carrier is still treated as committed');
+  });
+});
