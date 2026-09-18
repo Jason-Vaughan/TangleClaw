@@ -24,6 +24,7 @@ const vm = require('node:vm');
 
 const UI_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'ui.js'), 'utf8');
 const HELPER_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'api-helper.js'), 'utf8');
+const LANDING_SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'landing.js'), 'utf8');
 
 /**
  * Slice a top-level function's body out of a source text by brace matching.
@@ -70,7 +71,15 @@ function helperGlobals() {
   };
 }
 
-const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// The page's OWN `esc`, lifted from landing.js — this panel renders on
+// index.html, where landing.js defines it. A hand-written stub here asserted
+// `<strong>9000</strong>` for a numeric session id at a time when the shipped
+// helper emitted nothing for a number, so this file reported a panel that
+// worked while the operator read a blank.
+const escDecl = 'function esc(str)';
+const escCtx = vm.createContext({});
+vm.runInContext(escDecl + functionBody(LANDING_SRC, escDecl), escCtx);
+const esc = escCtx.esc;
 
 /**
  * Run the real `renderProjectRulesSection` for a project.
