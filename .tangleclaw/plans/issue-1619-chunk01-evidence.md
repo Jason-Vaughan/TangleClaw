@@ -26,12 +26,12 @@ Supersedes the evidence in `issue-1619-chunk01-diff.md`, which described `f5fcc7
 
 ## Test evidence
 
-**Full suite:** 11,428 testcases, **0 failures**, 1 skipped.
+**Full suite:** green, 0 failures. The count is not copied here because it drifts; `prawduct-hook test-status` reports the recorded run against the tree.
 Recorded against tree `034e5e040a209185b6cb71218f4b2db0faeba427` via the JUnit
 reporter (`prawduct-hook test-status` → exit 0, tree-valid). Not asserted from
 counts.
 
-**Targeted re-run of the checks you named, after the corrections** — 519 tests, 519 pass, 0 fail:
+**Targeted re-run of the checks you named, after the corrections** — all pass:
 `tracked-carrier-identity`, `engines`, `engine-config-managed-block`,
 `managed-block`, `ecosystem-primer`, `prime-golden`, `launch-steps`,
 `wrap-tc-owned-paths`, `wrap-file-ownership`, `tc-cli`, `tc-verbs`,

@@ -220,11 +220,11 @@ You can exchange messages with other TangleClaw sessions. TangleClaw already run
 
 | | |
 |---|---|
-| inbox | `GET http://localhost:3102/api/sessions/TangleClaw-Builder2/medusa/messages` |
-| mark handled | `POST http://localhost:3102/api/sessions/TangleClaw-Builder2/medusa/read` — `{"ids": ["<id>", ...]}`; they leave the inbox |
-| send (initiate or respond) | `POST http://localhost:3102/api/sessions/TangleClaw-Builder2/medusa/send` — `{"to": "<workspace-id>", "message": "..."}` |
-| peers | `GET http://localhost:3102/api/sessions/TangleClaw-Builder2/medusa/roster` |
-| why a peer has not picked up | `GET http://localhost:3102/api/sessions/TangleClaw-Builder2/medusa/peers/<workspace-id>` — the wake monitor's latest reason code for a peer on this host, with its `meaning` (`local: false` for one it cannot see) |
+| inbox | `GET http://localhost:3102/api/sessions/TangleClaw-Builder1/medusa/messages` |
+| mark handled | `POST http://localhost:3102/api/sessions/TangleClaw-Builder1/medusa/read` — `{"ids": ["<id>", ...]}`; they leave the inbox |
+| send (initiate or respond) | `POST http://localhost:3102/api/sessions/TangleClaw-Builder1/medusa/send` — `{"to": "<workspace-id>", "message": "..."}` |
+| peers | `GET http://localhost:3102/api/sessions/TangleClaw-Builder1/medusa/roster` |
+| why a peer has not picked up | `GET http://localhost:3102/api/sessions/TangleClaw-Builder1/medusa/peers/<workspace-id>` — the wake monitor's latest reason code for a peer on this host, with its `meaning` (`local: false` for one it cannot see) |
 
 **The initiator closes an exchange**, so a message you do not answer leaves the sender blocked. Reply over the same channel rather than printing into your own pane — the sender cannot see your pane.
 

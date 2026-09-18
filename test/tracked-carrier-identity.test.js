@@ -99,6 +99,36 @@ describe('#1619 — five checkouts, identical tracked bytes', () => {
     }
   });
 
+  // Both private-format generators, because the previous version of this pin
+  // exercised only the codex one — and the slip it missed was in the aider one,
+  // whose shared-docs body iterated the identity-bearing rendering while its
+  // guard consulted the derived selection.
+  const PRIVATE_FORMAT = {
+    codex: { render: (c, carrier) => engines._generateCodexYaml(cfg(c), c.path, carrier), own: '.codex.yaml' },
+    aider: { render: (c, carrier) => engines._generateAiderConf(cfg(c), c.path, carrier), own: '.aider.conf.yml' }
+  };
+
+  it('classifies by the FILE, not the generator format — for EVERY private-format generator', () => {
+    const c = checkouts[0];
+    for (const [label, gen] of Object.entries(PRIVATE_FORMAT)) {
+      const asPrivate = gen.render(c, gen.own);
+      const asShared = gen.render(c, 'CONVENTIONS.md');
+      // Present on the side entitled to it...
+      assert.ok(asPrivate.includes('/docs/fixture.md'), `${label}: private carrier should keep the doc path`);
+      assert.match(asPrivate, /https?:\/\/localhost:\d+/, `${label}: private carrier should keep the origin`);
+      assert.match(asPrivate, /LOCKED by /, `${label}: private carrier should keep the lock holder`);
+      // ...and absent on the side that is committed, whatever generator wrote it.
+      assert.ok(!asShared.includes(c.name) && !asShared.includes(encodeURIComponent(c.name)),
+        `${label}: a shared carrier must not name the project`);
+      assert.doesNotMatch(asShared, /https?:\/\/localhost:\d+/,
+        `${label}: a shared carrier must not carry the install origin`);
+      assert.ok(!asShared.includes('/docs/fixture.md'),
+        `${label}: a shared carrier must not carry a shared-doc install path`);
+      assert.doesNotMatch(asShared, /LOCKED by /,
+        `${label}: a shared carrier must not name the project holding a lock`);
+    }
+  });
+
   it('classifies by the FILE, not the generator format', () => {
     // The hazard: an operator profile pairing a shared-convention carrier with
     // a private-format generator. Before the classifier was derived, the

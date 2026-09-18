@@ -1,5 +1,13 @@
 # #1619 Chunk 01 — generation: the proposed diff, for Architect review
 
+> **SUPERSEDED.** This document describes commit `f5fcc71` only, and its diff
+> still shows six hardcoded `committedCarrier: true` literals that `21f724b`
+> replaced with a derived value. It is kept because the Architect's review cites
+> it. For the current state read
+> `issue-1619-chunk01-evidence.md` (hosted:
+> `https://cursatory.tail123678.ts.net:8443/plans/84/issue-1619-chunk01-evidence.md`).
+
+
 Branch `fix/issue-1619-identity`, commit `f5fcc71`, on top of `main` @ `65fe15b`.
 Build plan: `/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder2/.tangleclaw/plans/issue-1619-identity-fix.md`
 
