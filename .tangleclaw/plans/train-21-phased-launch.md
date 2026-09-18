@@ -784,7 +784,7 @@ Chunks are sequential; each one merges before the next begins.
 - **Acceptance cases:** restart under a changed rule set → `SNAPSHOT_REVISED`; step 1 carried over only on byte-equal content; READY with a wrong verdict; duplicate vs conflicting READY; READY after the session ended. Visual change: yes → VRF entry.
 
 ### Chunk 03 — Handoff, preflight, recovery (v41)
-- **21.7** (#1585) the `tc.handoff/1` document (`lib/handoff-publication.js`) + its on-disk store, `current.json`/`staged-*`/`history/` (`lib/handoff-lockfile.js`) + the `handoff-stage` wrap step (`lib/wrap-steps/handoff-stage.js`) + `publishHandoff`/`abandonHandoff` (exact-attempt, `lib/handoff-publish.js`) called from `_runClaimedWrap` + the `handoff_publications` table + an ADR 0002 contract update. `store.sessions.wrap` gains the `{publicationId}` binding (the same transaction as the lifecycle transition). Two tokens here are NOT paths and the record lint reads them as paths anyway: the schema id tc.handoff/1 and the directory name history/. Both are left unbackticked for that reason — the lint keys on backticked tokens containing a slash. What implements them is `lib/handoff-publication.js` and `lib/handoff-lockfile.js` (`historyPath`), both named above.
+- **21.7** (#1585) the tc.handoff/1 document (`lib/handoff-publication.js`) + its on-disk store, `current.json`/`staged-*`/history/ (`lib/handoff-lockfile.js`) + the `handoff-stage` wrap step (`lib/wrap-steps/handoff-stage.js`) + `publishHandoff`/`abandonHandoff` (exact-attempt, `lib/handoff-publish.js`) called from `_runClaimedWrap` + the `handoff_publications` table + an ADR 0002 contract update. `store.sessions.wrap` gains the `{publicationId}` binding (the same transaction as the lifecycle transition). Two tokens here are NOT paths and the record lint reads them as paths anyway: the schema id tc.handoff/1 and the directory name history/. Both are left unbackticked for that reason — the lint keys on backticked tokens containing a slash. What implements them is `lib/handoff-publication.js` and `lib/handoff-lockfile.js` (`historyPath`), both named above.
 - **21.8** (#1586) `lib/launch-preflight.js` (pure, ordered verdicts, repair proposals) + `applyHandoffRepairs` (validated controller) + `project_handoff_epoch` with baseline classification
 - **21.9** (#1587) recovery columns + the step-4/READY guards + the `recovery-clear` route and its guard + the UI control (worktree)
 - **Acceptance cases:**
@@ -992,10 +992,21 @@ Written before the code, because each one answers a question the blueprint leave
   - Retention (#1602) still did not land, and its enabling condition IS now satisfied. Recorded as a
     comment on that issue rather than left in a review — a deferral with no named home is a drop.
     Critic R-14.
-  - Two `chunk-ref-missing` entries in the record lint are false positives: 21.7's bullet backticked the
-    schema id `tc.handoff/1` and the directory name `history/`, and the lint reads a backticked token
-    with a slash as a path. Unbackticked, with a line saying why, so the next reader does not
-    re-backtick them.
+  - Two `chunk-ref-missing` entries in the record lint were false positives: 21.7's deliverable bullet
+    backticked the schema id tc.handoff/1 and the directory name history/, and the lint reads a
+    backticked token containing a slash as a path. Both are unbackticked in that bullet now — and
+    note that the first attempt unbackticked them only in the explanatory sentence it appended,
+    leaving the real occurrences intact while three records claimed the fix had taken. Verified by
+    re-running `prawduct-hook verify-records`, which now reports `chunk-ref-missing=0`. Claim a lint
+    fix only from the lint's own output.
+  - **§2.7's row 16 names an example that does not reach row 16.** "An `active` newest session with no
+    checkpoint" matches row 9 (`handoff-never-published`) first, whenever that session is past the
+    epoch — and row 9 is the better answer anyway, because it names what went missing rather than
+    listing what failed. A pre-epoch active session reaches row 8 (`legacy-unclean`), not row 16
+    either. Row 16's reachable named example is the continuity-index one, which is the one with a
+    fixture. The row-16 text is left as rev 4 wrote it and corrected here rather than edited in
+    place, so the approval history stays readable; `test/launch-preflight.test.js` pins what the code
+    actually returns.
   - **The Critic's record lint could not grade this chunk** and cannot grade any chunk in this repo:
     it reads `.prawduct/artifacts/build-plan.md`, and this repo keeps plans in `.tangleclaw/plans/`.
     A gitignored symlink now mirrors the governing plan there, in this worktree and in the primary
