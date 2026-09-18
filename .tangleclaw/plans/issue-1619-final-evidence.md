@@ -27,12 +27,11 @@ for the candidate as a whole.
 
 | | |
 |---|---|
-| **HEAD** | `7da31fdca5687482a87683385c30855e1a4da3fa` |
-| **Tree** | `5689247500cd2e25ead21309dbffe529118097e2` |
+| **Last code-bearing revision** | `7da31fd`, tree `56892475`. Documentation-only commits land after it; they change no behaviour and are not pinned here, because a table that names the commit writing it needs a successor to name that one. |
 | **Branch** | `fix/issue-1619-identity`, on `main` @ `f4d0d20` |
 | **Architectural approval** | granted at `f0b3af1`. Commits after it are `5d5f725` (the direct no-masking fixture the Architect asked be retained, plus the corrected origin explanation) and `7da31fd` (comment sweep, no behaviour). |
-| **Test evidence** | recorded against this tree by `prawduct-hook test-evidence record --from-junit`; `test-status` exits 0 with the working tree identical to the recorded run. |
-| **Critic** | coverage gate satisfied over `69fcb7db..` this tree, 0 unresolved blocking. The newest fact is a `verify-resolutions` round with 0 findings. |
+| **Test evidence** | recorded against that tree by `prawduct-hook test-evidence record --from-junit`; `test-status` exits 0 with the working tree identical to the recorded run. |
+| **Critic** | coverage gate satisfied from `69fcb7db` to the current tree, 0 unresolved blocking. The newest fact is a `verify-resolutions` round with 0 findings. |
 | **CI** | GitHub Tests SUCCESS at `f0b3af1`, independently confirmed by the Architect; re-run in flight for later commits. |
 
 Figures are deliberately not copied into this table: `prawduct-hook
