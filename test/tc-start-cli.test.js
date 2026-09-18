@@ -230,7 +230,10 @@ describe('tc start (car 21.3)', () => {
     // The disclosure three records promise, asserted where the reader meets it:
     // drop it from the payload or the renderer and this goes red.
     assert.match(status.stdout, /Pages are sized to \d+ characters, against this engine's measured \d+-character tool-output limit\./);
-    assert.match(status.stdout, /Not in this version: recovery/);
+    // The recovery gate shipped (#1587), so there is nothing left to declare
+    // pending — and the line says THAT rather than trailing off after a colon.
+    assert.match(status.stdout, /Nothing is pending: /);
+    assert.doesNotMatch(status.stdout, /Not in this version:/);
     assert.match(status.stdout, /READY: not attested yet\./);
 
     for (const args of [['start'], ['start', 'sideways'], ['start', 'next', '--ack', 'nope'], ['start', 'next', '--page', 'x']]) {

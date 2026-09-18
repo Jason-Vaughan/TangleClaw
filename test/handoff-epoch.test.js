@@ -458,8 +458,16 @@ describe('case 4 — a retried or failed migration leaves no drift and no marker
       INSERT INTO projects (id, name, path) VALUES (1, 'stamped', '/tmp/tc-epoch-stamped');
     `);
     open(dir);
-    assert.deepEqual(stamps(), [40, 42],
+    const stamped = stamps();
+    assert.equal(stamped.filter((v) => v === 42).length, 1,
       'the marker rides inside the epoch transaction, so the shared stamp must not write a second one');
+    // Every version the store crossed, and no repeats. Written as a set rather
+    // than as the literal `[40, 42]` it once was: this test is about 42 not
+    // being stamped twice, and a later migration adding its own stamp is not
+    // that failure — it is the normal way this list grows.
+    assert.deepEqual(stamped, [...new Set(stamped)].sort((a, b) => a - b),
+      'no version is stamped more than once');
+    assert.ok(stamped.includes(43), 'the versions after 42 are stamped by the shared line');
   });
 });
 

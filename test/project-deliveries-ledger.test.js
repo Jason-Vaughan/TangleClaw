@@ -149,7 +149,7 @@ describe('#1164 — the Settings modal renders the rule-delivery ledger', () => 
   });
 
   it('loadProjectRules reaches the ledger through the three-state reader', () => {
-    const body = functionBody(UI_SRC, 'async function loadProjectRules(projectId)');
+    const body = functionBody(UI_SRC, 'async function loadProjectRules(projectId, projectName)');
     assert.match(body, /await refreshProjectRuleDeliveries\(projectId\)/);
     assert.doesNotMatch(body, /api\(`\/api\/session-rules\/deliveries/,
       'the loader does not keep its own copy of the fetch beside the reader');

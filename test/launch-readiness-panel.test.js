@@ -61,6 +61,12 @@ function render(sequences) {
   vm.runInContext(liftFunction(LANDING_SRC, 'function esc(str)'), ctx);
   vm.runInContext(liftFunction(API_HELPER_SRC, 'function tcLaunchReadinessClass'), ctx);
   ctx.window.tcLaunchReadinessClass = ctx.tcLaunchReadinessClass;
+  // Lifted too, for the same reason the panel itself is: they are what the
+  // renderer calls, and a sandbox missing them would report every row as a
+  // throw — which is precisely what this file exists to catch on the live
+  // install, where the panel renders the moment the file is saved.
+  vm.runInContext(liftFunction(UI_SRC, 'function launchClearanceLabel'), ctx);
+  vm.runInContext(liftFunction(UI_SRC, 'function launchRecoveryHtml'), ctx);
   vm.runInContext(liftFunction(UI_SRC, 'function renderProjectLaunchSequences'), ctx);
   ctx.renderProjectLaunchSequences(sequences);
   return doc.getElementById('projLaunchSequencesList').innerHTML;
@@ -86,6 +92,13 @@ function row(overrides = {}) {
     nudgeCount: 0,
     lastNudgedAt: null,
     rulesDelivery: null,
+    recovery: 'none',
+    recoveryMode: 'operator',
+    recoveryRevision: 1,
+    recoveryClearance: null,
+    recoveryClearedAt: null,
+    recoveryClearedBy: null,
+    preflightVerdict: 'ok',
     steps: [
       { index: 0, id: 'identity', pageCount: 1, pagesServed: 1, servedAt: '2026-09-17 19:00:05', ackedAt: '2026-09-17 19:00:10', carriedFromRevision: null },
       { index: 1, id: 'governance', pageCount: 2, pagesServed: 2, servedAt: '2026-09-17 19:00:20', ackedAt: '2026-09-17 19:00:30', carriedFromRevision: null },
@@ -169,6 +182,158 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
       assert.equal(ctx.tcLaunchReadinessClass({ applicability: 'applicable' }), '');
       assert.equal(ctx.tcLaunchReadinessClass({ applicability: 'not-applicable', unreadyAt: 'x' }), '',
         'a launch with no sequence owes no readiness');
+    });
+  });
+
+  describe('recovery (Train 21, #1587)', () => {
+    it('says nothing about recovery for a launch that owes none', () => {
+      const html = render([row()]);
+      assert.doesNotMatch(html, /Recovery/);
+      assert.doesNotMatch(html, /data-launch-recovery-clear/);
+    });
+
+    it('offers the operator a clear, bound to the launch they are looking at', () => {
+      const html = render([row({
+        recovery: 'required', recoveryMode: 'operator', recoveryRevision: 3, preflightVerdict: 'handoff-behind'
+      })]);
+      assert.match(html, /Recovery required/);
+      assert.match(html, /handoff-behind/);
+      assert.match(html, /the task step is withheld/i);
+      assert.match(html, /data-launch-recovery-clear="9"/);
+      assert.match(html, /data-session-id="42"/);
+      assert.match(html, /data-recovery-revision="3"/,
+        'the button carries the revision, so a stale click is refused rather than applied');
+    });
+
+    it('offers no button in advisory mode, where the session clears its own', () => {
+      const html = render([row({
+        recovery: 'required', recoveryMode: 'advisory', preflightVerdict: 'handoff-behind'
+      })]);
+      assert.match(html, /Recovery required/);
+      assert.match(html, /advisory mode/);
+      assert.doesNotMatch(html, /data-launch-recovery-clear/,
+        'a control the route would refuse is worse than no control');
+    });
+
+    it('never words an open install\'s clear as an operator\'s', () => {
+      // The whole reason the three clearances are kept apart. An install with no
+      // login proved that the click came from its own dashboard and nothing
+      // more, and an operator reading this log has to be able to see that.
+      const open = render([row({
+        recovery: 'cleared', recoveryClearance: 'open-install-unverified',
+        recoveryClearedBy: null, recoveryClearedAt: '2026-09-18 08:00:00'
+      })]);
+      assert.match(open, /install with no login — nobody was identified/);
+      assert.doesNotMatch(open, /cleared by/);
+
+      const verified = render([row({
+        recovery: 'cleared', recoveryClearance: 'operator-verified',
+        recoveryClearedBy: 'rosie', recoveryClearedAt: '2026-09-18 08:00:00'
+      })]);
+      assert.match(verified, /cleared by rosie/);
+
+      const reconciled = render([row({
+        recovery: 'cleared', recoveryClearance: 'agent-reconciled', recoveryClearedBy: null
+      })]);
+      assert.match(reconciled, /written reconciliation \(advisory mode\)/);
+      assert.doesNotMatch(reconciled, /cleared by (?:an operator|null|undefined)/,
+        'an agent\'s reconciliation names the mechanism, never a person');
+    });
+
+    it('escapes a verdict and a clearer it prints', () => {
+      const html = render([row({
+        recovery: 'cleared', recoveryClearance: 'operator-verified',
+        recoveryClearedBy: '<img src=x onerror=alert(1)>', preflightVerdict: '<script>'
+      })]);
+      assert.doesNotMatch(html, /<img src=x/);
+      assert.doesNotMatch(html, /<script>/);
+      assert.match(html, /&lt;img src=x/);
+    });
+  });
+
+  describe('the clear button reaches the server (Train 21, #1587)', () => {
+    /**
+     * Run `wireLaunchRecoveryClears` against buttons the panel would have
+     * rendered, and report what the handler sent.
+     *
+     * The markup path cannot be used here — `_mini-dom` extracts ids from
+     * assigned `innerHTML` and builds no element tree — so the buttons are the
+     * ones `launchRecoveryHtml` names, constructed by hand from the same
+     * dataset keys. What this covers is the hop nothing else does: widget →
+     * request body. A button that renders and a route that works still leave
+     * room for the two to disagree about what a click means.
+     * @param {object} [opts]
+     * @param {string|null} [opts.openInstallToken] - What `/api/auth/me` answers with
+     * @param {object|null} [opts.clearAnswer] - What the clear route answers with
+     * @returns {{calls: object[], status: object[], disabled: boolean}}
+     */
+    function click(opts = {}) {
+      const { doc } = makeDocument(['projLaunchSequencesList']);
+      const ctx = { document: doc, window: {} };
+      vm.createContext(ctx);
+      const calls = [];
+      const status = [];
+      const btn = {
+        disabled: false,
+        dataset: { launchRecoveryClear: '9', sessionId: '42', recoveryRevision: '3' },
+        _click: null,
+        addEventListener(type, fn) { if (type === 'click') this._click = fn; }
+      };
+      ctx.api = async (url, fetchOpts) => {
+        calls.push({ url, fetchOpts });
+        if (url === '/api/auth/me') {
+          return { openInstallToken: opts.openInstallToken === undefined ? 'page-token' : opts.openInstallToken };
+        }
+        return opts.clearAnswer === undefined ? { ok: true } : opts.clearAnswer;
+      };
+      ctx.api.lastError = 'The launch moved under the click.';
+      ctx.projectRulesTargetId = 7;
+      ctx.projectRulesTargetName = 'my project';
+      ctx._setProjectRulesStatus = (text, ok) => status.push({ text, ok });
+      ctx.refreshProjectLaunchSequences = async () => true;
+      vm.runInContext(liftFunction(UI_SRC, 'function wireLaunchRecoveryClears'), ctx);
+      ctx.wireLaunchRecoveryClears({ querySelectorAll: () => [btn] });
+      return { run: async () => { await btn._click(); return { calls, status, btn }; } };
+    }
+
+    it('sends the launch the button was rendered for, as numbers', async () => {
+      const { calls } = await (click().run());
+      const post = calls.find((c) => c.url.includes('recovery-clear'));
+      assert.ok(post, 'the handler posted a clear');
+      assert.equal(post.url, '/api/sessions/my%20project/launch/recovery-clear',
+        'the project name is escaped into the path');
+      assert.equal(post.fetchOpts.method, 'POST');
+      assert.deepEqual(JSON.parse(post.fetchOpts.body), { sessionId: 42, sequenceId: 9, recoveryRevision: 3 },
+        'the dataset strings reach the server as the numbers it validates');
+    });
+
+    it('carries the page token an open install issued', async () => {
+      const { calls } = await (click({ openInstallToken: 'page-token' }).run());
+      const post = calls.find((c) => c.url.includes('recovery-clear'));
+      assert.equal(post.fetchOpts.headers['X-TC-Open-Token'], 'page-token');
+    });
+
+    it('sends no token header on an install that issues none', async () => {
+      // An armed install answers `openInstallToken: null`, and `api()`'s own
+      // CSRF header is what the route reads there. Sending an empty header
+      // would be sending a claim with nothing behind it.
+      const { calls } = await (click({ openInstallToken: null }).run());
+      const post = calls.find((c) => c.url.includes('recovery-clear'));
+      assert.equal(post.fetchOpts.headers, undefined);
+    });
+
+    it('re-enables the button and says why when the clear is refused', async () => {
+      const { status, btn } = await (click({ clearAnswer: null }).run());
+      assert.equal(btn.disabled, false, 'a refused clear leaves the operator able to try again');
+      assert.deepEqual(status, [{ text: 'The launch moved under the click.', ok: false }]);
+    });
+
+    it('reports success and leaves the button spent', async () => {
+      const { status, btn } = await (click().run());
+      assert.equal(btn.disabled, true);
+      assert.equal(status.length, 1);
+      assert.equal(status[0].ok, true);
+      assert.match(status[0].text, /Recovery cleared/);
     });
   });
 });

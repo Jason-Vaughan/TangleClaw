@@ -202,10 +202,10 @@ describe('launch sequence (Train 21, Chunk 01)', () => {
       const assumedStatus = launchSequence.status({ launchId: assumedSeq.launchId, projectId: assumed.id }).body;
       assert.equal(assumedStatus.toolOutput.measured, false);
       assert.match(assumedStatus.toolOutput.reason, /no measured tool-output limit/);
-      // Chunk 02 built READY and the unready window, so only recovery is still
-      // declared pending. The list is the honest "not built yet" statement, so it
-      // shrinks as each stage ships rather than describing what it once was.
-      assert.deepEqual(assumedStatus.pending.stages, ['recovery']);
+      // The list is the honest "not built yet" statement, so it shrinks as each
+      // stage ships rather than describing what it once was. It is empty now:
+      // the recovery gate was the last stage this protocol served without.
+      assert.deepEqual(assumedStatus.pending.stages, []);
     });
 
     it('a launch survives steps that cannot be rendered, and says why it has no sequence', () => {

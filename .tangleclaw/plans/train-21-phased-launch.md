@@ -11,7 +11,7 @@ governed_by:
   - .tangleclaw/plans/master-startup-and-wrap.md      # Master startup — excluded here, see §2.9
   - project rule: ENGINE-AGNOSTIC BY CONSTRUCTION
 scope: train-21-phased-launch
-branch: feat/train-21-chunk-03   # the chunk in flight; the gates resolve the active plan by this claim
+branch: feat/train-21-car-21-9   # the car in flight; the gates resolve the active plan by this claim
 partition: serial — every chunk edits lib/sessions.js, lib/store.js and server.js; the chunks that touch public/ run in a worktree
 ---
 
@@ -929,6 +929,159 @@ Written before the code, because each one answers a question the blueprint leave
   where the hook-channel ledger already renders, and §2.5's requirement is that the three kinds of
   evidence be readable side by side — which means one panel, not a second place to look.
 
+---
+
+## 4b. Car 21.9 build plan (#1587) — recovery gate, clear route, UI control
+
+**Branch:** `feat/train-21-car-21-9`. **Schema:** v42 → **v43** (v42 shipped with 21.8; a car takes
+the next unshipped number, per §2.7 *Migration boundary*). **Critic mode:** `chunk`.
+**Type:** feature. **Size:** medium-large — 9 files across store, config, launch, route and UI.
+
+### Confidence check
+
+- **Problem.** 21.8 computes `requiresRecovery` and freezes it into every launch record, and
+  nothing reads it. A session whose handoff state is corrupt, behind or unclassified is told so in
+  step 3 and then walks straight into step 4 and attests READY, which is the one outcome the
+  preflight exists to prevent.
+- **Success.** A launch whose preflight demands recovery cannot reach step 4 in `operator` mode
+  until an operator clears it through the dashboard; in `advisory` mode it reads step 4 behind a
+  warning and can only attest with a written reconciliation, which clears recovery in the same
+  transaction. Both clearances are recorded with which one it was, and an open install's clear is
+  never counted as operator-verified.
+- **Out of scope.** The per-rule drift diff (21.10), engine parity probes (21.11), ADR 0017
+  (21.12), and #1611's removal of the launching-workspace predicate. Retention (#1595) is
+  untouched.
+
+**Requirements Confidence: High.** §2.3, §2.7 and §2.8 specify the state machine, the branch order
+and the column set. The two open points are named as decisions below, not as guesses.
+
+### Steps
+
+- [x] **1. Schema v42→43 — the recovery columns.** `lib/store.js`: the six columns of §2.8 on
+  `launch_sequences`, in `_createTables` (fresh database) and in a v42→43 migration block
+  (upgrade), with a postcondition check that refuses to advance `schema_version` if the columns or
+  their CHECKs are missing — the shape v41→42 established. Existing rows take
+  `recovery='none'` / `recovery_mode='operator'` / `recovery_revision=1`: a launch that predates
+  the gate was never told to recover, and defaulting it to `required` would strand every live
+  pane. `_rowToLaunchSequence` maps all six.
+  Tests: `test/store.test.js` (fresh-database shape), a new `test/launch-recovery-migration.test.js`
+  (upgrade from a v42 fixture, the refusal on a half-applied upgrade, and idempotent re-run).
+
+- [x] **2. `recoveryMode` project setting.** `lib/project-config.js`: `launchSequence.recoveryMode`
+  with `RECOVERY_MODES = ['operator','advisory']` and `resolveRecoveryMode`, **default `operator`**
+  (operator ruling R3, §0). An unrecognised value reads as `operator` — the blocking side, because
+  this setting decides whether a bad handoff can walk through unattended, so a typo must fall back
+  to the side that stops rather than the side that waves through. `lib/projects.js` validates it
+  beside `pasteRules`.
+  Tests: `test/launch-sequence-settings.test.js`.
+
+- [x] **3. Recovery recorded at launch.** `lib/launch-sequence.js#buildSnapshot` returns
+  `recovery: preflight.requiresRecovery ? 'required' : 'none'`, `recoveryMode` from the resolved
+  setting, `recoveryRevision: 1`; `lib/sessions.js` resolves the setting and passes it;
+  `store.launchSequences.create` writes them. `_statusBlock` reports the row's real `recovery`
+  instead of today's hardcoded `'none'`, and the `PENDING_STAGES` note that named this gate as the
+  missing piece goes with it.
+  Tests: `test/launch-sequence.test.js`, `test/launch-preflight-context.test.js`.
+
+- [x] **4. The step-4 gate (§2.3 rule 4).** `_serve` withholds step 4 — and only step 4 — when
+  `recovery === 'required'`:
+  - `operator` → `200 {withheld: true, reason, recoveryRevision}` with **nothing marked served**,
+    so the ack rules never see a page that was not delivered.
+  - `advisory` → served, with a warning block naming the verdict and the reconciliation READY will
+    demand **prepended to the served page-0 slice only**. The step's frozen content, its digest and
+    its page offsets are untouched: the ack still carries `step.digest`, because the warning is
+    framing around the snapshot and not part of it.
+  The gate reads `recovery` alone. `unready_at` is not an input, and an expired unready window
+  therefore cannot open step 4.
+  Tests: `test/launch-sequence.test.js` — withheld in operator mode; served-with-warning in
+  advisory; the digest is the frozen one in both; the unready timer does not unlock it; a cleared
+  sequence serves normally.
+
+- [x] **5. The READY guard (§2.3).** `_validateReady` / `ready()`:
+  - `required` + `operator` → `409 RECOVERY_UNCLEARED`. Operator mode has no advisory path, so a
+    reconciliation cannot substitute for the clear.
+  - `required` + `advisory` → passes only with a reconciliation of at least
+    `MIN_RECONCILIATION_CHARS`; on acceptance, **the same transaction** that writes `ready_at`
+    sets `recovery='cleared'`, `recovery_clearance='agent-reconciled'` and
+    `recovery_cleared_at`, with `recovery_cleared_by` NULL (no operator was involved and the row
+    must not imply one).
+  - `_reconciliationRequired` gains the recovery trigger it was written without; the comment that
+    says the trigger belongs to #1587 goes with it.
+  Tests: `test/launch-ready.test.js`.
+
+- [x] **6. The open-install page token.** §2.8 left open whether one exists; it does not —
+  `/api/auth/me` answers `csrfToken: null` when signed out, so an open install has no anti-forgery
+  token at all. New `lib/open-install-token.js`: a process-lifetime store of minted tokens with a
+  TTL and a cap, issued to the dashboard by `/api/auth/me` **only while the gate is open**, and
+  read by the recovery-clear route and nothing else. It proves the caller fetched from this
+  server's dashboard in this process's lifetime, which is exactly the cross-site claim §2.8 makes
+  and no more: it does not prove a human and cannot exclude a local process, and the clearance
+  label says so.
+  Tests: new `test/open-install-token.test.js` (mint, expiry, cap eviction, single use vs reuse).
+
+- [x] **7. The `recovery-clear` route (§2.8).** `POST /api/sessions/:project/launch/recovery-clear`,
+  body `{sessionId, sequenceId, recoveryRevision}`, branching on **gate state first**:
+  1. `fallback` → `_refuseDuringFallback`.
+  2. `armed` → no `req.tcSession` is `401 UNAUTHENTICATED` (machine clients and failed auth end
+     here and never reach the open branch); otherwise clear as `operator-verified` with
+     `cleared_by = req.tcSession.username`. The perimeter CSRF check already covers this write;
+     the route asserts the token too rather than inheriting a guard it does not own.
+  3. `open` → machine clients `403 OPERATOR_REQUIRED`; the browser path requires same-origin
+     (`Origin` matching the served origin, and `Sec-Fetch-Site: same-origin` when sent) **and** the
+     page token from step 6; recorded as `open-install-unverified` with `cleared_by: null`.
+     The gate stands down in `open`, so identity is **not** resolved by the perimeter — the route
+     calls `_gateIdentity` itself to tell a machine client from a browser.
+  4. anything else → `409 GATE_STATE_UNSUPPORTED`. There is no fall-through to the open branch.
+  `recovery_mode='advisory'` → `409 RECOVERY_MODE_ADVISORY`, so the two clearing paths never cross.
+  The clear applies only when `(sessionId, sequenceId, recoveryRevision)` matches the live row and
+  `recovery='required'`; otherwise `409 STALE_RECOVERY`.
+  Tests: new `test/launch-recovery-clear.test.js` — every branch, the binding, and the
+  never-reached-open assertion for a failed armed authentication.
+
+- [x] **8. The UI control.** `GET /api/launch-sequences` returns the recovery fields;
+  `public/ui.js` renders each launch's recovery state in the existing Launch-readiness panel and
+  offers **Clear recovery** only for `recovery='required'` with `recovery_mode='operator'`; a
+  cleared row states which clearance it was, with `open-install-unverified` labelled as unverified
+  and never shown as operator-verified. Advisory rows say the session clears its own by
+  reconciling, and offer no button.
+  Tests: `test/launch-readiness-panel.test.js`. **Visual change: yes** → VRF entry.
+
+- [ ] **9. Record and wrap.** CHANGELOG `[Unreleased]`, the Status boxes below, `/prawduct:critic`,
+  handoff notes.
+
+### Decisions this car records
+
+- **`recovery_revision` starts at 1 and increments with the snapshot revision.** §2.8 binds a clear
+  to a `recoveryRevision` so a delayed click cannot clear a newer launch, but does not say what
+  moves it. A snapshot revision re-renders step 3 — the verdict presentation the operator read
+  before deciding to clear — so a revision is exactly the event that makes an outstanding clear
+  stale. Incrementing it anywhere else would invalidate clears for changes the operator never saw.
+- **An unrecognised `recoveryMode` reads as `operator`, the blocking side.** The mirror of
+  `pasteRules`, whose bad value falls back to `paste` because that is *its* delivering side. The
+  shared rule is that a bad value falls back to the side that fails safe for that setting's own
+  question, not to a fixed one of the two words.
+- **The advisory warning block is framing, not content.** Prepending it to the frozen step would
+  either change the digest the agent must ack or make the digest stop describing what was served.
+  It is prepended to the served slice, and the ack stays the snapshot's.
+
+### Acceptance cases (from §4 Chunk 03, the recovery subset)
+
+- advisory recovery reaches READY only with a reconciliation, atomically `cleared`
+- operator recovery cannot use the advisory path (`RECOVERY_UNCLEARED`); the clear route refuses
+  advisory rows
+- an armed install with failed auth never reaches the open-install branch; fallback is refused;
+  open-install clears are labelled unverified
+- READY while recovery is uncleared
+- an unready timer does not unlock step 4
+- a late clear for another sequence or revision → `STALE_RECOVERY`
+- a machine client clearing → 403
+- the open-install clear is recorded as unverified
+
+### Done when
+
+Every box above is ticked, the suite is green, `/prawduct:critic` has run with no unresolved
+blocking findings, the VRF entry is enqueued, and the PR closes #1587.
+
 ## 5. Open assumptions
 
 - `[ASSUMPTION: tc output reaches the model intact up to toolOutput.maxChars per engine | HIGH | Chunk 01 spike measures it; unknown engines default to a conservative 8000 and say so]`
@@ -987,7 +1140,9 @@ Written before the code, because each one answers a question the blueprint leave
   - The reconciliation condition stays **unnarrowed**: every revision demands one, and only the
     wording is derived from whether anything was served.
   - Retention follow-up #1595 and the nudge-verdict record #1596 filed from the Critic pass.
-- [ ] Chunk 03 — 21.7 (#1585) done, PR #1608; 21.8 (#1586) BUILT, PR owed; 21.9 (#1587) unbuilt
+- [ ] Chunk 03 — 21.7 (#1585) shipped (PR #1608, merged); 21.8 (#1586) shipped (issue closed, v42 live
+  on main); 21.9 (#1587) in flight on `feat/train-21-car-21-9`, planned in §4b
+  - [ ] Car 21.9 — recovery gate, clear route, UI control (#1587). Steps and Done-when: §4b
   - 21.8's deltas from the blueprint:
   - The context-gathering half lives in its own module, `lib/launch-preflight-context.js`, rather
     than in `lib/sessions.js`. §2.7 says the preflight runs beside the stranded `launchGate`, and it
