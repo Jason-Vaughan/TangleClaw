@@ -569,7 +569,11 @@ describe('launch sequence (Train 21, Chunk 01)', () => {
       const status = launchSequence.status({ launchId: sequence.launchId, projectId: project.id }).body;
       assert.equal(status.status.cursor, 4);
       assert.equal(status.steps.filter((s) => s.ackedAt).length, 4);
-      assert.equal(status.preflight.verdict, 'not-evaluated');
+      // A real verdict, not the placeholder this used to pin: the fixture is a
+      // project with no sessions, no publications and no handoff on disk, which
+      // is what `first-launch` names. `not-evaluated` stood only until the
+      // handoff check existed (#1586).
+      assert.equal(status.preflight.verdict, 'first-launch');
     });
 
     it('serves identical frozen bytes after a restart, and keeps its page boundaries when the budget changes', () => {

@@ -940,8 +940,23 @@ Written before the code, because each one answers a question the blueprint leave
   - The reconciliation condition stays **unnarrowed**: every revision demands one, and only the
     wording is derived from whether anything was served.
   - Retention follow-up #1595 and the nudge-verdict record #1596 filed from the Critic pass.
-- [ ] Chunk 03 — 21.7 (#1585) done, PR #1608; 21.8 (#1586) part-built (verdict engine, v42 epoch
-  migration, `applyHandoffRepairs`; the `launchSession` wiring still owed); 21.9 (#1587) unbuilt
+- [ ] Chunk 03 — 21.7 (#1585) done, PR #1608; 21.8 (#1586) BUILT, PR owed; 21.9 (#1587) unbuilt
+  - 21.8's deltas from the blueprint:
+  - The context-gathering half lives in its own module, `lib/launch-preflight-context.js`, rather
+    than in `lib/sessions.js`. §2.7 says the preflight runs beside the stranded `launchGate`, and it
+    does — but the reads it needs (store, handoff directory, git) are what `runPreflight`'s purity
+    exists to keep out, and putting them in `sessions.js` would have made them untestable without
+    launching a session.
+  - **The identity check's workspace half is deliberately not wired**, and this is the one place
+    21.8 does not do what §2.7 says. `medusa.mintWorkspaceId` draws fresh random bytes every launch,
+    so the launching id can never equal the one a previous session recorded; passing it would report
+    `identity-mismatch` — a recovery verdict — on every launch of every Medusa project. The
+    `projectId` half is exact and unaffected. Filed as **#1611**: either the check compares something
+    that can match, or the contract says identity is `projectId` alone.
+  - `SESSION_WINDOW` (200) is a diagnostic breadth, not a correctness threshold. The decision reads
+    sessions for the newest one, the epoch comparison, and the producer of the newest published
+    attempt; the first two are answered correctly by any newest-first slice, and the third is
+    answered by fetching producers by id regardless of the slice.
   - `applyHandoffRepairs` lives in `lib/handoff-publish.js`, not the pure preflight module, and
     delegates its re-checks to `publishHandoff` rather than restating them. `publishHandoff` already
     re-establishes exactly `_repairable`'s conditions inside its own transaction, against the live
