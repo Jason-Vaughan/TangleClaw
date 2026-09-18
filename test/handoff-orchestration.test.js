@@ -217,7 +217,39 @@ describe('the step reads only what wrap-scope actually produces', () => {
 
     const facts = stageStep._worktreeFacts(scope, 'abc123');
     assert.equal(typeof facts.gitDir, 'string');
-    assert.ok(facts.dirty === true || facts.dirty === false || facts.dirty === null,
-      'dirty is measured at handoff and may be null when it could not be established');
+    assert.equal(facts.dirty, false, 'the fixture tree is clean at this point');
+  });
+
+  // `dirty` decides a recovery verdict (plan §2.7: a removed worktree needs
+  // recovery iff it was dirty), and a kept session stages a checkpoint, another
+  // checkpoint and a final well inside `git.getInfo`'s TTL. A membership check
+  // — dirty is true, false or null — is satisfied by a value read minutes ago
+  // from a different attempt, so it cannot tell a measurement from a memory.
+  // Straddle a real write instead: the only thing that changes between these
+  // two calls is the tree itself.
+  it('measures dirty at the moment of staging, not from a cached earlier reading', async () => {
+    const wrapScope = require('../lib/wrap-scope.js');
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-handoff-dirty-'));
+    tmpDirs.push(repo);
+    const { execFileSync } = require('node:child_process');
+    const run = (args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
+    run(['init', '-q', '-b', 'main']);
+    run(['config', 'user.email', 't@example.com']);
+    run(['config', 'user.name', 'Test']);
+    fs.writeFileSync(path.join(repo, 'f.txt'), 'x\n');
+    run(['add', '.']);
+    run(['commit', '-q', '-m', 'init']);
+
+    const proj = { id: project.id, name: project.name, path: repo, configPath: repo };
+    const scope = await wrapScope.resolve(proj, null, {});
+
+    const clean = stageStep._worktreeFacts(scope, 'abc123');
+    assert.equal(clean.dirty, false, 'a committed tree stages as clean');
+
+    fs.writeFileSync(path.join(repo, 'f.txt'), 'uncommitted\n');
+
+    const dirty = stageStep._worktreeFacts(scope, 'abc123');
+    assert.equal(dirty.dirty, true,
+      'the second staging must see the write — a cached reading would still say false');
   });
 });

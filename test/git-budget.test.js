@@ -272,6 +272,28 @@ describe('git info budget (#891)', () => {
     });
   });
 
+  describe('a caller that needs the tree as of now can say so', () => {
+    it('skips the cached entry when asked for a fresh reading', () => {
+      // The cache keeps repeated dashboard polls off the event loop. A caller
+      // writing the answer into a frozen document is not polling, and a stale
+      // reading recorded there is indistinguishable afterwards from a measured
+      // one — identity is the assertion because a cached answer is the SAME
+      // object, so equal contents would pass either way.
+      const cached = git.getInfo(REPO_ROOT);
+      assert.equal(git.getInfo(REPO_ROOT), cached, 'precondition: the entry is cached');
+
+      const fresh = git.getInfo(REPO_ROOT, { fresh: true });
+      assert.notEqual(fresh, cached, 'a fresh read must not be served from the cache');
+    });
+
+    it('leaves the refreshed reading in the cache for everyone else', () => {
+      // A fresh read that bypassed the cache entirely would make the next
+      // poller pay for a full re-read, so it refreshes rather than skips.
+      const fresh = git.getInfo(REPO_ROOT, { fresh: true });
+      assert.equal(git.getInfo(REPO_ROOT), fresh);
+    });
+  });
+
   describe('a persistently slow repository is reported once, not once per poll', () => {
     it('warns the first time and drops to debug for the same directory', () => {
       // A partial is deliberately not cached, so a repository that stays slow
