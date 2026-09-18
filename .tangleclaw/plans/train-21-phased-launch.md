@@ -959,6 +959,20 @@ Written before the code, because each one answers a question the blueprint leave
     newest-first slice, and the third is answered by fetching producers by id regardless of the
     slice. Publications are bounded on the same argument — every question asked of them is about the
     highest `seq`.
+  - **A mixed repair batch applies `record-published` before `publish`**, seq-descending within
+    each action. The two actions contend for ONE `current.json` — a `record-published` proposal
+    exists only because the file already holds its bytes, and a `publish` renames over it. Ordered
+    by seq alone, the rename goes first whenever the promoted attempt has the lower seq, and then
+    either `promoteStaged` refuses to retire a `current.json` naming someone else (the launch
+    reports `unfinished`, a recovery verdict, for a fully repairable state) or, with no published
+    row to retire, the rename destroys the promoted document outright. An action with no declared
+    rank sorts LAST rather than first, which is the fail-safe direction, and a test pins that every
+    action has an explicit rank.
+  - **`requiresRecovery` is stored on the launch record, not recomputed.** It is not a function of
+    the verdict: `needsRecovery` reads `evidence.worktreeDirty` for `workspace-unavailable`, because
+    a vanished worktree measured clean has nothing to recover while one never measured does. #1587's
+    gate reading only the verdict would answer `false` for the unmeasured case — the unsafe
+    direction. `worktreeDirty` is stored beside it so the answer stays auditable.
   - **Repair proposals are computed BEFORE the verdict chain**, not at row 6. A proposal is a fact
     about the store, not about which word won; inside the chain it inherited the early exits, so
     rows 1-5 returned none — and `crash-recovery` (row 5) is reachable with a completed, eligible,

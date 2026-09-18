@@ -527,3 +527,25 @@ describe('a batch holding both actions', () => {
       'the applier orders the batch; it does not follow the order it was given');
   });
 });
+
+describe('every repair action has an explicit place in the batch order', () => {
+  it('no action falls through to the unknown rank', () => {
+    // `REPAIR_ACTIONS` is derived from the appliers; `REPAIR_ORDER` is written by
+    // hand. A third applier added and forgotten here would rank as unknown — and
+    // the unknown rank is last by design rather than first, so the worst case is
+    // "runs after the ones that matter" instead of "runs before record-published
+    // and destroys the document it was repairing". This pins that nobody has to
+    // rely on that fail-safe.
+    const { REPAIR_ACTIONS, REPAIR_ORDER, repairRank } = require('../lib/handoff-publish.js');
+    for (const action of REPAIR_ACTIONS) {
+      assert.notEqual(repairRank(action), REPAIR_ORDER.length,
+        `${action} has no explicit rank in REPAIR_ORDER — add it beside the action it must not overtake`);
+    }
+  });
+
+  it('ranks an action it does not know LAST, not first', () => {
+    const { REPAIR_ORDER, repairRank } = require('../lib/handoff-publish.js');
+    assert.equal(repairRank('something-nobody-declared'), REPAIR_ORDER.length);
+    assert.ok(repairRank('something-nobody-declared') > repairRank('record-published'));
+  });
+});
