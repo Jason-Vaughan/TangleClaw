@@ -348,8 +348,8 @@ describe('#1619 chunk 04 — the carrier a project actually tracks', () => {
 
   it('treats an unknown tracking state as committed — missing git is not a non-repository', () => {
     // This replaces a test that pinned the opposite, and the reasoning it
-    // pinned was wrong. I argued a directory git cannot answer for "cannot
-    // commit anything". A project that TRACKS its .codex.yaml is a repository
+    // pinned was wrong: it read "git cannot answer here" as "nothing here can
+    // be committed". A project that TRACKS its .codex.yaml is a repository
     // whose git is merely unavailable — break PATH and the old fallback called
     // that tracked file private and inlined the live token into it. The two
     // error directions are not comparable: one costs an API call, the other

@@ -204,8 +204,7 @@ describe('#1619 matrix — six data classes × four routes, judge → classify �
     // was caught. The unreadable fixture relies on `readFileSync` throwing on a
     // directory; where that does not throw, the contents land inside a fence
     // and the embedded-body check would satisfy the assertion for the wrong
-    // reason — the trap this file's own comment above records, and one I would
-    // otherwise have walked into while quoting it.
+    // reason — proving nothing about the branch the case is named for.
     // Each case names the marker that proves it reached ITS branch, and the
     // exact class the guard must return — `assert.ok` would accept any pattern
     // matching for any reason, which is how a case comes to be right by
@@ -227,10 +226,8 @@ describe('#1619 matrix — six data classes × four routes, judge → classify �
   });
 
   it('an asterisk in a document name defeats neither name-matching pattern', () => {
-    // Two patterns match a bold document name, and I widened one and left the
-    // other — the same partial sweep that has cost this branch more than any
-    // other mistake. Both are asserted here, together, so the pair cannot drift
-    // apart again.
+    // Two patterns match a bold document name. Both are asserted together so
+    // that widening one without the other fails here rather than shipping.
     assert.equal(
       tcOwned._carriesIdentity('- **a*b**: `/Users/someone/Docs/ref.md` — d'),
       'a shared-document install path',

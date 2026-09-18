@@ -802,7 +802,7 @@ describe('#1619 — the refusal survives every route into a null verdict', () =>
     // through to the mtime rule and is staged from `owned`. Nothing exotic: an
     // operator editing the top of their own CLAUDE.md in the session the server
     // regenerated the block underneath them.
-    const root = repo(NEUTRAL, carrier(IDENTITY, 'Operator notes, now with a new line I added.'));
+    const root = repo(NEUTRAL, carrier(IDENTITY, 'Operator notes, with a line the operator added.'));
     const c = ownership.classify(scopeFor(root), [{ path: 'CLAUDE.md', deleted: false }], {});
     assert.ok(!c.stageable.includes('CLAUDE.md'), 'a compound change must not stage an identity-carrying block');
     assert.ok(!c.owned.includes('CLAUDE.md'));
