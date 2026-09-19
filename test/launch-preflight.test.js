@@ -693,6 +693,48 @@ describe('a worktree neither end could read is not a verified worktree (#1648)',
     assert.equal(r.verdict, VERDICTS.OK);
   });
 
+  it('an unreadable probe never retracts a recorded BRANCH either', () => {
+    // The sibling clause. `movedHead` was changed to key on the recorded side;
+    // `movedBranch` kept `!!probe.branch`, so an unreadable probe made it
+    // false and the same wrong verdict survived one line down. A document
+    // recording a branch with no sha — reachable when `status` parses and
+    // `git log -1` goes short — against a probe that read neither, answered OK
+    // for a tree nobody read on either side.
+    const r = runPreflight(ctx({
+      file: {
+        state: FILE_STATES.VALID,
+        doc: doc({ worktree: worktree({ headSha: null, branch: 'main' }) }),
+        digest: DIGEST
+      },
+      worktreeProbe: { toplevelExists: true, headSha: null, branch: null }
+    }));
+    assert.notEqual(r.verdict, VERDICTS.OK,
+      'the recorded branch is evidence and an unreadable probe does not retract it');
+  });
+
+  it('a handoff that says its OWN reading went short is unverified', () => {
+    // Better evidence than inferring a gap from a null: a null reads as
+    // "unborn repository" just as readily as "git could not be read". The
+    // producer knows which, and now says so in the frozen bytes.
+    const r = runPreflight(ctx({
+      file: {
+        state: FILE_STATES.VALID,
+        doc: doc({
+          worktree: worktree({
+            headSha: 'abc123', branch: 'main',
+            unestablished: ['headSha'], readFailure: 'read-timed-out'
+          })
+        }),
+        digest: DIGEST
+      },
+      worktreeProbe: { toplevelExists: true, headSha: 'abc123', branch: 'main' }
+    }));
+    assert.notEqual(r.verdict, VERDICTS.OK,
+      'values the producer flagged as unestablished cannot verify anything, even when they match');
+    assert.ok(r.reasons.some((x) => /went short/i.test(x)),
+      'and the reason names the producer-side failure rather than the null');
+  });
+
   it('two measured, equal head shas still satisfy ok', () => {
     // The guard must not cost the ordinary case.
     const r = runPreflight(ctx({
