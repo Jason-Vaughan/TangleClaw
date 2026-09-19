@@ -34,6 +34,25 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-19 — The handoff records one tree at one moment (#1648)
+
+<!-- prawduct: type=bugfix | scope=handoff-1648 -->
+
+Found by the Chunk 03 whole-trajectory review — the governance checkpoint the Train 21 plan names after Chunk 03, which had never been run. Verified against this install before the fix was written.
+
+`tc.handoff/1`'s `worktree` block was three facts from three moments. `branch` came from the wrap scope's trunk, probed before the commit step ran. `headSha` came from the wrap's own commit step when it had one and from `scope.baseline.sha` — the sha the session LAUNCHED at — when it did not; BOTH are other moments, and the commit-step source is the one that survived a first attempt at this fix. `dirty` was measured fresh at staging, under a comment explaining why freshness mattered, two lines above two fields that had none. The preflight reads all three as one snapshot of one tree at one moment.
+
+What that did here: `current.json` recorded `branch: main` with `headSha: 40b94e310`, a commit that has never been on main. It was the wrap branch's tip, and that branch was squash-merged, so the sha never lands on main at all. The next launch computed `movedHead`, answered `stale`, required a reconciliation and refused READY. **The steady-state verdict on a sound handoff was `stale`.** The session that found it had itself been handed `stale` at launch and written a reconciliation, taking the defect for correct process.
+
+What was read first:
+- `git.getInfo` already reads `branch` and `dirty` from one `status` invocation and `lastCommit` from one `log`. Adding `headSha` to that same `log` format keeps everything one measurement, rather than adding a second probe that could disagree with the first.
+- Dropping the `scope.trunk.branch` fallback is deliberate, per `architecture.md`: a read that could not be established reports null and names itself, never a plausible default. An unmeasurable tree now records no branch instead of borrowing one from another moment.
+
+The guard for this class existed and could not see it. Car 21.9 closed four defects of exactly this shape and extended `test/handoff-orchestration.test.js` — created by car 21.7 (#1585, PR #1608) — to pin them. But it called `_worktreeFacts(scope, 'abc123')` with a literal anchor, so the fallback was never reached and branch/sha agreement was never asked. It now also runs with no anchor and asserts that the branch it names contains the sha it names. The fix was verified by reinstating the defect and confirming the guard fails.
+
+Three further defects were found by review of the fix itself, and all three were introduced by it. Preferring the wrap's commit sha looks obviously right and is not: when a wrap auto-branches off a protected branch, the commit lands on the WRAP branch and the original branch is checked back out, so the document would pair a measured `branch: main` with a sha main has never carried. That source is now gone entirely rather than reordered, and `_commitSha` went with it once nothing called it. `getInfo().branch` is never null — it answers the sentinels `unknown` and `HEAD`, both truthy — so a naive reader would have frozen a word that is not a branch into bytes nobody can repair; `measuredBranch()` is the reader that turns both into an honest absence. And an unmeasured tree was indistinguishable from a measured one at both ends: the document now carries `unestablished`/`readFailure` when a reading went short, and the launch treats a recorded side that established NOTHING as unverified rather than letting a readable probe stand in for a handoff that never captured the tree. The last is deliberately asymmetric — a recorded sha against an unreadable probe stays `stale`, because the recorded value is evidence and the probe's silence does not retract it.
+
+A pre-existing test asserted the old sourcing from a synthetic scope pointed at a path that does not exist — the defect written down as a contract. It is replaced by two: an unmeasurable tree reports `branch: null`, and a real tree reports its own branch while the fixture hands in a deliberately wrong `trunk.branch` and a bogus `baseline.sha` that the step must ignore. The old fixture handed in the right answer, which is why it could not catch this.
 ## 2026-09-19 — A session is told which governing rules moved while it was away (#1588)
 
 <!-- prawduct: type=feature | scope=train-21-phased-launch -->

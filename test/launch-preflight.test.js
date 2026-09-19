@@ -614,3 +614,138 @@ describe('ok is a positive predicate, proven by exhaustion', () => {
     }
   });
 });
+
+describe('a worktree neither end could read is not a verified worktree (#1648)', () => {
+  it('two unmeasured head shas do not satisfy ok', () => {
+    // `null !== null` is false, so an unmeasured pair used to read as "the head
+    // did not move" and went on to satisfy a precondition of `ok`. Nothing had
+    // looked at that tree on either side, and the launch reported it as sound.
+    //
+    // #1648's fix made this reachable: a failed measurement now answers null
+    // where a launch-time sha was previously substituted, so the hole had to
+    // close with it.
+    // BOTH recorded fields null — the fixture defaults `branch: 'main'`, and a
+    // recorded branch is real evidence, so leaving it in would test a
+    // half-measured tree rather than an unmeasured one.
+    const r = runPreflight(ctx({
+      file: {
+        state: FILE_STATES.VALID,
+        doc: doc({ worktree: worktree({ headSha: null, branch: null }) }),
+        digest: DIGEST
+      },
+      worktreeProbe: { toplevelExists: true, headSha: null, branch: null }
+    }));
+    assert.notEqual(r.verdict, VERDICTS.OK,
+      'neither side read the head, so nothing verified it');
+    assert.ok(r.reasons.some((x) => /unverified/i.test(x)),
+      'and the verdict names WHY, rather than failing silently');
+    // It must blame the side that actually failed. The first wording said
+    // "neither the handoff nor this launch could read the worktree's HEAD",
+    // which is false whenever the launch read it fine, and would send an
+    // operator to check git on this machine instead of the handoff.
+    assert.ok(r.reasons.some((x) => /handoff recorded neither/i.test(x)),
+      'the reason must name the RECORDED side, not claim the launch could not read');
+  });
+
+  it('a recorded head the probe could not read is still STALE, as it always was', () => {
+    // The asymmetry that matters: `recorded` is evidence and the probe is not,
+    // so a recorded sha with an unreadable probe is a real mismatch. Guarding
+    // this symmetrically would have turned a correct STALE into an `ok`, which
+    // is strictly worse than the hole being closed.
+    const r = runPreflight(ctx({
+      file: { state: FILE_STATES.VALID, doc: doc({ worktree: worktree({ headSha: 'abc123' }) }), digest: DIGEST },
+      worktreeProbe: { toplevelExists: true, headSha: null, branch: 'main' }
+    }));
+    assert.equal(r.verdict, VERDICTS.STALE);
+    assert.ok(r.reasons.some((x) => /could not be read/i.test(x)),
+      'and it says the probe failed rather than claiming HEAD is null');
+  });
+
+  it('a recorded side that established NOTHING is unverified, even against a good probe', () => {
+    // The third input, and the one a first fix missed. A probe that read fine
+    // says where the tree is NOW — it never says it is the tree the handoff
+    // described. With both recorded fields null, `movedHead` and `movedBranch`
+    // are each false because each guards on its own recorded value, so the
+    // launch would answer OK for a worktree the handoff never captured.
+    const r = runPreflight(ctx({
+      file: {
+        state: FILE_STATES.VALID,
+        doc: doc({ worktree: worktree({ headSha: null, branch: null }) }),
+        digest: DIGEST
+      },
+      worktreeProbe: { toplevelExists: true, headSha: 'abc123', branch: 'main' }
+    }));
+    assert.notEqual(r.verdict, VERDICTS.OK,
+      'a readable probe cannot verify a handoff that recorded nothing about the tree');
+    assert.ok(r.reasons.some((x) => /unverified/i.test(x)));
+    assert.ok(r.reasons.every((x) => !/this launch could not read/i.test(x)),
+      'the launch read the probe fine here — the message must not say otherwise');
+  });
+
+  it('a recorded branch that AGREES is evidence, even with no sha', () => {
+    // The boundary of the rule above, stated on purpose rather than left to
+    // fall out: the recorded side established a branch and it matches, so the
+    // tree is not unverified. Only a side that established NOTHING is.
+    const r = runPreflight(ctx({
+      file: { state: FILE_STATES.VALID, doc: doc({ worktree: worktree({ headSha: null }) }), digest: DIGEST },
+      worktreeProbe: { toplevelExists: true, headSha: null, branch: 'main' }
+    }));
+    assert.equal(r.verdict, VERDICTS.OK);
+  });
+
+  it('an unreadable probe never retracts a recorded BRANCH either', () => {
+    // The sibling clause. `movedHead` was changed to key on the recorded side;
+    // `movedBranch` kept `!!probe.branch`, so an unreadable probe made it
+    // false and the same wrong verdict survived one line down. A document
+    // recording a branch with no sha — reachable when `status` parses and
+    // `git log -1` goes short — against a probe that read neither, answered OK
+    // for a tree nobody read on either side.
+    const r = runPreflight(ctx({
+      file: {
+        state: FILE_STATES.VALID,
+        doc: doc({ worktree: worktree({ headSha: null, branch: 'main' }) }),
+        digest: DIGEST
+      },
+      worktreeProbe: { toplevelExists: true, headSha: null, branch: null }
+    }));
+    assert.notEqual(r.verdict, VERDICTS.OK,
+      'the recorded branch is evidence and an unreadable probe does not retract it');
+    // And it says the probe failed, rather than reporting "branch is null" —
+    // the same two-arm message the head clause carries, for the same reason.
+    assert.ok(r.reasons.some((x) => /branch could not be read/i.test(x)),
+      'an unread probe must not be reported as a branch value nobody observed');
+    assert.ok(r.reasons.every((x) => !/branch is null/i.test(x)));
+  });
+
+  it('a handoff that says its OWN reading went short is unverified', () => {
+    // Better evidence than inferring a gap from a null: a null reads as
+    // "unborn repository" just as readily as "git could not be read". The
+    // producer knows which, and now says so in the frozen bytes.
+    const r = runPreflight(ctx({
+      file: {
+        state: FILE_STATES.VALID,
+        doc: doc({
+          worktree: worktree({
+            headSha: 'abc123', branch: 'main',
+            unestablished: ['headSha'], readFailure: 'read-timed-out'
+          })
+        }),
+        digest: DIGEST
+      },
+      worktreeProbe: { toplevelExists: true, headSha: 'abc123', branch: 'main' }
+    }));
+    assert.notEqual(r.verdict, VERDICTS.OK,
+      'values the producer flagged as unestablished cannot verify anything, even when they match');
+    assert.ok(r.reasons.some((x) => /went short/i.test(x)),
+      'and the reason names the producer-side failure rather than the null');
+  });
+
+  it('two measured, equal head shas still satisfy ok', () => {
+    // The guard must not cost the ordinary case.
+    const r = runPreflight(ctx({
+      file: { state: FILE_STATES.VALID, doc: doc({ worktree: worktree() }), digest: DIGEST },
+      worktreeProbe: { toplevelExists: true, headSha: 'abc123', branch: 'main' }
+    }));
+    assert.equal(r.verdict, VERDICTS.OK);
+  });
+});

@@ -416,7 +416,11 @@ lives only in the DB, so the staged digest *is* the published digest:
   "projectId": 14, "workspaceId": "…|null", "sessionId": 1233, "wrapRunId": "…", "engineId": "claude",
   "kind": "final | checkpoint",                  // fixed at staging from the wrap's keepSessionRunning option
   "stagedAt": "ISO",
-  "worktree": {"path": "/abs", "toplevel": "/abs", "gitDir": "/abs", "branch": "…", "headSha": "…", "dirty": false},  // null for non-git
+  "worktree": {"path": "/abs", "toplevel": "/abs", "gitDir": "/abs", "branch": "…", "headSha": "…", "dirty": false,
+               // Present ONLY when the git reading went short (#1648). Absence is the signal that
+               // it was whole, so a consumer can tell "this tree has no commits" from "git could
+               // not be read" — which a bare null cannot say, and frozen bytes can never revisit.
+               "unestablished": ["headSha"], "readFailure": "read-timed-out"},  // null for non-git
   "rules": [{"id": 12, "source": "project", "revision": 3, "contentHash": "…"}],
   // Car 21.10 widened this block: `rules` rows also carry `label` and `measured`,
   // and a top-level `manifestSources` names what was read. §4c is the authority on
