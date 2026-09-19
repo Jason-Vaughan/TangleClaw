@@ -129,6 +129,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Internal
 
+- **The shipped #1619 plans are archived** (2026-09-18). Issue #1619 closed with PR #1627, so its four plan and evidence documents moved from `.tangleclaw/plans/` into `.tangleclaw/plans/archive/`. The standing rule is that a plan outlives its purpose the moment its PR merges: left beside the active plans, a future session reads closed work as ready. Moved rather than deleted, so the rationale and the recorded evidence survive.
+
 - **Two tests that could not fail for the reason they were written** (#1619). The wrap-ownership counter-case guarded its only assertion behind a conditional, so it would have passed silently the day the path it watches stopped being reached; and the five-checkout and switchboard fixtures built bare temp directories, so their engine-private assertions were exercising a hardcoded convention rather than any project's real git state. Both now assert unconditionally against real repositories.
 
 - **The active plan docs point at the project's own directory again** (2026-09-18). The project directory was renamed `TangleClaw-Builder` → `TangleClaw-Builder1`, which left the absolute paths inside `.tangleclaw/plans/sprint-v5.24.md`, `next-session-plan.md` and `train-21-phased-launch.md` naming a directory that no longer exists. Plans reference each other by absolute path precisely so that a session can open one it was handed, so every one of those pointers was dead rather than merely untidy.
