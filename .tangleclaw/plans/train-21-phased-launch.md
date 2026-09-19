@@ -1137,6 +1137,140 @@ and the column set. The two open points are named as decisions below, not as gue
 Every box above is ticked, the suite is green, `/prawduct:critic` has run with no unresolved
 blocking findings, the VRF entry is enqueued, and the PR closes #1587.
 
+---
+
+## 4c. Car 21.10 build plan (#1588) — per-rule drift reconciliation in step 3
+
+**Branch:** `feat/train-21-car-21-10`. **Schema:** no DB migration (see decisions).
+**Critic mode:** the chunk is `cumulative-final`, so 21.12's review is the train final; this car
+takes a `chunk` review. **Type:** feature. **Size:** medium.
+
+**Acceptance cases are DERIVED here, not quoted.** #1588 says "the acceptance cases for this car
+are listed under Chunk 04 in the plan" — they are not; §4's Chunk 04 carries three deliverable
+bullets and a governance-checkpoint note and nothing else. Chunks 02 and 03 each got an explicit
+`Acceptance cases:` list and Chunk 04 never did. The cases below are derived from the approved
+blueprint text that does exist (§2.2 rule-change/revision, §2.4 step 3's contents, §2.6's handoff
+manifest fields) rather than invented, and they are flagged to the Architect with ADR 0017 (21.12)
+so the gap is closed in the record rather than in one builder's head.
+
+### Confidence check
+
+- **Problem.** A session's rules can change between the wrap that wrote the handoff and the launch
+  that reads it, and today nothing says so. Step 3 reports the preflight verdict and the handoff
+  summary, both of which can read `ok` while the rule set the previous session worked under no
+  longer exists. The agent then resumes that session's work under rules it was never told changed.
+- **Success.** Step 3 names every rule added, removed or changed since the handoff was written,
+  per rule and per source; a launch with any such drift cannot attest READY without a
+  reconciliation, exactly as a revision cannot; and a handoff that never recorded a source says
+  so rather than reading as "unchanged".
+- **Out of scope.** Engine parity probes (21.11), ADR 0017 and the doc set (21.12), #1611's
+  removal of the launching-workspace predicate, and retention (#1595). This car does not change
+  what a wrap stages beyond the manifest widening below, and does not touch the recovery gate.
+
+### The gap this car has to close, precisely
+
+`_ruleManifest` (21.9, `lib/wrap-steps/handoff-stage.js`) already reuses
+`launchSequence.ruleFingerprints` and says in a comment that it does so *because* 21.10 diffs the
+two manifests. That reuse holds. What does not hold is the fingerprint's coverage:
+
+- `ruleFingerprints` reads `store.sessionRules.listActiveForProject` and stamps every row
+  `source: 'project'` — a literal, not a derivation. §2.2's manifest schema declares
+  `"source": "project|global|shared"`, so two of the three declared values are unreachable today.
+- The global rule set reaches the handoff as `globalRulesHash`, ONE hash over the whole text. A
+  per-rule diff cannot come out of it; only "the global rules changed" can.
+- Shared documents reach the LAUNCH manifest (`sourceManifest.sharedDocs`) but are **absent from
+  the handoff document entirely**. There is nothing to diff them against.
+
+So "including global/shared sources" is satisfiable for global at set granularity and, for shared,
+only for handoffs written after this car ships.
+
+### Decisions this car records
+
+- **`[DECISION: widen the handoff manifest additively, keep the schema id at tc.handoff/1 |
+  alternatives: a tc.handoff/2 bump, or diffing only project rules | rationale below]`**
+  `rules[]` gains entries whose `source` is `global` or `shared` alongside the existing `project`
+  rows, and the document gains exactly ONE new top-level field, `manifestSources`. Readers that
+  ignore both behave exactly as before, which is what makes it additive; `globalRulesHash` stays
+  where it is and keeps its meaning, because removing it would break the 21.8 preflight that
+  already reads it. A schema bump would force a migration path for documents that are frozen bytes
+  on disk and would buy nothing these two additions do not.
+
+  **`manifestSources` is not optional, and the diff cannot be honest without it.** It was absent
+  from the first cut of this decision, and writing the diff is what exposed the hole: a handoff
+  carrying no `shared` rows is EITHER one written before this car (which recorded no shared docs at
+  all) OR one written after it for a project that simply has none. Those two demand opposite
+  answers — `not-recorded` and `unchanged` — and nothing already in the document tells them apart,
+  because the pre-car fingerprint stamped every row `project` by literal. `manifestSources` is the
+  producing wrap declaring which sources it looked at; a document without it is read as having
+  recorded `project` only, which is exactly what was true before this car.
+- **`[DECISION: a source absent from a handoff reports `not-recorded`, never `unchanged` |
+  alternatives: treat absence as no-drift | rationale: this is the §2.7 three-valued-`dirty`
+  lesson one document over]`** A handoff written before this car carries no `shared` rows, and a
+  diff that flattened that to "unchanged" would tell the operator the shared docs are the ones the
+  previous session had — a claim nobody measured. The diff is three-valued per source:
+  `changed` / `unchanged` / `not-recorded`.
+- **`[DECISION: drift requires a reconciliation, and does NOT revise the snapshot |
+  alternatives: make drift a revision | rationale: a revision is about content served under the
+  agent]`** §2.2's revision exists because steps already served were replaced; the cursor moves
+  back and step 1 may carry over. Drift against a PREVIOUS session's handoff replaces nothing this
+  launch served — the snapshot is correct as rendered. Reporting it as a revision would re-serve
+  four steps that did not change and would make `carried_from_revision` evidence meaningless. It
+  therefore joins `_reconciliationRequired` as a fourth trigger, beside advisory recovery, a
+  revision, and a preflight verdict that declares one.
+- **No DB migration.** Every input is either in the frozen handoff bytes or recomputable at launch;
+  nothing here needs a column. The next unshipped schema version stays free for 21.11/21.12.
+
+### Steps
+
+1. **Widen the fingerprint.** `ruleFingerprints` takes an explicit source rather than stamping
+   `'project'`, and a new `manifestFingerprints(project)` composes the three sources into one
+   ordered array: project rules (per rule, as today), one `global` row hashing the global rule
+   text, and one `shared` row per registered shared document. `_ruleManifest` and
+   `buildSourceManifest` both call the composer, so the wrap and the launch keep deriving the same
+   shape — the property 21.9's comment was protecting.
+2. **A pure diff.** `lib/launch-rule-drift.js`, no store reads: `diffRuleManifests(before, after)`
+   returns `{added, removed, changed, perSource}` where `perSource` is the three-valued verdict
+   above. Pure so the step renderer and the READY gate share one answer and cannot disagree.
+3. **Render it in step 3.** `_ruleDriftLines(...)` joins `_preflightLines` in the `state` step:
+   one line per added/removed/changed rule naming the source and the rule, a per-source line for
+   `not-recorded`, and an explicit "no drift" line when there is none — said, never implied, the
+   same way stranded wraps says it.
+4. **Gate READY.** `_reconciliationRequired` gains the drift trigger, with wording that names what
+   drifted. The drift is computed once at sequence creation and stored on the sequence, because the
+   gate and the frozen step must answer identically — recomputing at READY would let a rule edit
+   between render and attest produce a requirement the agent was never shown.
+5. **Tests**, per the cases below.
+
+### Acceptance cases (derived — see the note above)
+
+- a rule added since the handoff → step 3 names it as added, and READY without a reconciliation is
+  refused naming that rule
+- a rule removed since the handoff → named as removed; READY refused
+- a rule whose body changed (same id, new `contentHash`) → named as changed, not as add+remove
+- a rule whose `revision` moved but whose `contentHash` did not → NOT drift (the body is what the
+  session read; a no-op version bump is not a change to report)
+- the global rule text changed → one `global` source line, and READY refused
+- a shared document's content changed → named per document
+- a handoff that recorded no `shared` rows → step 3 says `not-recorded` for that source, READY is
+  NOT gated on it, and the line never reads as "unchanged"
+- no drift at all → step 3 says so explicitly, and READY needs no reconciliation on drift grounds
+- drift AND a revision → one reconciliation requirement, wording naming both, not two refusals
+- drift on a launch whose preflight already requires a reconciliation → the existing wording wins
+  and drift is added to it, never replacing the preflight's reason
+- a launch with no handoff at all (first launch) → no drift section claims, and no drift gate
+- a corrupt handoff → the drift section says it could not be read, and does not gate READY (the
+  preflight already owns the corrupt verdict)
+- the drift stored at creation is what the gate reads: a rule edited between render and READY does
+  not change the requirement the agent was shown
+- `ruleFingerprints` and `_ruleManifest` derive byte-identical manifests for the same project state
+  (the property 21.9's comment asserts, now pinned by a test rather than by a comment)
+
+### Done when
+
+Every box above is ticked, the suite is green, `/prawduct:critic` has run at `chunk` with no
+unresolved blocking findings, and the PR closes #1588. The derived-acceptance-cases gap is carried
+into ADR 0017 (21.12) for the Architect, per the PM's bound 4.
+
 ## 5. Open assumptions
 
 - `[ASSUMPTION: tc output reaches the model intact up to toolOutput.maxChars per engine | HIGH | Chunk 01 spike measures it; unknown engines default to a conservative 8000 and say so]`

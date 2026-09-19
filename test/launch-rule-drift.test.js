@@ -1,0 +1,159 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert');
+
+const drift = require('../lib/launch-rule-drift');
+
+/**
+ * A manifest with explicit sources, as car 21.10 and later wraps write them.
+ * @param {object[]} rules - Fingerprints
+ * @param {string[]} [sources] - Recorded sources
+ * @returns {object} The manifest
+ */
+function manifest(rules, sources = ['project', 'global', 'shared']) {
+  return { rules, manifestSources: sources };
+}
+
+/**
+ * One fingerprint.
+ * @param {string} source - project | global | shared
+ * @param {string|number} id - Rule id
+ * @param {string} hash - Content hash
+ * @param {number|null} [revision] - Version number
+ * @returns {object} The fingerprint
+ */
+function fp(source, id, hash, revision = 1) {
+  return { id, source, revision, contentHash: hash };
+}
+
+test('recordedSources reads a legacy document as project-only', () => {
+  // No `manifestSources` means a pre-21.10 wrap, which looked at project rules
+  // and nothing else regardless of what its rows claim.
+  assert.deepStrictEqual(drift.recordedSources({ rules: [] }), ['project']);
+  assert.deepStrictEqual(drift.recordedSources(null), []);
+  assert.deepStrictEqual(
+    drift.recordedSources(manifest([], ['project', 'shared'])),
+    ['project', 'shared']
+  );
+});
+
+test('an added rule is reported as added, and only in a recorded source', () => {
+  const before = manifest([fp('project', 1, 'a')]);
+  const after = manifest([fp('project', 1, 'a'), fp('project', 2, 'b')]);
+  const d = drift.diffRuleManifests(before, after);
+  assert.strictEqual(d.hasDrift, true);
+  assert.deepStrictEqual(d.added.map((r) => r.id), [2]);
+  assert.deepStrictEqual(d.removed, []);
+  assert.deepStrictEqual(d.changed, []);
+  assert.strictEqual(d.perSource.project, 'changed');
+});
+
+test('a removed rule is reported as removed', () => {
+  const before = manifest([fp('project', 1, 'a'), fp('project', 2, 'b')]);
+  const after = manifest([fp('project', 1, 'a')]);
+  const d = drift.diffRuleManifests(before, after);
+  assert.deepStrictEqual(d.removed.map((r) => r.id), [2]);
+  assert.strictEqual(d.hasDrift, true);
+});
+
+test('a changed body is one change, never an add plus a remove', () => {
+  const before = manifest([fp('project', 1, 'a', 3)]);
+  const after = manifest([fp('project', 1, 'a2', 4)]);
+  const d = drift.diffRuleManifests(before, after);
+  assert.deepStrictEqual(d.added, []);
+  assert.deepStrictEqual(d.removed, []);
+  assert.strictEqual(d.changed.length, 1);
+  assert.strictEqual(d.changed[0].fromRevision, 3);
+  assert.strictEqual(d.changed[0].toRevision, 4);
+});
+
+test('a revision that moved with no content change is NOT drift', () => {
+  // The body is what the previous session read. A no-op version bump changes
+  // nothing it was governed by, so demanding a reconciliation for it would
+  // train the agent to write past a requirement that means nothing.
+  const before = manifest([fp('project', 1, 'same', 3)]);
+  const after = manifest([fp('project', 1, 'same', 9)]);
+  const d = drift.diffRuleManifests(before, after);
+  assert.strictEqual(d.hasDrift, false);
+  assert.strictEqual(d.perSource.project, 'unchanged');
+});
+
+test('the global rule set drifts at set granularity', () => {
+  const before = manifest([fp('global', 'global', 'g1')]);
+  const after = manifest([fp('global', 'global', 'g2')]);
+  const d = drift.diffRuleManifests(before, after);
+  assert.strictEqual(d.perSource.global, 'changed');
+  assert.strictEqual(d.hasDrift, true);
+});
+
+test('a shared document change is named per document', () => {
+  const before = manifest([fp('shared', 4, 'h1'), fp('shared', 5, 'h2')]);
+  const after = manifest([fp('shared', 4, 'h1'), fp('shared', 5, 'CHANGED')]);
+  const d = drift.diffRuleManifests(before, after);
+  assert.deepStrictEqual(d.changed.map((r) => r.id), [5]);
+  assert.strictEqual(d.perSource.shared, 'changed');
+});
+
+test('a source the handoff never recorded reads not-recorded, never unchanged', () => {
+  // The whole point of the module: a pre-21.10 handoff holds no evidence about
+  // shared docs, and saying "unchanged" would state a fact nobody measured.
+  const before = { rules: [fp('project', 1, 'a')] }; // legacy: no manifestSources
+  const after = manifest([fp('project', 1, 'a'), fp('shared', 4, 'h1'), fp('global', 'global', 'g1')]);
+  const d = drift.diffRuleManifests(before, after);
+  assert.strictEqual(d.perSource.shared, 'not-recorded');
+  assert.strictEqual(d.perSource.global, 'not-recorded');
+  assert.strictEqual(d.perSource.project, 'unchanged');
+});
+
+test('an unrecorded source never contributes drift, so it never gates READY', () => {
+  const before = { rules: [fp('project', 1, 'a')] };
+  const after = manifest([fp('project', 1, 'a'), fp('shared', 4, 'brand-new')]);
+  const d = drift.diffRuleManifests(before, after);
+  // The shared doc is not reported as "added" — nothing said it was absent before.
+  assert.deepStrictEqual(d.added, []);
+  assert.strictEqual(d.hasDrift, false);
+});
+
+test('a project with zero shared docs reads unchanged, not not-recorded', () => {
+  // The case `manifestSources` exists to separate from the one above.
+  const before = manifest([fp('project', 1, 'a')]);
+  const after = manifest([fp('project', 1, 'a')]);
+  const d = drift.diffRuleManifests(before, after);
+  assert.strictEqual(d.perSource.shared, 'unchanged');
+  assert.strictEqual(d.hasDrift, false);
+});
+
+test('no manifest at all is recorded:false and gates nothing', () => {
+  const d = drift.diffRuleManifests(null, manifest([fp('project', 1, 'a')]));
+  assert.strictEqual(d.recorded, false);
+  assert.strictEqual(d.hasDrift, false);
+  assert.deepStrictEqual(d.comparedSources, []);
+  for (const source of drift.SOURCES) assert.strictEqual(d.perSource[source], 'not-recorded');
+});
+
+test('rows are ordered by source then id, so step 3 renders the same every launch', () => {
+  const before = manifest([fp('shared', 9, 'x'), fp('project', 2, 'y')]);
+  const after = manifest([]);
+  const d = drift.diffRuleManifests(before, after);
+  assert.deepStrictEqual(d.removed.map((r) => r.source), ['project', 'shared']);
+});
+
+test('an unknown source on a row is read as project rather than dropped', () => {
+  const before = manifest([{ id: 1, source: 'wat', revision: 1, contentHash: 'a' }]);
+  const after = manifest([{ id: 1, source: 'wat', revision: 1, contentHash: 'b' }]);
+  const d = drift.diffRuleManifests(before, after);
+  assert.strictEqual(d.changed.length, 1);
+  assert.strictEqual(d.changed[0].source, 'project');
+});
+
+test('driftSummary names what moved, and is null without drift', () => {
+  assert.strictEqual(drift.driftSummary({ hasDrift: false }), null);
+  const d = drift.diffRuleManifests(
+    manifest([fp('project', 1, 'a')]),
+    manifest([fp('project', 1, 'b')])
+  );
+  const summary = drift.driftSummary(d);
+  assert.match(summary, /1 changed/);
+  assert.match(summary, /project rule 1/);
+});
