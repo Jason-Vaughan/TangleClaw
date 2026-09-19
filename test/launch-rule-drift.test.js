@@ -158,7 +158,7 @@ test('driftSummary names what moved, and is null without drift', () => {
   assert.match(summary, /project rule 1/);
 });
 
-test('an unreadable file on BOTH sides is never "unchanged" (R-17)', () => {
+test('an unreadable file on BOTH sides is never "unchanged"', () => {
   // `_fileHash` answers null for a file it could not read. Two nulls compare
   // equal, so an unreadable shared document used to satisfy the unchanged
   // branch — a measurement nobody took, reported as a measurement.
@@ -186,7 +186,7 @@ test('an unreadable row demotes its source even when other rows in it are fine',
   assert.strictEqual(d.hasDrift, false);
 });
 
-test('a source THIS launch could not read is `unreadable`, not `not-recorded` (R-2)', () => {
+test('a source THIS launch could not read is `unreadable`, not `not-recorded`', () => {
   // Opposite silences. `not-recorded` sends the operator to the previous
   // session; `unreadable` sends them to this machine.
   const before = manifest([

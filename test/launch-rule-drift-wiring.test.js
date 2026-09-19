@@ -360,7 +360,7 @@ describe('the launch never fails on drift', () => {
   });
 });
 
-describe('a failed measurement is distinguishable from a clean slate (R-18)', () => {
+describe('a failed measurement is distinguishable from a clean slate', () => {
   const sessions = require('../lib/sessions');
 
   it('a corrupt handoff renders a section saying it could not be read', () => {
@@ -399,7 +399,7 @@ describe('a failed measurement is distinguishable from a clean slate (R-18)', ()
   });
 });
 
-describe('a revision carries the drift through (R-6)', () => {
+describe('a revision carries the drift through', () => {
   it('the re-render is handed the same drift the first render was', () => {
     // A revision re-renders steps 2-4. Without the carry-through, step 3 would
     // lose the drift section while the gate still demanded a reconciliation for
@@ -416,7 +416,7 @@ describe('a revision carries the drift through (R-6)', () => {
   });
 });
 
-describe('the wrap and the launch build byte-equal manifests (R-7)', () => {
+describe('the wrap and the launch build byte-equal manifests', () => {
   let tmpDir;
   let project;
 

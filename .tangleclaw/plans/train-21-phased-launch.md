@@ -1487,4 +1487,18 @@ into ADR 0017 (21.12) for the Architect, per the PM's bound 4.
     building a fixture — an earlier hand-built one passed `worktreeTarget: null`, a value no producer
     emits, which is how it hid the bug.
   - `git.getInfo` now takes `{ fresh: true }`, for anything recorded into a frozen document.
-- [ ] Chunk 04
+- [ ] Chunk 04 — IN PROGRESS. `Type: cumulative-final`, so 21.12's review IS the train final; no
+  separate one is run.
+  - [x] Car 21.10 — per-rule drift reconciliation in step 3 (#1588). Built 2026-09-19 on
+    `feat/train-21-car-21-10` (`b632abcc8`, `472ae1f45`). Review
+    `rev-20260919T175143Z-ea511482` closed 0 blocking / 0 findings. Build plan and as-built
+    deltas: §4c. NOT merged — awaiting the operator's go, per the PM's bound 1.
+  - [ ] Car 21.11 — engine parity probes (#1589)
+  - [ ] Car 21.12 — ADR 0017 and the doc set (#1590). Bound 4: the draft goes to the Architect
+    BEFORE this merges.
+  - The car's one class of defect, worth reading before touching the drift path: failure, absence
+    and "nothing changed" started as ONE value at every boundary the car added, so every silence
+    rendered as the reassuring one. Three distinct values now carry it — `unreadable` vs
+    `not-recorded` for a source, `{unavailable}` vs `null` for a whole computation, and
+    `measured: false` vs a null hash for a row. A null returned by a reader is not a measurement,
+    and two of them must never compare equal.
