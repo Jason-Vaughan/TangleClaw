@@ -1203,12 +1203,38 @@ only for handoffs written after this car ships.
   because the pre-car fingerprint stamped every row `project` by literal. `manifestSources` is the
   producing wrap declaring which sources it looked at; a document without it is read as having
   recorded `project` only, which is exactly what was true before this car.
-- **`[DECISION: a source absent from a handoff reports `not-recorded`, never `unchanged` |
-  alternatives: treat absence as no-drift | rationale: this is the §2.7 three-valued-`dirty`
-  lesson one document over]`** A handoff written before this car carries no `shared` rows, and a
-  diff that flattened that to "unchanged" would tell the operator the shared docs are the ones the
-  previous session had — a claim nobody measured. The diff is three-valued per source:
-  `changed` / `unchanged` / `not-recorded`.
+- **`[DECISION: the per-source verdict is FIVE-valued, and which SIDE was silent is part of the
+  verdict | alternatives: a boolean changed/unchanged; a three-valued changed/unchanged/unknown |
+  rationale: this is the §2.7 three-valued-`dirty` lesson one document over, and the third value
+  was not enough]`** `changed` / `unchanged` / `not-recorded` (the HANDOFF never looked) /
+  `unreadable-at-wrap` (the previous wrap recorded the source but could not hash part of it) /
+  `unreadable-now` (THIS launch could not read it).
+
+  The last two were ONE value for exactly one review round, and that round shipped a renderer
+  telling operators "this launch could not read it — the server log names what failed" about files
+  that had failed at the previous wrap, on a machine whose log says nothing. Which side was silent
+  is not a detail of the verdict; it IS the verdict, because it decides where the person reading it
+  goes to look. A three-valued model is strictly better than a boolean and still wrong here.
+
+- **`[DECISION: an unmeasured row withholds GATING for its source but never suppresses a measured
+  change | alternatives: demote the whole source out of the comparison | rationale: completeness
+  and drift are different questions]`** A source holding an unreadable row cannot claim "and
+  nothing else changed", so it is reported as partly uncompared. But the rows that COULD be
+  measured were measured: dropping a real change because a sibling row was unreadable loses the one
+  fact the agent most needs and fails OPEN at the READY gate. The first cut demoted the whole
+  source before computing changes, and its own test pinned the loss — a shared document moving
+  `h1` → `CHANGED` with `hasDrift` asserted false. A measured change outranks a partial read in
+  the verdict, and the gap is disclosed beside it rather than in place of it.
+
+- **`[DECISION: a legacy handoff carrying NO rows claims nothing | alternatives: read it as
+  "recorded: project", per the era's fingerprint | rationale: the producer's empty array is
+  ambiguous and one reading invents drift]`** The pre-21.10 wrap returned `[]` both for a project
+  that genuinely had no rules AND for a rules read that threw — its catch returned an empty array —
+  so the frozen bytes cannot tell them apart. Reading such a document as having recorded the
+  project rules makes every rule in force now report as ADDED and refuses READY for a change nobody
+  made, on every launch, until someone edits a rule. Unknown is the honest answer and the safe
+  direction. A legacy document WITH rows is still read as project-only: its rows are what make it
+  evidence.
 - **`[DECISION: drift requires a reconciliation, and does NOT revise the snapshot |
   alternatives: make drift a revision | rationale: a revision is about content served under the
   agent]`** §2.2's revision exists because steps already served were replaced; the cursor moves

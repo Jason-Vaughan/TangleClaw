@@ -121,6 +121,29 @@ describe('the READY gate reads the frozen drift', () => {
     assert.doesNotMatch(why, /changed since the previous session's handoff/);
   });
 
+  it('a preflight verdict that demands one outranks drift', () => {
+    // The gap R-4 named: every other drift test left `requiresReconciliation`
+    // false, so this rung of the four-way precedence was documented as pinned
+    // and was not exercised at all.
+    const why = launchSequence._reconciliationRequired(sequence({
+      preflight: { verdict: 'handoff-behind', reason: 'the newest session never published', requiresReconciliation: true },
+      sourceManifest: { ruleDrift: drifted() }
+    }));
+    assert.match(why, /handoff-behind/);
+    assert.doesNotMatch(why, /changed since the previous session's handoff/);
+  });
+
+  it('drift is reported when NO stronger trigger applies', () => {
+    // The other side of precedence: drift must actually surface when it is the
+    // only reason, or the ordering above would be indistinguishable from drift
+    // never being checked.
+    const why = launchSequence._reconciliationRequired(sequence({
+      preflight: { verdict: 'ok', reason: 'fine', requiresReconciliation: false },
+      sourceManifest: { ruleDrift: drifted() }
+    }));
+    assert.match(why, /changed since the previous session's handoff/);
+  });
+
   it('a revision outranks drift for the same reason', () => {
     const why = launchSequence._reconciliationRequired(sequence({
       revision: 2,
@@ -169,8 +192,12 @@ describe('the handoff document carries what the next launch needs to diff', () =
   it('omits the field entirely when the producer declares nothing', () => {
     // Absent must stay distinguishable from empty: `[]` would claim the wrap
     // looked at no sources, which is a different fact from a wrap that predates
-    // the field.
-    const doc = handoffPublication.buildHandoffDocument(input());
+    // the field. Rows are supplied because they are what makes a legacy
+    // document evidence of anything — an empty legacy array is ambiguous
+    // between "no rules" and "the read failed", and is read as unknown.
+    const doc = handoffPublication.buildHandoffDocument(input({
+      rules: [{ id: 1, source: 'project', revision: 1, contentHash: 'a' }]
+    }));
     assert.equal('manifestSources' in doc, false);
     assert.deepEqual(drift.recordedSources(doc), ['project']);
   });
@@ -341,22 +368,38 @@ describe('step 3 states the drift it was frozen with', () => {
 describe('the launch never fails on drift', () => {
   const sessions = require('../lib/sessions');
 
-  it('returns null when the preflight offered no manifest', () => {
-    assert.equal(sessions._launchRuleDrift({ id: 1, name: 'p' }, [], { handoffManifest: null }), null);
-    assert.equal(sessions._launchRuleDrift({ id: 1, name: 'p' }, [], undefined), null);
+  it('takes exactly two arguments, so a stale call site cannot pass vacuously', () => {
+    // These three calls were written against the pre-fix three-argument shape
+    // and survived the signature change: `[]` is truthy, so the manifest guard
+    // fell through on the WRONG argument, every call returned null on line
+    // three, and the test below never entered the try it claims to cover. A
+    // green assertion about a function reached by the wrong path is worse than
+    // no assertion, so the arity is pinned first.
+    assert.equal(sessions._launchRuleDrift.length, 2);
   });
 
-  it('never throws, whatever the store is doing', () => {
-    // A launch must survive a drift computation that cannot complete. This
-    // asserts only that — deliberately NOT what the result is, because that
-    // depends on whether some other suite has initialized the shared store,
-    // and a test whose expectation flips with file ordering is not a contract.
+  it('returns null when the preflight offered no manifest', () => {
+    assert.equal(sessions._launchRuleDrift({ id: 1, name: 'p' }, { handoffManifest: null }), null);
+    assert.equal(sessions._launchRuleDrift({ id: 1, name: 'p' }, undefined), null);
+  });
+
+  it('never throws, and REACHES the catch, when the manifest cannot be built', () => {
+    // The point of the test is the broad-except path, so it has to get there:
+    // a manifest that IS offered, and a project id whose composer call fails.
+    // Asserting only `doesNotThrow` let the old version pass while returning
+    // early and executing none of the code it names.
+    let result;
     assert.doesNotThrow(() => {
-      sessions._launchRuleDrift(
-        { id: -999, name: 'nope' }, [],
+      result = sessions._launchRuleDrift(
+        { id: -999, name: 'nope' },
         { handoffManifest: { rules: [{ id: 1, source: 'project', revision: 1, contentHash: 'a' }], manifestSources: ['project'] } }
       );
     });
+    // It got past the guard: the guard's only other answer is null, and a
+    // diff result or an `unavailable` both prove the body ran.
+    assert.notEqual(result, null);
+    assert.ok(result.unavailable !== undefined || Array.isArray(result.added),
+      'the call must produce either a drift result or a named unavailability');
   });
 });
 
@@ -453,5 +496,68 @@ describe('the wrap and the launch build byte-equal manifests', () => {
     );
     assert.equal(d.hasDrift, false);
     assert.deepEqual(d.comparedSources, ['project', 'global', 'shared']);
+  });
+});
+
+describe('step 3 sends the reader to the machine that actually failed', () => {
+  const sessions = require('../lib/sessions');
+  const lines = (d) => sessions._ruleDriftLines(d).join('\n');
+  const m = (rules, sources = ['project', 'global', 'shared']) => ({ rules, manifestSources: sources });
+
+  it('a wrap-side failure does not blame this machine', () => {
+    // The defect: one collapsed "unmeasured" set made step 3 say "this launch
+    // could not read it — the server log names what failed" about a file that
+    // failed at the PREVIOUS wrap, on a machine whose log says nothing.
+    const text = lines(drift.diffRuleManifests(
+      m([{ id: 4, source: 'shared', revision: null, contentHash: null, measured: false }]),
+      m([{ id: 4, source: 'shared', revision: null, contentHash: 'h1' }])
+    ));
+    assert.match(text, /previous session's wrap recorded/);
+    assert.doesNotMatch(text, /This machine's server log/);
+  });
+
+  it('a launch-side failure does blame this machine, and says so', () => {
+    const text = lines(drift.diffRuleManifests(
+      m([{ id: 4, source: 'shared', revision: null, contentHash: 'h1' }]),
+      m([{ id: 4, source: 'shared', revision: null, contentHash: null, measured: false }])
+    ));
+    assert.match(text, /this launch could not read part of/);
+    assert.match(text, /This machine's server log/);
+    assert.doesNotMatch(text, /previous session's wrap recorded/);
+  });
+
+  it('a partly-unreadable source never carries "nothing changed"', () => {
+    // `comparedSources` includes a partly-unreadable source, so the no-drift
+    // sentence is built from the VERDICT instead — only a source whose verdict
+    // is literally `unchanged` is spoken for.
+    const text = lines(drift.diffRuleManifests(
+      m([
+        { id: 1, source: 'project', revision: 1, contentHash: 'a' },
+        { id: 4, source: 'shared', revision: null, contentHash: null, measured: false }
+      ]),
+      m([
+        { id: 1, source: 'project', revision: 1, contentHash: 'a' },
+        { id: 4, source: 'shared', revision: null, contentHash: null, measured: false }
+      ])
+    ));
+    assert.match(text, /Nothing changed in project, global since the handoff/);
+    assert.doesNotMatch(text, /Nothing changed in project, global, shared/);
+  });
+
+  it('a measured change is still named when its source is partly unreadable', () => {
+    const text = lines(drift.diffRuleManifests(
+      m([
+        { id: 4, source: 'shared', revision: null, contentHash: 'h1', label: 'shared document NETWORK' },
+        { id: 5, source: 'shared', revision: null, contentHash: null, measured: false }
+      ]),
+      m([
+        { id: 4, source: 'shared', revision: null, contentHash: 'CHANGED', label: 'shared document NETWORK' },
+        { id: 5, source: 'shared', revision: null, contentHash: null, measured: false }
+      ])
+    ));
+    assert.match(text, /shared document NETWORK.*changed/);
+    // And the gap is still disclosed beside it, so the change never reads as
+    // the complete list.
+    assert.match(text, /what is NOT named may have changed too/);
   });
 });

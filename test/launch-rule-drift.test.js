@@ -27,10 +27,16 @@ function fp(source, id, hash, revision = 1) {
   return { id, source, revision, contentHash: hash };
 }
 
-test('recordedSources reads a legacy document as project-only', () => {
+test('recordedSources reads a legacy document WITH ROWS as project-only', () => {
   // No `manifestSources` means a pre-21.10 wrap, which looked at project rules
-  // and nothing else regardless of what its rows claim.
-  assert.deepStrictEqual(drift.recordedSources({ rules: [] }), ['project']);
+  // and nothing else regardless of what its rows claim — but only its ROWS are
+  // evidence it looked. An empty legacy array is the ambiguous case and is
+  // covered by its own test below.
+  assert.deepStrictEqual(
+    drift.recordedSources({ rules: [{ id: 1, source: 'project', contentHash: 'a' }] }),
+    ['project']
+  );
+  assert.deepStrictEqual(drift.recordedSources({ rules: [] }), []);
   assert.deepStrictEqual(drift.recordedSources(null), []);
   assert.deepStrictEqual(
     drift.recordedSources(manifest([], ['project', 'shared'])),
@@ -165,12 +171,16 @@ test('an unreadable file on BOTH sides is never "unchanged"', () => {
   const before = manifest([{ id: 4, source: 'shared', revision: null, contentHash: null, measured: false }]);
   const after = manifest([{ id: 4, source: 'shared', revision: null, contentHash: null, measured: false }]);
   const d = drift.diffRuleManifests(before, after);
-  assert.strictEqual(d.perSource.shared, 'unreadable');
-  assert.ok(!d.comparedSources.includes('shared'));
+  assert.notStrictEqual(d.perSource.shared, drift.SOURCE_STATES.UNCHANGED);
+  assert.ok(d.unmeasured.before.includes('shared') && d.unmeasured.after.includes('shared'));
   assert.strictEqual(d.hasDrift, false);
 });
 
-test('an unreadable row demotes its source even when other rows in it are fine', () => {
+test('a measured change in a partly-unreadable source is still reported and still gates', () => {
+  // This test previously asserted the DEFECT: it demanded hasDrift be false
+  // while doc 4 demonstrably moved h1 -> CHANGED. Dropping a measured change
+  // because a SIBLING row was unreadable loses the one fact the agent most
+  // needs, and it silently fails open at the READY gate.
   const before = manifest([
     { id: 4, source: 'shared', revision: null, contentHash: 'h1' },
     { id: 5, source: 'shared', revision: null, contentHash: null, measured: false }
@@ -180,10 +190,58 @@ test('an unreadable row demotes its source even when other rows in it are fine',
     { id: 5, source: 'shared', revision: null, contentHash: null, measured: false }
   ]);
   const d = drift.diffRuleManifests(before, after);
-  // A source that is partly unmeasured cannot honestly carry "and nothing else
-  // changed", so it does not gate — and it is reported, not dropped.
-  assert.strictEqual(d.perSource.shared, 'unreadable');
+  assert.deepStrictEqual(d.changed.map((r) => r.id), [4]);
+  assert.strictEqual(d.hasDrift, true, 'a measured change must gate even beside an unreadable row');
+  // A measured change outranks the partial read in the verdict, and the gap is
+  // still reported separately so "nothing else changed" is never implied.
+  assert.strictEqual(d.perSource.shared, drift.SOURCE_STATES.CHANGED);
+  assert.ok(d.unmeasured.before.includes('shared'));
+  assert.ok(d.unmeasured.after.includes('shared'));
+});
+
+test('an unmeasured row is never compared against a measured one', () => {
+  const before = manifest([{ id: 4, source: 'shared', revision: null, contentHash: 'h1' }]);
+  const after = manifest([{ id: 4, source: 'shared', revision: null, contentHash: null, measured: false }]);
+  const d = drift.diffRuleManifests(before, after);
+  // It cannot be called changed (nobody measured the new value) and it cannot
+  // be called unchanged. It is a gap, reported as one.
+  assert.deepStrictEqual(d.changed, []);
   assert.strictEqual(d.hasDrift, false);
+  assert.strictEqual(d.perSource.shared, drift.SOURCE_STATES.UNREADABLE_NOW);
+});
+
+test('WHICH side failed to measure is carried, not collapsed', () => {
+  // The renderer sends the reader to a different machine for each, so a single
+  // "something was unmeasured" answer makes one of the two messages false.
+  const atWrap = drift.diffRuleManifests(
+    manifest([{ id: 4, source: 'shared', revision: null, contentHash: null, measured: false }]),
+    manifest([{ id: 4, source: 'shared', revision: null, contentHash: 'h1' }])
+  );
+  assert.strictEqual(atWrap.perSource.shared, drift.SOURCE_STATES.UNREADABLE_AT_WRAP);
+  assert.deepStrictEqual(atWrap.unmeasured.before, ['shared']);
+  assert.deepStrictEqual(atWrap.unmeasured.after, []);
+
+  const atLaunch = drift.diffRuleManifests(
+    manifest([{ id: 4, source: 'shared', revision: null, contentHash: 'h1' }]),
+    manifest([{ id: 4, source: 'shared', revision: null, contentHash: null, measured: false }])
+  );
+  assert.strictEqual(atLaunch.perSource.shared, drift.SOURCE_STATES.UNREADABLE_NOW);
+  assert.deepStrictEqual(atLaunch.unmeasured.after, ['shared']);
+  assert.deepStrictEqual(atLaunch.unmeasured.before, []);
+});
+
+test('a legacy handoff with no rows claims nothing, rather than inventing drift', () => {
+  // The pre-21.10 producer returned `[]` for a project with no rules AND for a
+  // rules read that threw. Reading that as "recorded: project" makes every
+  // rule in force now report as ADDED and refuses READY forever.
+  assert.deepStrictEqual(drift.recordedSources({ rules: [] }), []);
+  const d = drift.diffRuleManifests(
+    { rules: [] },
+    manifest([{ id: 1, source: 'project', revision: 1, contentHash: 'a' }])
+  );
+  assert.deepStrictEqual(d.added, []);
+  assert.strictEqual(d.hasDrift, false);
+  assert.strictEqual(d.perSource.project, drift.SOURCE_STATES.NOT_RECORDED);
 });
 
 test('a source THIS launch could not read is `unreadable`, not `not-recorded`', () => {
@@ -195,7 +253,7 @@ test('a source THIS launch could not read is `unreadable`, not `not-recorded`', 
   ], ['project', 'global']);
   const after = manifest([{ id: 1, source: 'project', revision: 1, contentHash: 'a' }], ['project']);
   const d = drift.diffRuleManifests(before, after);
-  assert.strictEqual(d.perSource.global, 'unreadable');
+  assert.strictEqual(d.perSource.global, drift.SOURCE_STATES.UNREADABLE_NOW);
   // shared was recorded by neither side, so it keeps the other verdict.
   assert.strictEqual(d.perSource.shared, 'not-recorded');
 });
@@ -203,5 +261,10 @@ test('a source THIS launch could not read is `unreadable`, not `not-recorded`', 
 test('a measured hash is still required to be a non-empty string', () => {
   const before = manifest([{ id: 1, source: 'project', revision: 1, contentHash: '' }]);
   const after = manifest([{ id: 1, source: 'project', revision: 1, contentHash: '' }]);
-  assert.strictEqual(drift.diffRuleManifests(before, after).perSource.project, 'unreadable');
+  const d = drift.diffRuleManifests(before, after);
+  // Both sides are unmeasured here, and the wrap side is reported first
+  // because it is the one the reader can do nothing about locally.
+  assert.strictEqual(d.perSource.project, drift.SOURCE_STATES.UNREADABLE_AT_WRAP);
+  assert.ok(d.unmeasured.before.includes('project') && d.unmeasured.after.includes('project'));
+  assert.strictEqual(d.hasDrift, false);
 });
