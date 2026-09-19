@@ -283,6 +283,68 @@ describe('the handoff-stage wrap step', () => {
       'an unmeasurable tree reports no branch; it must not borrow one from the scope');
   });
 
+  it('freezes what the git reading could NOT establish into the document', async () => {
+    // The producer half. The consumer test hand-builds `unestablished` into a
+    // fixture, so it would keep passing if this write path stopped emitting it
+    // or the field were renamed — the two halves would agree about a signal
+    // neither one actually produces.
+    //
+    // Driven from a real `getInfo` shape rather than a literal document: a
+    // reading where `status` parsed but the log went short, which is what makes
+    // a recorded branch with no sha reachable at all.
+    const gitMod = require('../lib/git.js');
+    const realGetInfo = gitMod.getInfo;
+    gitMod.getInfo = () => ({
+      branch: 'main', dirty: false, headSha: null,
+      lastCommit: '', lastCommitAge: '', latestTag: null,
+      incomplete: ['headSha', 'lastCommit', 'lastCommitAge'],
+      cause: 'read-timed-out'
+    });
+    try {
+      const res = await stageStep.run(ctx({
+        scope: {
+          workTree: '/abs/work', workToplevel: '/abs/work', workGitDir: '/abs/work/.git',
+          worktreeTarget: false, trunk: null, baseline: null
+        }
+      }));
+      const doc = lockfile.readHandoffFile(lockfile.stagedPath(project, res.output.publicationId)).doc;
+      assert.deepEqual(doc.worktree.unestablished, ['headSha', 'lastCommit', 'lastCommitAge'],
+        'the document must name what the reading could not establish');
+      assert.equal(doc.worktree.readFailure, 'read-timed-out',
+        'and why, so a consumer is not left inferring a gap from a null');
+      assert.equal(doc.worktree.headSha, null);
+      assert.equal(doc.worktree.branch, 'main', 'the half that WAS established is still recorded');
+    } finally {
+      gitMod.getInfo = realGetInfo;
+    }
+  });
+
+  it('adds neither field when the reading was whole', async () => {
+    // Absence is the signal for "this reading was complete", so an ordinary
+    // wrap must not carry the keys at all.
+    const gitMod = require('../lib/git.js');
+    const realGetInfo = gitMod.getInfo;
+    gitMod.getInfo = () => ({
+      branch: 'main', dirty: false, headSha: 'abc123',
+      lastCommit: 'x', lastCommitAge: '1m', latestTag: null,
+      incomplete: [], cause: null
+    });
+    try {
+      const res = await stageStep.run(ctx({
+        scope: {
+          workTree: '/abs/work', workToplevel: '/abs/work', workGitDir: '/abs/work/.git',
+          worktreeTarget: false, trunk: null, baseline: null
+        }
+      }));
+      const doc = lockfile.readHandoffFile(lockfile.stagedPath(project, res.output.publicationId)).doc;
+      assert.equal('unestablished' in doc.worktree, false);
+      assert.equal('readFailure' in doc.worktree, false);
+      assert.equal(doc.worktree.headSha, 'abc123');
+    } finally {
+      gitMod.getInfo = realGetInfo;
+    }
+  });
+
   it('measures the branch from the tree itself when the tree is real', async () => {
     // The other half of the contract above: when the tree CAN be read, the
     // branch is its actual branch, measured in the same reading as `dirty`.

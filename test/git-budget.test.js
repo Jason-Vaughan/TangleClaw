@@ -496,3 +496,51 @@ describe('the branch sentinels never escape as measured facts (#1648)', () => {
     assert.equal(git.measuredBranch(info), null, 'and the reader turns it into an honest absence');
   });
 });
+
+describe('the field names git.js pushes are the names the launch acts on', () => {
+  const git = require('../lib/git.js');
+  const { runPreflight, VERDICTS, FILE_STATES, BASELINES } = require('../lib/launch-preflight.js');
+
+  it('a REAL short reading produces an incomplete entry the preflight refuses to verify on', () => {
+    // The coupling neither side's own test can see. `lib/git.js` pushes the
+    // string, `lib/launch-preflight.js` checks for it, and every test on each
+    // side uses its own literal — so renaming the field in the producer leaves
+    // both suites green while a short reading silently verifies again.
+    //
+    // This drives the real producer and hands its real output to the real
+    // consumer, so the two cannot drift apart without something going red.
+    shadowGit(['log*']);
+    const info = git._fetchInfo(REPO_ROOT, { budgetMs: 3000 });
+    assert.ok(info.incomplete.length > 0, 'precondition: the reading really went short');
+
+    const r = runPreflight({
+      projectId: 14,
+      sessions: [{ id: 10, status: 'wrapped', startedAt: '2026-09-19T00:00:00Z' }],
+      publications: [{
+        publicationId: 'p1', sessionId: 10, kind: 'final', state: 'published',
+        eligible: true, digest: 'sha256:aaa', seq: 1
+      }],
+      file: {
+        state: FILE_STATES.VALID,
+        digest: 'sha256:aaa',
+        doc: {
+          schema: 'tc.handoff/1', publicationId: 'p1', projectId: 14, sessionId: 10,
+          kind: 'final', workspaceId: null,
+          worktree: {
+            path: '/repo', toplevel: '/repo', gitDir: '/repo/.git',
+            branch: info.branch, headSha: info.headSha, dirty: info.dirty,
+            // Exactly what the producer would freeze, taken from the producer.
+            unestablished: [...info.incomplete], readFailure: info.cause
+          }
+        }
+      },
+      stagedFiles: [],
+      continuityIndexPresent: true,
+      handoffEpoch: { present: true, baseline: BASELINES.POST_EPOCH, firstSessionId: 1 },
+      worktreeProbe: { toplevelExists: true, headSha: 'whatever', branch: 'whatever' }
+    });
+
+    assert.notEqual(r.verdict, VERDICTS.OK,
+      'a handoff whose own reading went short must not verify, whatever the probe says');
+  });
+});

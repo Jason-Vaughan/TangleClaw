@@ -710,6 +710,11 @@ describe('a worktree neither end could read is not a verified worktree (#1648)',
     }));
     assert.notEqual(r.verdict, VERDICTS.OK,
       'the recorded branch is evidence and an unreadable probe does not retract it');
+    // And it says the probe failed, rather than reporting "branch is null" —
+    // the same two-arm message the head clause carries, for the same reason.
+    assert.ok(r.reasons.some((x) => /branch could not be read/i.test(x)),
+      'an unread probe must not be reported as a branch value nobody observed');
+    assert.ok(r.reasons.every((x) => !/branch is null/i.test(x)));
   });
 
   it('a handoff that says its OWN reading went short is unverified', () => {
