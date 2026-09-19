@@ -356,7 +356,11 @@ what the read guard requires, and `promptPad` is the JSON escape for the NBSP a 
 carries — one character, not the six characters a pasted `\u00a0` would give you. Add
 `idleMarkerRow` (and `busyStates`, and their `evidence` entries) only if you have measured WHERE the
 engine draws its at-rest signal. Declaring `"status-row"` confines the match to the pane's last
-non-empty row and makes it a whole-segment match there. Reach for it when the marker is a status
+non-empty row and makes it a whole-segment match there (so `statusRowSeparator` must be declared
+too). Three things that row cannot tell you, all measured: a TRUNCATED row (ending U+2026) has had
+segments dropped, so nothing visible in it proves the run-state rendered; segment POSITION is not
+stable, because a configured segment that renders nothing is omitted and contributes no separator;
+and if two segments carry state tokens there is nothing to choose between them. All three refuse. Reach for it when the marker is a status
 segment rather than free text: a segment's rendering depends on the operator's own status-line
 order, on the pane width, and on whether its neighbours render at all, so reading it from the whole
 pane means transcript text that merely MENTIONS the marker can satisfy the gate. That is not
@@ -391,11 +395,12 @@ covers the decoration and nothing else.
 | `placeholderSgr` | SGR attributes this engine renders text the operator did **not** type in |
 | `idleMarker` | A POSITIVE at-rest signal, or `null` when nothing was found that is present at rest and absent mid-turn |
 | `idleMarkerRow` | Optional — `"status-row"` when the engine renders its at-rest signal in a status row rather than anywhere in the pane. `idleMarker` is then matched as a whole space-delimited segment of that ONE row |
+| `statusRowSeparator` | Optional, and REQUIRED alongside `idleMarkerRow` — the string the engine draws between rendered status segments. The row is split on it and the state must be a WHOLE segment: without it a match accepts any segment merely containing the state word, such as a git branch named `Ready` |
 | `busyStates` | Optional — the other state tokens that same row can carry, so a busy row is reported as busy rather than as a marker that never rendered. Never consulted for readiness |
 | `pasteRejectedMarker` | Optional — see below |
 | `decorativePattern` | Optional — a regex source matching cells the engine ANIMATES at rest (decoration the operator did not type). Declare it only where you have watched an idle pane and seen it move |
 
-Every field except `idleMarkerRow`, `busyStates`, `pasteRejectedMarker` and `decorativePattern` is **required**, `null` included. An author who has not
+Every field except `idleMarkerRow`, `busyStates`, `statusRowSeparator`, `pasteRejectedMarker` and `decorativePattern` is **required**, `null` included. An author who has not
 measured a value writes `null` and says so in `evidence`, which is a recorded gap; an omitted field
 would be the same gap with nobody able to tell it from an oversight.
 

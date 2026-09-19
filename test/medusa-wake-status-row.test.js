@@ -126,8 +126,9 @@ describe('#1628 readiness is read from the status row only', () => {
     assert.deepEqual(verdict([]), { working: true, reason: 'status-row-unavailable' });
   });
 
-  it('matches the state as a whole word, not a substring', () => {
-    // A branch named `ready-for-review` in the status row is not a run-state.
+  it('matches the state as a whole SEGMENT, not a substring of one', () => {
+    // A branch named `ready-for-review` renders as its own segment, and a
+    // segment is the unit: containing the word is not being the run-state.
     assert.equal(verdict(['  gpt-6 · main · ready-for-review']).reason, 'status-row-no-state');
     assert.equal(verdict(['  Ready-ish']).reason, 'status-row-no-state');
   });
@@ -173,5 +174,66 @@ describe('#1628 other engines are unchanged', () => {
     // module forbids.
     const hintAboveTheRow = ['? for shortcuts', '>', '  something else'];
     assert.equal(wake._assessActivity(hintAboveTheRow.join('\n'), ANTIGRAVITY, hintAboveTheRow).working, false);
+  });
+});
+
+describe('#1628 the status row is a JOIN of segments, and position proves nothing', () => {
+  // Reproduced by the Architect against the first version of this fix, which
+  // treated "last non-empty line" as provenance and matched the state as a
+  // whitespace-delimited token. All three returned atRest:true. A position
+  // heuristic is not identity, and a token match is not a segment match.
+  const verdict = (lines) => wake._assessStatusRow(lines, CODEX);
+
+  it('refuses a TRUNCATED row even when a state word is visible in it', () => {
+    // The row shows `Ready` — as a git branch literally named Ready — while the
+    // real run-state was cut off the end. U+2026 says segments were DROPPED, so
+    // what remains cannot prove the run-state rendered. Truncation is therefore
+    // decisive and is read BEFORE any token: an incomplete record must not be
+    // read as a whole one.
+    assert.deepEqual(verdict(['  gpt-6-astra \u00b7 Ready \u00b7 /a/long/path\u2026']),
+      { working: true, reason: 'status-row-truncated' });
+  });
+
+  it('prefers BUSY over idle when the row carries both', () => {
+    // `Ready` appearing before `Thinking` in the row is not evidence the pane is
+    // resting; it is evidence the row is ambiguous, and typing into a working
+    // pane is the failure that matters.
+    assert.deepEqual(verdict(['  gpt-6-astra \u00b7 Ready \u00b7 Thinking']),
+      { working: true, reason: 'not-at-rest' });
+  });
+
+  it('refuses prose whose last line merely ENDS in the state word', () => {
+    // No separator, so the whole line is one segment — and a sentence is not a
+    // run-state. This is what a token match got wrong.
+    assert.deepEqual(verdict(['The status word is Ready']),
+      { working: true, reason: 'status-row-no-state' });
+  });
+
+  it('refuses a row where two segments could each be the run-state', () => {
+    // Identity is carried by the token alone, because a configured segment that
+    // renders nothing is omitted and contributes no separator — so indexes are
+    // not stable and position cannot break the tie. Two candidates means
+    // nothing to choose between, and the safe reading is refusal.
+    assert.deepEqual(verdict(['  Ready \u00b7 Ready']),
+      { working: true, reason: 'status-row-ambiguous' });
+  });
+
+  it('still accepts the two layouts that were actually measured', () => {
+    // The refusals above must gate the ambiguous shapes only. A real probe
+    // capture has to survive them, or the gate is closed for everyone.
+    assert.equal(verdict(CX_IDLE_PANE).working, false);
+    assert.equal(verdict(CX_IDLE_WITH_NEIGHBOUR_PANE).working, false);
+  });
+
+  it('KNOWN LIMIT: an untruncated row with no run-state configured, carrying a segment that IS the state word, reads as rest', () => {
+    // Stated as a test rather than buried in prose, because it is the residual
+    // hole and nobody should rediscover it by being woken mid-turn. Text alone
+    // cannot distinguish "the run-state segment says Ready" from "run-state is
+    // not in this status line at all and some other segment is named Ready".
+    // The remedy is not a cleverer regex — it is a constrained layout where the
+    // run-state is known to render, or a structured signal that is not pane
+    // text. Asserted so that a future change that CLOSES it fails here loudly.
+    assert.equal(verdict(['  gpt-6-astra \u00b7 Ready']).working, false,
+      'if this now refuses, the limit was closed — delete this test and say how');
   });
 });

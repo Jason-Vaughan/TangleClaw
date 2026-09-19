@@ -80,6 +80,7 @@
         "Working",
         "Thinking"
       ],
+      "statusRowSeparator": " · ",
       "decorativePattern": "[⠀-⣿]",
       "evidence": {
         "busyMarker": {
@@ -117,6 +118,10 @@
         "busyStates": {
           "verifiedOn": "2026-09-19",
           "source": "`Working` measured live: the status row reads `  Working` while a turn is in flight, and `esc to interrupt` is present ABOVE it on codex's own working row, so busyMarker and this agree. `Thinking` is NOT measured — it is taken from codex's own segment help text, `Compact session run-state text (Ready, Working, Thinking)`, because neither probe turn ran long enough to render it. Declared anyway so a Thinking row reports as busy rather than as an unreachable marker; if the rendering differs the failure is a missed wake, never a false idle, because readiness still requires the POSITIVE Ready token."
+        },
+        "statusRowSeparator": {
+          "verifiedOn": "2026-09-19",
+          "source": "Measured in probe 2 (codex-cli 0.155.1, `status_line=[\"project-name\",\"run-state\",\"approval-mode\"]`): the row rendered `  Ready · Ask for approval` — U+0020 U+00B7 U+0020 between segments that RENDER. Declared because the run-state must be matched as a whole SEGMENT, not as a whitespace-delimited token: the status row also carries `git-branch`, so a branch named exactly `Ready` satisfies a token match while a segment match at least requires it to be the entire segment. `project-name` rendered nothing in that same probe and contributed no separator, which is why segment POSITION is not stable and cannot be used to identify run-state."
         }
       }
     }

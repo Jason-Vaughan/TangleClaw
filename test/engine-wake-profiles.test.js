@@ -435,6 +435,19 @@ describe('a malformed wake block is refused at the read, never half-loaded', () 
     assert.equal(derive(b).probe, undefined);
   });
 
+  it('refuses a status-row declaration with no separator to split on (#1628)', () => {
+    // Without it the match degrades from a SEGMENT to a token, and a git branch
+    // named exactly `Ready` satisfies the gate while the real run-state is
+    // clipped off the end. Reproduced by the Architect against the first
+    // version of this fix, which had no separator and accepted exactly that.
+    const b = wellFormed();
+    b.idleMarker = 'Ready';
+    b.idleMarkerRow = 'status-row';
+    b.evidence.idleMarkerRow = { verifiedOn: null, source: 'probe' };
+    assert.match(wake._wakeBlockErrors(b).join(' '), /needs wake\.statusRowSeparator/);
+    assert.equal(derive(b).probe, undefined);
+  });
+
   it('accepts the pair when both are declared together', () => {
     // The refusals must gate the broken combinations only — a profile that
     // declares confinement properly has to survive them.
@@ -442,8 +455,10 @@ describe('a malformed wake block is refused at the read, never half-loaded', () 
     b.idleMarker = 'Ready';
     b.idleMarkerRow = 'status-row';
     b.busyStates = ['Working', 'Thinking'];
+    b.statusRowSeparator = ' \u00b7 ';
     b.evidence.idleMarkerRow = { verifiedOn: null, source: 'probe' };
     b.evidence.busyStates = { verifiedOn: null, source: 'probe' };
+    b.evidence.statusRowSeparator = { verifiedOn: null, source: 'probe' };
     assert.deepEqual(wake._wakeBlockErrors(b), []);
     assert.equal(derive(b).probe.idleMarkerRow, 'status-row');
   });
