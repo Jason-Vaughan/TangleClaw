@@ -4,6 +4,12 @@ status: APPROVED rev 4 (Architect schema gate satisfied 2026-09-17, v40 + v41, b
 authorized_by: TangleClaw-ProjectManager, 2026-09-17 (planning only)
 source: /Users/jasonvaughan/Documents/Projects/Shared/TangleClaw-Shared/TRAIN_21_MICROPLAN.md
 review: /Users/jasonvaughan/Documents/Projects/TangleClaw-Architect/.tangleclaw/plans/train-21-builder-schema-review.md
+# No `branch:` claim, deliberately. This plan spans a whole Train — twelve cars across many
+# branches — so claiming one would orphan every other car's branch and make the lint grade the
+# wrong plan with confidence instead of saying it could not tell. It resolves through the
+# `active_build_plan` pointer, and the record lint correctly reports that as `unchecked` rather
+# than as a pass. A per-CAR plan would be the thing to give a `branch:`, if this repo ever splits
+# them out.
 governed_by:
   - .prawduct/artifacts/prime-delivery-direction.md   # ratified 2026-08-31
   - .prawduct/artifacts/wrap-direction.md             # ratified 2026-07-21
@@ -1226,6 +1232,27 @@ only for handoffs written after this car ships.
   `h1` → `CHANGED` with `hasDrift` asserted false. A measured change outranks a partial read in
   the verdict, and the gap is disclosed beside it rather than in place of it.
 
+- **`[DECISION: an unmeasurable governing source does NOT require a reconciliation — the gate
+  fails OPEN | alternatives: fail closed, demanding a reconciliation whenever any source could not
+  be compared | rationale: the gate's subject is drift, and an unmeasured source is not evidence of
+  drift]`** This is the failure DIRECTION of the new gate, and it was recorded only implicitly
+  until the Critic asked for it directly.
+
+  Fail-closed is the safer-sounding answer and is wrong here for two reasons. A reconciliation is a
+  written account of *what changed and what you are carrying forward*; demanding one for a source
+  nobody could read asks the agent to write about something no one can tell it, which trains the
+  habit of writing past a gate to get through it — the same defect as a requirement whose stated
+  reason is missing from the text. And the condition is not rare or self-clearing: a shared
+  document with a bad path is unreadable on every launch until a person fixes it, so fail-closed
+  would demand a reconciliation forever, from every session, for one stale row in a config.
+
+  What replaces gating is disclosure: step 3 states the gap in its own sentence, names the side
+  that went silent, and says plainly that what is NOT named may have changed too. The operator-
+  facing signal is the server log line naming the file. **The accepted cost is real** — a genuine
+  rule change inside an unreadable source passes unreconciled — and it is accepted because the
+  alternative blocks every launch on a condition the agent cannot resolve. Revisit if an
+  unreadable governing source ever becomes common rather than a misconfiguration.
+
 - **`[DECISION: a legacy handoff carrying NO rows claims nothing | alternatives: read it as
   "recorded: project", per the era's fingerprint | rationale: the producer's empty array is
   ambiguous and one reading invents drift]`** The pre-21.10 wrap returned `[]` both for a project
@@ -1266,12 +1293,18 @@ only for handoffs written after this car ships.
    rules change"; the handoff document's JSDoc says so, because a reader holding two hashes of one
    document otherwise cannot tell which answers that question.
 2. **A pure diff.** `lib/launch-rule-drift.js`, no store reads: `diffRuleManifests(before, after)`
-   returns `{added, removed, changed, perSource}` where `perSource` is the three-valued verdict
-   above. Pure so the step renderer and the READY gate share one answer and cannot disagree.
+   returns `{added, removed, changed, perSource, unmeasured, comparedSources}` where `perSource`
+   is the FIVE-valued verdict above and `unmeasured` names, per side, the sources whose rows could
+   not be hashed. Pure so the step renderer and the READY gate share one answer and cannot
+   disagree.
 3. **Render it in step 3.** `_ruleDriftLines(...)` joins `_preflightLines` in the `state` step:
-   one line per added/removed/changed rule naming the source and the rule, a per-source line for
-   `not-recorded`, and an explicit "no drift" line when there is none — said, never implied, the
-   same way stranded wraps says it.
+   one line per added/removed/changed rule naming the source and the rule; a per-source line for
+   `not-recorded`; two SEPARATE lines for the two unreadable directions, because one sends the
+   reader to the previous session's machine and the other to this one; and an explicit "no drift"
+   line when there is none — said, never implied, the same way stranded wraps says it. That last
+   line is built from the VERDICT, naming only sources whose state is literally `unchanged`, not
+   from `comparedSources`: a source that was compared but only partly readable cannot carry
+   "nothing changed" either.
 4. **Gate READY.** `_reconciliationRequired` gains the drift trigger, with wording that names what
    drifted. The drift is computed once at sequence creation and stored on the sequence, because the
    gate and the frozen step must answer identically — recomputing at READY would let a rule edit
@@ -1290,6 +1323,10 @@ only for handoffs written after this car ships.
 - a shared document's content changed → named per document
 - a handoff that recorded no `shared` rows → step 3 says `not-recorded` for that source, READY is
   NOT gated on it, and the line never reads as "unchanged"
+- a source neither side could compare → READY is NOT gated on it (the recorded fail-open decision),
+  step 3 states the gap in its own line, and the line names WHICH side went silent
+- a measured change inside a partly-unreadable source → still named AND still gates, with the gap
+  disclosed beside it rather than in place of it
 - no drift at all → step 3 says so explicitly, and READY needs no reconciliation on drift grounds
 - drift AND a revision → ONE reconciliation requirement, and the REVISION's wording wins. An
   earlier draft of this list said the wording should name both; the code is first-match-wins across
@@ -1321,7 +1358,9 @@ the same value:
 - a source THIS LAUNCH could not read is `unreadable`, not `not-recorded`. Both are uncomparable
   and they are silent on opposite sides: `not-recorded` sends the operator to the previous
   session, `unreadable` sends them to this machine.
-- step 3's no-drift sentence names only `comparedSources`. It used to speak for all three sources
+- step 3's no-drift sentence names only the sources whose verdict is `unchanged` (it briefly named
+  `comparedSources`, which was still too wide — a partly-readable source was compared and cannot
+  carry the claim). It used to speak for all three sources
   whenever `hasDrift` was false — including the first launch after this ships for every project,
   where two of three were never compared — and then retract it on the next line.
 - a drift computation that threw, and a handoff that could not be read, render a section saying so
@@ -1516,9 +1555,19 @@ into ADR 0017 (21.12) for the Architect, per the PM's bound 4.
 - [ ] Chunk 04 — IN PROGRESS. `Type: cumulative-final`, so 21.12's review IS the train final; no
   separate one is run.
   - [x] Car 21.10 — per-rule drift reconciliation in step 3 (#1588). Built 2026-09-19 on
-    `feat/train-21-car-21-10` (`b632abcc8`, `472ae1f45`). Review
-    `rev-20260919T175143Z-ea511482` closed 0 blocking / 0 findings. Build plan and as-built
-    deltas: §4c. NOT merged — awaiting the operator's go, per the PM's bound 1.
+    `feat/train-21-car-21-10`. Review `rev-20260919T182107Z-870826f7` closed 0 blocking /
+    0 warning / 0 note. Build plan and as-built deltas: §4c. NOT merged — awaiting the operator's
+    go, per the PM's bound 1.
+    - **THREE review rounds, and rounds 2 and 3 were self-inflicted.** Round 1 found the class
+      (failure, absence and "nothing changed" sharing one value). Round 2's fix introduced round
+      3's defects — the same class, one level down: it split `unmeasured` from `unchanged` and then
+      collapsed WHICH SIDE was unmeasured, and it stopped comparing null hashes by demoting whole
+      sources, which dropped measured changes. The shape to watch for when touching this code is
+      **making a value honest at one level and flattening it at the next.**
+    - **Round 2 shipped a green suite containing a test that asserted a bug** — a shared document
+      moving `h1` → `CHANGED` with `hasDrift` pinned false. Running the suite could never have
+      caught it; only reading the assertion could. Treat a green suite over this module as evidence
+      about what could have made it red, nothing more.
   - [ ] Car 21.11 — engine parity probes (#1589)
   - [ ] Car 21.12 — ADR 0017 and the doc set (#1590). Bound 4: the draft goes to the Architect
     BEFORE this merges.

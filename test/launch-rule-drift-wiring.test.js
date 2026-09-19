@@ -383,23 +383,36 @@ describe('the launch never fails on drift', () => {
     assert.equal(sessions._launchRuleDrift({ id: 1, name: 'p' }, undefined), null);
   });
 
-  it('never throws, and REACHES the catch, when the manifest cannot be built', () => {
-    // The point of the test is the broad-except path, so it has to get there:
-    // a manifest that IS offered, and a project id whose composer call fails.
-    // Asserting only `doesNotThrow` let the old version pass while returning
-    // early and executing none of the code it names.
-    let result;
-    assert.doesNotThrow(() => {
-      result = sessions._launchRuleDrift(
-        { id: -999, name: 'nope' },
+  it('reaches the body and produces a diff when the manifest is offered', () => {
+    // The guard's only other answer is null, so a diff result proves the body
+    // ran. This does NOT reach the catch — see the test below for that.
+    const result = sessions._launchRuleDrift(
+      { id: -999, name: 'nope' },
+      { handoffManifest: { rules: [{ id: 1, source: 'project', revision: 1, contentHash: 'a' }], manifestSources: ['project'] } }
+    );
+    assert.notEqual(result, null);
+    assert.ok(Array.isArray(result.added));
+  });
+
+  it('names the failure instead of throwing when the composer itself throws', () => {
+    // The broad-except path is UNREACHABLE without a stub: `manifestFingerprints`
+    // catches each of its three source reads, and the diff is defensive
+    // throughout. An earlier version of this test claimed to reach the catch and
+    // could not — its assertion was a disjunction satisfied by the success path,
+    // so it was green about code it never executed. Stubbing is what makes the
+    // name true.
+    const real = launchSequence.manifestFingerprints;
+    launchSequence.manifestFingerprints = () => { throw new Error('composer exploded'); };
+    try {
+      const result = sessions._launchRuleDrift(
+        { id: 1, name: 'p' },
         { handoffManifest: { rules: [{ id: 1, source: 'project', revision: 1, contentHash: 'a' }], manifestSources: ['project'] } }
       );
-    });
-    // It got past the guard: the guard's only other answer is null, and a
-    // diff result or an `unavailable` both prove the body ran.
-    assert.notEqual(result, null);
-    assert.ok(result.unavailable !== undefined || Array.isArray(result.added),
-      'the call must produce either a drift result or a named unavailability');
+      assert.match(result.unavailable, /could not compare them/);
+      assert.match(result.unavailable, /composer exploded/);
+    } finally {
+      launchSequence.manifestFingerprints = real;
+    }
   });
 });
 
