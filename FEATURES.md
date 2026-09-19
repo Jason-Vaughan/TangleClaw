@@ -663,3 +663,7 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - **TBD** — touched in this session: `test/tc-require-graph.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/tracked-carrier-identity.test.js`. <!-- describe -->
 - **TBD** — touched in this session: `test/wrap-rename-pathspec.test.js`. <!-- describe -->
+
+## TODO (auto-stubbed 2026-09-18)
+
+- **TBD** — touched in this session: `test/medusa-wake-status-row.test.js`. <!-- describe -->
