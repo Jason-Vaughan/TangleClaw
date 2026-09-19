@@ -1225,9 +1225,20 @@ only for handoffs written after this car ships.
 1. **Widen the fingerprint.** `ruleFingerprints` takes an explicit source rather than stamping
    `'project'`, and a new `manifestFingerprints(project)` composes the three sources into one
    ordered array: project rules (per rule, as today), one `global` row hashing the global rule
-   text, and one `shared` row per registered shared document. `_ruleManifest` and
-   `buildSourceManifest` both call the composer, so the wrap and the launch keep deriving the same
-   shape — the property 21.9's comment was protecting.
+   text, and one `shared` row per registered shared document. `_ruleManifest` (wrap) and
+   `_launchRuleDrift` (launch) both call the composer with NO caller-supplied rules, so the two
+   manifests the diff compares are built by one reader from one population — the property 21.9's
+   comment was protecting, now pinned by a test rather than by a comment.
+
+   **`buildSourceManifest` deliberately does NOT call the composer**, and an earlier draft of this
+   step said it did. Its `rules` array is the input to §2.2's revision check, whose ratified
+   trigger is a change to the PROJECT rules served in step 2; feeding it the widened array would
+   make a global-rules edit re-render four steps and move the cursor back, which changes Chunk 02's
+   approved protocol. The cost is that the three sources are traversed twice per launch and that
+   the global text is hashed two ways — `globalRulesHash` untrimmed (21.8's preflight reads it) and
+   the composer's `global` row trimmed. The composer's row is the authority for "did the global
+   rules change"; the handoff document's JSDoc says so, because a reader holding two hashes of one
+   document otherwise cannot tell which answers that question.
 2. **A pure diff.** `lib/launch-rule-drift.js`, no store reads: `diffRuleManifests(before, after)`
    returns `{added, removed, changed, perSource}` where `perSource` is the three-valued verdict
    above. Pure so the step renderer and the READY gate share one answer and cannot disagree.
@@ -1254,16 +1265,54 @@ only for handoffs written after this car ships.
 - a handoff that recorded no `shared` rows → step 3 says `not-recorded` for that source, READY is
   NOT gated on it, and the line never reads as "unchanged"
 - no drift at all → step 3 says so explicitly, and READY needs no reconciliation on drift grounds
-- drift AND a revision → one reconciliation requirement, wording naming both, not two refusals
-- drift on a launch whose preflight already requires a reconciliation → the existing wording wins
-  and drift is added to it, never replacing the preflight's reason
+- drift AND a revision → ONE reconciliation requirement, and the REVISION's wording wins. An
+  earlier draft of this list said the wording should name both; the code is first-match-wins across
+  four ordered triggers and that is the better answer, so the case is corrected here rather than
+  the code changed to match a sentence nobody ratified. An agent handed a list of reasons cannot
+  tell which gate it is standing at, and the stronger condition is the one it must act on. The
+  ordering (advisory recovery → revision → preflight verdict → drift) is pinned by tests.
+- drift on a launch whose preflight already requires a reconciliation → the preflight's wording
+  wins, for the same reason; drift does not replace it and is not appended to it
 - a launch with no handoff at all (first launch) → no drift section claims, and no drift gate
 - a corrupt handoff → the drift section says it could not be read, and does not gate READY (the
-  preflight already owns the corrupt verdict)
+  preflight already owns the corrupt verdict). Implemented as a distinct `{unavailable: reason}`
+  value rather than the `null` that means "first launch": a measurement that was attempted and
+  lost must not render identically to a clean slate, or a real rule change goes unreconciled with
+  nothing in the agent's own text recording that anything was tried.
 - the drift stored at creation is what the gate reads: a rule edited between render and READY does
   not change the requirement the agent was shown
 - `ruleFingerprints` and `_ruleManifest` derive byte-identical manifests for the same project state
   (the property 21.9's comment asserts, now pinned by a test rather than by a comment)
+
+Added by the Critic pass on this car — each one a place where failure and "nothing to report" were
+the same value:
+
+- a shared document unreadable at BOTH the wrap and the launch is `unreadable`, never `unchanged`.
+  `_fileHash` answers null for a file it could not read, two nulls compare equal, and the row was
+  filed under unchanged — the exact claim this car's own decision forbids, on the one source this
+  car adds, with no log line and no rendered line. A null hash is now carried as `measured: false`
+  and the diff refuses to compare it.
+- a source THIS LAUNCH could not read is `unreadable`, not `not-recorded`. Both are uncomparable
+  and they are silent on opposite sides: `not-recorded` sends the operator to the previous
+  session, `unreadable` sends them to this machine.
+- step 3's no-drift sentence names only `comparedSources`. It used to speak for all three sources
+  whenever `hasDrift` was false — including the first launch after this ships for every project,
+  where two of three were never compared — and then retract it on the next line.
+- a drift computation that threw, and a handoff that could not be read, render a section saying so
+  rather than no section at all. Only a genuine first launch renders nothing.
+- the composer takes NO rules from its caller. The launch used to hand in its already-filtered
+  bundle while the wrap read the store unfiltered, so a project holding one unusable rule reported
+  it as removed on every launch and blocked READY forever for a deletion that never happened; and
+  a caller whose own rules query THREW handed in `[]`, indistinguishable from "no rules".
+
+### Requirements Confidence
+
+**MEDIUM.** The blueprint text this car implements (§2.2, §2.4's step-3 row, §2.6's manifest
+fields) is Architect-approved at rev 4, so WHAT step 3 must contain is settled. What is not settled
+is the acceptance list: #1588 cites one the plan never carried, and the fourteen above plus the
+five added by the Critic pass are derived by this builder. They are the test contract as built, and
+they are what ADR 0017 (21.12) asks the Architect to ratify — a MEDIUM that resolves to HIGH on
+that ruling, or sends this car back if the derivation missed the intent.
 
 ### Done when
 

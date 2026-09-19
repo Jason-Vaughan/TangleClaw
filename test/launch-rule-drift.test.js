@@ -157,3 +157,51 @@ test('driftSummary names what moved, and is null without drift', () => {
   assert.match(summary, /1 changed/);
   assert.match(summary, /project rule 1/);
 });
+
+test('an unreadable file on BOTH sides is never "unchanged" (R-17)', () => {
+  // `_fileHash` answers null for a file it could not read. Two nulls compare
+  // equal, so an unreadable shared document used to satisfy the unchanged
+  // branch — a measurement nobody took, reported as a measurement.
+  const before = manifest([{ id: 4, source: 'shared', revision: null, contentHash: null, measured: false }]);
+  const after = manifest([{ id: 4, source: 'shared', revision: null, contentHash: null, measured: false }]);
+  const d = drift.diffRuleManifests(before, after);
+  assert.strictEqual(d.perSource.shared, 'unreadable');
+  assert.ok(!d.comparedSources.includes('shared'));
+  assert.strictEqual(d.hasDrift, false);
+});
+
+test('an unreadable row demotes its source even when other rows in it are fine', () => {
+  const before = manifest([
+    { id: 4, source: 'shared', revision: null, contentHash: 'h1' },
+    { id: 5, source: 'shared', revision: null, contentHash: null, measured: false }
+  ]);
+  const after = manifest([
+    { id: 4, source: 'shared', revision: null, contentHash: 'CHANGED' },
+    { id: 5, source: 'shared', revision: null, contentHash: null, measured: false }
+  ]);
+  const d = drift.diffRuleManifests(before, after);
+  // A source that is partly unmeasured cannot honestly carry "and nothing else
+  // changed", so it does not gate — and it is reported, not dropped.
+  assert.strictEqual(d.perSource.shared, 'unreadable');
+  assert.strictEqual(d.hasDrift, false);
+});
+
+test('a source THIS launch could not read is `unreadable`, not `not-recorded` (R-2)', () => {
+  // Opposite silences. `not-recorded` sends the operator to the previous
+  // session; `unreadable` sends them to this machine.
+  const before = manifest([
+    { id: 1, source: 'project', revision: 1, contentHash: 'a' },
+    { id: 'global', source: 'global', revision: null, contentHash: 'g' }
+  ], ['project', 'global']);
+  const after = manifest([{ id: 1, source: 'project', revision: 1, contentHash: 'a' }], ['project']);
+  const d = drift.diffRuleManifests(before, after);
+  assert.strictEqual(d.perSource.global, 'unreadable');
+  // shared was recorded by neither side, so it keeps the other verdict.
+  assert.strictEqual(d.perSource.shared, 'not-recorded');
+});
+
+test('a measured hash is still required to be a non-empty string', () => {
+  const before = manifest([{ id: 1, source: 'project', revision: 1, contentHash: '' }]);
+  const after = manifest([{ id: 1, source: 'project', revision: 1, contentHash: '' }]);
+  assert.strictEqual(drift.diffRuleManifests(before, after).perSource.project, 'unreadable');
+});

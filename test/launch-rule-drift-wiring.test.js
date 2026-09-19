@@ -224,17 +224,24 @@ describe('the wrap and the launch derive the same manifest shape', () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
-    it('names every source it successfully read, and hands project rules through', () => {
-      // The passed-in rules are used rather than re-read, so the manifest
-      // describes the rules the launch actually rendered — not whatever the
-      // table says one query later.
-      const m = launchSequence.manifestFingerprints({ id: 1, name: 'p' }, [{ id: 7, content: 'body' }]);
+    it('names every source it successfully read', () => {
+      const m = launchSequence.manifestFingerprints({ id: 1, name: 'p' });
       assert.deepEqual(m.manifestSources, ['project', 'global', 'shared']);
-      const project = m.rules.filter((r) => r.source === 'project');
-      assert.deepEqual(project.map((r) => r.id), [7]);
       // Exactly one global row: the global rules are one document, so there is
       // no per-rule identity to diff below the set.
       assert.equal(m.rules.filter((r) => r.source === 'global').length, 1);
+    });
+
+    it('takes no rules from its caller, so both sides read one population', () => {
+      // The defect this signature change closes: the launch used to hand in
+      // its already-filtered bundle while the wrap read the store unfiltered,
+      // so a project holding one empty rule reported it as removed on every
+      // launch and blocked READY forever for a deletion that never happened.
+      // A second argument is ignored rather than trusted.
+      const a = launchSequence.manifestFingerprints({ id: 1, name: 'p' });
+      const b = launchSequence.manifestFingerprints({ id: 1, name: 'p' }, [{ id: 7, content: 'ghost' }]);
+      assert.deepEqual(a.rules, b.rules);
+      assert.equal(launchSequence.manifestFingerprints.length, 1, 'the composer takes exactly one argument');
     });
 
     it('a global row carries a label, so step 3 never prints a bare id', () => {
@@ -263,14 +270,27 @@ describe('step 3 states the drift it was frozen with', () => {
     assert.deepEqual(sessions._ruleDriftLines(null), []);
   });
 
-  it('says so explicitly when nothing drifted', () => {
+  it('says so explicitly when nothing drifted, naming only what it compared', () => {
     // "No drift" is a finding. A section that only appears on bad news is one
     // whose absence tells the reader nothing.
     const text = lines(drift.diffRuleManifests(
       m([{ id: 1, source: 'project', revision: 1, contentHash: 'a' }]),
       m([{ id: 1, source: 'project', revision: 1, contentHash: 'a' }])
     ));
-    assert.match(text, /No rule, global rule or shared document changed/);
+    assert.match(text, /Nothing changed in project, global, shared since the handoff/);
+  });
+
+  it('the no-drift sentence never speaks for a source it did not compare', () => {
+    // The sentence used to be blanket, so the first launch after this ships
+    // for any project — where two of three sources were never recorded —
+    // stated that nothing changed and then retracted it on the next line.
+    const text = lines(drift.diffRuleManifests(
+      { rules: [{ id: 1, source: 'project', revision: 1, contentHash: 'a' }] }, // legacy
+      m([{ id: 1, source: 'project', revision: 1, contentHash: 'a' }])
+    ));
+    assert.match(text, /Nothing changed in project since the handoff/);
+    assert.doesNotMatch(text, /global rule or shared document changed/);
+    assert.doesNotMatch(text, /Nothing changed in project, global/);
   });
 
   it('names each added, removed and changed source', () => {
@@ -337,5 +357,101 @@ describe('the launch never fails on drift', () => {
         { handoffManifest: { rules: [{ id: 1, source: 'project', revision: 1, contentHash: 'a' }], manifestSources: ['project'] } }
       );
     });
+  });
+});
+
+describe('a failed measurement is distinguishable from a clean slate (R-18)', () => {
+  const sessions = require('../lib/sessions');
+
+  it('a corrupt handoff renders a section saying it could not be read', () => {
+    const text = sessions._ruleDriftLines({ unavailable: 'the handoff could not be read (invalid)' }).join('\n');
+    assert.match(text, /Not compared/);
+    assert.match(text, /could not be read/);
+    assert.match(text, /possibly different/);
+  });
+
+  it('a first launch renders no section at all', () => {
+    // Nothing was attempted, so there is nothing to report. This is the ONE
+    // case that legitimately renders blank.
+    assert.deepEqual(sessions._ruleDriftLines(null), []);
+  });
+
+  it('the preflight says WHY it has no manifest, so the two cannot collapse', () => {
+    // A document that exists and could not be read is a failed measurement.
+    assert.equal(
+      sessions._launchRuleDrift({ id: 1, name: 'p' }, { handoffManifest: null, handoffManifestUnavailable: 'boom' }).unavailable,
+      'boom'
+    );
+    // A project with no handoff at all has nothing to say.
+    assert.equal(
+      sessions._launchRuleDrift({ id: 1, name: 'p' }, { handoffManifest: null, handoffManifestUnavailable: null }),
+      null
+    );
+  });
+
+  it('an unavailable drift never gates READY', () => {
+    // It states a gap; it cannot demand a reconciliation for a comparison
+    // nobody completed.
+    assert.equal(
+      launchSequence._reconciliationRequired(sequence({ sourceManifest: { ruleDrift: { unavailable: 'boom' } } })),
+      null
+    );
+  });
+});
+
+describe('a revision carries the drift through (R-6)', () => {
+  it('the re-render is handed the same drift the first render was', () => {
+    // A revision re-renders steps 2-4. Without the carry-through, step 3 would
+    // lose the drift section while the gate still demanded a reconciliation for
+    // it — a requirement whose stated reason had vanished from the text.
+    const src = require('node:fs').readFileSync(
+      require('node:path').join(__dirname, '..', 'lib', 'launch-sequence.js'), 'utf8'
+    );
+    const reviseFn = src.slice(src.indexOf('function _reviseIfRulesChanged'));
+    const body = reviseFn.slice(0, reviseFn.indexOf('\nfunction '));
+    // Both halves: the re-render call and the rebuilt manifest.
+    assert.match(body, /ruleDrift: manifest\.ruleDrift \?\? null/);
+    assert.equal((body.match(/ruleDrift: manifest\.ruleDrift \?\? null/g) || []).length, 2,
+      'the drift must be carried into BOTH the re-render and the rebuilt manifest');
+  });
+});
+
+describe('the wrap and the launch build byte-equal manifests (R-7)', () => {
+  let tmpDir;
+  let project;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-drift-eq-'));
+    store._setBasePath(path.join(tmpDir, 'store'));
+    store.init();
+    project = store.projects.create({ name: 'drift-eq', path: tmpDir, engine: 'claude' });
+    store.sessionRules.create({ projectId: project.id, content: 'a governing rule', createdBy: 'operator', approvedByOperator: true });
+    store.sessionRules.create({ projectId: project.id, content: 'another one', createdBy: 'operator', approvedByOperator: true });
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('the wrap step and the launch derive the identical manifest', () => {
+    // 21.9's comment asserted this coupling and nothing checked it; the first
+    // cut of 21.10 then broke it by letting the launch pass its own already-
+    // filtered bundle. Now both go through one reader with no caller input, so
+    // the property is structural — and pinned here rather than narrated.
+    const handoffStage = require('../lib/wrap-steps/handoff-stage');
+    const fromWrap = handoffStage._ruleManifest(project);
+    const fromLaunch = launchSequence.manifestFingerprints(project);
+    assert.deepEqual(fromWrap, fromLaunch);
+  });
+
+  it('and they therefore diff to no drift against each other', () => {
+    const handoffStage = require('../lib/wrap-steps/handoff-stage');
+    const d = drift.diffRuleManifests(
+      handoffStage._ruleManifest(project),
+      launchSequence.manifestFingerprints(project)
+    );
+    assert.equal(d.hasDrift, false);
+    assert.deepEqual(d.comparedSources, ['project', 'global', 'shared']);
   });
 });
