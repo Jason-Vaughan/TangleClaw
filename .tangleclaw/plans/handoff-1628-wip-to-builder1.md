@@ -78,10 +78,25 @@ case; this one has nothing to key on. No regex closes it.
 
 It is pinned as a named test that fails if someone closes it
 (`test/medusa-wake-status-row.test.js`, the `KNOWN LIMIT` case) and stated in
-`a7a8efc`'s commit message. The two real exits, both the Architect's to rule on:
-a constrained layout where the run-state is known to render, or a structured
-signal that is not scraped from a terminal (codex ships an app-server; its
-binary carries `remoteControl/status` — **not investigated**, named only).
+`a7a8efc`'s commit message.
+
+Two more limits, both answers to Builder1's verification questions and both now
+in `EVIDENCE-1628.md`. **`status-row-ambiguous` is speculative hardening** — no
+real codex layout has been observed producing two candidate segments; the rule
+is reasoned from the fact that position cannot identify the run-state, not
+measured. And **the captured region does not always contain the status row**: a
+trust dialog draws none at all, and with the `/statusline` picker open the last
+non-empty line is the picker's help line, with a *preview* row directly above it
+that looks exactly like a status row. Both fail closed, but the reason
+misattributes an engine-mode fact to a missing run-state, and anything
+revisiting `_statusRow` should treat "last non-empty line" as the heuristic it
+is.
+
+The two real exits from the unconfigured-`Ready` limit above, both the
+Architect's to rule on: a constrained layout where the run-state is known to
+render, or a structured signal that is not scraped from a terminal (codex ships
+an app-server; its binary carries `remoteControl/status` — **not investigated**,
+named only).
 
 ## Test results — real, not asserted
 
@@ -124,7 +139,28 @@ they exist only in this checkout and in the archive. The build plan at
   `~/.tangleclaw/engines/`, because the runtime reads there and not from the repo.
   Note the compact layout `[model-with-reasoning, run-state, approval-mode]`
   renders `… · Ready · …`, which the *old* installed matcher also accepts — so
-  (a) alone restores a working wake without (b).
+  (a) alone restores a working wake without (b). **Verified live on the
+  Architect's pane 2026-09-19: footer `  gpt-6-astra high · Ready · never`, 34
+  chars, untruncated; wake nudge fired (delivery 5078, 05:34:04Z).**
+
+### DEPLOY ORDER IS NOT SYMMETRIC — do not sync the profile first
+
+Found by Builder1 reviewing this handoff. The "no engine-profile sync" hold is
+load-bearing for a reason that was not written down, and holds get lifted by
+whoever reads this next.
+
+The installed runtime profile still has `idleMarker: "· Ready ·"` and no
+`idleMarkerRow`; this change sets the bare `"Ready"`; and the installed CODE
+still reads the marker with `includes()` over the whole pane. So:
+
+    CODE-FIRST    new code + old profile -> whole-pane read of `· Ready ·`.
+                  Status quo. SAFE.
+    PROFILE-FIRST old code + new profile -> whole-pane read of bare `Ready`,
+                  satisfied by ordinary transcript text (the profile's own
+                  evidence names `Ready in 1.2s`). FALSE AT-REST, and an
+                  injection into a working pane. UNSAFE.
+
+Ship the code first, or both together. Never the profile alone.
 
 ## Holds still in force
 
