@@ -4,9 +4,9 @@
 
 | Open issues | In a train | In the yard | Unmilestoned |
 |---|---|---|---|
-| **252** | **53** | **29** | **11** |
+| **238** | **53** | **29** | **11** |
 
-_Data as of 2026-09-19 21:26 UTC._ A snapshot, not a live feed — a published page cannot poll GitHub. Regenerate with `build-board.py`, then republish.
+_Data as of 2026-09-19 02:18 UTC._ A snapshot, not a live feed — a published page cannot poll GitHub. Regenerate with `build-board.py`, then republish.
 
 > **Release gate.** These are POST-v5 trains. Nothing couples until v5 releases. Shipping model (ratified 2026-07-30): each version ships ONE train with all its cars — v5.1 is one complete train, v5.2 the next. Nothing here couples while `versionBumpEnabled` is false.
 
