@@ -218,6 +218,28 @@ describe('the step reads only what wrap-scope actually produces', () => {
     const facts = stageStep._worktreeFacts(scope, 'abc123');
     assert.equal(typeof facts.gitDir, 'string');
     assert.equal(facts.dirty, false, 'the fixture tree is clean at this point');
+
+    // WITH NO ANCHOR — the ordinary clean-tree wrap, where the commit step
+    // returns null. The guard above passes a literal anchor and so never
+    // reached this path, which is how #1648 survived the class guard built to
+    // close its class: `headSha` fell back to `scope.baseline.sha`, the sha the
+    // session LAUNCHED at, while `branch` came from the scope's trunk.
+    const measured = stageStep._worktreeFacts(scope, null);
+    const gitOut = (args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+    const head = gitOut(['rev-parse', 'HEAD']);
+    const onBranch = gitOut(['rev-parse', '--abbrev-ref', 'HEAD']);
+
+    assert.equal(measured.headSha, head,
+      'headSha must be THIS tree\'s head, never a sha carried from another moment');
+    assert.equal(measured.branch, onBranch,
+      'branch must be THIS tree\'s branch, not one probed before the commit step');
+
+    // The property the document actually needs, and the one that was false on
+    // the live install: the branch it names must CONTAIN the sha it names.
+    const contains = gitOut(['branch', '--contains', measured.headSha])
+      .split('\n').map((l) => l.replace(/^[*+]?\s*/, '').trim()).filter(Boolean);
+    assert.ok(contains.includes(measured.branch),
+      `the handoff claims branch ${measured.branch} at ${measured.headSha}, but that branch does not contain it`);
   });
 
   // `dirty` decides a recovery verdict (plan §2.7: a removed worktree needs

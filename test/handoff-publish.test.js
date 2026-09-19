@@ -260,9 +260,48 @@ describe('the handoff-stage wrap step', () => {
     }));
     const doc = lockfile.readHandoffFile(lockfile.stagedPath(project, res.output.publicationId)).doc;
     assert.equal(doc.worktree.headSha, 'cafe1234');
-    assert.equal(doc.worktree.branch, 'main');
     assert.equal(doc.worktree.gitDir, '/abs/work/.git',
       'gitDir is a path; worktreeTarget is a boolean and was never one');
+    // `/abs/work` does not exist, so the tree could not be measured — and the
+    // branch is reported as unmeasured rather than filled in from
+    // `scope.trunk.branch`. That fallback was #1648: it named a branch probed
+    // at wrap-scope resolution beside a sha from another moment, and the
+    // document then claimed a branch that did not contain its own sha.
+    // `architecture.md`: a read that could not be established reports null and
+    // names itself, never a plausible default.
+    assert.equal(doc.worktree.branch, null,
+      'an unmeasurable tree reports no branch; it must not borrow one from the scope');
+  });
+
+  it('measures the branch from the tree itself when the tree is real', async () => {
+    // The other half of the contract above: when the tree CAN be read, the
+    // branch is its actual branch, measured in the same reading as `dirty`.
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-handoff-branch-'));
+    tmpDirs.push(repo);
+    const { execFileSync } = require('node:child_process');
+    const run = (args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
+    run(['init', '-q', '-b', 'trunk-under-test']);
+    run(['config', 'user.email', 't@e.st']);
+    run(['config', 'user.name', 'T']);
+    fs.writeFileSync(path.join(repo, 'f.txt'), 'x');
+    run(['add', '-A']);
+    run(['commit', '-q', '-m', 'init']);
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+
+    const res = await stageStep.run(ctx({
+      scope: {
+        workTree: repo, workToplevel: repo, workGitDir: path.join(repo, '.git'),
+        worktreeTarget: false,
+        // Deliberately WRONG, and deliberately present: if the step still read
+        // the scope for this, the assertion below would catch it.
+        trunk: { branch: 'a-branch-this-tree-is-not-on' },
+        baseline: { sha: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef' }
+      }
+    }));
+    const doc = lockfile.readHandoffFile(lockfile.stagedPath(project, res.output.publicationId)).doc;
+    assert.equal(doc.worktree.branch, 'trunk-under-test');
+    assert.equal(doc.worktree.headSha, head,
+      'with no commit from this wrap, the head sha is the tree\'s own — never the launch baseline');
   });
 
   it('records worktree null ONLY for a root with no git identity, never as a stand-in for an unread key', async () => {
