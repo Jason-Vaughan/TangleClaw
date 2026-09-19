@@ -1526,8 +1526,9 @@ ADR 0017. `Requirements Confidence: MEDIUM` on that dependency.
 5. After clearance, the **failed verdict and its provenance are still readable**.
 6. The **missing/malformed result** fallback on a launch that required the check does NOT yield an
    open gate.
-7. **Legitimate first launch** — nothing to check — still proceeds normally. This is the case the
-   naive fix breaks; see the open contract question below.
+7. **Legitimate first launch** is CHECKED, reaches a positive evaluated verdict through the real
+   evaluator, and proceeds on THAT — never on an absence. Covered end to end through the real
+   evaluator and snapshot, not by a fixture that omits `preflight`.
 8. An **unattributed** READY (aider's shape: no nudge, delayed transition) is recorded as
    unattributed and does **not** qualify as automatic.
 
@@ -1538,19 +1539,38 @@ operator pane. Required parity rests on actual same-launch in-pane `tc` output *
 READY record. A blocked or failed probe is recorded as blocked or failed. Manual startup is
 distinguished from automatic activation.
 
-### OPEN CONTRACT QUESTION — blocks the #1650 fix, not this plan
+### The discriminator, RESOLVED — and my premise was wrong
 
-`PREFLIGHT_NOT_EVALUATED` (`lib/launch-sequence.js:88`) is both the missing-result fallback **and**
-the default parameter of `buildSnapshot` (`:469`). One constant therefore answers two unlike
-questions: *a required check produced nothing* (must gate, per the ruling) and *no preflight was
-passed at all*, which includes the legitimate first-launch behaviour the same ruling requires
-preserved. Setting `requiresRecovery: true` on it satisfies the first and breaks the second;
-leaving it false keeps the gap open.
+I had proposed splitting the constant on "was the check required", assuming a legitimate first
+launch arrives with **no** preflight. **The Architect corrected the premise** (clarification dated
+2026-09-19 against main `202dcb75d`): an omitted preflight was never first-launch evidence.
 
-Proposed discriminator, with the Architect for confirmation: **whether the check was REQUIRED for
-that launch**, not the shape of the result — splitting the default-parameter use from the
-missing-result use so no caller obtains an open gate by omitting an argument. Case 7 above is what
-fails if this is got wrong in the strict direction; case 6 is what fails in the loose direction.
+Production calls `launchPreflight.evaluate` BEFORE constructing the snapshot, and the evaluator
+reaches `first-launch` only after establishing no sessions, no publication rows, no continuity
+index and an absent handoff — with integrity checks preceding it. **A failed read or a missing
+argument cannot establish those absences.** First launch is a positively evaluated verdict that
+happens to be benign, not an absence of evaluation.
+
+So the contract is simpler than the split I proposed, and the split would have been actively
+harmful — it would have created exactly the permissive omitted-argument path that reopens the hole:
+
+- Applicable current launches require the check, **including first launches**.
+- Missing, null or malformed at the snapshot boundary **owes recovery**. ONE default — not a
+  permissive constructor case beside a restrictive fallback case.
+- Legitimate first-launch behaviour is preserved by passing its **explicit successful evaluation**,
+  never by leaving `preflight` out.
+- Attempted-failure and missing-evidence stay **distinct for provenance** ("we tried and it broke"
+  and "nothing ever ran" send a reader to different places). Neither satisfies a required
+  successful check.
+- **No** `preflightRequired: false` flag and no "no handoff means no check" exemption. #1623's
+  not-applicable path must not become a backdoor for applicable sequences.
+
+Normalization placement is the Builder's, provided storage, renderer and gate carry one consistent
+contract. Construction fixtures intending a healthy launch pass an explicit valid evaluated
+preflight; omission, null and malformed each get their own negative test.
+
+**#1650's production correction is tracked separately from this parity car**, per the ruling — its
+own branch and PR, not folded in here.
 
 ### Explicitly out of scope
 
