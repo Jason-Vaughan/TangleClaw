@@ -121,7 +121,7 @@ describe('git info budget (#891)', () => {
       assert.ok(info.incomplete.length > 0, 'a truncated read must say what it could not answer');
       for (const field of info.incomplete) {
         assert.ok(
-          ['branch', 'dirty', 'lastCommit', 'lastCommitAge', 'latestTag'].includes(field),
+          ['branch', 'dirty', 'headSha', 'lastCommit', 'lastCommitAge', 'latestTag'].includes(field),
           `incomplete named an unknown field: ${field}`
         );
       }
@@ -173,7 +173,7 @@ describe('git info budget (#891)', () => {
         'and must never be reported as a repository git refused to read');
     });
 
-    it('marks BOTH fields of a killed two-field read, not just the one it names', () => {
+    it('marks EVERY field of a killed multi-field read, not just the one it names', () => {
       // THE CONTRACT THIS HAS ALWAYS PROTECTED, unchanged: a step the cap KILLED
       // establishes nothing, and every field that step would have answered must
       // be named — never left reporting its empty fallback as though something
@@ -187,10 +187,16 @@ describe('git info budget (#891)', () => {
       // test passed for a mechanism that no longer exists.
       //
       // The same hazard lives on the invocation that replaced it: `log -1
-      // --format=%s%n%cr` answers lastCommit AND lastCommitAge together, so a
-      // kill there must name both. Naming only the field the step is keyed under
-      // would leave the other reporting `''` as an established answer — the exact
-      // shape #891 removed.
+      // --format=%H%n%s%n%cr` answers headSha, lastCommit AND lastCommitAge
+      // together, so a kill there must name all THREE. Naming only the field the
+      // step is keyed under would leave the others reporting their empty
+      // fallback as an established answer — the exact shape #891 removed.
+      //
+      // The list below is the whole point of this test and it has to grow with
+      // the format string. It said two fields while the invocation answered
+      // three (#1648 added `headSha`), so it passed while covering two thirds of
+      // the contract — and `headSha` is the one field a FROZEN handoff document
+      // cannot recover from if it reads as established when nothing looked.
       //
       // `latestTag` is deliberately NOT asserted here any more: `describe` is its
       // own invocation and still runs, so it is genuinely established. Under the
@@ -200,12 +206,13 @@ describe('git info budget (#891)', () => {
       shadowGit(['log*']);
       const info = git._fetchInfo(REPO_ROOT, { budgetMs: 3000 });
 
-      for (const field of ['lastCommit', 'lastCommitAge']) {
+      for (const field of ['headSha', 'lastCommit', 'lastCommitAge']) {
         assert.ok(info.incomplete.includes(field),
           `${field} was to be answered by a step that was killed, so it was never established`);
       }
       assert.equal(info.lastCommit, '', 'and its value stays empty rather than half-parsed');
       assert.equal(info.lastCommitAge, '');
+      assert.equal(info.headSha, null, 'a sha nobody read is null, never a stale or partial value');
     });
   });
 
@@ -333,7 +340,14 @@ describe('git info budget (#891)', () => {
         shadowGit(null);
         const info = git._fetchInfo(REPO_ROOT, { budgetMs: 800 });
 
-        assert.equal(info.incomplete.length, 5, 'precondition: nothing was established');
+        // Derived, never written down. This read establishes nothing, so every
+        // field it could answer must be named — and a literal here goes stale
+        // the moment the roster grows, which is exactly what happened when
+        // `headSha` joined it (#1648): the count said five while the reader
+        // answered six, and the precondition failed for a correct reading.
+        const ANSWERABLE = ['branch', 'dirty', 'headSha', 'lastCommit', 'lastCommitAge', 'latestTag'];
+        assert.deepEqual([...info.incomplete].sort(), [...ANSWERABLE].sort(),
+          'precondition: nothing was established, so every answerable field is named');
         const reported = lines.filter((l) => l.includes('Git info incomplete'));
         assert.equal(reported.length, 1, 'the emptiest read must not be the quietest one');
         assert.match(reported[0], /WARN/);
@@ -447,5 +461,126 @@ describe('git info budget — an empty budget never becomes an unbounded spawn (
     assert.ok(info !== null, 'an unread repository is unknown, not absent');
     assert.ok(info.incomplete.includes('dirty'));
     assert.equal(info.dirty, null);
+  });
+});
+
+describe('the branch sentinels never escape as measured facts (#1648)', () => {
+  const git = require('../lib/git.js');
+
+  it('measuredBranch answers null for the sentinels getInfo actually returns', () => {
+    // `getInfo().branch` is never null. It answers `'unknown'` when the status
+    // read failed or could not be parsed, and `'HEAD'` when the tree is
+    // detached. Both are truthy, so `info.branch || null` — the obvious reader —
+    // stores a word that is not a branch. The handoff freezes its bytes, so a
+    // launch then refuses READY over `branch: "unknown"` unrepairably.
+    assert.equal(git.measuredBranch({ branch: 'unknown' }), null);
+    assert.equal(git.measuredBranch({ branch: 'HEAD' }), null,
+      'a detached tree has no branch; reporting the literal git prints is not a branch name');
+    assert.equal(git.measuredBranch({ branch: '' }), null);
+    assert.equal(git.measuredBranch(null), null);
+    assert.equal(git.measuredBranch({}), null);
+  });
+
+  it('and passes a real branch through unchanged', () => {
+    assert.equal(git.measuredBranch({ branch: 'main' }), 'main');
+    assert.equal(git.measuredBranch({ branch: 'feat/x' }), 'feat/x');
+  });
+
+  it('the sentinel is what a failed status read really produces', () => {
+    // Not asserted from the docstring: produced. If `_fetchInfo` ever stops
+    // answering `'unknown'` here, the reader above is guarding a case that no
+    // longer exists and this test says so.
+    shadowGit(['status*']);
+    const info = git._fetchInfo(REPO_ROOT, { budgetMs: 2000 });
+    assert.equal(info.branch, 'unknown', 'precondition: a failed status read answers the sentinel');
+    assert.equal(git.measuredBranch(info), null, 'and the reader turns it into an honest absence');
+  });
+});
+
+describe('the field names git.js pushes are the names the launch acts on', () => {
+  const git = require('../lib/git.js');
+  const { runPreflight, VERDICTS, FILE_STATES, BASELINES } = require('../lib/launch-preflight.js');
+
+  // `shadowGit` prepends a fake `git` to PATH and leaves a tmpdir behind. Every
+  // other user in this file undoes it; being the last describe is not a reason
+  // to skip it, because file order is not a contract.
+  afterEach(() => { restoreGit(); });
+
+  const DIGEST = 'sha256:aaa';
+
+  /**
+   * The HEALTHY context, copied from `test/launch-preflight.test.js` so every
+   * clause before the worktree check passes. Hand-rolling it is what made the
+   * first version of this test vacuous twice over: a malformed publication row
+   * returned `handoff-unconfirmed` on eligibility and digest grounds, so the
+   * assertion passed without the worktree check ever running.
+   * @param {object} worktree - The recorded worktree block under test
+   * @param {object} probe - The launch-side probe
+   * @returns {object} A preflight context
+   */
+  function healthyCtx(worktree, probe) {
+    return {
+      projectId: 14,
+      workspaceId: 'ws-1',
+      sessions: [{ id: 10, status: 'wrapped' }],
+      publications: [{
+        publicationId: 'pid-1', seq: 1, projectId: 14, sessionId: 10,
+        wrapRunId: 'run-1', kind: 'final', state: 'published', fileDigest: DIGEST,
+        eligibleAt: '2026-09-17T00:00:00Z', eligibleVia: 'lifecycle-wrap'
+      }],
+      file: {
+        state: FILE_STATES.VALID,
+        digest: DIGEST,
+        doc: {
+          schema: 'tc.handoff/1', publicationId: 'pid-1', projectId: 14,
+          workspaceId: 'ws-1', sessionId: 10, kind: 'final', worktree
+        }
+      },
+      stagedFiles: [],
+      continuityIndexPresent: true,
+      handoffEpoch: { epochSessionId: 0, baseline: BASELINES.EMPTY, baselineReason: null },
+      worktreeProbe: probe,
+      fallbackRootHead: null
+    };
+  }
+
+  it('the healthy fixture really reaches ok, so a failure below means the worktree clause', () => {
+    // The precondition the previous version lacked. Without it, "not OK" says
+    // nothing about which clause answered.
+    const r = runPreflight(healthyCtx(
+      { path: '/repo', toplevel: '/repo', gitDir: '/repo/.git', branch: 'main', headSha: 'abc123', dirty: false },
+      { toplevelExists: true, headSha: 'abc123', branch: 'main' }
+    ));
+    assert.equal(r.verdict, VERDICTS.OK, 'precondition: every other clause passes');
+  });
+
+  it('a REAL short reading produces an incomplete entry the preflight refuses to verify on', () => {
+    // The coupling neither side's own test can see. `lib/git.js` pushes the
+    // string, `lib/launch-preflight.js` checks for it, and every test on each
+    // side uses its own literal — so renaming the field in the producer leaves
+    // both suites green while a short reading silently verifies again.
+    //
+    // This drives the real producer and hands its real output to the real
+    // consumer. The probe AGREES with what that reading established, so
+    // `movedHead` and `movedBranch` are both false and the producer's own
+    // short-reading signal is the only thing that can keep the verdict off OK.
+    shadowGit(['log*']);
+    const info = git._fetchInfo(REPO_ROOT, { budgetMs: 3000 });
+    assert.ok(info.incomplete.includes('headSha'),
+      'precondition: the real reading really went short on the sha');
+
+    const r = runPreflight(healthyCtx(
+      {
+        path: '/repo', toplevel: '/repo', gitDir: '/repo/.git',
+        branch: info.branch, headSha: info.headSha, dirty: info.dirty,
+        unestablished: [...info.incomplete], readFailure: info.cause
+      },
+      { toplevelExists: true, branch: info.branch, headSha: 'whatever' }
+    ));
+
+    assert.notEqual(r.verdict, VERDICTS.OK,
+      'a handoff whose own reading went short must not verify, whatever the probe says');
+    assert.ok(r.reasons.some((x) => /git reading went short/.test(x)),
+      'the reason must come from the producer\'s own recorded failure, not a probe mismatch');
   });
 });

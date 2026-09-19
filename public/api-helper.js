@@ -1787,6 +1787,7 @@
   const TC_GIT_FIELD_TEXT = Object.assign(Object.create(null), {
     dirty: 'whether there are uncommitted changes',
     branch: 'the current branch',
+    headSha: 'which commit the tree is on',
     lastCommit: 'the last commit',
     lastCommitAge: 'how long ago the last commit was',
     latestTag: 'the latest tag'

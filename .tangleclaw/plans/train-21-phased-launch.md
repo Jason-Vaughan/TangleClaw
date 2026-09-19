@@ -4,6 +4,12 @@ status: APPROVED rev 4 (Architect schema gate satisfied 2026-09-17, v40 + v41, b
 authorized_by: TangleClaw-ProjectManager, 2026-09-17 (planning only)
 source: /Users/jasonvaughan/Documents/Projects/Shared/TangleClaw-Shared/TRAIN_21_MICROPLAN.md
 review: /Users/jasonvaughan/Documents/Projects/TangleClaw-Architect/.tangleclaw/plans/train-21-builder-schema-review.md
+# No `branch:` claim, deliberately. This plan spans a whole Train — twelve cars across many
+# branches — so claiming one would orphan every other car's branch and make the lint grade the
+# wrong plan with confidence instead of saying it could not tell. It resolves through the
+# `active_build_plan` pointer, and the record lint correctly reports that as `unchecked` rather
+# than as a pass. A per-CAR plan would be the thing to give a `branch:`, if this repo ever splits
+# them out.
 governed_by:
   - .prawduct/artifacts/prime-delivery-direction.md   # ratified 2026-08-31
   - .prawduct/artifacts/wrap-direction.md             # ratified 2026-07-21
@@ -410,8 +416,17 @@ lives only in the DB, so the staged digest *is* the published digest:
   "projectId": 14, "workspaceId": "…|null", "sessionId": 1233, "wrapRunId": "…", "engineId": "claude",
   "kind": "final | checkpoint",                  // fixed at staging from the wrap's keepSessionRunning option
   "stagedAt": "ISO",
-  "worktree": {"path": "/abs", "toplevel": "/abs", "gitDir": "/abs", "branch": "…", "headSha": "…", "dirty": false},  // null for non-git
+  "worktree": {"path": "/abs", "toplevel": "/abs", "gitDir": "/abs", "branch": "…", "headSha": "…", "dirty": false,
+               // Present ONLY when the git reading went short (#1648). Absence is the signal that
+               // it was whole, so a consumer can tell "this tree has no commits" from "git could
+               // not be read" — which a bare null cannot say, and frozen bytes can never revisit.
+               "unestablished": ["headSha"], "readFailure": "read-timed-out"},  // null for non-git
   "rules": [{"id": 12, "source": "project", "revision": 3, "contentHash": "…"}],
+  // Car 21.10 widened this block: `rules` rows also carry `label` and `measured`,
+  // and a top-level `manifestSources` names what was read. §4c is the authority on
+  // that shape and on why an unmeasured row is not an empty one — deliberately NOT
+  // restated here, because two copies of one schema is how this list fell behind
+  // the code in the first place.
   "globalRulesHash": "…", "engineConfigHash": "…", "continuityIndexHash": "…",
   "wrapOutcome": "complete | degraded",
   "missingEvidence": ["learnings-capture: failed", "…"],   // every non-ok step, named; empty iff complete
@@ -1139,116 +1154,421 @@ blocking findings, the VRF entry is enqueued, and the PR closes #1587.
 
 ---
 
-## 4d. Car 21.11 build plan (#1589) — engine parity probes and honest not-applicable
+## 4c. Car 21.10 build plan (#1588) — per-rule drift reconciliation in step 3
 
-**Branch:** `feat/train-21-car-21-11`, from `origin/main` (21.10 is in review as PR #1646 and this
-car does not depend on it). **Schema:** no DB migration. **Critic mode:** `chunk` — the chunk is
-`cumulative-final`, so 21.12's review is the train final. **Type:** feature. **Size:** medium.
+**Branch:** `feat/train-21-car-21-10`. **Schema:** no DB migration (see decisions).
+**Critic mode:** the chunk is `cumulative-final`, so 21.12's review is the train final; this car
+takes a `chunk` review. **Type:** feature. **Size:** medium.
 
-**Acceptance cases are DERIVED here, exactly as §4c records for 21.10.** #1589 says Chunk 04's
-cases are listed in the plan; they are not. Same gap, same treatment: derived from the approved
-§2.9 text, marked as derived, and carried to the Architect with ADR 0017.
-
-**Bounds in force (ProjectManager, 2026-09-19).** Probes are serial, bounded and isolated. No
-second implementing Builder. No injection into an operator pane. Required parity must rest on
-actual same-launch in-pane `tc` output AND a server-side READY record. **A blocked or failed probe
-is recorded as blocked or failed — never as `not-applicable`, never as passed.** Manual startup is
-distinguished from automatic activation.
+**Acceptance cases are DERIVED here, not quoted.** #1588 says "the acceptance cases for this car
+are listed under Chunk 04 in the plan" — they are not; §4's Chunk 04 carries three deliverable
+bullets and a governance-checkpoint note and nothing else. Chunks 02 and 03 each got an explicit
+`Acceptance cases:` list and Chunk 04 never did. The cases below are derived from the approved
+blueprint text that does exist (§2.2 rule-change/revision, §2.4 step 3's contents, §2.6's handoff
+manifest fields) rather than invented, and they are flagged to the Architect with ADR 0017 (21.12)
+so the gap is closed in the record rather than in one builder's head.
 
 ### Confidence check
 
-- **Problem.** `data/engines/{codex,aider,antigravity}.json` each declare
-  `launchSequence: { supported: true }` and nothing else, and `resolveApplicability`
-  (`lib/launch-sequence.js:181`) treats that bare claim as fact. Nobody has ever confirmed that
-  `tc` resolves inside a pane on those engines or that one of their sessions can reach READY. A
-  declaration nothing measured is serving as evidence that the channel works — which is the exact
-  shape `prime-delivery-direction.md` §4 forbids ("unverifiable delivery is recorded as
-  *unverified*, never promoted because nothing contradicted it").
-- **Success.** Every engine's launch-sequence claim carries its own provenance: `verified` with
-  when, how and what was observed, or nothing — and the surface that reports it says **declared but
-  unprobed** rather than reading the same as a probed one. A probe that fails records the failure.
-  openclaw and the Master pane carry honest `not-applicable` reasons naming what is absent.
-- **Out of scope.** ADR 0017 and the doc set (21.12). Flipping R1's `pasteRules` default — that
-  needs the operator's ratification and is not a parity question. Building a Master phased launch
-  (#1589 asks only that the follow-up be referenced; the Master's own plan owns the work).
-  Retention (#1595) and delegated clearing (#1025) — both already OPEN, so this car cites them
-  rather than filing duplicates.
+- **Problem.** A session's rules can change between the wrap that wrote the handoff and the launch
+  that reads it, and today nothing says so. Step 3 reports the preflight verdict and the handoff
+  summary, both of which can read `ok` while the rule set the previous session worked under no
+  longer exists. The agent then resumes that session's work under rules it was never told changed.
+- **Success.** Step 3 names every rule added, removed or changed since the handoff was written,
+  per rule and per source; a launch with any such drift cannot attest READY without a
+  reconciliation, exactly as a revision cannot; and a handoff that never recorded a source says
+  so rather than reading as "unchanged".
+- **Out of scope.** Engine parity probes (21.11), ADR 0017 and the doc set (21.12), #1611's
+  removal of the launching-workspace predicate, and retention (#1595). This car does not change
+  what a wrap stages beyond the manifest widening below, and does not touch the recovery gate.
 
-### The gap, precisely
+### The gap this car has to close, precisely
 
-`toolOutput` already models this correctly and is the precedent to copy: claude's declaration
-carries a `source` paragraph saying what was measured and how, and `resolveToolOutput` returns
-`measured: true|false` so `tc start status` can tell a reader when a limit is assumed. codex, aider
-and antigravity declare **no** `toolOutput`, take the conservative 8,000 default, and are correctly
-reported as assumed. That half is already honest.
+`_ruleManifest` (21.9, `lib/wrap-steps/handoff-stage.js`) already reuses
+`launchSequence.ruleFingerprints` and says in a comment that it does so *because* 21.10 diffs the
+two manifests. That reuse holds. What does not hold is the fingerprint's coverage:
 
-`launchSequence` has no such half. `{ supported: true }` is indistinguishable between "measured in
-a live pane" and "someone believed it when the profile was written".
+- `ruleFingerprints` reads `store.sessionRules.listActiveForProject` and stamps every row
+  `source: 'project'` — a literal, not a derivation. §2.2's manifest schema declares
+  `"source": "project|global|shared"`, so two of the three declared values are unreachable today.
+- The global rule set reaches the handoff as `globalRulesHash`, ONE hash over the whole text. A
+  per-rule diff cannot come out of it; only "the global rules changed" can.
+- Shared documents reach the LAUNCH manifest (`sourceManifest.sharedDocs`) but are **absent from
+  the handoff document entirely**. There is nothing to diff them against.
+
+So "including global/shared sources" is satisfiable for global at set granularity and, for shared,
+only for handoffs written after this car ships.
 
 ### Decisions this car records
 
-- **`[DECISION: verification is a property of the DECLARATION, not a separate registry |
-  alternatives: a probe-results table; a generated report file | rationale: the claim and its
-  evidence must not be able to drift apart]`** `launchSequence` gains an optional `verified`
-  object — `{at, method, activation, evidence}`. A declaration with no `verified` is **declared,
-  unprobed**, and every surface that reports support says which it is. Keeping the evidence beside
-  the claim means a profile edit that changes the claim without re-probing is visible in the diff
-  rather than silently inheriting a stale pass.
-- **`[DECISION: a failed probe is recorded, not erased | alternatives: leave the field absent on
-  failure | rationale: absent already means "never probed", and the PM's bound 2 forbids the
-  collapse]`** A probe that runs and fails writes `verified: {outcome: "failed", …}` with the
-  reason. Absent, failed and passed are three states and stay three: "we never looked", "we looked
-  and it did not work", "we looked and it did". This is car 21.10's lesson applied to a different
-  document — an unmeasured thing must never render as a measured one.
-- **`[DECISION: `supported` still gates applicability; `verified` never does |
-  alternatives: refuse a sequence on an unprobed engine | rationale: withholding the channel is a
-  bigger harm than serving it unproven]`** An unprobed engine still gets its launch sequence. The
-  honest-absence requirement is met by SAYING it is unprobed, not by withholding governance from
-  sessions that would otherwise receive it. A probe that FAILED is the case worth revisiting, and
-  is deliberately left non-gating in this car — flagged for the Architect in ADR 0017 rather than
-  decided here, because refusing a channel on evidence is a policy question, not a build one.
-- **Master pane `not-applicable`.** It is not an engine profile, so it takes its reason where the
-  parity surface reports, citing
-  `/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder1/.tangleclaw/plans/master-startup-and-wrap.md`
-  as the plan that owns it.
+- **`[DECISION: widen the handoff manifest additively, keep the schema id at tc.handoff/1 |
+  alternatives: a tc.handoff/2 bump, or diffing only project rules | rationale below]`**
+  `rules[]` gains entries whose `source` is `global` or `shared` alongside the existing `project`
+  rows, and the document gains exactly ONE new top-level field, `manifestSources`. Readers that
+  ignore both behave exactly as before, which is what makes it additive; `globalRulesHash` stays
+  where it is and keeps its meaning, because removing it would break the 21.8 preflight that
+  already reads it. A schema bump would force a migration path for documents that are frozen bytes
+  on disk and would buy nothing these two additions do not.
+
+  **`manifestSources` is not optional, and the diff cannot be honest without it.** It was absent
+  from the first cut of this decision, and writing the diff is what exposed the hole: a handoff
+  carrying no `shared` rows is EITHER one written before this car (which recorded no shared docs at
+  all) OR one written after it for a project that simply has none. Those two demand opposite
+  answers — `not-recorded` and `unchanged` — and nothing already in the document tells them apart,
+  because the pre-car fingerprint stamped every row `project` by literal. `manifestSources` is the
+  producing wrap declaring which sources it looked at; a document without it is read as having
+  recorded `project` only, which is exactly what was true before this car.
+- **`[DECISION: the per-source verdict is FIVE-valued, and which SIDE was silent is part of the
+  verdict | alternatives: a boolean changed/unchanged; a three-valued changed/unchanged/unknown |
+  rationale: this is the §2.7 three-valued-`dirty` lesson one document over, and the third value
+  was not enough]`** `changed` / `unchanged` / `not-recorded` (the HANDOFF never looked) /
+  `unreadable-at-wrap` (the previous wrap recorded the source but could not hash part of it) /
+  `unreadable-now` (THIS launch could not read it).
+
+  The last two were ONE value for exactly one review round, and that round shipped a renderer
+  telling operators "this launch could not read it — the server log names what failed" about files
+  that had failed at the previous wrap, on a machine whose log says nothing. Which side was silent
+  is not a detail of the verdict; it IS the verdict, because it decides where the person reading it
+  goes to look. A three-valued model is strictly better than a boolean and still wrong here.
+
+- **`[DECISION: an unmeasured row withholds GATING for its source but never suppresses a measured
+  change | alternatives: demote the whole source out of the comparison | rationale: completeness
+  and drift are different questions]`** A source holding an unreadable row cannot claim "and
+  nothing else changed", so it is reported as partly uncompared. But the rows that COULD be
+  measured were measured: dropping a real change because a sibling row was unreadable loses the one
+  fact the agent most needs and fails OPEN at the READY gate. The first cut demoted the whole
+  source before computing changes, and its own test pinned the loss — a shared document moving
+  `h1` → `CHANGED` with `hasDrift` asserted false. A measured change outranks a partial read in
+  the verdict, and the gap is disclosed beside it rather than in place of it.
+
+- **`[DECISION: an unmeasurable governing source does NOT require a reconciliation — the gate
+  fails OPEN | alternatives: fail closed, demanding a reconciliation whenever any source could not
+  be compared | rationale: the gate's subject is drift, and an unmeasured source is not evidence of
+  drift]`** This is the failure DIRECTION of the new gate, and it was recorded only implicitly
+  until the Critic asked for it directly.
+
+  Fail-closed is the safer-sounding answer and is wrong here for two reasons. A reconciliation is a
+  written account of *what changed and what you are carrying forward*; demanding one for a source
+  nobody could read asks the agent to write about something no one can tell it, which trains the
+  habit of writing past a gate to get through it — the same defect as a requirement whose stated
+  reason is missing from the text. And the condition is not rare or self-clearing: a shared
+  document with a bad path is unreadable on every launch until a person fixes it, so fail-closed
+  would demand a reconciliation forever, from every session, for one stale row in a config.
+
+  What replaces gating is disclosure: step 3 states the gap in its own sentence, names the side
+  that went silent, and says plainly that what is NOT named may have changed too. The operator-
+  facing signal is the server log line naming the file. **The accepted cost is real** — a genuine
+  rule change inside an unreadable source passes unreconciled — and it is accepted because the
+  alternative blocks every launch on a condition the agent cannot resolve. Revisit if an
+  unreadable governing source ever becomes common rather than a misconfiguration.
+
+- **`[DECISION: a legacy handoff carrying NO rows claims nothing | alternatives: read it as
+  "recorded: project", per the era's fingerprint | rationale: the producer's empty array is
+  ambiguous and one reading invents drift]`** The pre-21.10 wrap returned `[]` both for a project
+  that genuinely had no rules AND for a rules read that threw — its catch returned an empty array —
+  so the frozen bytes cannot tell them apart. Reading such a document as having recorded the
+  project rules makes every rule in force now report as ADDED and refuses READY for a change nobody
+  made, on every launch, until someone edits a rule. Unknown is the honest answer and the safe
+  direction. A legacy document WITH rows is still read as project-only: its rows are what make it
+  evidence.
+- **`[DECISION: drift requires a reconciliation, and does NOT revise the snapshot |
+  alternatives: make drift a revision | rationale: a revision is about content served under the
+  agent]`** §2.2's revision exists because steps already served were replaced; the cursor moves
+  back and step 1 may carry over. Drift against a PREVIOUS session's handoff replaces nothing this
+  launch served — the snapshot is correct as rendered. Reporting it as a revision would re-serve
+  four steps that did not change and would make `carried_from_revision` evidence meaningless. It
+  therefore joins `_reconciliationRequired` as a fourth trigger, beside advisory recovery, a
+  revision, and a preflight verdict that declares one.
+- **No DB migration.** Every input is either in the frozen handoff bytes or recomputable at launch;
+  nothing here needs a column. The next unshipped schema version stays free for 21.11/21.12.
 
 ### Steps
 
-1. **Declare the shape.** `launchSequence.verified` in the profile schema + `lib/engines.js`
-   capability documentation; `resolveApplicability` unchanged (it reads `supported`).
-2. **Report it honestly.** `tc start status` and the parity surface distinguish
-   verified / declared-unprobed / probe-failed / not-applicable, and never render two of them alike.
-3. **The probe harness** (`scripts/engine-parity-probe.js`): launches ONE engine in an isolated
-   pane, captures in-pane `tc` output, reads the server's own launch record for a READY row, and
-   writes the `verified` block. Serial and bounded by construction — it takes one engine per run.
-4. **Run it** for codex, aider, antigravity; record whatever it returns, including failure.
-5. **Cite the follow-ups** — #1025, #1595 and the Master plan — rather than filing duplicates.
-6. **Tests**, per the cases below.
+1. **Widen the fingerprint.** `ruleFingerprints` takes an explicit source rather than stamping
+   `'project'`, and a new `manifestFingerprints(project)` composes the three sources into one
+   ordered array: project rules (per rule, as today), one `global` row hashing the global rule
+   text, and one `shared` row per registered shared document. `_ruleManifest` (wrap) and
+   `_launchRuleDrift` (launch) both call the composer with NO caller-supplied rules, so the two
+   manifests the diff compares are built by one reader from one population — the property 21.9's
+   comment was protecting, now pinned by a test rather than by a comment.
 
-### Acceptance cases (derived)
+   **`buildSourceManifest` deliberately does NOT call the composer**, and an earlier draft of this
+   step said it did. Its `rules` array is the input to §2.2's revision check, whose ratified
+   trigger is a change to the PROJECT rules served in step 2; feeding it the widened array would
+   make a global-rules edit re-render four steps and move the cursor back, which changes Chunk 02's
+   approved protocol. The cost is that the three sources are traversed twice per launch and that
+   the global text is hashed two ways — `globalRulesHash` untrimmed (21.8's preflight reads it) and
+   the composer's `global` row trimmed. The composer's row is the authority for "did the global
+   rules change"; the handoff document's JSDoc says so, because a reader holding two hashes of one
+   document otherwise cannot tell which answers that question.
+2. **A pure diff.** `lib/launch-rule-drift.js`, no store reads: `diffRuleManifests(before, after)`
+   returns `{added, removed, changed, perSource, unmeasured, comparedSources}` where `perSource`
+   is the FIVE-valued verdict above and `unmeasured` names, per side, the sources whose rows could
+   not be hashed. Pure so the step renderer and the READY gate share one answer and cannot
+   disagree.
+3. **Render it in step 3.** `_ruleDriftLines(...)` joins `_preflightLines` in the `state` step:
+   one line per added/removed/changed rule naming the source and the rule; a per-source line for
+   `not-recorded`; two SEPARATE lines for the two unreadable directions, because one sends the
+   reader to the previous session's machine and the other to this one; and an explicit "no drift"
+   line when there is none — said, never implied, the same way stranded wraps says it. That last
+   line is built from the VERDICT, naming only sources whose state is literally `unchanged`, not
+   from `comparedSources`: a source that was compared but only partly readable cannot carry
+   "nothing changed" either.
+4. **Gate READY.** `_reconciliationRequired` gains the drift trigger, with wording that names what
+   drifted. The drift is computed once at sequence creation and stored on the sequence, because the
+   gate and the frozen step must answer identically — recomputing at READY would let a rule edit
+   between render and attest produce a requirement the agent was never shown.
+5. **Tests**, per the cases below.
 
-- an engine with no `verified` block reports **declared, unprobed** — never the same string as a
-  verified one
-- a probe that fails writes `outcome: failed` with a reason, and the surface says failed — not
-  absent, not passed
-- a probe that cannot start at all (engine binary missing) is **blocked**, distinct from failed
-- `resolveApplicability` is unchanged by any `verified` value: an unprobed engine still gets its
-  sequence
-- openclaw reports `not-applicable` with its existing reason, and is never counted as unprobed
-- the Master pane reports `not-applicable` citing the plan that owns it
-- manual startup and automatic activation are recorded distinctly, per the PM's bound 2
-- a probe's evidence names the SAME launch it observed — an in-pane `tc` output and a READY row
-  from two different launches is not parity evidence (the §2.1 identity handshake is what ties
-  them; the probe records the launch id both halves carry)
-- an engine whose profile is edited after a probe keeps its `verified` block visible in the diff,
-  so a stale pass cannot be inherited silently
+### Acceptance cases (derived — see the note above)
+
+- a rule added since the handoff → step 3 names it as added, and READY without a reconciliation is
+  refused naming that rule
+- a rule removed since the handoff → named as removed; READY refused
+- a rule whose body changed (same id, new `contentHash`) → named as changed, not as add+remove
+- a rule whose `revision` moved but whose `contentHash` did not → NOT drift (the body is what the
+  session read; a no-op version bump is not a change to report)
+- the global rule text changed → one `global` source line, and READY refused
+- a shared document's content changed → named per document
+- a handoff that recorded no `shared` rows → step 3 says `not-recorded` for that source, READY is
+  NOT gated on it, and the line never reads as "unchanged"
+- a source neither side could compare → READY is NOT gated on it (the recorded fail-open decision),
+  step 3 states the gap in its own line, and the line names WHICH side went silent
+- a measured change inside a partly-unreadable source → still named AND still gates, with the gap
+  disclosed beside it rather than in place of it
+- no drift at all → step 3 says so explicitly, and READY needs no reconciliation on drift grounds
+- drift AND a revision → ONE reconciliation requirement, and the REVISION's wording wins. An
+  earlier draft of this list said the wording should name both; the code is first-match-wins across
+  four ordered triggers and that is the better answer, so the case is corrected here rather than
+  the code changed to match a sentence nobody ratified. An agent handed a list of reasons cannot
+  tell which gate it is standing at, and the stronger condition is the one it must act on. The
+  ordering (advisory recovery → revision → preflight verdict → drift) is pinned by tests.
+- drift on a launch whose preflight already requires a reconciliation → the preflight's wording
+  wins, for the same reason; drift does not replace it and is not appended to it
+- a launch with no handoff at all (first launch) → no drift section claims, and no drift gate
+- a corrupt handoff → the drift section says it could not be read, and does not gate READY (the
+  preflight already owns the corrupt verdict). Implemented as a distinct `{unavailable: reason}`
+  value rather than the `null` that means "first launch": a measurement that was attempted and
+  lost must not render identically to a clean slate, or a real rule change goes unreconciled with
+  nothing in the agent's own text recording that anything was tried.
+- the drift stored at creation is what the gate reads: a rule edited between render and READY does
+  not change the requirement the agent was shown
+- `ruleFingerprints` and `_ruleManifest` derive byte-identical manifests for the same project state
+  (the property 21.9's comment asserts, now pinned by a test rather than by a comment)
+
+Added by the Critic pass on this car — each one a place where failure and "nothing to report" were
+the same value:
+
+- a shared document unreadable at BOTH the wrap and the launch is `unreadable`, never `unchanged`.
+  `_fileHash` answers null for a file it could not read, two nulls compare equal, and the row was
+  filed under unchanged — the exact claim this car's own decision forbids, on the one source this
+  car adds, with no log line and no rendered line. A null hash is now carried as `measured: false`
+  and the diff refuses to compare it.
+- a source THIS LAUNCH could not read is `unreadable`, not `not-recorded`. Both are uncomparable
+  and they are silent on opposite sides: `not-recorded` sends the operator to the previous
+  session, `unreadable` sends them to this machine.
+- step 3's no-drift sentence names only the sources whose verdict is `unchanged` (it briefly named
+  `comparedSources`, which was still too wide — a partly-readable source was compared and cannot
+  carry the claim). It used to speak for all three sources
+  whenever `hasDrift` was false — including the first launch after this ships for every project,
+  where two of three were never compared — and then retract it on the next line.
+- a drift computation that threw, and a handoff that could not be read, render a section saying so
+  rather than no section at all. Only a genuine first launch renders nothing.
+- the composer takes NO rules from its caller. The launch used to hand in its already-filtered
+  bundle while the wrap read the store unfiltered, so a project holding one unusable rule reported
+  it as removed on every launch and blocked READY forever for a deletion that never happened; and
+  a caller whose own rules query THREW handed in `[]`, indistinguishable from "no rules".
+
+### Requirements Confidence
+
+**MEDIUM.** The blueprint text this car implements (§2.2, §2.4's step-3 row, §2.6's manifest
+fields) is Architect-approved at rev 4, so WHAT step 3 must contain is settled. What is not settled
+is the acceptance list: #1588 cites one the plan never carried, and the fourteen above plus the
+five added by the Critic pass are derived by this builder. They are the test contract as built, and
+they are what ADR 0017 (21.12) asks the Architect to ratify — a MEDIUM that resolves to HIGH on
+that ruling, or sends this car back if the derivation missed the intent.
+
+### Architect ruling, 2026-09-19 — the derived contract is APPROVED WITH AMENDMENTS
+
+`/Users/jasonvaughan/Documents/Projects/TangleClaw-Architect/.tangleclaw/plans/train-21-chunk04-acceptance-ruling.md`.
+A CONTRACT review — explicitly not code, PR or merge approval. The `Requirements Confidence: MEDIUM`
+above resolves on this ruling, subject to the amendments below, which are recorded here rather than
+deferred to ADR 0017 at the Architect's instruction.
+
+- **A measured empty is not an absence.** A manifest that explicitly declares `shared` and carries
+  zero shared rows has measured zero: it must compare zero→zero `unchanged`, and zero→one `added`.
+  The shipped code already behaves this way — `recordedSources` returns the declared filter
+  whenever `manifestSources` is an array, so the unknown-reading fires ONLY when the field is
+  absent entirely (the pre-21.10 producer, which wrote `[]` both for "no rules" and for a read that
+  threw). The behaviour was incidental; an acceptance case now pins it.
+- **Unknown alone does not create a drift gate, and cannot waive recovery or current-rule
+  delivery.** The fail-open decision is approved for DRIFT only. It carries no authority over the
+  recovery gate or the rules channel; both are decided elsewhere and stay decided there.
+- **First-match refusal priority is approved, with a proviso:** all drift and uncertainty must
+  remain visible. Only the refusal STRING is first-match — step 3 renders every finding and every
+  gap whichever trigger supplied the wording.
+- **Frozen original drift must not defeat a pre-READY revision or re-ack.** Carrying the drift
+  through a revision must not interfere with that revision's cursor reset and re-acknowledgement.
+  To be VERIFIED, not asserted.
+- The prose bullet count was wrong (19 claimed, 21 actual). No count is written here now: nothing
+  parses one, and this repo's own learning is that it goes stale — which it did inside one session.
+
+### As-built delta — the global row was the third source, and it lacked the treatment
+
+A cumulative round after the amendments landed found the class this car exists to fix, surviving
+in the one source nobody had re-derived. `manifestFingerprints` wrapped `store.globalRules.load()`
+in a try/catch, but that call catches its own errors AND the missing-file case and answers `''`,
+so the catch was dead for both realistic failures and the row froze as `sha('')` — a real-looking
+hash for a measurement nobody took, carrying no `measured: false`.
+
+Its two siblings were already honest: `_fileHash` answers `null` for a shared document it could
+not read, and `listActiveForProject` throws so the project source is left undeclared. Global was
+the only one of the three without the treatment — **the recurring shape here is a fix applied to
+the sites that prompted it and not to the family**, which this plan already records twice.
+
+Fixed at the producer, not the consumer: `store.globalRules.loadMeasured()` answers
+`{text, measured}` from ONE read, and `load()` now delegates to it so every existing caller is
+byte-for-byte unchanged. `manifestFingerprints` carries `measured` through and hashes only a
+document it actually read. The path stays private to the store — a readability probe in
+`launch-sequence.js` would have minted a second source of truth for where the global rules live
+and would have silently bypassed the test-only path redirection.
+
+The consumer needed no change: `_measured()` was already correct, and correctly returned `true`
+for `sha('')` because that IS a non-empty hash string. The predicate was sound; it was being fed
+a fabricated measurement.
+
+Pinned by four cases, including the end-to-end property rather than only the field: a document
+unreadable on BOTH sides must not be reported `unchanged`. A measured empty stays measured — the
+amendment above is the case the fix must not break while fixing the unread one.
 
 ### Done when
 
-Every box ticked, suite green, `/prawduct:critic` run at `chunk` with no unresolved blocking
-findings, the three probes RUN with their real outcomes recorded whatever they were, and the PR
-closes #1589. The derived-acceptance gap and the failed-probe-does-not-gate decision both carry
-into ADR 0017 for the Architect, per the PM's bound 4.
+Every box above is ticked, the suite is green, `/prawduct:critic` has run at `chunk` with no
+unresolved blocking findings, the four amendments above are implemented or verified, and the PR
+closes #1588.
+
+## 4d. Car 21.11 build plan (#1589) — engine parity CERTIFICATION
+
+**Branch:** `feat/train-21-car-21-11`. **Schema:** no DB migration. **Critic mode:** `chunk` — the
+chunk is `cumulative-final`, so 21.12's review is the train final. **Type:** feature. **Size:**
+medium.
+
+**This section was rewritten wholesale on 2026-09-19** against the Architect's formal #1650 ruling
+(`/Users/jasonvaughan/Documents/Projects/TangleClaw-Architect/.tangleclaw/plans/train-21-preflight-evaluation-failure-ruling.md`,
+recorded on the issue). The prior draft is preserved in commit `b53412fab` for diffing and is
+**superseded, not amended**: it was built around *existence* — does `tc` resolve, does READY land —
+and the ruling replaces that oracle outright. Two of its premises were also false, and both are
+corrected below.
+
+### What the prior draft got wrong, recorded so it is not re-derived
+
+1. **"Nobody has confirmed `tc` resolves in codex/aider/antigravity panes" was FALSE.** The live
+   `launch_sequences` table already separates the three engines: **codex** seq 29 reached READY with
+   no unready transition and 0 nudges; **antigravity** seq 27 went unready → 1 nudge → READY, so its
+   outcome was nudge-ASSISTED and the assistance is recorded; **aider** seq 33 went unready → **0
+   nudges** → READY 13 minutes later, so the outcome is real but the mechanism is **unattributed**.
+   That third row is the Architect's "assisted READY, candidate qualification missing" — and it is
+   the actual finding, not the absence the draft claimed.
+   *Re-verified read-only against `launch_sequences` on 2026-09-19 before this rewrite was
+   committed: `nudge_count` 0/1/0 and `unready_at` null/set/set for seq 29/27/33 respectively, with
+   `page_budget` 7332 on all three. The numbers are the table's, not a recollection.*
+2. **"A stale pass is visible in a git diff" was REJECTED** by the Architect as an acceptance case.
+   A git diff is not a mechanism. Staleness must be detected by the binding described below, not by
+   a human noticing a diff.
+3. Measured overhead is **668**, not the 301 the draft's harmlessness claim assumed — all three
+   engines carry `page_budget 7332`. `toolOutput` 8000 with `measured:false` is already honest and
+   stays.
+
+### The oracle, restated: READY alone certifies nothing
+
+Per the ruling, a probe may no longer assert "READY lands". Three distinct outcomes, none of which
+substitutes for another:
+
+| Scenario | Passes when | Does NOT establish |
+|---|---|---|
+| **Normal success** | the verdict is *successfully evaluated*, recovery state is correct, rule delivery and acknowledgements are current, and READY is bound to the SAME launch and final revision | anything about failure handling |
+| **Injected evaluation failure** | the configured gate REFUSES — `operator` withholds the task step and refuses READY; `advisory` warns and requires written reconciliation plus atomic clearance | successful-preflight evidence, ever |
+| **Cleared recovery** | a separately NAMED scenario: clearance was granted under the configured policy AND the failed-evaluation provenance survives it | that the evaluation succeeded — clearance is permission, not evaluation |
+
+Neither `not-evaluated` nor missing evaluation evidence qualifies the normal-success case, **even
+after a clearance**. A required engine failure is recorded as failed or blocked — never `N/A`
+merely to close the car.
+
+### Certification binding — what a result is bound to, and what invalidates it
+
+A pass certifies a **configuration**, not an engine name. Every recorded result binds to all of:
+
+- engine id **and version**
+- the effective relevant **config fingerprint**
+- **source / deployed runtime identity** (what actually ran, not what the repo says)
+- the **same launch and session**, and the same **final revision**
+- **assistance attribution** — automatic, nudge-assisted, or unattributed, carried explicitly
+
+**Any changed input demotes the result to `historical` / `stale`. It is never reported as
+current-verified.** Invalidation is mechanical, derived from the binding — not a reviewer noticing.
+The three engine rows above are today's evidence and are `historical` by this rule until re-run
+under a recorded binding.
+
+### Acceptance cases — DERIVED, and flagged as such
+
+Same treatment as §4c: #1589 says Chunk 04's cases are in the plan; they are not. These are derived
+from the approved §2.9 text plus the #1650 ruling, marked derived, and carried to the Architect with
+ADR 0017. `Requirements Confidence: MEDIUM` on that dependency.
+
+1. A normal-success probe on an engine establishes all five bindings and a verdict of successfully
+   evaluated; READY is bound to the same launch and final revision.
+2. An injected context-evaluation failure in **`operator`** mode: the task step is withheld and
+   READY is refused until a bound clear. Asserted through the REAL evaluator → stored preflight →
+   snapshot → task/READY path, not a hand-built `requiresRecovery: true` fixture.
+3. The same injected failure in **`advisory`** mode: warning served, written reconciliation and
+   atomic `agent-reconciled` clearance required; no silent acceptance.
+4. A **valid bound clearance** clears; a **wrong or stale** clearance does not.
+5. After clearance, the **failed verdict and its provenance are still readable**.
+6. The **missing/malformed result** fallback on a launch that required the check does NOT yield an
+   open gate.
+7. **Legitimate first launch** — nothing to check — still proceeds normally. This is the case the
+   naive fix breaks; see the open contract question below.
+8. An **unattributed** READY (aider's shape: no nudge, delayed transition) is recorded as
+   unattributed and does **not** qualify as automatic.
+
+### Bounds in force (ProjectManager, 2026-09-19) — unchanged by the rewrite
+
+Probes are serial, bounded and isolated. No second implementing Builder. No injection into an
+operator pane. Required parity rests on actual same-launch in-pane `tc` output **and** a server-side
+READY record. A blocked or failed probe is recorded as blocked or failed. Manual startup is
+distinguished from automatic activation.
+
+### OPEN CONTRACT QUESTION — blocks the #1650 fix, not this plan
+
+`PREFLIGHT_NOT_EVALUATED` (`lib/launch-sequence.js:88`) is both the missing-result fallback **and**
+the default parameter of `buildSnapshot` (`:469`). One constant therefore answers two unlike
+questions: *a required check produced nothing* (must gate, per the ruling) and *no preflight was
+passed at all*, which includes the legitimate first-launch behaviour the same ruling requires
+preserved. Setting `requiresRecovery: true` on it satisfies the first and breaks the second;
+leaving it false keeps the gap open.
+
+Proposed discriminator, with the Architect for confirmation: **whether the check was REQUIRED for
+that launch**, not the shape of the result — splitting the default-parameter use from the
+missing-result use so no caller obtains an open gate by omitting an argument. Case 7 above is what
+fails if this is got wrong in the strict direction; case 6 is what fails in the loose direction.
+
+### Explicitly out of scope
+
+- **#1623** (no usable sequence) — a separate gap. Fixing the sequenced path does not close it and
+  does not certify an affected no-sequence case.
+- **#1648** evaluated-`stale` semantics — unchanged by the ruling.
+- Historical engine-capability probe failures remain **non-gating** for supported governance
+  delivery.
+- Historical pre-gate rows stay historical. No bulk rewrite of their outcomes.
+
+### Done when
+
+**Probes RUN with any outcome does NOT close #1589** (Architect, binding). Required cases must PASS,
+or the operator explicitly amends scope. Beyond that: every box ticked, suite green,
+`/prawduct:critic` at `chunk` with no unresolved blocking findings, ADR 0017 carrying the #1650
+ruling and returned for Architect review, and **final parity acceptance still HELD** until the
+#1650 correction is integrated into the identified candidate and the whole-trajectory findings have
+an explicit disposition. Diagnostic runs are labelled diagnostic and are not final certification.
 
 ## 5. Open assumptions
 
@@ -1417,4 +1737,30 @@ into ADR 0017 for the Architect, per the PM's bound 4.
     building a fixture — an earlier hand-built one passed `worktreeTarget: null`, a value no producer
     emits, which is how it hid the bug.
   - `git.getInfo` now takes `{ fresh: true }`, for anything recorded into a frozen document.
-- [ ] Chunk 04
+- [ ] Chunk 04 — IN PROGRESS. `Type: cumulative-final`, so 21.12's review IS the train final; no
+  separate one is run.
+  - [x] Car 21.10 — per-rule drift reconciliation in step 3 (#1588). Built 2026-09-19 on
+    `feat/train-21-car-21-10`. Build plan and as-built deltas: §4c. NOT merged — awaiting the
+    operator's go, per the PM's bound 1. The review history is the governance ledger's, not this
+    bullet's: an outcome copied here goes stale the next round, and one did — this bullet read
+    "0 blocking / 0 warning / 0 note" while a later cumulative round found a blocking defect the
+    earlier rounds had not reached.
+    - **THREE review rounds, and rounds 2 and 3 were self-inflicted.** Round 1 found the class
+      (failure, absence and "nothing changed" sharing one value). Round 2's fix introduced round
+      3's defects — the same class, one level down: it split `unmeasured` from `unchanged` and then
+      collapsed WHICH SIDE was unmeasured, and it stopped comparing null hashes by demoting whole
+      sources, which dropped measured changes. The shape to watch for when touching this code is
+      **making a value honest at one level and flattening it at the next.**
+    - **Round 2 shipped a green suite containing a test that asserted a bug** — a shared document
+      moving `h1` → `CHANGED` with `hasDrift` pinned false. Running the suite could never have
+      caught it; only reading the assertion could. Treat a green suite over this module as evidence
+      about what could have made it red, nothing more.
+  - [ ] Car 21.11 — engine parity probes (#1589)
+  - [ ] Car 21.12 — ADR 0017 and the doc set (#1590). Bound 4: the draft goes to the Architect
+    BEFORE this merges.
+  - The car's one class of defect, worth reading before touching the drift path: failure, absence
+    and "nothing changed" started as ONE value at every boundary the car added, so every silence
+    rendered as the reassuring one. Three distinct values now carry it — `unreadable` vs
+    `not-recorded` for a source, `{unavailable}` vs `null` for a whole computation, and
+    `measured: false` vs a null hash for a row. A null returned by a reader is not a measurement,
+    and two of them must never compare equal.
