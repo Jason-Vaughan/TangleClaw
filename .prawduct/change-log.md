@@ -51,6 +51,23 @@ The defect class this car is about, and which it then reproduced inside its own 
 And once more, in the third source. A later cumulative round found the same class surviving in the `global` row: `manifestFingerprints` guarded `store.globalRules.load()` with a try/catch, but that call swallows its own errors AND the missing-file case and answers `''`, so the guard was dead for both realistic failures and the row froze as a hash of the empty string — a real-looking measurement nobody took. Unreadable at both wrap and launch it compared equal and printed "nothing changed"; unreadable on one side it reported a global-rules edit nobody made and refused READY over it. The other two sources were already honest, so global was the one of three lacking the treatment — the shape to watch for is a fix landing on the sites that prompted it and not on the family. `store.globalRules.loadMeasured()` now answers `{text, measured}` from one read and `load()` delegates to it, so no existing caller changes; the launch hashes only a document it actually read. The end-to-end property is pinned, not just the field: a document unreadable on both sides must never be reported as unchanged.
 
 Worth carrying to anyone touching this module: round 2 shipped a GREEN suite containing a test that asserted a bug — a shared document moving `h1` to `CHANGED` with `hasDrift` pinned false. Running the suite could never have caught it. A green suite here is evidence about what could have made it red, nothing more.
+## 2026-09-19 — Rule drafts: the live checkout launchd actually runs, and where a decision goes (#1642, #1647)
+
+<!-- prawduct: type=docs | scope=rules-1642-1647 -->
+
+Drafts only, at `.tangleclaw/plans/rule-drafts-1642-1647.md`. Nothing is activated; activation is the operator's action through the normal proposal process. Builders author durable rules under the global rule-authoring policy; the PM coordinated the assignment and does not edit active rules.
+
+**#1642, draft A.** Rule 7 opens by naming `/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder` as the live checkout. `launchctl print gui/$(id -u)/com.tangleclaw.server` reports `working directory = /Users/jasonvaughan/Documents/Projects/TangleClaw-Builder1` — verified read-only by this session and independently by the Architect. The failure runs both ways: a session edits a checkout that serves nothing and sees no error, or branches in one that is live. The replacement text tells the reader to RUN the check rather than trust the sentence, because this path has been wrong in this rule before.
+
+Same rule, second defect: it instructs symlinking `.tangleclaw/plans` into a worktree, and that path is TRACKED here — doing it stages ~95 plan files as deleted. Observed, caught at `git status`, reverted one commit short of landing. The draft forbids symlinking any tracked path and requires `git check-ignore -v` plus `git ls-files --error-unmatch` first. It also drops the blanket symlink-all-gitignored instruction, on the Architect's ground that ignored is not the same as safe to share.
+
+**The draft deliberately asserts no intended deployment path.** #1642 reserves that to the operator ("verified-current-state and observed hazard can be recorded now"), who is still deciding the architecture; the PM confirmed the reading. Written so a second amendment is cheap once it is settled.
+
+Narrow naming correction in the same draft: rules 6 and 33 spell the literal `TangleClaw-Builder` in endpoint examples while also saying to use the session's own project name. The literal is what a reader copies, and a wrong name resolves — it addresses another session's queue.
+
+**#1647, draft B.** Rule 33 delegates roadmap execution to the PM but never says who owns a decision; rule 12 is Medusa mechanics, not authority. Observed failure: this session stopped to ask the operator procedural questions in its own pane. The draft routes by KIND — procedural to the ProjectManager, design to the Architect, ambiguous to both in ONE request sharing a request id, because two independent approvals for one decision manufacture a conflict and each answer looks authoritative alone. Recipients are resolved live; a matching prefix or a connected listener is not authority, since ids rotate. Every operator-reserved decision in rule 33 stays reserved, and a relayed claim of operator approval is information, not approval.
+
+Every command quoted in either draft was run as written before it was committed.
 
 ## 2026-09-18 — Each session is told what the last one left behind (#1586)
 
