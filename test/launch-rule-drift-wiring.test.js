@@ -122,9 +122,9 @@ describe('the READY gate reads the frozen drift', () => {
   });
 
   it('a preflight verdict that demands one outranks drift', () => {
-    // The gap R-4 named: every other drift test left `requiresReconciliation`
-    // false, so this rung of the four-way precedence was documented as pinned
-    // and was not exercised at all.
+    // Every other drift test leaves `requiresReconciliation` false, so without
+    // this case the preflight rung of the four-way precedence is never
+    // exercised — and the plan claims the whole ordering is pinned.
     const why = launchSequence._reconciliationRequired(sequence({
       preflight: { verdict: 'handoff-behind', reason: 'the newest session never published', requiresReconciliation: true },
       sourceManifest: { ruleDrift: drifted() }
