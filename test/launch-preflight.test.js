@@ -614,3 +614,46 @@ describe('ok is a positive predicate, proven by exhaustion', () => {
     }
   });
 });
+
+describe('a worktree neither end could read is not a verified worktree (#1648)', () => {
+  it('two unmeasured head shas do not satisfy ok', () => {
+    // `null !== null` is false, so an unmeasured pair used to read as "the head
+    // did not move" and went on to satisfy a precondition of `ok`. Nothing had
+    // looked at that tree on either side, and the launch reported it as sound.
+    //
+    // #1648's fix made this reachable: a failed measurement now answers null
+    // where a launch-time sha was previously substituted, so the hole had to
+    // close with it.
+    const r = runPreflight(ctx({
+      file: { state: FILE_STATES.VALID, doc: doc({ worktree: worktree({ headSha: null }) }), digest: DIGEST },
+      worktreeProbe: { toplevelExists: true, headSha: null, branch: 'main' }
+    }));
+    assert.notEqual(r.verdict, VERDICTS.OK,
+      'neither side read the head, so nothing verified it');
+    assert.ok(r.reasons.some((x) => /unverified/i.test(x)),
+      'and the verdict names WHY, rather than failing silently');
+  });
+
+  it('a recorded head the probe could not read is still STALE, as it always was', () => {
+    // The asymmetry that matters: `recorded` is evidence and the probe is not,
+    // so a recorded sha with an unreadable probe is a real mismatch. Guarding
+    // this symmetrically would have turned a correct STALE into an `ok`, which
+    // is strictly worse than the hole being closed.
+    const r = runPreflight(ctx({
+      file: { state: FILE_STATES.VALID, doc: doc({ worktree: worktree({ headSha: 'abc123' }) }), digest: DIGEST },
+      worktreeProbe: { toplevelExists: true, headSha: null, branch: 'main' }
+    }));
+    assert.equal(r.verdict, VERDICTS.STALE);
+    assert.ok(r.reasons.some((x) => /could not be read/i.test(x)),
+      'and it says the probe failed rather than claiming HEAD is null');
+  });
+
+  it('two measured, equal head shas still satisfy ok', () => {
+    // The guard must not cost the ordinary case.
+    const r = runPreflight(ctx({
+      file: { state: FILE_STATES.VALID, doc: doc({ worktree: worktree() }), digest: DIGEST },
+      worktreeProbe: { toplevelExists: true, headSha: 'abc123', branch: 'main' }
+    }));
+    assert.equal(r.verdict, VERDICTS.OK);
+  });
+});

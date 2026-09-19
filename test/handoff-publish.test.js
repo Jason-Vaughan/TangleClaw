@@ -250,7 +250,13 @@ describe('the handoff-stage wrap step', () => {
     assert.equal(doc.nextAction, '- ship chunk 03');
   });
 
-  it('records the wrap commit as the handoff\'s head sha when the work tree is a repo', async () => {
+  it('does NOT take the head sha from the wrap\'s commit step', async () => {
+    // It used to, and that was a second source for a field whose contract is
+    // "one tree, one moment". The two disagree on a real flow: when the wrap
+    // auto-branches off a protected branch, `commit` captures its sha on the
+    // WRAP branch and the original branch is then checked back out — so the
+    // document would pair a freshly measured `branch: main` with a sha main has
+    // never carried. That is #1648 restated inside the fix for #1648.
     const res = await stageStep.run(ctx({
       scope: {
         workTree: '/abs/work', workToplevel: '/abs/work', workGitDir: '/abs/work/.git',
@@ -259,7 +265,11 @@ describe('the handoff-stage wrap step', () => {
       previousResults: [{ stepId: 'commit', kind: 'commit', status: 'done', blockers: [], output: { commitSha: 'cafe1234' } }]
     }));
     const doc = lockfile.readHandoffFile(lockfile.stagedPath(project, res.output.publicationId)).doc;
-    assert.equal(doc.worktree.headSha, 'cafe1234');
+    assert.notEqual(doc.worktree.headSha, 'cafe1234',
+      'the commit step\'s sha is a different fact and the commit step already records it');
+    // `/abs/work` is not readable, so nothing was measured — and nothing is
+    // invented to fill the gap.
+    assert.equal(doc.worktree.headSha, null);
     assert.equal(doc.worktree.gitDir, '/abs/work/.git',
       'gitDir is a path; worktreeTarget is a boolean and was never one');
     // `/abs/work` does not exist, so the tree could not be measured — and the
