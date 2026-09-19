@@ -34,6 +34,23 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-19 — A session is told which governing rules moved while it was away (#1588)
+
+<!-- prawduct: type=feature | scope=train-21-phased-launch -->
+
+Train 21 Chunk 04, car 21.10. Authorized by the ProjectManager under the delegation rule. No DB migration — the next unshipped schema version stays free for 21.11/21.12.
+
+Step 3 already stated whether the previous session's handoff was sound and said nothing about whether the rules that session worked under still hold. It now names every project rule, global rule set and shared document that changed since the handoff was written, and drift joins `_reconciliationRequired` as the fourth and last trigger — last because each rung above it names a stronger condition, and an agent handed a list cannot tell which gate it is standing at.
+
+What was read first:
+- §4's Chunk 04 carries NO acceptance cases, though #1588 says it does. Chunks 02 and 03 each got an explicit list and 04 never did. The cases in §4c are DERIVED from the approved §2.2/§2.4/§2.6 text and are flagged as such; the car carries `Requirements Confidence: MEDIUM` naming that dependency, and ADR 0017 (21.12) is what asks the Architect to ratify them. If the derivation missed the intent, this car comes back.
+- `sourceManifest.rules` is deliberately NOT widened. It is the input to §2.2's revision check, whose ratified trigger is a change to the project rules served in step 2; widening it would make a global-rules edit re-render four steps and move the cursor back, changing Chunk 02's approved protocol. The cost is that the three sources are traversed twice per launch and the global text is hashed two ways.
+
+The defect class this car is about, and which it then reproduced inside its own fixes more than once: failure, absence and "nothing changed" arriving as ONE value, so every silence renders as the reassuring one. Round 1 found it in the build (an unreadable shared document hashed to null at both wrap and launch, compared equal to itself, and reported UNCHANGED with no log line anywhere). Round 3 found it again in round 2's fix, one level down — `unmeasured` was split from `unchanged` and then WHICH SIDE was unmeasured got collapsed, so step 3 blamed this machine for failures that happened at the previous wrap; and null hashes stopped being compared by demoting whole sources, which dropped measured changes. The per-source verdict is now five-valued and the renderer emits a separate sentence per direction.
+
+And once more, in the third source. A later cumulative round found the same class surviving in the `global` row: `manifestFingerprints` guarded `store.globalRules.load()` with a try/catch, but that call swallows its own errors AND the missing-file case and answers `''`, so the guard was dead for both realistic failures and the row froze as a hash of the empty string — a real-looking measurement nobody took. Unreadable at both wrap and launch it compared equal and printed "nothing changed"; unreadable on one side it reported a global-rules edit nobody made and refused READY over it. The other two sources were already honest, so global was the one of three lacking the treatment — the shape to watch for is a fix landing on the sites that prompted it and not on the family. `store.globalRules.loadMeasured()` now answers `{text, measured}` from one read and `load()` delegates to it, so no existing caller changes; the launch hashes only a document it actually read. The end-to-end property is pinned, not just the field: a document unreadable on both sides must never be reported as unchanged.
+
+Worth carrying to anyone touching this module: round 2 shipped a GREEN suite containing a test that asserted a bug — a shared document moving `h1` to `CHANGED` with `hasDrift` pinned false. Running the suite could never have caught it. A green suite here is evidence about what could have made it red, nothing more.
 ## 2026-09-19 — Rule drafts: the live checkout launchd actually runs, and where a decision goes (#1642, #1647)
 
 <!-- prawduct: type=docs | scope=rules-1642-1647 -->
