@@ -290,3 +290,63 @@ describe('schema v30→v31 — outcome CHECK widened on a REAL old DB', () => {
     }
   });
 });
+
+describe('_awaitPaneReady on a status-row engine (#1628)', () => {
+  // codex is the engine #1628 proved the whole-pane reading got wrong, and this
+  // gate decides whether a prime paste may claim `delivered`. Every case below
+  // runs the codex branch; the antigravity cases above run the other one, so
+  // between them both readings are exercised rather than one being assumed.
+  const {
+    CX_IDLE_PANE, CX_CLIPPED_PANE, CX_TRANSCRIPT_PROSE_PANE
+  } = require('./_wake-fixtures');
+
+  it('precondition: codex confines its marker to the status row', () => {
+    const codex = medusaWake.ENGINE_WAKE_PROFILES.codex;
+    assert.equal(codex.idleMarkerRow, 'status-row');
+    assert.equal(codex.idleMarker, 'Ready');
+  });
+
+  it('reports ready when the status row renders the marker over a settled transcript', async () => {
+    const { opts } = scriptedPane([CX_IDLE_PANE, CX_IDLE_PANE]);
+    const res = await sessions._awaitPaneReady('t', 'codex', opts);
+    assert.equal(res.gated, true);
+    assert.equal(res.ready, true);
+  });
+
+  it('NEVER reports ready from a marker that is only in the transcript', async () => {
+    // The pane is displaying prose ABOUT the marker while its status row is
+    // clipped. The reading this replaces called that ready and let the paste
+    // claim `delivered` — the launch-side face of the same defect.
+    assert.ok(CX_TRANSCRIPT_PROSE_PANE.join('\n').includes('Ready'),
+      'fixture must carry the marker in its prose, or it pins nothing');
+    const { opts } = scriptedPane([CX_TRANSCRIPT_PROSE_PANE, CX_TRANSCRIPT_PROSE_PANE]);
+    const res = await sessions._awaitPaneReady('t', 'codex', opts);
+    assert.equal(res.ready, false);
+  });
+
+  it('names the truncated status row in the timeout reason, not just the elapsed time', async () => {
+    // An operator whose status line hides the run-state gets told WHICH thing
+    // to reorder. A timeout that only says "never rendered" is the silence
+    // #1628 was reported as.
+    const { opts } = scriptedPane([CX_CLIPPED_PANE, CX_CLIPPED_PANE]);
+    const res = await sessions._awaitPaneReady('t', 'codex', opts);
+    assert.equal(res.ready, false);
+    assert.match(res.reason, /status-row-truncated/);
+  });
+
+  it('still requires a settled transcript — the marker alone is not readiness', async () => {
+    const moving1 = ['boot line 1', ...CX_IDLE_PANE];
+    const moving2 = ['boot line 1', 'boot line 2', ...CX_IDLE_PANE];
+    const { opts, calls } = scriptedPane([moving1, moving2, moving2]);
+    const res = await sessions._awaitPaneReady('t', 'codex', opts);
+    assert.equal(res.ready, true);
+    assert.ok(calls() >= 3, 'readiness was declared before the digest held');
+  });
+
+  it('carries a capture error into the reason ahead of any row verdict', async () => {
+    const { opts } = scriptedPane([new Error('pane is gone')], { timeoutMs: 300 });
+    const res = await sessions._awaitPaneReady('t', 'codex', opts);
+    assert.equal(res.ready, false);
+    assert.match(res.reason, /pane is gone/);
+  });
+});

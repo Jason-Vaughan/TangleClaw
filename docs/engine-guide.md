@@ -354,6 +354,16 @@ captured live declares its signature:
 Copy that block as it stands: its `evidence` map covers exactly the fields it declares, which is
 what the read guard requires, and `promptPad` is the JSON escape for the NBSP a real profile
 carries — one character, not the six characters a pasted `\u00a0` would give you. Add
+`idleMarkerRow` (and `busyStates`, and their `evidence` entries) only if you have measured WHERE the
+engine draws its at-rest signal. Declaring `"status-row"` confines the match to the pane's last
+non-empty row and makes it a whole-segment match there. Reach for it when the marker is a status
+segment rather than free text: a segment's rendering depends on the operator's own status-line
+order, on the pane width, and on whether its neighbours render at all, so reading it from the whole
+pane means transcript text that merely MENTIONS the marker can satisfy the gate. That is not
+hypothetical — it is #1628, in both directions at once: codex's row truncated before its run-state
+so no wake ever fired, and the same literal sitting in a transcript made a working pane read as
+rested. Without the field an engine keeps the whole-pane reading it was measured against.
+
 `pasteRejectedMarker` (and its `evidence` entry) only if you have measured this engine discarding
 a submission.
 
@@ -380,10 +390,12 @@ covers the decoration and nothing else.
 | `promptPad` | The separator the prompt itself draws before the first input column, or `null` when it has never been measured |
 | `placeholderSgr` | SGR attributes this engine renders text the operator did **not** type in |
 | `idleMarker` | A POSITIVE at-rest signal, or `null` when nothing was found that is present at rest and absent mid-turn |
+| `idleMarkerRow` | Optional — `"status-row"` when the engine renders its at-rest signal in a status row rather than anywhere in the pane. `idleMarker` is then matched as a whole space-delimited segment of that ONE row |
+| `busyStates` | Optional — the other state tokens that same row can carry, so a busy row is reported as busy rather than as a marker that never rendered. Never consulted for readiness |
 | `pasteRejectedMarker` | Optional — see below |
 | `decorativePattern` | Optional — a regex source matching cells the engine ANIMATES at rest (decoration the operator did not type). Declare it only where you have watched an idle pane and seen it move |
 
-Every field except `pasteRejectedMarker` and `decorativePattern` is **required**, `null` included. An author who has not
+Every field except `idleMarkerRow`, `busyStates`, `pasteRejectedMarker` and `decorativePattern` is **required**, `null` included. An author who has not
 measured a value writes `null` and says so in `evidence`, which is a recorded gap; an omitted field
 would be the same gap with nobody able to tell it from an oversight.
 

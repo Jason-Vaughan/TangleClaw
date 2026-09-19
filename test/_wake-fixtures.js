@@ -79,6 +79,79 @@ const AG_TYPING_PANE = [
   '? for shortcuts                                    Gemini 3.5 Flash (Medium)'
 ];
 
+// ── codex pane fixtures (2026-09-19 live probes, codex-cli 0.155.1) ──
+// The exact bytes matter more here than anywhere else in this file. codex
+// draws its run-state in a STATUS ROW whose content depends on the operator's
+// `tui.status_line` order, the pane width, and whether neighbouring segments
+// render at all — and the `\u00b7` separators come from the JOIN between
+// segments, not from run-state itself. Hand-writing these would invent a row
+// codex never draws and the guard would go green against it.
+
+/** Composer line: empty, carrying codex's animated braille shimmer. */
+const CX_COMPOSER = '\u203a\u2801Ask Codex to do anything\u2840  \u2808     \u2808 \u2802                                \u2804    \u2802';
+
+/** `status_line = ["run-state"]` at rest. No separators: run-state is alone. */
+const CX_IDLE_PANE = [
+  '\u2022 PROBE_DONE',
+  '  done 8:28 PM',
+  CX_COMPOSER,
+  '  Ready'
+];
+/** Same layout, turn in flight. The busy marker lives ABOVE, not in the row. */
+const CX_BUSY_PANE = [
+  '\u2022 Working (3s \u2022 esc to interrupt)',
+  CX_COMPOSER,
+  '  Working'
+];
+/**
+ * Reasoning state. Recorded from codex's own segment help text
+ * (`Compact session run-state text (Ready, Working, Thinking)`) rather than a
+ * live capture — neither probe turn was long enough to render it. Marked so
+ * nobody mistakes it for a measured row.
+ */
+const CX_THINKING_PANE = [
+  CX_COMPOSER,
+  '  Thinking'
+];
+/** run-state with a rendering neighbour after it: one joining separator. */
+const CX_IDLE_WITH_NEIGHBOUR_PANE = [
+  '  done 8:28 PM',
+  CX_COMPOSER,
+  '  Ready \u00b7 Ask for approval'
+];
+/**
+ * The #1628 incident row: 14 configured segments, run-state sixth, truncated
+ * at the pane width. The state token never renders, and the row ends U+2026.
+ */
+const CX_CLIPPED_PANE = [
+  '  Worked for 1m 1s \u00b7 done 8:05 PM',
+  CX_COMPOSER,
+  '  gpt-6-astra high \u00b7 ~/Documents/Projects/TangleClaw-Architect \u00b7 TangleClaw-Architect \u00b7 docs/simplify-b\u2026'
+];
+/**
+ * The false-idle case, and the reason this gate reads ONE row instead of the
+ * tail: the pane is displaying PROSE about the marker. Whole-tail matching
+ * found the literal here and reported a resting pane (ledger 5030,
+ * 2026-09-19 03:29:50Z). The status row is the clipped one — no state token.
+ */
+const CX_TRANSCRIPT_PROSE_PANE = [
+  '  The exact separator characters still need testing because TangleClaw',
+  '  matches \u00b7 Ready \u00b7 literally. I will confirm before asserting recovery.',
+  CX_COMPOSER,
+  '  gpt-6-astra high \u00b7 ~/Documents/Projects/TangleClaw-Architect \u00b7 TangleClaw-Architect \u00b7 docs/simplify-b\u2026'
+];
+/** A dialog: the composer is replaced by selector rows, no status row at all. */
+const CX_DIALOG_PANE = [
+  '  Do you trust the contents of this directory?',
+  '\u203a 1. Yes, continue',
+  '  2. No, quit'
+];
+/** Operator mid-typing: composer holds their draft, status row still at rest. */
+const CX_TYPING_PANE = [
+  '\u203a reply PROBE_DONE without tools or file changes',
+  '  Ready'
+];
+
 module.exports = {
   IDLE_PANE,
   BUSY_PANE,
@@ -87,5 +160,14 @@ module.exports = {
   AG_IDLE_PANE,
   AG_BUSY_PANE,
   AG_DIALOG_PANE,
-  AG_TYPING_PANE
+  AG_TYPING_PANE,
+  CX_COMPOSER,
+  CX_IDLE_PANE,
+  CX_BUSY_PANE,
+  CX_THINKING_PANE,
+  CX_IDLE_WITH_NEIGHBOUR_PANE,
+  CX_CLIPPED_PANE,
+  CX_TRANSCRIPT_PROSE_PANE,
+  CX_DIALOG_PANE,
+  CX_TYPING_PANE
 };

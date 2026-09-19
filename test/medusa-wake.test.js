@@ -1442,7 +1442,12 @@ describe('medusa-wake — the peer reason vocabulary is declared for every code 
     const prefixes = new Set();
 
     // The assessor reasons `_judgeSession` prefixes with `pane-`.
-    const assessorReasons = ['_assessActivity', '_assessPane']
+    // `_assessStatusRow` and `readReadiness` are among them: `_assessActivity`
+    // RETURNS their verdicts, so their codes reach a sender exactly like the
+    // ones written inline. `not-at-rest` in particular now lives in
+    // `readReadiness` — a code added there and not scanned would escape the
+    // "every emitted code is mapped" guard silently (#1628).
+    const assessorReasons = ['_assessActivity', '_assessPane', '_assessStatusRow', 'readReadiness']
       .flatMap((fn) => [...stripComments(topLevelFunction(fn)).matchAll(/reason:\s*'([a-z-]+)'/g)].map((m) => m[1]));
     assert.ok(assessorReasons.length >= 5, `the assessor scan found reasons: ${assessorReasons}`);
     const idleOwn = [...stripComments(topLevelFunction('assessSessionIdle')).matchAll(/reason:\s*'(pane-[a-z-]+)'/g)].map((m) => m[1]);

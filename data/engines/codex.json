@@ -58,7 +58,9 @@
   "defaultLaunchMode": "default",
   "persistent": null,
   "capabilities": {
-    "launchSequence": { "supported": true },
+    "launchSequence": {
+      "supported": true
+    },
     "supportsSlashCommands": false,
     "supportsPrimePrompt": true,
     "supportsConfigFile": true,
@@ -72,7 +74,12 @@
       "placeholderSgr": [
         2
       ],
-      "idleMarker": "· Ready ·",
+      "idleMarker": "Ready",
+      "idleMarkerRow": "status-row",
+      "busyStates": [
+        "Working",
+        "Thinking"
+      ],
       "decorativePattern": "[⠀-⣿]",
       "evidence": {
         "busyMarker": {
@@ -96,12 +103,20 @@
           "source": "Live capture: the placeholder is emitted as `\\u001b[2mAsk Codex to do anything`, i.e. SGR 2 (dim), the same attribute Claude uses. The braille shimmer is NOT outside this field merely because it carries only a truecolor foreground. `_cells` applies SGR sub-parameters as attributes, so `\\u001b[38;2;R;G;Bm` records 38, 2 and R — the 2 from the truecolor selector is indistinguishable from a real dim attribute, and a probe confirms `sgr.has(2)` is true for such a cell. The shimmer is therefore handled by `decorativePattern`, which names it explicitly, rather than by this field happening to catch it."
         },
         "idleMarker": {
-          "verifiedOn": "2026-09-16",
-          "source": "Measured from outside the pane over 50 samples at 1.5s intervals against a live codex session: the status row reads `· Ready ·` at rest and `· Working ·` during a turn — present in 45/45 at-rest samples, absent in 5/5 working samples, zero overlap. Required because codex keeps its composer drawn during a turn, so the composer-empty read alone would call a working pane idle. The separators are part of the declared marker on purpose: the gate matches with `includes()` over the whole captured tail, so a bare `Ready` would also be satisfied by ordinary transcript text such as a tool line reading `Ready in 1.2s`, which is not an at-rest signal at all. `· Ready ·` is the status row's own rendering and was confirmed present on the live pane. Known limit, NOT measured: a cold pane that has not yet drawn its status row has no idle marker, and declaring one puts codex on the readiness-gated prime paste (`lib/sessions.js#_awaitPaneReady`). Every sample here was taken on a warm session; a freshly launched codex pane did render the status row with `Ready` in it during startup captures, but the gate's cold-start timing was not measured."
+          "verifiedOn": "2026-09-19",
+          "source": "Re-measured on codex-cli 0.155.1 after the #1628 incident, in two disposable probes at 104x41 with per-invocation `-c tui.status_line` overrides. The marker is the BARE STATE TOKEN, not a decorated literal. `status_line=[\"run-state\"]` renders the row as `  Ready` at rest and `  Working` in a turn — U+0020 U+0020 then the word, with NO separators. `status_line=[\"project-name\",\"run-state\",\"approval-mode\"]` renders `  Ready · Ask for approval`: the U+00B7 comes from the JOIN between rendered segments, and `project-name` contributed no leading separator because it rendered nothing at all (codex's own picker calls it \"omitted when unavailable\"). This is why the previous declared value `· Ready ·` was wrong in two independent ways. It required a PRECEDING segment that actually renders content, so a configured-but-empty neighbour silently deleted the leading separator; and it was matched with `includes()` over the whole captured tail, which found the literal in TRANSCRIPT PROSE discussing the marker and reported a resting pane that was not at rest (delivery ledger 5030, 2026-09-19 03:29:50Z). Both faces are fixed by `idleMarkerRow`, which confines the match to the status row and makes the token match whole-word there."
         },
         "decorativePattern": {
           "verifiedOn": "2026-09-16",
           "source": "Measured, not predicted. codex paints an animated braille shimmer (U+2800-U+28FF) across the composer line AND the lines above it, continuously, in any session that has conversation history. It broke both idle gates. Movement: `_paneDigest` hashes the transcript region above the composer, where part of the shimmer is drawn — 8 distinct digests over 8 samples of a completely idle pane, so the monitor reported `pane-writing` forever and the nudge could never fire. Composer: a shimmer cell lands between glyph and cursor about a third of the time (8 empty / 4 blocked, reproduced in two independent 12-sample runs), and it OVERWRITES the pad cell, which made the separator unrecognisable. Declaring the range makes both gates discount cells the ENGINE drew rather than the operator; the digest blanks them to spaces rather than deleting them, so a moving shimmer cannot shorten a line and reintroduce the instability. After the fix, on the same live pane: 1 distinct digest over 8 idle samples, composer 12/12 empty, and the wake nudge fired end to end. Scoped to the engine that draws them — claude and antigravity declare nothing, so braille typed into those engines is still input. Accepted cost, stated rather than hidden: braille an operator genuinely types into codex is discounted as decoration. NOT caused by tui.animations, the model, or reasoning effort — a fresh gpt-6-astra high session with animations ON showed zero shimmer over 12 samples, so it tracks session history rather than configuration."
+        },
+        "idleMarkerRow": {
+          "verifiedOn": "2026-09-19",
+          "source": "The status row is the LAST NON-EMPTY line of the VISIBLE pane. Validated against three independent captures: both probe layouts, and the operator pane whose row is truncated and correctly yields no state token. codex runs on tmux's ALTERNATE SCREEN, so a no-range `capture-pane -p` returns exactly the visible pane and cannot pull scrollback in — which matters because scrollback is where the prose that forged the false idle lives."
+        },
+        "busyStates": {
+          "verifiedOn": "2026-09-19",
+          "source": "`Working` measured live: the status row reads `  Working` while a turn is in flight, and `esc to interrupt` is present ABOVE it on codex's own working row, so busyMarker and this agree. `Thinking` is NOT measured — it is taken from codex's own segment help text, `Compact session run-state text (Ready, Working, Thinking)`, because neither probe turn ran long enough to render it. Declared anyway so a Thinking row reports as busy rather than as an unreachable marker; if the rendering differs the failure is a missed wake, never a false idle, because readiness still requires the POSITIVE Ready token."
         }
       }
     }

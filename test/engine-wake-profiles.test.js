@@ -409,6 +409,44 @@ describe('a malformed wake block is refused at the read, never half-loaded', () 
     astral.promptGlyph = '𝄞';
     assert.deepEqual(wake._wakeBlockErrors(astral), []);
   });
+
+  it('refuses a status-row declaration with no marker to find (#1628)', () => {
+    // The dangerous shape, and the reason this is a refusal rather than a
+    // default: the block VALIDATES, the engine loads, and the readiness read
+    // falls through to the whole-pane `includes()` — an author who declared
+    // confinement silently gets the reading #1628 was, with a profile that
+    // says otherwise. Failing open here is worse than any parse error.
+    const b = wellFormed();
+    b.idleMarker = null;
+    b.idleMarkerRow = 'status-row';
+    b.evidence.idleMarkerRow = { verifiedOn: null, source: 'probe' };
+    assert.match(wake._wakeBlockErrors(b).join(' '), /needs a wake\.idleMarker to find/);
+    assert.equal(derive(b).probe, undefined);
+  });
+
+  it('refuses busyStates declared where nothing reads it (#1628)', () => {
+    // Measured detail that no code consults is a claim the profile cannot
+    // honour — and it reads, to the next author, as though the busy tokens are
+    // being checked.
+    const b = wellFormed();
+    b.busyStates = ['Working'];
+    b.evidence.busyStates = { verifiedOn: null, source: 'probe' };
+    assert.match(wake._wakeBlockErrors(b).join(' '), /read only where wake\.idleMarkerRow confines the match/);
+    assert.equal(derive(b).probe, undefined);
+  });
+
+  it('accepts the pair when both are declared together', () => {
+    // The refusals must gate the broken combinations only — a profile that
+    // declares confinement properly has to survive them.
+    const b = wellFormed();
+    b.idleMarker = 'Ready';
+    b.idleMarkerRow = 'status-row';
+    b.busyStates = ['Working', 'Thinking'];
+    b.evidence.idleMarkerRow = { verifiedOn: null, source: 'probe' };
+    b.evidence.busyStates = { verifiedOn: null, source: 'probe' };
+    assert.deepEqual(wake._wakeBlockErrors(b), []);
+    assert.equal(derive(b).probe.idleMarkerRow, 'status-row');
+  });
 });
 
 describe('declaring badly and declaring nothing are one answer', () => {
@@ -739,4 +777,31 @@ describe('the engine guide\'s wake table agrees with the real field set', () => 
     assert.deepEqual(named, optional,
       'the guide names a different optional set than WAKE_FIELDS declares');
   });
+});
+
+describe('every document that lists the wake roster lists all of it (#1628)', () => {
+  // The guide already had a guard; these two did not, and both went stale the
+  // moment a field was added. An author writing a profile from the
+  // configuration reference would silently inherit the whole-pane reading that
+  // IS #1628, with nothing to tell them a narrower one exists.
+  //
+  // Derived from `Object.keys(WAKE_FIELDS)` rather than a second list here —
+  // a hand-kept expectation is the same defect one file over.
+  const ROSTER_DOCS = [
+    path.join(ROOT, 'docs', 'configuration-reference.md'),
+    path.join(ROOT, 'FEATURES.md'),
+    path.join(ROOT, 'docs', 'engine-guide.md')
+  ];
+
+  for (const doc of ROSTER_DOCS) {
+    it(`${path.relative(ROOT, doc)} names every wake field`, () => {
+      const text = fs.readFileSync(doc, 'utf8');
+      // Either spelling counts: prose backticks a field, while the
+      // configuration reference renders the block as JSON and quotes it.
+      const named = (f) => text.includes(`\`${f}\``) || text.includes(`"${f}"`);
+      const missing = Object.keys(wake.WAKE_FIELDS).filter((f) => !named(f));
+      assert.deepEqual(missing, [],
+        `${path.relative(ROOT, doc)} omits wake field(s) an author would need`);
+    });
+  }
 });
