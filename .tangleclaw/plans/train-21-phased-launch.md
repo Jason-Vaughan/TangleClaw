@@ -1137,6 +1137,119 @@ and the column set. The two open points are named as decisions below, not as gue
 Every box above is ticked, the suite is green, `/prawduct:critic` has run with no unresolved
 blocking findings, the VRF entry is enqueued, and the PR closes #1587.
 
+---
+
+## 4d. Car 21.11 build plan (#1589) — engine parity probes and honest not-applicable
+
+**Branch:** `feat/train-21-car-21-11`, from `origin/main` (21.10 is in review as PR #1646 and this
+car does not depend on it). **Schema:** no DB migration. **Critic mode:** `chunk` — the chunk is
+`cumulative-final`, so 21.12's review is the train final. **Type:** feature. **Size:** medium.
+
+**Acceptance cases are DERIVED here, exactly as §4c records for 21.10.** #1589 says Chunk 04's
+cases are listed in the plan; they are not. Same gap, same treatment: derived from the approved
+§2.9 text, marked as derived, and carried to the Architect with ADR 0017.
+
+**Bounds in force (ProjectManager, 2026-09-19).** Probes are serial, bounded and isolated. No
+second implementing Builder. No injection into an operator pane. Required parity must rest on
+actual same-launch in-pane `tc` output AND a server-side READY record. **A blocked or failed probe
+is recorded as blocked or failed — never as `not-applicable`, never as passed.** Manual startup is
+distinguished from automatic activation.
+
+### Confidence check
+
+- **Problem.** `data/engines/{codex,aider,antigravity}.json` each declare
+  `launchSequence: { supported: true }` and nothing else, and `resolveApplicability`
+  (`lib/launch-sequence.js:181`) treats that bare claim as fact. Nobody has ever confirmed that
+  `tc` resolves inside a pane on those engines or that one of their sessions can reach READY. A
+  declaration nothing measured is serving as evidence that the channel works — which is the exact
+  shape `prime-delivery-direction.md` §4 forbids ("unverifiable delivery is recorded as
+  *unverified*, never promoted because nothing contradicted it").
+- **Success.** Every engine's launch-sequence claim carries its own provenance: `verified` with
+  when, how and what was observed, or nothing — and the surface that reports it says **declared but
+  unprobed** rather than reading the same as a probed one. A probe that fails records the failure.
+  openclaw and the Master pane carry honest `not-applicable` reasons naming what is absent.
+- **Out of scope.** ADR 0017 and the doc set (21.12). Flipping R1's `pasteRules` default — that
+  needs the operator's ratification and is not a parity question. Building a Master phased launch
+  (#1589 asks only that the follow-up be referenced; the Master's own plan owns the work).
+  Retention (#1595) and delegated clearing (#1025) — both already OPEN, so this car cites them
+  rather than filing duplicates.
+
+### The gap, precisely
+
+`toolOutput` already models this correctly and is the precedent to copy: claude's declaration
+carries a `source` paragraph saying what was measured and how, and `resolveToolOutput` returns
+`measured: true|false` so `tc start status` can tell a reader when a limit is assumed. codex, aider
+and antigravity declare **no** `toolOutput`, take the conservative 8,000 default, and are correctly
+reported as assumed. That half is already honest.
+
+`launchSequence` has no such half. `{ supported: true }` is indistinguishable between "measured in
+a live pane" and "someone believed it when the profile was written".
+
+### Decisions this car records
+
+- **`[DECISION: verification is a property of the DECLARATION, not a separate registry |
+  alternatives: a probe-results table; a generated report file | rationale: the claim and its
+  evidence must not be able to drift apart]`** `launchSequence` gains an optional `verified`
+  object — `{at, method, activation, evidence}`. A declaration with no `verified` is **declared,
+  unprobed**, and every surface that reports support says which it is. Keeping the evidence beside
+  the claim means a profile edit that changes the claim without re-probing is visible in the diff
+  rather than silently inheriting a stale pass.
+- **`[DECISION: a failed probe is recorded, not erased | alternatives: leave the field absent on
+  failure | rationale: absent already means "never probed", and the PM's bound 2 forbids the
+  collapse]`** A probe that runs and fails writes `verified: {outcome: "failed", …}` with the
+  reason. Absent, failed and passed are three states and stay three: "we never looked", "we looked
+  and it did not work", "we looked and it did". This is car 21.10's lesson applied to a different
+  document — an unmeasured thing must never render as a measured one.
+- **`[DECISION: `supported` still gates applicability; `verified` never does |
+  alternatives: refuse a sequence on an unprobed engine | rationale: withholding the channel is a
+  bigger harm than serving it unproven]`** An unprobed engine still gets its launch sequence. The
+  honest-absence requirement is met by SAYING it is unprobed, not by withholding governance from
+  sessions that would otherwise receive it. A probe that FAILED is the case worth revisiting, and
+  is deliberately left non-gating in this car — flagged for the Architect in ADR 0017 rather than
+  decided here, because refusing a channel on evidence is a policy question, not a build one.
+- **Master pane `not-applicable`.** It is not an engine profile, so it takes its reason where the
+  parity surface reports, citing
+  `/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder1/.tangleclaw/plans/master-startup-and-wrap.md`
+  as the plan that owns it.
+
+### Steps
+
+1. **Declare the shape.** `launchSequence.verified` in the profile schema + `lib/engines.js`
+   capability documentation; `resolveApplicability` unchanged (it reads `supported`).
+2. **Report it honestly.** `tc start status` and the parity surface distinguish
+   verified / declared-unprobed / probe-failed / not-applicable, and never render two of them alike.
+3. **The probe harness** (`scripts/engine-parity-probe.js`): launches ONE engine in an isolated
+   pane, captures in-pane `tc` output, reads the server's own launch record for a READY row, and
+   writes the `verified` block. Serial and bounded by construction — it takes one engine per run.
+4. **Run it** for codex, aider, antigravity; record whatever it returns, including failure.
+5. **Cite the follow-ups** — #1025, #1595 and the Master plan — rather than filing duplicates.
+6. **Tests**, per the cases below.
+
+### Acceptance cases (derived)
+
+- an engine with no `verified` block reports **declared, unprobed** — never the same string as a
+  verified one
+- a probe that fails writes `outcome: failed` with a reason, and the surface says failed — not
+  absent, not passed
+- a probe that cannot start at all (engine binary missing) is **blocked**, distinct from failed
+- `resolveApplicability` is unchanged by any `verified` value: an unprobed engine still gets its
+  sequence
+- openclaw reports `not-applicable` with its existing reason, and is never counted as unprobed
+- the Master pane reports `not-applicable` citing the plan that owns it
+- manual startup and automatic activation are recorded distinctly, per the PM's bound 2
+- a probe's evidence names the SAME launch it observed — an in-pane `tc` output and a READY row
+  from two different launches is not parity evidence (the §2.1 identity handshake is what ties
+  them; the probe records the launch id both halves carry)
+- an engine whose profile is edited after a probe keeps its `verified` block visible in the diff,
+  so a stale pass cannot be inherited silently
+
+### Done when
+
+Every box ticked, suite green, `/prawduct:critic` run at `chunk` with no unresolved blocking
+findings, the three probes RUN with their real outcomes recorded whatever they were, and the PR
+closes #1589. The derived-acceptance gap and the failed-probe-does-not-gate decision both carry
+into ADR 0017 for the Architect, per the PM's bound 4.
+
 ## 5. Open assumptions
 
 - `[ASSUMPTION: tc output reaches the model intact up to toolOutput.maxChars per engine | HIGH | Chunk 01 spike measures it; unknown engines default to a conservative 8000 and say so]`
