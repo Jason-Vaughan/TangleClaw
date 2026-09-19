@@ -14,7 +14,7 @@
  * comparison nobody made.
  */
 
-const { describe, it, before, after } = require('node:test');
+const { describe, it, before, after, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -275,6 +275,66 @@ describe('the wrap and the launch derive the same manifest shape', () => {
       const m = launchSequence.manifestFingerprints({ id: 1, name: 'p' }, []);
       const global = m.rules.find((r) => r.source === 'global');
       assert.equal(global.label, 'the global rules');
+    });
+
+    describe('a global document that could not be read is not a measured empty', () => {
+      // The defect: `store.globalRules.load()` catches its own errors AND the
+      // missing-file case and answers `''`, so the try/catch around it never
+      // fires for either realistic failure, and the row froze as `sha('')` —
+      // a real-looking hash for a measurement nobody took. Its two siblings
+      // already got this right (`_fileHash` answers null; `listActiveForProject`
+      // throws), so `global` was the one source without the treatment.
+      const globalRow = () => launchSequence
+        .manifestFingerprints({ id: 1, name: 'p' })
+        .rules.find((r) => r.source === 'global');
+
+      afterEach(() => {
+        store.globalRules._resetBundledGlobalRulesPath();
+      });
+
+      it('records measured:false and no hash when the document is missing', () => {
+        store.globalRules._setBundledGlobalRulesPath(
+          path.join(tmpDir, 'absent', 'global-rules.md')
+        );
+        const row = globalRow();
+        assert.equal(row.measured, false, 'an unread document must not claim a measurement');
+        assert.equal(row.contentHash, null, 'null is not a hash, and sha(\'\') is not null');
+      });
+
+      it('still DECLARES the source, so the row says the document exists', () => {
+        // Undeclared would be a different lie: the global rules do exist on
+        // this install, they just could not be read this time.
+        store.globalRules._setBundledGlobalRulesPath(
+          path.join(tmpDir, 'absent', 'global-rules.md')
+        );
+        const m = launchSequence.manifestFingerprints({ id: 1, name: 'p' });
+        assert.ok(m.manifestSources.includes('global'));
+      });
+
+      it('a document readable on both sides is still measured, empty or not', () => {
+        const file = path.join(tmpDir, 'empty-global-rules.md');
+        fs.writeFileSync(file, '', 'utf8');
+        store.globalRules._setBundledGlobalRulesPath(file);
+        const row = globalRow();
+        // A measured empty IS a measurement — zero to zero is unchanged. This
+        // is the case the fix must NOT break while it fixes the unread one.
+        assert.equal(row.measured, true);
+        assert.equal(typeof row.contentHash, 'string');
+      });
+
+      it('unreadable on BOTH sides does not report the rules as unchanged', () => {
+        // The property, not the field: this is what the fabricated hash
+        // actually caused. Two unread launches compared equal and step 3
+        // printed "nothing changed" about a document nobody read.
+        store.globalRules._setBundledGlobalRulesPath(
+          path.join(tmpDir, 'absent', 'global-rules.md')
+        );
+        const before = launchSequence.manifestFingerprints({ id: 1, name: 'p' });
+        const after = launchSequence.manifestFingerprints({ id: 1, name: 'p' });
+        const d = drift.diffRuleManifests(before, after);
+        assert.notEqual(d.perSource.global, 'unchanged',
+          'an unread document must never be reported as unchanged');
+      });
     });
   });
 });
@@ -603,9 +663,22 @@ describe('carried drift cannot defeat a pre-READY revision or re-ack', () => {
     // is a single value on `sourceManifest`. No step row carries it, so no
     // revision path can read it when deciding what to re-serve.
     const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'launch-sequence.js'), 'utf8');
-    const revise = src.slice(src.indexOf('function _reviseIfRulesChanged'));
+    const fnAt = src.indexOf('function _reviseIfRulesChanged');
+    assert.notEqual(fnAt, -1, '_reviseIfRulesChanged moved — this test reads it by name');
+    const revise = src.slice(fnAt);
     const body = revise.slice(0, revise.indexOf('\nfunction '));
-    const stepBuilder = body.slice(body.indexOf('const newSteps'), body.indexOf('const cursor'));
+    // Both anchors are asserted BEFORE they are used to slice. `indexOf` answers
+    // -1 for a renamed local, and `slice(-1, n)` yields '' — on which the
+    // negative assertion below passes vacuously. A test that stops testing when
+    // a variable is renamed is worse than no test: it reports a guarantee it is
+    // no longer checking.
+    const start = body.indexOf('const newSteps');
+    const end = body.indexOf('const cursor');
+    assert.notEqual(start, -1, 'the step builder local was renamed — re-anchor this test');
+    assert.notEqual(end, -1, 'the cursor local was renamed — re-anchor this test');
+    assert.ok(start < end, 'the step builder must still precede the cursor for this slice to mean anything');
+    const stepBuilder = body.slice(start, end);
+    assert.ok(stepBuilder.length > 0, 'an empty slice proves nothing');
     assert.ok(!/ruleDrift/.test(stepBuilder),
       'no step row may be built from the drift — that is what keeps ack state independent of it');
     // And the cursor is still derived purely from ack state.

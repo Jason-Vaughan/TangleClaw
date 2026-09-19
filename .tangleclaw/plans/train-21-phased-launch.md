@@ -418,6 +418,11 @@ lives only in the DB, so the staged digest *is* the published digest:
   "stagedAt": "ISO",
   "worktree": {"path": "/abs", "toplevel": "/abs", "gitDir": "/abs", "branch": "…", "headSha": "…", "dirty": false},  // null for non-git
   "rules": [{"id": 12, "source": "project", "revision": 3, "contentHash": "…"}],
+  // Car 21.10 widened this block: `rules` rows also carry `label` and `measured`,
+  // and a top-level `manifestSources` names what was read. §4c is the authority on
+  // that shape and on why an unmeasured row is not an empty one — deliberately NOT
+  // restated here, because two copies of one schema is how this list fell behind
+  // the code in the first place.
   "globalRulesHash": "…", "engineConfigHash": "…", "continuityIndexHash": "…",
   "wrapOutcome": "complete | degraded",
   "missingEvidence": ["learnings-capture: failed", "…"],   // every non-ok step, named; empty iff complete
@@ -1404,6 +1409,34 @@ deferred to ADR 0017 at the Architect's instruction.
 - The prose bullet count was wrong (19 claimed, 21 actual). No count is written here now: nothing
   parses one, and this repo's own learning is that it goes stale — which it did inside one session.
 
+### As-built delta — the global row was the third source, and it lacked the treatment
+
+A cumulative round after the amendments landed found the class this car exists to fix, surviving
+in the one source nobody had re-derived. `manifestFingerprints` wrapped `store.globalRules.load()`
+in a try/catch, but that call catches its own errors AND the missing-file case and answers `''`,
+so the catch was dead for both realistic failures and the row froze as `sha('')` — a real-looking
+hash for a measurement nobody took, carrying no `measured: false`.
+
+Its two siblings were already honest: `_fileHash` answers `null` for a shared document it could
+not read, and `listActiveForProject` throws so the project source is left undeclared. Global was
+the only one of the three without the treatment — **the recurring shape here is a fix applied to
+the sites that prompted it and not to the family**, which this plan already records twice.
+
+Fixed at the producer, not the consumer: `store.globalRules.loadMeasured()` answers
+`{text, measured}` from ONE read, and `load()` now delegates to it so every existing caller is
+byte-for-byte unchanged. `manifestFingerprints` carries `measured` through and hashes only a
+document it actually read. The path stays private to the store — a readability probe in
+`launch-sequence.js` would have minted a second source of truth for where the global rules live
+and would have silently bypassed the test-only path redirection.
+
+The consumer needed no change: `_measured()` was already correct, and correctly returned `true`
+for `sha('')` because that IS a non-empty hash string. The predicate was sound; it was being fed
+a fabricated measurement.
+
+Pinned by four cases, including the end-to-end property rather than only the field: a document
+unreadable on BOTH sides must not be reported `unchanged`. A measured empty stays measured — the
+amendment above is the case the fix must not break while fixing the unread one.
+
 ### Done when
 
 Every box above is ticked, the suite is green, `/prawduct:critic` has run at `chunk` with no
@@ -1580,9 +1613,11 @@ closes #1588.
 - [ ] Chunk 04 — IN PROGRESS. `Type: cumulative-final`, so 21.12's review IS the train final; no
   separate one is run.
   - [x] Car 21.10 — per-rule drift reconciliation in step 3 (#1588). Built 2026-09-19 on
-    `feat/train-21-car-21-10`. Review `rev-20260919T182107Z-870826f7` closed 0 blocking /
-    0 warning / 0 note. Build plan and as-built deltas: §4c. NOT merged — awaiting the operator's
-    go, per the PM's bound 1.
+    `feat/train-21-car-21-10`. Build plan and as-built deltas: §4c. NOT merged — awaiting the
+    operator's go, per the PM's bound 1. The review history is the governance ledger's, not this
+    bullet's: an outcome copied here goes stale the next round, and one did — this bullet read
+    "0 blocking / 0 warning / 0 note" while a later cumulative round found a blocking defect the
+    earlier rounds had not reached.
     - **THREE review rounds, and rounds 2 and 3 were self-inflicted.** Round 1 found the class
       (failure, absence and "nothing changed" sharing one value). Round 2's fix introduced round
       3's defects — the same class, one level down: it split `unmeasured` from `unchanged` and then
