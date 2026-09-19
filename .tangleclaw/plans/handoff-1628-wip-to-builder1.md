@@ -119,7 +119,7 @@ unpiped run with a real exit code.
 | `probe1-idle.txt` | `status_line=["run-state"]` at rest — `  Ready`, no separators |
 | `probe2-final.txt` | three-segment layout — `  Ready · Ask for approval` |
 | `probe3-after.txt` | the compact layout verified live after the picker |
-| `arch-pane-raw.txt`, `arch-samples.json` | the clipped operator pane, 10 at-rest samples, marker absent 10/10 |
+| `arch-pane-raw.txt`, `arch-samples.json` | the clipped operator pane, 10 at-rest samples, marker absent 10/10. Capture WIDTH 104 is provable from the bytes (last row exactly 104, max width 104, ends `U+2026`); capture HEIGHT is **unknown** — the `41` reported earlier was a later, separate reading, not file metadata |
 | `ledger-rows.txt` | wake ledger rows for sessions 1041-1044 |
 | `junit4.xml` | the JUnit report behind the numbers above |
 | `MANIFEST.sha256` | sha256 for every file here |
