@@ -650,3 +650,16 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/launch-preflight.test.js` — the launch preflight's ordered verdicts (car 21.8). Order is the design, so each check is asserted against a fixture that ALSO satisfies a later one: the suite fails if the checks are reordered, not only if one is deleted.
 - `test/launch-preflight-context.test.js` — gathering the preflight's context and running it (#1586): whether the reads against the database, the handoff directory and git describe the project as it actually is, and whether a failure in any of them degrades the verdict instead of taking down the launch. A wrong verdict and a verdict that says it could not be reached are different outcomes.
 - `test/esc-contract.test.js` — the escape helpers' contract, asserted against the REAL shipped functions. Every case lifts its subject out of the page source so a test-local stub can never stand in — that substitution is what would let an escaping change ship green. Pins `esc` in `public/landing.js`, `esc` in `public/session.js` and `tcEscapeHtml` in `public/api-helper.js` together, because api-helper renders shared markup with whichever one its host page hands it.
+
+## TODO (auto-stubbed 2026-09-18)
+
+- **TBD** — touched in this session: `lib/open-install-token.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/identity-matrix.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/launch-recovery-clear.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/launch-recovery-gate.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/launch-recovery-migration.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/open-install-token.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/store-learnings.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/tc-require-graph.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/tracked-carrier-identity.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/wrap-rename-pathspec.test.js`. <!-- describe -->
