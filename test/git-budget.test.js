@@ -504,7 +504,7 @@ describe('the field names git.js pushes are the names the launch acts on', () =>
   // `shadowGit` prepends a fake `git` to PATH and leaves a tmpdir behind. Every
   // other user in this file undoes it; being the last describe is not a reason
   // to skip it, because file order is not a contract.
-  afterEach(() => { shadowGit(null); });
+  afterEach(() => { restoreGit(); });
 
   const DIGEST = 'sha256:aaa';
 
