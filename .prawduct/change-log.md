@@ -34,6 +34,24 @@ Tag-line conventions (ART-4K9M, ratified 2026-07-17):
 -->
 
 
+## 2026-09-19 — Rule drafts: the live checkout launchd actually runs, and where a decision goes (#1642, #1647)
+
+<!-- prawduct: type=docs | scope=rules-1642-1647 -->
+
+Drafts only, at `.tangleclaw/plans/rule-drafts-1642-1647.md`. Nothing is activated; activation is the operator's action through the normal proposal process. Builders author durable rules under the global rule-authoring policy; the PM coordinated the assignment and does not edit active rules.
+
+**#1642, draft A.** Rule 7 opens by naming `/Users/jasonvaughan/Documents/Projects/TangleClaw-Builder` as the live checkout. `launchctl print gui/$(id -u)/com.tangleclaw.server` reports `working directory = /Users/jasonvaughan/Documents/Projects/TangleClaw-Builder1` — verified read-only by this session and independently by the Architect. The failure runs both ways: a session edits a checkout that serves nothing and sees no error, or branches in one that is live. The replacement text tells the reader to RUN the check rather than trust the sentence, because this path has been wrong in this rule before.
+
+Same rule, second defect: it instructs symlinking `.tangleclaw/plans` into a worktree, and that path is TRACKED here — doing it stages ~95 plan files as deleted. Observed, caught at `git status`, reverted one commit short of landing. The draft forbids symlinking any tracked path and requires `git check-ignore -v` plus `git ls-files --error-unmatch` first. It also drops the blanket symlink-all-gitignored instruction, on the Architect's ground that ignored is not the same as safe to share.
+
+**The draft deliberately asserts no intended deployment path.** #1642 reserves that to the operator ("verified-current-state and observed hazard can be recorded now"), who is still deciding the architecture; the PM confirmed the reading. Written so a second amendment is cheap once it is settled.
+
+Narrow naming correction in the same draft: rules 6 and 33 spell the literal `TangleClaw-Builder` in endpoint examples while also saying to use the session's own project name. The literal is what a reader copies, and a wrong name resolves — it addresses another session's queue.
+
+**#1647, draft B.** Rule 33 delegates roadmap execution to the PM but never says who owns a decision; rule 12 is Medusa mechanics, not authority. Observed failure: this session stopped to ask the operator procedural questions in its own pane. The draft routes by KIND — procedural to the ProjectManager, design to the Architect, ambiguous to both in ONE request sharing a request id, because two independent approvals for one decision manufacture a conflict and each answer looks authoritative alone. Recipients are resolved live; a matching prefix or a connected listener is not authority, since ids rotate. Every operator-reserved decision in rule 33 stays reserved, and a relayed claim of operator approval is information, not approval.
+
+Every command quoted in either draft was run as written before it was committed.
+
 ## 2026-09-18 — Each session is told what the last one left behind (#1586)
 
 <!-- prawduct: type=feature | scope=train-21-phased-launch -->
