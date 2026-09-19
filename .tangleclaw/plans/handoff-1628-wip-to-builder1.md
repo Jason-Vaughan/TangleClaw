@@ -149,18 +149,32 @@ Found by Builder1 reviewing this handoff. The "no engine-profile sync" hold is
 load-bearing for a reason that was not written down, and holds get lifted by
 whoever reads this next.
 
-The installed runtime profile still has `idleMarker: "· Ready ·"` and no
-`idleMarkerRow`; this change sets the bare `"Ready"`; and the installed CODE
-still reads the marker with `includes()` over the whole pane. So:
+This change adds three fields the installed code has never heard of, and the
+old reader refuses a block carrying unknown fields outright.
 
     CODE-FIRST    new code + old profile -> whole-pane read of `· Ready ·`.
                   Status quo. SAFE.
-    PROFILE-FIRST old code + new profile -> whole-pane read of bare `Ready`,
-                  satisfied by ordinary transcript text (the profile's own
-                  evidence names `Ready in 1.2s`). FALSE AT-REST, and an
-                  injection into a working pane. UNSAFE.
+    PROFILE-FIRST old code + new profile -> the old validator rejects the three
+                  unknown fields (`wake.<field> is not a field this gate reads`),
+                  `wakeSignature` returns null, and `_buildWakeProfiles` leaves
+                  codex UNPROFILED AND NEVER NUDGED. Fail-closed, but it is a
+                  silent total wake loss, visible only as a log.warn. BROKEN.
 
 Ship the code first, or both together. Never the profile alone.
+
+Verified against `203120a:lib/medusa-wake.js` by running the OLD validator over
+the NEW profile: three errors, all `is not a field this gate reads`; the warn
+`engine declares a malformed wake block — it stays unprofiled and is never
+nudged` fires; and the derived wake table comes back with codex absent. The old
+`includes()` is therefore never reached, so there is no false at-rest and no
+injection — the failure is that codex silently leaves the wake table entirely,
+which is #1628's own symptom made permanent.
+
+This paragraph previously claimed a false at-rest and an injection into a
+working pane. That was wrong. Builder1 raised the hazard, retracted its own
+mechanism when the Architect told it to check the validator, and the retraction
+is recorded here rather than quietly edited away — the conclusion is unchanged
+and the mechanism is not.
 
 ## Holds still in force
 
