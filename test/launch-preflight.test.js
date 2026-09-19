@@ -624,9 +624,16 @@ describe('a worktree neither end could read is not a verified worktree (#1648)',
     // #1648's fix made this reachable: a failed measurement now answers null
     // where a launch-time sha was previously substituted, so the hole had to
     // close with it.
+    // BOTH recorded fields null — the fixture defaults `branch: 'main'`, and a
+    // recorded branch is real evidence, so leaving it in would test a
+    // half-measured tree rather than an unmeasured one.
     const r = runPreflight(ctx({
-      file: { state: FILE_STATES.VALID, doc: doc({ worktree: worktree({ headSha: null }) }), digest: DIGEST },
-      worktreeProbe: { toplevelExists: true, headSha: null, branch: 'main' }
+      file: {
+        state: FILE_STATES.VALID,
+        doc: doc({ worktree: worktree({ headSha: null, branch: null }) }),
+        digest: DIGEST
+      },
+      worktreeProbe: { toplevelExists: true, headSha: null, branch: null }
     }));
     assert.notEqual(r.verdict, VERDICTS.OK,
       'neither side read the head, so nothing verified it');
@@ -646,6 +653,36 @@ describe('a worktree neither end could read is not a verified worktree (#1648)',
     assert.equal(r.verdict, VERDICTS.STALE);
     assert.ok(r.reasons.some((x) => /could not be read/i.test(x)),
       'and it says the probe failed rather than claiming HEAD is null');
+  });
+
+  it('a recorded side that established NOTHING is unverified, even against a good probe', () => {
+    // The third input, and the one a first fix missed. A probe that read fine
+    // says where the tree is NOW — it never says it is the tree the handoff
+    // described. With both recorded fields null, `movedHead` and `movedBranch`
+    // are each false because each guards on its own recorded value, so the
+    // launch would answer OK for a worktree the handoff never captured.
+    const r = runPreflight(ctx({
+      file: {
+        state: FILE_STATES.VALID,
+        doc: doc({ worktree: worktree({ headSha: null, branch: null }) }),
+        digest: DIGEST
+      },
+      worktreeProbe: { toplevelExists: true, headSha: 'abc123', branch: 'main' }
+    }));
+    assert.notEqual(r.verdict, VERDICTS.OK,
+      'a readable probe cannot verify a handoff that recorded nothing about the tree');
+    assert.ok(r.reasons.some((x) => /unverified/i.test(x)));
+  });
+
+  it('a recorded branch that AGREES is evidence, even with no sha', () => {
+    // The boundary of the rule above, stated on purpose rather than left to
+    // fall out: the recorded side established a branch and it matches, so the
+    // tree is not unverified. Only a side that established NOTHING is.
+    const r = runPreflight(ctx({
+      file: { state: FILE_STATES.VALID, doc: doc({ worktree: worktree({ headSha: null }) }), digest: DIGEST },
+      worktreeProbe: { toplevelExists: true, headSha: null, branch: 'main' }
+    }));
+    assert.equal(r.verdict, VERDICTS.OK);
   });
 
   it('two measured, equal head shas still satisfy ok', () => {

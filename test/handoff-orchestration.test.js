@@ -215,16 +215,16 @@ describe('the step reads only what wrap-scope actually produces', () => {
     assert.equal(typeof scope.worktreeTarget, 'boolean',
       'worktreeTarget is a boolean — it must never be used as gitDir');
 
-    const facts = stageStep._worktreeFacts(scope, 'abc123');
+    const facts = stageStep._worktreeFacts(scope);
     assert.equal(typeof facts.gitDir, 'string');
     assert.equal(facts.dirty, false, 'the fixture tree is clean at this point');
 
-    // WITH NO ANCHOR — the ordinary clean-tree wrap, where the commit step
-    // returns null. The guard above passes a literal anchor and so never
-    // reached this path, which is how #1648 survived the class guard built to
-    // close its class: `headSha` fell back to `scope.baseline.sha`, the sha the
-    // session LAUNCHED at, while `branch` came from the scope's trunk.
-    const measured = stageStep._worktreeFacts(scope, null);
+    // The facts must describe ONE tree: the branch named has to contain the sha
+    // named. They came from different moments once — the scope's trunk branch
+    // probed before the commit step, the sha from the session's launch — and a
+    // fixture that supplies the right answer cannot catch that, so this asserts
+    // agreement against a real tree rather than against handed-in values.
+    const measured = stageStep._worktreeFacts(scope);
     const gitOut = (args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
     const head = gitOut(['rev-parse', 'HEAD']);
     const onBranch = gitOut(['rev-parse', '--abbrev-ref', 'HEAD']);
@@ -265,12 +265,12 @@ describe('the step reads only what wrap-scope actually produces', () => {
     const proj = { id: project.id, name: project.name, path: repo, configPath: repo };
     const scope = await wrapScope.resolve(proj, null, {});
 
-    const clean = stageStep._worktreeFacts(scope, 'abc123');
+    const clean = stageStep._worktreeFacts(scope);
     assert.equal(clean.dirty, false, 'a committed tree stages as clean');
 
     fs.writeFileSync(path.join(repo, 'f.txt'), 'uncommitted\n');
 
-    const dirty = stageStep._worktreeFacts(scope, 'abc123');
+    const dirty = stageStep._worktreeFacts(scope);
     assert.equal(dirty.dirty, true,
       'the second staging must see the write — a cached reading would still say false');
   });
