@@ -639,6 +639,12 @@ describe('a worktree neither end could read is not a verified worktree (#1648)',
       'neither side read the head, so nothing verified it');
     assert.ok(r.reasons.some((x) => /unverified/i.test(x)),
       'and the verdict names WHY, rather than failing silently');
+    // It must blame the side that actually failed. The first wording said
+    // "neither the handoff nor this launch could read the worktree's HEAD",
+    // which is false whenever the launch read it fine, and would send an
+    // operator to check git on this machine instead of the handoff.
+    assert.ok(r.reasons.some((x) => /handoff recorded neither/i.test(x)),
+      'the reason must name the RECORDED side, not claim the launch could not read');
   });
 
   it('a recorded head the probe could not read is still STALE, as it always was', () => {
@@ -672,6 +678,8 @@ describe('a worktree neither end could read is not a verified worktree (#1648)',
     assert.notEqual(r.verdict, VERDICTS.OK,
       'a readable probe cannot verify a handoff that recorded nothing about the tree');
     assert.ok(r.reasons.some((x) => /unverified/i.test(x)));
+    assert.ok(r.reasons.every((x) => !/this launch could not read/i.test(x)),
+      'the launch read the probe fine here — the message must not say otherwise');
   });
 
   it('a recorded branch that AGREES is evidence, even with no sha', () => {
