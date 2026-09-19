@@ -53,6 +53,27 @@ describe('wrap pipeline ai-content prompts', () => {
     assert.match(step.prompt, /## Result/);
   });
 
+  it('changelog-update prompt keeps the subsection list open to project-defined ones', () => {
+    // #1617. A project's rules may define subsections beyond Keep a Changelog
+    // — TangleClaw's own `### Internal` is what selects a patch-tier bump — and
+    // a prompt that lists only the six tells the AI a narrower set than the
+    // project actually uses. The instruction to consult the engine config for
+    // the rest is the fix, and nothing else fails when it is dropped: a prompt
+    // edit produces a worse entry, never an error. Hence a pin.
+    const step = getAiContentStep('changelog-update');
+    assert.match(step.prompt, /\{engineConfigFile\}/);
+    assert.match(
+      step.prompt,
+      /plus any this project defines/,
+      'the subsection list must not read as closed: a project may define more'
+    );
+    assert.match(
+      step.prompt,
+      /beyond the standard set/,
+      'the prompt must send the AI to the engine config for subsections beyond the standard six'
+    );
+  });
+
   it('learnings-capture prompt is populated and references learnings.md', () => {
     const step = getAiContentStep('learnings-capture');
     assert.ok(
