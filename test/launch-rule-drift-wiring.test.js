@@ -574,3 +574,68 @@ describe('step 3 sends the reader to the machine that actually failed', () => {
     assert.match(text, /what is NOT named may have changed too/);
   });
 });
+
+describe('carried drift cannot defeat a pre-READY revision or re-ack', () => {
+  // Its OWN scratch store. Relying on a sibling describe's setup is the
+  // order-dependence a Critic round already flagged in this file; repeating it
+  // here would make these assertions true only when the file runs whole.
+  let tmpDir;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-drift-reack-'));
+    store._setBasePath(path.join(tmpDir, 'store'));
+    store.init();
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  // The Architect's amendment, verified structurally rather than asserted.
+  // A revision exists to re-serve replaced content and collect fresh
+  // acknowledgements. Drift is carried across that revision, so the question is
+  // whether carrying it can interfere with the re-ack.
+
+  it('drift lives in the manifest, never in step state, so it cannot touch an ack', () => {
+    // The structural reason it cannot interfere: acknowledgement state is
+    // per-step (`ackedAt`, `pagesServed`, `carriedFromRevision`) and the drift
+    // is a single value on `sourceManifest`. No step row carries it, so no
+    // revision path can read it when deciding what to re-serve.
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'launch-sequence.js'), 'utf8');
+    const revise = src.slice(src.indexOf('function _reviseIfRulesChanged'));
+    const body = revise.slice(0, revise.indexOf('\nfunction '));
+    const stepBuilder = body.slice(body.indexOf('const newSteps'), body.indexOf('const cursor'));
+    assert.ok(!/ruleDrift/.test(stepBuilder),
+      'no step row may be built from the drift — that is what keeps ack state independent of it');
+    // And the cursor is still derived purely from ack state.
+    assert.match(body, /const cursor = newSteps\.findIndex\(\(st\) => !st\.ackedAt\)/);
+  });
+
+  it('a revision outranks drift, so the agent is never told to reconcile instead of re-acking', () => {
+    // If drift won the wording, an agent mid-revision would be handed a reason
+    // that does not describe the gate it is at — and the re-ack it actually
+    // owes would go unstated.
+    const why = launchSequence._reconciliationRequired(sequence({
+      revision: 3,
+      id: 515151,
+      sourceManifest: { ruleDrift: drifted() }
+    }));
+    assert.match(why, /revised to revision 3/);
+    assert.doesNotMatch(why, /changed since the previous session's handoff/);
+  });
+
+  it('and exactly one reason is returned, never a list', () => {
+    const why = launchSequence._reconciliationRequired(sequence({
+      revision: 3,
+      id: 515152,
+      recovery: 'required',
+      recoveryMode: 'advisory',
+      preflight: { verdict: 'handoff-behind', reason: 'x', requiresReconciliation: true },
+      sourceManifest: { ruleDrift: drifted() }
+    }));
+    assert.equal(typeof why, 'string');
+    // The strongest condition supplies it — an uncleared advisory recovery.
+    assert.match(why, /needs recovering/);
+  });
+});

@@ -268,3 +268,41 @@ test('a measured hash is still required to be a non-empty string', () => {
   assert.ok(d.unmeasured.before.includes('project') && d.unmeasured.after.includes('project'));
   assert.strictEqual(d.hasDrift, false);
 });
+
+test('a MEASURED empty source compares zero-to-zero unchanged', () => {
+  // The Architect's amendment: a manifest that explicitly declares `shared` and
+  // carries no shared rows has measured zero. That is a fact, not a gap, and it
+  // must not be confused with the pre-21.10 producer's ambiguous empty array.
+  const before = manifest([], ['project', 'global', 'shared']);
+  const after = manifest([], ['project', 'global', 'shared']);
+  const d = drift.diffRuleManifests(before, after);
+  assert.strictEqual(d.perSource.shared, drift.SOURCE_STATES.UNCHANGED);
+  assert.strictEqual(d.hasDrift, false);
+});
+
+test('a MEASURED empty source compares zero-to-one as added', () => {
+  const before = manifest([], ['project', 'global', 'shared']);
+  const after = manifest([{ id: 4, source: 'shared', revision: null, contentHash: 'h1' }], ['project', 'global', 'shared']);
+  const d = drift.diffRuleManifests(before, after);
+  assert.deepStrictEqual(d.added.map((r) => r.id), [4]);
+  assert.strictEqual(d.perSource.shared, drift.SOURCE_STATES.CHANGED);
+  assert.strictEqual(d.hasDrift, true, 'a document appearing under a measured-empty source IS drift');
+});
+
+test('the measured empty and the ambiguous legacy empty are different answers', () => {
+  // Both manifests carry zero rows. One declared what it looked at; the other
+  // is a pre-21.10 document whose `[]` meant either "no rules" or "the read
+  // threw". They must not resolve alike.
+  const declared = drift.diffRuleManifests(
+    manifest([], ['project']),
+    manifest([{ id: 1, source: 'project', revision: 1, contentHash: 'a' }], ['project'])
+  );
+  const legacy = drift.diffRuleManifests(
+    { rules: [] },
+    manifest([{ id: 1, source: 'project', revision: 1, contentHash: 'a' }], ['project'])
+  );
+  assert.strictEqual(declared.hasDrift, true);
+  assert.strictEqual(legacy.hasDrift, false);
+  assert.strictEqual(declared.perSource.project, drift.SOURCE_STATES.CHANGED);
+  assert.strictEqual(legacy.perSource.project, drift.SOURCE_STATES.NOT_RECORDED);
+});

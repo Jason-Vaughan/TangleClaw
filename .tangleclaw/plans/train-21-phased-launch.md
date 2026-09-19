@@ -1379,11 +1379,36 @@ five added by the Critic pass are derived by this builder. They are the test con
 they are what ADR 0017 (21.12) asks the Architect to ratify — a MEDIUM that resolves to HIGH on
 that ruling, or sends this car back if the derivation missed the intent.
 
+### Architect ruling, 2026-09-19 — the derived contract is APPROVED WITH AMENDMENTS
+
+`/Users/jasonvaughan/Documents/Projects/TangleClaw-Architect/.tangleclaw/plans/train-21-chunk04-acceptance-ruling.md`.
+A CONTRACT review — explicitly not code, PR or merge approval. The `Requirements Confidence: MEDIUM`
+above resolves on this ruling, subject to the amendments below, which are recorded here rather than
+deferred to ADR 0017 at the Architect's instruction.
+
+- **A measured empty is not an absence.** A manifest that explicitly declares `shared` and carries
+  zero shared rows has measured zero: it must compare zero→zero `unchanged`, and zero→one `added`.
+  The shipped code already behaves this way — `recordedSources` returns the declared filter
+  whenever `manifestSources` is an array, so the unknown-reading fires ONLY when the field is
+  absent entirely (the pre-21.10 producer, which wrote `[]` both for "no rules" and for a read that
+  threw). The behaviour was incidental; an acceptance case now pins it.
+- **Unknown alone does not create a drift gate, and cannot waive recovery or current-rule
+  delivery.** The fail-open decision is approved for DRIFT only. It carries no authority over the
+  recovery gate or the rules channel; both are decided elsewhere and stay decided there.
+- **First-match refusal priority is approved, with a proviso:** all drift and uncertainty must
+  remain visible. Only the refusal STRING is first-match — step 3 renders every finding and every
+  gap whichever trigger supplied the wording.
+- **Frozen original drift must not defeat a pre-READY revision or re-ack.** Carrying the drift
+  through a revision must not interfere with that revision's cursor reset and re-acknowledgement.
+  To be VERIFIED, not asserted.
+- The prose bullet count was wrong (19 claimed, 21 actual). No count is written here now: nothing
+  parses one, and this repo's own learning is that it goes stale — which it did inside one session.
+
 ### Done when
 
 Every box above is ticked, the suite is green, `/prawduct:critic` has run at `chunk` with no
-unresolved blocking findings, and the PR closes #1588. The derived-acceptance-cases gap is carried
-into ADR 0017 (21.12) for the Architect, per the PM's bound 4.
+unresolved blocking findings, the four amendments above are implemented or verified, and the PR
+closes #1588.
 
 ## 5. Open assumptions
 
