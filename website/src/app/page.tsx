@@ -10,7 +10,7 @@ export default function Home() {
   const detailedCards = [
     { title: "Management & Governance", desc: "Project Master orchestration, roadmap planning, strict rule enforcement, Feature Index tracking, and comprehensive Global & Project Settings for fine-grained AI co-author and access governance." },
     { title: "Specialized Agent Roles", desc: "Deploy a complete virtual team with distinct roles—from Architects and Project Managers to parallel Builders, plus built-in templates to create your own." },
-    { title: "LLM-Agnostic Communication", desc: "The Medusa Switchboard enables real-time cross-talk, allowing team agents running on completely different LLMs to seamlessly coordinate." },
+    { title: "LLM-Agnostic Communication", desc: "Real-time cross-talk across frontier, open-source, local, or API/OAuth models. The system auto-detects and coordinates any CLI-based or Aider-compatible LLM." },
     { title: "Quality & Auditing", desc: "Critic methodology, Eval Audit Mode, and adversarial-agent primitives." },
     { title: "Operations & Supervision", desc: "Fleet health monitoring, idle/wedged detection, and PortHub service supervision." },
     { title: "Security Integration", desc: "Robust authentication and governance today, with TangleScan and SecurityClaw architecture on the roadmap." }
