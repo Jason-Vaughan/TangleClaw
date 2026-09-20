@@ -449,6 +449,42 @@ test('#1685 verify-4 — an unlocatable composer must not become an accept', asy
     assert.match(r.reason, /could not be located/);
   });
 
+  await t.test('BUSY does not rescue an unlocatable composer — activity is not evidence THIS prompt was taken', async () => {
+    // The busy sibling of the fixture above, and the fourth variant of one
+    // defect. `located` guarded the two nonce checks and the reason wording but
+    // not the activity check — the only one that returns a positive claim. A
+    // previous turn still running while our paste sits unsubmitted is the
+    // consecutive-step case by definition, so busy + unlocatable + our nonce
+    // present must not be an accept.
+    const NONCE = 'NONCE-busy-scrolled';
+    const busy = PROFILE.busyMarker;
+    const pane = paneScript([{
+      lines: [`  ${busy}  `, `  wrapped body carrying ${NONCE} mid-prompt`, '  trailing instruction'],
+      cursor: { x: 10, y: 2, line: '  trailing instruction' }
+    }]);
+    const clock = fakeClock(1000);
+    const r = await receipt.verifySubmission('s', CODEX, NONCE, {
+      capturePane: pane.capturePane, cursorInfo: pane.cursorInfo, now: clock.now, sleep: clock.sleep, windowMs: 3000
+    });
+    assert.notEqual(r.outcome, 'accepted');
+    assert.match(r.reason, /not evidence that THIS prompt was the thing taken/);
+  });
+
+  await t.test('a busy engine with a LOCATED empty composer is still accepted — the gate stays narrow', async () => {
+    // The guard must not cost the normal accept path.
+    const busy = PROFILE.busyMarker;
+    const composer = '› \u001b[2mAsk Codex to do anything\u001b[0m';
+    const pane = paneScript([{
+      lines: [`  ${busy}  `, composer],
+      cursor: { x: 2, y: 1, line: composer }
+    }]);
+    const clock = fakeClock(400);
+    const r = await receipt.verifySubmission('s', CODEX, 'NONCE-elsewhere', {
+      capturePane: pane.capturePane, cursorInfo: pane.cursorInfo, now: clock.now, sleep: clock.sleep
+    });
+    assert.equal(r.outcome, 'accepted');
+  });
+
   await t.test('a genuine echo still wins over a composer holding something ELSE', async () => {
     // The operator's half-typed line, or a selector row the cursor sits on, says
     // nothing about OUR prompt. Letting it suppress a real echo answered
