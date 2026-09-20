@@ -2,12 +2,12 @@ import Image from "next/image";
 
 export default function Home() {
   const features = [
-    { title: "Planning & Requirements", desc: "Automate user story mapping and epic breakdown with AI-driven insights." },
-    { title: "Design & Architecture", desc: "Generate architecture documents, sequence diagrams, and UI wireframes directly in your local environment." },
-    { title: "Development", desc: "Local-first context-aware coding agents that integrate with your existing Git workflows seamlessly." },
-    { title: "Testing & QA", desc: "Continuous integration of test suites and autonomous bug hunting." },
-    { title: "Deployment", desc: "Orchestrate multi-environment deployments securely from your own infrastructure." },
-    { title: "Operations", desc: "Always-on monitoring, real-time alerts, and self-healing systems." }
+    { title: "Multi-Agent Dashboard", desc: "Monitor active sessions, system resources, and leased ports across all projects from a single centralized hub." },
+    { title: "Master Session Coordination", desc: "A global structural session that observes and manages child sessions, orchestrating complex workflows with live wrap monitoring." },
+    { title: "Project & Global Rules", desc: "Enforce precise governance with engine-specific settings, automated feature mapping, and customizable startup/wrap rules." },
+    { title: "OpenClaw Integrations", desc: "Connect and manage remote AI clusters securely over Tailscale, dispatching workloads to dedicated hardware seamlessly." },
+    { title: "Medusa Switchboard", desc: "Enable real-time inter-agent communication and auto-waking on inbound messages, turning isolated sessions into a cooperative swarm." },
+    { title: "Eval Auditing & History", desc: "Track every agent action, grade exchange quality, and maintain a durable history of all sessions for continuous improvement." }
   ];
 
   return (
@@ -46,7 +46,7 @@ export default function Home() {
 
         {/* Feature Grid */}
         <div id="features" className="w-full pt-12 border-t border-white/10">
-          <h2 className="text-3xl font-semibold tracking-tight mb-16 text-center">The Next-Gen SDLC</h2>
+          <h2 className="text-3xl font-semibold tracking-tight mb-16 text-center">Platform Capabilities</h2>
           
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
             {features.map((feature, i) => (
