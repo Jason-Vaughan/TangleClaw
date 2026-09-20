@@ -327,11 +327,12 @@ rolled back either. The companions are then uncommitted session changes, and the
 **Engine-agnostic.** A shell command and git: the same inputs produce the same commit on every engine.
 
 
-## Proposed 2026-09-20 — exactly one release authority per release-governed group (#1697)
+## Extended 2026-09-20 — exactly one release authority per release-governed group (#1697)
 
-> **Status: PROPOSED, not accepted.** Drafted by Builder1; revised 2026-09-20 against the
-> Architect's review of PR #1703. Nothing below is built. It records a decision the operator has
-> stated as a requirement, so that the build implements a ratified rule rather than inventing one.
+**Status: ACCEPTED** — ratified by the Architect 2026-09-20 at head `683ae8096`, after one
+revision round against the review on PR #1703. Drafted by Builder1; the Architect approves ADRs.
+Nothing is built yet: this records the decision so the build implements a ratified rule rather than
+inventing one. Implemented by #1697.
 
 `releaseMode` is per project, and nothing relates one project's mode to another's. A fleet whose
 members share a repository can hold several release-capable projects at once, and nothing says so.
