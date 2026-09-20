@@ -5,7 +5,8 @@
 </p>
 
 <p align="center">
-  <strong>AI coding session orchestrator</strong> — persistent sessions, session continuity, multi-engine management, governance delegation, secure remote access
+  <strong>A local-first platform for orchestrating AI teams across the Software Development Life Cycle (SDLC)</strong><br>
+  <em>Persistent memory &middot; Agent-to-Agent Switchboard &middot; Fleet Governance &middot; Multi-Engine Management</em>
 </p>
 
 <p align="center">
@@ -74,7 +75,25 @@ What started as session persistence grew into a full orchestration platform — 
 </tr>
 </table>
 
-## What TangleClaw Does
+## An AI-Native SDLC Platform
+
+As you scale up AI-assisted development, you quickly hit a wall: agents lose context, step on each other's toes, and require constant human babysitting.
+
+TangleClaw solves this by turning isolated AI coding assistants into a coordinated engineering organization. Rather than running a single agent, TangleClaw is the execution and control plane that allows you to orchestrate fleets of specialized roles—Architects, Project Managers, and Builders—collaborating across different AI models to ship features autonomously.
+
+TangleClaw provides the infrastructure for an entire AI-driven Software Development Life Cycle (SDLC):
+
+- **Management:** Project Master sessions, Trains, and Chunks
+- **Architecture:** Specialized higher-reasoning agent sessions
+- **Engineering:** Multi-engine sessions and parallel builder fleets (`aider`, `claude code`, `antigravity`)
+- **Communication:** The Medusa Switchboard for direct agent-to-agent coordination
+- **Quality & Code Review:** Critic methodology and Eval Audit Modes
+- **Operations:** Fleet health monitoring, PortHub port management, and service supervision
+- **Security:** Ingress, Service Tokens, and Governance bounds
+
+Most importantly, TangleClaw enforces strict safety boundaries, ensuring that while the agents do the heavy lifting, the human developer retains absolute control over deployments, destructive actions, and architectural decisions.
+
+## Core Features
 
 - **Persistent sessions** — AI engine sessions run in tmux, surviving network drops, device switches, and reconnects. Close your laptop, switch devices, pick up where you left off
 - **Session continuity** — every session ends with a structured wrap: a per-session summary, an updated project changelog, and a resume prime so the next session starts with "we left off at X — continue?" instead of a cold open. Full transcripts are snapshotted at wrap and everything is searchable from a per-project **Session History & Search** drawer — filter by date, tags, type, or files touched, then drill from summary into the raw transcript
