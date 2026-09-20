@@ -661,3 +661,10 @@ Suite: `node --test 'test/*.test.js'` (CI-gated; the run prints its own totals �
 - `test/tc-require-graph.test.js` — the `tc` require graph (Train 21): `lib/tc-verbs.js` loads without pulling in the store or `node:sqlite`, so the CLI's verb roster stays usable where the database is not.
 - `test/store-learnings.test.js` — `store.learnings` create/list/getActive: tier defaulting to provisional, explicit tiers, source-session attribution, and the refusals (a missing `projectId`). Ordering here is why `ORDER BY` on a timestamp needs a unique tiebreak — one-second resolution let rows written together tie and sort differently per machine.
 
+## TODO (auto-stubbed 2026-09-19)
+
+- **TBD** — touched in this session: `CODE_OF_CONDUCT.md`. <!-- describe -->
+- **TBD** — touched in this session: `lib/launch-rule-drift.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/launch-preflight-evaluation-failure.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/launch-rule-drift-wiring.test.js`. <!-- describe -->
+- **TBD** — touched in this session: `test/launch-rule-drift.test.js`. <!-- describe -->
