@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useState } from "react";
+import VersionBadge from "./components/VersionBadge";
 
 export default function Home() {
   const [selectedImage, setSelectedImage] = useState<{src: string, alt: string} | null>(null);
@@ -56,9 +57,12 @@ export default function Home() {
           </div>
 
           <div className="space-y-6 max-w-3xl flex flex-col items-center mx-auto">
-            <h1 className="text-5xl md:text-7xl font-semibold tracking-tight leading-tight text-transparent bg-clip-text bg-gradient-to-br from-white via-gray-200 to-zinc-500 pb-2 text-center w-full">
-              TangleClaw
-            </h1>
+            <div className="flex flex-col items-center">
+              <h1 className="text-5xl md:text-7xl font-semibold tracking-tight leading-tight text-transparent bg-clip-text bg-gradient-to-br from-white via-gray-200 to-zinc-500 pb-2 text-center w-full">
+                TangleClaw
+              </h1>
+              <VersionBadge />
+            </div>
             <p className="text-xl md:text-2xl text-zinc-400 font-medium tracking-wide max-w-2xl mx-auto text-center w-full">
               An open-source, local-first AI-native SDLC orchestration platform.
             </p>
