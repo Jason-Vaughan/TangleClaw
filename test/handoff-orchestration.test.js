@@ -360,6 +360,30 @@ describe('a probe failure and a non-git root are different handoffs (#1649)', ()
       'the reason is load-bearing only where it explains a missing fact');
   });
 
+  // The JOIN, which every test above leaves unpinned: each one asserts a side.
+  // Delete `worktreeProblem: _worktreeProblem(scope)` from the step's
+  // `buildHandoffDocument` call and all of them stay green while the frozen
+  // bytes silently lose the discriminator — the same seam failure this file's
+  // header records for #1585. So drive the REAL step with a REAL failed-probe
+  // scope and read the staged bytes back off disk.
+  it('the staged bytes carry the probe failure, not just the helper', async () => {
+    const scope = await scopeWithFailedProbe();
+    const stepResult = await stageStep.run({
+      project,
+      session: { id: 7, engineId: 'claude' },
+      previousResults: [],
+      scope,
+      options: { keepSessionRunning: false },
+      wrapRunId: 'run-1649'
+    });
+
+    const staged = lockfile.readHandoffFile(lockfile.stagedPath(project, stepResult.output.publicationId));
+    assert.equal(staged.outcome, 'ok', 'the staged document must still read back as a handoff');
+    assert.equal(staged.doc.worktree, null);
+    assert.equal(staged.doc.worktreeProblem, scope.workTreeProblem,
+      'the reason must reach the frozen bytes — the whole point is that they cannot be repaired later');
+  });
+
   it('refuses to build a document that records both facts and a failure', async () => {
     // The two are mutually exclusive by construction, so the honesty contract
     // is enforced where the bytes are made rather than discovered by a reader

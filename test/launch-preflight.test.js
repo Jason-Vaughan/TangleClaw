@@ -143,14 +143,65 @@ describe('runPreflight — the healthy case', () => {
     }));
     assert.notEqual(r.verdict, VERDICTS.OK,
       'a tree nobody could measure is not a tree verified as fine');
-    assert.equal(r.verdict, VERDICTS.STALE);
-    assert.equal(needsReconciliation(r), true,
-      'the handoff is sound; what cannot be believed is the tree it describes');
+    assert.equal(needsRecovery(r), true,
+      'git never answered — strictly weaker evidence than a reading that went short, '
+      + 'and that case already owes recovery');
     assert.notEqual(r.evidence.worktreeChecks, 'skipped: no-git',
       'recording a failure as a skip is the conflation this check exists to end');
     assert.equal(r.evidence.worktreeReadFailure, 'git could not be run in /repo: timed out');
     assert.ok(r.reasons.some((x) => /could not read its work tree/.test(x)),
       'the reason must name the probe failure, not describe a missing worktree');
+  });
+
+  // The ladder property, and the reason the case above is not a reconciliation
+  // verdict. A worktree whose git reading merely went SHORT already owes
+  // recovery; a probe that never ran is strictly less evidence than that, so it
+  // cannot owe less. Asserted as a pair, because the inversion is only visible
+  // in the comparison — each verdict read alone looks defensible.
+  it('demands at least as much as a reading that merely went short', () => {
+    const wentShort = runPreflight(ctx({
+      file: {
+        state: FILE_STATES.VALID,
+        doc: doc({ worktree: worktree({ headSha: null, branch: null, unestablished: ['headSha', 'branch'], readFailure: 'read-timed-out' }) }),
+        digest: DIGEST
+      },
+      worktreeProbe: { toplevelExists: true, headSha: 'abc123', branch: 'main' }
+    }));
+    const neverRan = runPreflight(ctx({
+      file: {
+        state: FILE_STATES.VALID,
+        doc: doc({ worktree: null, worktreeProblem: 'git could not be run in /repo: timed out' }),
+        digest: DIGEST
+      },
+      worktreeProbe: null
+    }));
+    assert.equal(needsRecovery(wentShort), true, 'baseline: a short reading owes recovery');
+    assert.equal(needsRecovery(neverRan), needsRecovery(wentShort),
+      'a probe that never ran must not owe LESS than one that ran and went short');
+  });
+
+  // An early return would have answered with the worktree alone. Check 15
+  // COLLECTS its failed preconditions rather than short-circuiting, so a
+  // handoff that is both unreadable and mismatched names both — which sends an
+  // operator to the right place rather than the first place. The co-occurring
+  // failure here is a `final` publication against a session still `active`,
+  // chosen because it is decided AT 15; a defect the ladder catches earlier
+  // (a newer session, say) would return above the worktree block by design.
+  it('still names the other failed preconditions alongside the probe failure', () => {
+    const r = runPreflight(ctx({
+      sessions: [{ id: 10, status: 'active' }],
+      file: {
+        state: FILE_STATES.VALID,
+        doc: doc({ worktree: null, worktreeProblem: 'git could not be run in /repo: timed out' }),
+        digest: DIGEST
+      },
+      worktreeProbe: null
+    }));
+    assert.notEqual(r.verdict, VERDICTS.OK);
+    assert.ok(r.reasons.some((x) => /could not read its work tree/.test(x)),
+      'the probe failure is still named');
+    assert.ok(r.reasons.some((x) => /does not match session status/.test(x)),
+      'and so is the precondition an early return would have preempted');
   });
 
   // A blank string is what a producer writes when it meant to name a reason and
@@ -167,6 +218,25 @@ describe('runPreflight — the healthy case', () => {
 });
 
 describe('runPreflight — integrity comes before every exception', () => {
+  // The reader names why a file is not a handoff; that reason used to stop at
+  // the context boundary, so an operator in recovery was told `current.json is
+  // invalid` and nothing else. Class-scoped: this covers every reason
+  // `readDocument` can produce, not only the ones #1649 added.
+  it('states WHY the file is corrupt, not just that it is', () => {
+    const r = runPreflight(ctx({
+      file: { state: FILE_STATES.INVALID, doc: null, digest: DIGEST, reason: 'worktree.toplevel is undefined, expected a path' }
+    }));
+    assert.equal(r.verdict, VERDICTS.HANDOFF_CORRUPT);
+    assert.ok(r.reasons.some((x) => /worktree\.toplevel is undefined/.test(x)),
+      'the operator is sent to recovery — the reason is the only thing telling them where to look');
+  });
+
+  it('still reports a corrupt file when the reader gave no reason', () => {
+    const r = runPreflight(ctx({ file: { state: FILE_STATES.UNREADABLE, doc: null, digest: null } }));
+    assert.equal(r.verdict, VERDICTS.HANDOFF_CORRUPT);
+    assert.ok(r.reasons.length > 0);
+  });
+
   for (const state of [FILE_STATES.UNREADABLE, FILE_STATES.INVALID]) {
     it(`reports handoff-corrupt for a ${state} file even under first-launch conditions`, () => {
       // The ordering assertion: this fixture ALSO satisfies row 4's "no sessions,

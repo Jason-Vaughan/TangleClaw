@@ -117,13 +117,18 @@ All notable changes to TangleClaw are documented in this file.
     behaves exactly as before. A document can never carry both — claiming it read the tree and could
     not read the tree is refused where the bytes are made, rather than left for a reader with no safe
     way to choose.
-  - **The launch asks for reconciliation instead of reporting `ok`.** The handoff itself is still
-    sound and still worth reading; what cannot be believed is the tree it describes, so the session
-    is told the probe failed and what it said, and a person decides. Handoffs written before this
-    change are unaffected: they carry no such field, and its absence keeps meaning "not a git
-    repository".
+  - **The launch now owes recovery instead of reporting `ok`.** It says the probe failed and what it
+    said, alongside anything else that was wrong with the handoff, rather than answering on the
+    worktree alone. It cannot ask for less than the case where git *did* answer and only the commit
+    or branch went short — that already required recovery, and a probe that never ran is less
+    evidence, not more. Handoffs written before this change are unaffected: they carry no such
+    field, and its absence keeps meaning "not a git repository".
   - **The worktree block is now validated when it is read**, rather than trusted and indexed into. A
     block missing the paths every reader needs used to surface as a worktree the document never had.
+  - **A corrupt handoff now says what is wrong with it.** The reader already named the reason — not
+    JSON, wrong schema, no publication id — and it was dropped before anyone could see it, so an
+    operator sent to recovery was told only that the file was invalid. The reason now reaches the
+    verdict, for every reason the reader can give rather than only the ones added here.
 
 - **A newly launched session now starts reading its own context instead of waiting to be asked** (#1635). Where the prime is delivered silently — through the engine's session-start hook rather than by typing into the pane — a session was handed everything it needed as hidden context and asked nothing, so it sat at an empty prompt with no turn to answer. Nothing in the launch path typed into that pane, because skipping the paste is exactly what silent prime does; the only writer left was the unready monitor, whose window is ten minutes by default. Two launches on the record show the shape: one waited out that window to the second, the other was rescued by a person typing. TangleClaw now sends one line at launch asking the session to read its launch context, which is the turn the silent path removed.
   - **Once, and never over someone's typing.** One line per session, claimed before it is sent rather than after, so a send still in flight can never become a second one. It goes out only through the shared idle gate, which refuses a pane that is working or that holds an unsent draft — the half-typed message stays half-typed. The claim is given back on the paths where nothing was typed at all, so a session whose engine was still booting keeps its kickoff instead of spending it on a window that passed; the window itself is ninety seconds, long enough to outlast the slowest engine boot on record.
