@@ -293,11 +293,15 @@ refusal rather than fail loudly. The full architectural rationale is ADR 0017.
 
 Three subverbs, and the product ships no others (`lib/tc-verbs.js#START_SUBVERBS`):
 
-| Subverb | What it does | What refuses it |
+| Subverb | What it does | Notable refusals |
 |---|---|---|
 | `tc start next` | Serves the next unacknowledged step, or a named page of it (`--page <n>`). Acknowledge with `--ack <step>:<revision>:<digest>`, from the footer of the last page | `PAGES_UNSERVED` (a page of this step was never served), `ACK_OUT_OF_ORDER`, `ACK_DIGEST_MISMATCH`, `SNAPSHOT_REVISED` |
-| `tc start ready` | Attests that the whole sequence was read. Requires `--verdict` and `--first-action`; `--reconciliation` when the launch demands one | see the READY ladder below |
-| `tc start status` | Reports the launch's own state — steps acknowledged, recovery, page size and whether the size is measured or assumed. Read-only, and it works in panes that predate this mechanism | nothing |
+| `tc start ready` | Attests that the whole sequence was read. Requires `--verdict` and `--first-action`; `--reconciliation` when the launch demands one | see the two stages below |
+| `tc start status` | Reports the launch's own state — steps acknowledged, recovery, page size and whether the size is measured or assumed. Read-only | **Launch resolution refuses `status` too** — `BAD_LAUNCH_ID`, `LAUNCH_NOT_BOUND`, `SEQUENCE_SESSION_MISMATCH`, `SESSION_ENDED`. What it does *not* refuse is a **missing** launch id: a pane predating this mechanism is answered as legacy rather than refused, which is the read-only exemption `next` and `ready` do not get |
+
+**"Notable refusals" is not the whole list.** Every row is reachable by the launch-resolution
+refusals in stage 1 below, so the column names what is characteristic of each subverb rather than
+what is exhaustive for it.
 
 **`--verdict` is the point of the attestation, not a formality.** It must equal the preflight verdict
 the session's own state step stated. The refusal (`READY_VERDICT_MISMATCH`) deliberately does **not**
@@ -310,9 +314,12 @@ artifact at all, and only then does the inner ladder judge *this* attestation.
 
 *Outer — resolution and record (`ready()`), before any of the content is judged:*
 
-1. **Launch resolution** — `LAUNCH_ID_REQUIRED` in a pane with no `TANGLECLAW_LAUNCH_ID`,
-   `LAUNCH_NOT_BOUND` while the bind transaction has not landed (retried automatically for 10 s),
-   or `SEQUENCE_SESSION_MISMATCH` / `SESSION_ENDED` when the bound session is not the one asking.
+1. **Launch resolution**, in this order: `LAUNCH_ID_REQUIRED` in a pane with no
+   `TANGLECLAW_LAUNCH_ID` (a read-only `status` is answered as legacy instead); then
+   `BAD_LAUNCH_ID` (400) when the id is not one TangleClaw minted, which is a malformed input rather
+   than a timing problem and so is checked before any lookup; then `LAUNCH_NOT_BOUND` while the bind
+   transaction has not landed, retried automatically for 10 s; then `SEQUENCE_SESSION_MISMATCH` and
+   `SESSION_ENDED` when the bound session is not the active one asking.
 2. `SEQUENCE_NOT_APPLICABLE` — this session has no sequence to attest, and the reason says why.
 3. `BAD_READY` (400, not 409) — the artifact is not a `tc.ready/1` object. Checked *before* the
    already-attested answer, because a malformed artifact is malformed either way and answering it

@@ -4,7 +4,7 @@
 a mechanism that is already built and running. It is submitted to the Architect for review before
 its PR merges — bound 4 of the train's plan. Cars 21.1–21.10 shipped (v40–v43); car 21.11's
 certification half was **cancelled by an operator scope amendment** rather than built — cancelled,
-not blocked — and this ADR says so in § "What was descoped".
+not blocked, and not carried forward — and this ADR says so in § "What was descoped".
 **Source issues:** #1579–#1590, tracking #1591. Rulings on #1589 and #1650.
 **Builds on:** ADR 0002 (wrap pipeline contract — the handoff publication extends it), ADR 0008
 (project/master session model), ADR 0013 (settings take effect or say why not).
@@ -158,7 +158,7 @@ stated as a table so no row can be read as the other.
 | Identity check — **projectId half** | yes, exact | — |
 | Identity check — **workspaceId half** | **NO.** `lib/sessions.js` calls `evaluate(project, {workspaceId: null})`, so the comparison in `lib/launch-preflight.js` never fires in production | The launching side needs something stable to compare against. `medusa.mintWorkspaceId` draws fresh random bytes every launch, so comparing it would report `identity-mismatch` on every launch of every Medusa project. **#1611**, open |
 | A launch with **no sequence** is gated on a damaged handoff | **NO** — the gate lives on the sequence, so a launch that has none is gated by nothing | **#1623**, open |
-| Engine parity **certification** — a pass bound to engine id and version, config fingerprint, runtime identity, launch/session/revision, and assistance attribution, demoting to `stale` mechanically | **NO — cancelled by scope**, operator amendment 2026-09-20, because no current downstream consumer needs durable certification. Not blocked, not owed | Unscheduled. An Architect-ruled design exists (#1720) for whoever revives it; it is an archived decision, not a pending task. See below |
+| Engine parity **certification** — a pass bound to engine id and version, config fingerprint, runtime identity, launch/session/revision, and assistance attribution | **NO — cancelled by scope**, operator amendment 2026-09-20, because no current downstream consumer needs durable certification. Not blocked, not owed | **None. There is no desired state for this row.** It is not deferred, unscheduled or unowned — it was cancelled. An Architect-ruled design is archived at #1720, and it is history, not a plan. See below |
 | Retention for the launch-sequence tables | **NO** — unbounded for Train 21 | **#1595**, open |
 | A phased launch for the Master pane | **NO** — Master now declares an honest `{applicable: false, reason}` instead of silence | **#1712**, open question |
 | Delegated recovery clearance (a peer clears a stalled session) | **NO** — needs an authenticated non-operator identity path | **#1713**, open question |
@@ -195,9 +195,13 @@ Architect supplied a viable binding on 2026-09-20 (`.tangleclaw/plans/wrap-seque
 durable JSON, with a pure resolver over `current`/`stale`/`invalid`/`blocked`/`failed`/`N/A`. The
 ruling was **conditional, not an unqualified "no migration needed"** — the existing JSON is the
 vehicle *only while it preserves the full binding*, and the ruling's own contingency is to **lift the
-no-migration bound explicitly rather than weaken the certification.** Read it at the source rather
-than from this summary; it is an archived decision for cancelled work, and its details belong to
-whoever revives that work.
+no-migration bound explicitly rather than weaken the certification.**
+
+**That design is archived history, not a plan on hold.** It creates no task, no desired state and no
+gate, here or on any later train. Nothing inherits it by default: should a real consumer for durable
+certification appear, it needs **a newly operator-authorized issue with freshly scoped gates**, and
+this ruling is then reference material that new scoping may adopt or discard. Read it at the source
+if that day comes.
 
 Acceptance cases 6 and 7 needed no work — #1650 had already shipped the contract, and it was
 **verified rather than rebuilt**.
@@ -258,9 +262,12 @@ a handoff directory are new storage, with **no retention policy yet** (#1595). T
 cost of honest per-channel evidence (plan §2.5) is paid deliberately, and is worth revisiting only if
 session-bound per-shard hook receipts ever exist.
 
-**Left open.** #1611, #1623, #1595, #1712, #1713, and the designed-but-unbuilt certification above.
-They are listed in the shipped/desired table rather than in prose so that none of them can be
-mistaken for delivered.
+**Left open:** #1611, #1623, #1595, #1712, #1713. They are listed in the shipped/desired table rather
+than in prose so that none of them can be mistaken for delivered.
+
+**Not left open — cancelled:** engine parity certification. It is absent from that list deliberately.
+An item that is cancelled and an item that is pending look identical once both are unbuilt, and the
+only thing that tells them apart is where each is written down.
 
 ## Alternatives considered
 

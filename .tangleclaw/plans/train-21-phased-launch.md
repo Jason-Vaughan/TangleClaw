@@ -1639,9 +1639,10 @@ own branch and PR, not folded in here.
 > This clause is dead. The operator **did** explicitly amend scope on 2026-09-20 — the branch this
 > text names — and #1589 closed under it. Nothing below is owed by any car, and the **final parity
 > acceptance it holds is cancelled, not pending**: it cannot be un-held, because what it gated no
-> longer exists as a deliverable of this train. The whole-trajectory prerequisite travels with the
-> certification work; §4e records that disposition. Repeated at this heading because a reader who
-> jumps straight to "Done when" never sees §4d's banner.
+> longer exists. The whole-trajectory prerequisite **expires with the deliverable it gated** — it
+> does not transfer to a later train, and nothing inherits it; §4e records that disposition.
+> Repeated at this heading because a reader who jumps straight to "Done when" never sees §4d's
+> banner.
 
 Superseded text, kept verbatim for the reasoning:
 
@@ -1785,8 +1786,11 @@ the same obligation.**
 parity acceptance*. The operator's 2026-09-20 scope amendment cancelled final parity acceptance —
 cases 1–5 and 8 were struck rather than built — and the Architect directed on 2026-09-20 that no
 Done-when or final-parity clause may still demand that cancelled subsystem, which is why §4d now
-carries a superseded banner. The prerequisite therefore gates nothing in Train 21; it travels with
-the certification work to whichever train revives it.
+carries a superseded banner. The prerequisite therefore gates nothing in Train 21 — and it gates
+nothing anywhere else either. **It expires with the deliverable it gated rather than transferring.**
+The Architect ruled this explicitly on 2026-09-20: certification was cancelled for want of a current
+consumer, so no future train inherits it by default, and a revival would need **a newly
+operator-authorized issue with freshly scoped gates** that this one does not pre-supply.
 
 **Nothing here should be read as the review having been performed.** That sentence is the whole
 point of recording this: a declined review and a passed one are indistinguishable in a session
@@ -2045,11 +2049,13 @@ summary, and only the written distinction survives.
     Aider parity moved to epic #1645. **The certification was CANCELLED BY SCOPE, not blocked** —
     the operator's judgement was that no current downstream consumer needs durable certification.
     Live parity evidence was never the obstacle: the operator accepted **six Codex and three
-    Antigravity clean READY launches** for this car. An Architect-ruled design exists for whoever
-    revives the work (`.tangleclaw/plans/wrap-sequence-architecture.md` §3, #1720); read it there
-    rather than from a summary here, because the ruling is **conditional** — existing versioned JSON
-    carries the binding only while it preserves the binding in full, and otherwise the no-migration
-    bound is lifted rather than the certification weakened. Follow-ups filed: #1712, #1713; retention
+    Antigravity clean READY launches** for this car. **Nothing is carried forward and nothing is
+    owed**: there is no desired state, task or gate for certification on this train or any later
+    one, and a revival would need a newly operator-authorized issue with freshly scoped gates. An
+    Architect ruling is ARCHIVED at `.tangleclaw/plans/wrap-sequence-architecture.md` §3 (#1720) as
+    history rather than as a design on hold; note only that it was **conditional** — existing
+    versioned JSON carried the binding solely while it preserved that binding in full — so it should
+    not be quoted as an unqualified no-migration answer. Follow-ups filed: #1712, #1713; retention
     was already #1595.
   - [ ] Car 21.12 — ADR 0017 and the doc set (#1590). Built 2026-09-20 on
     `feat/train-21-car-21-12`. Build plan, the measured per-file gap and acceptance cases: §4e.
