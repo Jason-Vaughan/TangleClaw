@@ -172,6 +172,47 @@ test('not-accepted — attributable to THIS send', async (t) => {
     assert.match(r.reason, /appeared after this send/);
   });
 
+  await t.test('a rejection drawn DURING the settle is still attributable', async () => {
+    // The baseline is taken BEFORE the settle for exactly this: an engine that
+    // discards a paste announces it immediately, well inside RECEIPT_SETTLE_MS.
+    // Baselining after the settle would find the engine's own rejection already
+    // on screen and call it pre-existing scrollback. Pre- and post-fix code
+    // answer differently here, which is what makes this a test of the change
+    // rather than of the code it replaced.
+    const marker = medusaWake.ENGINE_WAKE_PROFILES.antigravity.pasteRejectedMarker;
+    let reads = 0;
+    const clock = fakeClock(400);
+    const r = await receipt.verifySubmission('s', 'antigravity', 'NONCE-x', {
+      // Read 0 is the pre-settle baseline: clean. Every read after it shows the
+      // marker, i.e. the engine painted its refusal during the settle window.
+      capturePane: () => { const first = reads === 0; reads += 1; return { lines: first ? ['clean'] : [`refused. ${marker}`] }; },
+      cursorInfo: () => null,
+      now: clock.now, sleep: clock.sleep
+    });
+    assert.equal(r.outcome, 'not-accepted');
+    assert.match(r.reason, /appeared after this send/);
+  });
+
+  await t.test('a baseline read that FAILED cannot attribute a marker — stale stays stale', async () => {
+    // A failed pre-read recording `false` would claim the marker was absent
+    // before the send, which an unread pane cannot establish — and an earlier
+    // send's marker would then block a healthy wrap. A false not-accepted is
+    // the one direction this module must never fail in.
+    const marker = medusaWake.ENGINE_WAKE_PROFILES.antigravity.pasteRejectedMarker;
+    let reads = 0;
+    const clock = fakeClock(1000);
+    const r = await receipt.verifySubmission('s', 'antigravity', 'NONCE-x', {
+      capturePane: () => {
+        reads += 1;
+        if (reads === 1) throw new Error('baseline read failed');
+        return { lines: [`old scrollback. ${marker}`] };
+      },
+      cursorInfo: () => null,
+      now: clock.now, sleep: clock.sleep, windowMs: 2000
+    });
+    assert.notEqual(r.outcome, 'not-accepted');
+  });
+
   await t.test('a rejection marker ALREADY present on the first read is stale, not evidence', async () => {
     // It may have been left by an earlier send. `not-accepted` must be about
     // THIS one, so an un-attributable marker is unknown.
@@ -214,6 +255,19 @@ test('unknown — every silence names itself', async (t) => {
     }], 'NONCE-x');
     assert.equal(r.outcome, 'unknown');
     assert.match(r.reason, /not that THIS prompt was the thing taken/);
+  });
+
+  await t.test("an absent idle marker is NOT reported as the engine working", async () => {
+    // `_assessActivity` answers working:true for `not-at-rest`, which means only
+    // that the idle marker was missing from the bounded tail — a scrolled pane
+    // produces it too. Rendering that to the operator as "the engine is
+    // working" is absence-read-as-presence surviving in the reason string after
+    // being removed from the logic.
+    const composer = '› \u001b[2mAsk Codex to do anything\u001b[0m';
+    const r = await run([{ lines: ['scrolled transcript', composer], cursor: { x: 2, y: 1, line: composer } }], 'NONCE-x');
+    assert.equal(r.outcome, 'unknown');
+    assert.match(r.reason, /not evidence of work/);
+    assert.doesNotMatch(r.reason, /the engine is working/);
   });
 
   await t.test('an at-rest pane with an empty composer', async () => {
