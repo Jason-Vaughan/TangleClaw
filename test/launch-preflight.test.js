@@ -126,6 +126,44 @@ describe('runPreflight — the healthy case', () => {
     assert.equal(r.verdict, VERDICTS.OK);
     assert.equal(r.evidence.worktreeChecks, 'skipped: no-git');
   });
+
+  // #1649. The fixture below is byte-for-byte the accepted non-git case above,
+  // plus the one field that says WHY the worktree is missing. Written that way
+  // deliberately: it satisfies every other precondition of `ok`, so the only
+  // thing that can withhold `ok` is the discriminator itself. A fixture that
+  // also failed some unrelated clause would pass against the old code too.
+  it('refuses ok when the handoff says its git probe FAILED, not that there is no git', () => {
+    const r = runPreflight(ctx({
+      file: {
+        state: FILE_STATES.VALID,
+        doc: doc({ worktree: null, worktreeProblem: 'git could not be run in /repo: timed out' }),
+        digest: DIGEST
+      },
+      worktreeProbe: null
+    }));
+    assert.notEqual(r.verdict, VERDICTS.OK,
+      'a tree nobody could measure is not a tree verified as fine');
+    assert.equal(r.verdict, VERDICTS.STALE);
+    assert.equal(needsReconciliation(r), true,
+      'the handoff is sound; what cannot be believed is the tree it describes');
+    assert.notEqual(r.evidence.worktreeChecks, 'skipped: no-git',
+      'recording a failure as a skip is the conflation this check exists to end');
+    assert.equal(r.evidence.worktreeReadFailure, 'git could not be run in /repo: timed out');
+    assert.ok(r.reasons.some((x) => /could not read its work tree/.test(x)),
+      'the reason must name the probe failure, not describe a missing worktree');
+  });
+
+  // A blank string is what a producer writes when it meant to name a reason and
+  // had none. It must not push a genuine non-git project into reconciliation
+  // forever, so the document builder normalizes it away at the source.
+  it('treats an empty probe reason as no reason, not as a failure', () => {
+    const r = runPreflight(ctx({
+      file: { state: FILE_STATES.VALID, doc: doc({ worktree: null, worktreeProblem: '' }), digest: DIGEST },
+      worktreeProbe: null
+    }));
+    assert.equal(r.verdict, VERDICTS.OK);
+    assert.equal(r.evidence.worktreeChecks, 'skipped: no-git');
+  });
 });
 
 describe('runPreflight — integrity comes before every exception', () => {

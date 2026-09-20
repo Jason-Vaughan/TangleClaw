@@ -421,6 +421,12 @@ lives only in the DB, so the staged digest *is* the published digest:
                // it was whole, so a consumer can tell "this tree has no commits" from "git could
                // not be read" — which a bare null cannot say, and frozen bytes can never revisit.
                "unestablished": ["headSha"], "readFailure": "read-timed-out"},  // null for non-git
+  // WHY `worktree` is null, when the reason is that nobody could look (#1649). `wrap-scope`
+  // reports an unreadable work tree and a genuine non-repo identically — `workToplevel` is null
+  // in both — and a bare null here is read as "no git", which skips checks 13/14 and satisfies a
+  // precondition of `ok`. Mutually exclusive with a `worktree` object; absent on every pre-#1649
+  // document, where absence keeps meaning "not a git repository".
+  "worktreeProblem": "git could not be run in /abs: timed out | null",
   "rules": [{"id": 12, "source": "project", "revision": 3, "contentHash": "…"}],
   // Car 21.10 widened this block: `rules` rows also carry `label` and `measured`,
   // and a top-level `manifestSources` names what was read. §4c is the authority on
