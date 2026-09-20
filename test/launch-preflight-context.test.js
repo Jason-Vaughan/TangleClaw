@@ -340,10 +340,23 @@ describe('what the launch path actually produces', () => {
     assert.equal(result.requiresRecovery, false);
   });
 
-  it('claims neither predicate when it could not decide at all', () => {
+  it('owes RECOVERY when it could not decide at all, and says it tried', () => {
+    // This expectation is the inverse of what it once asserted, and the inversion
+    // is the contract: failing to establish current continuity is not evidence
+    // that continuity is sound. A launch that could not run its required check
+    // must not proceed to an ungated READY on the strength of a decision nobody
+    // reached.
     const result = evaluate({ id: project.id, name: project.name, path: 42 });
-    assert.equal(result.evaluationFailed, true);
-    assert.equal(result.requiresRecovery, false, 'nothing is owed on the strength of a decision nobody reached');
+    assert.equal(result.requiresRecovery, true,
+      'a check that could not be performed is not a check that passed');
+    // Reconciliation stays false on purpose: a reconciliation cannot clear
+    // operator-mode recovery, so demanding one here would name a gate the
+    // launch is not standing at.
     assert.equal(result.requiresReconciliation, false);
+    // A POSITIVELY OBSERVED failure: called, and it threw. Distinct from
+    // `evaluationMissing`, which is the weaker claim that no usable result is
+    // available. Both owe recovery.
+    assert.equal(result.evaluationFailed, true);
+    assert.equal(result.evaluationMissing, false);
   });
 });

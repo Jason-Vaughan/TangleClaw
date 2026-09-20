@@ -70,6 +70,24 @@ describe('unready-launch monitor (Train 21, car 21.5)', () => {
   });
 
   /**
+   * An explicitly evaluated, benign preflight.
+   *
+   * Every fixture here means "a launch with nothing wrong", and that is a
+   * POSITIVE verdict the evaluator reached — not the absence of one. Leaving
+   * `preflight` out states the opposite (no evidence arrived), which owes
+   * recovery.
+   */
+  const HEALTHY_PREFLIGHT = Object.freeze({
+    verdict: 'ok',
+    reason: 'nothing was left behind',
+    requiresRecovery: false,
+    requiresReconciliation: false,
+    worktreeDirty: false,
+    evaluationFailed: false,
+    evaluationMissing: false
+  });
+
+  /**
    * Create a project and bind a launch sequence to a session of it, without
    * starting a pane.
    * @param {string} name - Project name
@@ -77,6 +95,7 @@ describe('unready-launch monitor (Train 21, car 21.5)', () => {
    * @param {string} [opts.engine] - Engine id for the session row
    * @param {string} [opts.sessionMode] - 'tmux' (default) or 'webui'
    * @param {object} [opts.config] - Project config to save
+   * @param {object} [opts.preflight] - Override the benign default
    * @returns {{project: object, session: object, sequence: object}}
    */
   function bindSequence(name, opts = {}) {
@@ -93,7 +112,13 @@ describe('unready-launch monitor (Train 21, car 21.5)', () => {
       engineProfile: engine,
       applicability: { applicable: true, reason: null },
       rendered,
-      rules: []
+      rules: [],
+      // These sequences intend a HEALTHY launch, so they must supply an explicit
+      // successfully-evaluated preflight. Omitting it is missing evidence, which
+      // owes recovery — the task step would be withheld and this fixture would be
+      // testing the recovery gate rather than the monitor. A healthy launch is
+      // stated, never inherited from a default.
+      preflight: opts.preflight || HEALTHY_PREFLIGHT
     });
     const session = store.sessions.start({
       projectId: project.id,

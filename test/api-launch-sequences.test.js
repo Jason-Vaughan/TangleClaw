@@ -136,6 +136,24 @@ describe('GET /api/launch-sequences (car 21.5)', () => {
       { outcome: 'written', channel: 'rules-hook', skipReason: null });
   });
 
+  it('carries the preflight CAUSE, not only its verdict word', async () => {
+    // The route sends what the recovery panel renders. Carrying the verdict
+    // alone asked an operator to grant a clearance against a cause they could
+    // not see, so these three travel with it — and are asserted here because a
+    // payload field nothing reads is one a later edit silently drops.
+    const res = await get(server, `/api/launch-sequences?projectId=${project.id}`);
+    const byId = new Map(res.body.sequences.map((s) => [s.sequenceId, s]));
+    const seq = byId.get(pulled.sequence.id);
+    assert.ok(seq, 'the sequence is in the listing');
+    assert.ok('preflightReason' in seq, 'the reason must reach the panel');
+    assert.equal(typeof seq.preflightEvaluationFailed, 'boolean',
+      'a witnessed failure is a boolean claim, never undefined');
+    assert.equal(typeof seq.preflightEvaluationMissing, 'boolean',
+      'and so is "no usable result available" — the weaker of the two');
+    assert.equal(seq.preflightEvaluationFailed && seq.preflightEvaluationMissing, false,
+      'the two provenance claims are alternatives: witnessing a failure is not the same as lacking a result');
+  });
+
   it('carries the served and acknowledged state per step', async () => {
     const id = { launchId: pulled.sequence.launchId, projectId: project.id };
     const first = launchSequence.next(id).body;
