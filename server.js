@@ -4283,6 +4283,15 @@ route('GET', '/api/launch-sequences', (req, res) => {
       recoveryClearedAt: sequence.recoveryClearedAt,
       recoveryClearedBy: sequence.recoveryClearedBy,
       preflightVerdict: (sequence.preflight && sequence.preflight.verdict) || null,
+      // The verdict WORD alone asks someone to grant `operator-verified` against
+      // a cause they cannot see — "Recovery required: not-evaluated" beside a
+      // Clear button. The reason says what happened, and the two provenance
+      // flags say where to look for it: `evaluationFailed` means this machine's
+      // server log names the error, `evaluationMissing` means no evaluation
+      // reached the launch at all, so there is no log to find.
+      preflightReason: (sequence.preflight && sequence.preflight.reason) || null,
+      preflightEvaluationFailed: !!(sequence.preflight && sequence.preflight.evaluationFailed),
+      preflightEvaluationMissing: !!(sequence.preflight && sequence.preflight.evaluationMissing),
       // Named `rulesDelivery`, not `hook`: the row it comes from records
       // whichever channel the prime used for the rule text — the startup hook,
       // a paste, or the deliberate skip a pulled launch writes. Calling it the

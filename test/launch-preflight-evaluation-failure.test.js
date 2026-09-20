@@ -202,7 +202,14 @@ describe('a preflight that could not be evaluated (#1650)', () => {
         ['undefined', undefined],
         ['empty object', {}],
         ['non-string verdict', { verdict: 7 }],
-        ['a bare string', 'not-an-object']
+        ['a bare string', 'not-an-object'],
+        // A verdict STRING is not a usable result. This shape has one and no
+        // `requiresRecovery`, so a verdict-only guard admits it and the gate
+        // then reads falsy — recording `none` for a launch nobody evaluated.
+        // It is the exact shape `buildSnapshot`'s own @param documents, and
+        // buildSnapshot is exported and called directly by other suites.
+        ['a verdict with no requiresRecovery', { verdict: 'not-evaluated', reason: 'partial' }],
+        ['a non-boolean requiresRecovery', { verdict: 'ok', requiresRecovery: 'yes' }]
       ];
       for (const [label, bad] of shapes) {
         const name = `bad-${counter}-${label.replace(/[^a-z0-9]/gi, '')}`;
