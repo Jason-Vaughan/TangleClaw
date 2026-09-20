@@ -1,6 +1,11 @@
+"use client";
+
 import Image from "next/image";
+import { useState } from "react";
 
 export default function Home() {
+  const [selectedImage, setSelectedImage] = useState<{src: string, alt: string} | null>(null);
+
   const detailedCards = [
     { title: "Management & Governance", desc: "Project Master orchestration, roadmap planning, and strict rule enforcement." },
     { title: "Specialized Agent Roles", desc: "Deploy a complete virtual team with distinct roles—from Architects and Project Managers to parallel Builders." },
@@ -36,7 +41,7 @@ export default function Home() {
       <main className="flex-1 w-full max-w-5xl px-6 py-24 md:py-32 flex flex-col items-center">
         
         {/* Hero Section */}
-        <div className="flex flex-col items-center text-center space-y-8 mb-24">
+        <div className="flex flex-col items-center text-center space-y-8 mb-24 w-full">
           
           {/* Logo */}
           <div className="relative w-32 h-32 md:w-40 md:h-40 bg-zinc-900 rounded-[2rem] border border-white/10 flex items-center justify-center overflow-hidden shadow-2xl">
@@ -50,11 +55,11 @@ export default function Home() {
             />
           </div>
 
-          <div className="space-y-6 max-w-3xl">
-            <h1 className="text-5xl md:text-7xl font-semibold tracking-tight leading-tight text-transparent bg-clip-text bg-gradient-to-br from-white via-gray-200 to-zinc-500 pb-2">
+          <div className="space-y-6 max-w-3xl flex flex-col items-center mx-auto">
+            <h1 className="text-5xl md:text-7xl font-semibold tracking-tight leading-tight text-transparent bg-clip-text bg-gradient-to-br from-white via-gray-200 to-zinc-500 pb-2 text-center w-full">
               TangleClaw
             </h1>
-            <p className="text-xl md:text-2xl text-zinc-400 font-medium tracking-wide max-w-2xl">
+            <p className="text-xl md:text-2xl text-zinc-400 font-medium tracking-wide max-w-2xl mx-auto text-center w-full">
               An open-source, local-first AI-native SDLC orchestration platform.
             </p>
             
@@ -89,15 +94,19 @@ export default function Home() {
           <h2 className="text-3xl font-semibold tracking-tight mb-12 text-center">Interface Preview</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             {galleryImages.map((img, i) => (
-              <div key={i} className="relative rounded-2xl overflow-hidden border border-white/10 bg-zinc-900/50 aspect-video group">
+              <div 
+                key={i} 
+                className="relative rounded-2xl overflow-hidden border border-white/10 bg-zinc-900/50 aspect-video group cursor-pointer"
+                onClick={() => setSelectedImage(img)}
+              >
                 <Image
                   src={img.src}
                   alt={img.alt}
                   fill
-                  className="object-cover opacity-90 group-hover:opacity-100 transition-opacity"
+                  className="object-contain p-4 opacity-90 group-hover:opacity-100 group-hover:scale-105 transition-all duration-300"
                   sizes="(max-width: 768px) 100vw, 50vw"
                 />
-                <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/90 to-transparent">
+                <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/90 via-black/40 to-transparent pointer-events-none">
                   <p className="text-sm font-medium text-white">{img.alt}</p>
                 </div>
               </div>
@@ -111,6 +120,32 @@ export default function Home() {
           &copy; {new Date().getFullYear()} TangleClaw. All rights reserved.
         </p>
       </footer>
+
+      {/* Lightbox Modal */}
+      {selectedImage && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 p-4 md:p-12 cursor-zoom-out backdrop-blur-sm"
+          onClick={() => setSelectedImage(null)}
+        >
+          <div className="relative w-full h-full max-w-7xl flex flex-col">
+            <div className="flex-1 relative">
+              <Image
+                src={selectedImage.src}
+                alt={selectedImage.alt}
+                fill
+                className="object-contain"
+                sizes="100vw"
+                priority
+              />
+            </div>
+            <div className="absolute bottom-4 left-0 right-0 text-center">
+              <span className="bg-black/60 text-white px-4 py-2 rounded-full text-sm backdrop-blur-md border border-white/10">
+                {selectedImage.alt}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
