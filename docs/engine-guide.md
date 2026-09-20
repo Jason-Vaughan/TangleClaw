@@ -277,8 +277,17 @@ emitting output of a known size in a live session on that engine and checking wh
 `"launchSequence": { "supported": true }`, or `{ "supported": false, "reason": "…" }`.
 
 Whether TangleClaw serves this engine's sessions their context in acknowledged steps over
-`tc start`. Support means only that the engine runs in a pane where `tc` is on PATH — no
-engine-specific behaviour is assumed beyond that.
+`tc start`. **`supported: true` is a declaration of intent and capability, not evidence** — it says
+TangleClaw should build a sequence for this engine's sessions, and it commits TangleClaw to serving
+one. It does not assert that the context reaches the model.
+
+**`tc` on PATH is necessary and not sufficient.** Whether a served step is actually consumed depends
+on the engine's interaction path: the integration has to run `tc` and get its output into the
+model's context. An engine that gates command execution behind a confirmation, imports output only
+on request, or renders it somewhere the model does not read, can be `supported: true` and still
+leave a session stalled mid-sequence. Aider is the worked example — ADR 0017 records it, and
+automatic Aider parity is **#1645**. The failure is visible as a sequence that stops advancing, not
+as an error.
 
 **An engine that declares nothing is treated as unsupported**, and the reason says so. A launch
 without a sequence still gets the pushed prime; `tc start next` in such a pane answers with why
@@ -517,7 +526,10 @@ one, in the pane environment. The verbs come from a declared roster — read the
 ages every time a verb is added. Each answers honestly (an empty inbox or idle fleet says so in
 words; a disabled capability states its reason), and the server records each invocation as a
 verb-labeled **awareness receipt**, so a session that never discovered the floor is a detectable
-state. This is engine-neutral by construction: a new engine needs no adapter to reach it.
+state. This is engine-neutral by construction: a new engine needs no adapter for `tc` to be
+*present*. Whether its model actually reaches the floor is the same distinction the
+`launchSequence` section draws — the engine still has to run `tc` and get the output into model
+context, and an engine that gates or defers that can have the whole floor and never use it.
 Engine-profile `launch.env` overrides any of these keys on collision.
 
 #### Prime paste readiness
