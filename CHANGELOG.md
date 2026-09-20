@@ -238,6 +238,25 @@ All notable changes to TangleClaw are documented in this file.
 - **A wrap that finishes now ends the session, even when it had nothing to commit** (#1558). The session used to end only when the wrap made a commit. When a session's work had already merged by pull request, and the wrap's own notes went to ignored files, a full wrap reported "no changes to commit" and left the session running. Now any wrap that finishes records the session as wrapped, closes its terminal and releases its document locks, commit or not. A wrap that stops for you, fails or crashes still leaves the session open so you can answer or retry. The finished report now says "Wrapped — nothing new to commit" and whether the session ended or is still running. Wrap results (the stream's `run-done` and `GET /wrap/status`) carry `sessionOutcome`: `ended`, `kept` (kept on request and still running), or `null` when the run didn't finish or the session ended another way, such as a Kill during the wrap.
 
 ### Internal
+- **ADR 0002 records that a release-governed group may hold exactly one release authority** (#1703,
+  implementing rule for #1697). A decision written down, not a behaviour change — nothing enforces
+  it yet, and the amendment says so explicitly so the build implements a ratified rule rather than
+  inventing one.
+  - **The condition it names was live on this install and nobody knew.** `releaseMode` is per
+    project and nothing relates one project's mode to another's, so on 2026-09-20 three members of
+    this group — `TangleClaw-Builder1`, `TangleClaw-ProjectManager` and `TangleClaw-Builder2` — were
+    all release-capable at once. It had been true for an unknown period and surfaced only because
+    someone wrote a check and ran it by hand.
+  - **The invariant is binary, not graduated.** `off` is the only value under which the version-bump
+    step does not run; every other value means it executes and may cut. `ask` *reads* as safe because
+    a human chooses Cut, but that governs when a cut happens, not whether the project can make one —
+    two members on `ask` are two members that can each author a bump.
+  - **Release governance stays opt-in.** `project_groups` relates projects for shared documents and
+    infrastructure and may contain entirely independent release streams, so the constraint attaches
+    where it is declared rather than being implied by group membership.
+  - Drafted by a Builder and ratified by the Architect, per this repo's split on who writes ADRs and
+    who approves them.
+
 - **The Medusa-contract yield test derives its budget instead of naming one** (#1680). It squeezed
   the prime against a hardcoded 4,400 characters, which cleared the irreducible floor — directives,
   yielded sections' pointers, the contract's own pointer — by fifteen characters. Nothing about the
