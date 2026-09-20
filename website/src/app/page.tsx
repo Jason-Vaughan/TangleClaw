@@ -2,12 +2,16 @@ import Image from "next/image";
 
 export default function Home() {
   const features = [
-    { title: "Multi-Agent Dashboard", desc: "Monitor active sessions, system resources, and leased ports across all projects from a single centralized hub." },
-    { title: "Master Session Coordination", desc: "A global structural session that observes and manages child sessions, orchestrating complex workflows with live wrap monitoring." },
-    { title: "Project & Global Rules", desc: "Enforce precise governance with engine-specific settings, automated feature mapping, and customizable startup/wrap rules." },
-    { title: "OpenClaw Integrations", desc: "Connect and manage remote AI clusters securely over Tailscale, dispatching workloads to dedicated hardware seamlessly." },
-    { title: "Medusa Switchboard", desc: "Enable real-time inter-agent communication and auto-waking on inbound messages, turning isolated sessions into a cooperative swarm." },
-    { title: "Eval Auditing & History", desc: "Track every agent action, grade exchange quality, and maintain a durable history of all sessions for continuous improvement." }
+    { title: "Management", desc: "Project Master, planning, governance, roadmap/trains" },
+    { title: "Architecture", desc: "Specialized higher-reasoning agents" },
+    { title: "Engineering", desc: "Multi-engine sessions and parallel builders" },
+    { title: "Communication", desc: "Session Switchboard / Medusa" },
+    { title: "Quality", desc: "Critic methodology, Eval Audit Mode, adversarial-agent primitive" },
+    { title: "Code Review", desc: "Tangle Code Review" },
+    { title: "Release", desc: "Managed-project release automation" },
+    { title: "Dependency Management", desc: "Cross-project dependency registry" },
+    { title: "Operations", desc: "Fleet health, idle/wedged detection, PortHub, service supervision" },
+    { title: "Security", desc: "Authentication/governance today; TangleScan/SecurityClaw ideas longer-term" }
   ];
 
   return (
