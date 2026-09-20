@@ -26,7 +26,7 @@
 
 ```bash
 # Quickstart (macOS) — prerequisites and what the installer does: Quick Start, below
-git clone --branch v5.28.0 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v5.29.0 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw && ./deploy/install.sh
 ```
 
@@ -166,7 +166,7 @@ Most importantly, TangleClaw enforces strict safety boundaries, ensuring that wh
 ## Quick Start
 
 ```bash
-git clone --branch v5.28.0 https://github.com/Jason-Vaughan/TangleClaw.git
+git clone --branch v5.29.0 https://github.com/Jason-Vaughan/TangleClaw.git
 cd TangleClaw
 ./deploy/install.sh
 ```
