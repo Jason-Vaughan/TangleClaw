@@ -2,9 +2,5 @@
 
 ## Current build chunk
 
-**Active:** Chunk 01 — generation: tracked carriers stop carrying identity
-
-**On deck:** Chunk 02 — migration: clean what is already committed
-
-Plan: `.tangleclaw/plans/issue-1619-identity-fix.md`
+All chunks in `.tangleclaw/plans/train-21-phased-launch.md` are marked done. Open a new plan or wrap this one up.
 <!-- TANGLECLAW:PRIMING-ROLL:END -->

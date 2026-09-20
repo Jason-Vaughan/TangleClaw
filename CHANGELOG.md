@@ -4,6 +4,8 @@ All notable changes to TangleClaw are documented in this file.
 
 ## [Unreleased]
 
+## [5.29.0] - 2026-09-20
+
 ### Added
 
 - **A session can now be handed its context step by step, and say it read each one** (#1579, #1580, #1581 — Train 21, Chunk 01). Until now everything a session needed arrived in one push at launch, nothing confirmed it landed, and on Claude it was already at the 10,000-character cap that *replaces* an over-long payload rather than shortening it. A launched session is now also given a **launch sequence**: four steps — identity, governance, state, task — that it pulls with `tc start next` and acknowledges one at a time. The pushed prime is unchanged apart from two lines: one telling the session the sequence is there, and the list of `tc` verbs, which is generated from the verb roster that `start` joined.
