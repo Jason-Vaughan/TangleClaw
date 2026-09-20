@@ -1110,8 +1110,9 @@ and the column set. The two open points are named as decisions below, not as gue
   reconciling, and offer no button.
   Tests: `test/launch-readiness-panel.test.js`. **Visual change: yes** → VRF entry.
 
-- [ ] **9. Record and wrap.** CHANGELOG `[Unreleased]`, the Status boxes below, `/prawduct:critic`,
-  handoff notes.
+- [x] **9. Record and wrap.** CHANGELOG `[Unreleased]`, the Status boxes below, `/prawduct:critic`,
+  handoff notes. All four discharged when the car shipped as PR #1624 (`8832e8bd`); the box was
+  simply never ticked back.
 
 ### Decisions this car records
 
@@ -1858,7 +1859,9 @@ summary, and only the written distinction survives.
   21.9 (#1587) shipped (PR #1624, `8832e8bd`, v43). All three issues closed.
   - [x] Car 21.9 — recovery gate, clear route, UI control (#1587). Steps, as-built deltas and
     Done-when: §4b. Seven Critic rounds; #1623 filed for the one gap left open (a launch with no
-    sequence is gated by nothing). VRF-1587-recovery-clear is PENDING with the operator.
+    sequence is gated by nothing). VRF-1587-recovery-clear is **VERIFIED 2026-09-18**, on the live
+    install after the restart onto `8832e8bd`; the record with its outcomes is in
+    `.prawduct/operator-verification.md`. Read it there — this line is a pointer, not a copy.
   - 21.8's deltas from the blueprint:
   - The context-gathering half lives in its own module, `lib/launch-preflight-context.js`, rather
     than in `lib/sessions.js`. §2.7 says the preflight runs beside the stranded `launchGate`, and it
@@ -1963,7 +1966,7 @@ summary, and only the written distinction survives.
     building a fixture — an earlier hand-built one passed `worktreeTarget: null`, a value no producer
     emits, which is how it hid the bug.
   - `git.getInfo` now takes `{ fresh: true }`, for anything recorded into a frozen document.
-- [ ] Launch reliability (#1680, #1673, #1685) — IN PROGRESS, `Type: chunk`. Dispatched by the
+- [x] Launch reliability (#1680, #1673, #1685) — COMPLETE 2026-09-20. `Type: chunk`. Dispatched by the
   ProjectManager 2026-09-20; branch `feat/train-21-chunk-04`. A separate chunk from the
   `cumulative-final` one below, which it does not consume — see §4's entry for why the two share a
   number on the roadmap and must not share a tick.
@@ -2015,11 +2018,26 @@ summary, and only the written distinction survives.
     dashboard is `operator` mode, the shipped default **per ruling R3** — so the gap was a
     governance decision, not a defect. Operator ruled 2026-09-20: report it, leave R3 standing.
     Per-project opt-in remains `launchSequence.recoveryMode: advisory`.
-  - [ ] #1685 — wrap prompt delivery receipt. **NOT STARTED — split out of this chunk by the
-    operator 2026-09-20** and owed its own session. `lib/wrap-steps/ai-content.js` logs
-    `prompt sent` when `sendKeys` returns, which is not evidence the engine accepted a task;
-    closing that needs an engine-aware submission/receipt with duplicate-submission prevention,
-    and its acceptance explicitly refuses fixture-only evidence.
+  - [x] #1685 — wrap prompt delivery receipt. Built and merged across PRs #1711/#1714/#1716;
+    VRF passed 2026-09-20 and the issue is CLOSED. `lib/wrap-steps/ai-content.js` no longer treats
+    `sendKeys` returning as evidence the engine accepted a task: it asks the pane, via a bounded
+    engine-aware probe over the wake vocabulary in `ENGINE_WAKE_PROFILES`.
+    - **The receipt is negative-only, and that is the design, not a gap.** It answers `not-accepted`
+      or `unknown` and has NO success verdict — four review rounds found four reachable paths to a
+      false `accepted`, all in the accept half, because a bounded capture of a rendered TUI cannot
+      carry a positive claim. Success is still established where it always was: the completion
+      marker, the capture file and the settle watch. A healthy wrap therefore logs
+      `delivery unconfirmed: <reason>` per content step, which reads like a warning and is not one.
+    - **A `not-accepted` blocks rather than re-sends.** Re-pasting over a composer on a misread
+      would submit the same task twice, which the issue's acceptance forbids outright.
+    - VRF evidence, with its limits, is in `.prawduct/operator-verification.md` under
+      `VRF-1685-consecutive-step-delivery`, and on the closed issue. Read it there rather than
+      trusting a summary here — this bullet is a pointer, and the neighbouring 21.10 entry records
+      what happens when an outcome is copied into the plan and goes stale.
+    - **What the live run did not reach, because it matters to whoever touches this next.** Only the
+      `turn-in-flight` branch of `unknown` fired; codex is already mid-turn 4s after a send, so the
+      at-rest-empty-composer branch is covered by unit tests alone. No send actually failed, so the
+      blocking `not-accepted` path remains unobserved outside tests. And the run was codex only.
 - [x] Chunk 04 — COMPLETE 2026-09-20. `Type: cumulative-final`, so 21.12's review IS the train
   final; no separate one is run.
   - [x] Car 21.10 — per-rule drift reconciliation in step 3 (#1588). Built 2026-09-19 on
