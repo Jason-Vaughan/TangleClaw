@@ -3,7 +3,7 @@ import Image from "next/image";
 export default function Home() {
   const detailedCards = [
     { title: "Management & Governance", desc: "Project Master orchestration, roadmap planning, and strict rule enforcement." },
-    { title: "Multi-Engine Engineering", desc: "Parallel builders, specialized higher-reasoning agents, and multi-engine session orchestration." },
+    { title: "Specialized Agent Roles", desc: "Deploy a complete virtual team with distinct roles—from Architects and Project Managers to parallel Builders." },
     { title: "Communication", desc: "Session Switchboard (Medusa) for real-time inter-agent messaging and coordination." },
     { title: "Quality & Auditing", desc: "Critic methodology, Eval Audit Mode, and adversarial-agent primitives." },
     { title: "Operations & Supervision", desc: "Fleet health monitoring, idle/wedged detection, and PortHub service supervision." },
