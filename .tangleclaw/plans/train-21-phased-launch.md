@@ -922,12 +922,15 @@ against it, dispatched by the ProjectManager on 2026-09-20 and listed on the sha
 - **#1673** automate the crash-recovery clear, rather than sending the operator to the dashboard
 - **#1685** wrap reports a content prompt delivered that the engine never accepted as a task
 
-**This is a separate chunk from the `cumulative-final` one above, and does not consume it.** The
-roadmap and this plan both call a chunk "04", and they do not mean the same set: the roadmap's is
-these three defects, while the plan's is 21.10/21.11/21.12 — of which only 21.10 (#1588) has closed.
-Ticking one for the other would disarm the train's final review while two cars are still open, so
-the two are recorded apart and the final review stays where it was. The numbering itself is the
-ProjectManager's to reconcile; it is reported, not resolved here.
+**This is a separate chunk from the `cumulative-final` one above, and does not consume it.** Its
+three defects are not cars of the Train; the plan's own Chunk 04 is 21.10/21.11/21.12, of which only
+21.10 (#1588) has closed. Ticking one for the other would disarm the train's final review while two
+cars are still open, so the two are recorded apart and the final review stays where it was.
+
+The roadmap briefly called this "Chunk 04" too, colliding with the plan's. Reported to the
+ProjectManager rather than renumbered here — the roadmap is theirs — and **they renamed it to
+Chunk 05 on 2026-09-20**, so the collision is resolved at the source. Kept as a note because the
+reason the two must not share a tick outlives the numbering that prompted it.
 
 ---
 
