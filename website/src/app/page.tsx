@@ -17,6 +17,20 @@ export default function Home() {
     "Specialized Higher-Reasoning Architecture Agents"
   ];
 
+  const galleryImages = [
+    { src: "/screenshots/Dashboard.png", alt: "TangleClaw Dashboard" },
+    { src: "/screenshots/master session.png", alt: "Master Session Interface" },
+    { src: "/screenshots/project settings 1.png", alt: "Project Settings" },
+    { src: "/screenshots/open claw integration.png", alt: "OpenClaw Integrations" },
+    { src: "/screenshots/session history detail.png", alt: "Session History" },
+    { src: "/screenshots/global settings.png", alt: "Global Settings" },
+    { src: "/screenshots/Project Rules 2.png", alt: "Project Rules" },
+    { src: "/screenshots/eval audit.png", alt: "Eval Audit Metrics" },
+    { src: "/screenshots/open claw list.png", alt: "OpenClaw Cluster List" },
+    { src: "/screenshots/project settings 2 - startup and wrap rules.png", alt: "Startup & Wrap Rules" },
+    { src: "/screenshots/session history summary list.png", alt: "Session History Summary" }
+  ];
+
   return (
     <div className="min-h-screen bg-black text-white flex flex-col items-center selection:bg-white selection:text-black font-sans">
       <main className="flex-1 w-full max-w-5xl px-6 py-24 md:py-32 flex flex-col items-center">
@@ -65,6 +79,27 @@ export default function Home() {
               <div key={i} className="p-6 md:p-8 rounded-3xl bg-zinc-950 border border-white/5 hover:bg-zinc-900/50 hover:border-white/10 transition-colors group">
                 <h3 className="text-lg font-semibold mb-3 text-zinc-100 group-hover:text-white transition-colors">{card.title}</h3>
                 <p className="text-zinc-400 text-sm leading-relaxed">{card.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Screenshot Gallery */}
+        <div id="gallery" className="w-full pt-16 mt-8 border-t border-white/10">
+          <h2 className="text-3xl font-semibold tracking-tight mb-12 text-center">Interface Preview</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            {galleryImages.map((img, i) => (
+              <div key={i} className="relative rounded-2xl overflow-hidden border border-white/10 bg-zinc-900/50 aspect-video group">
+                <Image
+                  src={img.src}
+                  alt={img.alt}
+                  fill
+                  className="object-cover opacity-90 group-hover:opacity-100 transition-opacity"
+                  sizes="(max-width: 768px) 100vw, 50vw"
+                />
+                <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/90 to-transparent">
+                  <p className="text-sm font-medium text-white">{img.alt}</p>
+                </div>
               </div>
             ))}
           </div>
