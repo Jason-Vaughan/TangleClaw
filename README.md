@@ -32,64 +32,37 @@ cd TangleClaw && ./deploy/install.sh
 
 ---
 
-You VPN into your dev machine. You SSH in. You navigate to your project directory, fire up an AI coding agent, and start building. Thirty minutes later your VPN hiccups, or your SSH tunnel drops, or your laptop goes to sleep — and the session is gone. The agent's context, your conversation history, everything. There's no way to reconnect. You SSH back in, start over, and re-explain what you were doing.
+As you scale up AI-assisted development, you quickly hit a wall: isolated AI agents lose context, step on each other's toes, and require constant human babysitting.
 
-TangleClaw was built to fix that. It wraps AI coding sessions in persistent tmux processes so they survive network drops, device switches, and reconnects. Close your laptop at your desk, open your phone on the couch, and pick up the exact same session. The agent never knows you left.
+TangleClaw is an **open-source, local-first AI-native SDLC orchestration platform**. It solves this by turning isolated AI coding assistants into a coordinated engineering organization. Rather than running a single agent, TangleClaw is the execution and control plane that allows you to orchestrate fleets of specialized roles collaborating across different AI models to ship features autonomously.
 
-What started as session persistence grew into a full orchestration platform — and 4.0 closes the loop on the other half of the problem: **context that survives between sessions, not just within them**. Every session now ends with a structured wrap that writes a per-session summary, rolls a "here's where we left off" resume prime for the next session, and snapshots the full transcript — all searchable from the dashboard. Add password-gated remote access behind a Caddy ingress, a persistent Project Master assistant that watches the whole fleet, per-project routing to local models, and governance delegated to the live Prawduct plugin, and TangleClaw is a complete control plane for AI-assisted development — reachable from any browser or phone once you put it behind the login gate.
+TangleClaw solves the context and coordination problem at scale: **context that survives between sessions, not just within them**, and **agents that coordinate with each other**. Every session runs in a persistent wrapper, ending with a structured wrap that writes a per-session summary, rolls a "here's where we left off" resume prime for the next session, and snapshots the full transcript. Add a persistent Project Master assistant that watches the whole fleet, the Medusa Switchboard for direct agent-to-agent coordination, per-project routing to local models, and a complete control plane reachable from any browser or phone.
 
 ## Screenshots
 
-<sub><em>Click any screenshot to open it full size.</em></sub>
 
-<table>
-<tr>
-<td width="50%" align="center" valign="top">
-  <a href="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/dashboard.png?raw=true"><img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/dashboard.png?raw=true" width="400" alt="TangleClaw dashboard"></a>
-  <br><sub><b>Dashboard</b> — every managed project with engine badges, git info, and session indicators</sub>
-</td>
-<td width="50%" align="center" valign="top">
-  <a href="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-info-drawer.png?raw=true"><img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-info-drawer.png?raw=true" width="400" alt="Project detail panel"></a>
-  <br><sub><b>Project detail panel</b> — engine, active session, git state, groups, and session management</sub>
-</td>
-</tr>
-<tr>
-<td width="50%" align="center" valign="top">
-  <a href="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/session-history-search.png?raw=true"><img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/session-history-search.png?raw=true" width="400" alt="Session History and Search"></a>
-  <br><sub><b>Session History &amp; Search</b> — every wrapped session, searchable across summaries and full transcripts; filter by date, type, tags, files touched</sub>
-</td>
-<td width="50%" align="center" valign="top">
-  <a href="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/session-view-switchboard.png?raw=true"><img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/session-view-switchboard.png?raw=true" width="400" alt="In-session view with the Session Switchboard control"></a>
-  <br><sub><b>In-session view</b> — the terminal wrapper with the command bar, wrap/peek controls, and the <b>Session Switchboard</b> control (the two heads beside <i>Wrap</i>)</sub>
-</td>
-</tr>
-<tr>
-<td width="50%" align="center" valign="top">
-  <a href="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-master.png?raw=true"><img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-master.png?raw=true" width="400" alt="Project Master"></a>
-  <br><sub><b>Project Master</b> — a persistent fleet assistant that pops open as a drawer inside any session (and as a landing-page pane): what's running, what's idle, what shipped</sub>
-</td>
-<td width="50%" align="center" valign="top">
-  <a href="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-settings.png?raw=true"><img src="https://github.com/Jason-Vaughan/project-assets/blob/main/tangleclaw-screenshots/project-settings.png?raw=true" width="400" alt="Project settings"></a>
-  <br><sub><b>Project settings</b> — per-project engine, tags, Project Map / Feature Index, auto version bump, and the <b>Enable Medusa session comms</b> switch</sub>
-</td>
-</tr>
-</table>
+## SDLC Departments & Agent Roles
 
-## An AI-Native SDLC Platform
+TangleClaw provides the infrastructure for an entire AI-driven Software Development Life Cycle (SDLC). To achieve this, TangleClaw is building out configurable base templates for specific organizational roles. These foundational templates map directly to SDLC departments, giving you a coordinated engineering organization out of the box.
 
-As you scale up AI-assisted development, you quickly hit a wall: agents lose context, step on each other's toes, and require constant human babysitting.
+The ground set of foundational agent templates we are rolling out first:
 
-TangleClaw solves this by turning isolated AI coding assistants into a coordinated engineering organization. Rather than running a single agent, TangleClaw is the execution and control plane that allows you to orchestrate fleets of specialized roles—Architects, Project Managers, and Builders—collaborating across different AI models to ship features autonomously.
+- **Project Manager (Management):** Oversees the fleet, manages cross-project status, breaks down requirements into actionable chunks, and assigns tasks to specialized agents.
+- **Architect (Architecture):** Specialized in higher-reasoning tasks, system design, and API contracts. Ensures the Builders stay aligned with the broader system design.
+- **Builder (Engineering):** The executors. Multi-engine sessions and parallel fleets (`aider`, `claude code`, `antigravity`) that write the code, run tests, and ship features autonomously.
 
-TangleClaw provides the infrastructure for an entire AI-driven Software Development Life Cycle (SDLC):
+TangleClaw's features and roadmap align directly with these core SDLC departments:
 
-- **Management:** Project Master sessions, Trains, and Chunks
-- **Architecture:** Specialized higher-reasoning agent sessions
-- **Engineering:** Multi-engine sessions and parallel builder fleets (`aider`, `claude code`, `antigravity`)
-- **Communication:** The Medusa Switchboard for direct agent-to-agent coordination
-- **Quality & Code Review:** Critic methodology and Eval Audit Modes
-- **Operations:** Fleet health monitoring, PortHub port management, and service supervision
-- **Security:** Ingress, Service Tokens, and Governance bounds
+- **Management:** Project Master, planning, governance, roadmap/trains
+- **Architecture:** Specialized higher-reasoning agents
+- **Engineering:** Multi-engine sessions and parallel builders
+- **Communication:** Session Switchboard/Medusa
+- **Quality:** Critic methodology, Eval Audit Mode, adversarial-agent primitive
+- **Code Review:** Tangle Code Review
+- **Release:** Managed-project release automation
+- **Dependency Management:** Cross-project dependency registry
+- **Operations:** Fleet health, idle/wedged detection, PortHub, service supervision
+- **Security:** Authentication/governance today; TangleScan/SecurityClaw ideas longer-term
 
 Most importantly, TangleClaw enforces strict safety boundaries, ensuring that while the agents do the heavy lifting, the human developer retains absolute control over deployments, destructive actions, and architectural decisions.
 
