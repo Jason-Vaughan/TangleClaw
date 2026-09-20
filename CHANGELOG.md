@@ -110,8 +110,12 @@ All notable changes to TangleClaw are documented in this file.
   checked. `getMasterStatus()` now states it in the same `{applicable, reason}` shape a project
   launch uses. The reason is about the pane rather than the engine: Master usually resolves an engine
   that *does* support launch sequences, so an engine-derived answer would claim "applicable" for
-  exactly the pane where it is least true. Car 21.11 itself remains open — its parity probes are
-  unrun and its required cases are recorded as held on the issue.
+  exactly the pane where it is least true. Car 21.11 itself remains open, though not for want of probes:
+  launches have since reached READY cleanly on codex and antigravity with no nudges. What is
+  unbuilt is the certification binding that would let such a launch COUNT — a stored record bound
+  to engine version, config fingerprint, runtime identity and assistance attribution, demoting
+  itself to stale when any of those change. The required cases stay held on the issue for that
+  reason.
 
 - **A wrap prompt that never reached the engine is now reported as a delivery failure, not blamed on
   a slow model** (#1685). `sendKeys` returning meant tmux had accepted characters into a pty — not
