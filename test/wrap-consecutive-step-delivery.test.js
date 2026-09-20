@@ -64,6 +64,11 @@ test('#1685 consecutive content steps', async (t) => {
       assert.equal(r.ok, false);
       assert.equal(r.status, 'blocked');
       assert.equal(r.deliveryOutcome, 'not-accepted');
+      // The REASON is set on the step result too, and nothing asserted it — the
+      // other half of the hop the pipeline test pins. Deleting the line that
+      // sets it left the suite green.
+      assert.equal(r.deliveryReason,
+        'the composer is holding input — the prompt was pasted but never submitted');
       assert.equal(waited, false, 'must not wait out MAX_WAIT_MS for a task that was never queued');
       const text = r.blockers.join(' ');
       assert.match(text, /never became a task/);
@@ -104,6 +109,7 @@ test('#1685 consecutive content steps', async (t) => {
       // the field is dropped entirely, which is how the value went missing the
       // first time it was wired.
       assert.equal(r.deliveryOutcome, 'accepted');
+      assert.equal(r.deliveryReason, 'the engine is working (turn-in-flight)');
       assert.equal(polled, true, 'an accepted prompt must still reach the completion wait');
     } finally { restore(); }
   });
@@ -142,6 +148,7 @@ test('#1685 consecutive content steps', async (t) => {
       const r = await aiContent._runTmuxCapture(ctx());
       assert.equal(r.status, 'blocked');
       assert.equal(Object.prototype.hasOwnProperty.call(r, 'deliveryOutcome'), false);
+      assert.equal(Object.prototype.hasOwnProperty.call(r, 'deliveryReason'), false);
     } finally { restore(); }
   });
 

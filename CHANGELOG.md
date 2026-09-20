@@ -104,6 +104,15 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **The Master pane now says WHY it gets no launch sequence, instead of saying nothing** (#1589,
+  Train 21 car 21.11 — partial). Master never asked the question, so a reader looking for the answer
+  found an absence — and an absence reads the same whether the answer is "no" or whether nobody ever
+  checked. `getMasterStatus()` now states it in the same `{applicable, reason}` shape a project
+  launch uses. The reason is about the pane rather than the engine: Master usually resolves an engine
+  that *does* support launch sequences, so an engine-derived answer would claim "applicable" for
+  exactly the pane where it is least true. Car 21.11 itself remains open — its parity probes are
+  unrun and its required cases are recorded as held on the issue.
+
 - **A wrap prompt that never reached the engine is now reported as a delivery failure, not blamed on
   a slow model** (#1685). `sendKeys` returning meant tmux had accepted characters into a pty — not
   that the engine had turned them into a task — and the wrap logged `prompt sent` on that basis. A

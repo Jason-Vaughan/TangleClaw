@@ -76,18 +76,35 @@ against that file returns zero hits). The receipt is a **wiring** job, not an in
 
 Checked in this order, and **the order is load-bearing**:
 
-1. **accepted** — `_assessPane` reports `turn-in-flight` or `agents-running`. Only these two count;
-   `not-at-rest` means merely that the idle marker was absent from the captured tail, which a
-   scrolled pane also produces.
-2. **not-accepted** — `_assessPane` reports `composer-has-input`. The text was pasted and never
-   submitted. This is checked BEFORE the echo, because `sendKeys` pastes into the composer, so an
-   unsubmitted prompt renders inside the very capture an echo check reads.
-3. **accepted** — this send's **nonce** appears in the transcript *outside the cursor's line*. The
-   nonce rather than the step header, which is identical on every attempt and so matches a failed
-   attempt's scrollback. Skipped entirely when the cursor is unknown: without it there is no way to
-   tell composer from transcript, and guessing there is the whole bug.
-4. **unknown** — anything else: an at-rest pane with an empty composer, an engine that declares no
-   vocabulary, a pane that could not be read, or a cursor that never read on any poll.
+1. **`not-accepted`** — the engine's own declared rejection marker, where it declares one.
+2. **`not-accepted`** — this send's **nonce found inside the composer region**, confirmed over two
+   consecutive reads. The sharpest non-submission signal, and the only one that survives a paste
+   that wrapped across several composer rows.
+3. **`accepted`** — the nonce in the **transcript above** the composer. Checked before the generic
+   filled-composer signal: a composer holding something *else* (the operator's half-typed line, a
+   selector row the cursor sits on) says nothing about our prompt, and letting it suppress a real
+   echo answered `not-accepted` for a prompt that had demonstrably been submitted.
+4. **`accepted`** — the engine is working (`turn-in-flight` / `agents-running`). Only these two;
+   `not-at-rest` means merely that the idle marker was absent from the tail, which a scrolled pane
+   also produces.
+5. **`not-accepted`** — a composer holding anything else, also confirmed over two reads.
+6. **`unknown`** — everything else, each silence naming itself.
+
+### Two decisions this design turns on, recorded here rather than only in comments
+
+**The composer is read BEFORE the engine's activity.** A pane can be busy *and* holding our
+unsubmitted text — a previous turn still running while the new paste sits in the composer, which is
+exactly the consecutive-step failure. Deriving both from `_assessPane`'s single mutually-exclusive
+verdict made that case classify as `accepted`, so the two questions are asked of `_assessActivity`
+and `_composerEmpty` separately.
+
+**The echo is bounded by a REGION, and an unlocatable boundary is reported as such.** `sendKeys`
+clears the composer, pastes, then sends Enter, so an unsubmitted prompt renders across the composer
+rows — inside the same capture the echo reads. `_splitAtComposer` draws that boundary once, from the
+nearest glyph-led row at or above the cursor. When no glyph row is in the bounded tail — routine,
+because a composer taller than the visible pane scrolls its own head out — the answer is **not
+located**, never a fallback to the cursor's single row. That fallback is how the defect came back a
+third time.
 
 ### The one defect class to design against
 
@@ -122,11 +139,12 @@ drawer. It never degrades to either neighbour.
 
 - [x] **C3 — Drawer + step result.** `deliveryOutcome` is threaded through the pipeline's recorded
       result and its `step-done`/`step-blocked` stream event, so the drawer receives it alongside the
-      blocker text that names the failing step. **No new drawer code was needed** and none was
-      written: the blocked report already renders `blockers`, and content-step completion is already
-      distinct from lifecycle/publication via `sessionOutcome` (#1558). Recorded rather than claimed
-      as built — the requirement is met by existing surfaces carrying a new value, which is a
-      smaller change than the plan anticipated.
+      blocker text that names the failing step. **That sentence was wrong when it was written.** It said no
+      drawer code was needed and none was written; the same commit added 31 lines to
+      `public/wrap-drawer.js` — the `settleLiveRow` carry and a `deriveDetail` branch. Corrected
+      rather than deleted, because a plan that misreports its own diff is the failure mode worth
+      leaving visible. What IS true: `sessionOutcome` (#1558) already separated content-step
+      completion from lifecycle, so that half needed nothing.
       - The threading was NOT free: `wrap-pipeline.js` built its recorded row from an explicit field
         list, so the receipt's answer was silently dropped there on first wiring. It is now carried
         conditionally — absent, not null, on every step that never measured delivery — and pinned by
