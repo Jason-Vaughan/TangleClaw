@@ -91,15 +91,24 @@ drawer. It never degrades to either neighbour.
 
 ## Chunks
 
-- [ ] **C1 — Receipt primitive.** Engine-aware `verifySubmission` reading `capabilities.wake`;
+- [x] **C1 — Receipt primitive.** Engine-aware `verifySubmission` reading `capabilities.wake`;
       returns `accepted | not-accepted | unknown` with a reason. Unit tests per engine, including
       both no-vocabulary engines.
-- [ ] **C2 — Wire into `ai-content.js`.** Replace the unconditional `prompt sent` log with the
+- [x] **C2 — Wire into `ai-content.js`.** Replace the unconditional `prompt sent` log with the
       receipt outcome; a `not-accepted` fails the step fast with a delivery blocker rather than
       waiting 300 s. `unknown` proceeds to the existing wait and says so.
-- [ ] **C3 — Drawer + step result.** Surface the stage and the delivery outcome; keep content-step
-      completion distinct from lifecycle/publication.
-- [ ] **C4 — Regression suite.** Consecutive-step scenarios per R6.
+- [x] **C3 — Drawer + step result.** `deliveryOutcome` is threaded through the pipeline's recorded
+      result and its `step-done`/`step-blocked` stream event, so the drawer receives it alongside the
+      blocker text that names the failing step. **No new drawer code was needed** and none was
+      written: the blocked report already renders `blockers`, and content-step completion is already
+      distinct from lifecycle/publication via `sessionOutcome` (#1558). Recorded rather than claimed
+      as built — the requirement is met by existing surfaces carrying a new value, which is a
+      smaller change than the plan anticipated.
+      - The threading was NOT free: `wrap-pipeline.js` built its recorded row from an explicit field
+        list, so the receipt's answer was silently dropped there on first wiring. It is now carried
+        conditionally — absent, not null, on every step that never measured delivery — and pinned by
+        a test.
+- [x] **C4 — Regression suite.** Consecutive-step scenarios per R6.
 - [ ] **C5 — Record + VRF.** CHANGELOG, plan Status, and enqueue the live VRF.
 
 ## Done when

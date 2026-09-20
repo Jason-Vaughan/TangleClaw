@@ -110,6 +110,38 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
     });
   });
 
+  describe('#1685 delivery outcome threading', () => {
+    it('carries a step\'s deliveryOutcome into results, and omits it where none was measured', async () => {
+      // The receipt is worthless if the pipeline drops it: the drawer has to
+      // tell "the prompt never became a task" from "the model is slow", and
+      // this boundary is where that answer would silently disappear. It did
+      // disappear when the receipt was first wired — `recorded` listed its
+      // fields explicitly, so a field nobody added here was simply gone.
+      const restoreHandlers = stubRealHandlers(wrapPipeline);
+      const kinds = Object.keys(wrapPipeline.STEP_DISPATCH);
+      const measuredKind = kinds[0];
+      wrapPipeline.STEP_DISPATCH[measuredKind] = {
+        run: async () => ({
+          ok: true, status: 'done', output: null, blockers: [], deliveryOutcome: 'accepted'
+        })
+      };
+      try {
+        const result = await wrapPipeline.runWrapPipeline('pipeline-test');
+        const measured = result.results.filter((r) => r.kind === measuredKind);
+        assert.ok(measured.length > 0, 'the patched kind should have run at least once');
+        for (const row of measured) assert.equal(row.deliveryOutcome, 'accepted');
+
+        // Absent, not null, on every step that never asked — so no existing
+        // consumer sees a new field appear on results it already reads.
+        const unmeasured = result.results.filter((r) => r.kind !== measuredKind);
+        for (const row of unmeasured) {
+          assert.equal(Object.prototype.hasOwnProperty.call(row, 'deliveryOutcome'), false,
+            `step ${row.stepId} should not carry deliveryOutcome`);
+        }
+      } finally { restoreHandlers(); }
+    });
+  });
+
   describe('runWrapPipeline — no-op stubs', () => {
     it('runs all stubs end-to-end and returns ok:true', async () => {
       // Chunks 4+ replaced no-op stubs with real handlers (lint, test,
