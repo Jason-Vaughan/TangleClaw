@@ -34,6 +34,17 @@ cd TangleClaw && ./deploy/install.sh
 
 As you scale up AI-assisted development, you quickly hit a wall: isolated AI agents lose context, step on each other's toes, and require constant human babysitting.
 
+## Overview
+
+TangleClaw is a fundamentally new way to build software. It escapes the traditional constraints of "dumb terminals" and raw code editors by introducing **Agentic SDLC Orchestration**—a continuously running, local-first ecosystem where intelligent agents (such as the Project Manager, Architect, and Builder) collaborate autonomously to plan, execute, review, and ship code.
+
+Rather than acting as a chat interface that writes disconnected scripts, TangleClaw runs as a background supervisor (`launchd`/`tmux`), managing isolated workspaces, tracking file modifications, assigning ports, and orchestrating multiple specialized agents across your repository.
+
+> **Visualizing the Orchestration:** The repo updates rapidly. To see TangleClaw's orchestration interface and features in action for version **5.28.0**, check out the [Platform Screenshots Gallery](https://tangleclaw.com/screenshots).
+> For the main website, visit: **[tangleclaw.com](https://tangleclaw.com)**
+
+---
+
 TangleClaw is an **open-source, local-first AI-native SDLC orchestration platform**. It solves this by turning isolated AI coding assistants into a coordinated engineering organization. Rather than running a single agent, TangleClaw is the execution and control plane that allows you to orchestrate fleets of specialized roles collaborating across different AI models to ship features autonomously.
 
 TangleClaw solves the context and coordination problem at scale: **context that survives between sessions, not just within them**, and **agents that coordinate with each other**. Every session runs in a persistent wrapper, ending with a structured wrap that writes a per-session summary, rolls a "here's where we left off" resume prime for the next session, and snapshots the full transcript. Add a persistent Project Master assistant that watches the whole fleet, the Medusa Switchboard for direct agent-to-agent coordination, per-project routing to local models, and a complete control plane reachable from any browser or phone.
