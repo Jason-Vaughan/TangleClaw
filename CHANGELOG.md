@@ -123,14 +123,23 @@ All notable changes to TangleClaw are documented in this file.
     was pasted and never submitted, so the step blocks at once with a message naming the step and
     saying in as many words that waiting would not have helped — instead of five minutes of silence
     followed by the wrong explanation.
+  - **It never claims success.** The receipt answers only "this send was not accepted" or
+    "unconfirmed"; there is no positive verdict. Four review rounds found four different ways a
+    rendered terminal could be misread into claiming a prompt had been delivered when it was sitting
+    unsubmitted — the exact failure this exists to catch. Success was always established elsewhere,
+    by the completion line the model prints, so the check that could be wrong was removed rather
+    than guarded again.
+  - **A failure has to be about the prompt just sent.** Either this send's own text is still sitting
+    in the input box, or the engine said it discarded something *after* the send. A box holding
+    somebody else's half-typed line, a busy engine, or a pane that could not be read all report
+    "unconfirmed" and say which.
   - **It reuses the vocabulary the engine profiles already declare** (`capabilities.wake` — the busy
     marker, idle marker and prompt pattern the wake system reads) rather than inventing a second
     description of the same panes.
   - **Absence of evidence is not treated as evidence.** A pane at rest with an empty composer is
-    genuinely ambiguous — an engine that accepted the task and finished it inside the window looks
-    identical to one that never received it — so that stays `unknown` and falls through to the
-    existing wait untouched. The same applies to an engine whose idle marker merely did not appear
-    in the captured tail, which a scrolled pane also produces.
+    genuinely ambiguous — an engine that took the task and finished it inside the window looks
+    identical to one that never received it — so that reports unconfirmed and falls through to the
+    existing wait untouched.
   - **Engines that declare no vocabulary are unaffected.** Aider and OpenClaw answer `unknown` and
     wrap exactly as before; the receipt never refuses a wrap it cannot measure.
   - **Nothing is ever re-sent.** The receipt reports; it does not re-paste or re-press Enter, because

@@ -546,36 +546,48 @@ a repair could not be applied.
 **Ordering on the launch path.** The repair runs before `launchBaseline.capture`, so the file it
 moves is not counted as the new session's own change and put in front of the operator at wrap.
 
-## Extended 2026-09-20 — a step may report whether its prompt reached the engine (#1685)
+## Extended 2026-09-20 — a step may report that its prompt was NOT accepted (#1685)
 
-A step handler's result may now carry a fourth field beside `{ok, status, output, blockers}`:
+*Amended in place the same day, by Architect ruling, after the tri-state's positive value proved
+unsound. The original wording declared `'accepted' | 'not-accepted' | 'unknown'`; it is replaced
+rather than annotated, because a contract readers might still implement must not state a value no
+writer may emit.*
+
+A step handler's result may carry two fields beside `{ok, status, output, blockers}`:
 
 ```
-deliveryOutcome?: 'accepted' | 'not-accepted' | 'unknown'
+deliveryOutcome?: 'not-accepted' | 'unknown'
 deliveryReason?:  string      // the sentence explaining that outcome
 ```
 
-The reason travels with the outcome, and for the same reason the outcome travels at all: `unknown`
-covers an engine that declares no wake vocabulary (its pane was never read), a pane at rest with an
-empty composer, an unreadable pane, a cursor that never read, and a composer boundary that could not
-be located. A surface given only the word would assert one of those causes for all of them.
+**There is no `accepted`, and no current writer may create one.** Four review rounds found four
+reachable paths to a false `accepted` — every one of them in the accept half — because the boundary
+between a composer and a transcript, read from a bounded capture of a rendered TUI, cannot support a
+positive claim: the composer wraps across rows, scrolls its own head out of the capture, and can be
+drawn without a prompt glyph. The accept inference also had no independent behavioral consumer; an
+`accepted` step fell through to the same wait it would have done anyway.
 
-**Why it belongs in the contract rather than inside one step.** The pipeline builds each recorded
-row, and the SSE `step-done` / `step-blocked` frames, from an explicit field list. A value a step
-measures is therefore lost at that boundary unless the contract names it — which is exactly what
-happened when this field was first wired: the receipt was taken, logged, and dropped one hop later,
-and the drawer went on showing the generic blocked report while the server knew better.
+**Positive evidence is downstream task completion** — the completion marker, the capture file, and
+the settle watch — which is where it always was. This receipt is negative-only: it may prove that a
+send was not accepted, and otherwise reports `unknown`.
 
-**Present only when measured.** A step that never asks the question omits the field entirely. It is
-absent, never `null` and never `'unknown'`: a step that did not look must not be recorded as one
-that looked and could not tell. That distinction is the whole value of the field, and collapsing it
-would repeat the flattening this amendment exists to prevent.
+**`not-accepted` must be attributable to THIS send.** Only two things qualify: this send's nonce
+still inside a reliably located composer across the confirmation reads, and an engine's declared
+rejection marker observed as a post-send event. A marker merely present in bounded scrollback may be
+stale. A composer holding some *other* text is not proof our prompt was unsubmitted — it may be
+operator input or a selector row — so that is `unknown`, as are an unlocatable boundary, a generic
+busy state, an apparent transcript echo, an empty composer, an unreadable pane, and engines with no
+wake vocabulary.
 
-**Why three values.** `sendKeys` returning proves only that tmux accepted characters into a pty.
-`accepted` and `not-accepted` are each positive evidence — the engine is working or echoed the
-send's nonce; the composer is still holding the text. `unknown` covers the genuinely undecidable
-pane, and the engines that declare no wake vocabulary at all (aider, openclaw), which must keep
-wrapping exactly as they did before. Consumers must treat `unknown` as its own answer; reading it
-as either neighbour reintroduces the defect.
+**Present only when measured.** A step that never asks omits both fields entirely — absent, never
+`null` and never `'unknown'`: a step that did not look must not be recorded as one that looked and
+could not tell. The pipeline builds each recorded row and each SSE `step-done`/`step-blocked` frame
+from an explicit field list, so a field the contract does not name is dropped at that boundary. That
+is exactly how `deliveryOutcome` was lost the first time it was wired.
+
+**Readers may tolerate historical `accepted` rows** if compatibility requires it. Reintroducing it
+as a writable value requires an engine-native acknowledgement or an authoritative transcript event
+tied to the send's nonce — not rendered-pane inference — and another explicit amendment here.
 
 `lib/wrap-delivery-receipt.js` is the only producer today, via the `ai-content` step.
+
