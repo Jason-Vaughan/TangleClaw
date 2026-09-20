@@ -74,12 +74,13 @@ against that file returns zero hits). The receipt is a **wiring** job, not an in
 > evidence of *failure*, not of rest. Recorded rather than quietly rewritten, because the inversion
 > is the instructive part.
 
-> **SUPERSEDED by Architect ruling, 2026-09-20.** Everything below described a tri-state with a
-> positive `accepted`. That value is deleted. Four review rounds found four reachable paths to a
-> false `accepted`, every one in the accept half, and the boundary between composer and transcript
-> in a bounded capture of a rendered TUI cannot carry a positive claim. The accept inference also
-> had no independent behavioral consumer. Recorded rather than rewritten: the sequence of four
-> nearly-right fixes is the instructive part.
+> **SUPERSEDED AGAIN by Architect ruling, 2026-09-20.** The correction above still described a
+> tri-state with a positive `accepted`. That value is now deleted outright. Four review rounds found
+> four reachable paths to a false `accepted`, every one of them in the accept half, and the boundary
+> between composer and transcript in a bounded capture of a rendered TUI cannot carry a positive
+> claim. It also had no independent behavioral consumer. Both corrections are kept rather than
+> collapsed into one: the sequence of four nearly-right fixes is the instructive part, and it is
+> what argued the value out of existence.
 
 **The shipped design is a NEGATIVE receipt.** Two outcomes:
 
@@ -98,12 +99,21 @@ acknowledgement tied to the nonce, not pane inference, plus another ADR 0002 ame
 ### The one defect class to design against
 
 Train 21's car 21.10 shipped this exact failure three times (parent plan, Chunk 04): **a value made
-honest at one level and flattened at the next.** Here that would be collapsing `unknown` into
-either `accepted` (silent pass — the bug we are fixing, restored one layer up) or `not-accepted`
-(false alarms on aider/openclaw, which would be worse than today).
+honest at one level and flattened at the next.**
 
-**`unknown` is a third value end to end** — in the return, the log, the step result, and the
-drawer. It never degrades to either neighbour.
+*As shipped, that risk is halved by construction: with no `accepted`, `unknown` has only one
+neighbour it could collapse into.* The surviving hazard is collapsing `unknown` into
+`not-accepted` — false alarms on aider and openclaw, which declare no wake vocabulary and answer
+`unknown` by definition. That would be worse than today, because it would block wraps that
+currently work.
+
+**`unknown` is a first-class value end to end** — in the return, the log, the step result, and the
+drawer. It never degrades to its neighbour.
+
+The original form of this hazard is worth keeping visible: the danger used to be collapsing
+`unknown` into `accepted`, a silent pass that restored the very bug this module exists to catch.
+Four review rounds each found a different route to exactly that, which is why the value is gone
+rather than guarded.
 
 ### Explicitly NOT doing
 

@@ -115,7 +115,8 @@ test('#1685 consecutive content steps', async (t) => {
       // the field is dropped entirely, which is how the value went missing the
       // first time it was wired.
       assert.equal(r.deliveryOutcome, 'unknown');
-      assert.match(r.deliveryReason, /not that THIS prompt was the thing taken/);
+      assert.equal(r.deliveryReason,
+        'the engine is working (turn-in-flight), which says something is running but not that THIS prompt was the thing taken');
       assert.equal(polled, true, 'an unconfirmed prompt must still reach the completion wait');
     } finally { restore(); }
   });
