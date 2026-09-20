@@ -37,7 +37,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "TangleClaw | AI-Native SDLC Orchestration",
     description: "An open-source, local-first AI-native SDLC orchestration platform.",
-    url: "https://tangleclaw.dev",
+    url: "https://tangleclaw.com",
     siteName: "TangleClaw",
     images: [
       {
