@@ -1802,11 +1802,27 @@ an explicit disposition. Diagnostic runs are labelled diagnostic and are not fin
       for all six scenarios; the ordering block ships only where a launch has a sequence.
     - **Generated-text evidence is not a live launch.** Acceptance criterion 3 asks for a real
       launch reaching READY without a second operator prompt; that is a VRF owed, not something
-      these fixtures establish.
+      these fixtures establish. Queued as **VRF-1680-launch-reaches-ready-unprompted** in
+      `.prawduct/operator-verification.md` — the box above is ticked for the BUILD, and the VRF is
+      what holds the acceptance, because `Fixes #1680` closes the issue on merge and prose in a
+      ticked box holds nothing.
+    - **A sequence-less launch is the population nothing watches.** It gets the reworded banner and
+      Resume with no ordering block, and the owed VRF cannot reach it from a project that has a
+      sequence. Named in the VRF entry as the second thing to look at.
     - One test changed for a reason unrelated to the contract it guards: the Medusa-contract yield
       test squeezed against a hardcoded budget sitting fifteen characters above the prime's
-      irreducible floor, so any directive edit failed it. It now derives the budget from that
-      floor. Assertions unchanged.
+      irreducible floor, so any directive edit failed it. It now derives that floor — including
+      stripping the overflow report the impossible-budget render appends, without which the fit
+      would have held by construction rather than by yielding. Original assertions unchanged; two
+      added.
+    - **The block is core text, so it displaces bulk.** On the richest sequence-bearing prime
+      against Claude's cap it is what tips the total over, and the Ecosystem primer yields to its
+      pointer where previously nothing yielded. No directive is displaced and nothing overflows —
+      that is the budget working — but it is a real change in what such a session receives. The
+      `full-silent-claude-pull` golden fixture is the record; read the yield out of the fixture
+      rather than from a number written here, because a number here would go stale the next time
+      this text is edited and nothing would catch it. No fixture covered this combination before:
+      every other sequence-bearing one is a paste engine whose prime is far smaller.
   - [ ] #1673 — automate the crash-recovery clear
   - [ ] #1685 — wrap prompt delivery receipt
 - [ ] Chunk 04 — IN PROGRESS. `Type: cumulative-final`, so 21.12's review IS the train final; no

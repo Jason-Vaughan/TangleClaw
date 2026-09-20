@@ -1318,14 +1318,23 @@ describe('sessions', () => {
           // The number this test used to carry cleared the floor by 15
           // characters, so a one-sentence wording fix elsewhere in the prime
           // failed it for a reason that had nothing to do with the contract.
-          // Rendering against an impossible budget yields everything and
-          // reports the overflow, so its length is the floor plus that
-          // report — a margin that keeps the squeeze real (too small for the
-          // contract to trim into, so it must still reduce to its pointer)
-          // without being a cliff edge.
-          const budget = budgeted(1).length;
+          //
+          // An impossible budget yields everything and then APPENDS the
+          // overflow report, so that render is the floor plus a report the
+          // real render will not carry — budget to it and the fit holds by the
+          // report's width, not by yielding. Render once more AT that length
+          // and the report drops, leaving the prime's true floor: everything
+          // yielded, the contract down to its pointer, nothing left to give.
+          // Budget to exactly that and the fit has no slack to hide in.
+          const unbounded = budgeted(Number.MAX_SAFE_INTEGER).length;
+          const budget = budgeted(budgeted(1).length).length;
           const prompt = budgeted(budget);
 
+          // Guards the derivation itself: if the floor ever stopped being a
+          // squeeze — a budget that fits the prime whole asks nothing of the
+          // contract — every assertion below would pass while testing nothing.
+          assert.ok(budget < unbounded / 2,
+            `the budget must actually squeeze (floor ${budget} vs ${unbounded} unbounded)`);
           assert.ok(prompt.length <= budget,
             `the contract's yielding must bring the whole prime within budget (got ${prompt.length} of ${budget})`);
           // "Yielded" means gave up space and said so — either trimmed with a

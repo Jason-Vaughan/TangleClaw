@@ -127,17 +127,33 @@ describe('launch step contents (car 21.2)', () => {
       assert.match(identity, /Your opening runs in this order:/);
       // The order must name all four stages, in order, in one place.
       const order = identity.slice(identity.indexOf('Your opening runs in this order:'));
-      const stages = ['1.', '2.', '3.', '4.'].map((n) => order.indexOf(`\n${n} `));
+      const stages = ['(a)', '(b)', '(c)', '(d)'].map((n) => order.indexOf(`\n${n} `));
       assert.ok(stages.every((i) => i > -1), 'all four stages are present');
       assert.deepEqual(stages, [...stages].sort((a, b) => a - b), 'and they are in order');
+      // The stages must not be numbered: "step N" already means a
+      // launch-sequence step, and a rival 1-4 is how "step 4" comes to mean
+      // the task step rather than the proposal.
+      assert.ok(!/\n[1-4]\. /.test(order),
+        'the opening stages never reuse the numbering that already names launch steps');
+      // The name says "before any directive that claims a turn", so check it
+      // rather than leave the name carrying an unasserted claim. The banner
+      // block is the one such directive sharing this step; the Resume section
+      // is the other, and it rides step 4, which is after step 1 by
+      // construction.
+      const bannerIdx = identity.indexOf('begin your FIRST visible reply');
+      const orderIdx = identity.indexOf('Your opening runs in this order:');
+      assert.ok(bannerIdx > -1 && orderIdx > bannerIdx,
+        'the stated order follows the banner directive it sequences, in the same step');
     });
 
     it('step 1 authorizes initialization explicitly and scopes the confirmation rule to the work', () => {
       const { identity } = render();
       assert.match(identity, /already authorized/, 'routine bootstrap needs no operator approval');
       assert.match(identity, /Do not ask the operator to approve them/);
-      assert.match(identity, /those rules gate step 4/,
+      assert.match(identity, /those rules gate \(d\), the work you propose/,
         'the wait-for-confirmation rule is scoped to the proposed work, not to initialization');
+      assert.match(identity, /never gate reading a launch step, including the task step/,
+        'and it says so about the step whose arrival used to be read as needing approval');
     });
 
     it('authorizing initialization does not widen into authorizing the work', () => {

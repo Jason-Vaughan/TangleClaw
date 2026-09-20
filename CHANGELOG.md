@@ -127,7 +127,19 @@ All notable changes to TangleClaw are documented in this file.
     visible message, and the banner stays unconditional and separate.
   - Applies to both delivery paths and every engine; the ordering block ships only where a launch
     actually has a sequence, so a legacy or no-sequence launch is unchanged apart from the scoped
-    wording. Prime budgeting behaviour is unchanged.
+    wording.
+  - **The budgeting mechanism is unchanged; what it now has to budget is not.** The ordering block
+    is core text, so it never yields — it pushes against everything that does. On the richest
+    sequence-bearing prime (silent Claude, Medusa contract, heal report, against that engine's
+    10,000-character cap) the block is what tips the prime past the cap, and the **Ecosystem primer
+    now yields to its pointer where previously nothing yielded at all**. Nothing overflows and no
+    directive is displaced: bulk giving way to a pointer is the budget working as designed. But it
+    is a real change in what a session on that configuration receives, and it is recorded here
+    rather than described as budget-neutral.
+    - The new `full-silent-claude-pull` golden fixture is what holds this, and what makes the next
+      such growth show up as a reviewable diff instead of a silent yield. It is worth having
+      because every other sequence-bearing fixture is a paste engine whose prime is far smaller —
+      until now, this block's cost was only ever pinned where it could not matter.
 
 - **A wrap that could not read git no longer hands the next session a clean bill of health** (#1649).
   A handoff records `worktree: null` to mean "this project is not a git repository" — and the next
@@ -219,9 +231,10 @@ All notable changes to TangleClaw are documented in this file.
   yielded sections' pointers, the contract's own pointer — by fifteen characters. Nothing about the
   contract it tests depends on that number, so adding one sentence anywhere in the prime failed it,
   with a message about the contract for a cause that was not the contract. It now measures the floor
-  by rendering against an impossible budget and squeezes to that, keeping the squeeze genuinely
-  tight (the contract must still reduce to its pointer) without sitting on a cliff edge. The
-  assertions are unchanged.
+  by rendering against an impossible budget, rendering once more at that length to drop the
+  overflow report the first render appends, and squeezing to the floor that leaves — so the fit has
+  no slack to hold by construction. The original assertions are unchanged; two were added, one
+  guarding that the derived floor is still a squeeze at all.
 - **The Feature Index's auto-stubbed backlog is emptied** (Train 21 wrap). Five entries the wrap had
   stubbed as `TBD` when a session first touched their files are described and moved under their real
   categories: the Contributor Covenant, car 21.10's rule-drift diff, and the three test files for the

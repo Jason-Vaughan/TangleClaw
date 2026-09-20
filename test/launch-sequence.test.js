@@ -610,6 +610,19 @@ describe('launch sequence (Train 21, Chunk 01)', () => {
       assert.equal(done.body.step, null);
       assert.equal(done.body.next, 'ready');
       assert.equal(done.body.status.cursor, 4);
+      // The page an agent actually reads at this point, pinned because it
+      // carries an ORDER and orders drift (#1680). The freshness checks belong
+      // BEFORE the attestation — a session that attests first has vouched for
+      // a next action it has not yet checked, and then tells the operator it
+      // was stale — and the page must hand off to the proposal rather than to
+      // "the task step's instructions", which says nothing about stopping.
+      assert.match(done.body.content, /All four launch steps are acknowledged/);
+      const freshnessIdx = done.body.content.indexOf('freshness checks');
+      const attestIdx = done.body.content.indexOf('tc start ready');
+      assert.ok(freshnessIdx > -1 && attestIdx > freshnessIdx,
+        'the freshness checks are asked for before the attestation, not after it');
+      assert.match(done.body.content, /records initialization, not authorization/);
+      assert.match(done.body.content, /emit the resume proposal the task step describes, and stop there/);
 
       const status = launchSequence.status({ launchId: sequence.launchId, projectId: project.id }).body;
       assert.equal(status.status.cursor, 4);
