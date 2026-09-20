@@ -189,6 +189,12 @@ All notable changes to TangleClaw are documented in this file.
 - **A wrap that finishes now ends the session, even when it had nothing to commit** (#1558). The session used to end only when the wrap made a commit. When a session's work had already merged by pull request, and the wrap's own notes went to ignored files, a full wrap reported "no changes to commit" and left the session running. Now any wrap that finishes records the session as wrapped, closes its terminal and releases its document locks, commit or not. A wrap that stops for you, fails or crashes still leaves the session open so you can answer or retry. The finished report now says "Wrapped — nothing new to commit" and whether the session ended or is still running. Wrap results (the stream's `run-done` and `GET /wrap/status`) carry `sessionOutcome`: `ended`, `kept` (kept on request and still running), or `null` when the run didn't finish or the session ended another way, such as a Kill during the wrap.
 
 ### Internal
+- **The Feature Index's auto-stubbed backlog is emptied** (Train 21 wrap). Five entries the wrap had
+  stubbed as `TBD` when a session first touched their files are described and moved under their real
+  categories: the Contributor Covenant, car 21.10's rule-drift diff, and the three test files for the
+  drift diff, its end-to-end wiring, and a preflight that could not be evaluated (#1650). The stub
+  block is gone, so the index no longer carries a to-do list a reader has to skip past.
+
 - **Train 21's plan resolves to a gate again, and two records catch up to the code** (Train 21 housekeeping).
   The plan's frontmatter carried `branch: feat/train-21-car-21-9` — a branch that no longer exists — directly
   below its own comment explaining that this plan deliberately claims no branch, because a Train spanning twelve
