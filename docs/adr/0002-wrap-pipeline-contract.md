@@ -327,6 +327,125 @@ rolled back either. The companions are then uncommitted session changes, and the
 **Engine-agnostic.** A shell command and git: the same inputs produce the same commit on every engine.
 
 
+## Extended 2026-09-20 — exactly one release authority per release-governed group (#1697)
+
+**Status: ACCEPTED** — ratified by the Architect 2026-09-20 at head `683ae8096`, after one
+revision round against the review on PR #1703. Drafted by Builder1; the Architect approves ADRs.
+Nothing is built yet: this records the decision so the build implements a ratified rule rather than
+inventing one. Implemented by #1697.
+
+`releaseMode` is per project, and nothing relates one project's mode to another's. A fleet whose
+members share a repository can hold several release-capable projects at once, and nothing says so.
+On 2026-09-20 three members of this install's own group — `TangleClaw-Builder1`,
+`TangleClaw-ProjectManager` and `TangleClaw-Builder2` — were simultaneously release-capable. The
+condition had existed for an unknown period and surfaced only because a check was written and run by
+hand.
+
+**The operator's requirement, stated 2026-09-20:** *"once a system is put together with multiple
+team members, there can only be one that has that ability. All the other ones must be set to off for
+the system to work … the system has to force this working condition."*
+
+### The invariant is binary, not graduated
+
+`off` is the only value under which the step does not run (`lib/wrap-steps/version-bump.js` returns
+`skip`). Every other value means it executes and may cut. `ask` reads as safe because a human must
+choose Cut, but that governs *when* a cut happens, not *whether* the project can make one. Two
+members on `ask` are two members that can each author a bump. So the condition is exact: **exactly
+one member release-capable, every other member `off`.**
+
+### Release governance is opt-in, never implied by a group
+
+`project_groups` today relates projects for shared documents and infrastructure, and may contain
+repositories with entirely independent release streams. Governance therefore attaches to a
+**release-governed group**, marked explicitly — a nullable owner field is a sufficient opt-in.
+
+- A group with no release governance has **no effect on releases**. It must never suppress one.
+- An **ungrouped project keeps today's per-project behaviour** unchanged. A solo project must not
+  have to form a group to cut a release.
+
+### At most one release-governed group per project, and ambiguity fails closed
+
+`project_group_members` is keyed `PRIMARY KEY (group_id, project_id)`, so only the pair is unique: a
+project may belong to several groups, and `test/engines.test.js` exercises that directly. A project
+may therefore belong to **at most one release-governed group**, enforced on mutation.
+
+Where legacy or corrupt state produces more than one, **runtime fails closed**, naming every
+conflicting group and owner. It must never select the first group the store returns — an arbitrary
+pick is the silent-wrong-answer class this ADR's 2026-09-14 entry exists to refuse.
+
+### The ownership lifecycle is defined, and every transition is atomic
+
+- The owner is a **current, non-archived member**, enforced by constraint and by transactional
+  validation — not by convention.
+- **Enabling** release governance assigns an owner atomically. **Transfer** is one atomic operation.
+- **Rejected until authority is atomically transferred, or governance explicitly dissolved:**
+  removing or archiving the owner, hard-deleting the owner, and deleting or dissolving a
+  release-governed group.
+- A normal group may have no owner. A group already marked release-governed **may not silently
+  drift to zero owners**.
+
+### Effective capability is the group's, and the owner's local mode is only a policy
+
+The group record is the source of truth for **who may release**.
+
+- A **non-owner's effective mode is forced to `off`**, whatever a stale or hand-edited local value
+  says, and write paths **reject** attempts to make a non-owner release-capable.
+- The **owner's local mode selects only the decision policy** — whether the agent or the operator
+  decides. (Stated semantically so the mode naming in #1701 remains a separate decision.)
+- If the owner's local mode is `off`, unreadable, or otherwise unusable, **runtime skips with an
+  explicit remediation** rather than choosing a policy on the operator's behalf.
+
+### One resolver, consumed at every surface
+
+A single shared release-capability resolver serves `release-recommendation`, `version-bump`, the
+settings/API projection, and write validation. `release-recommendation` must consume it too, so a
+non-owner is never prompted for a release decision it could not execute — displayed, writable,
+prompted and executable state cannot be allowed to disagree. **`version-bump` remains the
+load-bearing backstop**, because it is the last surface before the act itself.
+
+### A non-owner skips; it does not error
+
+The refusal takes the existing `skip` shape and names the owning project, so the wrap continues, the
+changelog entry is still written, and the only thing withheld is the promotion and the bump — which
+were never this member's to make. That is ADR 0013's contract applied here: a setting that does not
+take effect says why it does not. It also keeps the 2026-07-19 entry's distinction intact —
+never-blocks governs the pipeline, and a refusal to act on an input the step cannot honour is not a
+block.
+
+### Why write-time enforcement alone is insufficient
+
+`version-bump` resolves its mode from `store.projectConfig.load(...)` — the member's own
+`.tangleclaw/project.json`. **In this checkout that file is ignored (`.gitignore:66`) and untracked,
+so an ordinary branch switch does not restore it**, and an earlier draft of this amendment was wrong
+to say otherwise. The runtime check is still load-bearing, for the cases that do occur:
+
+- an agent or operator edits the file directly;
+- a newly attached project arrives on the installed default, which is how the three owners above
+  appeared;
+- a hand-typed invalid value resolves to `ask` (`lib/project-config.js`), not `off` — an
+  unrecognised mode is release-capable;
+- stash or restore paths that explicitly include ignored files;
+- legacy repositories where the file is **tracked**, where checkout does rewrite it.
+
+Guarding only the API guards the one path that was never the problem.
+
+### Acceptance shape
+
+The contract is ratifiable when these states are mechanical: an ordinary group has no effect on
+releases; a release-governed group has exactly one active-member owner; only that owner can be
+effectively non-`off`; ownership transitions are atomic; ambiguous or invalid runtime state skips
+safely with an actionable reason; and the recommendation prompt follows the same capability decision
+as the bump step.
+
+### Out of scope, deliberately
+
+The default for an absent `releaseMode` (#1702) and the naming of the modes (#1701) are separate
+decisions and are not settled here. Whether release authority is ultimately an attribute of an agent
+*role* rather than a field on a group is Train 22's to decide; this amendment asks only that the
+build not make that migration expensive. ADR 0002's overgrown amendment ledger deserves a
+current-contract index, which is its own issue and not this revision's business.
+
+
 ## Amended 2026-09-16 — a finished wrap ends the session, commit or not (#1558)
 
 Chunk 11a ended the session only on `pipelineResult.ok && pipelineResult.commitSha`, and treated a
