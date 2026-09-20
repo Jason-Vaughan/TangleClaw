@@ -3,8 +3,22 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
+// A real store on a throwaway base path, established SYNCHRONOUSLY at require
+// time. `ENGINE_WAKE_PROFILES` is derived from the profiles the store holds, so
+// without this the file leans on whatever `~/.tangleclaw/engines` the host
+// happens to have: green on a dev machine with a live install, red on CI where
+// every engine reads as unprofiled. This file learned that the hard way — it
+// went green locally and failed CI with "Cannot read properties of undefined
+// (reading 'busyMarker')" on eight tests, which also means those tests were
+// exercising nothing on CI rather than merely erroring.
+const { useThrowawayStore } = require('./_engine-store');
+
+const engineStore = useThrowawayStore('wrap-delivery-receipt');
+
 const receipt = require('../lib/wrap-delivery-receipt');
 const medusaWake = require('../lib/medusa-wake');
+
+test.after(() => engineStore.cleanup());
 
 /**
  * A pane reader that replays scripted frames, one per poll.
