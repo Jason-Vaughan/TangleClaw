@@ -327,6 +327,68 @@ rolled back either. The companions are then uncommitted session changes, and the
 **Engine-agnostic.** A shell command and git: the same inputs produce the same commit on every engine.
 
 
+## Proposed 2026-09-20 — exactly one release authority per group (#1697)
+
+> **Status: PROPOSED, not accepted.** Drafted by Builder1 for the Architect's approval. Nothing
+> below is built. It records a decision the operator has stated as a requirement, so that the
+> build implements a ratified rule rather than inventing one.
+
+`releaseMode` is per project. Nothing relates one project's mode to another's, so a fleet whose
+members share a repository can hold several release-capable projects at once and nothing says so.
+On 2026-09-20 three members of this install's own group — `TangleClaw-Builder1`,
+`TangleClaw-ProjectManager` and `TangleClaw-Builder2` — were simultaneously release-capable. The
+condition had existed for an unknown period and surfaced only because a check was written and run
+by hand.
+
+**The operator's requirement, stated 2026-09-20:** *"once a system is put together with multiple
+team members, there can only be one that has that ability. All the other ones must be set to off
+for the system to work … the system has to force this working condition."*
+
+**The invariant is binary, not graduated.** `off` is the only value under which the step does not
+run (`lib/wrap-steps/version-bump.js` returns `skip`). Every other value means it executes and may
+cut. `ask` reads as safe because a human must choose Cut, but that governs *when* a cut happens,
+not *whether* the project can make one. Two members on `ask` are two members that can each author a
+bump. So the condition is exact: **exactly one member not-`off`, every other member `off`.**
+
+**Authority belongs to the group, not to the member.** A per-project flag plus a checker can only
+report a second owner after someone has created one, and this install demonstrates that such a
+report goes unread. A group-held `releaseOwnerProjectId` cannot express two owners: setting a new
+one is a single write that implies the old one loses it, with no window in which both are set and
+no cleanup step to forget. This is the shape PortHub already uses for ports — one lease, `409`
+naming the holder — and release authority is the same problem: one resource, many claimants, cheap
+to prevent and expensive to discover late.
+
+**Enforcement needs two sites, and the second is the one that forces it.** Write-time refusal —
+setting a second member release-capable returns a conflict naming the current owner — is necessary
+and insufficient. `version-bump` resolves its mode from `store.projectConfig.load(...)`, the
+member's own `.tangleclaw/project.json`, which is gitignored, edited by agents, and restored by
+ordinary git operations. A member becomes release-capable with no API call ever made: an agent
+edits the file, a branch switch restores an older copy, a newly attached project arrives on the
+installed default, or a hand-typed invalid value resolves to `ask` rather than `off`. Guarding only
+the API guards the one path that was never the problem. **The run-time check inside `version-bump`
+is therefore load-bearing**: the step resolves the owner from the group and refuses when the
+running project is not it.
+
+**A non-owner skips; it does not error.** The refusal takes the existing `skip` shape and names the
+owning project in its reason, so the wrap continues, the changelog entry is still written, and the
+only thing withheld is the promotion and the bump — which were never this member's to make. That is
+ADR 0013's contract applied here: a setting that does not take effect says why it does not. It also
+keeps the 2026-07-19 entry's distinction intact — never-blocks governs the pipeline, and a refusal
+to act on an input the step cannot honour is not a block.
+
+**The group wins a disagreement.** Where the group's record and a member's local mode conflict, the
+group decides, because it is the record that a stray file restore in one member's checkout cannot
+change. What a non-owner's `releaseMode` then *means* — inert, or rejected on write — is left to the
+build.
+
+**Out of scope, deliberately.** A project in no group keeps today's per-project behaviour unchanged:
+a solo project must not have to form a group to cut a release. The default for an absent
+`releaseMode` (#1702) and the naming of the modes themselves (#1701) are separate decisions and are
+not settled here. Whether release authority is ultimately an attribute of an agent *role* rather
+than a field on a group is Train 22's to decide (#1678 relationship noted); this amendment should
+not be built in a way that makes that migration expensive.
+
+
 ## Amended 2026-09-16 — a finished wrap ends the session, commit or not (#1558)
 
 Chunk 11a ended the session only on `pipelineResult.ok && pipelineResult.commitSha`, and treated a
