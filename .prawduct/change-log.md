@@ -70,6 +70,64 @@ The defect class this car is about, and which it then reproduced inside its own 
 And once more, in the third source. A later cumulative round found the same class surviving in the `global` row: `manifestFingerprints` guarded `store.globalRules.load()` with a try/catch, but that call swallows its own errors AND the missing-file case and answers `''`, so the guard was dead for both realistic failures and the row froze as a hash of the empty string — a real-looking measurement nobody took. Unreadable at both wrap and launch it compared equal and printed "nothing changed"; unreadable on one side it reported a global-rules edit nobody made and refused READY over it. The other two sources were already honest, so global was the one of three lacking the treatment — the shape to watch for is a fix landing on the sites that prompted it and not on the family. `store.globalRules.loadMeasured()` now answers `{text, measured}` from one read and `load()` delegates to it, so no existing caller changes; the launch hashes only a document it actually read. The end-to-end property is pinned, not just the field: a document unreadable on both sides must never be reported as unchanged.
 
 Worth carrying to anyone touching this module: round 2 shipped a GREEN suite containing a test that asserted a bug — a shared document moving `h1` to `CHANGED` with `hasDrift` pinned false. Running the suite could never have caught it. A green suite here is evidence about what could have made it red, nothing more.
+## 2026-09-19 — A preflight that could not run now owes recovery (#1650)
+
+<!-- prawduct: type=fix | scope=train-21-phased-launch -->
+
+Train 21, chunk B of the #1650 sequence. Implements the Architect's formal ruling
+(`train-21-preflight-evaluation-failure-ruling.md`, recorded on the issue). Tracked SEPARATELY from
+the 21.11 parity car, per that ruling — this is the production correction, not the certification work.
+
+**The defect.** A mandatory current-launch preflight that could not be EVALUATED returned both
+requirement flags false, so the launch proceeded to an ungated READY. Failing to establish current
+continuity is not evidence that continuity is sound. The same hole was reachable three other ways:
+an absent result, a malformed one, and an omitted constructor argument.
+
+**Six seams, corrected together** — five named in the ruling plus one it implies:
+1. `launch-preflight-context.js#evaluate`'s catch now sets `requiresRecovery: true`.
+2. `launch-preflight.js` adds `NOT_EVALUATED` to `RECOVERY_VERDICTS`.
+3. `launch-preflight.js#needsRecovery` answers TRUE for a missing/malformed result — it previously
+   answered false, so a caller handing over nothing got an open gate. Not named in the ruling; found
+   by reading the predicate the ruling pointed at.
+4. `sessions.js#_storedPreflight` carries the provenance into storage, so it survives a clearance.
+5. `launch-sequence.js#PREFLIGHT_NOT_EVALUATED` requires recovery and says nothing ever ran.
+6. `buildSnapshot` NORMALIZES the preflight instead of relying on its default parameter.
+
+**Seam 6 was a hole in the first version of this fix, and the new tests caught it.** A default
+parameter fires only for `undefined`. An explicit `null` slipped past it and then read as falsy at
+the gate, so `preflight: null` still produced `recovery: 'none'` — the same open gate an omitted
+argument used to give, reached by another route. One normalization now, so storage, renderer and
+gate cannot disagree.
+
+**Attempted-failure and missing-evidence stay distinct** (`evaluationFailed` / `evaluationMissing`).
+Both owe recovery; they differ in where a reader goes — a server log on this machine, or a call that
+never happened.
+
+**First launch is NOT exempt, and that corrected my own premise.** I had proposed splitting the
+constant on "was the check required", assuming a legitimate first launch arrives with no preflight.
+The Architect corrected it: production calls `evaluate` BEFORE building the snapshot, and the
+evaluator reaches `first-launch` only after establishing no sessions, no publications, no continuity
+index and an absent handoff, with integrity checks first. A failed read cannot establish those
+absences. My split would have created exactly the permissive omitted-argument path the ruling warns
+reopens the hole.
+
+**Evidence runs through the production composition**, not a hand-built `requiresRecovery: true`
+fixture. Failure is induced by making the handoff directory a regular file, so the evaluator really
+throws: operator mode withholds the task step and refuses READY `RECOVERY_UNCLEARED`; advisory
+serves it; a bound clear permits READY while the failed verdict and its provenance survive; a
+clearance bound to the wrong revision writes nothing; omitted/null/malformed each gate; and the
+controls hold — a first launch is positively evaluated and proceeds, and a decided `handoff-corrupt`
+stays its own verdict rather than blurring into an evaluation failure.
+
+Two pre-existing fixtures relied on the permissive default and now state an explicit evaluated
+preflight instead, which is the ruling's instruction rather than a weakened assertion. The contract
+test that expected both-false flags is inverted, because that expectation WAS the defect.
+
+Filed #1658: `test/dir-scanner.test.js`'s 300ms deadline test is load-sensitive and flaked once in
+three full-suite runs on this branch while main was green in three. This branch does not touch
+dir-scanner; the mechanism is simply more parallel load. Flagged rather than fixed — raising the
+timeout would weaken the guard instead of removing the host dependency.
+
 ## 2026-09-19 — Rule drafts: the live checkout launchd actually runs, and where a decision goes (#1642, #1647)
 
 <!-- prawduct: type=docs | scope=rules-1642-1647 -->

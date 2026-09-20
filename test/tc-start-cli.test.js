@@ -109,7 +109,20 @@ describe('tc start (car 21.3)', () => {
       engineProfile: engine,
       applicability: { applicable: true, reason: null },
       rendered,
-      rules: store.sessionRules.listActiveForProject(project.id)
+      rules: store.sessionRules.listActiveForProject(project.id),
+      // This suite drives the HAPPY path to READY, so it must state an
+      // explicitly evaluated benign preflight. Omitting it is missing evidence,
+      // which owes recovery, and READY would be refused RECOVERY_UNCLEARED —
+      // correctly, but this file is not testing that gate.
+      preflight: {
+        verdict: 'ok',
+        reason: 'nothing was left behind',
+        requiresRecovery: false,
+        requiresReconciliation: false,
+        worktreeDirty: false,
+        evaluationFailed: false,
+        evaluationMissing: false
+      }
     });
     const session = store.sessions.start({ projectId: project.id, engineId: 'claude', launchSequence: snapshot });
     sequence = store.launchSequences.getBySession(session.id);
@@ -179,7 +192,11 @@ describe('tc start (car 21.3)', () => {
     // is about the route being wired rather than about test order.
     const early = await request(server, 'POST', '/api/tc/start/ready', paneHeaders(), {
       schema: 'tc.ready/1',
-      preflightVerdict: 'not-evaluated',
+      // Must match the sequence's stored verdict, which this suite sets to an
+      // explicitly evaluated `ok`. A mismatch is its own refusal, and this test
+      // is about the route being wired and demanding a launch id — so the
+      // verdict must not be the thing that fails.
+      preflightVerdict: 'ok',
       proposedFirstAction: 'confirm the next chunk with the operator'
     });
     assert.equal(early.status, 409);
@@ -226,7 +243,7 @@ describe('tc start (car 21.3)', () => {
     const status = await runTc(['start', 'status'], paneEnv);
     assert.equal(status.code, 0, status.stderr);
     assert.match(status.stdout, /Launch sequence \d+ .*acknowledged/);
-    assert.match(status.stdout, /Preflight: not-evaluated/);
+    assert.match(status.stdout, /Preflight: ok/);
     // The disclosure three records promise, asserted where the reader meets it:
     // drop it from the payload or the renderer and this goes red.
     assert.match(status.stdout, /Pages are sized to \d+ characters, against this engine's measured \d+-character tool-output limit\./);
