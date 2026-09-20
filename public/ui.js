@@ -2487,16 +2487,28 @@ function launchClearanceLabel(s) {
 function launchRecoveryHtml(s) {
   if (!s.recovery || s.recovery === 'none') return '';
   const verdict = s.preflightVerdict ? `<code>${esc(s.preflightVerdict)}</code>` : 'an unrecorded verdict';
+  // The verdict WORD alone asks you to clear a launch without saying what
+  // happened to it. The cause, and where to go looking for it. The two are not
+  // equally strong claims: a witnessed failure names an error in this machine's
+  // server log, while a missing result says only that none is available — which
+  // does not establish that none was produced.
+  const cause = s.preflightReason ? ` ${esc(s.preflightReason)}.` : '';
+  const whereToLook = s.preflightEvaluationFailed
+    ? ' The evaluation was attempted and failed — this machine\'s server log names the error.'
+    : (s.preflightEvaluationMissing
+      ? ' No usable evaluation result was available for this launch. That is not proof none ran, '
+        + 'so the server log may still say something.'
+      : '');
   if (s.recovery === 'cleared') {
     return `<br><small class="session-rule-meta">Recovery: ${verdict} — ${launchClearanceLabel(s)}`
       + `${s.recoveryClearedAt ? ` at ${esc(s.recoveryClearedAt)}` : ''}</small>`;
   }
   if (s.recoveryMode === 'advisory') {
-    return `<br><small class="session-rule-meta rules-status-err">Recovery required: ${verdict}. `
+    return `<br><small class="session-rule-meta rules-status-err">Recovery required: ${verdict}.${cause}${whereToLook} `
       + 'This project is in advisory mode, so the session clears it by attesting with a written '
       + 'reconciliation — there is nothing here for you to clear.</small>';
   }
-  return `<br><small class="session-rule-meta rules-status-err">Recovery required: ${verdict}. `
+  return `<br><small class="session-rule-meta rules-status-err">Recovery required: ${verdict}.${cause}${whereToLook} `
     + 'The task step is withheld and this session cannot attest until you clear it.</small>'
     + `<br><button type="button" class="btn btn-sm" data-launch-recovery-clear="${esc(s.sequenceId)}" `
     + `data-session-id="${esc(s.sessionId)}" data-recovery-revision="${esc(s.recoveryRevision)}">`

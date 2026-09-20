@@ -602,11 +602,11 @@ describe('ok is a positive predicate, proven by exhaustion', () => {
     // be a pass nobody decided to grant.
     const exceptions = new Set([VERDICTS.FIRST_LAUNCH, VERDICTS.LEGACY, VERDICTS.OK]);
     for (const verdict of Object.values(VERDICTS)) {
-      // `not-evaluated` is the one member this module never returns: it is what
-      // the launch records when it could not gather a context at all, so it is
-      // neither a decision nor a bucket. It is in the enum so that every reader
-      // matching on a verdict can name it.
-      if (verdict === VERDICTS.NOT_EVALUATED) continue;
+      // `not-evaluated` is still the one member this module never RETURNS — it is
+      // what a launch records when no usable evaluation result is available — but
+      // it is no longer outside the buckets: it joined RECOVERY_VERDICTS (#1650),
+      // because a check that could not be performed is not a check that passed.
+      // So it is asserted here like every other verdict rather than skipped.
       const covered = preflight.RECOVERY_VERDICTS.has(verdict)
         || preflight.RECONCILIATION_VERDICTS.has(verdict)
         || exceptions.has(verdict);

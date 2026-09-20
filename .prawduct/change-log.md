@@ -99,9 +99,13 @@ the gate, so `preflight: null` still produced `recovery: 'none'` — the same op
 argument used to give, reached by another route. One normalization now, so storage, renderer and
 gate cannot disagree.
 
-**Attempted-failure and missing-evidence stay distinct** (`evaluationFailed` / `evaluationMissing`).
-Both owe recovery; they differ in where a reader goes — a server log on this machine, or a call that
-never happened.
+**Witnessed-failure and missing-result stay distinct** (`evaluationFailed` / `evaluationMissing`),
+and they are NOT equally strong claims. `evaluationFailed` is reserved for a positively observed
+failure: the evaluator was called and threw, and this machine's server log names it.
+`evaluationMissing` says only that no usable result is available — it does not establish that none
+was produced, since a result can be lost or malformed in transit. The Architect corrected this
+wording after the first draft asserted "nothing ever ran", which is the same absence-of-evidence
+error the gate itself exists to prevent.
 
 **First launch is NOT exempt, and that corrected my own premise.** I had proposed splitting the
 constant on "was the check required", assuming a legitimate first launch arrives with no preflight.

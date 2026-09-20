@@ -205,6 +205,44 @@ describe('the launch-readiness panel renders (Train 21, car 21.5)', () => {
         'the button carries the revision, so a stale click is refused rather than applied');
     });
 
+    it('states the CAUSE, not just the verdict word, so a clear is an informed one', () => {
+      // The payload carried the verdict and not the reason, which asked someone
+      // to grant `operator-verified` against "Recovery required: not-evaluated"
+      // beside a Clear button. A control offered without the cause is a decision
+      // taken blind.
+      const html = render([row({
+        recovery: 'required',
+        recoveryMode: 'operator',
+        recoveryRevision: 3,
+        preflightVerdict: 'not-evaluated',
+        preflightReason: 'the handoff directory could not be read (ENOTDIR)',
+        preflightEvaluationFailed: true,
+        preflightEvaluationMissing: false
+      })]);
+      assert.match(html, /could not be read \(ENOTDIR\)/, 'the reason reaches the reader');
+      assert.match(html, /server log names the error/,
+        'a WITNESSED failure sends them somewhere specific');
+    });
+
+    it('does not claim nothing ran when it only lacks a result', () => {
+      // The weaker claim must stay weaker. Missing evidence means no usable
+      // result is available — it does not establish that no evaluation ran, and
+      // saying otherwise would repeat the exact error this gate exists to stop.
+      const html = render([row({
+        recovery: 'required',
+        recoveryMode: 'operator',
+        recoveryRevision: 3,
+        preflightVerdict: 'not-evaluated',
+        preflightReason: 'no usable preflight result is available for this launch',
+        preflightEvaluationFailed: false,
+        preflightEvaluationMissing: true
+      })]);
+      assert.match(html, /not proof none ran/,
+        'absence of a result is not evidence of absence of a run');
+      assert.doesNotMatch(html, /server log names the error/,
+        'nothing was witnessed, so it must not point at an error nobody saw');
+    });
+
     it('offers no button in advisory mode, where the session clears its own', () => {
       const html = render([row({
         recovery: 'required', recoveryMode: 'advisory', preflightVerdict: 'handoff-behind'

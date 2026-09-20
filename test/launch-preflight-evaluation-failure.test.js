@@ -149,7 +149,8 @@ describe('a preflight that could not be evaluated (#1650)', () => {
       assert.equal(result.requiresRecovery, true,
         'a check that could not be performed is not a check that passed');
       assert.equal(result.evaluationFailed, true);
-      assert.equal(result.evaluationMissing, false, 'it was attempted — the evidence did not merely fail to arrive');
+      assert.equal(result.evaluationMissing, false,
+        'the failure was witnessed, which is the stronger claim — this is not merely "no result available"');
     });
 
     it('classifies not-evaluated as a recovery verdict', () => {
@@ -169,11 +170,11 @@ describe('a preflight that could not be evaluated (#1650)', () => {
     // The ruling's "must not regain an open gate through an absent/malformed
     // result or a default constructor". One default, not a permissive
     // constructor case beside a restrictive fallback case.
-    it('the not-evaluated default owes recovery and says nothing ever ran', () => {
+    it('the not-evaluated default owes recovery and claims only that no usable result is available', () => {
       assert.equal(launchSequence.PREFLIGHT_NOT_EVALUATED.requiresRecovery, true);
       assert.equal(launchSequence.PREFLIGHT_NOT_EVALUATED.evaluationMissing, true);
       assert.equal(launchSequence.PREFLIGHT_NOT_EVALUATED.evaluationFailed, false,
-        'nothing was attempted, so nothing failed — a reader sent to a log would find none');
+        'no failure was WITNESSED here — the flag is reserved for one that was, and absence of a result does not establish one');
     });
 
     it('omitting preflight entirely gates the launch', () => {
