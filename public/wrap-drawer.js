@@ -281,10 +281,19 @@
     // absent is not a measured `unknown`.
     if (stepResult.status === 'blocked') {
       if (stepResult.deliveryOutcome === 'not-accepted') {
-        return 'prompt never reached the engine — not a slow model';
+        return stepResult.deliveryReason
+          ? `prompt never reached the engine — ${stepResult.deliveryReason}`
+          : 'prompt never reached the engine — not a slow model';
       }
       if (stepResult.deliveryOutcome === 'unknown') {
-        return 'delivery unconfirmed — the pane could not say whether the prompt landed';
+        // The REASON, not a stand-in for it. `unknown` covers an engine that
+        // declares no wake vocabulary (the pane was never read at all), a pane
+        // at rest with an empty composer, an unreadable pane, and a cursor that
+        // never read — four different situations, and a single sentence asserts
+        // one cause for all four.
+        return stepResult.deliveryReason
+          ? `delivery unconfirmed — ${stepResult.deliveryReason}`
+          : 'delivery unconfirmed';
       }
     }
     const output = stepResult.output && typeof stepResult.output === 'object' ? stepResult.output : null;
@@ -1445,6 +1454,7 @@
     // drawer the first time. Absent stays absent — a step that never measured
     // delivery must not read as a measured `unknown`.
     if (typeof event.deliveryOutcome === 'string') row.deliveryOutcome = event.deliveryOutcome;
+    if (typeof event.deliveryReason === 'string') row.deliveryReason = event.deliveryReason;
     if (event.halted === true) next.blockedAt = event.stepId;
     if (next.currentStepId === event.stepId) {
       next.currentStepId = null;
@@ -1815,7 +1825,13 @@
     liveStepTiming,
     handbackView,
     retryLabel,
-    wrapButtonView
+    wrapButtonView,
+    // Exposed for tests: this is the LAST hop the delivery tri-state crosses,
+    // and it is where the value died once already — the row is rebuilt from an
+    // explicit field list, so a field nobody names here is silently dropped.
+    // Nothing asserted the copy, which meant deleting the line left the suite
+    // green.
+    settleLiveRow
   };
 
   // Browser: attach to window so session.js can call helpers.

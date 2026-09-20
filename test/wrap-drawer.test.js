@@ -1367,6 +1367,30 @@ describe('#867 — stranded-wrap classification agrees with the server', () => {
     assert.deepEqual(stranded, ['stranded — gh unavailable']);
   });
 
+  it('#1685 — settleLiveRow CARRIES the delivery fields off the event, and absent stays absent', () => {
+    const H = loadHelpers();
+    const reduce = H.reduceWrapRun || H.applyWrapEvent || null;
+    // Asserted through the row builder the stream feeds, because this is the
+    // last hop: the tri-state died here once already, and nothing pinned the
+    // copy — deleting the line left the suite green.
+    const next = { results: [], currentStepId: null, currentStepStartedAt: null, started: false, blockedAt: null };
+    H.settleLiveRow(next, {
+      stepId: 'ai-content', kind: 'ai-content', status: 'blocked', blockers: [],
+      deliveryOutcome: 'not-accepted', deliveryReason: 'the composer is holding input'
+    }, 'blocked');
+    const row = next.results.find((r) => r.stepId === 'ai-content');
+    assert.equal(row.deliveryOutcome, 'not-accepted');
+    assert.equal(row.deliveryReason, 'the composer is holding input');
+
+    // A step that never measured delivery must not gain the fields.
+    const next2 = { results: [], currentStepId: null, currentStepStartedAt: null, started: false, blockedAt: null };
+    H.settleLiveRow(next2, { stepId: 'commit', kind: 'commit', status: 'done', blockers: [] }, 'done');
+    const row2 = next2.results.find((r) => r.stepId === 'commit');
+    assert.equal(Object.prototype.hasOwnProperty.call(row2, 'deliveryOutcome'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(row2, 'deliveryReason'), false);
+    void reduce;
+  });
+
   it('#1685 — the delivery line explains a BLOCKED row and never pre-empts a completed one', () => {
     const { deriveDetail } = loadHelpers();
 
@@ -1374,8 +1398,28 @@ describe('#867 — stranded-wrap classification agrees with the server', () => {
     // slow" are indistinguishable without this, and that confusion is the bug.
     assert.equal(deriveDetail({ kind: 'ai-content', status: 'blocked', deliveryOutcome: 'not-accepted', output: null }),
       'prompt never reached the engine — not a slow model');
+
+    // The REASON travels, because `unknown` covers four different situations —
+    // an engine that declares no vocabulary (the pane was never read at all), a
+    // pane at rest with an empty composer, an unreadable pane, and a cursor that
+    // never read. One fixed sentence asserted one cause for all four.
+    assert.equal(
+      deriveDetail({
+        kind: 'ai-content', status: 'blocked', deliveryOutcome: 'unknown', output: null,
+        deliveryReason: 'engine aider declares no wake vocabulary, so nothing here can observe whether the prompt became a task'
+      }),
+      'delivery unconfirmed — engine aider declares no wake vocabulary, so nothing here can observe whether the prompt became a task'
+    );
+    assert.equal(
+      deriveDetail({
+        kind: 'ai-content', status: 'blocked', deliveryOutcome: 'not-accepted', output: null,
+        deliveryReason: "this send's own text is still in the composer on 2 consecutive reads"
+      }),
+      "prompt never reached the engine — this send's own text is still in the composer on 2 consecutive reads"
+    );
+    // No reason recorded: say less rather than assert a cause nothing measured.
     assert.equal(deriveDetail({ kind: 'ai-content', status: 'blocked', deliveryOutcome: 'unknown', output: null }),
-      'delivery unconfirmed — the pane could not say whether the prompt landed');
+      'delivery unconfirmed');
 
     // DONE with `unknown` is the case that must stay quiet. aider and openclaw
     // declare no wake vocabulary, so every send answers `unknown`; surfacing it

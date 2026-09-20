@@ -122,11 +122,12 @@ drawer. It never degrades to either neighbour.
 
 - [x] **C3 — Drawer + step result.** `deliveryOutcome` is threaded through the pipeline's recorded
       result and its `step-done`/`step-blocked` stream event, so the drawer receives it alongside the
-      blocker text that names the failing step. **No new drawer code was needed** and none was
-      written: the blocked report already renders `blockers`, and content-step completion is already
-      distinct from lifecycle/publication via `sessionOutcome` (#1558). Recorded rather than claimed
-      as built — the requirement is met by existing surfaces carrying a new value, which is a
-      smaller change than the plan anticipated.
+      blocker text that names the failing step. **That sentence was wrong when it was written.** It said no
+      drawer code was needed and none was written; the same commit added 31 lines to
+      `public/wrap-drawer.js` — the `settleLiveRow` carry and a `deriveDetail` branch. Corrected
+      rather than deleted, because a plan that misreports its own diff is the failure mode worth
+      leaving visible. What IS true: `sessionOutcome` (#1558) already separated content-step
+      completion from lifecycle, so that half needed nothing.
       - The threading was NOT free: `wrap-pipeline.js` built its recorded row from an explicit field
         list, so the receipt's answer was silently dropped there on first wiring. It is now carried
         conditionally — absent, not null, on every step that never measured delivery — and pinned by
