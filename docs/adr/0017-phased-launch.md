@@ -3,8 +3,8 @@
 **Status:** **Proposed (2026-09-20).** Written by car 21.12 (#1590) at the close of Train 21, against
 a mechanism that is already built and running. It is submitted to the Architect for review before
 its PR merges — bound 4 of the train's plan. Cars 21.1–21.10 shipped (v40–v43); car 21.11's
-certification half was removed by an operator scope amendment rather than built, and this ADR says
-so in § "What was descoped".
+certification half was **cancelled by an operator scope amendment** rather than built — cancelled,
+not blocked — and this ADR says so in § "What was descoped".
 **Source issues:** #1579–#1590, tracking #1591. Rulings on #1589 and #1650.
 **Builds on:** ADR 0002 (wrap pipeline contract — the handoff publication extends it), ADR 0008
 (project/master session model), ADR 0013 (settings take effect or say why not).
@@ -158,7 +158,7 @@ stated as a table so no row can be read as the other.
 | Identity check — **projectId half** | yes, exact | — |
 | Identity check — **workspaceId half** | **NO.** `lib/sessions.js` calls `evaluate(project, {workspaceId: null})`, so the comparison in `lib/launch-preflight.js` never fires in production | The launching side needs something stable to compare against. `medusa.mintWorkspaceId` draws fresh random bytes every launch, so comparing it would report `identity-mismatch` on every launch of every Medusa project. **#1611**, open |
 | A launch with **no sequence** is gated on a damaged handoff | **NO** — the gate lives on the sequence, so a launch that has none is gated by nothing | **#1623**, open |
-| Engine parity **certification** — a pass bound to engine id and version, config fingerprint, runtime identity, launch/session/revision, and assistance attribution, demoting to `stale` mechanically | **NO — not built.** Removed from 21.11 by operator scope amendment, 2026-09-20 | **Designed, not built.** The Architect ruled the design on 2026-09-20 (#1720): a versioned `tc.parity-certification/1` evidence record in the existing `launch_sequences` JSON, plus a pure resolver over `current`/`stale`/`invalid`/`blocked`/`failed`/`N/A`. See below |
+| Engine parity **certification** — a pass bound to engine id and version, config fingerprint, runtime identity, launch/session/revision, and assistance attribution, demoting to `stale` mechanically | **NO — cancelled by scope**, operator amendment 2026-09-20, because no current downstream consumer needs durable certification. Not blocked, not owed | Unscheduled. An Architect-ruled design exists (#1720) for whoever revives it; it is an archived decision, not a pending task. See below |
 | Retention for the launch-sequence tables | **NO** — unbounded for Train 21 | **#1595**, open |
 | A phased launch for the Master pane | **NO** — Master now declares an honest `{applicable: false, reason}` instead of silence | **#1712**, open question |
 | Delegated recovery clearance (a peer clears a stalled session) | **NO** — needs an authenticated non-operator identity path | **#1713**, open question |
@@ -166,38 +166,41 @@ stated as a table so no row can be read as the other.
 ## What was descoped, and by whom
 
 **Car 21.11's certification machinery was removed from the train by an operator scope amendment on
-2026-09-20**, recorded on #1589. It was not built, and nothing in this train should be read as
-certifying automatic engine parity.
+2026-09-20**, recorded on #1589. It was **cancelled by scope, not blocked** — the distinction
+matters, because a reader who takes it as blocked will go looking for the obstacle and conclude the
+work is owed. Nothing in this train certifies automatic engine parity, and nothing in it should be
+read as trying and failing to.
 
-The reasons are on the issue and are worth preserving here because they are design constraints, not
-scheduling:
+**Live parity evidence was not the gap.** The operator accepted **six Codex and three Antigravity
+clean READY launches** for this car. The `launch_sequences` table carries attested launches on both
+engines independently of this decision. An earlier draft of this ADR said the opposite — that
+required probes could not be obtained, because an agent driving a pane is assisted activation and
+the Architect had ruled assisted activation cannot certify automatic behaviour. **That reasoning was
+retracted**, and it is named here rather than quietly deleted so the retraction survives the draft
+that carried it.
 
-- **Required parity needs live in-pane probes**, and the Architect ruled that *"assisted/manual
-  activation cannot certify automatic behavior."* An agent driving those panes **is** assisted
-  activation, so an agent-run probe produces exactly the evidence the acceptance contract rejects.
-- **Aider parity was failing** — a URL-import gate, a per-command output-import confirmation,
-  copy/paste fragility, and a model claiming an acknowledgement it had not made. That work moved to
-  epic **#1645**, with #1639, #1641, #1643 and #1644 under it.
-- **The binding collided with the car's own constraint** — and the collision was *resolved*, after
-  the descoping decision was already in motion. `launch_sequences` carries none of the fields a
-  certification would have to bind, while 21.11 declared *"Schema: no DB migration"*. The Architect
-  ruled on 2026-09-20 (recorded in `.tangleclaw/plans/wrap-sequence-architecture.md` §3, merged as
-  #1720) that **the no-migration bound holds** and the binding rides the existing durable JSON — the
-  `launch_sequences` row plus `ready_artifact`/`ready_digest` — as a versioned
-  `tc.parity-certification/1` record naming engine id and version, the config/profile fingerprint
-  excluding its own evidence subtree, deployed runtime identity, scenario and outcome, assistance
-  attribution, and the launch/session/revision/`readyDigest` anchor. A **pure resolver** compares
-  that binding against currently measured inputs and answers `current`, `stale`, `invalid`,
-  `blocked`, `failed` or an explicit `N/A`; unknown or unmeasured provenance is `invalid`, never
-  `current` and never `N/A`. History is append-only. The ruling's own contingency: if this cannot be
-  made mechanically valid within the existing JSON, **lift the no-migration bound explicitly rather
-  than weaken the certification.**
+What was descoped, precisely:
 
-  So the design is settled and unbuilt. Whoever picks it up inherits a specification, not a blank
-  page — and inherits the reason it stopped, which was the evidence problem below, not the schema.
+- **The certification subsystem** — acceptance cases 1–5 and 8. **Cancelled because no current
+  downstream consumer needs durable certification**, which is a product judgement the operator is
+  entitled to make, not an engineering obstacle. They are neither shipped nor claimed.
+- **Aider parity** moved to epic **#1645**, with #1639, #1641, #1643 and #1644 under it. Aider's
+  problems were real — a URL-import gate, a per-command output-import confirmation, copy/paste
+  fragility, and a model claiming an acknowledgement it had not made — but they are that epic's
+  subject now, not this train's.
 
-Acceptance cases 6 and 7 of that car needed no work — #1650 had already shipped the contract, and it
-was **verified rather than rebuilt**. Cases 1–5 and 8 are neither shipped nor claimed.
+**The schema collision had a ruled answer, and it was not the reason anything stopped.** The
+Architect supplied a viable binding on 2026-09-20 (`.tangleclaw/plans/wrap-sequence-architecture.md`
+§3, merged as #1720): a versioned `tc.parity-certification/1` evidence record carried in existing
+durable JSON, with a pure resolver over `current`/`stale`/`invalid`/`blocked`/`failed`/`N/A`. The
+ruling was **conditional, not an unqualified "no migration needed"** — the existing JSON is the
+vehicle *only while it preserves the full binding*, and the ruling's own contingency is to **lift the
+no-migration bound explicitly rather than weaken the certification.** Read it at the source rather
+than from this summary; it is an archived decision for cancelled work, and its details belong to
+whoever revives that work.
+
+Acceptance cases 6 and 7 needed no work — #1650 had already shipped the contract, and it was
+**verified rather than rebuilt**.
 
 What *did* ship from 21.11 is narrow and honest: the Master pane states `{applicable: false,
 reason}` in the same shape a project launch uses, with the reason about the **pane** rather than the
@@ -238,9 +241,17 @@ could.
 ## Consequences
 
 **Good.** Context delivery is evidenced rather than hoped for. The hook cap stops being a governance
-budget. Any engine with `tc` on PATH can receive full context, and one that cannot says why rather
-than silently receiving less. A damaged handoff is caught at the next launch instead of being
-inherited.
+budget. An engine no longer needs a hidden prime channel to receive full context, and one that cannot
+receive a sequence says why rather than silently receiving less. A damaged handoff is caught at the
+next launch instead of being inherited.
+
+**`tc` on PATH is necessary and not sufficient, and Aider proved it.** The ambient floor puts `tc` in
+every pane, but a sequence is only delivered where **the engine integration actually executes `tc`
+and gets its output into the model's context** — which is a property of the engine's own interaction
+model, not of the PATH. Aider has `tc` and still could not complete an unassisted launch: its URL
+import gate, its per-command output-import confirmation and its copy/paste fragility sit between the
+command and the model. `launchSequence.supported` therefore records an *intent to serve*, never a
+measured capability to consume. Automatic Aider parity is **#1645**.
 
 **Costs, accepted.** A launch now involves several round trips instead of one push. Four tables and
 a handoff directory are new storage, with **no retention policy yet** (#1595). The Claude duplication

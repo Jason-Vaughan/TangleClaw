@@ -906,7 +906,7 @@ Chunks are sequential; each one merges before the next begins.
 
 ### Chunk 04 — Reconciliation, parity, the record (`Type: cumulative-final`)
 - **21.10** (#1588) per-rule drift diff in step 3 (added/removed/changed from the handoff manifest, including global/shared sources); a revision or drift makes `reconciliation` required
-- **21.11** (#1589) engine parity probes (codex, aider, antigravity) + honest `not-applicable` for openclaw and Master + follow-ups (Master phased launch; delegated clearing; retention setting)
+- **21.11** (#1589) engine parity probes (codex, aider, antigravity) + honest `not-applicable` for openclaw and Master + follow-ups (Master phased launch; delegated clearing; retention setting). **CLOSED 2026-09-20 by operator scope amendment: the certification subsystem was cancelled by scope, not blocked, and §4d is superseded — see `## Status`.**
 - **21.12** (#1590) docs: ADR 0017 "Phased launch", `api-contract.md`, `engine-guide.md`, `configuration-reference.md`, CHANGELOG. The R1 amendment is **not** here: it lands with 21.6.
 
 Governance checkpoints: after Chunk 01 (does the single renderer and frozen snapshot hold?) and after
@@ -1483,6 +1483,25 @@ closes #1588.
 
 ## 4d. Car 21.11 build plan (#1589) — engine parity CERTIFICATION
 
+> **SUPERSEDED 2026-09-20 BY OPERATOR SCOPE AMENDMENT. NOTHING BELOW IS BINDING.**
+>
+> #1589 is **CLOSED**. The certification subsystem this section specifies — acceptance cases 1–5 and
+> 8 — was **cancelled by scope, not blocked**: the operator judged that no current downstream
+> consumer needs durable certification. **Live parity evidence was never the obstacle.** The
+> operator accepted **six Codex and three Antigravity clean READY launches** for this car, and the
+> `launch_sequences` table carries attested launches on both engines. An earlier reading — that
+> required probes could not be obtained because an agent driving a pane is assisted activation — was
+> **retracted**; it is named here rather than deleted so the retraction outlives the draft that
+> carried it.
+>
+> **Every "Done when", acceptance case and final-parity clause in this section is superseded** and
+> demands nothing of any car, this train's final review included. Aider parity moved to epic #1645.
+> What actually shipped from this car, and what was removed, is recorded in `## Status` — read that,
+> not the specification below.
+>
+> The section is kept unedited because it holds the reasoning a future revival would otherwise
+> re-derive. Read it as an archived design, never as work owed.
+
 **Branch:** `feat/train-21-car-21-11`. **Schema:** no DB migration. **Critic mode:** `chunk` — the
 chunk is `cumulative-final`, so 21.12's review is the train final. **Type:** feature. **Size:**
 medium.
@@ -1615,7 +1634,16 @@ own branch and PR, not folded in here.
   delivery.
 - Historical pre-gate rows stay historical. No bulk rewrite of their outcomes.
 
-### Done when
+### Done when — SUPERSEDED, DEMANDS NOTHING
+
+> This clause is dead. The operator **did** explicitly amend scope on 2026-09-20 — the branch this
+> text names — and #1589 closed under it. Nothing below is owed by any car, and the **final parity
+> acceptance it holds is cancelled, not pending**: it cannot be un-held, because what it gated no
+> longer exists as a deliverable of this train. The whole-trajectory prerequisite travels with the
+> certification work; §4e records that disposition. Repeated at this heading because a reader who
+> jumps straight to "Done when" never sees §4d's banner.
+
+Superseded text, kept verbatim for the reasoning:
 
 **Probes RUN with any outcome does NOT close #1589** (Architect, binding). Required cases must PASS,
 or the operator explicitly amends scope. Beyond that: every box ticked, suite green,
@@ -1701,9 +1729,11 @@ two files were kept current by the cars that built them — recorded here becaus
 1. Write `docs/adr/0017-phased-launch.md`.
 2. Add the attestation / recovery / handoff section to `docs/engine-guide.md`.
 3. CHANGELOG entry under `[Unreleased]`.
-4. Tick this car and Chunk 04 in `## Status`.
-5. `/prawduct:critic` at `cumulative` — the train final — and disposition every finding.
-6. Architect review of the ADR (bound 4) BEFORE merge.
+4. `/prawduct:critic` at `cumulative` — and disposition the outcome (see the finding below).
+5. Architect review of the ADR (bound 4) BEFORE merge, against a committed immutable head.
+6. **Tick this car and Chunk 04 in `## Status` only once every Done-when gate above is satisfied,
+   this review included.** A tick is a claim every later reader believes, and a car cannot certify
+   its own bound 4 — ticking before the review inverts the gate it is supposed to record.
 
 ### Acceptance cases
 
@@ -1746,20 +1776,21 @@ the same obligation.**
    review fact that was never written.
 
 2. **The Architect's whole-trajectory review** (ruling on #1589, 2026-09-19: *"Whole-trajectory
-   review remains a final-parity prerequisite"*), which 21.11's Done-when also holds. **This one
-   cannot be produced from this branch at any interval.** Every car merged into `main` before this
-   branch was cut, so this branch's merge-base is already downstream of the whole train — there is
-   no git range from here that spans the trajectory the Architect asked to have reviewed.
+   review remains a final-parity prerequisite"*), which §4d's Done-when also held. **This one cannot
+   be produced from this branch at any interval.** Every car merged into `main` before this branch
+   was cut, so this branch's merge-base is already downstream of the whole train — there is no git
+   range from here that spans the trajectory the Architect asked to have reviewed.
 
-**The disposition this car proposes, for the Architect to accept or reject — it is not ours to
-rule.** The whole-trajectory review was made a prerequisite *of final parity acceptance*. The
-operator's 2026-09-20 scope amendment removed final parity acceptance from this train; cases 1–5 and
-8 were struck rather than built. So the prerequisite is **moot rather than discharged** — the thing
-it gated no longer exists as a deliverable of Train 21, and it travels with the certification work
-to whichever train picks that up. Nothing here should be read as the review having been performed.
+**Disposition: MOOT, not discharged.** The whole-trajectory review was a prerequisite *of final
+parity acceptance*. The operator's 2026-09-20 scope amendment cancelled final parity acceptance —
+cases 1–5 and 8 were struck rather than built — and the Architect directed on 2026-09-20 that no
+Done-when or final-parity clause may still demand that cancelled subsystem, which is why §4d now
+carries a superseded banner. The prerequisite therefore gates nothing in Train 21; it travels with
+the certification work to whichever train revives it.
 
-Put to the Architect together with the ADR under bound 4, since that review is required before this
-merges anyway.
+**Nothing here should be read as the review having been performed.** That sentence is the whole
+point of recording this: a declined review and a passed one are indistinguishable in a session
+summary, and only the written distinction survives.
 
 ## 5. Open assumptions
 
@@ -2011,12 +2042,16 @@ merges anyway.
     exactly the pane where it is least true. openclaw needed nothing; its reason was already in its
     engine profile. Acceptance cases 6 and 7 were already shipped by #1650 and were VERIFIED, not
     rebuilt. **Cases 1–5 and 8 were removed from the car, and are neither shipped nor claimed.**
-    Aider parity moved to epic #1645. The certification binding is DESIGNED and unbuilt: the
-    Architect ruled it on 2026-09-20 (`.tangleclaw/plans/wrap-sequence-architecture.md` §3, #1720) —
-    the no-migration bound holds, the binding rides existing JSON as `tc.parity-certification/1`,
-    and a pure resolver answers `current`/`stale`/`invalid`/`blocked`/`failed`/`N/A`.
-    Follow-ups filed: #1712, #1713; retention was already #1595.
-  - [x] Car 21.12 — ADR 0017 and the doc set (#1590). Built 2026-09-20 on
+    Aider parity moved to epic #1645. **The certification was CANCELLED BY SCOPE, not blocked** —
+    the operator's judgement was that no current downstream consumer needs durable certification.
+    Live parity evidence was never the obstacle: the operator accepted **six Codex and three
+    Antigravity clean READY launches** for this car. An Architect-ruled design exists for whoever
+    revives the work (`.tangleclaw/plans/wrap-sequence-architecture.md` §3, #1720); read it there
+    rather than from a summary here, because the ruling is **conditional** — existing versioned JSON
+    carries the binding only while it preserves the binding in full, and otherwise the no-migration
+    bound is lifted rather than the certification weakened. Follow-ups filed: #1712, #1713; retention
+    was already #1595.
+  - [ ] Car 21.12 — ADR 0017 and the doc set (#1590). Built 2026-09-20 on
     `feat/train-21-car-21-12`. Build plan, the measured per-file gap and acceptance cases: §4e.
     `docs/adr/0017-phased-launch.md` states shipped vs desired as a table, per the Architect's
     ruling on #1589, with #1611 and #1623 named there rather than left to inference; it carries R1,

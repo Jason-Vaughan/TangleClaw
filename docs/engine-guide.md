@@ -304,19 +304,37 @@ the session's own state step stated. The refusal (`READY_VERDICT_MISMATCH`) deli
 echo the correct verdict back, because handing it over would let a retry pass without the session
 ever having read the step.
 
-**The READY ladder, in the order it refuses.** The order is load-bearing, and an implementer
-debugging a stuck pane should read it top-down:
+**How READY refuses, in the order it actually runs.** Two stages, and the distinction matters when
+you are debugging a stuck pane: the outer stage decides whether there is an attestable sequence and
+artifact at all, and only then does the inner ladder judge *this* attestation.
 
-1. `SNAPSHOT_REVISED` — the rules changed under this launch; re-read from the current revision.
-2. `READY_VERDICT_MISMATCH` — as above.
-3. `RECOVERY_UNCLEARED` — the project's handoff state needs recovering and this project clears in
+*Outer — resolution and record (`ready()`), before any of the content is judged:*
+
+1. **Launch resolution** — `LAUNCH_ID_REQUIRED` in a pane with no `TANGLECLAW_LAUNCH_ID`,
+   `LAUNCH_NOT_BOUND` while the bind transaction has not landed (retried automatically for 10 s),
+   or `SEQUENCE_SESSION_MISMATCH` / `SESSION_ENDED` when the bound session is not the one asking.
+2. `SEQUENCE_NOT_APPLICABLE` — this session has no sequence to attest, and the reason says why.
+3. `BAD_READY` (400, not 409) — the artifact is not a `tc.ready/1` object. Checked *before* the
+   already-attested answer, because a malformed artifact is malformed either way and answering it
+   with a conflict would claim it merely differed from the stored one.
+4. **Already attested** — an identical artifact replays idempotently (a lost response is safe to
+   re-run); a *different* one is `READY_CONFLICT` and the attestation on record stands unchanged.
+5. `SNAPSHOT_REVISED` — the project's rules changed while this launch was initializing, so steps
+   were re-rendered; re-read them and attest with a reconciliation.
+
+*Inner — validating this attestation (`_validateReady`), once an un-attested applicable sequence and
+a well-formed artifact exist:*
+
+6. `SNAPSHOT_REVISED` — the artifact names a revision this sequence has moved past.
+7. `READY_VERDICT_MISMATCH` — as above.
+8. `RECOVERY_UNCLEARED` — the project's handoff state needs recovering and this project clears in
    `operator` mode. **This precedes the unacknowledged-steps check on purpose**: in `operator` mode
    the task step is withheld, so the cursor can never reach the end, and answering "steps unacked"
    would send the session back to acknowledge a step nothing will ever serve it. It also precedes the
    reconciliation check, because no text can stand in for a person's clear.
-4. `STEPS_UNACKED` — steps remain.
-5. `RECONCILIATION_REQUIRED` — this launch needs a written reconciliation of at least 40 characters
-   (a snapshot revision, or drift between the handoff's rules and the live ones).
+9. `STEPS_UNACKED` — steps remain.
+10. `RECONCILIATION_REQUIRED` — this launch needs a written reconciliation of at least 40 characters
+    (a snapshot revision, or drift between the handoff's rules and the live ones).
 
 **Recovery has two modes, per project** (`launchSequence.recoveryMode`, and see
 `docs/configuration-reference.md`). In `operator` — the shipped default — the task step is withheld
