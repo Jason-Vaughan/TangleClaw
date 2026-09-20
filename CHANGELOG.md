@@ -104,6 +104,32 @@ All notable changes to TangleClaw are documented in this file.
 
 ### Fixed
 
+- **A wrap prompt that never reached the engine is now reported as a delivery failure, not blamed on
+  a slow model** (#1685). `sendKeys` returning meant tmux had accepted characters into a pty — not
+  that the engine had turned them into a task — and the wrap logged `prompt sent` on that basis. A
+  prompt that was never submitted was therefore indistinguishable from a model still thinking, so
+  the run waited out its full five-minute budget and then reported a generic non-completion. The
+  send now asks the pane what happened and says what it saw.
+  - **Input left sitting in the composer is caught immediately.** That is positive evidence the text
+    was pasted and never submitted, so the step blocks at once with a message naming the step and
+    saying in as many words that waiting would not have helped — instead of five minutes of silence
+    followed by the wrong explanation.
+  - **It reuses the vocabulary the engine profiles already declare** (`capabilities.wake` — the busy
+    marker, idle marker and prompt pattern the wake system reads) rather than inventing a second
+    description of the same panes.
+  - **Absence of evidence is not treated as evidence.** A pane at rest with an empty composer is
+    genuinely ambiguous — an engine that accepted the task and finished it inside the window looks
+    identical to one that never received it — so that stays `unknown` and falls through to the
+    existing wait untouched. The same applies to an engine whose idle marker merely did not appear
+    in the captured tail, which a scrolled pane also produces.
+  - **Engines that declare no vocabulary are unaffected.** Aider and OpenClaw answer `unknown` and
+    wrap exactly as before; the receipt never refuses a wrap it cannot measure.
+  - **Nothing is ever re-sent.** The receipt reports; it does not re-paste or re-press Enter, because
+    a re-send on a misread would submit the same task twice.
+  - **Not a root-cause claim.** This closes the boundary that reported success it could not know. It
+    does not assert what happened in the run that surfaced the bug, and deliberately makes no claim
+    about a lost Enter, a still-running turn, or operator interference.
+
 - **A launching session no longer asks the operator for permission to read its own launch context**
   (#1680). The prime carried two directives that each claimed the session's first turn — the banner
   block claimed the first visible *reply*, and the Resume section claimed the first visible
