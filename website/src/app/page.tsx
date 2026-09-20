@@ -36,18 +36,27 @@ export default function Home() {
             />
           </div>
 
-          <div className="space-y-4 max-w-3xl">
-            <h1 className="text-5xl md:text-7xl font-bold tracking-tighter text-transparent bg-clip-text bg-gradient-to-br from-zinc-100 via-zinc-400 to-zinc-600">
+          <div className="space-y-6 max-w-3xl">
+            <h1 className="text-5xl md:text-7xl font-bold tracking-tighter text-transparent bg-clip-text bg-gradient-to-br from-white via-green-400 to-green-700 pb-1">
               TangleClaw
             </h1>
-            <p className="text-xl md:text-2xl text-zinc-400 font-medium tracking-tight">
+            <p className="text-xl md:text-2xl text-zinc-400 font-medium tracking-tight mb-8">
               An open-source, local-first AI-native SDLC orchestration platform.
             </p>
+            
+            <ul className="flex flex-col md:flex-row flex-wrap justify-center items-center gap-x-8 gap-y-3 pt-6 text-zinc-300 text-sm md:text-base font-medium">
+              {highLevelBullets.map((bullet, i) => (
+                <li key={i} className="flex items-center">
+                  <span className="text-green-500 mr-2 text-xl leading-none">•</span>
+                  <span>{bullet}</span>
+                </li>
+              ))}
+            </ul>
           </div>
         </div>
 
         {/* Platform Capabilities */}
-        <div id="features" className="w-full pt-12 border-t border-white/10">
+        <div id="features" className="w-full pt-16 border-t border-white/10">
           <h2 className="text-3xl font-semibold tracking-tight mb-16 text-center">Platform Capabilities</h2>
           
           {/* Detailed Cards */}
@@ -58,19 +67,6 @@ export default function Home() {
                 <p className="text-zinc-400 text-sm leading-relaxed">{card.desc}</p>
               </div>
             ))}
-          </div>
-
-          {/* High-Level Bullets */}
-          <div className="bg-zinc-950 border border-white/5 rounded-3xl p-8 md:p-10 w-full max-w-3xl mx-auto">
-            <h3 className="text-xl font-semibold mb-6 text-zinc-100 text-center">Ecosystem Highlights</h3>
-            <ul className="grid grid-cols-1 md:grid-cols-2 gap-4 text-zinc-400 text-sm">
-              {highLevelBullets.map((bullet, i) => (
-                <li key={i} className="flex items-start">
-                  <span className="text-zinc-600 mr-3 mt-1">•</span>
-                  <span className="leading-relaxed">{bullet}</span>
-                </li>
-              ))}
-            </ul>
           </div>
         </div>
       </main>
