@@ -1,5 +1,6 @@
 # CLAUDE.md
 
+**Project Vision:** TangleClaw is an open-source, local-first AI-native SDLC orchestration platform. We are building the execution and control plane for fleets of specialized AI agents (Project Managers, Architects, Builders) across the software development lifecycle.
 <!-- This repo is governed by the Prawduct Claude Code plugin — see "Governance (Prawduct)"
 below, under the PRAWDUCT:ANCHOR marker.
 

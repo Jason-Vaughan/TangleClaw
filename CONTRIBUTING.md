@@ -1,6 +1,6 @@
 # Contributing to TangleClaw
 
-Thanks for your interest in contributing to TangleClaw! This document covers how to set up a development environment, run tests, and submit changes.
+Thanks for your interest in contributing to TangleClaw, the open-source, local-first AI-native SDLC orchestration platform. This document covers how to set up a development environment, run tests, and submit changes.
 
 ## Prerequisites
 
@@ -93,7 +93,7 @@ TangleClaw currently has no user authentication — anyone who can reach the ser
 
 ### Linux Support
 
-TangleClaw currently requires macOS (launchd for service management). Adding systemd support would open TangleClaw to Linux servers — which is a natural fit for the VPN/SSH remote dev use case.
+TangleClaw currently requires macOS (launchd for service management). Adding systemd support would open TangleClaw to Linux servers — which is a natural fit for orchestrating SDLC fleets across distributed environments.
 
 ### Sidecar Controls
 
