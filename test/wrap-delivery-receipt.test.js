@@ -266,6 +266,35 @@ test('#1685 R-2 — the claude profile, whose shape differs from codex', async (
   });
 });
 
+test('#1685 R-2 — a filled composer is confirmed before it is believed', async (t) => {
+  await t.test('a single frame showing input is NOT enough to answer not-accepted', async () => {
+    // medusa-wake documents composer-has-input as also reachable by a glyph-led
+    // selector row holding the cursor. One frame of it must not block a wrap.
+    const held = '› NONCE-live typed';
+    const idle = '› \u001b[2mAsk Codex to do anything\u001b[0m';
+    const pane = paneScript([
+      { lines: [held, '· Ready ·'], cursor: { x: 17, y: 0, line: held } },
+      { lines: [idle, '· Ready ·'], cursor: { x: 2, y: 0, line: idle } }
+    ]);
+    const clock = fakeClock(1000);
+    const r = await receipt.verifySubmission('s', CODEX, 'NONCE-unmatched', {
+      capturePane: pane.capturePane, cursorInfo: pane.cursorInfo, now: clock.now, sleep: clock.sleep, windowMs: 3000
+    });
+    assert.notEqual(r.outcome, 'not-accepted');
+  });
+
+  await t.test('two consecutive frames showing input ARE enough', async () => {
+    const held = '› NONCE-live typed';
+    const pane = paneScript([{ lines: [held, '· Ready ·'], cursor: { x: 17, y: 0, line: held } }]);
+    const clock = fakeClock(400);
+    const r = await receipt.verifySubmission('s', CODEX, 'NONCE-unmatched', {
+      capturePane: pane.capturePane, cursorInfo: pane.cursorInfo, now: clock.now, sleep: clock.sleep
+    });
+    assert.equal(r.outcome, 'not-accepted');
+    assert.match(r.reason, /consecutive reads/);
+  });
+});
+
 test('#1685 R-3 — an engine that says it discarded the submission', async (t) => {
   await t.test("antigravity's declared rejection marker is not-accepted, not a 300s wait", async () => {
     const marker = medusaWake.ENGINE_WAKE_PROFILES.antigravity.pasteRejectedMarker;
