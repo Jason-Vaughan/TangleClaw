@@ -74,47 +74,46 @@ against that file returns zero hits). The receipt is a **wiring** job, not an in
 > evidence of *failure*, not of rest. Recorded rather than quietly rewritten, because the inversion
 > is the instructive part.
 
-Checked in this order, and **the order is load-bearing**:
+> **SUPERSEDED AGAIN by Architect ruling, 2026-09-20.** The correction above still described a
+> tri-state with a positive `accepted`. That value is now deleted outright. Four review rounds found
+> four reachable paths to a false `accepted`, every one of them in the accept half, and the boundary
+> between composer and transcript in a bounded capture of a rendered TUI cannot carry a positive
+> claim. It also had no independent behavioral consumer. Both corrections are kept rather than
+> collapsed into one: the sequence of four nearly-right fixes is the instructive part, and it is
+> what argued the value out of existence.
 
-1. **`not-accepted`** — the engine's own declared rejection marker, where it declares one.
-2. **`not-accepted`** — this send's **nonce found inside the composer region**, confirmed over two
-   consecutive reads. The sharpest non-submission signal, and the only one that survives a paste
-   that wrapped across several composer rows.
-3. **`accepted`** — the nonce in the **transcript above** the composer. Checked before the generic
-   filled-composer signal: a composer holding something *else* (the operator's half-typed line, a
-   selector row the cursor sits on) says nothing about our prompt, and letting it suppress a real
-   echo answered `not-accepted` for a prompt that had demonstrably been submitted.
-4. **`accepted`** — the engine is working (`turn-in-flight` / `agents-running`). Only these two;
-   `not-at-rest` means merely that the idle marker was absent from the tail, which a scrolled pane
-   also produces.
-5. **`not-accepted`** — a composer holding anything else, also confirmed over two reads.
-6. **`unknown`** — everything else, each silence naming itself.
+**The shipped design is a NEGATIVE receipt.** Two outcomes:
 
-### Two decisions this design turns on, recorded here rather than only in comments
+- **`not-accepted`** — attributable to THIS send. Either (a) this send's nonce is still inside a
+  reliably located composer across the confirmation reads, or (b) the engine's declared rejection
+  marker APPEARED during the watch (absent on the first read, present later — one already in
+  scrollback may belong to an earlier send).
+- **`unknown`** — everything else, each silence naming itself: an unlocatable composer boundary, a
+  composer holding someone else's text, a busy engine, an at-rest empty composer, an unreadable
+  pane, a cursor that never read, or an engine with no wake vocabulary.
 
-**The composer is read BEFORE the engine's activity.** A pane can be busy *and* holding our
-unsubmitted text — a previous turn still running while the new paste sits in the composer, which is
-exactly the consecutive-step failure. Deriving both from `_assessPane`'s single mutually-exclusive
-verdict made that case classify as `accepted`, so the two questions are asked of `_assessActivity`
-and `_composerEmpty` separately.
-
-**The echo is bounded by a REGION, and an unlocatable boundary is reported as such.** `sendKeys`
-clears the composer, pastes, then sends Enter, so an unsubmitted prompt renders across the composer
-rows — inside the same capture the echo reads. `_splitAtComposer` draws that boundary once, from the
-nearest glyph-led row at or above the cursor. When no glyph row is in the bounded tail — routine,
-because a composer taller than the visible pane scrolls its own head out — the answer is **not
-located**, never a fallback to the cursor's single row. That fallback is how the defect came back a
-third time.
+Success is established downstream, as it always was — the completion marker, the capture file and
+the settle watch in `ai-content.js`. Reintroducing a positive outcome requires an engine-native
+acknowledgement tied to the nonce, not pane inference, plus another ADR 0002 amendment.
 
 ### The one defect class to design against
 
 Train 21's car 21.10 shipped this exact failure three times (parent plan, Chunk 04): **a value made
-honest at one level and flattened at the next.** Here that would be collapsing `unknown` into
-either `accepted` (silent pass — the bug we are fixing, restored one layer up) or `not-accepted`
-(false alarms on aider/openclaw, which would be worse than today).
+honest at one level and flattened at the next.**
 
-**`unknown` is a third value end to end** — in the return, the log, the step result, and the
-drawer. It never degrades to either neighbour.
+*As shipped, that risk is halved by construction: with no `accepted`, `unknown` has only one
+neighbour it could collapse into.* The surviving hazard is collapsing `unknown` into
+`not-accepted` — false alarms on aider and openclaw, which declare no wake vocabulary and answer
+`unknown` by definition. That would be worse than today, because it would block wraps that
+currently work.
+
+**`unknown` is a first-class value end to end** — in the return, the log, the step result, and the
+drawer. It never degrades to its neighbour.
+
+The original form of this hazard is worth keeping visible: the danger used to be collapsing
+`unknown` into `accepted`, a silent pass that restored the very bug this module exists to catch.
+Four review rounds each found a different route to exactly that, which is why the value is gone
+rather than guarded.
 
 ### Explicitly NOT doing
 

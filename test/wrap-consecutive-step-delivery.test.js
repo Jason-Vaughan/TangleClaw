@@ -88,11 +88,17 @@ test('#1685 consecutive content steps', async (t) => {
     } finally { restore(); }
   });
 
-  await t.test('an accepted delivery proceeds to the existing wait — no behaviour change', async () => {
+  await t.test('an UNKNOWN delivery proceeds to the existing wait — no behaviour change', async () => {
     let polled = false;
     const restore = patchInternal({
       sendKeys: () => {},
-      verifySubmission: async () => ({ outcome: 'accepted', reason: 'the engine is working (turn-in-flight)' }),
+      // There is no `accepted`: the receipt is negative-only since the
+      // Architect's 2026-09-20 ruling. A healthy send answers `unknown`, and
+      // success is established downstream by the completion marker.
+      verifySubmission: async () => ({
+        outcome: 'unknown',
+        reason: 'the engine is working (turn-in-flight), which says something is running but not that THIS prompt was the thing taken'
+      }),
       sleep: async () => {},
       // Advance in steps small enough that the wait loop actually runs, then
       // exceeds MAX_WAIT_MS. A clock that jumps the whole budget on its first
@@ -108,9 +114,10 @@ test('#1685 consecutive content steps', async (t) => {
       // EXACT, not notEqual: `notEqual(undefined, 'not-accepted')` is green when
       // the field is dropped entirely, which is how the value went missing the
       // first time it was wired.
-      assert.equal(r.deliveryOutcome, 'accepted');
-      assert.equal(r.deliveryReason, 'the engine is working (turn-in-flight)');
-      assert.equal(polled, true, 'an accepted prompt must still reach the completion wait');
+      assert.equal(r.deliveryOutcome, 'unknown');
+      assert.equal(r.deliveryReason,
+        'the engine is working (turn-in-flight), which says something is running but not that THIS prompt was the thing taken');
+      assert.equal(polled, true, 'an unconfirmed prompt must still reach the completion wait');
     } finally { restore(); }
   });
 
