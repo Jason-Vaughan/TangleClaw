@@ -28,7 +28,7 @@ export default function Home() {
             />
           </div>
           
-          <h1 className="text-5xl md:text-7xl font-semibold tracking-tight text-white leading-tight">
+          <h1 className="text-5xl md:text-7xl font-semibold tracking-tight leading-tight text-transparent bg-clip-text bg-gradient-to-br from-white via-gray-200 to-zinc-500 pb-2">
             TangleClaw
           </h1>
           <p className="text-xl md:text-2xl text-zinc-400 font-medium tracking-wide max-w-2xl">
