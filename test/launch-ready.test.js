@@ -442,6 +442,19 @@ describe('launch sequence attestation (Train 21, Chunk 02)', () => {
       assert.equal(after.readyAt, replay.body.readyAt);
       assert.equal(launchSequence.status(id).body.status.ready, true,
         'so ready and the cursor can never disagree');
+      // The fourth surface that narrates the opening order (#1680), and the
+      // one an agent reaches by pulling again AFTER attesting — the moment it
+      // is most likely to read "there is nothing left" as "so begin". It has
+      // to end where the other three end: at the proposal, stopped, with READY
+      // named as a record rather than an approval. Asserted by ordering rather
+      // than whole-string, so a rewrite that keeps the meaning passes and one
+      // that drops the stop does not.
+      const proposalIdx = served.body.content.indexOf('resume proposal');
+      const stopIdx = served.body.content.indexOf('stop there for the operator');
+      assert.ok(proposalIdx > -1 && stopIdx > proposalIdx,
+        'the attested page sends the session to the proposal and stops it there');
+      assert.match(served.body.content, /not that the work is approved/,
+        'and says what READY did not do, since this page is read after it succeeded');
     });
 
     it('demands a reconciliation when the preflight verdict asks for one, without a revision', () => {

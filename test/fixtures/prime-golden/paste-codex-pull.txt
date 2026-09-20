@@ -1,7 +1,7 @@
 # Session Start — golden-paste
 *TangleClaw'd into existence.*
 
-Before anything else, begin your FIRST visible reply to the operator with the banner line `*TangleClaw'd into existence.*` on its own line. This is unconditional: do it every session, whatever the model is driving this project, even when the operator opens with a direct task. It is a visible-output requirement only and does NOT authorize starting work — honor any wait-for-confirmation directive below before acting.
+Before anything else, begin your FIRST visible reply to the operator with the banner line `*TangleClaw'd into existence.*` on its own line. This is unconditional: do it every session, whatever the model is driving this project, even when the operator opens with a direct task. It is a visible-output requirement only and does NOT authorize starting work — honor any wait-for-confirmation directive below before acting on the task. Reading your launch context is not acting.
 
 ## Session Ownership
 This session owns one project: **golden-paste**.
@@ -18,7 +18,14 @@ Surface the mismatch — never refuse outright; the operator can always say "do 
 ## Launch sequence
 Run `tc start next` now, before any other work, and follow what it prints. It serves this session's governance, state and task in order, and each step tells you how to acknowledge it.
 
-_Base branch CI: **unknown** — not probed before this launch. Not green: TangleClaw could not look, which is a different fact from "passing". Mention it to the operator in your first message; they are the one who can fix the probe._
+Your opening runs in this order:
+(a) Emit the banner line this prime requires, and say in one line that you are reading your launch context. Keep it short: whatever you have been given, the freshness checks that decide what to propose have not run yet, so there is nothing to report here beyond having started.
+(b) Run the sequence to the end: `tc start next` for each step, acknowledging each one with the command that step prints.
+(c) Do the read-only freshness checks the task step asks for, then attest with `tc start ready`.
+(d) Propose the project action, and stop there.
+(a) through (c) are routine initialization and are already authorized. Do not ask the operator to approve them, and do not read a wait-for-confirmation rule anywhere in this context as gating them — those rules gate (d), the work you propose. They never gate reading a launch step, including the task step. Reading and attesting record only that the context arrived: they never authorize executing the recorded next action, editing another project, or dispatching work nobody asked for, and an explicit preflight, recovery or privileged-action approval requirement still applies in full.
+
+_Base branch CI: **unknown** — not probed before this launch. Not green: TangleClaw could not look, which is a different fact from "passing". Mention it to the operator in your opening — in the resume proposal where this launch has a sequence, otherwise your first message; they are the one who can fix the probe._
 
 Stranded wraps: none recorded for this project.
 

@@ -912,6 +912,26 @@ Chunks are sequential; each one merges before the next begins.
 Governance checkpoints: after Chunk 01 (does the single renderer and frozen snapshot hold?) and after
 Chunk 03 (a whole-trajectory review before parity).
 
+### Launch reliability — what the built sequence got wrong in use (`Type: chunk`)
+
+Not part of the original twelve cars. These are defects the sequence surfaced once real sessions ran
+against it, dispatched by the ProjectManager on 2026-09-20 and listed on the shared MASTER_ROADMAP.
+
+- **#1680** the prime's opening order — two directives each claiming the session's first turn, beside
+  an unscoped wait-for-confirmation rule, so a session stopped to ask permission to initialize
+- **#1673** automate the crash-recovery clear, rather than sending the operator to the dashboard
+- **#1685** wrap reports a content prompt delivered that the engine never accepted as a task
+
+**This is a separate chunk from the `cumulative-final` one above, and does not consume it.** Its
+three defects are not cars of the Train; the plan's own Chunk 04 is 21.10/21.11/21.12, of which only
+21.10 (#1588) has closed. Ticking one for the other would disarm the train's final review while two
+cars are still open, so the two are recorded apart and the final review stays where it was.
+
+The roadmap briefly called this "Chunk 04" too, colliding with the plan's. Reported to the
+ProjectManager rather than renumbered here — the roadmap is theirs — and **they renamed it to
+Chunk 05 on 2026-09-20**, so the collision is resolved at the source. Kept as a note because the
+reason the two must not share a tick outlives the numbering that prompted it.
+
 ---
 
 ## 4a. Chunk 02 implementation decisions
@@ -1771,6 +1791,63 @@ an explicit disposition. Diagnostic runs are labelled diagnostic and are not fin
     building a fixture — an earlier hand-built one passed `worktreeTarget: null`, a value no producer
     emits, which is how it hid the bug.
   - `git.getInfo` now takes `{ fresh: true }`, for anything recorded into a frozen document.
+- [ ] Launch reliability (#1680, #1673, #1685) — IN PROGRESS, `Type: chunk`. Dispatched by the
+  ProjectManager 2026-09-20; branch `feat/train-21-chunk-04`. A separate chunk from the
+  `cumulative-final` one below, which it does not consume — see §4's entry for why the two share a
+  number on the roadmap and must not share a tick.
+  - [x] #1680 — the opening order. Built 2026-09-20. The order is stated once in the launch step
+    that arrives FIRST, initialization is declared authorized, and the confirmation gate is scoped
+    to the proposed work rather than to reading context. The Resume section stops claiming a turn
+    that, on a pull, it is served too late to take.
+    - **Four surfaces narrate this order and none owns it**, so they had drifted: the prime's
+      ordering block, the all-acked page (`ALL_ACKED_CONTENT`), the already-attested page (the
+      `readyAt` arm of `_serve`) and `kickoffLine`. Two disagreed on whether the freshness checks
+      precede `tc start ready` — attesting first vouches for an unchecked next action — and two
+      ended at the attestation rather than at the proposal. All four now end at the proposal with
+      the stop named, each with a test asserting the ORDER by index rather than the prose.
+      **Reviews found this in three rounds, each time on the sibling the last fix pointed at**: the
+      first round caught the prime, the second caught the all-acked page and `kickoffLine`, the
+      third caught the already-attested page. The family was never enumerated, only walked. A
+      single-owner construction for this text is the real fix and is NOT done — filed as **#1693**,
+      triggered by a fifth surface or by the next edit to any of the four.
+    - The fix is text the product generates, so its regression coverage is over generated text:
+      `test/launch-steps.test.js` pins the stated order, the explicit authorization, the preserved
+      gate, and the absence of any retroactive first-message command. Golden fixtures regenerated
+      for all six scenarios; the ordering block ships only where a launch has a sequence.
+    - **Generated-text evidence is not a live launch.** Acceptance criterion 3 asks for a real
+      launch reaching READY without a second operator prompt; that is a VRF owed, not something
+      these fixtures establish. Queued as **VRF-1680-launch-reaches-ready-unprompted** in
+      `.prawduct/operator-verification.md` — the box above is ticked for the BUILD, and the VRF is
+      what holds the acceptance, because `Fixes #1680` closes the issue on merge and prose in a
+      ticked box holds nothing.
+    - **A sequence-less launch is the population nothing watches.** It gets the reworded banner and
+      Resume with no ordering block, and the owed VRF cannot reach it from a project that has a
+      sequence. Named in the VRF entry as the second thing to look at.
+    - One test changed for a reason unrelated to the contract it guards: the Medusa-contract yield
+      test squeezed against a hardcoded budget sitting fifteen characters above the prime's
+      irreducible floor, so any directive edit failed it. It now derives that floor — including
+      stripping the overflow report the impossible-budget render appends, without which the fit
+      would have held by construction rather than by yielding. Original assertions unchanged; two
+      added.
+    - **The block is core text, so it displaces bulk.** On the richest sequence-bearing prime
+      against Claude's cap it is what tips the total over, and the Ecosystem primer yields to its
+      pointer where previously nothing yielded. No directive is displaced and nothing overflows —
+      that is the budget working — but it is a real change in what such a session receives. The
+      `full-silent-claude-pull` golden fixture is the record; read the yield out of the fixture
+      rather than from a number written here, because a number here would go stale the next time
+      this text is edited and nothing would catch it. No fixture covered this combination before:
+      every other sequence-bearing one is a paste engine whose prime is far smaller.
+  - [x] #1673 — CLOSED 2026-09-20 without code, and deliberately. The capability it asks for
+    already ships: in `advisory` mode a session clears its own recovery by attesting READY
+    (`lib/launch-sequence.js`, clearance `agent-reconciled`). What sends the operator to the
+    dashboard is `operator` mode, the shipped default **per ruling R3** — so the gap was a
+    governance decision, not a defect. Operator ruled 2026-09-20: report it, leave R3 standing.
+    Per-project opt-in remains `launchSequence.recoveryMode: advisory`.
+  - [ ] #1685 — wrap prompt delivery receipt. **NOT STARTED — split out of this chunk by the
+    operator 2026-09-20** and owed its own session. `lib/wrap-steps/ai-content.js` logs
+    `prompt sent` when `sendKeys` returns, which is not evidence the engine accepted a task;
+    closing that needs an engine-aware submission/receipt with duplicate-submission prevention,
+    and its acceptance explicitly refuses fixture-only evidence.
 - [ ] Chunk 04 — IN PROGRESS. `Type: cumulative-final`, so 21.12's review IS the train final; no
   separate one is run.
   - [x] Car 21.10 — per-rule drift reconciliation in step 3 (#1588). Built 2026-09-19 on

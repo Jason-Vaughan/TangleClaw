@@ -368,6 +368,22 @@ describe('launch kickoff (#1635)', () => {
       assert.match(launchKickoff.kickoffLine({ cursor: 0 }, 4), /authorize nothing/);
     });
 
+    it('carries the same opening order the prime states (#1680)', () => {
+      // Four surfaces narrate this order and none owns it, so they drift: the
+      // prime, the all-acked page, the already-attested page and this line.
+      // The two halves that drift silently are where the freshness checks sit
+      // relative to the attestation, and whether the session is told to STOP
+      // after proposing — a kickoff that ends at "attest" reads as a licence
+      // to continue into the work.
+      const line = launchKickoff.kickoffLine({ cursor: 0 }, 4);
+      const freshness = line.indexOf('freshness checks');
+      const attest = line.indexOf('tc start ready');
+      assert.ok(freshness > -1 && attest > freshness,
+        'the freshness checks come before the attestation, as the prime says');
+      assert.match(line, /stop there for the operator/,
+        'and the line ends at the proposal, not at the attestation');
+    });
+
     it('counts the steps it was given rather than assuming four', () => {
       assert.match(launchKickoff.kickoffLine({ cursor: 0 }, 6), /0 of 6 step\(s\)/);
     });

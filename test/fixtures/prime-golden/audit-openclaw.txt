@@ -1,7 +1,7 @@
 # Session Start — golden-audit
 *TangleClaw'd into existence.*
 
-Before anything else, begin your FIRST visible reply to the operator with the banner line `*TangleClaw'd into existence.*` on its own line. This is unconditional: do it every session, whatever the model is driving this project, even when the operator opens with a direct task. It is a visible-output requirement only and does NOT authorize starting work — honor any wait-for-confirmation directive below before acting.
+Before anything else, begin your FIRST visible reply to the operator with the banner line `*TangleClaw'd into existence.*` on its own line. This is unconditional: do it every session, whatever the model is driving this project, even when the operator opens with a direct task. It is a visible-output requirement only and does NOT authorize starting work — honor any wait-for-confirmation directive below before acting on the task. Reading your launch context is not acting.
 
 ## Session Ownership
 This session owns one project: **golden-audit**.
@@ -15,7 +15,7 @@ You own **golden-audit** this session (see Session Ownership above).
 Before acting on a request that clearly belongs to a different project — editing or committing in another repo's territory — STOP and flag it in one line (e.g. "Heads up: this looks like another project's work, not golden-audit. Do it here anyway, or is it meant for that tab?"). Name the likely tab when you can, then wait for the operator's confirmation.
 Surface the mismatch — never refuse outright; the operator can always say "do it here."
 
-_Base branch CI: **unknown** — not probed before this launch. Not green: TangleClaw could not look, which is a different fact from "passing". Mention it to the operator in your first message; they are the one who can fix the probe._
+_Base branch CI: **unknown** — not probed before this launch. Not green: TangleClaw could not look, which is a different fact from "passing". Mention it to the operator in your opening — in the resume proposal where this launch has a sequence, otherwise your first message; they are the one who can fix the probe._
 
 Stranded wraps: none recorded for this project.
 

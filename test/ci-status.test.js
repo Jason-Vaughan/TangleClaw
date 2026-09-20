@@ -195,7 +195,13 @@ describe('#991 primeLines', () => {
     assert.match(lines, /main is FAILING/);
     assert.match(lines, /run https:\/\/github\.com\/o\/r\/actions\/runs\/1 on abcdef0 \(Tests\)/);
     assert.match(lines, /release must not be cut/);
-    assert.match(lines, /Say so to the operator/);
+    // Relativized with #1680: on a pull this rides step 3, so "your first
+    // message" had already passed by the time it arrived — the same
+    // unsatisfiable-on-arrival shape that made a session drop what it was told
+    // to relay. What must hold is that the operator is told, and that the
+    // instruction names a turn the session can still reach.
+    assert.match(lines, /Tell the operator in your opening/);
+    assert.match(lines, /resume proposal where this launch has a sequence, otherwise in your first message/);
   });
 
   it('renders unknown AS unknown, says it is not green, and asks the session to relay it', () => {

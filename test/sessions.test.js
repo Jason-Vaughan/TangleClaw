@@ -860,7 +860,7 @@ describe('sessions', () => {
         });
 
         const prompt = sessions.generatePrimePrompt(resumeProject, engine);
-        assert.match(prompt, /## Resume — emit this as your FIRST visible message/);
+        assert.match(prompt, /## Resume — the proposal that closes your initialization/);
         assert.ok(prompt.includes('hidden context'), 'explains the prime is hidden');
         assert.ok(prompt.includes('Freshness check FIRST'), 'mandates a freshness check');
         assert.ok(prompt.includes('We left off at'), 'gives the visible resume wording');
@@ -911,7 +911,7 @@ describe('sessions', () => {
         const prompt = sessions.generatePrimePrompt(resumeProject, engine);
         assert.ok(prompt.includes('## Last Session Summary'));
         assert.ok(prompt.includes('Legacy passive summary blob'));
-        assert.equal(prompt.includes('## Resume — emit this'), false);
+        assert.equal(prompt.includes('## Resume'), false);
         // Regression: the legacy (no-index) path took the `else` branch, which
         // previously carried NO banner-emit instruction — so the banner was
         // dropped 100% of the time after a mechanical-only wrap. The hoisted
@@ -927,7 +927,7 @@ describe('sessions', () => {
           freshness: { sha: 'x', branch: 'main', writtenAt: '2026-06-15' }
         });
         const prompt = sessions.generatePrimePrompt(resumeProject, engine);
-        assert.equal(prompt.includes('## Resume — emit this'), false);
+        assert.equal(prompt.includes('## Resume'), false);
       });
     });
 
@@ -1306,15 +1306,37 @@ describe('sessions', () => {
         process.env.MEDUSA_CONTRACT_PATH = contractFile;
         try {
           const base = store.engines.get('claude');
-          const tight = {
-            ...base,
-            capabilities: { ...base.capabilities, startupInjection: { maxChars: 4400 } }
-          };
-          const prompt = sessions.generatePrimePrompt(medProject, tight,
-            { medusaWorkspaceId: 'med-yield-cafe0123' });
+          const budgeted = (maxChars) => sessions.generatePrimePrompt(
+            medProject,
+            { ...base, capabilities: { ...base.capabilities, startupInjection: { maxChars } } },
+            { medusaWorkspaceId: 'med-yield-cafe0123' }
+          );
+          // Derive the squeeze from the prime's own floor rather than naming a
+          // number. A hardcoded budget has to sit above the irreducible
+          // floor — directives, yielded sections' pointers, the contract's
+          // pointer — and that floor moves whenever any directive is edited.
+          // The number this test used to carry cleared the floor by 15
+          // characters, so a one-sentence wording fix elsewhere in the prime
+          // failed it for a reason that had nothing to do with the contract.
+          //
+          // An impossible budget yields everything and then APPENDS the
+          // overflow report, so that render is the floor plus a report the
+          // real render will not carry — budget to it and the fit holds by the
+          // report's width, not by yielding. Render once more AT that length
+          // and the report drops, leaving the prime's true floor: everything
+          // yielded, the contract down to its pointer, nothing left to give.
+          // Budget to exactly that and the fit has no slack to hide in.
+          const unbounded = budgeted(Number.MAX_SAFE_INTEGER).length;
+          const budget = budgeted(budgeted(1).length).length;
+          const prompt = budgeted(budget);
 
-          assert.ok(prompt.length <= 4400,
-            `the contract's yielding must bring the whole prime within budget (got ${prompt.length})`);
+          // Guards the derivation itself: if the floor ever stopped being a
+          // squeeze — a budget that fits the prime whole asks nothing of the
+          // contract — every assertion below would pass while testing nothing.
+          assert.ok(budget < unbounded / 2,
+            `the budget must actually squeeze (floor ${budget} vs ${unbounded} unbounded)`);
+          assert.ok(prompt.length <= budget,
+            `the contract's yielding must bring the whole prime within budget (got ${prompt.length} of ${budget})`);
           // "Yielded" means gave up space and said so — either trimmed with a
           // note or reduced to its pointer. Asserting one specific branch would
           // pin the test to a budget arithmetic detail rather than the contract.
