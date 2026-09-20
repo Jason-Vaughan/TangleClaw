@@ -19,6 +19,7 @@ to file paths — this maps the layout itself.
 - `public/` — Browser UI served from disk — dashboard (`index.html`/`ui.js`), session page (`session.js`), styles, service worker (`sw.js`).
 - `scripts/` — Operator CLI scripts — `ingress-cutover.js` (reversible caddy/direct switch), `reset-admin.js` (break-glass), `gate-fallback.js` + `drill-gate-fallback.js` (stand the login down behind Caddy's password when it breaks), capture spike.
 - `test/` — The node test-runner suite (`node --test test/*.test.js`) — the project's test contract.
+- `website/` — The public marketing site (Next.js, deployed to Vercel) — `src/app/` pages, `public/screenshots/` gallery. Separate npm project from the server; not part of the node test suite.
 
 ## Shared directories / doc groups
 

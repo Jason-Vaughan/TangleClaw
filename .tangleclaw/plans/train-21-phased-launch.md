@@ -17,7 +17,6 @@ governed_by:
   - .tangleclaw/plans/master-startup-and-wrap.md      # Master startup — excluded here, see §2.9
   - project rule: ENGINE-AGNOSTIC BY CONSTRUCTION
 scope: train-21-phased-launch
-branch: feat/train-21-car-21-9   # the car in flight; the gates resolve the active plan by this claim
 partition: serial — every chunk edits lib/sessions.js, lib/store.js and server.js; the chunks that touch public/ run in a worktree
 ---
 
@@ -1760,8 +1759,8 @@ an explicit disposition. Diagnostic runs are labelled diagnostic and are not fin
 - [ ] Chunk 04 — IN PROGRESS. `Type: cumulative-final`, so 21.12's review IS the train final; no
   separate one is run.
   - [x] Car 21.10 — per-rule drift reconciliation in step 3 (#1588). Built 2026-09-19 on
-    `feat/train-21-car-21-10`. Build plan and as-built deltas: §4c. NOT merged — awaiting the
-    operator's go, per the PM's bound 1. The review history is the governance ledger's, not this
+    `feat/train-21-car-21-10`. Build plan and as-built deltas: §4c. MERGED via PR #1646; #1588 is
+    closed. The review history is the governance ledger's, not this
     bullet's: an outcome copied here goes stale the next round, and one did — this bullet read
     "0 blocking / 0 warning / 0 note" while a later cumulative round found a blocking defect the
     earlier rounds had not reached.
