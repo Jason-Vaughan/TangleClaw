@@ -117,6 +117,25 @@ export default function Home() {
             ))}
           </div>
         </div>
+
+        {/* Call to Action */}
+        <div className="w-full pt-24 pb-12 flex flex-col items-center text-center">
+          <h2 className="text-3xl md:text-4xl font-semibold tracking-tight mb-6">Ready to take control of your SDLC?</h2>
+          <p className="text-zinc-400 text-lg mb-8 max-w-xl">
+            TangleClaw is open-source and runs entirely on your local machine. No cloud subscriptions, no vendor lock-in.
+          </p>
+          <a 
+            href="https://github.com/Jason-Vaughan/TangleClaw" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="inline-flex items-center justify-center px-8 py-4 text-base font-semibold text-black bg-white rounded-full hover:bg-gray-200 transition-colors shadow-lg hover:shadow-xl hover:scale-105 duration-200"
+          >
+            Install Now in Minutes
+            <svg className="w-5 h-5 ml-2 -mr-1" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clipRule="evenodd" />
+            </svg>
+          </a>
+        </div>
       </main>
 
       <footer className="w-full py-10 border-t border-white/10 text-center">
