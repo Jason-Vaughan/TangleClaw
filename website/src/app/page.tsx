@@ -12,7 +12,7 @@ export default function Home() {
     { title: "Specialized Agent Roles", desc: "Deploy a complete virtual team with distinct roles—from Architects and Project Managers to parallel Builders, plus built-in templates to create your own." },
     { title: "LLM-Agnostic Communication", desc: "Real-time cross-talk across frontier, open-source, local, or API/OAuth models. The system auto-detects and coordinates any CLI-based or Aider-compatible LLM." },
     { title: "Quality & Auditing", desc: "Critic methodology, Eval Audit Mode, and adversarial-agent primitives." },
-    { title: "Operations & Supervision", desc: "Fleet health monitoring, idle/wedged detection, and PortHub service supervision." },
+    { title: "Operations & Supervision", desc: "Fleet health monitoring, automatic DHCP-like port lease management to prevent port collisions, and built-in troubleshooting utilities to quickly clear and fix errors." },
     { title: "Security Integration", desc: "Robust authentication and governance today, with TangleScan and SecurityClaw architecture on the roadmap." }
   ];
 
