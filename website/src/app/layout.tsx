@@ -17,8 +17,25 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "TangleClaw | AI-Native SDLC Orchestration",
   description: "An open-source, local-first AI-native SDLC orchestration platform. Automate and manage your software development lifecycle securely.",
+  keywords: [
+    "AI coding", "SDLC orchestration", "local-first AI", "open-source AI agent", 
+    "developer tools", "TangleClaw", "AI agents", "automated code review", 
+    "Medusa Switchboard", "project management AI"
+  ],
+  authors: [{ name: "Jason Vaughan" }],
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-video-preview": -1,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+    },
+  },
   openGraph: {
-    title: "TangleClaw",
+    title: "TangleClaw | AI-Native SDLC Orchestration",
     description: "An open-source, local-first AI-native SDLC orchestration platform.",
     url: "https://tangleclaw.dev",
     siteName: "TangleClaw",
@@ -35,7 +52,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "TangleClaw",
+    title: "TangleClaw | AI-Native SDLC Orchestration",
     description: "An open-source, local-first AI-native SDLC orchestration platform.",
     images: ["/tangleclaw-logo-real.png"],
   },
