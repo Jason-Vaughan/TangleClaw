@@ -1796,6 +1796,17 @@ an explicit disposition. Diagnostic runs are labelled diagnostic and are not fin
     that arrives FIRST, initialization is declared authorized, and the confirmation gate is scoped
     to the proposed work rather than to reading context. The Resume section stops claiming a turn
     that, on a pull, it is served too late to take.
+    - **Four surfaces narrate this order and none owns it**, so they had drifted: the prime's
+      ordering block, the all-acked page (`ALL_ACKED_CONTENT`), the already-attested page (the
+      `readyAt` arm of `_serve`) and `kickoffLine`. Two disagreed on whether the freshness checks
+      precede `tc start ready` — attesting first vouches for an unchecked next action — and two
+      ended at the attestation rather than at the proposal. All four now end at the proposal with
+      the stop named, each with a test asserting the ORDER by index rather than the prose.
+      **Reviews found this in three rounds, each time on the sibling the last fix pointed at**: the
+      first round caught the prime, the second caught the all-acked page and `kickoffLine`, the
+      third caught the already-attested page. The family was never enumerated, only walked. A
+      single-owner construction for this text is the real fix and is NOT done — worth filing if a
+      fifth surface appears.
     - The fix is text the product generates, so its regression coverage is over generated text:
       `test/launch-steps.test.js` pins the stated order, the explicit authorization, the preserved
       gate, and the absence of any retroactive first-message command. Golden fixtures regenerated

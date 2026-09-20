@@ -125,6 +125,18 @@ All notable changes to TangleClaw are documented in this file.
   - **The Resume section no longer claims a turn it cannot have.** It names its own place in the
     stated order — the proposal that closes initialization — instead of demanding to be the first
     visible message, and the banner stays unconditional and separate.
+  - **All four surfaces that narrate the opening now agree, and each is pinned.** The prime's
+    ordering block, the page served once every step is acknowledged, the page served when a session
+    pulls again after attesting, and the kickoff line written into a silent pane had drifted apart
+    — nothing owns the order, so each was edited on its own. Two of them disagreed about where the
+    freshness checks sit relative to `tc start ready`, which is not presentation: a session that
+    attests first has vouched for a next action it has not checked, and then has to tell the
+    operator it was stale. The kickoff line stopped at "attest", which reads as leave to continue
+    into the work rather than stop at the proposal, and the post-attestation page said only that
+    there was nothing left to pull — read after a success, at the moment a session is most likely
+    to take "nothing left" for "so begin". Each now ends at the proposal with the stop named, and
+    each has a regression test asserting the ORDER rather than the wording, so a rewrite that keeps
+    the meaning passes and one that drops the stop does not.
   - Applies to both delivery paths and every engine; the ordering block ships only where a launch
     actually has a sequence, so a legacy or no-sequence launch is unchanged apart from the scoped
     wording.
