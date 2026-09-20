@@ -315,13 +315,58 @@ test('#1685 R-3 — an engine that says it discarded the submission', async (t) 
 });
 
 test('transcript outside the composer', async (t) => {
-  await t.test('drops the cursor line and keeps the rest', () => {
-    const out = receipt._transcriptOutsideComposer(['a', 'b', 'c'], { y: 1 });
+  await t.test('drops the composer line by CONTENT, wherever it sits in the capture', () => {
+    const out = receipt._transcriptOutsideComposer(['a', 'b', 'c'], { y: 99, line: 'b' });
     assert.equal(out, 'a\nc');
+  });
+
+  await t.test('ignores the row index entirely — cursor.y does not index the capture', () => {
+    // capturePane issues `-S -80`, so row 0 is 80 rows ABOVE the pane top while
+    // cursor_y is pane-relative. An index-based filter dropped an arbitrary
+    // scrollback row and left the composer in the body.
+    const out = receipt._transcriptOutsideComposer(['old', '› typed', 'tail'], { y: 0, line: '› typed' });
+    assert.equal(out, 'old\ntail');
+  });
+
+  await t.test('matches through SGR, since the capture is styled and the cursor line may not be', () => {
+    const out = receipt._transcriptOutsideComposer(['\u001b[2m› typed\u001b[0m', 'tail'], { y: 0, line: '› typed' });
+    assert.equal(out, 'tail');
   });
 
   await t.test('with no cursor it yields nothing, so no echo can match', () => {
     assert.equal(receipt._transcriptOutsideComposer(['a', 'b'], null), '');
+  });
+});
+
+test('#1685 verify-1 — scrollback above the visible pane must not defeat the composer exclusion', async (t) => {
+  await t.test('an unsubmitted paste is still not-accepted when the capture carries scrollback', async () => {
+    // THE regression this round. Every earlier fixture modelled the capture as
+    // the visible pane alone, which is the one shape where cursor.y happens to
+    // index it. A real capture is `-S -80`, so the composer sits far down the
+    // array while cursor.y stays small — the index filter dropped a scrollback
+    // row, left the composer in the echo body, and the nonce (which rides at
+    // the END of the prompt) matched it: `accepted`, on poll 1, before the
+    // two-poll composer confirmation could ever fire.
+    const composer = '› NONCE-live123 please do the thing';
+    const lines = ['scroll A', 'scroll B', 'scroll C', composer, '· Ready ·'];
+    const pane = paneScript([{ lines, cursor: { x: 20, y: 0, line: composer } }]);
+    const clock = fakeClock(400);
+    const r = await receipt.verifySubmission('s', CODEX, 'NONCE-live123', {
+      capturePane: pane.capturePane, cursorInfo: pane.cursorInfo, now: clock.now, sleep: clock.sleep
+    });
+    assert.equal(r.outcome, 'not-accepted');
+  });
+
+  await t.test('a genuine transcript echo with scrollback present is still accepted', async () => {
+    const composer = '› \u001b[2mAsk Codex to do anything\u001b[0m';
+    const lines = ['scroll A', 'NONCE-live123 working on it', composer, '· Ready ·'];
+    const pane = paneScript([{ lines, cursor: { x: 2, y: 0, line: composer } }]);
+    const clock = fakeClock(400);
+    const r = await receipt.verifySubmission('s', CODEX, 'NONCE-live123', {
+      capturePane: pane.capturePane, cursorInfo: pane.cursorInfo, now: clock.now, sleep: clock.sleep
+    });
+    assert.equal(r.outcome, 'accepted');
+    assert.match(r.reason, /echoed/);
   });
 });
 

@@ -7,6 +7,7 @@ authorized_by: TangleClaw-ProjectManager dispatch, 2026-09-20 (Chunk 06 final pi
 parent_plan: /Users/jasonvaughan/Documents/Projects/TangleClaw-Builder1/.tangleclaw/plans/train-21-phased-launch.md
 type: bugfix
 size: medium
+scope: lib/wrap-delivery-receipt.js, lib/wrap-steps/ai-content.js, lib/wrap-pipeline.js, public/wrap-drawer.js, docs/adr/0002-wrap-pipeline-contract.md, test/
 ---
 
 # #1685 — Wrap prompt delivery receipt
@@ -107,12 +108,18 @@ drawer. It never degrades to either neighbour.
 
 ## Chunks
 
+### Chunk 01: Receipt primitive
+
 - [x] **C1 — Receipt primitive.** Engine-aware `verifySubmission` reading `capabilities.wake`;
       returns `accepted | not-accepted | unknown` with a reason. Unit tests per engine, including
       both no-vocabulary engines.
+### Chunk 02: Wire into ai-content
+
 - [x] **C2 — Wire into `ai-content.js`.** Replace the unconditional `prompt sent` log with the
       receipt outcome; a `not-accepted` fails the step fast with a delivery blocker rather than
       waiting 300 s. `unknown` proceeds to the existing wait and says so.
+### Chunk 03: Drawer and step result
+
 - [x] **C3 — Drawer + step result.** `deliveryOutcome` is threaded through the pipeline's recorded
       result and its `step-done`/`step-blocked` stream event, so the drawer receives it alongside the
       blocker text that names the failing step. **No new drawer code was needed** and none was
@@ -124,8 +131,12 @@ drawer. It never degrades to either neighbour.
         list, so the receipt's answer was silently dropped there on first wiring. It is now carried
         conditionally — absent, not null, on every step that never measured delivery — and pinned by
         a test.
+### Chunk 04: Regression suite
+
 - [x] **C4 — Regression suite.** Consecutive-step scenarios per R6.
-- [ ] **C5 — Record + VRF.** CHANGELOG, plan Status, and enqueue the live VRF.
+### Chunk 05: Record and VRF
+
+- [x] **C5 — Record + VRF.** CHANGELOG, plan Status, and enqueue the live VRF.
 
 ## Done when
 

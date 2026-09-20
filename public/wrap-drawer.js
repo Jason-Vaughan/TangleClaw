@@ -262,17 +262,30 @@
    * @returns {string|null}
    */
   function deriveDetail(stepResult) {
-    // #1685 — delivery first, because it answers a question the other details
-    // cannot: whether the prompt ever became a task. A step that blocked
-    // without delivery is NOT a slow model, and the row has to say which it was
-    // or the operator reads five minutes of silence as the model's fault.
-    // `undefined` means the step never measured delivery and is left alone —
-    // only a measured value speaks.
-    if (stepResult.deliveryOutcome === 'not-accepted') {
-      return 'prompt never reached the engine — not a slow model';
-    }
-    if (stepResult.deliveryOutcome === 'unknown') {
-      return 'delivery unconfirmed — the pane could not say whether the prompt landed';
+    // #1685 — delivery detail, but ONLY where it explains a failure.
+    //
+    // A step that BLOCKED needs it: "the prompt never reached the engine" and
+    // "the model took too long" look identical otherwise, and that confusion is
+    // the whole bug. A step that COMPLETED does not — its own detail (fields
+    // captured, files written) is what the operator wants, and the delivery
+    // value would only pre-empt it.
+    //
+    // `unknown` in particular must stay quiet on a healthy row: engines that
+    // declare no wake vocabulary (aider, openclaw) answer `unknown` on EVERY
+    // send, so surfacing it unconditionally would label every one of their
+    // completed steps "delivery unconfirmed" — contradicting the row's own
+    // status badge, and contradicting ADR 0002's promise that those engines
+    // keep wrapping exactly as before.
+    //
+    // `undefined` means the step never measured delivery and is left alone:
+    // absent is not a measured `unknown`.
+    if (stepResult.status === 'blocked') {
+      if (stepResult.deliveryOutcome === 'not-accepted') {
+        return 'prompt never reached the engine — not a slow model';
+      }
+      if (stepResult.deliveryOutcome === 'unknown') {
+        return 'delivery unconfirmed — the pane could not say whether the prompt landed';
+      }
     }
     const output = stepResult.output && typeof stepResult.output === 'object' ? stepResult.output : null;
     // Canonical skip signal is the step status (#204). Handle it once, above

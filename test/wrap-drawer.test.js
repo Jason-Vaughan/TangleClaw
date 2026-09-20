@@ -1367,6 +1367,30 @@ describe('#867 — stranded-wrap classification agrees with the server', () => {
     assert.deepEqual(stranded, ['stranded — gh unavailable']);
   });
 
+  it('#1685 — the delivery line explains a BLOCKED row and never pre-empts a completed one', () => {
+    const { deriveDetail } = loadHelpers();
+
+    // Blocked: the whole point. "never reached the engine" and "the model was
+    // slow" are indistinguishable without this, and that confusion is the bug.
+    assert.equal(deriveDetail({ kind: 'ai-content', status: 'blocked', deliveryOutcome: 'not-accepted', output: null }),
+      'prompt never reached the engine — not a slow model');
+    assert.equal(deriveDetail({ kind: 'ai-content', status: 'blocked', deliveryOutcome: 'unknown', output: null }),
+      'delivery unconfirmed — the pane could not say whether the prompt landed');
+
+    // DONE with `unknown` is the case that must stay quiet. aider and openclaw
+    // declare no wake vocabulary, so every send answers `unknown`; surfacing it
+    // here labelled every completed step on those engines "delivery
+    // unconfirmed", contradicting its own status badge and ADR 0002's promise
+    // that they wrap exactly as before.
+    assert.equal(deriveDetail({ kind: 'ai-content', status: 'done', deliveryOutcome: 'unknown', output: { capturedText: 'x', completedVia: 'marker' } }),
+      'captured');
+    assert.equal(deriveDetail({ kind: 'ai-content', status: 'done', deliveryOutcome: 'accepted', output: { capturedText: 'x', parsedFields: { summary: 's' } } }),
+      'captured 1 field');
+
+    // Absent is not a measured `unknown`: a step that never asked is untouched.
+    assert.equal(deriveDetail({ kind: 'ai-content', status: 'blocked', output: null }), null);
+  });
+
   it('an ai-content row says when its capture was reused by a Retry, not freshly written (#1404)', () => {
     const { deriveDetail } = loadHelpers();
     // #1450 — a quiet-terminal finish names itself on the row; a marker finish adds nothing.
