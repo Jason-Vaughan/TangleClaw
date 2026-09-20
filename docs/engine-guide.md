@@ -329,8 +329,9 @@ treated as absent and logged at warn.
 #### `wake`
 
 Optional, and the gate on everything TangleClaw does by *reading* an engine's pane: the idle-gated
-Medusa wake nudge, the session chime, and the prime-paste readiness gate. An engine that has been
-captured live declares its signature:
+Medusa wake nudge, the session chime, the prime-paste readiness gate, and the launch kickoff that
+asks a silently primed session to read its own context (#1635). An engine that has been captured
+live declares its signature:
 
 ```json
 "wake": {
@@ -399,8 +400,11 @@ entry for a field that no longer exists, is a profile defect. `verifiedOn` is an
 for a value nobody has measured — which is a different thing from a value measured and found absent
 (Claude's `idleMarker` carries a date, because the absence itself was measured).
 
-**Omit the whole block and the engine is simply never nudged** — skipped and logged once per
-session, never woken against a guessed idle signature. A block that is present but malformed is
+**Omit the whole block and the engine is never typed into by any of them** — skipped and logged
+once per consumer, never woken or kicked off against a guessed idle signature. For the launch
+kickoff that means a silently primed session on an unprofiled engine falls back to exactly the
+behavior it had before #1635: nothing types into its pane until the unready monitor's window
+elapses. Degraded and recorded (`unprofiled-engine`), never guessed at. A block that is present but malformed is
 **the same answer**: refused at the read, logged, and the engine stays unprofiled rather than
 half-loaded into the gate that decides whether to type into a live pane. Declaring badly and
 declaring nothing deliberately agree, so the settings control below can never offer a switch the

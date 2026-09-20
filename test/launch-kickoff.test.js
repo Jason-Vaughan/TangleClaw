@@ -15,7 +15,7 @@
  * the two things these tests must not do.
  */
 
-const { describe, it, beforeEach, afterEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { setLevel } = require('../lib/logger');
 
@@ -47,6 +47,8 @@ describe('launch kickoff (#1635)', () => {
     injected = [];
     activity = [];
     launchKickoff._internal.stepCount = () => 4;
+    // A sequence nobody has begun: the shape that earns a kickoff.
+    launchKickoff._internal.getSequence = () => ({ id: 1, cursor: 0 });
     launchKickoff._internal.wakeProfiles = () => ({ claude: { busyMarker: 'esc to interrupt', promptRe: /^> / } });
     launchKickoff._internal.capturePane = () => ({ lines: ['> '], alternateScreen: false });
     launchKickoff._internal.cursorInfo = () => null;
@@ -257,9 +259,105 @@ describe('launch kickoff (#1635)', () => {
     });
   });
 
+  describe('a session that no longer needs asking', () => {
+    it('leaves a session that has already begun reading alone', async () => {
+      // The whole point of the window is that something else may move in it —
+      // a human typing is one of the two launches on the record. Sending now
+      // would tell a session that is mid-read to begin reading.
+      launchKickoff._internal.getSequence = () => ({ id: 1, cursor: 1 });
+
+      const outcome = await launchKickoff.kickoff({ ...LIVE_LAUNCH });
+
+      assert.equal(outcome, 'already-begun');
+      assert.equal(injected.length, 0);
+    });
+
+    it('can still kick off a session that began and was rolled back', async () => {
+      // Nothing was typed, so the one-shot was not spent.
+      launchKickoff._internal.getSequence = () => ({ id: 1, cursor: 1 });
+      await launchKickoff.kickoff({ ...LIVE_LAUNCH });
+
+      launchKickoff._internal.getSequence = () => ({ id: 1, cursor: 0 });
+      const outcome = await launchKickoff.kickoff({ ...LIVE_LAUNCH });
+
+      assert.equal(outcome, 'sent');
+      assert.equal(injected.length, 1);
+    });
+
+    it('says so when the sequence is gone by the time the pane comes free', async () => {
+      launchKickoff._internal.getSequence = () => null;
+
+      const outcome = await launchKickoff.kickoff({ ...LIVE_LAUNCH });
+
+      assert.equal(outcome, 'sequence-gone');
+      assert.equal(injected.length, 0);
+    });
+  });
+
+  describe('the window is long enough for a slow boot', () => {
+    it('outlasts the 41-second boot that sized the readiness gate', () => {
+      // A horizon shorter than a real slow boot expires while the engine is
+      // still starting, which is the ten-minute wait this module removes
+      // arriving by another route.
+      const { PANE_READY_TIMEOUT_MS } = require('../lib/sessions');
+      assert.ok(launchKickoff.IDLE_TIMEOUT_MS >= PANE_READY_TIMEOUT_MS,
+        'the kickoff gives a booting pane at least as long as the prime paste does');
+    });
+
+    it('gives the shot back when the pane never came free', async () => {
+      // Claiming the shot protects against a SECOND turn. A window that
+      // expired without typing never risked one, and keeping the claim would
+      // spend the kickoff on exactly the slow boot that needs it most.
+      launchKickoff._internal.assessIdle = () => ({ idle: false, reason: 'working', digest: 'd', idleTicks: 0 });
+      const first = await launchKickoff.kickoff({ ...LIVE_LAUNCH });
+      assert.equal(first, 'pane-busy');
+      assert.ok(!launchKickoff._fired.has(LIVE_LAUNCH.sessionId), 'the one-shot was not spent');
+
+      launchKickoff._internal.assessIdle = () => ({ idle: true, reason: 'at-prompt', digest: 'd', idleTicks: 2 });
+      const second = await launchKickoff.kickoff({ ...LIVE_LAUNCH });
+
+      assert.equal(second, 'sent');
+      assert.equal(injected.length, 1);
+    });
+  });
+
+  describe('it carries no rules', () => {
+    it('writes a kickoff activity entry and nothing else', async () => {
+      // Direction §4: a delivery row for a line that carries no rules is the
+      // true-but-useless accounting the ledger exists to keep out. The hook
+      // delivered the rules; this line delivers none.
+      await launchKickoff.kickoff({ ...LIVE_LAUNCH });
+
+      assert.equal(activity.length, 1);
+      assert.equal(activity[0].eventType, 'launch.kickoff');
+      assert.deepEqual(activity[0].detail, { observed: 'sent' });
+    });
+
+    it('cannot reach the rule-delivery ledger at all', () => {
+      // Structural, because the guarantee is an absence: the module has no
+      // seam that could write a delivery row, so no future edit can add one
+      // without this failing first.
+      //
+      // Comments are stripped before the scan. The module's own docstring
+      // names the ledger in order to say it never writes to it, and a guard
+      // that cannot tell an explanation from a call would fire on the prose
+      // that documents the very property it is checking.
+      const raw = require('node:fs').readFileSync(require('node:path').join(__dirname, '../lib/launch-kickoff.js'), 'utf8');
+      const code = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+      assert.ok(!code.includes('session_rule_deliveries'), 'no rules table');
+      assert.ok(!code.includes('_recordRuleDelivery'), 'no rules recorder');
+      assert.ok(!code.includes('session-rules-channel'), 'no rules channel');
+      assert.deepEqual(
+        Object.keys(launchKickoff._internal).filter((k) => /rule/i.test(k)),
+        [],
+        'no rules-shaped seam'
+      );
+    });
+  });
+
   describe('the line itself', () => {
     it('is a single line, so one Enter submits the whole sentence', () => {
-      assert.ok(!launchKickoff.kickoffLine(4).includes('\n'));
+      assert.ok(!launchKickoff.kickoffLine({ cursor: 0 }, 4).includes('\n'));
     });
 
     it('states that reading authorizes nothing', () => {
@@ -267,11 +365,18 @@ describe('launch kickoff (#1635)', () => {
       // sits one word away from "begin working". The line has to close that
       // itself, because the confirmation gates it must not override are in a
       // prime this line does not repeat.
-      assert.match(launchKickoff.kickoffLine(4), /authorize nothing/);
+      assert.match(launchKickoff.kickoffLine({ cursor: 0 }, 4), /authorize nothing/);
     });
 
     it('counts the steps it was given rather than assuming four', () => {
-      assert.match(launchKickoff.kickoffLine(6), /0 of 6 step\(s\)/);
+      assert.match(launchKickoff.kickoffLine({ cursor: 0 }, 6), /0 of 6 step\(s\)/);
+    });
+
+    it('states the count it observed rather than a constant', async () => {
+      // #1599, in the sibling written beside this one: a line that describes a
+      // state it did not observe is the failure that train exists to end. The
+      // number is rendered from the row, so it cannot drift from it.
+      assert.match(launchKickoff.kickoffLine({ cursor: 2 }, 6), /2 of 6 step\(s\)/);
     });
   });
 
@@ -293,6 +398,15 @@ describe('launch kickoff (#1635)', () => {
 
       launchKickoff.reset();
       launchKickoff._internal.assessIdle = () => ({ idle: false, reason: 'working', digest: 'd', idleTicks: 0 });
+      produced.add(await launchKickoff.kickoff({ ...LIVE_LAUNCH }));
+
+      launchKickoff.reset();
+      launchKickoff._internal.assessIdle = () => ({ idle: true, reason: 'at-prompt', digest: 'd', idleTicks: 2 });
+      launchKickoff._internal.getSequence = () => ({ id: 1, cursor: 2 });
+      produced.add(await launchKickoff.kickoff({ ...LIVE_LAUNCH }));
+
+      launchKickoff.reset();
+      launchKickoff._internal.getSequence = () => null;
       produced.add(await launchKickoff.kickoff({ ...LIVE_LAUNCH }));
 
       for (const code of produced) {
@@ -380,7 +494,10 @@ describe('the launch path reaches the kickoff (#1635)', () => {
     assert.equal(calls[0].hasSequence, false);
   });
 
-  it('does not kick off a launch whose prime was pasted', async () => {
+  it('carries a pasted-prime launch through rather than deciding for it', async () => {
+    // The branch tests only whether this is a real launch. Re-testing
+    // `silentPrime` here would make the module's own `not-silent` answer
+    // unreachable in production — a declared outcome only tests could see.
     sessions._deferEngineInit(
       'tc-builder1', 'TangleClaw-Builder1', 'claude', ENGINE_PROFILE,
       'the prime', null, false, null,
@@ -388,7 +505,8 @@ describe('the launch path reaches the kickoff (#1635)', () => {
     );
     await settle();
 
-    assert.equal(calls.length, 0);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].silentPrime, false);
   });
 
   it('does not kick off a caller that is not launching a session', async () => {
@@ -399,5 +517,111 @@ describe('the launch path reaches the kickoff (#1635)', () => {
     await settle();
 
     assert.equal(calls.length, 0);
+  });
+});
+
+/**
+ * The launch itself reaches the kickoff, with the launch's own facts.
+ *
+ * The block above drives `_deferEngineInit` directly, so it proves the hop but
+ * takes the kickoff context as given. The context is BUILT one level up, in
+ * `launchSession`, and `hasSequence` is a mapping there rather than a value
+ * passed in — a real launch is the only thing that can show it is the right
+ * mapping. That parameter is 9th and positional, which is the other reason to
+ * prove it from the top: an argument inserted ahead of it would still typecheck.
+ */
+describe('a real launch builds the kickoff context (#1635)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const os = require('node:os');
+  const store = require('../lib/store');
+  const tmux = require('../lib/tmux');
+  const enginesModule = require('../lib/engines');
+
+  let tmpDir;
+  let projectsDir;
+  let sessions;
+  let realKickoff;
+  let calls;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-kickoff-launch-'));
+    store._setBasePath(tmpDir);
+    store.init();
+    projectsDir = path.join(tmpDir, 'projects');
+    fs.mkdirSync(projectsDir, { recursive: true });
+    const config = store.config.load();
+    config.projectsDir = projectsDir;
+    store.config.save(config);
+    sessions = require('../lib/sessions');
+  });
+
+  after(() => {
+    store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    calls = [];
+    realKickoff = launchKickoff.kickoff;
+    launchKickoff.kickoff = (args) => {
+      calls.push(args);
+      return Promise.resolve('sent');
+    };
+  });
+
+  afterEach(() => {
+    launchKickoff.kickoff = realKickoff;
+  });
+
+  /** Let the deferred launch timers fire. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
+
+  /**
+   * Launch a fresh project with tmux and engine detection stubbed out.
+   * @param {string} name - Project and directory name
+   * @returns {object} The launch result
+   */
+  function launch(name) {
+    const dir = path.join(projectsDir, name);
+    fs.mkdirSync(dir, { recursive: true });
+    store.projects.create({ name, path: dir, engine: 'claude' });
+    const real = {
+      create: tmux.createSession, has: tmux.hasSession, kill: tmux.killSession, detect: enginesModule.detectEngine
+    };
+    tmux.createSession = () => true;
+    tmux.hasSession = () => false;
+    tmux.killSession = () => true;
+    enginesModule.detectEngine = () => ({ available: true, path: '/usr/bin/fake-engine' });
+    try {
+      return sessions.launchSession(name, {});
+    } finally {
+      tmux.createSession = real.create;
+      tmux.hasSession = real.has;
+      tmux.killSession = real.kill;
+      enginesModule.detectEngine = real.detect;
+    }
+  }
+
+  it('hands the kickoff the session and project it just created', async () => {
+    const result = launch('kickoff-ctx-project');
+    await settle();
+
+    assert.equal(calls.length, 1, 'the launch called the kickoff exactly once');
+    assert.equal(calls[0].sessionId, result.session.id);
+    assert.equal(calls[0].projectId, result.session.projectId);
+    assert.equal(calls[0].projectName, 'kickoff-ctx-project');
+  });
+
+  it('reports hasSequence from the sequence the launch actually created', async () => {
+    // The mapping under test: `hasSequence` is `applicability === 'applicable'`,
+    // and the store is the oracle for whether a sequence really exists.
+    const result = launch('kickoff-seq-project');
+    await settle();
+
+    const sequence = store.launchSequences.getBySession(result.session.id);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].hasSequence, Boolean(sequence),
+      'the kickoff was told about a sequence exactly when one exists');
   });
 });
