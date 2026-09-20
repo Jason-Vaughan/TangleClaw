@@ -277,12 +277,106 @@ emitting output of a known size in a live session on that engine and checking wh
 `"launchSequence": { "supported": true }`, or `{ "supported": false, "reason": "…" }`.
 
 Whether TangleClaw serves this engine's sessions their context in acknowledged steps over
-`tc start`. Support means only that the engine runs in a pane where `tc` is on PATH — no
-engine-specific behaviour is assumed beyond that.
+`tc start`. **`supported: true` is a declaration of intent and capability, not evidence** — it says
+TangleClaw should build a sequence for this engine's sessions, and it commits TangleClaw to serving
+one. It does not assert that the context reaches the model.
+
+**`tc` on PATH is necessary and not sufficient.** Whether a served step is actually consumed depends
+on the engine's interaction path: the integration has to run `tc` and get its output into the
+model's context. An engine that gates command execution behind a confirmation, imports output only
+on request, or renders it somewhere the model does not read, can be `supported: true` and still
+leave a session stalled mid-sequence. Aider is the worked example — ADR 0017 records it, and
+automatic Aider parity is **#1645**. The failure is visible as a sequence that stops advancing, not
+as an error.
 
 **An engine that declares nothing is treated as unsupported**, and the reason says so. A launch
 without a sequence still gets the pushed prime; `tc start next` in such a pane answers with why
 there is nothing to serve, rather than an empty success.
+
+#### What a launch sequence asks of the session (not of the engine)
+
+Declaring `launchSequence.supported` is the whole of the engine's obligation. Everything below is
+what the **session running in the pane** does, and it matters to an engine implementer for one
+reason: if the model driving your engine cannot follow it, sessions on your engine will stall at a
+refusal rather than fail loudly. The full architectural rationale is ADR 0017.
+
+Three subverbs, and the product ships no others (`lib/tc-verbs.js#START_SUBVERBS`):
+
+| Subverb | What it does | Notable refusals |
+|---|---|---|
+| `tc start next` | Serves the next unacknowledged step, or a named page of it (`--page <n>`). Acknowledge with `--ack <step>:<revision>:<digest>`, from the footer of the last page | `PAGES_UNSERVED` (a page of this step was never served), `ACK_OUT_OF_ORDER`, `ACK_DIGEST_MISMATCH`, `SNAPSHOT_REVISED` |
+| `tc start ready` | Attests that the whole sequence was read. Requires `--verdict` and `--first-action`; `--reconciliation` when the launch demands one | see the two stages below |
+| `tc start status` | Reports the launch's own state — steps acknowledged, recovery, page size and whether the size is measured or assumed. Read-only | **Launch resolution refuses `status` too** — `BAD_LAUNCH_ID`, `LAUNCH_NOT_BOUND`, `SEQUENCE_SESSION_MISMATCH`, `SESSION_ENDED`. What it does *not* refuse is a **missing** launch id: a pane predating this mechanism is answered as legacy rather than refused, which is the read-only exemption `next` and `ready` do not get |
+
+**"Notable refusals" is not the whole list.** Every row is reachable by the launch-resolution
+refusals in stage 1 below, so the column names what is characteristic of each subverb rather than
+what is exhaustive for it.
+
+**`--verdict` is the point of the attestation, not a formality.** It must equal the preflight verdict
+the session's own state step stated. The refusal (`READY_VERDICT_MISMATCH`) deliberately does **not**
+echo the correct verdict back, because handing it over would let a retry pass without the session
+ever having read the step.
+
+**How READY refuses, in the order it actually runs.** Two stages, and the distinction matters when
+you are debugging a stuck pane: the outer stage decides whether there is an attestable sequence and
+artifact at all, and only then does the inner ladder judge *this* attestation.
+
+*Outer — resolution and record (`ready()`), before any of the content is judged:*
+
+1. **Launch resolution**, in this order: `LAUNCH_ID_REQUIRED` in a pane with no
+   `TANGLECLAW_LAUNCH_ID` (a read-only `status` is answered as legacy instead); then
+   `BAD_LAUNCH_ID` (400) when the id is not one TangleClaw minted, which is a malformed input rather
+   than a timing problem and so is checked before any lookup; then `LAUNCH_NOT_BOUND` while the bind
+   transaction has not landed, retried automatically for 10 s; then `SEQUENCE_SESSION_MISMATCH` and
+   `SESSION_ENDED` when the bound session is not the active one asking.
+2. `SEQUENCE_NOT_APPLICABLE` — this session has no sequence to attest, and the reason says why.
+3. `BAD_READY` (400, not 409) — the artifact is not a `tc.ready/1` object. Checked *before* the
+   already-attested answer, because a malformed artifact is malformed either way and answering it
+   with a conflict would claim it merely differed from the stored one.
+4. **Already attested** — an identical artifact replays idempotently (a lost response is safe to
+   re-run); a *different* one is `READY_CONFLICT` and the attestation on record stands unchanged.
+5. `SNAPSHOT_REVISED` — the project's rules changed while this launch was initializing, so steps
+   were re-rendered; re-read them and attest with a reconciliation.
+
+*Inner — validating this attestation (`_validateReady`), once an un-attested applicable sequence and
+a well-formed artifact exist:*
+
+6. `SNAPSHOT_REVISED` — the artifact names a revision this sequence has moved past.
+7. `READY_VERDICT_MISMATCH` — as above.
+8. `RECOVERY_UNCLEARED` — the project's handoff state needs recovering and this project clears in
+   `operator` mode. **This precedes the unacknowledged-steps check on purpose**: in `operator` mode
+   the task step is withheld, so the cursor can never reach the end, and answering "steps unacked"
+   would send the session back to acknowledge a step nothing will ever serve it. It also precedes the
+   reconciliation check, because no text can stand in for a person's clear.
+9. `STEPS_UNACKED` — steps remain.
+10. `RECONCILIATION_REQUIRED` — this launch needs a written reconciliation of at least 40 characters
+    (a snapshot revision, or drift between the handoff's rules and the live ones).
+
+**Recovery has two modes, per project** (`launchSequence.recoveryMode`, and see
+`docs/configuration-reference.md`). In `operator` — the shipped default — the task step is withheld
+and only a person clears it, from the project's Launch readiness panel. In `advisory` the task step
+is served behind a warning and the session clears its own recovery by attesting with a written
+reconciliation, recorded as `agent-reconciled`. An unrecognised value reads as `operator`, so a typo
+can never be why a damaged handoff went unnoticed.
+
+**The handoff preflight is what produces that verdict.** At launch TangleClaw reads the handoff the
+previous session published and returns an ordered verdict — `ok` only for a current, eligible
+publication from the newest session, and otherwise a *named* problem (`crash-recovery`,
+`handoff-behind`, `legacy-unclean`, `workspace-unavailable`, `unclassified`, and the rest). A
+preflight that could not run returns `PREFLIGHT_NOT_EVALUATED` and requires recovery; it never reads
+as permission to proceed (#1650). An engine does nothing here — this is listed so that an
+implementer seeing `RECOVERY_UNCLEARED` in a fresh pane knows it is about the *project's* prior
+state, not about their engine.
+
+**Nothing here blocks a pane.** A launch with no sequence — an unsupported engine, a pane that
+predates the mechanism, a sequence that could not be created — still starts and still gets the pushed
+prime. `tc start next` in such a pane says why there is nothing to serve rather than returning an
+empty success, and mutating subverbs answer `LAUNCH_ID_REQUIRED` where `TANGLECLAW_LAUNCH_ID` is
+absent.
+
+**READY authorizes nothing.** It records that the context arrived and was read. It is an attestation
+by a local process in a local pane, so it carries no authentication meaning, and it leaves every
+operator confirmation rule exactly where it was.
 
 #### `readOnlyModeMarker`
 
@@ -432,7 +526,10 @@ one, in the pane environment. The verbs come from a declared roster — read the
 ages every time a verb is added. Each answers honestly (an empty inbox or idle fleet says so in
 words; a disabled capability states its reason), and the server records each invocation as a
 verb-labeled **awareness receipt**, so a session that never discovered the floor is a detectable
-state. This is engine-neutral by construction: a new engine needs no adapter to reach it.
+state. This is engine-neutral by construction: a new engine needs no adapter for `tc` to be
+*present*. Whether its model actually reaches the floor is the same distinction the
+`launchSequence` section draws — the engine still has to run `tc` and get the output into model
+context, and an engine that gates or defers that can have the whole floor and never use it.
 Engine-profile `launch.env` overrides any of these keys on collision.
 
 #### Prime paste readiness
