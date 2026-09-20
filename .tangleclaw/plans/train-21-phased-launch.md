@@ -1724,10 +1724,42 @@ These are documentation, so each case is a claim a reader can falsify against th
 
 ### Done when
 
-Every box above ticked, the suite green (unchanged — this car adds no code), `/prawduct:critic` at
-`cumulative` with no unresolved blocking findings **and the whole-trajectory findings explicitly
-dispositioned** (21.11's Done-when holds this as a final-parity prerequisite), the ADR reviewed by
-the Architect, and the PR merged by hand rather than by `--auto`.
+Every box above ticked, the suite green (unchanged — this car adds no code), the cumulative-final
+review dispositioned per the finding below, the ADR reviewed by the Architect, and the PR merged by
+hand rather than by `--auto`.
+
+### The cumulative-final review has no subject, and that is a finding, not a formality
+
+`/prawduct:critic cumulative` was dispatched and **declined: exit 3, "no review needed — no
+judgeable file"**. All four files this car touches are records or prose, so the interval composes as
+a free edge and the coverage gate already passes it. Forcing a review would grade four documents,
+which is not a whole-trajectory review either.
+
+**This matters because two separate obligations were resting on this car's review, and they are not
+the same obligation.**
+
+1. **The plan's own `Type: cumulative-final`** — "21.12's review IS the train final; no separate one
+   is run." This one is genuinely satisfied by composition: each car's code was reviewed on its own
+   branch, those facts are in the evidence store, and the gate spans the interval. What is NOT
+   satisfied is the *expectation a future reader would form* from the phrase "the train final",
+   which implies a review round that never happened. Recorded here so nobody goes looking for a
+   review fact that was never written.
+
+2. **The Architect's whole-trajectory review** (ruling on #1589, 2026-09-19: *"Whole-trajectory
+   review remains a final-parity prerequisite"*), which 21.11's Done-when also holds. **This one
+   cannot be produced from this branch at any interval.** Every car merged into `main` before this
+   branch was cut, so this branch's merge-base is already downstream of the whole train — there is
+   no git range from here that spans the trajectory the Architect asked to have reviewed.
+
+**The disposition this car proposes, for the Architect to accept or reject — it is not ours to
+rule.** The whole-trajectory review was made a prerequisite *of final parity acceptance*. The
+operator's 2026-09-20 scope amendment removed final parity acceptance from this train; cases 1–5 and
+8 were struck rather than built. So the prerequisite is **moot rather than discharged** — the thing
+it gated no longer exists as a deliverable of Train 21, and it travels with the certification work
+to whichever train picks that up. Nothing here should be read as the review having been performed.
+
+Put to the Architect together with the ADR under bound 4, since that review is required before this
+merges anyway.
 
 ## 5. Open assumptions
 
@@ -1991,6 +2023,13 @@ the Architect, and the PR merged by hand rather than by `--auto`.
     R2, R3 and the #1650 ruling. `docs/engine-guide.md` gains the attestation / recovery / preflight
     half it was missing entirely. **Bound 4 stands: the draft goes to the Architect BEFORE this
     merges, and this PR does not auto-merge.**
+    - **The cumulative-final review declined for want of a subject** (`critic-begin` exit 3: no
+      judgeable file — all four paths are records or prose). The plan's own `cumulative-final` is
+      satisfied by composition; the **Architect's whole-trajectory review is not, and cannot be
+      produced from this branch at any interval**, because every car merged before it was cut. §4e
+      carries the proposed disposition — moot rather than discharged, since the operator's scope
+      amendment removed the final parity acceptance it was a prerequisite of. **The Architect rules
+      on it, not this car.**
     - **`api-contract.md` was named by §4 and does not exist** — not at `docs/`, not anywhere in the
       repo. This car did not create it: standing up a repo-wide API contract doc inside a train car
       would add a documentation surface with a freshness obligation on every route the product
