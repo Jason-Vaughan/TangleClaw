@@ -284,6 +284,66 @@ engine-specific behaviour is assumed beyond that.
 without a sequence still gets the pushed prime; `tc start next` in such a pane answers with why
 there is nothing to serve, rather than an empty success.
 
+#### What a launch sequence asks of the session (not of the engine)
+
+Declaring `launchSequence.supported` is the whole of the engine's obligation. Everything below is
+what the **session running in the pane** does, and it matters to an engine implementer for one
+reason: if the model driving your engine cannot follow it, sessions on your engine will stall at a
+refusal rather than fail loudly. The full architectural rationale is ADR 0017.
+
+Three subverbs, and the product ships no others (`lib/tc-verbs.js#START_SUBVERBS`):
+
+| Subverb | What it does | What refuses it |
+|---|---|---|
+| `tc start next` | Serves the next unacknowledged step, or a named page of it (`--page <n>`). Acknowledge with `--ack <step>:<revision>:<digest>`, from the footer of the last page | `PAGES_UNSERVED` (a page of this step was never served), `ACK_OUT_OF_ORDER`, `ACK_DIGEST_MISMATCH`, `SNAPSHOT_REVISED` |
+| `tc start ready` | Attests that the whole sequence was read. Requires `--verdict` and `--first-action`; `--reconciliation` when the launch demands one | see the READY ladder below |
+| `tc start status` | Reports the launch's own state — steps acknowledged, recovery, page size and whether the size is measured or assumed. Read-only, and it works in panes that predate this mechanism | nothing |
+
+**`--verdict` is the point of the attestation, not a formality.** It must equal the preflight verdict
+the session's own state step stated. The refusal (`READY_VERDICT_MISMATCH`) deliberately does **not**
+echo the correct verdict back, because handing it over would let a retry pass without the session
+ever having read the step.
+
+**The READY ladder, in the order it refuses.** The order is load-bearing, and an implementer
+debugging a stuck pane should read it top-down:
+
+1. `SNAPSHOT_REVISED` — the rules changed under this launch; re-read from the current revision.
+2. `READY_VERDICT_MISMATCH` — as above.
+3. `RECOVERY_UNCLEARED` — the project's handoff state needs recovering and this project clears in
+   `operator` mode. **This precedes the unacknowledged-steps check on purpose**: in `operator` mode
+   the task step is withheld, so the cursor can never reach the end, and answering "steps unacked"
+   would send the session back to acknowledge a step nothing will ever serve it. It also precedes the
+   reconciliation check, because no text can stand in for a person's clear.
+4. `STEPS_UNACKED` — steps remain.
+5. `RECONCILIATION_REQUIRED` — this launch needs a written reconciliation of at least 40 characters
+   (a snapshot revision, or drift between the handoff's rules and the live ones).
+
+**Recovery has two modes, per project** (`launchSequence.recoveryMode`, and see
+`docs/configuration-reference.md`). In `operator` — the shipped default — the task step is withheld
+and only a person clears it, from the project's Launch readiness panel. In `advisory` the task step
+is served behind a warning and the session clears its own recovery by attesting with a written
+reconciliation, recorded as `agent-reconciled`. An unrecognised value reads as `operator`, so a typo
+can never be why a damaged handoff went unnoticed.
+
+**The handoff preflight is what produces that verdict.** At launch TangleClaw reads the handoff the
+previous session published and returns an ordered verdict — `ok` only for a current, eligible
+publication from the newest session, and otherwise a *named* problem (`crash-recovery`,
+`handoff-behind`, `legacy-unclean`, `workspace-unavailable`, `unclassified`, and the rest). A
+preflight that could not run returns `PREFLIGHT_NOT_EVALUATED` and requires recovery; it never reads
+as permission to proceed (#1650). An engine does nothing here — this is listed so that an
+implementer seeing `RECOVERY_UNCLEARED` in a fresh pane knows it is about the *project's* prior
+state, not about their engine.
+
+**Nothing here blocks a pane.** A launch with no sequence — an unsupported engine, a pane that
+predates the mechanism, a sequence that could not be created — still starts and still gets the pushed
+prime. `tc start next` in such a pane says why there is nothing to serve rather than returning an
+empty success, and mutating subverbs answer `LAUNCH_ID_REQUIRED` where `TANGLECLAW_LAUNCH_ID` is
+absent.
+
+**READY authorizes nothing.** It records that the context arrived and was read. It is an attestation
+by a local process in a local pane, so it carries no authentication meaning, and it leaves every
+operator confirmation rule exactly where it was.
+
 #### `readOnlyModeMarker`
 
 Optional. An engine whose TUI has a read-only mode — Claude Code's plan mode — declares how to

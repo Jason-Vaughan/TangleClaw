@@ -1624,6 +1624,111 @@ ruling and returned for Architect review, and **final parity acceptance still HE
 #1650 correction is integrated into the identified candidate and the whole-trajectory findings have
 an explicit disposition. Diagnostic runs are labelled diagnostic and are not final certification.
 
+## 4e. Car 21.12 build plan (#1590) — ADR 0017 and the doc set
+
+**Branch:** `feat/train-21-car-21-12`. **Schema:** no DB migration. **Critic mode:** `cumulative` —
+Chunk 04 is `Type: cumulative-final`, so this car's review IS the train final; no separate `final`
+is run. **Type:** feature (documentation). **Size:** medium.
+
+**Bound 4 is in force:** the ADR draft goes to the Architect BEFORE this merges. This car does not
+auto-merge.
+
+### Confidence check
+
+- **Problem.** Train 21 replaced a single pushed prime with a server-ordered acknowledged sequence,
+  a handoff lockfile, a preflight and a recovery gate — eleven cars of mechanism with no
+  architectural record and no operator-facing reference. A reader today can find the *behaviour* in
+  `FEATURES.md` and the *settings* in `configuration-reference.md`, but nothing states why the
+  design is shaped this way, which parts shipped, and which parts were descoped rather than built.
+- **Success.** ADR 0017 exists and is accepted; an engine implementer can read `engine-guide.md` and
+  learn what the attestation, recovery and handoff halves of the sequence require of their engine;
+  `configuration-reference.md` covers every launch-sequence setting the train shipped; the CHANGELOG
+  carries the train. A reader can tell **shipped** from **desired** without opening an issue.
+- **Out of scope.** The R1 amendment to `prime-delivery-direction.md` §3 (shipped with 21.6). Any
+  code change to the launch sequence. The certification machinery removed from 21.11 by the
+  operator's amendment — this car records that it was removed, and never as shipped. Aider parity
+  (#1645). The open defects below are *recorded*, not fixed.
+
+### `api-contract.md` does not exist, and this car does not create it
+
+§4's line for this car names `api-contract.md`. **There is no such file, and there never has been**
+— not at `docs/api-contract.md`, not anywhere in the repo (`git ls-files` finds no path matching
+`*api*contract*`). The name was written into the plan on 2026-09-17 from the shape a doc set
+usually takes, not from this repo's.
+
+This repo documents its HTTP surface in three places, none of them a contract doc: `FEATURES.md`
+per feature (which already carries `POST /api/tc/start/next` and `GET /api/tc/start/status`), the
+`data/*-guide.md` carriers that are injected into engine configs, and `docs/engine-guide.md` for
+what an engine must do. **Creating a whole API contract doc is a new documentation surface**, with
+its own freshness obligation on every route the product ships — that is a decision about this
+repo's doc architecture, not a step in a car about Train 21.
+
+`[DECISION: route the api-contract.md obligation to engine-guide.md and FEATURES.md rather than
+creating docs/api-contract.md | the named file does not exist, and standing up a repo-wide API
+contract doc inside a train car would create a surface nobody committed to maintaining | Builder1
+2026-09-20, reported to the ProjectManager; reversible by filing the doc as its own chore]`
+
+### The gap each file has to close, measured not assumed
+
+Measured at `cffe998a4`, by grepping each file for the train's own vocabulary:
+
+| File | Has | Missing |
+|---|---|---|
+| `FEATURES.md` | the sequence, the unready monitor, the ack rules, both routes | nothing this car must add |
+| `docs/configuration-reference.md` | the whole `launchSequence` object — `pasteRules`, `unreadyWindowMinutes`, `recoveryMode` | nothing this car must add |
+| `docs/engine-guide.md` | `toolOutput.maxChars`, `launchSequence.supported`, `TANGLECLAW_LAUNCH_ID` | **`tc start ready` and attestation; recovery and what a withheld task step looks like; the handoff preflight.** Zero occurrences of `ready`, `recovery`, `handoff` or `preflight` in the file |
+| `docs/adr/` | 0002–0016 | **ADR 0017** |
+| `CHANGELOG.md` | per-PR entries under `[Unreleased]` | the train's own entry |
+
+So the doc work is **one new ADR, one real gap in `engine-guide.md`, and the CHANGELOG**. The other
+two files were kept current by the cars that built them — recorded here because "update
+`configuration-reference.md`" reads like outstanding work, and it is not.
+
+### What ADR 0017 must carry, from the rulings that bind it
+
+1. **R1, R2, R3** (§0) with their dispositions and who ruled.
+2. **The #1650 ruling** — 21.11's Done-when requires ADR 0017 to carry it.
+3. **Shipped vs desired, stated separately.** The Architect's 2026-09-19 ruling on #1589 requires
+   this in as many words, with #1611 as the named case.
+4. **What was descoped and by whom** — the operator's 2026-09-20 amendment removed 21.11's
+   certification machinery (acceptance cases 1–5 and 8). The ADR records it as removed, never as
+   shipped.
+5. **The open defects the train leaves behind:** #1611 (identity check's workspace half unwired),
+   #1623 (a launch with no sequence is gated by nothing), #1595 (retention), #1712, #1713.
+
+### Steps
+
+1. Write `docs/adr/0017-phased-launch.md`.
+2. Add the attestation / recovery / handoff section to `docs/engine-guide.md`.
+3. CHANGELOG entry under `[Unreleased]`.
+4. Tick this car and Chunk 04 in `## Status`.
+5. `/prawduct:critic` at `cumulative` — the train final — and disposition every finding.
+6. Architect review of the ADR (bound 4) BEFORE merge.
+
+### Acceptance cases
+
+These are documentation, so each case is a claim a reader can falsify against the code.
+
+- Every `tc start` subverb the product ships (`next`, `status`, `ready`) appears in `engine-guide.md`
+  with what the engine must do for it. Falsified by a subverb in `START_SUBVERBS` that the guide
+  never names.
+- The ADR's "shipped" column matches the code. Falsified by any row asserting behaviour that
+  `lib/launch-preflight.js`, `lib/launch-sequence.js` or `lib/handoff-publication.js` does not
+  implement — #1611's workspace half is the case that must land under **desired**, not shipped.
+- No document claims a required parity case passed. Falsified by any sentence reading 21.11 as
+  certified rather than descoped.
+- The ADR names R1/R2/R3 and the #1650 ruling with dates and rulers.
+- Every issue number cited resolves to an issue whose state matches how the text describes it.
+- No file path is cited that does not exist — the `api-contract.md` case is the one this car found,
+  and the pre-rename `TangleClaw-Builder` path is the other.
+
+### Done when
+
+Every box above ticked, the suite green (unchanged — this car adds no code), `/prawduct:critic` at
+`cumulative` with no unresolved blocking findings **and the whole-trajectory findings explicitly
+dispositioned** (21.11's Done-when holds this as a final-parity prerequisite), the ADR reviewed by
+the Architect, and the PR merged by hand rather than by `--auto`.
+
 ## 5. Open assumptions
 
 - `[ASSUMPTION: tc output reaches the model intact up to toolOutput.maxChars per engine | HIGH | Chunk 01 spike measures it; unknown engines default to a conservative 8000 and say so]`
@@ -1866,9 +1971,34 @@ an explicit disposition. Diagnostic runs are labelled diagnostic and are not fin
       moving `h1` → `CHANGED` with `hasDrift` pinned false. Running the suite could never have
       caught it; only reading the assertion could. Treat a green suite over this module as evidence
       about what could have made it red, nothing more.
-  - [x] Car 21.11 — engine parity probes (#1589) (CLOSED: Scope amendment. Aider moved to #1645; certification machinery removed)
-  - [ ] Car 21.12 — ADR 0017 and the doc set (#1590). Bound 4: the draft goes to the Architect
-    BEFORE this merges.
+  - [x] Car 21.11 — engine parity probes (#1589). **CLOSED 2026-09-20 under an operator scope
+    amendment, not by passing its required cases.** What shipped is narrow: the Master pane states
+    `{applicable: false, reason}` in the same shape a project launch uses, and the reason is about
+    the PANE rather than the engine — Master usually resolves an engine declaring
+    `launchSequence.supported: true`, so an engine-derived answer would report "applicable" for
+    exactly the pane where it is least true. openclaw needed nothing; its reason was already in its
+    engine profile. Acceptance cases 6 and 7 were already shipped by #1650 and were VERIFIED, not
+    rebuilt. **Cases 1–5 and 8 were removed from the car, and are neither shipped nor claimed.**
+    Aider parity moved to epic #1645. The certification binding is DESIGNED and unbuilt: the
+    Architect ruled it on 2026-09-20 (`.tangleclaw/plans/wrap-sequence-architecture.md` §3, #1720) —
+    the no-migration bound holds, the binding rides existing JSON as `tc.parity-certification/1`,
+    and a pure resolver answers `current`/`stale`/`invalid`/`blocked`/`failed`/`N/A`.
+    Follow-ups filed: #1712, #1713; retention was already #1595.
+  - [x] Car 21.12 — ADR 0017 and the doc set (#1590). Built 2026-09-20 on
+    `feat/train-21-car-21-12`. Build plan, the measured per-file gap and acceptance cases: §4e.
+    `docs/adr/0017-phased-launch.md` states shipped vs desired as a table, per the Architect's
+    ruling on #1589, with #1611 and #1623 named there rather than left to inference; it carries R1,
+    R2, R3 and the #1650 ruling. `docs/engine-guide.md` gains the attestation / recovery / preflight
+    half it was missing entirely. **Bound 4 stands: the draft goes to the Architect BEFORE this
+    merges, and this PR does not auto-merge.**
+    - **`api-contract.md` was named by §4 and does not exist** — not at `docs/`, not anywhere in the
+      repo. This car did not create it: standing up a repo-wide API contract doc inside a train car
+      would add a documentation surface with a freshness obligation on every route the product
+      ships, and nobody committed to maintaining one. Routed to `engine-guide.md` and `FEATURES.md`
+      instead, and reported to the ProjectManager. §4e records the decision.
+    - **`configuration-reference.md` and `FEATURES.md` needed nothing** — measured, not assumed:
+      both were kept current by the cars that built them. Recorded because "update
+      `configuration-reference.md`" reads like outstanding work and is not.
   - The car's one class of defect, worth reading before touching the drift path: failure, absence
     and "nothing changed" started as ONE value at every boundary the car added, so every silence
     rendered as the reassuring one. Three distinct values now carry it — `unreadable` vs
