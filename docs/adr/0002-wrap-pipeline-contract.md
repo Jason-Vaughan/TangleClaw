@@ -552,7 +552,13 @@ A step handler's result may now carry a fourth field beside `{ok, status, output
 
 ```
 deliveryOutcome?: 'accepted' | 'not-accepted' | 'unknown'
+deliveryReason?:  string      // the sentence explaining that outcome
 ```
+
+The reason travels with the outcome, and for the same reason the outcome travels at all: `unknown`
+covers an engine that declares no wake vocabulary (its pane was never read), a pane at rest with an
+empty composer, an unreadable pane, a cursor that never read, and a composer boundary that could not
+be located. A surface given only the word would assert one of those causes for all of them.
 
 **Why it belongs in the contract rather than inside one step.** The pipeline builds each recorded
 row, and the SSE `step-done` / `step-blocked` frames, from an explicit field list. A value a step

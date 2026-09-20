@@ -340,7 +340,7 @@ test('#1685 verify-3 — the composer is a REGION, not a row', async (t) => {
   const composerRows = [
     '› [TangleClaw wrap — step 2 of 3: learnings-capture]',
     '  capture the session learnings into the file named below, then print the',
-    `  completion line containing ##TC-DONE## then \`${NONCE}\`. TangleClaw waits`,
+    `  completion line containing TCWRAP-DONE then \`${NONCE}\`. TangleClaw waits`,
     "  for that line before sending anything else, so print it only once the",
     "  step's work is done."
   ];
@@ -359,13 +359,15 @@ test('#1685 verify-3 — the composer is a REGION, not a row', async (t) => {
   });
 
   await t.test('the region excludes every composer row, not just the cursor\'s', () => {
-    const body = receipt._transcriptOutsideComposer(
+    const r = receipt._splitAtComposer(
       ['transcript above', ...composerRows, '· Ready ·'],
       { x: 24, y: 4, line: cursorLine },
       PROFILE
     );
-    assert.equal(body, 'transcript above');
-    assert.ok(!body.includes(NONCE), 'the nonce must not survive into the echo body');
+    assert.equal(r.located, true);
+    assert.equal(r.transcript, 'transcript above');
+    assert.ok(!r.transcript.includes(NONCE), 'the nonce must not survive into the echo body');
+    assert.ok(r.composer.includes(NONCE), 'the nonce belongs to the composer region');
   });
 
   await t.test('a busy engine holding our unsubmitted text is NOT accepted', async () => {
@@ -384,28 +386,84 @@ test('#1685 verify-3 — the composer is a REGION, not a row', async (t) => {
   });
 });
 
-test('transcript outside the composer', async (t) => {
-  await t.test('drops the composer line by CONTENT, wherever it sits in the capture', () => {
-    // Everything from the composer DOWN is excluded, not just its one row.
-    const out = receipt._transcriptOutsideComposer(['a', 'b', 'c'], { y: 99, line: 'b' }, PROFILE);
-    assert.equal(out, 'a');
+test('splitting a capture at the composer', async (t) => {
+  await t.test('splits at the glyph-led row, not the cursor row', () => {
+    const r = receipt._splitAtComposer(['old', '› typed', 'wrapped continuation'],
+      { y: 0, line: 'wrapped continuation' }, PROFILE);
+    assert.equal(r.located, true);
+    assert.equal(r.transcript, 'old');
+    assert.equal(r.composer, '› typed\nwrapped continuation');
   });
 
   await t.test('ignores the row index entirely — cursor.y does not index the capture', () => {
     // capturePane issues `-S -80`, so row 0 is 80 rows ABOVE the pane top while
-    // cursor_y is pane-relative. An index-based filter dropped an arbitrary
-    // scrollback row and left the composer in the body.
-    const out = receipt._transcriptOutsideComposer(['old', '› typed', 'tail'], { y: 0, line: '› typed' }, PROFILE);
-    assert.equal(out, 'old');
+    // cursor_y is pane-relative. They share no origin.
+    const r = receipt._splitAtComposer(['old', '› typed', 'tail'], { y: 99, line: '› typed' }, PROFILE);
+    assert.equal(r.transcript, 'old');
   });
 
-  await t.test('locates the composer through SGR, since the capture is styled and the cursor line may not be', () => {
-    const out = receipt._transcriptOutsideComposer(['above', '\u001b[2m› typed\u001b[0m', 'tail'], { y: 0, line: '› typed' }, PROFILE);
-    assert.equal(out, 'above');
+  await t.test('locates the composer through SGR, since the capture is styled', () => {
+    const r = receipt._splitAtComposer(['above', '\u001b[2m› typed\u001b[0m'], { y: 0, line: '› typed' }, PROFILE);
+    assert.equal(r.located, true);
+    assert.equal(r.transcript, 'above');
   });
 
-  await t.test('with no cursor it yields nothing, so no echo can match', () => {
-    assert.equal(receipt._transcriptOutsideComposer(['a', 'b'], null, PROFILE), '');
+  await t.test('a glyph MID-LINE is transcript, not a prompt', () => {
+    // `startsWith` after trimming, matching _paneDigest. `includes` would treat
+    // any transcript line mentioning the glyph as the composer's first row.
+    const r = receipt._splitAtComposer(['talking about › here', '› typed'], { y: 0, line: '› typed' }, PROFILE);
+    assert.equal(r.transcript, 'talking about › here');
+  });
+
+  await t.test('NO glyph row in the capture is NOT LOCATED — never a one-row fallback', () => {
+    // THE regression this round. The tail is bounded, and a composer taller than
+    // the visible pane scrolls its own head out of it — routine for a
+    // multi-thousand-character wrap prompt. Falling back to the cursor's single
+    // row silently restored the defect the region exclusion existed to fix.
+    const r = receipt._splitAtComposer(['body row one', 'body row two'],
+      { y: 0, line: 'body row two' }, PROFILE);
+    assert.equal(r.located, false);
+    assert.equal(r.transcript, '');
+    assert.equal(r.composer, '');
+  });
+
+  await t.test('with no cursor it is not located, so no echo can match', () => {
+    assert.equal(receipt._splitAtComposer(['a', 'b'], null, PROFILE).located, false);
+  });
+});
+
+test('#1685 verify-4 — an unlocatable composer must not become an accept', async (t) => {
+  await t.test('a capture whose composer head scrolled away answers unknown, not accepted', async () => {
+    const NONCE = 'NONCE-scrolled';
+    // No glyph row: the composer's first row is above the captured tail. The
+    // nonce is present, on what USED to be mislabelled as transcript.
+    const pane = paneScript([{
+      lines: [`  wrapped body carrying ${NONCE} mid-prompt`, '  and its trailing instruction'],
+      cursor: { x: 10, y: 1, line: '  and its trailing instruction' }
+    }]);
+    const clock = fakeClock(1000);
+    const r = await receipt.verifySubmission('s', CODEX, NONCE, {
+      capturePane: pane.capturePane, cursorInfo: pane.cursorInfo, now: clock.now, sleep: clock.sleep, windowMs: 3000
+    });
+    assert.notEqual(r.outcome, 'accepted');
+    assert.match(r.reason, /could not be located/);
+  });
+
+  await t.test('a genuine echo still wins over a composer holding something ELSE', async () => {
+    // The operator's half-typed line, or a selector row the cursor sits on, says
+    // nothing about OUR prompt. Letting it suppress a real echo answered
+    // not-accepted for a prompt that had demonstrably been submitted.
+    const NONCE = 'NONCE-submitted';
+    const composer = '› operator half-typed something';
+    const pane = paneScript([{
+      lines: [`${NONCE} the model is answering`, composer],
+      cursor: { x: 30, y: 1, line: composer }
+    }]);
+    const clock = fakeClock(400);
+    const r = await receipt.verifySubmission('s', CODEX, NONCE, {
+      capturePane: pane.capturePane, cursorInfo: pane.cursorInfo, now: clock.now, sleep: clock.sleep
+    });
+    assert.equal(r.outcome, 'accepted');
   });
 });
 

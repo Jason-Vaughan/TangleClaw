@@ -122,14 +122,20 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
       const measuredKind = kinds[0];
       wrapPipeline.STEP_DISPATCH[measuredKind] = {
         run: async () => ({
-          ok: true, status: 'done', output: null, blockers: [], deliveryOutcome: 'accepted'
+          ok: true, status: 'done', output: null, blockers: [],
+          deliveryOutcome: 'accepted', deliveryReason: 'the engine is working (turn-in-flight)'
         })
       };
       try {
         const result = await wrapPipeline.runWrapPipeline('pipeline-test');
         const measured = result.results.filter((r) => r.kind === measuredKind);
         assert.ok(measured.length > 0, 'the patched kind should have run at least once');
-        for (const row of measured) assert.equal(row.deliveryOutcome, 'accepted');
+        for (const row of measured) {
+          assert.equal(row.deliveryOutcome, 'accepted');
+          // The reason crosses the SAME explicit-field-list hop that dropped the
+          // outcome once. Unasserted, deleting either line leaves this green.
+          assert.equal(row.deliveryReason, 'the engine is working (turn-in-flight)');
+        }
 
         // Absent, not null, on every step that never asked — so no existing
         // consumer sees a new field appear on results it already reads.
@@ -137,6 +143,8 @@ describe('wrap-pipeline (#139 Chunk 3)', () => {
         for (const row of unmeasured) {
           assert.equal(Object.prototype.hasOwnProperty.call(row, 'deliveryOutcome'), false,
             `step ${row.stepId} should not carry deliveryOutcome`);
+          assert.equal(Object.prototype.hasOwnProperty.call(row, 'deliveryReason'), false,
+            `step ${row.stepId} should not carry deliveryReason`);
         }
       } finally { restoreHandlers(); }
     });
